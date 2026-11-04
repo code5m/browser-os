@@ -1,0 +1,9 @@
+{
+  "name": "browseros-managed-ui-test-harness",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Isolated browser test tooling; never shipped with BrowserOS",
+  "devDependencies": {
+    "playwright": "1.63.0"
+  }
+}

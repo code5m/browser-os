@@ -1,0 +1,95 @@
+// Real Vue UI with simulated navigation and native transport. No Bilibili calls.
+const assert=require('node:assert/strict');
+const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
+const base=process.env.CODING_UI_URL||'http://127.0.0.1:1433';
+(async()=>{
+ const browser=await chromium.launch({executablePath:'/usr/bin/google-chrome',headless:true,args:['--no-sandbox']});
+ try{
+  const page=await browser.newPage(),errors=[];
+  page.on('pageerror',e=>errors.push(e.message));
+  const html=`<link rel="stylesheet" href="/src/styles/tokens.css"><div id="app"></div><script type="module">
+    import {createApp} from '/node_modules/.vite/deps/vue.js';
+    import {createPinia} from '/node_modules/.vite/deps/pinia.js';
+    import Home from '/src/capabilities/home/ui/HomePanel.vue';
+    import Bfc from '/src/capabilities/bfc/ui/BfcProjectPanel.vue';
+    import {useBrowserStore} from '/src/capabilities/browser/public.ts';
+    import {useLayoutStore} from '/src/stores/useLayoutStore.ts';
+    import {bridge} from '/src/bridge.ts';
+    const pinia=createPinia();
+    window.calls=[];
+    bridge.getStartDirs=async()=>[];
+    bridge.wechatAccountStatus=async()=>{throw Error('WECHAT_ACCOUNT_NOT_CONFIGURED')};
+    bridge.wechatDraftPermissionCheck=async()=>({draft_read_access:true,draft_count:7});
+    const browserStore=useBrowserStore(pinia),layout=useLayoutStore(pinia);
+    browserStore.tabNew=async(url)=>{window.calls.push(url)};
+    layout.activateBrowser=()=>window.calls.push('browser-activated');
+    window.mount=(component)=>{window.instance?.unmount();window.instance=createApp(component).use(pinia);window.instance.mount('#app')};
+    window.mount(Home);
+    window.mountBfc=()=>window.mount(Bfc);
+  </script>`;
+  await page.route('**/__home_bfc_fixture',route=>route.fulfill({contentType:'text/html',body:html}));
+  await page.goto(base+'/__home_bfc_fixture');
+  const draft=page.getByRole('button',{name:'📣 公众号工作台'});
+  await draft.waitFor();
+  assert.equal(await draft.getAttribute('aria-expanded'),'false');
+  await draft.click();
+  await page.getByRole('heading',{name:'公众号个人工作台'}).waitFor({timeout:15000});
+  assert.equal(await draft.getAttribute('aria-expanded'),'true');
+  const nav=page.getByRole('navigation',{name:'公众号工作台导航'});
+  assert.equal(await nav.getByRole('button').count(),9,'all nine reference screenshot sections are navigable');
+  const shell=page.locator('.wxwb');
+  assert.match(await shell.evaluate(el=>getComputedStyle(el).backgroundImage),/gradient/);
+  await page.getByRole('button',{name:'验证草稿读取权限'}).first().click();
+  await page.getByText('草稿读取权限已验证；写入仍须通过真实草稿核验。').waitFor();
+  await nav.getByRole('button',{name:'AI 选题库'}).click();
+  await page.getByRole('textbox',{name:'主题 / 标题'}).fill('AI 工具如何提升生产效率？');
+  await page.getByRole('textbox',{name:'选题依据 / 论证角度'}).fill('已核实的产品功能、同行比较与反例');
+  await page.getByRole('button',{name:/加入待写选题/}).click();
+  await page.getByRole('button',{name:/带入草稿/}).click();
+  assert.equal(await page.getByRole('textbox',{name:'标题'}).inputValue(),'AI 工具如何提升生产效率？');
+  await nav.getByRole('button',{name:'发布排期'}).click();
+  await page.getByRole('textbox',{name:'文章标题'}).fill('周五内容复核');
+  await page.locator('input[type="datetime-local"]').fill('2026-11-07T20:00');
+  await page.getByRole('button',{name:/添加本机计划/}).click();
+  await page.getByText('周五内容复核').waitFor();
+  await page.getByText(/未发送/).first().waitFor();
+  await nav.getByRole('button',{name:'数据复盘'}).click();
+  await page.getByText(/官方阅读量、完读率、粉丝和分享接口尚未接入/).waitFor();
+  await nav.getByRole('button',{name:'爆文拆解'}).click();
+  await page.getByPlaceholder('粘贴标题，分析数字、问题与冲突等结构…').fill('AI 如何让效率提升 3 倍？');
+  await page.getByText('数字标题').waitFor();
+  await nav.getByRole('button',{name:'工作台总览'}).click();
+  await page.getByText('来自微信草稿读取 API').waitFor();
+  await page.evaluate(()=>document.documentElement.dataset.theme='dark');
+  const homeBackground=await page.locator('.wxwb').evaluate(el=>getComputedStyle(el).backgroundImage);
+  assert.match(homeBackground,/gradient/);
+  await page.setViewportSize({width:700,height:900});
+  const mobile=await page.locator('.wxwb').evaluate(el=>({w:el.getBoundingClientRect().width,available:el.parentElement.getBoundingClientRect().width}));
+  assert.ok(mobile.w<=mobile.available+2,'WeChat dashboard must fit a narrow BrowserOS window');
+  await draft.click();
+  assert.equal(await page.getByRole('heading',{name:'公众号个人工作台'}).count(),0);
+  await page.evaluate(()=>window.mountBfc());
+  await page.getByRole('button',{name:/新发现的收藏/}).waitFor();
+  const latest=page.getByRole('button',{name:/查看 \/ 检查本地新增收藏/});
+  await latest.click();
+  await page.getByText('BFC_LOCAL_SNAPSHOT_VIEW_OPENED').waitFor();
+  await page.getByRole('button',{name:/打开安全补采/}).first().click();
+  await page.getByText('BFC_MANUAL_IMPORT_OPENED').waitFor();
+  await page.getByRole('button',{name:'我已登录'}).click();
+  await page.getByText('BFC_LOGIN_CONFIRMED_BY_USER').waitFor();
+  await page.getByRole('button',{name:'我已完成导入'}).click();
+  await page.getByText('BFC_IMPORT_REPORTED_BY_USER').waitFor();
+  await page.getByRole('button',{name:/我遇到 HTTP 412/}).click();
+  await page.getByText('BFC_HTTP_412_REPORTED').waitFor();
+  await page.getByRole('alert').filter({hasText:'你报告 B站访问受限'}).waitFor();
+  await page.getByText('未验证成功').waitFor();
+  await page.getByText('访问受限怎么解决？').click();
+  await page.getByText(/不要使用代理轮换、Cookie 注入/).waitFor();
+  assert.deepEqual(await page.evaluate(()=>window.calls),[
+    'http://127.0.0.1:4198/#updates','browser-activated',
+    'http://127.0.0.1:4198/manage#sync','browser-activated'
+  ]);
+  assert.deepEqual(errors,[]);
+  console.log('HOME_BFC_MANAGED_UI=PASS nine-section WeChat dashboard, topic-to-draft, plans, title review, responsive contrast; BFC HTTP 412 manual recovery and honest local-only results; mock transport');
+ }finally{await browser.close()}
+})().catch(error=>{console.error(error);process.exitCode=1});

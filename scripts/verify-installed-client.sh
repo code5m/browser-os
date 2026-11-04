@@ -121,17 +121,20 @@ else
   hint "Add a regression so large image directories cannot reintroduce eager data URL loading."
 fi
 
-# Always reconcile the lockfile before building a release. Git updates package.json
-# and package-lock.json but do not update node_modules automatically.
+# A branch switch can leave node_modules at a version newer than package-lock.
+# Validate every direct dependency, not merely the presence of terser.
 if [[ "$BUILD" -eq 1 ]]; then
-  if ! (cd "$ROOT" && node -e 'require.resolve("terser")' >/dev/null 2>&1); then
+  if ! (cd "$ROOT" && node scripts/check-locked-npm-deps.mjs); then
     printf '\n== Restoring locked frontend dependencies ==\n'
-    if (cd "$ROOT" && npm ci --no-audit --no-fund); then
-      ok "Locked frontend dependencies restored."
-    else
+    if ! (cd "$ROOT" && npm ci --no-audit --no-fund); then
       fail "npm ci failed; refusing to build or install a stale release."
       exit 1
     fi
+    if ! (cd "$ROOT" && node scripts/check-locked-npm-deps.mjs); then
+      fail "Frontend dependencies still differ from package-lock.json after npm ci."
+      exit 1
+    fi
+    ok "Locked frontend dependencies restored."
   fi
 fi
 

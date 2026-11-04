@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue';
 import { bridge } from '../../bridge';
+import { open as openNativeDialog } from '@tauri-apps/plugin-dialog';
 
 // Credential is an ephemeral form field; never persist it in browser storage.
 const appId = ref('');
 const appSecret = ref('');
 const configured = ref('未配置');
+const props = defineProps<{ suggestedTitle?: string }>();
 const title = ref('');
+watch(() => props.suggestedTitle, value => { if (value?.trim()) title.value = value.slice(0, 32); });
 const author = ref('');
 const digest = ref('');
 const contentHtml = ref('');
@@ -67,6 +70,18 @@ function checkPermission() {
   void run(async () => {
     const result = await bridge.wechatDraftPermissionCheck();
     notice.value = `官方草稿读取权限检查通过；账号草稿数：${result.draft_count ?? '未知'}。写入权限仍须通过真实草稿核对。`;
+  });
+}
+function chooseCover() {
+  void run(async () => {
+    const path = await openNativeDialog({ multiple: false, directory: false, filters: [{ name: '封面 JPG', extensions: ['jpg', 'jpeg'] }] });
+    if (typeof path === 'string') coverPath.value = path;
+  });
+}
+function chooseBodyImage() {
+  void run(async () => {
+    const path = await openNativeDialog({ multiple: false, directory: false, filters: [{ name: '正文图片', extensions: ['jpg', 'jpeg', 'png'] }] });
+    if (typeof path === 'string') bodyImagePath.value = path;
   });
 }
 function uploadCover() {
@@ -178,11 +193,13 @@ onMounted(() => {
     </form>
     <div class="form-row">
       <label>封面 JPG（不超过 64 KB）<input v-model="coverPath" placeholder="/home/.../cover.jpg" aria-label="封面绝对路径" /></label>
+      <button type="button" :disabled="busy" @click="chooseCover">选择封面文件</button>
       <button :disabled="busy || !coverPath.trim()" @click="uploadCover">上传永久封面</button>
       <span>封面 media_id：{{ coverMediaId || '未上传' }}</span>
     </div>
     <div class="form-row">
       <label>正文 JPG/PNG（不超过 1 MB）<input v-model="bodyImagePath" placeholder="/home/.../body.png" aria-label="正文图片绝对路径" /></label>
+      <button type="button" :disabled="busy" @click="chooseBodyImage">选择正文图片</button>
       <button :disabled="busy || !bodyImagePath.trim()" @click="uploadBodyImage">上传正文图片</button>
       <button :disabled="!bodyImageUrl" @click="insertBodyImage">插入正文</button>
     </div>
@@ -210,12 +227,14 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.wechat-draft{display:flex;flex-direction:column;gap:12px;font-size:13px;line-height:1.5;color:var(--text-primary,#26384a)}
-header{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap}small{color:var(--text-secondary,#65768c)}
+.wechat-draft{display:flex;flex-direction:column;gap:12px;font-size:13px;line-height:1.5;color:var(--chrome-text,#3c4043)}
+header{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap}small{color:var(--chrome-muted,#70757a)}
 .form-row{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap}
 .form-row label{flex:1;min-width:180px}
 label{display:flex;flex-direction:column;gap:5px}
-input,textarea,button{font:inherit;padding:8px;border:1px solid #8295ac;border-radius:6px;background:var(--bg-secondary,#f5f7fa);color:inherit}
-input,textarea{width:100%;box-sizing:border-box}textarea{resize:vertical;min-height:150px}button{cursor:pointer}button:disabled{opacity:.5;cursor:default}
+input,textarea,button{font:inherit;padding:8px;border:1px solid var(--chrome-border,#dadce0);border-radius:6px;background:var(--chrome-address,#f1f3f4);color:inherit}
+input,textarea{width:100%;box-sizing:border-box}textarea{resize:vertical;min-height:150px}button{cursor:pointer}button:hover:not(:disabled){border-color:var(--home-accent,#2b6cb0)}
+button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--home-accent,#2b6cb0);outline-offset:2px}
+button:disabled{opacity:.65;cursor:default}
 .draft-form{display:flex;flex-direction:column;gap:12px}p{margin:0;color:var(--text-secondary,#65768c)}
 </style>

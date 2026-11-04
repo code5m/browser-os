@@ -24,6 +24,8 @@ const base = process.env.CODING_UI_URL || 'http://127.0.0.1:1433';
        createApp(Panel).mount('#app');</script>`;
     await page.route('**/__wechat_draft_fixture', route => route.fulfill({contentType:'text/html',body:html}));
     await page.goto(base + '/__wechat_draft_fixture');
+    assert.equal(await page.getByRole('button',{name:'选择封面文件'}).count(),1,'native cover file chooser is exposed');
+    assert.equal(await page.getByRole('button',{name:'选择正文图片'}).count(),1,'native body image picker is exposed');
     await page.getByPlaceholder('wx...').fill('wx1234567890abcdef');
     await page.getByPlaceholder('仅写入系统密钥库').fill('a-test-app-secret');
     await page.getByRole('button',{name:'保存账户'}).click();

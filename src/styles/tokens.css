@@ -2,8 +2,7 @@
  * DESIGN TOKENS v1 — Phase UI-5
  *
  * 原则（§23）：**语义化命名**，禁止 --gray-1 / --gray-2 这类让人猜的编号 token。
- * 原则（§25）：token 的取值必须**逐字等于**它替换掉的硬编码字面量，
- *             因此 computed value 不变 —— token 化不是 redesign。
+ * 原则（§25）：保持原有视觉风格；低对比度文字及暗色主题为无障碍可读性作审慎校正。
  *
  * 当前范围刻意很小：只覆盖 shared/ui 已消费的样式（.empty / .ctx-menu / .ctx-item）。
  * 未覆盖的 45+ 硬编码色值保持原样，留待后续批次 + 人工视觉验收后再扩。
@@ -25,7 +24,7 @@
 
   /* 文本 */
   --ui-text: #333;
-  --ui-text-muted: #bbb;
+  --ui-text-muted: #64748b;
 
   /* 语义色 */
   --ui-danger: #c33;
@@ -33,6 +32,10 @@
   /* 交互态 */
   --ui-hover-bg: #eef3ff;
   --ui-danger-bg: #ffeaea;
+  --ui-success-text: #167044;
+  --home-accent: #2b6cb0;
+  --bfc-accent: #315ea8;
+  --bfc-background: linear-gradient(135deg, #f4f7ff, #fff);
 }
 :root[data-theme="dark"] {
   --chrome-frame:#202124;
@@ -44,8 +47,12 @@
   --chrome-hover:#3c4043;
   --ui-surface: #1d222a;
   --ui-text: #d7e0ec;
-  --ui-text-muted: #9aa8b8;
+  --ui-text-muted: #b4bfce;
   --ui-danger: #ff9b9b;
   --ui-hover-bg: #30445f;
   --ui-danger-bg: #482b32;
+  --ui-success-text: #6ee7a2;
+  --home-accent: #9fceff;
+  --bfc-accent: #9fceff;
+  --bfc-background: linear-gradient(135deg, #202938, #1d222a);
 }

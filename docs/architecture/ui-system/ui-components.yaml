@@ -8,7 +8,7 @@
 
 version: 1
 generated_from_head: 3f57a92e5fb7d9a6bc978f1572964d3c14fb8caf
-total: 96
+total: 98
 
 components:
   - { id: agent.operation-review, name: CodingOperationReview, layer: CAPABILITY_UI, owner: agent, file: src/capabilities/agent/ui/CodingOperationReview.vue, public: false, business_semantics: "Explicit per-operation approval and result recording", capability_specific: true, dependencies: [bridge, CodingCommandPanel], consumers: [CodingWorkbench], status: OBSERVED }
@@ -17,6 +17,7 @@ components:
   - { id: agent.coding-workbench, name: CodingWorkbench, layer: CAPABILITY_UI, owner: agent, file: src/capabilities/agent/ui/CodingWorkbench.vue, public: false, business_semantics: "Project editing and reviewed agent changes", capability_specific: true, dependencies: [bridge, aiService, CodingCodeEditor], consumers: [AgentManagerPanel], status: OBSERVED }
   - { id: agent.coding-editor, name: CodingCodeEditor, layer: CAPABILITY_UI, owner: agent, file: src/capabilities/agent/ui/CodingCodeEditor.vue, public: false, business_semantics: "Monaco editing and diff with no language server claim", capability_specific: true, dependencies: [monaco-editor], consumers: [CodingWorkbench], status: OBSERVED }
   - { id: workspace.wechat-draft, name: WechatDraftPanel, layer: WORKBENCH, owner: workspace, file: src/components/system/WechatDraftPanel.vue, public: false, business_semantics: "Manual WeChat Official Account image upload and draft-only workflow, no publish or send", capability_specific: false, dependencies: [bridge, system-keyring], consumers: [SettingsPanel], status: OBSERVED }
+  - { id: workspace.wechat-workbench, name: WechatWorkbenchPanel, layer: WORKBENCH, owner: workspace, file: src/components/system/WechatWorkbenchPanel.vue, public: false, business_semantics: "Nine-view neon workbench for manual topic planning and genuine WeChat draft-only flow without fake analytics or publishing", capability_specific: false, dependencies: [bridge, WechatDraftPanel], consumers: [HomePanel], status: OBSERVED }
   - { id: framework.ai-config, name: AiConfiguration, layer: WORKBENCH, owner: framework, file: src/components/system/AiConfiguration.vue, public: true, business_semantics: "Unified AI provider configuration with OS credential references", capability_specific: false, dependencies: [aiService], consumers: [SettingsPanel], status: OBSERVED }
   - { id: framework.ai-assistant, name: AiAssistant, layer: WORKBENCH, owner: framework, file: src/components/system/AiAssistant.vue, public: true, business_semantics: "Explicit user prompt and context submission through configured AI", capability_specific: false, dependencies: [aiService], consumers: [DatabaseWorkspace, GitStudio, AINavPanel], status: OBSERVED }
   - { id: bookmark.bar, name: BookmarkBar, layer: CAPABILITY_UI, owner: bookmark, file: src/capabilities/bookmark/ui/BookmarkBar.vue, public: false, business_semantics: "Bookmark bar backed by native menu adapter", capability_specific: true, dependencies: [useBookmarkStore, nativeMenu], consumers: [bookmark contributions], status: OBSERVED }

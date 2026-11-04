@@ -83,6 +83,14 @@ const base=process.env.CODING_UI_URL||'http://127.0.0.1:1433';
   await page.waitForFunction(()=>window.fixture.workers.size>0);
   await page.evaluate(()=>window.fixture.app.unmount());await page.waitForTimeout(1000);
   assert.equal(await page.evaluate(()=>window.fixture.workers.size),0,'reopened editor workers must also terminate');
+  const compilerOptions=await page.evaluate(async()=>{
+    const resources=performance.getEntriesByType('resource').map(item=>item.name);
+    const module=await import(resources.find(name=>name.includes('/codingEditorServices.mjs')));
+    const loaded=await module.ensureTypeScriptServices();
+    return {ts:loaded.typescriptDefaults.getCompilerOptions(),js:loaded.javascriptDefaults.getCompilerOptions()};
+  });
+  assert.equal(compilerOptions.ts.noEmit,true,'TS compiler options survive unmount and reopen');
+  assert.equal(compilerOptions.js.checkJs,true,'JS diagnostics reinitialize for each owner');
   assert.deepEqual(errors,[]);assert.deepEqual(externalRequests,[],'language services must not download project dependencies');console.log('TYPESCRIPT_WORKER=PASS TS/JS diagnostics, completion, hover, cross-file navigation callback, model cleanup; actual browser compiler, not installed-client acceptance');
  }finally{await browser.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});

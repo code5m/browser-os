@@ -1,6 +1,9 @@
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // The listener is only used to choose a free port; Vite must still bind it strictly.
 const listener = createServer();
@@ -13,7 +16,21 @@ let serverExit = null;
 let log = '';
 server.on('exit', code => { serverExit = code ?? -1; });
 for (const stream of [server.stdout, server.stderr]) stream.on('data', chunk => { log = (log + chunk.toString()).slice(-8000); });
-const tests = ['check-coding-workbench-ui.cjs', 'check-coding-command-ui.cjs', 'check-coding-operation-ui.cjs', 'check-coding-workspace-context.cjs', 'check-coding-lsp-ui.cjs', 'check-coding-typescript-ui.cjs', 'check-coding-typescript-workbench-ui.cjs', 'check-wechat-draft-ui.cjs'];
+// Test-only sidecar: the runtime dependency freeze deliberately excludes
+// Playwright. Its own lockfile makes npm ci + UI regressions reproducible.
+const harness = fileURLToPath(new URL('../tools/managed-ui/', import.meta.url));
+if (!process.env.PLAYWRIGHT_MODULE) {
+  const localModule = join(harness, 'node_modules/playwright');
+  if (!existsSync(join(localModule, 'package.json'))) {
+    console.log('[coding-ui] installing isolated, pinned Playwright test harness');
+    const install = spawn('npm', ['ci', '--prefix', harness, '--ignore-scripts', '--no-audit', '--no-fund'], { stdio: 'inherit' });
+    const status = await new Promise((ok, fail) => { install.once('error', fail); install.once('exit', code => ok(code)); });
+    if (status !== 0) throw new Error('Pinned Playwright test harness installation failed');
+  }
+  if (!existsSync(join(localModule, 'package.json'))) throw new Error('Pinned Playwright test harness unavailable');
+  process.env.PLAYWRIGHT_MODULE = localModule;
+}
+const tests = ['check-coding-workbench-ui.cjs', 'check-coding-command-ui.cjs', 'check-coding-operation-ui.cjs', 'check-coding-workspace-context.cjs', 'check-coding-lsp-ui.cjs', 'check-coding-typescript-ui.cjs', 'check-coding-typescript-workbench-ui.cjs', 'check-wechat-draft-ui.cjs', 'check-home-bfc-managed-ui.cjs'];
 try {
   let ready = false;
   for (let attempt = 0; attempt < 100 && serverExit === null; attempt++) {
@@ -21,7 +38,10 @@ try {
     await delay(100);
   }
   if (!ready) throw new Error(`Test server unavailable (exit=${serverExit}): ${log}`);
-  for (const test of tests) {
+  // Optional local iteration only; the default command always runs the full gate.
+  const selected = process.env.CODING_UI_ONLY ? tests.filter(t => t === process.env.CODING_UI_ONLY) : tests;
+  if (!selected.length) throw new Error('Unknown CODING_UI_ONLY test');
+  for (const test of selected) {
     console.log(`[coding-ui] ${test}`);
     const child = spawn(process.execPath, [`tests/${test}`], { stdio: 'inherit', env: { ...process.env, CODING_UI_URL: base } });
     const code = await new Promise((resolve, reject) => { child.once('error', reject); child.once('exit', (status, signal) => resolve(status ?? (signal ? 1 : 1))); });

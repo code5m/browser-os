@@ -2,7 +2,8 @@
 /**
  * verify-design-tokens.mjs — Design Token Foundation 验证（UI-5 / §22~§25）
  *
- * 核心不变量：**before computed value === after computed value**。
+ * 核心不变量：未被审批的 token 不得发生 computed value 漂移。
+ * 例外：UI 对比度审查批准 --ui-text-muted 的浅色与深色修正。
  * 做法：token 的声明值必须与它替换掉的硬编码字面量**逐字相同**，
  *       因此 var() 解析结果与迁移前完全一致 —— token 化不等于 redesign。
  *
@@ -26,7 +27,6 @@ const bad = (id, m, d) => { console.log(`  [FAIL   ] ${id}  ${m}`); if (d) conso
 const ORIGINALS = {
   "--ui-surface": "#fff",
   "--ui-text": "#333",
-  "--ui-text-muted": "#bbb",
   "--ui-danger": "#c33",
   "--ui-hover-bg": "#eef3ff",
   "--ui-danger-bg": "#ffeaea",
@@ -58,6 +58,28 @@ for (const [name, original] of Object.entries(ORIGINALS)) {
   const val = m[1].trim();
   if (val === original) ok("T1", `${name} = ${val}（与原子面量一致，computed 不变）`);
   else bad("T1", `${name} 取值漂移`, `expected=${original} actual=${val}`);
+}
+
+// T1b: explicit accessibility exception. Text must reach WCAG AA normal-text contrast.
+function luminance(hex) {
+  const rgb = [1,3,5].map(i => parseInt(hex.slice(i,i+2),16)/255)
+    .map(n => n <= .04045 ? n/12.92 : ((n+.055)/1.055)**2.4);
+  return rgb[0]*.2126+rgb[1]*.7152+rgb[2]*.0722;
+}
+function contrast(a,b) {
+  const x=luminance(a), y=luminance(b);
+  return (Math.max(x,y)+.05)/(Math.min(x,y)+.05);
+}
+const themes = [
+  {label:'light', token:'#64748b', background:'#ffffff', source:tokensSrc.slice(0,tokensSrc.indexOf(':root[data-theme="dark"]'))},
+  {label:'dark', token:'#b4bfce', background:'#1d222a', source:tokensSrc.slice(tokensSrc.indexOf(':root[data-theme="dark"]'))},
+];
+for(const theme of themes){
+  const match=theme.source.match(/--ui-text-muted\s*:\s*(#[0-9a-fA-F]{6})\s*;/);
+  const actual=match?.[1];
+  if(actual!==theme.token) bad('T1b', `${theme.label} muted text token changed`, `expected=${theme.token} actual=${actual}`);
+  else if(contrast(actual,theme.background)<4.5) bad('T1b', `${theme.label} text contrast below AA`, String(contrast(actual,theme.background)));
+  else ok('T1b', `${theme.label} muted text contrast ${contrast(actual,theme.background).toFixed(2)}:1`);
 }
 
 // T2: token 必须是 :root 语义变量，不得是 --gray-N 编号

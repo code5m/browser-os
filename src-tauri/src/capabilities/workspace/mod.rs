@@ -26,5 +26,6 @@
 pub mod cas;
 pub mod draft_journal;
 pub mod fs_cmds;
+pub mod safe_paths;
 pub mod weixin_drafts;
 pub mod workspace;

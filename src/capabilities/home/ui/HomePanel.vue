@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted } from "vue";
+import { computed, onMounted, ref, defineAsyncComponent } from "vue";
 import { useHomeStore } from "../state/useHomeStore";
 import HomeLaunchers from "./HomeLaunchers.vue";
 import HomeRecents from "./HomeRecents.vue";
@@ -8,6 +8,9 @@ import HomeShortcutEditor from "./HomeShortcutEditor.vue";
 import HomeChangelog from "./HomeChangelog.vue";
 
 const home = useHomeStore();
+// Lazy: only load WeChat when the user opens this draft-only tool.
+const showWechatDrafts = ref(false);
+const WechatWorkbenchPanel = defineAsyncComponent(() => import("../../../components/system/WechatWorkbenchPanel.vue"));
 
 // 常用目录播种（仅首次）：把后端承诺的起始目录补进主页。
 onMounted(() => home.seedDirShortcuts());
@@ -25,6 +28,9 @@ const state = computed(() => home.panelState);
         <span>主页</span>
       </h1>
       <div class="home-actions">
+        <button type="button" title="公众号个人工作台（不自动发布或群发）" aria-controls="home-wechat-drafts" :aria-expanded="showWechatDrafts" @click="showWechatDrafts = !showWechatDrafts">
+          📣 公众号工作台
+        </button>
         <button type="button" title="把当前网页收藏到主页" @click="home.favoriteCurrentPage">
           ☆ 收藏网页
         </button>
@@ -45,6 +51,9 @@ const state = computed(() => home.panelState);
     </p>
 
     <HomeLaunchers />
+    <section v-if="showWechatDrafts" id="home-wechat-drafts" class="home-wechat-drafts" aria-label="公众号草稿管理">
+      <WechatWorkbenchPanel />
+    </section>
     <HomeShortcuts />
     <HomeRecents />
     <HomeChangelog />
@@ -72,7 +81,7 @@ const state = computed(() => home.panelState);
   margin: 0;
   font-size: 18px;
   font-weight: 600;
-  color: #1d2129;
+  color: var(--chrome-text, #3c4043);
 }
 .hh-icon {
   font-size: 20px;
@@ -84,9 +93,9 @@ const state = computed(() => home.panelState);
   flex-wrap: wrap;
 }
 .home-actions button {
-  border: 1px solid #d5dbe7;
-  background: #fff;
-  color: #4e5969;
+  border: 1px solid var(--chrome-border, #dadce0);
+  background: var(--chrome-toolbar, #fff);
+  color: var(--chrome-text, #3c4043);
   border-radius: 6px;
   padding: 5px 12px;
   font-size: 12px;
@@ -94,11 +103,11 @@ const state = computed(() => home.panelState);
   white-space: nowrap;
 }
 .home-actions button:hover {
-  border-color: #2b6cb0;
-  color: #2b6cb0;
+  border-color: var(--home-accent, #2b6cb0);
+  color: var(--home-accent, #2b6cb0);
 }
 .home-actions button:focus-visible {
-  outline: 2px solid #2b6cb0;
+  outline: 2px solid var(--home-accent, #2b6cb0);
   outline-offset: 2px;
 }
 
@@ -108,9 +117,9 @@ const state = computed(() => home.panelState);
   padding: 8px 12px;
   border-radius: 8px;
   font-size: 12px;
-  color: #4e5969;
-  background: #f4f6fb;
-  border: 1px solid #e8ebf0;
+  color: var(--chrome-text, #3c4043);
+  background: var(--chrome-address, #f1f3f4);
+  border: 1px solid var(--chrome-border, #dadce0);
 }
 .home-state-error {
   color: #a8071a;
@@ -118,6 +127,14 @@ const state = computed(() => home.panelState);
   border-color: #ffccc7;
 }
 
+.home-wechat-drafts {
+  margin: 0 0 20px;
+  padding: 0;
+  border-radius: 18px;
+  background: transparent;
+  color: var(--chrome-text, #3c4043);
+  border: none;
+}
 /* 窄窗口：标题与操作各占一行，操作按钮横向铺开便于点击 */
 @media (max-width: 720px) {
   .home-panel {
