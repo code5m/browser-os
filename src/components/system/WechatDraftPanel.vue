@@ -210,12 +210,14 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.wechat-draft{display:flex;flex-direction:column;gap:12px;font-size:13px;line-height:1.5;color:var(--text-primary,#26384a)}
-header{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap}small{color:var(--text-secondary,#65768c)}
+.wechat-draft{display:flex;flex-direction:column;gap:12px;font-size:13px;line-height:1.5;color:var(--chrome-text,#3c4043)}
+header{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap}small{color:var(--chrome-muted,#70757a)}
 .form-row{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap}
 .form-row label{flex:1;min-width:180px}
 label{display:flex;flex-direction:column;gap:5px}
-input,textarea,button{font:inherit;padding:8px;border:1px solid #8295ac;border-radius:6px;background:var(--bg-secondary,#f5f7fa);color:inherit}
-input,textarea{width:100%;box-sizing:border-box}textarea{resize:vertical;min-height:150px}button{cursor:pointer}button:disabled{opacity:.5;cursor:default}
+input,textarea,button{font:inherit;padding:8px;border:1px solid var(--chrome-border,#dadce0);border-radius:6px;background:var(--chrome-address,#f1f3f4);color:inherit}
+input,textarea{width:100%;box-sizing:border-box}textarea{resize:vertical;min-height:150px}button{cursor:pointer}button:hover:not(:disabled){border-color:var(--home-accent,#2b6cb0)}
+button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--home-accent,#2b6cb0);outline-offset:2px}
+button:disabled{opacity:.65;cursor:default}
 .draft-form{display:flex;flex-direction:column;gap:12px}p{margin:0;color:var(--text-secondary,#65768c)}
 </style>
