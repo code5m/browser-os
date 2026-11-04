@@ -3,8 +3,8 @@ import type { CapabilityDefinition } from "../../capability/types"
 // Home 能力 Manifest（STAGE I-B — 物理隔离）
 //
 // 语义裁决：Home 拥有「主页快捷方式（url/app/dir）+ 最近访问 + 启动器元数据」，
-// 单一状态 owner = useHomeStore（id=home）。跨能力消费者仅 workspace（经
-// capabilities/home/public.ts 的窄契约 favoriteDirectory）——严禁直连内部 store。
+// 单一状态 owner = useHomeStore（id=home）。跨能力消费者 workspace 与 wechat 仅经
+// 各自 public 契约（favoriteDirectory / WECHAT_WORKBENCH_VIEW）——严禁直连内部 store。
 // 物理迁移（src/stores/useHomeStore.ts → src/capabilities/home/state/；
 // src/components/home/* → src/capabilities/home/ui/）不改变语义 owner，业务 UI 零改动。
 export const homeManifest: CapabilityDefinition = {
@@ -13,7 +13,7 @@ export const homeManifest: CapabilityDefinition = {
   category: "CAPABILITY",
   provides: ["home.shortcut", "home.recent", "home.launch", "home.favorite"],
   dependsOn: ["browser", "workspace", "apps", "bridge"],
-  optionalDependencies: [],
+  optionalDependencies: ["wechat"],
   lifecycle: {
     supported: ["ACTIVE", "SUSPENDED"],
     default: "ACTIVE",
@@ -43,7 +43,7 @@ export const homeManifest: CapabilityDefinition = {
     maturity: "C3",
     maturityEvidence: ["scripts/check-home-ui-logic.mjs", "scripts/check-home-client-policy.py", "scripts/check-capability-platform.mjs", "scripts/check-hot-plug-acceptance.mjs"],
     dependencies: ["browser", "workspace", "apps", "bridge"],
-    optionalDependencies: [],
+    optionalDependencies: ["wechat"],
     conflicts: [],
     provides: ["home.shortcut", "home.recent", "home.launch", "home.favorite"],
     requires: [],

@@ -277,7 +277,7 @@ async function openDirCenter() {
         <button class="tbtn" aria-label="后退" :disabled="!layout.isBrowserView()" @click="browser.goBack" title="后退"><ArrowLeft :size="18"/></button>
         <button class="tbtn" aria-label="前进" :disabled="!layout.isBrowserView()" @click="browser.goForward" title="前进"><ArrowRight :size="18"/></button>
         <button class="tbtn" aria-label="刷新" :disabled="!layout.isBrowserView()" @click="browser.reloadActive" title="刷新"><RotateCw :size="17"/></button>
-        <button class="tbtn" data-nav-item aria-label="主页" title="主页" @click="onItem('home')"><House :size="18"/></button>
+        <button class="tbtn" data-nav-item aria-label="主页" title="主页" :aria-current="layout.mainView === 'home' ? 'page' : undefined" @click="onItem('home')"><House :size="18"/></button>
         <div ref="omniAnchor" class="omni-wrap">
           <button type="button" class="omni-mode" aria-label="切换地址栏模式" :title="'地址栏模式：' + (layout.addrMode === 'auto' ? '自动' : layout.addrMode === 'url' ? '网页' : '文件')"
             @mousedown.prevent @click="layout.toggleAddrMode()"><SlidersHorizontal :size="15"/></button>

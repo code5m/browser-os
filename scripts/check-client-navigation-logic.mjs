@@ -76,6 +76,8 @@ const {
 
 const storeSrc = readFileSync(`${ROOT}src/stores/useLayoutStore.ts`, "utf8");
 const barSrc = readFileSync(`${ROOT}src/components/layout/ActivityBar.vue`, "utf8");
+const homeSrc = readFileSync(ROOT + "src/capabilities/home/ui/HomePanel.vue", "utf8");
+const wechatPublicSrc = readFileSync(ROOT + "src/capabilities/wechat/public.ts", "utf8");
 
 let failures = 0;
 let total = 0;
@@ -92,7 +94,7 @@ function check(name, cond) {
 const TOP_VIEWS = TOP_NAV_ITEMS.map((i) => i.view);
 const MENU_VIEWS = NAV_MENU_SECTIONS.flatMap((s) => s.items.map((i) => i.view));
 // 宫格有独立的常驻按钮（不受窄窗口裁剪），其可达性由源码断言覆盖
-const ALWAYS_VIEWS = ["grid"];
+const ALWAYS_VIEWS = ["grid", "bfc"];
 
 console.log("--- 1. 导航真源 ---");
 check(
@@ -121,7 +123,11 @@ const declaredViews = mainViewBlock
   : [];
 check("源码可解析 MainView 联合类型", declaredViews.length >= 15);
 
-const reachable = new Set([...TOP_VIEWS, ...MENU_VIEWS, ...ALWAYS_VIEWS]);
+const wechatModuleEntry = homeSrc.includes("openWechatWorkbench")
+  && wechatPublicSrc.includes('WECHAT_WORKBENCH_VIEW = "wechat"')
+  && homeSrc.includes("openModule(WECHAT_WORKBENCH_VIEW)");
+check("公众号入口通过模块页签 API 打开 wechat 视图", wechatModuleEntry);
+const reachable = new Set([...TOP_VIEWS, ...MENU_VIEWS, ...ALWAYS_VIEWS, ...(wechatModuleEntry ? ["wechat"] : [])]);
 // editor 是文件编辑器覆盖层，不是导航目标；settings 走 ⚙️ 常驻按钮
 const orphans = declaredViews.filter(
   (v) => v !== "editor" && !reachable.has(v)
@@ -131,8 +137,8 @@ check(
   orphans.length === 0
 );
 check(
-  "MODULE_META 已导出且含主页/插件/设置",
-  !!MODULE_META.home && !!MODULE_META.plugin && !!MODULE_META.settings
+  "MODULE_META 已导出且含主页/插件/设置/公众号",
+  !!MODULE_META.home && !!MODULE_META.plugin && !!MODULE_META.settings && !!MODULE_META.bfc && !!MODULE_META.wechat
 );
 
 console.log("--- 2. 窄窗口裁剪不丢功能 ---");

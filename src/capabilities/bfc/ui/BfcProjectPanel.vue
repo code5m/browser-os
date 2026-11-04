@@ -18,7 +18,7 @@ const guideVisible = ref(true);
 const links = [
   { id:"website", icon:"🌐", label:"BFC Web 版", description:"面向用户的专题视频入口", url:"https://github.com/code5m/bcf-website" },
   { id:"workbench", icon:"🧭", label:"BFC 工作台", description:"本地整理、分类与差异监测", url:"http://127.0.0.1:4198/#topics" },
-  { id:"updates", icon:"🆕", label:"新发现的收藏", description:"查看已授权本地快照的新增 BV 候选", url:"http://127.0.0.1:4198/#updates" }
+  { id:"updates", icon:"🆕", label:"新发现的收藏", description:"在 BFC 工作台内查看已授权本地快照的新增 BV 候选", url:"http://127.0.0.1:4198/#updates" }
 ];
 const statusLabel = computed(()=>({idle:"尚未检查",opened:"需在打开的页面继续确认",blocked:"用户报告访问受限",error:"打开页面失败"}[latestState.value]));
 function record(state:ResultState, code:string, message:string, source:string) {

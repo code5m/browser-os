@@ -38,6 +38,13 @@ policies:
     resident: false
     release_note: 仅撤销 BFC 入口；已打开网页由 browser owner 管理，不由 BFC 关闭
 
+  - id: wechat
+    class: [LIGHT]
+    suspendable: true
+    destroyable: true
+    resident: false
+    release_note: 仅释放工作台运行态与贡献；微信官方素材/草稿数据由微信服务端持有
+
   - id: browser
     class: [HEAVY, WEBVIEW, NATIVE]
     suspendable: false

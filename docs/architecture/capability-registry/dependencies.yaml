@@ -47,6 +47,7 @@ edges:
   - { from: agent, to: browser, kind: optional }
   - { from: bfc, to: bridge, kind: required }
   - { from: bfc, to: browser, kind: required }
+  - { from: wechat, to: bridge, kind: required }
   - { from: browser,   to: bridge,   kind: required }
   - { from: bookmark,  to: browser, kind: optional }
   - { from: workspace, to: browser, kind: optional }
@@ -85,6 +86,7 @@ edges:
   - { from: home,      to: workspace, kind: required }
   - { from: home,      to: apps,      kind: required }
   - { from: home,      to: bridge,    kind: required }
+  - { from: home,      to: wechat,    kind: optional }
   # STAGE I-B：workspace 的「收藏目录」意图**不**声明 workspace→home 依赖边，
   # 而是经 shared 窄缝 src/composables/homeNav.ts（与 terminalNav/browserNav 同族）。
   # 理由：home→workspace 已是必须依赖，若再声明 workspace→home 将构成 CB-04 必须依赖环。

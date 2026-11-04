@@ -1,6 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, defineAsyncComponent } from "vue";
+import { computed, onMounted } from "vue";
 import { useHomeStore } from "../state/useHomeStore";
+import { useLayoutStore } from "../../../stores/useLayoutStore";
+import { contributionRegistry } from "../../../capability/contribution/registry";
+import { CONTRIBUTION_SLOTS } from "../../../capability/contribution/types";
+import { WECHAT_WORKBENCH_VIEW } from "../../wechat/public";
 import HomeLaunchers from "./HomeLaunchers.vue";
 import HomeRecents from "./HomeRecents.vue";
 import HomeShortcuts from "./HomeShortcuts.vue";
@@ -8,9 +12,17 @@ import HomeShortcutEditor from "./HomeShortcutEditor.vue";
 import HomeChangelog from "./HomeChangelog.vue";
 
 const home = useHomeStore();
-// Lazy: only load WeChat when the user opens this draft-only tool.
-const showWechatDrafts = ref(false);
-const WechatWorkbenchPanel = defineAsyncComponent(() => import("../../../components/system/WechatWorkbenchPanel.vue"));
+const layout = useLayoutStore();
+function openWechatWorkbench() {
+  const available = contributionRegistry
+    .getSurfaceContributions(CONTRIBUTION_SLOTS.WORKBENCH_MAIN)
+    .some((item) => item.view === WECHAT_WORKBENCH_VIEW);
+  if (!available) {
+    layout.showToast("公众号工作台当前未启用，请在能力管理中启用后重试");
+    return;
+  }
+  layout.openModule(WECHAT_WORKBENCH_VIEW);
+}
 
 // 常用目录播种（仅首次）：把后端承诺的起始目录补进主页。
 onMounted(() => home.seedDirShortcuts());
@@ -28,7 +40,7 @@ const state = computed(() => home.panelState);
         <span>主页</span>
       </h1>
       <div class="home-actions">
-        <button type="button" title="公众号个人工作台（不自动发布或群发）" aria-controls="home-wechat-drafts" :aria-expanded="showWechatDrafts" @click="showWechatDrafts = !showWechatDrafts">
+        <button type="button" title="在独立页签打开公众号个人工作台（不自动发布或群发）" @click="openWechatWorkbench">
           📣 公众号工作台
         </button>
         <button type="button" title="把当前网页收藏到主页" @click="home.favoriteCurrentPage">
@@ -51,9 +63,6 @@ const state = computed(() => home.panelState);
     </p>
 
     <HomeLaunchers />
-    <section v-if="showWechatDrafts" id="home-wechat-drafts" class="home-wechat-drafts" aria-label="公众号草稿管理">
-      <WechatWorkbenchPanel />
-    </section>
     <HomeShortcuts />
     <HomeRecents />
     <HomeChangelog />
@@ -127,14 +136,7 @@ const state = computed(() => home.panelState);
   border-color: #ffccc7;
 }
 
-.home-wechat-drafts {
-  margin: 0 0 20px;
-  padding: 0;
-  border-radius: 18px;
-  background: transparent;
-  color: var(--chrome-text, #3c4043);
-  border: none;
-}
+
 /* 窄窗口：标题与操作各占一行，操作按钮横向铺开便于点击 */
 @media (max-width: 720px) {
   .home-panel {
