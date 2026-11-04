@@ -85,7 +85,7 @@ async function openArea(view: MainView) {
   margin: 0 0 10px;
   font-size: 13px;
   font-weight: 600;
-  color: #4e5969;
+  color: var(--chrome-text, #3c4043);
   letter-spacing: 0.3px;
 }
 .launch-grid {
@@ -99,8 +99,8 @@ async function openArea(view: MainView) {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  background: #fff;
-  border: 1px solid #e8ebf0;
+  background: var(--chrome-toolbar, #fff);
+  border: 1px solid var(--chrome-border, #dadce0);
   border-radius: 10px;
   padding: 12px 6px;
   cursor: pointer;
@@ -111,14 +111,14 @@ async function openArea(view: MainView) {
 .launch-card:hover {
   transform: translateY(-2px);
   box-shadow: 0 4px 14px rgba(43, 108, 176, 0.12);
-  border-color: #c6d8ef;
+  border-color: var(--home-accent, #2b6cb0);
 }
 .launch-card.active {
-  border-color: #2b6cb0;
+  border-color: var(--home-accent, #2b6cb0);
   box-shadow: 0 0 0 2px rgba(43, 108, 176, 0.12);
 }
 .launch-card:focus-visible {
-  outline: 2px solid #2b6cb0;
+  outline: 2px solid var(--home-accent, #2b6cb0);
   outline-offset: 2px;
 }
 .launch-icon {
@@ -127,7 +127,7 @@ async function openArea(view: MainView) {
 }
 .launch-label {
   font-size: 12px;
-  color: #4e5969;
+  color: var(--chrome-text, #3c4043);
 }
 
 /* 窄窗口：缩小栅格与字号，保证 17 个入口不挤成一团 */
