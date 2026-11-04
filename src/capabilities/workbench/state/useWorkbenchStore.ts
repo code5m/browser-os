@@ -10,10 +10,19 @@ export const useWorkbenchStore = defineStore('workbench', () => {
   const browser = hostServices.require<BrowserContextPort>("browser-context");
   let snapshot = { sidebar: true, dock: false, ai: false };
   let previous: MainView = 'home';
-  try { collapsed.value = JSON.parse(localStorage.getItem('workbench-layout-v1') || '{}').collapsed === true; } catch {}
+  try {
+    const saved = JSON.parse(localStorage.getItem('workbench-layout-v1') || '{}');
+    collapsed.value = saved.collapsed === true;
+    if (saved.snapshot && ['sidebar', 'dock', 'ai'].every(key => typeof saved.snapshot[key] === 'boolean')) {
+      snapshot = { sidebar: saved.snapshot.sidebar, dock: saved.snapshot.dock, ai: saved.snapshot.ai };
+    }
+    if (collapsed.value) {
+      layout.sidebarOpen = false; layout.browserDockOpen = false; browser.setAiNavOpen(false);
+    }
+  } catch {}
   watch(collapsed, value => {
-    try { localStorage.setItem('workbench-layout-v1', JSON.stringify({ version: 1, collapsed: value })); } catch {}
-  });
+    try { localStorage.setItem('workbench-layout-v1', JSON.stringify({ version: 2, collapsed: value, snapshot })); } catch {}
+  }, { flush: 'sync' });
   function open(view: string) {
     commandOpen.value = false;
     if (view === 'browser') layout.setView('browser');

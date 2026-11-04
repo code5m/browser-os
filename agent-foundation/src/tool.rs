@@ -119,6 +119,24 @@ impl ToolRegistry {
         tasks.propose_tool(task_id, name, args, effect)
     }
 
+    pub(crate) fn propose_at_revision(
+        &self,
+        tasks: &TaskRegistry,
+        task_id: uuid::Uuid,
+        name: &str,
+        args: Value,
+        revision: u64,
+    ) -> Result<uuid::Uuid> {
+        let effect = {
+            let registry = self.tools.read().unwrap_or_else(|e| e.into_inner());
+            registry
+                .get(name)
+                .map(|tool| tool.effect())
+                .ok_or(FoundationError::PermissionDenied)?
+        };
+        tasks.propose_tool_at_revision(task_id, name, args, effect, revision)
+    }
+
     /// Calls are only possible with a permit produced by trusted UI approval.
     /// Tool implementations must independently validate root/scope/arguments and
     /// provide an idempotency key for irreversible external side effects.
@@ -223,15 +241,17 @@ impl ToolRegistry {
             }
         }
         if effectful && result.is_err() {
-            tasks.record_event(
+            tasks.record_event_at_revision(
                 permit.task_id,
+                permit.revision,
                 EventKind::EffectUnknown {
                     call_id: permit.operation.call_id,
                 },
             )?;
         }
-        tasks.record_event(
+        tasks.record_event_at_revision(
             permit.task_id,
+            permit.revision,
             EventKind::ToolFinished {
                 call_id: permit.operation.call_id,
                 succeeded: result.is_ok(),

@@ -271,6 +271,10 @@ export const useFileStore = defineStore("files", () => {
     }
     return false;
   }
+  function lockPathMutation(paths: { path: string; isDirectory: boolean }[]): (() => void) | null {
+    try { return documentOwnership.beginMutation(paths); }
+    catch { layout.showToast('文件或目录正在被编辑、保存或移动，请处理后重试'); return null; }
+  }
   function replacePathPrefix(oldPath: string, from: string, to: string): string {
     const clean = from.replace(/\/+$/, "") || "/";
     return oldPath === clean ? to : oldPath.startsWith(clean + "/") ? to + oldPath.slice(clean.length) : oldPath;
@@ -293,24 +297,31 @@ export const useFileStore = defineStore("files", () => {
       closeFileCtx();
       return;
     }
+    const releaseMutation = lockPathMutation([{path: entry.path, isDirectory: entry.is_dir}]);
+    if (!releaseMutation) return;
     try {
       await bridge.deletePath(entry.path);
       const overlayRemoved = containsDocument(target, editorFilePath.value, entry.is_dir);
-      if (overlayRemoved) {
+      const preserveOverlay = overlayRemoved && editorDirty.value;
+      const preserveInline = containsOpenFile && inlineFile.value === openPath && inlineText.value !== inlineSavedText.value;
+      const preserveOtherDraft = documentOwnership.dirtyUnder(target, entry.is_dir);
+      if (overlayRemoved && !preserveOverlay) {
         editorFilePath.value = "";
         editorSavedContent.value = "";
         fileContent.value = "";
         layout.setView("files");
       }
-      layout.showToast("已删除: " + entry.name);
-      if (containsOpenFile && inlineFile.value === openPath) {
+      layout.showToast(preserveOverlay || preserveInline || preserveOtherDraft
+        ? "已删除磁盘文件；删除期间产生的编辑草稿仍保留，请复制或另存。"
+        : "已删除: " + entry.name);
+      if (containsOpenFile && inlineFile.value === openPath && !preserveInline) {
         ++inlineReadRequest;
         inlineFile.value = "";
       }
       await refreshTree();
     } catch (e: any) {
       layout.showToast("删除失败: " + (e?.message ?? e));
-    }
+    } finally { releaseMutation(); }
     closeFileCtx();
   }
   async function ctxRename(entry: DirEntry) {
@@ -320,16 +331,21 @@ export const useFileStore = defineStore("files", () => {
       closeFileCtx();
       return;
     }
+    const parent = entry.path.slice(0, entry.path.lastIndexOf("/")) || "/";
+    const renamed = parent.replace(/\/$/, "") + "/" + name;
+    const releaseMutation = lockPathMutation([{path: entry.path, isDirectory: entry.is_dir}, {path: renamed, isDirectory: entry.is_dir}]);
+    if (!releaseMutation) return;
     try {
       await bridge.renamePath(entry.path, name);
-      const parent = entry.path.slice(0, entry.path.lastIndexOf("/")) || "/";
-      const renamed = parent.replace(/\/$/, "") + "/" + name;
+      const editedDuringMutation = documentOwnership.dirtyUnder(entry.path, entry.is_dir);
       updateOpenPaths(entry.path, renamed);
-      layout.showToast("已重命名 → " + name);
+      layout.showToast(editedDuringMutation
+        ? "已重命名；操作期间产生了编辑草稿，请检查原路径及新路径后再保存。"
+        : "已重命名 → " + name);
       await refreshTree();
     } catch (e: any) {
       layout.showToast("重命名失败: " + (e?.message ?? e));
-    }
+    } finally { releaseMutation(); }
     closeFileCtx();
   }
   async function ctxFavorite(entry: DirEntry) {
@@ -549,14 +565,20 @@ export const useFileStore = defineStore("files", () => {
     const dst = moveConfirm.dst;
     moveConfirm.show = false;
     if (blocksDirtyPathMutation(src, true)) return;
+    const target = dst.replace(/\/$/, "") + "/" + (src.split("/").filter(Boolean).pop() || src);
+    const releaseMutation = lockPathMutation([{path: src, isDirectory: true}, {path: target, isDirectory: true}]);
+    if (!releaseMutation) return;
     try {
       await bridge.movePath(src, dst);
-      updateOpenPaths(src, dst.replace(/\/$/, "") + "/" + (src.split("/").filter(Boolean).pop() || src));
-      layout.showToast("已移动: " + (dst.split("/").filter(Boolean).pop() || dst));
+      const editedDuringMutation = documentOwnership.dirtyUnder(src, true);
+      updateOpenPaths(src, target);
+      layout.showToast(editedDuringMutation
+        ? "已移动；操作期间产生了编辑草稿，请检查原路径及新路径后再保存。"
+        : "已移动: " + (dst.split("/").filter(Boolean).pop() || dst));
       await refreshTree();
     } catch (e: any) {
       layout.showToast("移动失败: " + (e?.message ?? e));
-    }
+    } finally { releaseMutation(); }
   }
 
   // 打开软件 / 切换本地位置后，侧边栏树自动定位到当前打开位置

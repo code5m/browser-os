@@ -90,7 +90,13 @@ impl AgentEngine<'_> {
         }
 
         let run = async {
-            let mut stream = self.provider.stream(request).await?;
+            let mut stream = tokio::select! {
+                result = self.provider.stream(request) => result?,
+                _ = cancellation.changed() => return Err(FoundationError::Cancelled),
+            };
+            if !self.tasks.active_at_revision(task_id, revision) {
+                return Err(FoundationError::Cancelled);
+            }
             let mut text = String::new();
             let mut usage = None;
             let mut count = 0usize;
@@ -115,8 +121,9 @@ impl AgentEngine<'_> {
                         if delta.len() > self.limits.max_text_bytes.saturating_sub(text.len()) {
                             return Err(FoundationError::Provider("MODEL_TEXT_LIMIT".to_owned()));
                         }
-                        self.tasks.record_event(
+                        self.tasks.record_event_at_revision(
                             task_id,
+                            revision,
                             EventKind::ModelProgress {
                                 bytes: delta.len() as u64,
                             },
@@ -134,7 +141,16 @@ impl AgentEngine<'_> {
                             .map_err(|_| FoundationError::InvalidInput("tool argument JSON"))?;
                         let call_id = self
                             .tools
-                            .propose(self.tasks, task_id, &tool_name, arguments)?;
+                            .propose_at_revision(
+                                self.tasks, task_id, &tool_name, arguments, revision,
+                            )
+                            .map_err(|error| {
+                                if error == FoundationError::InvalidTransition {
+                                    FoundationError::Cancelled
+                                } else {
+                                    error
+                                }
+                            })?;
                         return Ok(TurnResult {
                             text,
                             completion: TurnCompletion::NeedsApproval { call_id },
@@ -148,7 +164,15 @@ impl AgentEngine<'_> {
                         usage = Some((input_tokens, output_tokens));
                     }
                     Some(ModelEvent::Finished) => {
-                        self.tasks.finish(task_id, true)?;
+                        self.tasks
+                            .finish_at_revision(task_id, true, revision)
+                            .map_err(|error| {
+                                if error == FoundationError::InvalidTransition {
+                                    FoundationError::Cancelled
+                                } else {
+                                    error
+                                }
+                            })?;
                         return Ok(TurnResult {
                             text,
                             completion: TurnCompletion::Completed,
@@ -172,7 +196,7 @@ impl AgentEngine<'_> {
         };
         if result.is_err() && self.tasks.active_at_revision(task_id, revision) {
             // Only the same active revision can be failed; never override Pause or Cancel.
-            let _ = self.tasks.finish(task_id, false);
+            let _ = self.tasks.finish_at_revision(task_id, false, revision);
         }
         result
     }
@@ -312,6 +336,48 @@ mod tests {
         fn stream<'a>(&'a self, _request: ModelRequest) -> ModelFuture<'a> {
             Box::pin(async move { std::future::pending::<Result<ModelStream>>().await })
         }
+    }
+    struct ConnectingProvider(Arc<tokio::sync::Notify>);
+    impl ModelProvider for ConnectingProvider {
+        fn stream<'a>(&'a self, _request: ModelRequest) -> ModelFuture<'a> {
+            Box::pin(async move {
+                self.0.notify_one();
+                std::future::pending::<Result<ModelStream>>().await
+            })
+        }
+    }
+    #[tokio::test]
+    async fn cancellation_interrupts_provider_connection() {
+        let tasks = TaskRegistry::new(Arc::new(EventJournal::new(32)));
+        let tools = ToolRegistry::default();
+        let task = tasks.create(Uuid::new_v4(), "Task", vec![]).unwrap();
+        tasks.start(task.id).unwrap();
+        let connected = Arc::new(tokio::sync::Notify::new());
+        let provider = ConnectingProvider(connected.clone());
+        let engine = AgentEngine {
+            provider: &provider,
+            tools: &tools,
+            tasks: &tasks,
+            limits: TurnLimits::default(),
+        };
+        let cancel = async {
+            connected.notified().await;
+            tasks.cancel(task.id).unwrap();
+        };
+        let (result, ()) = tokio::join!(
+            tokio::time::timeout(
+                Duration::from_millis(500),
+                engine.drive_turn(task.id, "mock", "work")
+            ),
+            cancel
+        );
+        assert_eq!(
+            result
+                .expect("cancellation must not wait for provider timeout")
+                .err(),
+            Some(FoundationError::Cancelled)
+        );
+        assert_eq!(tasks.get(task.id).unwrap().status, TaskStatus::Cancelled);
     }
     #[tokio::test]
     async fn timeout_is_a_terminal_failure_not_a_stuck_task() {

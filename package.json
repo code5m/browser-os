@@ -65,7 +65,7 @@
     "check:lifecycle-perf-fixtures": "node scripts/measure-lifecycle-comparison.mjs --self-test",
     "check:native-effect-audit": "node scripts/check-native-owner-effect-audit.mjs --self-test && node scripts/check-native-owner-effect-audit.mjs --check",
     "check:native-legacy-security": "node tests/check-native-legacy-security.mjs",
-    "check:studio-folding": "node tests/check-studio-folding.mjs"
+    "check:studio-folding": "node tests/check-studio-folding.mjs && node tests/check-workbench-fold-persistence.mjs"
   },
   "dependencies": {
     "@lucide/vue": "^1.42.0",

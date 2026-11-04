@@ -15,6 +15,7 @@ export function documentKey(root, path) {
       typeof root !== 'string' || root.includes('\0')) {
     throw Error('DOCUMENT_PATH_INVALID');
   }
+  if (!path.startsWith('/') && !root.startsWith('/')) throw Error('DOCUMENT_PATH_INVALID');
   const absolute = path.startsWith('/') ? path : root.replace(/\/+$/, '') + '/' + path;
   if (!absolute.startsWith('/') || absolute.includes('\\')) throw Error('DOCUMENT_PATH_INVALID');
   const segments = absolute.split('/').filter(Boolean);
@@ -27,6 +28,9 @@ export function createDocumentOwnership() {
   // notifications without retaining a second copy of file contents.
   const owners = new Map();
   const writes = new Map();
+  const mutations = new Map();
+  const contains = (base, path) => path === base || path.startsWith(base === '/' ? '/' : base + '/');
+  const overlaps = (a,b) => a.path === b.path || (a.isDirectory && contains(a.path,b.path)) || (b.isDirectory && contains(b.path,a.path));
   function replace(owner, documents) {
     if (!owner || !Array.isArray(documents)) throw Error('DOCUMENT_OWNER_INVALID');
     const next = new Map();
@@ -68,6 +72,7 @@ export function createDocumentOwnership() {
   }
   function beginSave(owner, path) {
     const target = documentKey('', path);
+    if ([...mutations.values()].some(items => items.some(item => overlaps(item,{path:target,isDirectory:false})))) throw Error('DOCUMENT_PATH_MUTATION_IN_PROGRESS');
     if (conflicts(owner, target).length) throw Error('DOCUMENT_CONCURRENT_DIRTY_EDIT');
     if (writes.has(target)) throw Error('DOCUMENT_SAVE_IN_PROGRESS');
     const token = Symbol(target);
@@ -79,12 +84,22 @@ export function createDocumentOwnership() {
       if (writes.get(target) === token) writes.delete(target);
     };
   }
+  function beginMutation(paths) {
+    if (!Array.isArray(paths) || !paths.length) throw Error('DOCUMENT_PATH_INVALID');
+    const items = paths.map(item => ({path:documentKey('',item.path),isDirectory:item.isDirectory === true}));
+    if (items.some(item => dirtyUnder(item.path,item.isDirectory))) throw Error('DOCUMENT_CONCURRENT_DIRTY_EDIT');
+    if (items.some(item => writingUnder(item.path,item.isDirectory))) throw Error('DOCUMENT_SAVE_IN_PROGRESS');
+    if ([...mutations.values()].some(active => active.some(a => items.some(b => overlaps(a,b))))) throw Error('DOCUMENT_PATH_MUTATION_IN_PROGRESS');
+    const token = Symbol('path-mutation');
+    mutations.set(token,items);
+    return () => { mutations.delete(token); };
+  }
   function snapshot() {
     return [...owners].flatMap(([owner, paths]) => [...paths].map(([path, dirty]) => ({
       owner, path, dirty
     })));
   }
-  return { replace, conflicts, dirtyUnder, writingUnder, beginSave, snapshot };
+  return { replace, conflicts, dirtyUnder, writingUnder, beginSave, beginMutation, snapshot };
 }
 
 // One owner across the main Vue application, but no persistence across browser

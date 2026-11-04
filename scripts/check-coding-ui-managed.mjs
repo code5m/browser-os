@@ -13,7 +13,7 @@ let serverExit = null;
 let log = '';
 server.on('exit', code => { serverExit = code ?? -1; });
 for (const stream of [server.stdout, server.stderr]) stream.on('data', chunk => { log = (log + chunk.toString()).slice(-8000); });
-const tests = ['check-coding-workbench-ui.cjs', 'check-coding-command-ui.cjs', 'check-coding-operation-ui.cjs', 'check-coding-workspace-context.cjs', 'check-coding-lsp-ui.cjs', 'check-coding-typescript-ui.cjs', 'check-coding-typescript-workbench-ui.cjs'];
+const tests = ['check-coding-workbench-ui.cjs', 'check-coding-command-ui.cjs', 'check-coding-operation-ui.cjs', 'check-coding-workspace-context.cjs', 'check-coding-lsp-ui.cjs', 'check-coding-typescript-ui.cjs', 'check-coding-typescript-workbench-ui.cjs', 'check-wechat-draft-ui.cjs'];
 try {
   let ready = false;
   for (let attempt = 0; attempt < 100 && serverExit === null; attempt++) {

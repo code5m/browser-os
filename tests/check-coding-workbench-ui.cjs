@@ -32,6 +32,11 @@ const base=process.env.CODING_UI_URL||'http://127.0.0.1:1433';
   assert.equal(await page.getByText('secret-value',{exact:false}).count(),0,'refresh errors must not expose backend details');
   await page.getByLabel('项目目录',{exact:true}).fill('/fixture');await page.getByRole('button',{name:'打开项目',exact:true}).click();
   await page.getByText('项目根目录未完整显示；可从第一页分页查看，超出扫描上限的内容仍须另行检查。',{exact:true}).waitFor();
+  for(const path of ['dir/./alias.ts','dir//alias.ts','dir\\alias.ts','dir/','.']){
+    await page.getByLabel('新文件相对路径').fill(path);await page.getByRole('button',{name:'新建',exact:true}).click();
+    await page.getByRole('status').filter({hasText:'请输入项目内相对文件路径'}).waitFor();
+    assert.equal(await page.locator('.editor-tab').count(),0,'ambiguous paths must not create a second document identity');
+  }
   await page.evaluate(()=>{const original=window.fixture.bridge.codingService;window.fixture.bridge.codingService=async request=>request.action==='knowledge_search'?{hits:[],limited:true}:original(request)});
   await page.getByRole('button',{name:'知识库',exact:true}).click();await page.getByLabel('知识库关键词').fill('fixture');await page.getByRole('button',{name:'检索',exact:true}).click();
   await page.getByRole('status').filter({hasText:'知识检索不完整'}).waitFor();await page.getByRole('button',{name:'文件',exact:true}).click();

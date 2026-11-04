@@ -288,13 +288,15 @@ impl TaskRegistry {
         }];
         let committed = self.persist(&next, Some(previous.revision), &events)?;
         tasks.insert(id, next);
-        drop(tasks);
+        // Publish the new generation's signal before exposing Running; pause
+        // and cancel use the same task -> signals lock order.
         let (sender, _) = watch::channel(false);
         self.signals
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .insert(id, sender);
         self.publish(id, &events, committed);
+        drop(tasks);
         Ok(())
     }
 
@@ -313,9 +315,9 @@ impl TaskRegistry {
         }];
         let committed = self.persist(&next, Some(previous.revision), &events)?;
         tasks.insert(id, next);
-        drop(tasks);
         self.signal_cancel(id);
         self.publish(id, &events, committed);
+        drop(tasks);
         Ok(())
     }
 
@@ -335,13 +337,21 @@ impl TaskRegistry {
         }];
         let committed = self.persist(&next, Some(previous.revision), &events)?;
         tasks.insert(id, next);
-        drop(tasks);
         self.signal_cancel(id);
         self.publish(id, &events, committed);
+        drop(tasks);
         Ok(())
     }
 
     pub fn finish(&self, id: Uuid, success: bool) -> Result<()> {
+        self.finish_checked(id, success, None)
+    }
+
+    pub(crate) fn finish_at_revision(&self, id: Uuid, success: bool, revision: u64) -> Result<()> {
+        self.finish_checked(id, success, Some(revision))
+    }
+
+    fn finish_checked(&self, id: Uuid, success: bool, revision: Option<u64>) -> Result<()> {
         let status = if success {
             TaskStatus::Completed
         } else {
@@ -349,7 +359,10 @@ impl TaskRegistry {
         };
         let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
         let previous = tasks.get(&id).ok_or(FoundationError::NotFound)?.clone();
-        if previous.status != TaskStatus::Running || previous.pending.is_some() {
+        if previous.status != TaskStatus::Running
+            || previous.pending.is_some()
+            || revision.is_some_and(|expected| previous.revision != expected)
+        {
             return Err(FoundationError::InvalidTransition);
         }
         let mut next = previous.clone();
@@ -361,9 +374,9 @@ impl TaskRegistry {
         }];
         let committed = self.persist(&next, Some(previous.revision), &events)?;
         tasks.insert(id, next);
-        drop(tasks);
         self.signal_cancel(id);
         self.publish(id, &events, committed);
+        drop(tasks);
         Ok(())
     }
 
@@ -373,6 +386,28 @@ impl TaskRegistry {
         tool_name: impl Into<String>,
         arguments: Value,
         effect: ToolEffect,
+    ) -> Result<Uuid> {
+        self.propose_tool_checked(id, tool_name, arguments, effect, None)
+    }
+
+    pub(crate) fn propose_tool_at_revision(
+        &self,
+        id: Uuid,
+        tool_name: impl Into<String>,
+        arguments: Value,
+        effect: ToolEffect,
+        revision: u64,
+    ) -> Result<Uuid> {
+        self.propose_tool_checked(id, tool_name, arguments, effect, Some(revision))
+    }
+
+    fn propose_tool_checked(
+        &self,
+        id: Uuid,
+        tool_name: impl Into<String>,
+        arguments: Value,
+        effect: ToolEffect,
+        revision: Option<u64>,
     ) -> Result<Uuid> {
         let tool_name = tool_name.into();
         if tool_name.is_empty()
@@ -397,7 +432,10 @@ impl TaskRegistry {
         let name = pending.tool_name.clone();
         let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
         let previous = tasks.get(&id).ok_or(FoundationError::NotFound)?.clone();
-        if previous.status != TaskStatus::Running || previous.pending.is_some() {
+        if previous.status != TaskStatus::Running
+            || previous.pending.is_some()
+            || revision.is_some_and(|expected| previous.revision != expected)
+        {
             return Err(FoundationError::InvalidTransition);
         }
         let mut next = previous.clone();
@@ -416,8 +454,8 @@ impl TaskRegistry {
         ];
         let committed = self.persist(&next, Some(previous.revision), &events)?;
         tasks.insert(id, next);
-        drop(tasks);
         self.publish(id, &events, committed);
+        drop(tasks);
         Ok(call_id)
     }
 
@@ -455,8 +493,8 @@ impl TaskRegistry {
         let committed = self.persist(&next, Some(previous.revision), &events)?;
         let revision = next.revision;
         tasks.insert(id, next);
-        drop(tasks);
         self.publish(id, &events, committed);
+        drop(tasks);
         if accepted {
             Ok(Some(ApprovedOperation {
                 task_id: id,
@@ -486,14 +524,37 @@ impl TaskRegistry {
             .is_some_and(|task| task.status == TaskStatus::Running && task.revision == revision)
     }
 
-    /// Store metadata-only progress with the same durable outbox semantics.
-    pub(crate) fn record_event(&self, task_id: Uuid, kind: EventKind) -> Result<()> {
+    #[cfg(feature = "experimental-rig-run")]
+    pub(crate) fn with_active_revision<T>(
+        &self,
+        id: Uuid,
+        revision: u64,
+        action: impl FnOnce() -> Result<T>,
+    ) -> Result<T> {
+        let tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
+        let task = tasks.get(&id).ok_or(FoundationError::NotFound)?;
+        if task.status != TaskStatus::Running || task.revision != revision {
+            return Err(FoundationError::InvalidTransition);
+        }
+        action()
+    }
+
+    /// Store metadata-only progress for the still-active task generation.
+    pub(crate) fn record_event_at_revision(
+        &self,
+        task_id: Uuid,
+        revision: u64,
+        kind: EventKind,
+    ) -> Result<()> {
         let tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
         let task = tasks.get(&task_id).ok_or(FoundationError::NotFound)?;
+        if task.status != TaskStatus::Running || task.revision != revision {
+            return Err(FoundationError::Cancelled);
+        }
         let kinds = [kind];
         let committed = self.persist(task, Some(task.revision), &kinds)?;
-        drop(tasks);
         self.publish(task_id, &kinds, committed);
+        drop(tasks);
         Ok(())
     }
 
@@ -574,6 +635,107 @@ impl TaskRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stale_generation_cannot_finish_or_record_progress_after_resume() {
+        let journal = Arc::new(EventJournal::new(32));
+        let registry = TaskRegistry::new(journal.clone());
+        let task = registry.create(Uuid::new_v4(), "race", vec![]).unwrap();
+        registry.start(task.id).unwrap();
+        let old_revision = registry.get(task.id).unwrap().revision;
+        registry.pause(task.id).unwrap();
+        registry.start(task.id).unwrap();
+        assert_eq!(
+            registry
+                .finish_at_revision(task.id, true, old_revision)
+                .err(),
+            Some(FoundationError::InvalidTransition)
+        );
+        assert_eq!(
+            registry
+                .record_event_at_revision(
+                    task.id,
+                    old_revision,
+                    EventKind::ModelProgress { bytes: 1 }
+                )
+                .err(),
+            Some(FoundationError::Cancelled)
+        );
+        assert_eq!(
+            registry
+                .record_event_at_revision(
+                    task.id,
+                    old_revision,
+                    EventKind::ToolFinished {
+                        call_id: Uuid::new_v4(),
+                        succeeded: true
+                    }
+                )
+                .err(),
+            Some(FoundationError::Cancelled)
+        );
+        assert_eq!(
+            registry
+                .propose_tool_at_revision(
+                    task.id,
+                    "editor.read",
+                    Value::Null,
+                    ToolEffect::ReadOnly,
+                    old_revision
+                )
+                .err(),
+            Some(FoundationError::InvalidTransition)
+        );
+        assert_eq!(registry.get(task.id).unwrap().status, TaskStatus::Running);
+        assert!(!journal
+            .replay(task.id, 0)
+            .unwrap()
+            .iter()
+            .any(|event| matches!(&event.kind, EventKind::ModelProgress { .. })));
+    }
+
+    #[test]
+    fn pause_resume_race_keeps_current_cancellation_signal_consistent() {
+        let journal = Arc::new(EventJournal::new(1024));
+        let registry = Arc::new(TaskRegistry::new(journal.clone()));
+        let task = registry.create(Uuid::new_v4(), "race", vec![]).unwrap();
+        registry.start(task.id).unwrap();
+        for _ in 0..500 {
+            let prior = registry.cancellation(task.id).unwrap();
+            std::thread::scope(|scope| {
+                let pausing = registry.clone();
+                scope.spawn(move || pausing.pause(task.id).unwrap());
+                let resuming = registry.clone();
+                scope.spawn(move || loop {
+                    if resuming.get(task.id).unwrap().status == TaskStatus::Paused {
+                        resuming.start(task.id).unwrap();
+                        break;
+                    }
+                    std::thread::yield_now();
+                });
+            });
+            assert!(*prior.borrow(), "the paused generation must be cancelled");
+            assert_eq!(registry.get(task.id).unwrap().status, TaskStatus::Running);
+            assert!(
+                !*registry.cancellation(task.id).unwrap().borrow(),
+                "the resumed generation must remain active"
+            );
+        }
+        let current = registry.cancellation(task.id).unwrap();
+        registry.cancel(task.id).unwrap();
+        assert!(
+            *current.borrow(),
+            "the current generation must be cancelled"
+        );
+        let mut status = TaskStatus::Ready;
+        for event in journal.replay(task.id, 0).unwrap() {
+            if let EventKind::StateChanged { from, to } = event.kind {
+                assert_eq!(from, status, "published task transitions must remain in commit order");
+                status = to;
+            }
+        }
+        assert_eq!(status, TaskStatus::Cancelled);
+    }
 
     #[test]
     fn retirement_keeps_recent_terminal_replay_but_bounds_history() {

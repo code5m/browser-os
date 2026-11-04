@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { onMounted, ref, watch } from 'vue';
 import { bridge } from '../../bridge';
 
 // Credential is an ephemeral form field; never persist it in browser storage.
@@ -18,11 +18,26 @@ const draftMediaId = ref('');
 const verified = ref(false);
 const busy = ref(false);
 const notice = ref('');
-const outcomeUnknown = ref(false);
+watch(coverPath, () => { coverMediaId.value = ''; }, { flush: 'sync' });
+watch(bodyImagePath, () => { bodyImageUrl.value = ''; }, { flush: 'sync' });
+const pendingDraftKey = 'browseros:wechat-draft-pending-v1';
+// These codes are emitted before draft/add is attempted; other failures may be ambiguous.
+const draftNotSentErrors = new Set(['WECHAT_DRAFT_INPUT_INVALID', 'WECHAT_ACCOUNT_NOT_CONFIGURED', 'WECHAT_ACCOUNT_INVALID', 'WECHAT_HTTP_CONFIG_FAILED', 'WECHAT_TOKEN_NETWORK_FAILED', 'WECHAT_TOKEN_MISSING']);
+const outcomeUnknown = ref(true);
+const draftStorageAvailable = ref(false);
+try {
+  const stored = localStorage.getItem(pendingDraftKey);
+  outcomeUnknown.value = stored !== null;
+  if (stored?.startsWith('media:')) {
+    const mediaId = stored.slice(6);
+    if (mediaId.length > 0 && mediaId.length <= 512 && !/[\r\n\0]/.test(mediaId)) draftMediaId.value = mediaId;
+  }
+  draftStorageAvailable.value = true;
+} catch { /* Do not risk creating a duplicate when state cannot be retained. */ }
 
 function statusError(error: unknown): string {
   // Only stable native error codes enter UI; never echo a secret, response URL or raw provider body.
-  return String(error).match(/WECHAT_[A-Z0-9_]+/)?.[0] || 'WECHAT_REQUEST_FAILED';
+  return String(error).match(/WECHAT_API_-?\d+|WECHAT_[A-Z0-9_]+/)?.[0] || 'WECHAT_REQUEST_FAILED';
 }
 async function run(action: () => Promise<void>) {
   if (busy.value) return;
@@ -42,6 +57,8 @@ function saveAccount() {
   void run(async () => {
     try {
       configured.value = await bridge.wechatAccountSave(appId.value.trim(), appSecret.value);
+      coverMediaId.value = '';
+      bodyImageUrl.value = '';
       notice.value = '配置已存入系统密钥库，未保存到浏览器存储。';
     } finally { appSecret.value = ''; }
   });
@@ -54,14 +71,18 @@ function checkPermission() {
 }
 function uploadCover() {
   void run(async () => {
-    const result = await bridge.wechatUploadCover(coverPath.value.trim());
+    const path = coverPath.value.trim();
+    const result = await bridge.wechatUploadCover(path);
+    if (coverPath.value.trim() !== path) { notice.value = '封面路径已变更，请重新上传封面。'; return; }
     coverMediaId.value = result.media_id;
     notice.value = '封面素材上传成功，已获得永久素材 media_id。';
   });
 }
 function uploadBodyImage() {
   void run(async () => {
-    const result = await bridge.wechatUploadBodyImage(bodyImagePath.value.trim());
+    const path = bodyImagePath.value.trim();
+    const result = await bridge.wechatUploadBodyImage(path);
+    if (bodyImagePath.value.trim() !== path) { notice.value = '正文图片路径已变更，请重新上传图片。'; return; }
     bodyImageUrl.value = result.url;
     notice.value = '正文图片已上传；可将图片地址插入正文。';
   });
@@ -77,29 +98,64 @@ function createDraft() {
       notice.value = '上一次创建结果不明。请先到微信公众号后台确认是否已生成，禁止盲目重试。';
       return;
     }
+    if (!draftStorageAvailable.value) {
+      notice.value = '无法保存草稿提交状态，请检查本地存储后重试。';
+      return;
+    }
     // A new, user-initiated draft/add only. No publish or mass-send path exists.
-    try {
-      const result = await bridge.wechatCreateDraft(title.value, author.value, digest.value, contentHtml.value, coverMediaId.value);
-      draftMediaId.value = result.media_id;
-      verified.value = result.verified;
-      notice.value = result.verified
-        ? '微信草稿箱已返回并验证草稿，未发布或群发。'
-        : '草稿接口已返回 media_id，但详情核验未完成；请点击验证草稿，勿重复创建。';
-    } catch (error) {
-      if (statusError(error) === 'WECHAT_DRAFT_OUTCOME_UNKNOWN_NO_AUTO_RETRY') outcomeUnknown.value = true;
+    try { localStorage.setItem(pendingDraftKey, 'pending'); }
+    catch {
+      draftStorageAvailable.value = false;
+      notice.value = '无法保存草稿提交状态，请检查本地存储后重试。';
+      return;
+    }
+    outcomeUnknown.value = true;
+    draftMediaId.value = '';
+    verified.value = false;
+    let result;
+    try { result = await bridge.wechatCreateDraft(title.value, author.value, digest.value, contentHtml.value, coverMediaId.value); }
+    catch (error) {
+      if (draftNotSentErrors.has(statusError(error))) {
+        try { localStorage.removeItem(pendingDraftKey); outcomeUnknown.value = false; }
+        catch { draftStorageAvailable.value = false; }
+      }
       throw error;
     }
+    draftMediaId.value = result.media_id;
+    verified.value = result.verified;
+    if (!result.verified) {
+      try { localStorage.setItem(pendingDraftKey, `media:${result.media_id}`); }
+      catch { draftStorageAvailable.value = false; notice.value = '草稿已返回 media_id，但无法保存核实状态；请记录 media_id 并检查本地存储。'; return; }
+      notice.value = '草稿接口已返回 media_id，但详情核验未完成；请点击验证草稿，勿重复创建。';
+      return;
+    }
+    try { localStorage.removeItem(pendingDraftKey); }
+    catch {
+      draftStorageAvailable.value = false;
+      notice.value = '草稿已返回 media_id，但无法更新本地核实状态；请记录 media_id 并检查本地存储。';
+      return;
+    }
+    outcomeUnknown.value = false;
+    notice.value = '微信草稿箱已返回并验证草稿，未发布或群发。';
   });
 }
 function verifyDraft() {
   void run(async () => {
     const result = await bridge.wechatGetDraftStatus(draftMediaId.value.trim());
     verified.value = result.verified;
+    if (!result.verified) { notice.value = '草稿详情尚未验证，请勿重复创建。'; return; }
+    if (outcomeUnknown.value) {
+      try { localStorage.removeItem(pendingDraftKey); }
+      catch { draftStorageAvailable.value = false; notice.value = '草稿已验证，但无法更新本地状态，请检查本地存储。'; return; }
+      outcomeUnknown.value = false;
+    }
     notice.value = '草稿详情接口确认存在。请继续在真实公众平台草稿箱检查图片、标题和正文。';
   });
 }
 function confirmResolvedUnknown() {
   if (!confirm('你已在微信公众号后台检查，并确认上次不明结果没有创建草稿？')) return;
+  try { localStorage.removeItem(pendingDraftKey); draftStorageAvailable.value = true; }
+  catch { notice.value = '无法保存核实状态，请检查本地存储后重试。'; return; }
   outcomeUnknown.value = false;
   notice.value = '已记录人工核实；允许重新创建一次草稿。';
 }
@@ -138,7 +194,7 @@ onMounted(() => {
       </div>
       <label>草稿 HTML 正文<textarea v-model="contentHtml" required rows="7" maxlength="19999" spellcheck="false" placeholder="仅发送用户明确填写的 HTML 内容" /></label>
       <div class="form-row">
-        <button type="submit" :disabled="busy || outcomeUnknown || !title.trim() || !contentHtml.trim() || !coverMediaId">创建到草稿箱（不发布）</button>
+        <button type="submit" :disabled="busy || outcomeUnknown || !draftStorageAvailable || !title.trim() || !contentHtml.trim() || !coverMediaId">创建到草稿箱（不发布）</button>
         <span>创建后不会自动重试，以免出现重复草稿。</span>
       </div>
     </form>
@@ -146,7 +202,8 @@ onMounted(() => {
       <span>草稿 media_id：{{ draftMediaId }} · {{ verified ? 'API 验证成功' : '待验证' }}</span>
       <button :disabled="busy" @click="verifyDraft">验证草稿详情</button>
     </div>
-    <div v-if="outcomeUnknown" class="form-row"><strong>提交超时：结果可能已成功。</strong><button :disabled="busy" @click="confirmResolvedUnknown">人工核实无重复草稿后解除禁止重试</button></div>
+    <p v-if="!draftStorageAvailable" role="alert">本地草稿状态存储不可用，无法安全创建草稿；请检查浏览器存储后重新打开此页面。</p>
+    <div v-else-if="outcomeUnknown && !draftMediaId" class="form-row"><strong>上次提交结果不明，请先到公众号后台核实。</strong><button :disabled="busy" @click="confirmResolvedUnknown">人工核实无重复草稿后解除禁止重试</button></div>
     <p role="status" aria-live="polite">{{ busy ? '请求中…' : notice }}</p>
     <p>请在微信公众号管理后台草稿箱复核封面、正文图、权限及素材。当前 UI 的模拟测试不代表账号真实验收。</p>
   </section>

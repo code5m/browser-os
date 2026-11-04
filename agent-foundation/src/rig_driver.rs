@@ -51,7 +51,7 @@ pub enum RigDriverStep {
 
 pub struct RigMultiTurnDriver {
     pilot: RigRunPilot,
-    pending: Option<(Uuid, ToolCall)>,
+    pending: Option<(Uuid, Uuid, u64, ToolCall)>,
 }
 
 impl RigMultiTurnDriver {
@@ -89,6 +89,7 @@ impl RigMultiTurnDriver {
         if start.status != TaskStatus::Running {
             return Err(FoundationError::InvalidTransition);
         }
+        let revision = start.revision;
 
         loop {
             let step = self
@@ -103,10 +104,10 @@ impl RigMultiTurnDriver {
                     turn,
                 } => {
                     let task = tasks.get(task_id)?;
-                    if task.status != TaskStatus::Running {
+                    if task.status != TaskStatus::Running || task.revision != revision {
                         return Err(FoundationError::Cancelled);
                     }
-                    let _lease = tasks.acquire_execution(task_id, task.revision)?;
+                    let _lease = tasks.acquire_execution(task_id, revision)?;
                     let request = CompletionRequest::new(prompt)
                         .messages(history)
                         .model::<String>(Some(model_id.to_owned()))
@@ -123,7 +124,7 @@ impl RigMultiTurnDriver {
                             reply.map_err(|_|FoundationError::Timeout)??,
                         _=cancellation.changed()=>return Err(FoundationError::Cancelled),
                     };
-                    if !tasks.active_at_revision(task_id, task.revision) {
+                    if !tasks.active_at_revision(task_id, revision) {
                         return Err(FoundationError::Cancelled);
                     }
                     if response.choice.len() > 64 {
@@ -157,13 +158,19 @@ impl RigMultiTurnDriver {
                         return Err(FoundationError::InvalidInput("rig tool arguments"));
                     }
                     let tool_name = call.function.name.to_string();
-                    let proposed = registry.propose(
-                        tasks,
-                        task_id,
-                        &tool_name,
-                        call.function.arguments.clone(),
-                    )?;
-                    self.pending = Some((proposed, call));
+                    let approved_revision = revision
+                        .checked_add(2)
+                        .ok_or(FoundationError::InvalidTransition)?;
+                    let proposed = registry
+                        .propose_at_revision(
+                            tasks,
+                            task_id,
+                            &tool_name,
+                            call.function.arguments.clone(),
+                            revision,
+                        )
+                        .map_err(stale_transition)?;
+                    self.pending = Some((task_id, proposed, approved_revision, call));
                     return Ok(RigDriverStep::NeedsApproval {
                         call_id: proposed,
                         tool_name,
@@ -174,10 +181,14 @@ impl RigMultiTurnDriver {
                     // state; the previous order permanently marked an oversized
                     // error as Completed. Fail closed and retain a Failed event.
                     if response.output.len() > 256 * 1024 {
-                        tasks.finish(task_id, false)?;
+                        tasks
+                            .finish_at_revision(task_id, false, revision)
+                            .map_err(stale_transition)?;
                         return Err(FoundationError::Provider("RIG_OUTPUT_LIMIT".into()));
                     }
-                    tasks.finish(task_id, true)?;
+                    tasks
+                        .finish_at_revision(task_id, true, revision)
+                        .map_err(stale_transition)?;
                     return Ok(RigDriverStep::Completed {
                         text: response.output,
                         input_tokens: response.usage.input_tokens,
@@ -198,15 +209,11 @@ impl RigMultiTurnDriver {
         result: Value,
         tasks: &TaskRegistry,
     ) -> Result<()> {
-        let task = tasks.get(task_id)?;
-        if task.status != TaskStatus::Running {
-            return Err(FoundationError::InvalidTransition);
-        }
-        let Some((pending, call)) = self.pending.take() else {
+        let Some((pending_task, pending, approved_revision, call)) = self.pending.take() else {
             return Err(FoundationError::ApprovalMismatch);
         };
-        if pending != call_id {
-            self.pending = Some((pending, call));
+        if pending_task != task_id || pending != call_id {
+            self.pending = Some((pending_task, pending, approved_revision, call));
             return Err(FoundationError::ApprovalMismatch);
         }
         if serde_json::to_vec(&result)
@@ -214,17 +221,23 @@ impl RigMultiTurnDriver {
             .len()
             > 64 * 1024
         {
-            self.pending = Some((pending, call));
+            self.pending = Some((pending_task, pending, approved_revision, call));
             return Err(FoundationError::InvalidInput("rig tool result"));
         }
-        self.pilot
-            .state()
-            .tool_results(vec![UserContent::ToolResult(ToolResult {
-                call: call.id,
-                name: call.function.name,
-                content: vec![ToolResultContent::json(result)],
-            })])
-            .map_err(|_| FoundationError::Provider("RIG_TOOL_RESULTS".into()))
+        let accepted = tasks.with_active_revision(task_id, approved_revision, || {
+            self.pilot
+                .state()
+                .tool_results(vec![UserContent::ToolResult(ToolResult {
+                    call: call.id.clone(),
+                    name: call.function.name.clone(),
+                    content: vec![ToolResultContent::json(result)],
+                })])
+                .map_err(|_| FoundationError::Provider("RIG_TOOL_RESULTS".into()))
+        });
+        if accepted.is_err() {
+            self.pending = Some((pending_task, pending, approved_revision, call));
+        }
+        accepted
     }
 
     pub fn snapshot(&self) -> Result<String> {
@@ -234,6 +247,14 @@ impl RigMultiTurnDriver {
             return Err(FoundationError::InvalidTransition);
         }
         self.pilot.snapshot()
+    }
+}
+
+fn stale_transition(error: FoundationError) -> FoundationError {
+    if error == FoundationError::InvalidTransition {
+        FoundationError::Cancelled
+    } else {
+        error
     }
 }
 
@@ -285,6 +306,33 @@ mod tests {
                 Err(FoundationError::PermissionDenied)
             }
         }
+    }
+
+    #[test]
+    fn stale_tool_result_cannot_resume_a_new_task_generation() {
+        let tasks = TaskRegistry::new(Arc::new(EventJournal::new(16)));
+        let task = tasks.create(Uuid::new_v4(), "test", vec![]).unwrap();
+        tasks.start(task.id).unwrap();
+        let revision = tasks.get(task.id).unwrap().revision;
+        let call_id = Uuid::new_v4();
+        let call = ToolCall::from_wire(
+            "test-call",
+            ToolFunction::new(ToolName::new("demo.inspect").unwrap(), json!({})),
+        );
+        let mut driver = RigMultiTurnDriver::new("Review", 2).unwrap();
+        driver.pending = Some((task.id, call_id, revision, call));
+        tasks.pause(task.id).unwrap();
+        tasks.start(task.id).unwrap();
+        assert_eq!(
+            driver
+                .accept_host_tool_result(task.id, call_id, json!({}), &tasks)
+                .err(),
+            Some(FoundationError::InvalidTransition)
+        );
+        assert!(
+            driver.pending.is_some(),
+            "stale result must not consume the pending operation"
+        );
     }
 
     #[tokio::test]
@@ -361,6 +409,18 @@ mod tests {
             panic!("expected approval");
         };
         assert!(driver.snapshot().is_err());
+        let other = tasks.create(Uuid::new_v4(), "Other task", vec![]).unwrap();
+        tasks.start(other.id).unwrap();
+        assert_eq!(
+            driver
+                .accept_host_tool_result(other.id, call_id, json!({"forged": true}), &tasks)
+                .err(),
+            Some(FoundationError::ApprovalMismatch)
+        );
+        assert!(
+            driver.snapshot().is_err(),
+            "wrong-task result must not consume the pending operation"
+        );
         let receipt = HostApprovalIssuer::new([23; 32])
             .unwrap()
             .issue(
