@@ -50,6 +50,8 @@ runInNewContext(code, {
     if (id === "vue") return require("vue");
     if (id === "@lucide/vue") return { Globe: {}, Plus: {}, X: {} };
     if (id === "../../bridge") return { bridge: {} };
+    // New read-only tab projection is unrelated to window dragging.
+    if (id === "../../application/tabResourceProjection.mjs") return { projectTabResources: () => [] };
     if (id === "@tauri-apps/api/window") return {
       getCurrentWindow: () => ({
         toggleMaximize: async () => { maximizes++; },
