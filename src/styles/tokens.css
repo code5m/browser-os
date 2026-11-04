@@ -32,6 +32,7 @@
   /* 交互态 */
   --ui-hover-bg: #eef3ff;
   --ui-danger-bg: #ffeaea;
+  --ui-success-text: #167044;
   --home-accent: #2b6cb0;
   --bfc-accent: #315ea8;
   --bfc-background: linear-gradient(135deg, #f4f7ff, #fff);
@@ -50,6 +51,7 @@
   --ui-danger: #ff9b9b;
   --ui-hover-bg: #30445f;
   --ui-danger-bg: #482b32;
+  --ui-success-text: #6ee7a2;
   --home-accent: #9fceff;
   --bfc-accent: #9fceff;
   --bfc-background: linear-gradient(135deg, #202938, #1d222a);

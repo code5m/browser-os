@@ -11,6 +11,7 @@ const latestNotice = ref("")
 const links = [
   { id: "website", icon: "🌐", label: "BFC Web 版", description: "面向用户的专题视频入口", url: "https://github.com/code5m/bcf-website" },
   { id: "workbench", icon: "🧭", label: "BFC 工作台", description: "本地整理、分类与差异监测", url: "http://127.0.0.1:4198/#topics" },
+  { id: "updates", icon: "🆕", label: "新发现的收藏", description: "查看本地授权快照发现的待收录视频", url: "http://127.0.0.1:4198/#updates" },
 ]
 
 async function openProject(url: string) {
@@ -23,8 +24,8 @@ async function acquireLatest() {
   if (latestBusy.value) return
   latestBusy.value = true
   try {
-    await openProject("http://127.0.0.1:4198/#sync")
-    latestNotice.value = "已打开 BFC 安全补采页面。请在获准访问的 B站收藏页保存最新 HTML，再导入工作台核对增量；当前不会直接抓取 B站。"
+    await openProject("http://127.0.0.1:4198/manage#sync")
+    latestNotice.value = "已打开 BFC 数据管理的安全补采页面。请在获准访问的 B站收藏页保存最新 HTML，再导入并点击新发现的收藏核对增量；当前不会直接抓取 B站。"
   } catch {
     latestNotice.value = "无法打开 BFC 工作台。请确认本地 127.0.0.1:4198 服务已经运行。"
   } finally {

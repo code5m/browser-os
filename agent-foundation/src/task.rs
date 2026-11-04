@@ -730,7 +730,10 @@ mod tests {
         let mut status = TaskStatus::Ready;
         for event in journal.replay(task.id, 0).unwrap() {
             if let EventKind::StateChanged { from, to } = event.kind {
-                assert_eq!(from, status, "published task transitions must remain in commit order");
+                assert_eq!(
+                    from, status,
+                    "published task transitions must remain in commit order"
+                );
                 status = to;
             }
         }

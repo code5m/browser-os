@@ -186,23 +186,18 @@ pub async fn wechat_draft_permission_check(
 }
 
 async fn upload(app: AppHandle, path: String, cover: bool) -> Result<Value, String> {
-    let canonical = sp::check_path_within_roots(&path, &crate::workspace::allowed_roots(&app))
+    let roots = crate::workspace::allowed_roots(&app);
+    let canonical = sp::check_path_within_roots(&path, &roots)
         .map_err(|_| "WECHAT_IMAGE_PATH_DENIED".to_string())?;
-    if !canonical.is_file() {
-        return Err("WECHAT_IMAGE_NOT_REGULAR".into());
-    }
-    let metadata = std::fs::metadata(&canonical).map_err(|_| "WECHAT_IMAGE_UNAVAILABLE")?;
     let size_limit = if cover { 64 * 1024 } else { 1024 * 1024 };
-    if metadata.len() > size_limit {
-        return Err("WECHAT_IMAGE_TOO_LARGE".into());
-    }
-    let bytes = tauri::async_runtime::spawn_blocking(move || std::fs::read(canonical))
-        .await
-        .map_err(|_| "WECHAT_IMAGE_READ_FAILED")?
-        .map_err(|_| "WECHAT_IMAGE_READ_FAILED")?;
-    if bytes.len() as u64 > size_limit {
-        return Err("WECHAT_IMAGE_TOO_LARGE".into());
-    }
+    // Read through authorized, non-following directory FDs: the path may be
+    // replaced after canonicalize and must never redirect to an outside file.
+    let bytes = tauri::async_runtime::spawn_blocking(move || {
+        super::safe_paths::read_regular(&canonical, &roots, size_limit)
+    })
+    .await
+    .map_err(|_| "WECHAT_IMAGE_READ_FAILED")?
+    .map_err(|_| "WECHAT_IMAGE_READ_FAILED")?;
     let jpeg = bytes.starts_with(&[0xff, 0xd8, 0xff]);
     let png = bytes.starts_with(&[137, 80, 78, 71, 13, 10, 26, 10]);
     if !jpeg && !(png && !cover) {
@@ -292,6 +287,42 @@ fn validate_news_draft(
     Ok(())
 }
 
+// The provider returns news_item[] from draft/get. A 200 response alone is
+// not proof that an article has the expected title, body and image binding.
+fn returned_article(details: &Value) -> Option<&Value> {
+    details.get("news_item")?.as_array()?.first()
+}
+fn draft_has_valid_content(details: &Value) -> bool {
+    let Some(article) = returned_article(details) else {
+        return false;
+    };
+    let title = article.get("title").and_then(Value::as_str).unwrap_or("");
+    let content = article.get("content").and_then(Value::as_str).unwrap_or("");
+    let cover = article
+        .get("thumb_media_id")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    !title.trim().is_empty() && !content.trim().is_empty() && safe_media_id(cover)
+}
+fn draft_matches_request(
+    details: &Value,
+    title: &str,
+    author: &str,
+    digest: &str,
+    html: &str,
+    cover_id: &str,
+) -> bool {
+    let Some(article) = returned_article(details) else {
+        return false;
+    };
+    draft_has_valid_content(details)
+        && article.get("title").and_then(Value::as_str) == Some(title)
+        && article.get("author").and_then(Value::as_str).unwrap_or("") == author
+        && article.get("digest").and_then(Value::as_str).unwrap_or("") == digest
+        && article.get("content").and_then(Value::as_str) == Some(html)
+        && article.get("thumb_media_id").and_then(Value::as_str) == Some(cover_id)
+}
+
 #[tauri::command]
 pub async fn wechat_create_draft(
     app: AppHandle,
@@ -340,7 +371,17 @@ pub async fn wechat_create_draft(
         .send()
         .await
     {
-        Ok(response) => json_response(response).await.is_ok(),
+        Ok(response) => match json_response(response).await {
+            Ok(details) => draft_matches_request(
+                &details,
+                &title,
+                &author,
+                &digest,
+                &content_html,
+                &cover_media_id,
+            ),
+            Err(_) => false,
+        },
         Err(_) => false,
     };
     Ok(
@@ -367,8 +408,11 @@ pub async fn wechat_get_draft_status(
         .send()
         .await
         .map_err(|_| "WECHAT_DRAFT_VERIFY_NETWORK_FAILED")?;
-    json_response(response).await?;
-    Ok(json!({"media_id": media_id, "verified": true}))
+    let details = json_response(response).await?;
+    let verified = draft_has_valid_content(&details);
+    Ok(
+        json!({"media_id": media_id, "verified": verified, "status": if verified {"DRAFT_CONTENT_PRESENT_NEEDS_BACKEND_REVIEW"} else {"DRAFT_DETAILS_INCOMPLETE"}}),
+    )
 }
 
 #[cfg(test)]
@@ -396,6 +440,50 @@ mod tests {
             validate_news_draft("标题", "作者", "摘要", &"中".repeat(20_000), "cover-id"),
             Err("WECHAT_DRAFT_INPUT_INVALID".into())
         );
+    }
+    #[test]
+    fn draft_details_are_checked_not_just_http_status() {
+        let good = json!({"news_item":[{"title":"标题","author":"作者","digest":"摘要","content":"<p><img src=\"https://mmbiz.qpic.cn/test.jpg\"/></p>","thumb_media_id":"cover-id"}]});
+        let html = "<p><img src=\"https://mmbiz.qpic.cn/test.jpg\"/></p>";
+        assert!(draft_matches_request(
+            &good, "标题", "作者", "摘要", html, "cover-id"
+        ));
+        assert!(draft_has_valid_content(&good));
+        assert!(!draft_matches_request(
+            &good,
+            "错误标题",
+            "作者",
+            "摘要",
+            html,
+            "cover-id"
+        ));
+        assert!(!draft_matches_request(
+            &good,
+            "标题",
+            "作者",
+            "摘要",
+            "<p>图片丢失</p>",
+            "cover-id"
+        ));
+        assert!(!draft_matches_request(
+            &good,
+            "标题",
+            "作者",
+            "摘要",
+            html,
+            "错误封面"
+        ));
+        assert!(!draft_has_valid_content(&json!({"errcode":0})));
+        assert!(!draft_has_valid_content(&json!({"news_item":[]})));
+    }
+    #[test]
+    fn malformed_draft_details_cannot_be_verified() {
+        assert!(!draft_has_valid_content(
+            &json!({"news_item":[{"title":"标题","content":"正文"}]})
+        ));
+        assert!(!draft_has_valid_content(
+            &json!({"news_item":[{"title":"标题","content":"", "thumb_media_id":"x"}]})
+        ));
     }
     #[test]
     fn api_error_hides_provider_message_and_secrets() {
