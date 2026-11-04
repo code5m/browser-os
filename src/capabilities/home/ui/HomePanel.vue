@@ -10,7 +10,7 @@ import HomeChangelog from "./HomeChangelog.vue";
 const home = useHomeStore();
 // Lazy: only load WeChat when the user opens this draft-only tool.
 const showWechatDrafts = ref(false);
-const WechatDraftPanel = defineAsyncComponent(() => import("../../../components/system/WechatDraftPanel.vue"));
+const WechatWorkbenchPanel = defineAsyncComponent(() => import("../../../components/system/WechatWorkbenchPanel.vue"));
 
 // 常用目录播种（仅首次）：把后端承诺的起始目录补进主页。
 onMounted(() => home.seedDirShortcuts());
@@ -28,8 +28,8 @@ const state = computed(() => home.panelState);
         <span>主页</span>
       </h1>
       <div class="home-actions">
-        <button type="button" title="公众号素材上传与草稿箱（不会发布或群发）" aria-controls="home-wechat-drafts" :aria-expanded="showWechatDrafts" @click="showWechatDrafts = !showWechatDrafts">
-          📣 公众号草稿箱
+        <button type="button" title="公众号个人工作台（不自动发布或群发）" aria-controls="home-wechat-drafts" :aria-expanded="showWechatDrafts" @click="showWechatDrafts = !showWechatDrafts">
+          📣 公众号工作台
         </button>
         <button type="button" title="把当前网页收藏到主页" @click="home.favoriteCurrentPage">
           ☆ 收藏网页
@@ -52,7 +52,7 @@ const state = computed(() => home.panelState);
 
     <HomeLaunchers />
     <section v-if="showWechatDrafts" id="home-wechat-drafts" class="home-wechat-drafts" aria-label="公众号草稿管理">
-      <WechatDraftPanel />
+      <WechatWorkbenchPanel />
     </section>
     <HomeShortcuts />
     <HomeRecents />
@@ -129,11 +129,11 @@ const state = computed(() => home.panelState);
 
 .home-wechat-drafts {
   margin: 0 0 20px;
-  padding: 18px;
-  border-radius: 12px;
-  background: var(--chrome-toolbar, #fff);
+  padding: 0;
+  border-radius: 18px;
+  background: transparent;
   color: var(--chrome-text, #3c4043);
-  border: 1px solid var(--chrome-border, #dadce0);
+  border: none;
 }
 /* 窄窗口：标题与操作各占一行，操作按钮横向铺开便于点击 */
 @media (max-width: 720px) {
