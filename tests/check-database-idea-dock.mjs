@@ -3,6 +3,7 @@ import {readFileSync} from 'node:fs';
 import {KEY, normalizeDock, readDock, writeDock, resizedWidth, resizedOutput, markdownResult} from '../src/capabilities/database/model/ideaDock.mjs';
 import {exportRows, assertLosslessQueryExport} from '../src/capabilities/database/model/studioSql.mjs';
 import {projectTableRows, tableTextPreview} from '../src/capabilities/database/model/studioTable.mjs';
+import {decodeDbRows, projectTableRows as projectRawRows} from '../src/capabilities/database/model/resultProjection.mjs';
 assert.equal(normalizeDock().side,'right');
 assert.deepEqual(normalizeDock({side:'unsafe',navigator:Infinity,output:9000}),{side:'right',navigator:268,inspector:258,output:750,resultOpen:true,resultMaximized:false});
 assert.equal(resizedWidth(300,100,'left',920,260),360);
@@ -16,6 +17,16 @@ cache.set(KEY,'{"navigator":1e100}');assert.equal(readDock(storage).navigator,56
 cache.set(KEY,'{bad');assert.equal(readDock(storage).side,'right');
 assert.equal(readDock({getItem:()=>{throw new Error('private')}}).side,'right');
 assert.equal(writeDock({}, {setItem:()=>{throw new Error('private')}}),false);
+const decodedRows=decodeDbRows([[{i64:'9223372036854775807'},{text:'x'.repeat(250)},{bool:true},'null',{i64:'42'},42]]);
+assert.equal(decodedRows[0][0],'9223372036854775807');assert.equal(decodedRows[0][1].length,250);
+assert.equal(decodedRows[0][2],true);assert.equal(decodedRows[0][3],null);assert.equal(decodedRows[0][4],42);assert.equal(decodedRows[0][5],42);
+const markdown=markdownResult(['bigint','long_text'],[[decodedRows[0][0],decodedRows[0][1]]]);assert.ok(markdown.includes('9223372036854775807'));assert.equal(markdown.includes('x'.repeat(250)),true);
+const rawProjection=projectRawRows([{name:'id'},{name:'name'},{name:'note'}],
+  [{row_id:'row-1',values:['1','old',null]},{row_id:'row-2',values:['2','second','x']}],
+  {'row-1':{name:'draft'}},[{id:'insert-1',values:{name:'new',note:null}}],['row-2']);
+assert.deepEqual(rawProjection[0].values,['1','draft',null]);assert.equal(rawProjection[1].removed,true);
+assert.equal(rawProjection[2].inserted,true);assert.deepEqual(rawProjection[2].defaults,[true,false,false]);
+
 assert.match(markdownResult(['name'],[['alpha|beta']]),/alpha\\\|beta/);
 assert.doesNotThrow(()=>assertLosslessQueryExport([[{text:'<binary 3 bytes>'}, {i64:3}, 'null']]));
 assert.throws(()=>assertLosslessQueryExport([[{binary:{bytes:3}}]]), /无法无损/);
@@ -57,6 +68,7 @@ assert.match(workspace,/DatabaseOutput/);
 assert.doesNotMatch(workspace,/!raw|selectResult\(index\)/,'workspace must not reference undefined result bindings');
 assert.match(workspace,/db\.document\.raw/,'clear-result state must use the active document');
 assert.match(output,/rawRows=computed/,'result export must start from raw typed rows');
+assert.ok(output.includes('decodeDbRows(raw.value?.rows ?? [])'),'raw IPC rows must be decoded without display truncation');
 assert.match(output,/exportRows\(v\.columns,rows\.value/,'export must use raw filtered rows');
 assert.match(panel,/v-model="objectFilter"/,'object search must be present in the active source tree');
 assert.doesNotMatch(panel,/class="schema-row"/,'legacy duplicate schema tree must be removed');
@@ -73,6 +85,7 @@ for(const name of ['DatabasePanel','DatabaseWorkspace','DatabaseOutput','TableDa
 }
 assert.match(output,/aria-orientation="horizontal"/);
 assert.match(readFileSync('src/capabilities/database/ui/TableDataEditor.vue','utf8'),/exportTableData/);
+assert.ok(readFileSync('src/capabilities/database/ui/TableDataEditor.vue','utf8').includes(':disabled="!canEdit||!!table.cell"'),'cannot remove a row while a cell editor is open');
 assert.match(panel,/aria-orientation="vertical"/);
 assert.match(panel,/db-dialog-sources/);
 assert.match(panel,/source-children/);

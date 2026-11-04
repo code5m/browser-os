@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import {computed, onBeforeUnmount, onMounted, ref, watch} from 'vue';
 import {useDatabaseStore} from '../state/useDatabaseStore';
-import {buildResultView, decodeDbValue, truncateText} from '../../../utils/dbUi';
+import {buildResultView, truncateText} from '../../../utils/dbUi';
+import {decodeDbRows} from '../model/resultProjection.mjs';
 import {exportRows, assertLosslessQueryExport} from '../model/studioSql.mjs';
 import {readDock, resizedOutput, writeDock, markdownResult} from '../model/ideaDock.mjs';
 
@@ -27,7 +28,7 @@ const raw=computed(()=>db.document.raw);
 const view=computed(()=>raw.value?buildResultView(raw.value):null);
 // Preserve decoded scalar types for sorting, filtering, copying and export.
 // The display projection may truncate text, but it never feeds an exporter.
-const rawRows=computed(()=>Array.isArray(raw.value?.rows)?raw.value.rows.map(row=>(Array.isArray(row)?row:[]).map(cell=>decodeDbValue(cell))):[]);
+const rawRows=computed(()=>decodeDbRows(raw.value?.rows ?? []));
 const sourceLabel=computed(()=>{
   const conn=db.connections.find(c=>c.id===db.document.connId);
   return conn?.name||'未绑定数据源';
@@ -55,8 +56,10 @@ const rows=computed(()=>{
 const displayed=computed(()=>rows.value.slice(page.value*50,(page.value+1)*50));
 const visibleColumns=computed(()=>view.value?.columns.map((name,index)=>({name,index})).filter(x=>!hiddenColumns.value.has(x.index))||[]);
 const textPreview=computed(()=>{
-  try{return exportText().slice(0,160000);}
-  catch(error){return '无法生成文本预览：'+String(error);}
+  try{
+    const text=exportText();
+    return text.length>160000?text.slice(0,160000)+'…预览已截断；完整内容请使用“导出”。':text;
+  }catch(error){return '无法生成文本预览：'+String(error);}
 });
 watch(()=>[db.activeDocument,raw.value,filter.value],()=>{
   page.value=0;sortColumn.value=-1;hiddenColumns.value=new Set();valueEditor.value=null;
