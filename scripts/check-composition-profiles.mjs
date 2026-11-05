@@ -97,6 +97,9 @@ async function run() {
     else bad(`PROF-04-${name}`, `${name} 应含 terminal+browser+全部`, sIds.join(","));
   }
 
+  if (ids(full).includes("wechat")) ok("PROF-06", "full profile 注册微信公众号工作台能力");
+  else bad("PROF-06", "full profile 应注册微信公众号工作台", ids(full).join(","));
+
   // bootstrap 不抛错（能力层失败不应打断启动）
   if (minimal.activated && dev.activated && full.activated) ok("PROF-05", "各 profile bootstrap activated=true（无能力层异常）");
   else bad(

@@ -724,7 +724,7 @@ capabilities:
       - home.launch
       - home.favorite
     dependsOn: [browser, workspace, apps, bridge]
-    optionalDependencies: []
+    optionalDependencies: [wechat]
     lifecycle:
       supported: [ACTIVE, SUSPENDED]
       default: ACTIVE
@@ -740,3 +740,28 @@ capabilities:
       scope: disk
       sensitive: false
     entrypoint: src/capabilities/home/index.ts
+
+  - id: wechat
+    name: 微信公众号工作台
+    category: CAPABILITY
+    semanticOwner: WechatWorkbenchPanel
+    governanceStatus: GOVERNED
+    status: COMPATIBILITY_WRAPPED
+    maturity: C3
+    provides: [wechat.workbench, wechat.material.upload, wechat.draft]
+    dependsOn: [bridge]
+    optionalDependencies: []
+    lifecycle:
+      supported: [ACTIVE, SUSPENDED]
+      default: ACTIVE
+      activatable: true
+      resident: false
+    resources:
+      class: [LIGHT]
+      suspendable: true
+      destroyable: true
+    permissions: []
+    persistence:
+      scope: runtime_only
+      sensitive: false
+    entrypoint: src/capabilities/wechat/index.ts

@@ -384,14 +384,6 @@ fn chat_with_history(
     Ok(json!({"content":content,"model":profile.model}))
 }
 
-fn provider_turn(
-    profile: &AiProfile,
-    messages: &[Value],
-    tools: &[Value],
-) -> Result<Value, String> {
-    provider_turn_cancelable(profile, messages, tools, &|| false)
-}
-
 fn provider_turn_cancelable(
     profile: &AiProfile,
     messages: &[Value],
@@ -807,6 +799,7 @@ fn coding_turn(
 ) -> Result<Value, String> {
     coding_turn_cancelable(path, id, messages, tools, &|| false)
 }
+#[cfg(test)]
 fn coding_turn_cancelable(
     path: &Path,
     id: &str,

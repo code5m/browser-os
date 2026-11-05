@@ -24,6 +24,18 @@ owners:
     rationale: Existing stateless launcher and lifecycle owner; browser owns all opened WebViews. User approved required browser dependency on 2026-10-26.
     status: CURRENT_SOURCE
 
+  wechat_workbench:
+    owner: WechatWorkbenchPanel
+    owns:
+      - 微信公众号工作台模块页签入口与页面级 UI 状态
+    owner_only_api:
+      - openWechatWorkbench
+    may_call:
+      - useLayoutStore openModule("wechat")
+      - WeChat draft/material bridge public commands
+    rationale: Workbench UI is a first-class module tab; draft-only API workflow remains separate from publish/send actions.
+    status: CURRENT_SOURCE
+
   view_navigation:
     owner: useLayoutStore
     owns:
