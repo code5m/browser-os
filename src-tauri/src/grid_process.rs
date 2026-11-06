@@ -187,6 +187,10 @@ pub struct GridProcessManager {
     /// 子进程窗口焦点状态（子进程经 UDS Event 上报）：主窗 blur 时据此区分
     /// "用户点了宫格"（不隐藏）与"切到其它应用"（隐藏防幽灵浮层）
     child_focused: Mutex<HashMap<u32, bool>>,
+    // One coalescing relocation worker, regardless of GTK move/resize rate.
+    // The version is a latest-value notification, never an unbounded channel.
+    reposition_pending: AtomicU64,
+    reposition_running: AtomicBool,
 }
 
 impl GridProcessManager {
@@ -779,7 +783,63 @@ impl GridProcessManager {
         })
     }
 
-    /// 主窗 Moved/Resized：按记忆的 CSS rect 重算绝对坐标并下发（发后即忘）。
+    /// GTK move/resize callback: record latest geometry without touching the
+    /// UDS writer lock. Slow grid children can take up to 2 seconds per write,
+    /// which must never happen on the GTK main event loop.
+    pub fn request_reposition_async(&self) {
+        self.reposition_pending.fetch_add(1, Ordering::AcqRel);
+        if self.reposition_running.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let Some(app) = self.app() else {
+            self.reposition_running.store(false, Ordering::Release);
+            return;
+        };
+        let spawn = std::thread::Builder::new()
+            .name("browseros-grid-position".into())
+            .spawn(move || {
+                let manager = &app.state::<crate::bridge::AppState>().grid_manager;
+                loop {
+                    let observed = manager.reposition_pending.load(Ordering::Acquire);
+                    let started = std::time::Instant::now();
+                    manager.reposition_visible();
+                    let elapsed = started.elapsed().as_millis();
+                    if elapsed >= 50 {
+                        let pending = manager.reposition_pending.load(Ordering::Acquire);
+                        eprintln!(
+                            "[health] grid_reposition_background_slow elapsed_ms={elapsed} pending_updates={}",
+                            pending.saturating_sub(observed)
+                        );
+                    }
+                    if !manager.finish_reposition_iteration(observed) {
+                        break;
+                    }
+                }
+            });
+        if let Err(error) = spawn {
+            self.reposition_running.store(false, Ordering::Release);
+            eprintln!("[grid-manager] relocation worker unavailable: {error}");
+        }
+    }
+
+    /// A move arriving while the worker is sending must be replayed after the
+    /// stale write finishes. Hand-off is race-safe even when a new event starts
+    /// another worker during the final active=false transition.
+    fn finish_reposition_iteration(&self, observed: u64) -> bool {
+        if self.reposition_pending.load(Ordering::Acquire) != observed {
+            return true;
+        }
+        self.reposition_running.store(false, Ordering::Release);
+        if self.reposition_pending.load(Ordering::Acquire) == observed {
+            return false;
+        }
+        self.reposition_running
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    }
+
+    /// Worker thread only: recompute latest CSS→screen rectangles and emit UDS
+    /// writes in sequence. Visibility checks remain the source of truth.
     pub fn reposition_visible(&self) {
         let items: Vec<(u32, (f64, f64, f64, f64))> = self
             .children
@@ -1273,5 +1333,52 @@ mod grid_connection_generation_tests {
         assert!(!comms.is_connected());
         assert!(comms.writer.lock().unwrap().is_none());
         assert!(matches!(new_rx.try_recv(), Ok(Err(_))));
+    }
+}
+
+#[cfg(test)]
+mod grid_reposition_coalescing_tests {
+    use super::*;
+
+    #[test]
+    fn dirty_geometry_is_replayed_after_a_slow_uds_write() {
+        let manager = GridProcessManager::default();
+        manager.reposition_running.store(true, Ordering::Release);
+        manager.reposition_pending.store(10, Ordering::Release);
+        // The GTK event lands before the background writer finishes.
+        manager.reposition_pending.store(11, Ordering::Release);
+        assert!(manager.finish_reposition_iteration(10));
+        assert!(manager.reposition_running.load(Ordering::Acquire));
+        // A late event must survive another in-flight iteration, too.
+        manager.reposition_pending.store(12, Ordering::Release);
+        assert!(manager.finish_reposition_iteration(11));
+        assert!(!manager.finish_reposition_iteration(12));
+        assert!(!manager.reposition_running.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn a_new_gtk_event_can_claim_the_idle_worker_after_completion() {
+        let manager = GridProcessManager::default();
+        manager.reposition_running.store(true, Ordering::Release);
+        manager.reposition_pending.store(1, Ordering::Release);
+        assert!(!manager.finish_reposition_iteration(1));
+        assert!(!manager.reposition_running.load(Ordering::Acquire));
+        // Event callbacks claim at most one worker; subsequent requests are
+        // reduced to a monotonically increasing latest-value counter.
+        assert!(!manager.reposition_running.swap(true, Ordering::AcqRel));
+        manager.reposition_pending.fetch_add(1, Ordering::AcqRel);
+        assert!(manager.reposition_running.swap(true, Ordering::AcqRel));
+        manager.reposition_pending.fetch_add(1, Ordering::AcqRel);
+        assert_eq!(manager.reposition_pending.load(Ordering::Acquire), 3);
+    }
+
+    #[test]
+    fn gtk_queue_writes_no_grid_socket_without_an_app() {
+        let manager = GridProcessManager::default();
+        for _ in 0..1_000 {
+            manager.request_reposition_async();
+        }
+        assert!(!manager.reposition_running.load(Ordering::Acquire));
+        assert_eq!(manager.reposition_pending.load(Ordering::Acquire), 1_000);
     }
 }

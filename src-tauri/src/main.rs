@@ -163,6 +163,63 @@ fn native_hide_all_webviews(app: tauri::AppHandle) -> Result<(), String> {
     bridge::hide_all_webviews(native_main_webview(&app)?, app)
 }
 
+/// The GTK thread must never run the terminal/grid/WebView cleanup chain.
+#[derive(Default)]
+struct ExitLifecycleState {
+    started: std::sync::atomic::AtomicBool,
+    completed: std::sync::atomic::AtomicBool,
+}
+
+impl ExitLifecycleState {
+    fn claim(&self) -> bool {
+        !self.started.swap(true, std::sync::atomic::Ordering::AcqRel)
+    }
+
+    fn completed(&self) -> bool {
+        self.completed.load(std::sync::atomic::Ordering::Acquire)
+    }
+}
+
+fn begin_graceful_shutdown(app: tauri::AppHandle, trigger: &'static str) {
+    let state = app.state::<ExitLifecycleState>();
+    if !state.claim() {
+        return;
+    }
+    let worker_app = app.clone();
+    let spawn = std::thread::Builder::new()
+        .name("browseros-shutdown".into())
+        .spawn(move || {
+            let started = std::time::Instant::now();
+            eprintln!("[shutdown] begin trigger={trigger}");
+            // Cleanup work is serialized by ShutdownCoordinator and runs OFF
+            // the GTK loop. The app remains alive until its report is ready.
+            let report = worker_app
+                .state::<shutdown::ShutdownCoordinator>()
+                .shutdown();
+            eprintln!(
+                "[shutdown] cleanup_finished trigger={trigger} elapsed_ms={}",
+                started.elapsed().as_millis()
+            );
+            log_shutdown_report(&report);
+            worker_app
+                .state::<ExitLifecycleState>()
+                .completed
+                .store(true, std::sync::atomic::Ordering::Release);
+            let exit_handle = worker_app.clone();
+            if let Err(error) = worker_app.run_on_main_thread(move || exit_handle.exit(0)) {
+                eprintln!("[shutdown] scheduling final exit failed: {error}");
+                worker_app.exit(1);
+            }
+        });
+    if let Err(error) = spawn {
+        // A failed thread creation must not leave an unclosable window.
+        state
+            .started
+            .store(false, std::sync::atomic::Ordering::Release);
+        eprintln!("[shutdown] unable to start cleanup worker: {error}");
+    }
+}
+
 fn log_shutdown_report(report: &shutdown::ShutdownReport) {
     eprintln!(
         "[shutdown] completed ok={} already_shutdown={} executed={}",
@@ -1498,16 +1555,9 @@ fn main() {
                     let state = handle.state::<AppState>();
                     match event {
                         WindowEvent::Moved(_) | WindowEvent::Resized(_) => {
-                            // Existing placement semantics unchanged. A slow
-                            // synchronous UDS write on the GTK event thread is
-                            // a suspected freeze source and must be measurable
-                            // while the async Grid relocation is unfinished.
-                            let start = std::time::Instant::now();
-                            state.grid_manager.reposition_visible();
-                            let elapsed = start.elapsed().as_millis();
-                            if elapsed >= 50 {
-                                eprintln!("[health] gtk_grid_reposition_slow elapsed_ms={elapsed}");
-                            }
+                            // Bounded latest-value work: never acquire a grid
+                            // UDS writer lock on the GTK window event thread.
+                            state.grid_manager.request_reposition_async();
                         }
                         WindowEvent::Focused(false) => {
                             // 延迟判定：点击宫格子窗口同样触发主窗 blur，
@@ -1521,14 +1571,19 @@ fn main() {
                             });
                         }
                         WindowEvent::Focused(true) => {
-                            state.grid_manager.show_for_focus();
+                            // show_for_focus sends UDS messages; avoid blocking GTK
+                            // behind an unresponsive grid child.
+                            let h = handle.clone();
+                            std::thread::spawn(move || {
+                                h.state::<AppState>().grid_manager.show_for_focus();
+                            });
                         }
-                        WindowEvent::CloseRequested { .. } => {
-                            let start = std::time::Instant::now();
-                            eprintln!("[shutdown] begin trigger=window_close");
-                            let report = handle.state::<shutdown::ShutdownCoordinator>().shutdown();
-                            eprintln!("[shutdown] completed trigger=window_close elapsed_ms={}", start.elapsed().as_millis());
-                            log_shutdown_report(&report);
+                        WindowEvent::CloseRequested { api, .. } => {
+                            // Prevent the main window from disappearing while
+                            // resource cleanup is still in progress. GTK only
+                            // schedules work and never waits for it.
+                            api.prevent_close();
+                            begin_graceful_shutdown(handle.clone(), "window_close");
                         }
                         _ => {}
                     }
@@ -1585,6 +1640,7 @@ fn main() {
         // M0-2.b：注入统一生命周期核心。本检查点只提供核心，不迁移任何退出路径
         // （M0-2.c 负责把窗口关闭/菜单退出/系统退出与 grid/PTY/tab/线程调用方切到它）。
         .manage(shutdown::ShutdownCoordinator::new())
+        .manage(ExitLifecycleState::default())
         // M0-3.b：一次性用户意图令牌登记表（外部页面发起副作用调用时校验）。
         .manage(security_policy::IntentRegistry::new())
         // M4-3（Lane A4）：数据库连接配置登记簿（不含非 Send 的池句柄，按需重连）。
@@ -1816,14 +1872,51 @@ fn main() {
                         bridge::handle_open_url(app, u.as_str());
                     }
                 }
-                tauri::RunEvent::ExitRequested { .. } => {
-                    let start = std::time::Instant::now();
-                    eprintln!("[shutdown] begin trigger=exit_requested");
-                    let report = app.state::<shutdown::ShutdownCoordinator>().shutdown();
-                    eprintln!("[shutdown] completed trigger=exit_requested elapsed_ms={}", start.elapsed().as_millis());
-                    log_shutdown_report(&report);
+                tauri::RunEvent::ExitRequested { api, .. } => {
+                    if !app.state::<ExitLifecycleState>().completed() {
+                        api.prevent_exit();
+                        begin_graceful_shutdown(app.clone(), "exit_requested");
+                    }
                 }
                 _ => {}
             }
         });
+}
+
+#[cfg(test)]
+mod graceful_exit_state_tests {
+    use super::*;
+
+    #[test]
+    fn only_one_cleanup_worker_claims_close_and_exit_events() {
+        let exit = ExitLifecycleState::default();
+        assert!(exit.claim());
+        assert!(!exit.claim());
+        assert!(!exit.completed());
+        exit.completed
+            .store(true, std::sync::atomic::Ordering::Release);
+        assert!(exit.completed());
+        assert!(!exit.claim());
+    }
+
+    #[test]
+    fn concurrent_close_callbacks_do_not_spawn_duplicate_cleanup() {
+        let exit = std::sync::Arc::new(ExitLifecycleState::default());
+        let wins = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let handles: Vec<_> = (0..24)
+            .map(|_| {
+                let exit = exit.clone();
+                let wins = wins.clone();
+                std::thread::spawn(move || {
+                    if exit.claim() {
+                        wins.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+                    }
+                })
+            })
+            .collect();
+        for handle in handles {
+            handle.join().unwrap();
+        }
+        assert_eq!(wins.load(std::sync::atomic::Ordering::Acquire), 1);
+    }
 }

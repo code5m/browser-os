@@ -1286,7 +1286,10 @@ pub async fn coding_service(
                 .map_err(|_| "AGENT_STREAM_DISCONNECTED".to_string())
         };
         let execution =
-            crate::capabilities::agent::execution_owner::ProductionExecution::begin("coding")?;
+            crate::capabilities::agent::execution_owner::ProductionExecution::begin_coding(
+                &cancel_root,
+                request["session_id"].as_str(),
+            )?;
         let response = crate::capabilities::agent::public_api::dispatch_coding_request(
             &root,
             &storage,
