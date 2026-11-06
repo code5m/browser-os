@@ -37,6 +37,11 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const CHECK_NAME = "ARCHITECTURE";
+// Dedicated injected-page script is not part of the privileged Vue application
+// and cannot import src/bridge.ts. It may submit evidence through exactly one
+// tab-scoped, readback-only Native command. Other commands and files still fail.
+const REMOTE_BFC_READBACK_SCRIPT = "src/capabilities/bfc/model/readbackScripts.mjs";
+const REMOTE_BFC_SUBMIT_CALL = /(^|[^\w.])invoke\s*\(\s*["']bfc_readback_submit["']\s*,/;
 
 // ---------------------------------------------------------------------------
 // File scanning helpers
@@ -175,6 +180,11 @@ function checkInvokeCall(content, filePath, isBridge) {
     if (/^\s*import\s/.test(text)) continue;
     // Match invoke( preceded by start-of-string or a non-identifier non-dot char.
     if (/(^|[^\w.])invoke\s*\(/.test(text)) {
+      // The injected BFC script runs in an isolated remote tab, not the
+      // privileged Vue app. Permit only its ticket-bound evidence command.
+      if (rel(filePath) === REMOTE_BFC_READBACK_SCRIPT && REMOTE_BFC_SUBMIT_CALL.test(text)) {
+        continue;
+      }
       findings.push({
         severity: "P1",
         file: rel(filePath),
@@ -371,6 +381,12 @@ function selfTest() {
     true,
   );
   ok("bridge.ts invoke() call allowed", f4.length === 0);
+
+  const remoteScriptPath = join(ROOT, "src", "capabilities", "bfc", "model", "readbackScripts.mjs");
+  const remoteAllowed = checkInvokeCall('await invoke("bfc_readback_submit", { ticket, payload });', remoteScriptPath, false);
+  const remoteDenied = checkInvokeCall('await invoke("delete_path", { path });', remoteScriptPath, false);
+  const ordinaryDenied = checkInvokeCall('await invoke("bfc_readback_submit", { ticket });', fakePath, false);
+  ok("remote BFC invoke exception is exact command and file", remoteAllowed.length === 0 && remoteDenied.length === 1 && ordinaryDenied.length === 1);
 
   // 5. non-invoke Tauri import → WARN
   const w5 = checkNonInvokeTauriImport(

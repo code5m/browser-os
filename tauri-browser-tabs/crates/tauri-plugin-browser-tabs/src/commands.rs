@@ -61,19 +61,30 @@ impl TabManager {
             .parse()
             .map_err(|_| BrowserTabError::InvalidUrl(options.url.clone()))?;
 
-        // Emit navigation events back to the frontend.
-        let id = options.id.clone();
-        let app = self.app.clone();
+        // Linux WebKitGTK invokes on_navigation for subframe navigations as
+        // well as the main document. A busy page with srcdoc/about:blank
+        // iframes would overwrite the BrowserOS address bar. On Linux,
+        // notify::uri on the native WebView provides the authoritative MAIN
+        // frame URL; use that instead, below. Other platforms keep the
+        // original on_navigation path until equivalent native evidence exists.
+        #[cfg(not(target_os = "linux"))]
+        let nav_id = options.id.clone();
+        #[cfg(not(target_os = "linux"))]
+        let nav_app = self.app.clone();
         let mut builder = WebviewBuilder::new(&options.id, WebviewUrl::External(url))
-            .on_navigation(move |url| {
-                eprintln!("[browser-tabs] navigationFinished id={} url={}", id, url);
-                let _ = app.emit(
-                    "browser-tabs://event",
-                    BrowserTabEvent::NavigationFinished {
-                        id: id.clone(),
-                        url: url.to_string(),
-                    },
-                );
+            .on_navigation(move |next_url| {
+                #[cfg(not(target_os = "linux"))]
+                {
+                    let _ = nav_app.emit(
+                        "browser-tabs://event",
+                        BrowserTabEvent::NavigationFinished {
+                            id: nav_id.clone(),
+                            url: next_url.to_string(),
+                        },
+                    );
+                }
+                #[cfg(target_os = "linux")]
+                let _ = next_url;
                 true
             })
             .transparent(options.transparent);
@@ -83,7 +94,11 @@ impl TabManager {
         let id_nw = options.id.clone();
         let app_nw = self.app.clone();
         builder = builder.on_new_window(move |url, _features| {
-            eprintln!("[browser-tabs] newWindowRequested id={} url={}", id_nw, url);
+            eprintln!(
+                "[browser-tabs] newWindowRequested id={} url_bytes={}",
+                id_nw,
+                url.as_str().len()
+            );
             let _ = app_nw.emit(
                 "browser-tabs://event",
                 BrowserTabEvent::NewWindowRequested {
@@ -111,6 +126,40 @@ impl TabManager {
 
         let host = self.host_window()?;
         let webview = platform::create_child_webview(&host, builder, options.rect)?;
+
+        // Main-frame navigation truth on Linux. Gtk/WebKit's WebView.uri
+        // property changes for the top-level document, not its iframe
+        // documents. notify::uri also catches redirects and history changes.
+        // This listener ONLY observes URL state; it never changes GTK sizing,
+        // visibility or the browser lifecycle.
+        #[cfg(target_os = "linux")]
+        {
+            let uri_id = options.id.clone();
+            let uri_app = self.app.clone();
+            let _ = webview.with_webview(move |native| {
+                use webkit2gtk::WebViewExt;
+                let gtk_wv = native.inner();
+                let last_uri = std::cell::RefCell::new(String::new());
+                gtk_wv.connect_uri_notify(move |wv| {
+                    let Some(uri) = wv.uri() else { return };
+                    let value = uri.as_str();
+                    let mut previous = last_uri.borrow_mut();
+                    if value.is_empty() || value == previous.as_str() {
+                        return;
+                    }
+                    *previous = value.to_owned();
+                    // Keep URL in the trusted IPC payload only. Never write
+                    // a URL/query containing credentials into stderr.
+                    let _ = uri_app.emit(
+                        "browser-tabs://event",
+                        BrowserTabEvent::NavigationFinished {
+                            id: uri_id.clone(),
+                            url: value.to_owned(),
+                        },
+                    );
+                });
+            });
+        }
 
         // Shell shortcuts belong to the trusted GTK host, not remote-page JS/IPC.
         // Capture only three app-owned shortcuts from a focused child WebView.

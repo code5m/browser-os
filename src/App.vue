@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, onBeforeUnmount, onErrorCaptured, ref } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { bridge } from "./bridge";
+import { recordShellHeartbeat, recordNavigationApplied } from "./application/shellDiagnostics";
 import { useBrowserStore } from "./capabilities/browser/public";
 import { useResourceStore } from "./capabilities/browser/public";
 import { useSessionStore } from "./capabilities/session/public";
@@ -74,6 +75,7 @@ onErrorCaptured((err: unknown) => {
 const appHeight = ref<string>("100vh");
 let unlistenResize: (() => void) | null = null;
 let unlistenChildShortcut: (() => void) | null = null;
+let uiHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let layoutBusy = false;
 
 // 唯一的系统全屏入口：仅模式涉及沉浸时才调用原生窗口。
@@ -125,6 +127,8 @@ onBeforeUnmount(() => {
   window.removeEventListener("browseros:set-shell-mode", onShellModeRequest);
   unlistenResize?.();
   unlistenChildShortcut?.();
+  if (uiHeartbeatTimer !== null) clearInterval(uiHeartbeatTimer);
+  uiHeartbeatTimer = null;
 });
 
 async function syncWindowSize() {
@@ -148,6 +152,17 @@ onMounted(async () => {
   if (!(window as any).__TAURI_INTERNALS__) {
     return;
   }
+  // The native watchdog samples GTK. This periodic shell pulse separately
+  // marks Vue/JS event-loop progress in the existing session logfile, so a
+  // frozen renderer can be distinguished from a blocked GTK host. No URLs,
+  // form values, document bodies or credentials are ever sent to the logger.
+  let expectedPulseAt = performance.now() + 5_000;
+  uiHeartbeatTimer = setInterval(() => {
+    const current = performance.now();
+    const lagMs = Math.max(0, Math.round(current - expectedPulseAt));
+    expectedPulseAt = current + 5_000;
+    recordShellHeartbeat(lagMs, layout.mainView);
+  }, 5_000);
   await syncWindowSize();
   unlistenResize = await getCurrentWindow().onResized(syncWindowSize);
   unlistenChildShortcut = await onChildShellShortcut((event) => {
@@ -187,7 +202,13 @@ onMounted(async () => {
     layout.showToast("✅ 已保存到成果库");
   });
   bridge.onTabTitle((t) => browser.setTitle(t));
-  bridge.onTabNavigated((d) => browser.setNavigated(d.id, d.url));
+  bridge.onTabNavigated((d) => {
+    const previous = browser.tabs.find((tab) => tab.id === d.id)?.url;
+    browser.setNavigated(d.id, d.url);
+    if (previous !== undefined && previous !== d.url) {
+      recordNavigationApplied(d.id, d.seq ?? 0, d.url.length);
+    }
+  });
   // M1-8：资源瀑布实时事件（payload 已是后端脱敏 DTO）。订阅放全局，
   // 保证 Dock 面板未挂载时记录也不丢。
   bridge.onResourceReceived((r) => resources.applyReceived(r));

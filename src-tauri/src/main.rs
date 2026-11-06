@@ -6,6 +6,7 @@ mod crashlog;
 mod domain;
 mod grid_ipc;
 mod grid_process;
+mod hang_diagnostics;
 mod shared {
     pub mod clipboard;
     pub mod images;
@@ -25,6 +26,7 @@ mod session;
 mod shutdown;
 mod capabilities {
     pub mod agent;
+    pub mod bfc;
     pub mod browser;
     pub mod database;
     pub mod git;
@@ -1373,7 +1375,7 @@ fn main() {
                 match payload.get("type").and_then(|t| t.as_str()) {
                     Some("newWindowRequested") => {
                         if let Some(url) = payload.get("url").and_then(|u| u.as_str()) {
-                            eprintln!("[main] forward new-tab-request url={}", url);
+                            eprintln!("[main] forward new-tab-request url_bytes={}", url.len());
                             let _ =
                                 forward.emit("new-tab-request", serde_json::json!({ "url": url }));
                         }
@@ -1382,9 +1384,15 @@ fn main() {
                     Some("navigationFinished") => {
                         let id = payload.get("id").and_then(|i| i.as_str()).unwrap_or("");
                         let url = payload.get("url").and_then(|u| u.as_str()).unwrap_or("");
-                        eprintln!("[main] emit tab-navigated id={} url={}", id, url);
+                        // Navigation URLs may contain query credentials. Only the
+                        // trusted frontend event carries the full URL; disk logs
+                        // record tab identity and URL length, never its contents.
+                        static NAV_SEQUENCE: std::sync::atomic::AtomicU64 =
+                            std::sync::atomic::AtomicU64::new(1);
+                        let seq = NAV_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        eprintln!("[navigation] main_forward seq={} tab={} url_bytes={}", seq, id, url.len());
                         let _ = forward
-                            .emit("tab-navigated", serde_json::json!({ "id": id, "url": url }));
+                            .emit("tab-navigated", serde_json::json!({ "id": id, "url": url, "seq": seq }));
                     }
                     // 插件只暴露 loadFailed（网络/TLS/站点加载失败），不等价于渲染进程崩溃。
                     // 这里仅转为可观察事件，不自动重建，避免坏 URL 进入恢复循环。
@@ -1436,6 +1444,10 @@ fn main() {
                 .maximized(true)
                 .build()?;
             eprintln!("[main] main window url={:?}", window.url());
+            // Out-of-band GTK health sampler. The timer posts at most one
+            // callback; the dedicated worker can still snapshot thread wait
+            // channels and memory pressure when the window loop is blocked.
+            hang_diagnostics::start(app.handle().clone());
             let _ = window.show();
             let _ = window.set_focus();
             // 修正主 UI webview 的 GTK allocation / CSS 视口（WebKitGTK 偶发卡在小尺寸，
@@ -1486,7 +1498,16 @@ fn main() {
                     let state = handle.state::<AppState>();
                     match event {
                         WindowEvent::Moved(_) | WindowEvent::Resized(_) => {
+                            // Existing placement semantics unchanged. A slow
+                            // synchronous UDS write on the GTK event thread is
+                            // a suspected freeze source and must be measurable
+                            // while the async Grid relocation is unfinished.
+                            let start = std::time::Instant::now();
                             state.grid_manager.reposition_visible();
+                            let elapsed = start.elapsed().as_millis();
+                            if elapsed >= 50 {
+                                eprintln!("[health] gtk_grid_reposition_slow elapsed_ms={elapsed}");
+                            }
                         }
                         WindowEvent::Focused(false) => {
                             // 延迟判定：点击宫格子窗口同样触发主窗 blur，
@@ -1503,7 +1524,10 @@ fn main() {
                             state.grid_manager.show_for_focus();
                         }
                         WindowEvent::CloseRequested { .. } => {
+                            let start = std::time::Instant::now();
+                            eprintln!("[shutdown] begin trigger=window_close");
                             let report = handle.state::<shutdown::ShutdownCoordinator>().shutdown();
+                            eprintln!("[shutdown] completed trigger=window_close elapsed_ms={}", start.elapsed().as_millis());
                             log_shutdown_report(&report);
                         }
                         _ => {}
@@ -1557,6 +1581,7 @@ fn main() {
             Ok(())
         })
         .manage(AppState::default())
+        .manage(capabilities::bfc::runtime::BfcRuntime::default())
         // M0-2.b：注入统一生命周期核心。本检查点只提供核心，不迁移任何退出路径
         // （M0-2.c 负责把窗口关闭/菜单退出/系统退出与 grid/PTY/tab/线程调用方切到它）。
         .manage(shutdown::ShutdownCoordinator::new())
@@ -1574,6 +1599,12 @@ fn main() {
             capabilities::database::studio::db_studio_close,
             capabilities::database::studio::db_studio_call,
             capabilities::database::studio::db_studio_open,
+            capabilities::bfc::commands::bfc_readback_begin,
+            capabilities::bfc::commands::bfc_readback_submit,
+            capabilities::bfc::commands::bfc_readback_status,
+            capabilities::bfc::commands::bfc_readback_cancel,
+            capabilities::bfc::commands::bfc_readback_finish,
+            capabilities::bfc::commands::bfc_service_status,
             capabilities::git::studio::git_studio_cancel,
             capabilities::git::studio::git_studio_confirm,
             capabilities::git::studio::git_studio_preview,
@@ -1615,6 +1646,9 @@ fn main() {
             capabilities::workspace::weixin_drafts::wechat_upload_cover,
             capabilities::workspace::weixin_drafts::wechat_create_draft,
             capabilities::workspace::weixin_drafts::wechat_get_draft_status,
+            capabilities::workspace::weixin_drafts::wechat_working_draft_load,
+            capabilities::workspace::weixin_drafts::wechat_working_draft_save,
+            capabilities::workspace::weixin_drafts::wechat_working_draft_clear,
             bridge::get_start_dirs,
             bridge::reveal_artifact,
             fs_cmds::reveal_path,
@@ -1783,7 +1817,10 @@ fn main() {
                     }
                 }
                 tauri::RunEvent::ExitRequested { .. } => {
+                    let start = std::time::Instant::now();
+                    eprintln!("[shutdown] begin trigger=exit_requested");
                     let report = app.state::<shutdown::ShutdownCoordinator>().shutdown();
+                    eprintln!("[shutdown] completed trigger=exit_requested elapsed_ms={}", start.elapsed().as_millis());
                     log_shutdown_report(&report);
                 }
                 _ => {}

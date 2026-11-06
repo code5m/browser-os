@@ -4,6 +4,7 @@
 use crate::keyring_store::KeyringStore;
 use crate::security_policy as sp;
 use crate::shared::invocation::check_invocation_source;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -11,6 +12,8 @@ use tauri::AppHandle;
 
 // One OS keyring item avoids partially applied account rotation.
 const ACCOUNT_KEY: &str = "wechat:official:account-v1";
+const WORKING_DRAFT_KEY: &str = "wechat:official:working-draft-v1";
+const MAX_WORKING_DRAFT_BYTES: usize = 64 * 1024;
 const API_BASE: &str = "https://api.weixin.qq.com/cgi-bin";
 const MAX_HTML: usize = 1_000_000;
 
@@ -415,6 +418,137 @@ pub async fn wechat_get_draft_status(
     )
 }
 
+/// User-authored WeChat draft state is kept in a dedicated OS-keyring item.
+/// It is never copied to localStorage, browser cache or the provider API until
+/// the user explicitly presses Create Draft.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WechatWorkingDraft {
+    pub version: u32,
+    pub title: String,
+    pub author: String,
+    pub digest: String,
+    pub content_html: String,
+    pub cover_path: String,
+    pub body_image_path: String,
+    pub cover_media_id: String,
+    pub body_image_url: String,
+    pub draft_media_id: String,
+    pub verified: bool,
+    pub outcome_unknown: bool,
+    pub updated_at_ms: u64,
+}
+
+fn validate_working_draft(draft: &WechatWorkingDraft) -> Result<(), String> {
+    if draft.version != 1
+        || draft.title.chars().count() > 32
+        || draft.author.chars().count() > 16
+        || draft.digest.chars().count() > 120
+        || draft.content_html.len() > 19_999
+        || draft.cover_path.len() > 4096
+        || draft.body_image_path.len() > 4096
+        || draft.cover_media_id.len() > 512
+        || draft.body_image_url.len() > 2048
+        || draft.draft_media_id.len() > 512
+        || draft.title.contains(['\r', '\n', '\0'])
+        || draft.author.contains(['\r', '\n', '\0'])
+        || draft.digest.contains('\0')
+        || draft.content_html.contains('\0')
+        || draft.cover_path.contains('\0')
+        || draft.body_image_path.contains('\0')
+        || (!draft.cover_media_id.is_empty() && !safe_media_id(&draft.cover_media_id))
+        || (!draft.draft_media_id.is_empty() && !safe_media_id(&draft.draft_media_id))
+        || (!draft.body_image_url.is_empty()
+            && !(draft.body_image_url.starts_with("https://mmbiz.qpic.cn/")
+                || draft.body_image_url.starts_with("https://mmbiz.qlogo.cn/")))
+    {
+        return Err("WECHAT_WORKING_DRAFT_INVALID".into());
+    }
+    for (name, value, max) in [
+        ("title", draft.title.as_str(), 512),
+        ("author", draft.author.as_str(), 256),
+        ("digest", draft.digest.as_str(), 1024),
+        ("content_html", draft.content_html.as_str(), 19_999),
+        ("cover_path", draft.cover_path.as_str(), 4096),
+        ("body_image_path", draft.body_image_path.as_str(), 4096),
+        ("cover_media_id", draft.cover_media_id.as_str(), 512),
+        ("body_image_url", draft.body_image_url.as_str(), 2048),
+        ("draft_media_id", draft.draft_media_id.as_str(), 512),
+    ] {
+        sp::check_text_field(name, value, max).map_err(|_| "WECHAT_WORKING_DRAFT_INVALID")?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn wechat_working_draft_load(
+    app: AppHandle,
+    webview: tauri::Webview,
+) -> Result<Option<WechatWorkingDraft>, String> {
+    check_invocation_source(&webview, "wechat_working_draft_load", None, &app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let raw = match KeyringStore::get_token_result(WORKING_DRAFT_KEY) {
+            Ok(value) => value,
+            Err(keyring::Error::NoEntry) => return Ok(None),
+            Err(_) => return Err("WECHAT_DRAFT_STORE_UNAVAILABLE".into()),
+        };
+        if raw.len() > MAX_WORKING_DRAFT_BYTES {
+            return Err("WECHAT_WORKING_DRAFT_INVALID".into());
+        }
+        let draft: WechatWorkingDraft =
+            serde_json::from_str(&raw).map_err(|_| "WECHAT_WORKING_DRAFT_INVALID")?;
+        validate_working_draft(&draft)?;
+        Ok(Some(draft))
+    })
+    .await
+    .map_err(|_| "WECHAT_DRAFT_STORE_WORKER_FAILED".to_string())?
+}
+
+#[tauri::command]
+pub async fn wechat_working_draft_save(
+    app: AppHandle,
+    webview: tauri::Webview,
+    mut draft: WechatWorkingDraft,
+) -> Result<u64, String> {
+    check_invocation_source(&webview, "wechat_working_draft_save", None, &app)?;
+    draft.version = 1;
+    draft.updated_at_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .min(u64::MAX as u128) as u64;
+    validate_working_draft(&draft)?;
+    let encoded = serde_json::to_string(&draft).map_err(|_| "WECHAT_WORKING_DRAFT_INVALID")?;
+    if encoded.len() > MAX_WORKING_DRAFT_BYTES {
+        return Err("WECHAT_WORKING_DRAFT_TOO_LARGE".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        KeyringStore::save_token(WORKING_DRAFT_KEY, &encoded)
+            .map_err(|_| "WECHAT_DRAFT_STORE_UNAVAILABLE".to_string())?;
+        Ok(draft.updated_at_ms)
+    })
+    .await
+    .map_err(|_| "WECHAT_DRAFT_STORE_WORKER_FAILED".to_string())?
+}
+
+#[tauri::command]
+pub async fn wechat_working_draft_clear(
+    app: AppHandle,
+    webview: tauri::Webview,
+) -> Result<(), String> {
+    check_invocation_source(&webview, "wechat_working_draft_clear", None, &app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        match KeyringStore::get_token_result(WORKING_DRAFT_KEY) {
+            Err(keyring::Error::NoEntry) => Ok(()),
+            Err(_) => Err("WECHAT_DRAFT_STORE_UNAVAILABLE".into()),
+            Ok(_) => KeyringStore::delete_token(WORKING_DRAFT_KEY)
+                .map_err(|_| "WECHAT_DRAFT_STORE_UNAVAILABLE".to_string()),
+        }
+    })
+    .await
+    .map_err(|_| "WECHAT_DRAFT_STORE_WORKER_FAILED".to_string())?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -490,6 +624,45 @@ mod tests {
         assert_eq!(
             checked_payload(json!({"errcode":48001,"errmsg":"secret=do-not-show"})).unwrap_err(),
             "WECHAT_API_48001"
+        );
+    }
+
+    #[test]
+    fn working_draft_roundtrip_validates_bounds_and_never_contains_appsecret() {
+        let sample = WechatWorkingDraft {
+            version: 1,
+            title: "未完成选题".into(),
+            author: "作者".into(),
+            content_html: "<p>用户自己的正文</p>".into(),
+            outcome_unknown: true,
+            ..Default::default()
+        };
+        validate_working_draft(&sample).expect("working draft is within bounds");
+        let serialized = serde_json::to_string(&sample).unwrap();
+        assert!(!serialized.contains("app_secret"));
+        assert!(!serialized.contains("access_token"));
+        let restored: WechatWorkingDraft = serde_json::from_str(&serialized).unwrap();
+        assert!(
+            restored.outcome_unknown,
+            "ambiguous submit state must survive roundtrip"
+        );
+        assert_eq!(restored.content_html, sample.content_html);
+
+        let oversized = WechatWorkingDraft {
+            title: "字".repeat(33),
+            ..sample.clone()
+        };
+        assert_eq!(
+            validate_working_draft(&oversized),
+            Err("WECHAT_WORKING_DRAFT_INVALID".into())
+        );
+        let foreign_image = WechatWorkingDraft {
+            body_image_url: "https://example.org/image.png".into(),
+            ..sample
+        };
+        assert_eq!(
+            validate_working_draft(&foreign_image),
+            Err("WECHAT_WORKING_DRAFT_INVALID".into())
         );
     }
 }

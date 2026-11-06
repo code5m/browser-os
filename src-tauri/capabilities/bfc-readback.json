@@ -1,0 +1,20 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "bfc-readback",
+  "description": "Bilibili only: scoped DOM evidence reply to the short-lived main-window session",
+  "windows": [
+    "main"
+  ],
+  "webviews": [
+    "tab-*"
+  ],
+  "remote": {
+    "urls": [
+      "https://www.bilibili.com/*",
+      "https://space.bilibili.com/*"
+    ]
+  },
+  "permissions": [
+    "bfc-readback"
+  ]
+}

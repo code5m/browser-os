@@ -197,7 +197,14 @@ function showOmnibox(event:FocusEvent) {
   layout.navSection = omniOverlayAllowed.value ? 'omni' : '';
   nextTick(syncSuggestionsGeometry);
 }
-function blurAddress(){addressFocused.value=false;layout.closeNavSection();}
+function blurAddress(){
+  addressFocused.value=false;
+  // The URL can change while the user focuses the omnibox. The watcher
+  // intentionally preserves typed text during editing; release that snapshot
+  // on blur so a missed focused-time update never sticks indefinitely.
+  addressText.value=contextualAddress.value;
+  layout.closeNavSection();
+}
 async function showRecentAddresses() {
   layout.closeNavSection();
   const entries=omniCandidates.value.map(s=>({text:s.label,action:()=>chooseSuggestion(s)}));
