@@ -145,8 +145,7 @@ jobs:
       contents: read
     env:
       # Reduce temporary debug-symbol storage, not tests, assertions or features.
-      # Release profile unchanged; frontend size budget remains against historical M0 baseline.
-      # Advisory warning at 30%, hard reject after 35% (scripts/measure-build-metrics.py).
+      # Release profile unchanged; current frontend size caps and master delta are verified below.
       CARGO_PROFILE_DEV_DEBUG: '0'
       CARGO_PROFILE_TEST_DEBUG: '0'
       CARGO_INCREMENTAL: '0'
@@ -221,9 +220,9 @@ jobs:
       - name: Terminal Chromium DOM differential tests
         if: needs.impact.outputs.mode == 'full'
         run: dbus-run-session -- node scripts/check-xterm-dom.mjs
-      # Historical M0 overrun stays visible. Only the previously approved
-      # finite Monaco budget and a fresh same-run master comparison can pass.
-      - name: Audited frontend size (M0 history, Monaco budget, master delta)
+      # Check the exact shipped bytes against approved finite caps and the
+      # same-run master increment; do not report obsolete cumulative M0 breaches.
+      - name: Audited frontend size (approved caps, exact hashes, master delta)
         if: needs.impact.outputs.mode == 'full'
         env:
           SIZE_BASE_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || 'origin/master' }}

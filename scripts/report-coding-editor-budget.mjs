@@ -61,7 +61,7 @@ if(verifyDist){
  for(const item of outputs)assert.equal(hash(readFileSync(join('dist',item.fileName))),hash(item.type==='chunk'?item.code:item.source),`Production content mismatch: ${item.fileName}`);
  distVerification={status:'PASS',files:diskFiles.length,comparison:'SHA256 of every emitted file; exact disk inventory'};
 }
-const report={schema:'browseros-editor-budget-audit-v1',css_split:split,dist_verification:distVerification,initial_js_graph:initialGraph,post_build_compaction_bytes_saved:compacted.bytesSaved,total_bytes:total,exclusive_editor_bytes:editor,core_and_shared_bytes:total-editor,chunks,assets,limitations:['Historical baseline and 45% comparison remain unchanged.','Core includes every shared/unattributed byte.','Worker attribution uses exact content hashes and complete source-module ownership.','This is build attribution, not startup time, memory use or installed package size.']};
+const report={schema:'browseros-editor-budget-audit-v1',css_split:split,dist_verification:distVerification,initial_js_graph:initialGraph,post_build_compaction_bytes_saved:compacted.bytesSaved,total_bytes:total,exclusive_editor_bytes:editor,core_and_shared_bytes:total-editor,chunks,assets,limitations:['The same-run master incremental limit is verified separately by the CI size gate.','Core includes every shared/unattributed byte.','Worker attribution uses exact content hashes and complete source-module ownership.','This is build attribution, not startup time, memory use or installed package size.']};
 if(enforceBudget){
  const policy=JSON.parse(readFileSync(new URL('../docs/engineering/coding-editor-budget.json',import.meta.url)));
  const manifest=JSON.parse(readFileSync('package.json')),lock=JSON.parse(readFileSync('package-lock.json'));

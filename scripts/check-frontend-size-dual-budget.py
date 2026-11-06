@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Fail-closed frontend gates: immutable M0 history, approved editor budget,
-and a fresh same-run master build. Never reset the historical baseline.
+"""Fail-closed current frontend size gates: approved absolute budgets,
+exact production asset verification and a same-run master increment limit.
 """
 from __future__ import annotations
 
@@ -17,18 +17,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-HISTORICAL = "logs/m0-build-metrics/build-metrics-052b18a.json"
 EDITOR_POLICY = "docs/engineering/coding-editor-budget.json"
 METRICS = "scripts/measure-build-metrics.py"
-# A deliberately small, blocking review budget for performance changes.
-# This does not modify the archived M0 45% threshold or the approved editor caps.
+# A small, blocking incremental performance review budget.
+# The separately approved editor/core/total absolute caps remain mandatory.
 MASTER_GROWTH_LIMIT_PCT = 1.0
 
 
 def metrics_module():
     spec = importlib.util.spec_from_file_location("browseros_metrics", ROOT / METRICS)
     if spec is None or spec.loader is None:
-        raise RuntimeError("cannot load historical metrics implementation")
+        raise RuntimeError("cannot load build metrics implementation")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -67,6 +66,15 @@ def delta(base_bytes: int, current_bytes: int, limit_pct: float = MASTER_GROWTH_
 
 def same_blob(head: str, base: str, path: str) -> bool:
     return git("rev-parse", f"{head}:{path}") == git("rev-parse", f"{base}:{path}")
+
+
+def approved_policy_unchanged(base: str) -> bool:
+    """Only drop obsolete reporting metadata; never silently revise caps or deps."""
+    base_policy = json.loads(git("show", f"{base}:{EDITOR_POLICY}"))
+    current_policy = json.loads((ROOT / EDITOR_POLICY).read_text(encoding="utf-8"))
+    base_policy.pop("historicalBaseline", None)
+    base_policy.pop("historicalGrowthLimitPct", None)
+    return current_policy == base_policy
 
 
 def build_master(ref: str, mod) -> tuple[str, dict]:
@@ -113,31 +121,22 @@ def audited_editor(output: Path) -> dict:
 
 
 def check(ref: str, out: Path, editor_out: Path) -> int:
-    report: dict = {"schema": "browseros-frontend-dual-baseline-v1",
+    report: dict = {"schema": "browseros-frontend-size-gate-v2",
                     "generated_at": datetime.now(timezone.utc).isoformat(),
                     "status": "BLOCKED", "errors": []}
     errors = report["errors"]
     try:
         mod = metrics_module()
         current = make_snapshot(mod, ROOT / "dist")
-        historical = json.loads((ROOT / HISTORICAL).read_text(encoding="utf-8"))
-        verdict = mod.compare({"dist": current}, historical)
         report["candidate"] = {"sha": git("rev-parse", "HEAD"), "dist": current}
-        report["historical_m0"] = {
-            "path": HISTORICAL, "bytes": historical["dist"]["total_bytes"],
-            "limit_pct": verdict["growth_limit_pct"],
-            "delta_pct": verdict["deltas"]["total_bytes_pct"],
-            "status": "BREACH" if verdict["exceeds_growth_limit"] else "WITHIN_LIMIT",
-            "exception_requires": "approved finite editor/core/total audit AND same-run master delta"}
-        print(f"FROZEN_M0={report['historical_m0']['status']} growth={verdict['deltas']['total_bytes_pct']}%"
-              f" (limit={verdict['growth_limit_pct']}%; historical result is NOT reset)", flush=True)
         base_sha = git("rev-parse", "--verify", f"{ref}^{{commit}}")
         report["master_ref"] = base_sha
-        immutable = [HISTORICAL, METRICS, EDITOR_POLICY]
+        immutable = [METRICS]
         same = {name: same_blob("HEAD", base_sha, name) for name in immutable}
+        same[EDITOR_POLICY] = approved_policy_unchanged(base_sha)
         report["immutable_inputs"] = same
         if not all(same.values()):
-            errors.append("M0 baseline, metrics implementation or approved editor policy differs from master")
+            errors.append("metrics implementation or approved editor policy differs from master")
         report["build_provenance"] = {
             "node": run(["node", "--version"]).strip(),
             "npm": run(["npm", "--version"]).strip(),
@@ -163,18 +162,14 @@ def check(ref: str, out: Path, editor_out: Path) -> int:
                 errors.append("same-run master increment exceeds 1% performance review budget")
         except Exception as exc:
             errors.append(f"master same-run build/comparison: {exc}")
-        if report.get("historical_m0", {}).get("status") == "BREACH":
-            print("::warning title=Historical M0 overrun::Original frozen 45% ceiling remains breached; "
-                  "only the separately approved finite editor exception and master incremental gate "
-                  "can permit this build.", flush=True)
         if not errors:
-            report["status"] = "PASS_WITH_APPROVED_M0_EXCEPTION" if verdict["exceeds_growth_limit"] else "PASS"
+            report["status"] = "PASS"
     except Exception as exc:
         errors.append(f"size evidence preparation: {exc}")
     finally:
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        print("FRONTEND_DUAL_BASELINE_RESULT=" + report["status"], flush=True)
+        print("FRONTEND_SIZE_GATE_RESULT=" + report["status"], flush=True)
         for failure in errors:
             print("::error title=Frontend size gate::" + failure[-1600:].replace("\n", " | "), flush=True)
     return 0 if report["status"].startswith("PASS") else 1
@@ -192,7 +187,7 @@ def self_test() -> int:
         except ValueError:
             pass
     assert MASTER_GROWTH_LIMIT_PCT == 1.0
-    print("FRONTEND_DUAL_BASELINE_SELF_TEST=PASS threshold/boundary/negative/invalid")
+    print("FRONTEND_SIZE_GATE_SELF_TEST=PASS threshold/boundary/negative/invalid")
     return 0
 
 

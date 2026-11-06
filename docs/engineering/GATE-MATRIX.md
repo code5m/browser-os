@@ -26,7 +26,7 @@ Machine registry: `docs/engineering/governance.json`.
 | Rust quality | optional Rust tests | opt-in / release evidence | one compilation or SKIPPED |
 | Packaged GUI | optional packaged GUI mode | opt-in / release evidence | one Release build or SKIPPED |
 | Full GUI regression | GUI modes only | opt-in / release evidence | reuse Release, never auto-run |
-| Build metrics | `scripts/pre-merge.sh` | merge | approved editor/core/total budgets + exact production hashes; unchanged historical 45% comparison reported separately |
+| Build metrics | `scripts/pre-merge.sh` | merge | approved editor/core/total budgets + exact production hashes; independent same-run master increment limit |
 | Git integrity | `scripts/pre-merge.sh` | merge | repository object integrity |
 | Diff hygiene | `git diff --check` | push / merge | whitespace result |
 | Release baseline | immutable tag + GitHub Release | release | tag + release notes + final audit |

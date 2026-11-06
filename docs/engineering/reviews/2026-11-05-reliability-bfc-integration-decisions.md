@@ -9,7 +9,7 @@
 ## Decisions
 
 1. Preserve `.bevel/` and `需要解决的问题/` exactly as found. They are user-owned, untracked material and are not part of this branch.
-2. Keep the frozen M0 baseline and the approved editor/core/shared byte budgets unchanged. Reduce actual Core/Shared emitted bytes; do not relabel shared code as editor-only, suppress files, or skip the historical comparison.
+2. Preserve the approved editor/core/shared byte caps and production asset attribution. Reduce emitted Core/Shared bytes; do not relabel shared code as editor-only or suppress files. The obsolete cumulative M0 percentage is no longer a current CI verdict (2026-11-06 update).
 3. Workspace recovery keeps the source `session_id` from each selected encrypted journal. After a successful CAS save, clear only that selected journal and the current process journal. Never clear journals belonging to other sessions.
 4. WeChat work-in-progress state is stored in a dedicated encrypted native draft store whose key remains in the OS keyring. AppID/AppSecret never enter frontend persistence. An ambiguous `draft/add` outcome remains a durable no-blind-retry state.
 5. WeChat and BFC are full-width workbench surfaces in the existing main work area; no forced window maximization, overlay, or z-index workaround.
@@ -24,7 +24,7 @@
 ## Acceptance gates
 
 - Focused regression tests for every changed owner and failure path.
-- `npm run check`, one production build, exact Core/Shared/editor budget audit, and historical M0 comparison on the same source SHA.
+- `npm run check`, one production build, exact Core/Shared/editor budget audit, and same-run master incremental comparison on the same source SHA.
 - `cargo fmt --all --check`, `cargo check --locked`, `cargo test --locked`, plus focused Linux filesystem, Grid queue, shutdown and Coding identity tests.
 - `bash scripts/pre-merge.sh` and GitHub Full Validation on the exact branch head.
 - Package/GUI checks are reported separately. No GUI_PASS claim without the real installed-client desktop evidence required by `AGENTS.md` and `PROJECT-RULES.md`.

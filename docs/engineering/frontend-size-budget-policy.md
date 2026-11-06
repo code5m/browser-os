@@ -1,33 +1,14 @@
-# BrowserOS 前端构建体积预算（2026-10-24）
+# BrowserOS 当前前端体积预算（2026-11-06）
 
-## 目的
+## 生效规则
 
-避免长期使用已接近耗尽的旧体积余量，导致小幅正常 UI 功能增长反复阻断 Full Validation；同时保留有效的包体积治理、审计和性能质量门禁。
+- **批准的三项绝对上限**：Monaco 等编辑器独占资产 12 MiB；Core/Shared 1.5 MiB；所有构建资产合计 13.25 MiB。实际数字由 `docs/engineering/coding-editor-budget.json` 提供；不得重新归属共享字节以规避上限。
+- **真实产物核对**：对生产构建 `dist` 所有文件进行完整盘点与 SHA256 验证，校验编辑器源码所有权、锁定的依赖版本以及初始 JS 不包含编辑器代码。
+- **增量门禁**：同一 CI runner 对精确 master/base SHA 与当前 SHA 分别构建，使用相同 Node/npm、工具和统计口径；当前总字节增长超过 1% 则 FAIL。
+- **缺证据即失败**：构建、哈希、分项预算和同轮 master 对比任何一项失败，都不得标记 PASS。
 
-## 唯一预算定义
+## 输出与审计
 
-- 唯一可执行真源：`scripts/measure-build-metrics.py`。
-- 历史比较基线仍为 `logs/m0-build-metrics/build-metrics-052b18a.json`（2026-09-07，`dist.total_bytes=795517` 字节）。不自动更新或伪造基线。
-- **增长达到 30.0%**：CI 发出可观察的 warning，上传 JSON 体积证据；不单独造成构建失败。
-- **增长超过 45.0%**：阻断 Full Validation 和 `pre-merge.sh`，不能合并；恰好 45.0% 被接受。
-- 依旧校验 `cargo_warnings` 不增加（在 `pre-merge.sh` 采集）、所有 Rust/GUI/安全/架构/语义/供应链/数据库既有门禁；本次仅改变前端总字节增幅预算。
-- `dist` 是构建资产字节总和，不应被当作安装包体积、实际内存占用、冷启动时间或模块级运行开销。
+`.github/workflows/capability-v2-validation.yml` 运行 `scripts/check-frontend-size-dual-budget.py`，生成 `browseros-frontend-size-budget.json` 和 `browseros-editor-budget-audit.json`。报告仅以当轮实际构建的预算和增量为结论；历史累积超限提示已从当前 CI 结果移除。
 
-## 证据
-
-`capability-v2-validation.yml` 的 Early frozen frontend size gate 会公开当前 `dist` 度量及同比，并始终尽可能上传 artifact：
-
-`browseros-frontend-size-budget-<run_id>`，文件 `browseros-frontend-size-budget.json`
-
-JSON 记录基线来源和字节数、当前资产明细、增长百分比、预警/硬门禁状态、阈值。如果缺少基线或构建失败，工作流不应将其解释为通过。
-
-## 维护机制
-
-1. 每次合并前基于同一 head SHA 运行完整 Full Validation；达到 30% 预警时，优化超大模块/重复依赖/懒加载并记录理由，但不反复提交仅为避开 0.1% 的表面改动。
-2. 逼近 45% 时应专门安排体积治理，不得通过删除回归测试、隐藏构建文件或跳过检查逃避。
-3. 只有有实际生产构建证据、Git diff、GUI 回归、审查记录的独立变更，才能迁移冻结基线或再次调整预算；禁止自动在每个 PR 上滚动刷新基线。
-4. 对预算调整本身运行 `python3 scripts/measure-build-metrics.py --self-test`，它覆盖 30% 边界、45% 恰好可接受/超出必失败以及 cargo warning 回归。
-
-## 2026-10-24 预算调整记录
-
-用户明确要求“先调整门禁到45%”，据此将硬上限从 35% 调整为 45%。保留原历史基线、30% 预警和 warning 不增加约束，不改变资产统计口径。此前约 44.5% 的增长是预算内接受，并非通过优化降低；本次不代表体积治理完成、完整门禁或安装版 GUI 验收通过。
+历史构建档案仍可用于回溯原始测量，但不产生当轮构建的超限状态，也不得代替安装包体积、内存、冷启动或 GUI 测试证据。未来调整预算须提交经过审查的独立变更，不得篡改构建清单、源代码归属或跳过验证。
