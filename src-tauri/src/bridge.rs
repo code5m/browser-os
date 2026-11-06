@@ -164,7 +164,12 @@ fn recover_tab_webview(
     use tauri_plugin_browser_tabs::TabManagerState;
     let manager = app.state::<TabManagerState>();
     let _ = manager.close_tab(&id.to_string());
-    let (x, y, w, h) = layout.unwrap_or((0.0, 0.0, 1.0, 1.0));
+    let (x, y, w, h) = layout.unwrap_or((
+        0.0,
+        0.0,
+        INITIAL_HIDDEN_WEBVIEW_WIDTH,
+        INITIAL_HIDDEN_WEBVIEW_HEIGHT,
+    ));
     if let Err(e) = spawn_child_window(app, id, &url, x, y, w, h) {
         emit_tab_recovery_event(app, id, &url, reason, "failed", attempt, &e);
         return Err(format!("{source_error}; tab 恢复失败: {e}"));
@@ -3925,7 +3930,7 @@ pub fn tab_activate(webview: tauri::Webview, app: AppHandle, id: String) -> Resu
     crate::shared::native_legacy_policy::require_main(&webview, "tab_activate")?;
     crate::shared::native_legacy_policy::bound_text("tab_activate", "id", &id)?;
 
-    // 休眠重建：webview 已销毁的页签先按原 URL 重建（1x1 隐藏，前端 tab_position 放大）
+    // 休眠重建：webview 已销毁的页签先按原 URL 重建（稳定初始视口隐藏，前端 tab_position 定位）
     let was_hibernated = app
         .state::<AppState>()
         .hibernated_tabs
@@ -3942,7 +3947,15 @@ pub fn tab_activate(webview: tauri::Webview, app: AppHandle, id: String) -> Resu
             .map(|t| t.url.clone())
             .ok_or("TAB_NOT_FOUND")?;
         // Keep the hibernated marker until the native WebView is recreated.
-        spawn_child_window(&app, &id, &url, 0.0, 0.0, 1.0, 1.0)?;
+        spawn_child_window(
+            &app,
+            &id,
+            &url,
+            0.0,
+            0.0,
+            INITIAL_HIDDEN_WEBVIEW_WIDTH,
+            INITIAL_HIDDEN_WEBVIEW_HEIGHT,
+        )?;
         app.state::<AppState>()
             .hibernated_tabs
             .lock()

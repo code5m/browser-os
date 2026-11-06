@@ -5,6 +5,7 @@ import { useLayoutStore } from "../../../stores/useLayoutStore";
 import { openTerminalAt } from "../../../composables/terminalNav";
 import { renderMd } from "../../../utils/markdown";
 import { documentOwnership } from "../../../application/documentOwnership.mjs";
+import { persistDraftAfterSave } from "../model/draftRecovery.mjs";
 
 // ============================================================
 // Phase 8C-0A — Files Domain Owner
@@ -110,6 +111,10 @@ export const useFileStore = defineStore("files", () => {
   // persist user text in localStorage or share one journal between processes.
   const editorDraftSession = crypto.randomUUID().replaceAll("-", "");
   const inlineDraftSession = crypto.randomUUID().replaceAll("-", "");
+  // The selected source journal belongs to the recovered document, not this process.
+  // Keep that identity per path so saving one document never clears another session.
+  const editorRecoveredSessionByPath = new Map<string, string>();
+  const inlineRecoveredSessionByPath = new Map<string, string>();
   let editorJournalTimer: ReturnType<typeof setTimeout> | null = null;
   let inlineJournalTimer: ReturnType<typeof setTimeout> | null = null;
   let journalChain: Promise<void> = Promise.resolve();
@@ -118,6 +123,13 @@ export const useFileStore = defineStore("files", () => {
       layout.showToast("草稿加密保存失败，当前修改仍保留在内存中: " + String(error).slice(0, 90));
     });
     return journalChain;
+  }
+  function queueJournalStrict(action: () => Promise<void>): Promise<void> {
+    const task = journalChain.then(action);
+    journalChain = task.catch((error) => {
+      layout.showToast("草稿加密保存失败，当前修改仍保留在内存中: " + String(error).slice(0, 90));
+    });
+    return task;
   }
   // Serialize same-process saves and clears; otherwise a late debounced save
   // could recreate a discarded or already-saved draft after successful save.
@@ -613,7 +625,7 @@ export const useFileStore = defineStore("files", () => {
     const oldText = inlineText.value;
     try {
       const text = await bridge.readFile(entry.path);
-      let recovered: { baseline: string; content: string } | null = null;
+      let recovered: { session_id: string; baseline: string; content: string } | null = null;
       try {
         const drafts = await bridge.editorDraftList(entry.path);
         if (drafts.length && confirm("检测到未完成的加密行内草稿，是否恢复？")) recovered = drafts[0];
@@ -626,6 +638,8 @@ export const useFileStore = defineStore("files", () => {
       pathInput.value = filePath.value;
       inlineText.value = recovered?.content ?? text;
       inlineSavedText.value = recovered?.baseline ?? text;
+      if (recovered?.session_id) inlineRecoveredSessionByPath.set(entry.path, recovered.session_id);
+      else inlineRecoveredSessionByPath.delete(entry.path);
       inlineIsMd.value = isMd;
       inlineEdit.value = !isMd; // md 默认预览，其它文本直接编辑
       inlineHtml.value = isMd ? renderMd(inlineText.value) : "";
@@ -652,9 +666,27 @@ export const useFileStore = defineStore("files", () => {
     } finally {
       releaseSave?.();
     }
-    if (inlineFile.value !== path) return;
-    inlineSavedText.value = text;
-    if (inlineText.value === text) void queueJournal(() => bridge.editorDraftClear(path, inlineDraftSession));
+    const stillSameInlineFile = inlineFile.value === path;
+    if (stillSameInlineFile) {
+      inlineSavedText.value = text;
+      if (inlineJournalTimer) { clearTimeout(inlineJournalTimer); inlineJournalTimer = null; }
+    }
+    const recoveredSessionId = inlineRecoveredSessionByPath.get(path);
+    try {
+      await queueJournalStrict(() => persistDraftAfterSave({
+        path,
+        currentSessionId: inlineDraftSession,
+        recoveredSessionId,
+        savedText: text,
+        currentText: stillSameInlineFile ? inlineText.value : text,
+        save: (filePath, sessionId, baseline, content) => bridge.editorDraftSave(filePath, sessionId, baseline, content),
+        clear: (filePath, sessionId) => bridge.editorDraftClear(filePath, sessionId),
+      }));
+      inlineRecoveredSessionByPath.delete(path);
+    } catch (error) {
+      layout.showToast("文件已写入，但草稿恢复记录未能安全更新；请勿关闭当前编辑器: " + String(error).slice(0, 70));
+      return;
+    }
     if (inlineIsMd.value && !inlineEdit.value) inlineHtml.value = renderMd(inlineText.value);
     layout.showToast("已保存: " + inlineFile.value.split("/").pop());
   }
@@ -832,7 +864,7 @@ export const useFileStore = defineStore("files", () => {
     const currentContent = fileContent.value;
     try {
       const text = await bridge.readFile(path);
-      let recovered: { baseline: string; content: string } | null = null;
+      let recovered: { session_id: string; baseline: string; content: string } | null = null;
       try {
         const drafts = await bridge.editorDraftList(path);
         if (drafts.length && confirm("检测到未完成的加密编辑草稿，是否恢复？外部磁盘修改不会被覆盖。")) {
@@ -843,6 +875,8 @@ export const useFileStore = defineStore("files", () => {
       }
       if (request !== editorReadRequest || editorFilePath.value !== currentPath || fileContent.value !== currentContent) return false;
       editorFilePath.value = path;
+      if (recovered?.session_id) editorRecoveredSessionByPath.set(path, recovered.session_id);
+      else editorRecoveredSessionByPath.delete(path);
       editorSavedContent.value = recovered?.baseline ?? text;
       fileContent.value = recovered?.content ?? text;
       mdHtml.value = markdown ? renderMd(fileContent.value) : "";
@@ -868,10 +902,27 @@ export const useFileStore = defineStore("files", () => {
       // The native command serializes cooperating BrowserOS processes and
       // validates the baseline inside the same critical section as atomic rename.
       await bridge.writeFileCas(path, baseline, text);
-      if (editorFilePath.value === path) {
+      const stillSameEditorFile = editorFilePath.value === path;
+      if (stillSameEditorFile) {
         editorSavedContent.value = text;
-        if (fileContent.value === text) void queueJournal(() => bridge.editorDraftClear(path, editorDraftSession));
+        if (editorJournalTimer) { clearTimeout(editorJournalTimer); editorJournalTimer = null; }
       }
+      const recoveredSessionId = editorRecoveredSessionByPath.get(path);
+      try {
+        await queueJournalStrict(() => persistDraftAfterSave({
+          path,
+          currentSessionId: editorDraftSession,
+          recoveredSessionId,
+          savedText: text,
+          currentText: stillSameEditorFile ? fileContent.value : text,
+            save: (filePath, sessionId, baseline, content) => bridge.editorDraftSave(filePath, sessionId, baseline, content),
+            clear: (filePath, sessionId) => bridge.editorDraftClear(filePath, sessionId),
+          }));
+          editorRecoveredSessionByPath.delete(path);
+        } catch (journalError) {
+          layout.showToast("文件已写入，但草稿恢复记录未能安全更新；请勿关闭当前编辑器: " + String(journalError).slice(0, 70));
+          return;
+        }
       layout.showToast("已保存: " + path.split("/").pop());
     } catch (error: any) {
       layout.showToast("保存失败或磁盘冲突，草稿仍保留: " + (error?.message ?? error));

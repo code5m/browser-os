@@ -1,33 +1,15 @@
-# BrowserOS 前端构建体积预算（2026-10-24）
+# BrowserOS 前端体积预算与非阻断预警（2026-11-06）
 
-## 目的
+## 当前有效规则
 
-避免长期使用已接近耗尽的旧体积余量，导致小幅正常 UI 功能增长反复阻断 Full Validation；同时保留有效的包体积治理、审计和性能质量门禁。
+- **体积是审计，不是拒绝合并的原因**。Editor 12 MiB、Core/Shared 1.5 MiB、Total 13.25 MiB 以及相对 master 1% 的增量阈值均保持可见，但**超出时只产生 WARN**。预算数字不自动滚动，也不因增加正常功能而拒绝 PR。
+- **生产证据必须可信**：GitHub 构建当前精确 SHA 的 `dist`，`report-coding-editor-budget.mjs --verify-dist --audit-budget` 使用 Vite 生产等价内存构建，逐文件盘点并核对 SHA256；任何遗漏、不同产物、错误归属或无效统计都 FAIL。
+- **源码依赖与性能结构约束仍严格**：锁定 Monaco/DOMPurify 版本；不能把共享字节错误归为编辑器独占；不能把编辑器代码引入初始静态 JS 图。对统计器核心函数、批准的审计政策做未评审篡改仍拒绝合并。
+- **master 增量仍记录**：同一 runner 同口径构建明确的 master/base SHA、计算增量百分比，超过 1% 告警；如果 master 基准构建失败，记录 `UNAVAILABLE` 和详细警告，但当前生产构建和严格 SHA 验证若通过，CI 仍可 PASS。
+- **真正 FAIL 的项目不变**：生产编译、Rust/Native、安全、工程治理、资源归属与要求执行的安装版 GUI 验收失败仍可阻断合并。绝不把这些失败伪装成体积告警。
 
-## 唯一预算定义
+## 证据与历史
 
-- 唯一可执行真源：`scripts/measure-build-metrics.py`。
-- 历史比较基线仍为 `logs/m0-build-metrics/build-metrics-052b18a.json`（2026-09-07，`dist.total_bytes=795517` 字节）。不自动更新或伪造基线。
-- **增长达到 30.0%**：CI 发出可观察的 warning，上传 JSON 体积证据；不单独造成构建失败。
-- **增长超过 45.0%**：阻断 Full Validation 和 `pre-merge.sh`，不能合并；恰好 45.0% 被接受。
-- 依旧校验 `cargo_warnings` 不增加（在 `pre-merge.sh` 采集）、所有 Rust/GUI/安全/架构/语义/供应链/数据库既有门禁；本次仅改变前端总字节增幅预算。
-- `dist` 是构建资产字节总和，不应被当作安装包体积、实际内存占用、冷启动时间或模块级运行开销。
+GitHub Full Validation 保留 `/tmp/browseros-frontend-size-budget.json` 与 `/tmp/browseros-editor-budget-audit.json` 并上传 artifact。大小对比状态为 `PASS`、`WARN` 或 `UNAVAILABLE`，整体验证状态只在严肃的构建/完整性问题出现时 `BLOCKED`。超预算报告包含各项超出字节数，便于在后续性能优化时追踪趋势。
 
-## 证据
-
-`capability-v2-validation.yml` 的 Early frozen frontend size gate 会公开当前 `dist` 度量及同比，并始终尽可能上传 artifact：
-
-`browseros-frontend-size-budget-<run_id>`，文件 `browseros-frontend-size-budget.json`
-
-JSON 记录基线来源和字节数、当前资产明细、增长百分比、预警/硬门禁状态、阈值。如果缺少基线或构建失败，工作流不应将其解释为通过。
-
-## 维护机制
-
-1. 每次合并前基于同一 head SHA 运行完整 Full Validation；达到 30% 预警时，优化超大模块/重复依赖/懒加载并记录理由，但不反复提交仅为避开 0.1% 的表面改动。
-2. 逼近 45% 时应专门安排体积治理，不得通过删除回归测试、隐藏构建文件或跳过检查逃避。
-3. 只有有实际生产构建证据、Git diff、GUI 回归、审查记录的独立变更，才能迁移冻结基线或再次调整预算；禁止自动在每个 PR 上滚动刷新基线。
-4. 对预算调整本身运行 `python3 scripts/measure-build-metrics.py --self-test`，它覆盖 30% 边界、45% 恰好可接受/超出必失败以及 cargo warning 回归。
-
-## 2026-10-24 预算调整记录
-
-用户明确要求“先调整门禁到45%”，据此将硬上限从 35% 调整为 45%。保留原历史基线、30% 预警和 warning 不增加约束，不改变资产统计口径。此前约 44.5% 的增长是预算内接受，并非通过优化降低；本次不代表体积治理完成、完整门禁或安装版 GUI 验收通过。
+旧 M0 45% 累积超限规则已经移出当前 CI；原始日志不作发布决策。`scripts/measure-build-metrics.py --compare` 仅供历史诊断；旧的 `--approved-editor-budget` 子模式仍执行严格 SHA/依赖真实性审计，但字节超限是告警。任何正式改变批准的政策本身仍须独立审查。

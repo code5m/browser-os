@@ -7,9 +7,16 @@ use crate::domain::*;
 use tauri::{AppHandle, Emitter, Manager};
 use url::Url;
 
+/// A non-tiny offscreen/hidden initial viewport avoids a 1x1 WebKitGTK
+/// relayout while the first navigation and native tab positioning race.
+/// Keep these at a modest stable size; the frontend applies final geometry.
+pub const INITIAL_HIDDEN_WEBVIEW_WIDTH: f64 = 800.0;
+pub const INITIAL_HIDDEN_WEBVIEW_HEIGHT: f64 = 600.0;
+
 /// 在主窗口内创建一个子 Webview（方案 D：同窗口多 webview）。
 /// 底层已迁移到 tauri-plugin-browser-tabs：全链路 Logical(CSS) 坐标，
 /// Linux 下由插件强制触发 WebKitGTK size_allocate，修复子 webview 卡初始尺寸问题。
+/// The initial WebView is offscreen rather than hidden with WebKitGTK hide().
 /// window.open / target="_blank" 由插件统一拦截为 browser-tabs://event，
 /// 再在 main.rs 转发为前端既有的 new-tab-request。
 /// label 全局唯一（页签 tab-N / 宫格 grid-N）。
@@ -17,8 +24,8 @@ pub fn spawn_child_window(
     app: &AppHandle,
     label: &str,
     url: &str,
-    css_x: f64,
-    css_y: f64,
+    _css_x: f64,
+    _css_y: f64,
     css_w: f64,
     css_h: f64,
 ) -> Result<(), String> {
@@ -29,13 +36,17 @@ pub fn spawn_child_window(
         .create_tab(CreateTabOptions {
             id: label.to_string(),
             url: url.to_string(),
+            // Construct offscreen with a real viewport. Do not invoke the
+            // plugin's initial webview.hide() path after WebKit starts loading;
+            // the caller positions the WebView when the frontend is ready.
+            // -30000 is already the proven X11-safe offscreen coordinate.
             rect: LogicalRect::new(
-                css_x.round().max(0.0),
-                css_y.round().max(0.0),
-                css_w.round().max(1.0),
-                css_h.round().max(1.0),
+                -30000.0,
+                -30000.0,
+                css_w.round().max(INITIAL_HIDDEN_WEBVIEW_WIDTH),
+                css_h.round().max(INITIAL_HIDDEN_WEBVIEW_HEIGHT),
             ),
-            visible: false, // 前端随后 tab_position 时再 show
+            visible: true, // offscreen, not WebKitGTK hide() on a live view
             auto_resize: true,
             user_agent: None,
             transparent: false,
@@ -134,11 +145,19 @@ pub fn create_tab(app: AppHandle, url: &str) -> Result<TabInfo, String> {
         Err(_) => target.clone(),
     };
 
-    // 方案 B：异步创建独立子窗口（提交到主线程事件循环，避开同步创建第二个
-    // webview 卡死主线程）。窗口真正建好后由前端 tab_position 放大显示。
-    spawn_child_window(&app, &id, &target, 0.0, 0.0, 1.0, 1.0)?;
+    // 方案 B：异步创建独立子窗口。先在屏幕外预热真实视口，避免
+    // 在渲染过程调用 WebKitGTK hide() 或缩至 1x1，再由前端定位。
+    spawn_child_window(
+        &app,
+        &id,
+        &target,
+        0.0,
+        0.0,
+        INITIAL_HIDDEN_WEBVIEW_WIDTH,
+        INITIAL_HIDDEN_WEBVIEW_HEIGHT,
+    )?;
     eprintln!(
-        "[create_tab] 子窗口已提交创建 label={} init=(1x1) visible=false",
+        "[create_tab] 子窗口已提交创建 label={} init=(800x600) offscreen=true",
         id
     );
 

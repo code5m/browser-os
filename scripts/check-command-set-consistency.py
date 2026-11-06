@@ -46,8 +46,15 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MAIN_RS = os.path.join(REPO, "src-tauri", "src", "main.rs")
 BRIDGE_TS = os.path.join(REPO, "src", "bridge.ts")
 COLLECT_JS = os.path.join(REPO, "src-tauri", "injected", "collect.js")
+BFC_READBACK_JS = os.path.join(REPO, "src", "capabilities", "bfc", "model", "readbackScripts.mjs")
+# Only remote evidence submission is intentionally NOT allowed from the main
+# window. This must remain registered + explicitly remote-ACL-allowed + used
+# by the injected tab script; absence of any one part is a blocker.
+REMOTE_ONLY = {"bfc_readback_submit"}
 DEFAULT_TOML = os.path.join(REPO, "src-tauri", "permissions", "default-commands.toml")
 REMOTE_TOML = os.path.join(REPO, "src-tauri", "permissions", "remote-collect.toml")
+BFC_TOML = os.path.join(REPO, "src-tauri", "permissions", "bfc-readback.toml")
+BFC_CAPABILITY = os.path.join(REPO, "src-tauri", "capabilities", "bfc-readback.json")
 
 # 已确认的、当前有效且非本 lane 修复范围的漂移。
 # 每条必须附证据（frontend caller / Rust implementation / handler registration / ACL），
@@ -124,9 +131,15 @@ def invoked(path=None, text=None):
     return plain | typed
 
 
+def verified_remote_only(A, B_main, B_remote, C_remote):
+    return {cmd for cmd in REMOTE_ONLY if cmd in A and cmd not in B_main
+            and cmd in B_remote and cmd in C_remote}
+
+
 def compute_diffs(A, B_main, B_remote, C_main, C_remote):
+    remote_only = verified_remote_only(A, B_main, B_remote, C_remote)
     return {
-        "registered_not_in_default_acl": (A - B_main, KNOWN["registered_not_in_default_acl"]),
+        "registered_not_in_default_acl": ((A - B_main) - remote_only, KNOWN["registered_not_in_default_acl"]),
         "stale_acl_in_default": (B_main - A, set()),
         "main_invoke_not_registered": (C_main - A, KNOWN["main_invoke_not_registered"]),
         "remote_invoke_not_in_remote_acl": (C_remote - B_remote, KNOWN["remote_invoke_not_in_remote_acl"]),
@@ -176,9 +189,31 @@ def main(argv=None):
 
     A = registered_commands()
     B_main = toml_allows(DEFAULT_TOML)
-    B_remote = toml_allows(REMOTE_TOML)
+    # The historical remote-collect policy is frozen. BFC uses a dedicated,
+    # narrower HTTPS Bilibili tab-only capability with one evidence command.
+    try:
+        cap = json.loads(_read(BFC_CAPABILITY))
+        bfc_acl = toml_allows(BFC_TOML)
+        scoped = (cap["identifier"] == "bfc-readback"
+                  and cap["windows"] == ["main"]
+                  and cap["webviews"] == ["tab-*"]
+                  and cap["remote"]["urls"] == [
+                      "https://www.bilibili.com/*",
+                      "https://space.bilibili.com/*"]
+                  and cap["permissions"] == ["bfc-readback"]
+                  and bfc_acl == REMOTE_ONLY
+                  and REMOTE_ONLY.isdisjoint(toml_allows(REMOTE_TOML)))
+        if not scoped:
+            print("BFC_REMOTE_SCOPE_INVALID: BFC command must be HTTPS Bilibili tab-only, isolated from frozen remote-collect", file=sys.stderr)
+            return 1
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        print("BFC_REMOTE_SCOPE_INVALID: missing or malformed dedicated capability", file=sys.stderr)
+        return 1
+    B_remote = toml_allows(REMOTE_TOML) | bfc_acl
     C_main = invoked(BRIDGE_TS)
-    C_remote = invoked(COLLECT_JS)
+    # The BFC injected page script is a separate remote WebView entrypoint.
+    # Do not misclassify it as a main-window bridge caller.
+    C_remote = invoked(COLLECT_JS) | invoked(BFC_READBACK_JS)
 
     diffs = compute_diffs(A, B_main, B_remote, C_main, C_remote)
 
@@ -201,6 +236,11 @@ def main(argv=None):
 
     new_drift = []
     rows = []
+    remote_bad = sorted(REMOTE_ONLY - verified_remote_only(A, B_main, B_remote, C_remote))
+    if remote_bad:
+        new_drift.extend(remote_bad)
+        rows.append(("remote_only_contract", "Registered remote-only commands must have a remote caller, remote ACL and NO main-window ACL",
+                     remote_bad, [], ""))
     for key, (items, allowed) in diffs.items():
         extra = sorted(items - allowed)
         known_hits = sorted(items & allowed)
@@ -334,6 +374,15 @@ def run_self_test():
     diffs3 = compute_diffs(A3, B_main3, set(), C_main3, set())
     if not (diffs3["main_invoke_not_registered"][0] - KNOWN["main_invoke_not_registered"]):
         failures.append("真实 new drift 未被检出（false negative）")
+
+    # fixture 6: remote-only is legitimate only under all four constraints.
+    name = "bfc_readback_submit"
+    approved = verified_remote_only({name}, set(), {name}, {name})
+    if name not in approved:
+        failures.append("remote-only evidence command should be accepted with a remote ACL and caller")
+    for main_acl, remote_acl, caller in [({name}, {name}, {name}), (set(), set(), {name}), (set(), {name}, set())]:
+        if name in verified_remote_only({name}, main_acl, remote_acl, caller):
+            failures.append("remote-only command improperly accepted an unsafe ACL/caller state")
 
     if failures:
         print("COMMAND_SET_SELF_TEST: FAIL")

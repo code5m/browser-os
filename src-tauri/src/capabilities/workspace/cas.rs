@@ -1,15 +1,17 @@
-//! Workspace text-save boundary. A stable sidecar file lock serializes BrowserOS
-//! writers from independent processes; a same-directory rename provides atomic
-//! replacement after comparing the expected text under that lock.
+//! Workspace text-save boundary. Every Linux operation after authorization is
+//! rooted in a pinned parent directory FD. A stable sidecar lock serializes
+//! cooperating BrowserOS writers; same-directory rename is atomic.
 //!
-//! This is **not** a kernel-wide compare-and-swap against arbitrary writers
-//! that ignore the sidecar lock. Such writers may still race the final rename;
-//! the caller must retain a recovery draft and expose conflict/error states.
+//! This is not a kernel-wide compare-and-swap against arbitrary writers that
+//! ignore the sidecar lock. The final check detects ordinary external changes,
+//! but a non-cooperating writer can still race the final rename syscall.
 use crate::security_policy as sp;
 use crate::shared::invocation::check_invocation_source;
+#[cfg(not(target_os = "linux"))]
 use std::fs::{self, File, OpenOptions};
+#[cfg(not(target_os = "linux"))]
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tauri::AppHandle;
 
 const MAX_EDITOR_BYTES: usize = 8 * 1024 * 1024;
@@ -26,16 +28,41 @@ pub async fn write_file_cas(
     sp::check_text_field("content", &content, MAX_EDITOR_BYTES).map_err(|e| e.to_string())?;
     sp::check_text_field("expected_content", &expected_content, MAX_EDITOR_BYTES)
         .map_err(|e| e.to_string())?;
-    let canonical = sp::check_path_within_roots(&path, &crate::workspace::allowed_roots(&app))
-        .map_err(|e| e.to_string())?;
+    let roots = crate::workspace::allowed_roots(&app);
+    let canonical = sp::check_path_within_roots(&path, &roots).map_err(|e| e.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
-        save_if_unchanged(&canonical, expected_content.as_bytes(), content.as_bytes())
+        save_if_unchanged(
+            &canonical,
+            &roots,
+            expected_content.as_bytes(),
+            content.as_bytes(),
+        )
     })
     .await
     .map_err(|_| "FILE_SAVE_WORKER_FAILED".to_string())?
 }
 
-fn save_if_unchanged(path: &Path, expected: &[u8], content: &[u8]) -> Result<(), String> {
+fn save_if_unchanged(
+    path: &Path,
+    roots: &[PathBuf],
+    expected: &[u8],
+    content: &[u8],
+) -> Result<(), String> {
+    if expected.len() > MAX_EDITOR_BYTES || content.len() > MAX_EDITOR_BYTES {
+        return Err("FILE_SAVE_TOO_LARGE".into());
+    }
+    #[cfg(target_os = "linux")]
+    {
+        super::safe_paths::save_if_unchanged(path, roots, expected, content, MAX_EDITOR_BYTES)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        save_if_unchanged_path(path, expected, content)
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn save_if_unchanged_path(path: &Path, expected: &[u8], content: &[u8]) -> Result<(), String> {
     if expected.len() > MAX_EDITOR_BYTES || content.len() > MAX_EDITOR_BYTES {
         return Err("FILE_SAVE_TOO_LARGE".into());
     }
@@ -44,25 +71,23 @@ fn save_if_unchanged(path: &Path, expected: &[u8], content: &[u8]) -> Result<(),
         .file_name()
         .ok_or("FILE_NAME_INVALID")?
         .to_string_lossy();
-    // Never follow a maliciously replaced target, lock file or temporary file.
     let metadata = fs::symlink_metadata(path).map_err(|_| "FILE_TARGET_MISSING")?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
         return Err("FILE_TARGET_NOT_REGULAR".into());
     }
     let lock_path = parent.join(format!(".{name}.browseros.lock"));
-    let mut lock_opts = OpenOptions::new();
-    lock_opts.read(true).write(true).create(true);
+    let mut lock_options = OpenOptions::new();
+    lock_options.read(true).write(true).create(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        lock_opts.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+        lock_options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
     }
-    let lock = lock_opts
+    let lock = lock_options
         .open(&lock_path)
         .map_err(|_| "FILE_LOCK_UNAVAILABLE")?;
     lock.lock().map_err(|_| "FILE_LOCK_UNAVAILABLE")?;
-    // Every BrowserOS CAS writer uses this path-stable lock. Never release it
-    // between baseline check and rename; other native writers must participate.
+
     let result = (|| {
         let live_meta = fs::symlink_metadata(path).map_err(|_| "FILE_TARGET_MISSING")?;
         if live_meta.file_type().is_symlink() || !live_meta.is_file() {
@@ -81,37 +106,34 @@ fn save_if_unchanged(path: &Path, expected: &[u8], content: &[u8]) -> Result<(),
         }
         reader
             .open(path)
-            .and_then(|f| {
-                // Identity must still match the regular file measured under
-                // the lock; do not accidentally read a swapped symlink.
+            .and_then(|file| {
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::MetadataExt;
-                    let opened = f.metadata()?;
+                    let opened = file.metadata()?;
                     if (opened.dev(), opened.ino()) != (live_meta.dev(), live_meta.ino()) {
                         return Err(std::io::Error::other("FILE_CHANGED"));
                     }
                 }
-                f.take(MAX_EDITOR_BYTES as u64 + 1)
+                file.take(MAX_EDITOR_BYTES as u64 + 1)
                     .read_to_end(&mut current)
             })
             .map_err(|_| "FILE_READ_FAILED")?;
         if current != expected {
             return Err("FILE_CONFLICT".into());
         }
-        let tmp = parent.join(format!(".{name}.browseros-{}.tmp", uuid::Uuid::new_v4()));
-        let result = (|| {
-            let mut opts = OpenOptions::new();
-            opts.write(true).create_new(true);
+
+        let temp = parent.join(format!(".{name}.browseros-{}.tmp", uuid::Uuid::new_v4()));
+        let staged_result = (|| {
+            let mut options = OpenOptions::new();
+            options.write(true).create_new(true);
             #[cfg(unix)]
             {
                 use std::os::unix::fs::OpenOptionsExt;
-                opts.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+                options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
             }
-            let mut staged = opts.open(&tmp).map_err(|_| "FILE_STAGE_FAILED")?;
+            let mut staged = options.open(&temp).map_err(|_| "FILE_STAGE_FAILED")?;
             staged.write_all(content).map_err(|_| "FILE_STAGE_FAILED")?;
-            // Preserve ordinary owner permissions but never propagate SUID,
-            // SGID or sticky bits to a newly created replacement.
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
@@ -126,9 +148,9 @@ fn save_if_unchanged(path: &Path, expected: &[u8], content: &[u8]) -> Result<(),
                 .set_permissions(live_meta.permissions())
                 .map_err(|_| "FILE_STAGE_FAILED")?;
             staged.sync_all().map_err(|_| "FILE_STAGE_FAILED")?;
-            // Detect an uncooperative replacement during our temporary write.
+
             let latest = fs::symlink_metadata(path).map_err(|_| "FILE_TARGET_MISSING")?;
-            if !latest.is_file() || latest.file_type().is_symlink() {
+            if latest.file_type().is_symlink() || !latest.is_file() {
                 return Err("FILE_TARGET_NOT_REGULAR".into());
             }
             #[cfg(unix)]
@@ -150,17 +172,15 @@ fn save_if_unchanged(path: &Path, expected: &[u8], content: &[u8]) -> Result<(),
                     return Err("FILE_CONFLICT".into());
                 }
             }
-            fs::rename(&tmp, path).map_err(|_| "FILE_REPLACE_FAILED")?;
-            // The content rename is complete even if directory fsync fails;
-            // signal durability uncertainty rather than silently claiming success.
+            fs::rename(&temp, path).map_err(|_| "FILE_REPLACE_FAILED")?;
             File::open(parent)
-                .and_then(|dir| dir.sync_all())
+                .and_then(|directory| directory.sync_all())
                 .map_err(|_| "FILE_DURABILITY_UNCERTAIN".to_string())
         })();
-        if result.is_err() {
-            let _ = fs::remove_file(&tmp);
+        if staged_result.is_err() {
+            let _ = fs::remove_file(&temp);
         }
-        result
+        staged_result
     })();
     drop(lock);
     result
@@ -169,9 +189,10 @@ fn save_if_unchanged(path: &Path, expected: &[u8], content: &[u8]) -> Result<(),
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::sync::{Arc, Barrier};
 
-    fn fixture() -> (std::path::PathBuf, std::path::PathBuf) {
+    fn fixture() -> (PathBuf, PathBuf) {
         let dir = std::env::temp_dir().join(format!("browseros-cas-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&dir).unwrap();
         let file = dir.join("entry.txt");
@@ -182,53 +203,64 @@ mod tests {
     #[test]
     fn replace_is_atomic_and_conflicts_preserve_external_content() {
         let (dir, file) = fixture();
-        save_if_unchanged(&file, b"before", b"saved").unwrap();
+        let roots = [dir.clone()];
+        save_if_unchanged(&file, &roots, b"before", b"saved").unwrap();
         assert_eq!(fs::read_to_string(&file).unwrap(), "saved");
         fs::write(&file, "someone else's update").unwrap();
         assert_eq!(
-            save_if_unchanged(&file, b"saved", b"stale"),
+            save_if_unchanged(&file, &roots, b"saved", b"stale"),
             Err("FILE_CONFLICT".into())
         );
         assert_eq!(fs::read_to_string(&file).unwrap(), "someone else's update");
         assert!(!fs::read_dir(&dir)
             .unwrap()
             .flatten()
-            .any(|e| e.file_name().to_string_lossy().ends_with(".tmp")));
+            .any(|entry| entry.file_name().to_string_lossy().ends_with(".tmp")));
         fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
-    fn concurrent_writers_from_distinct_file_descriptors_have_one_winner() {
+    fn concurrent_cooperating_writers_from_distinct_file_descriptors_have_one_winner() {
         let (dir, file) = fixture();
+        let roots = [dir.clone()];
         let gate = Arc::new(Barrier::new(3));
         let writers: Vec<_> = (0..2)
             .map(|i| {
                 let file = file.clone();
+                let root = dir.clone();
                 let gate = Arc::clone(&gate);
                 std::thread::spawn(move || {
                     gate.wait();
-                    save_if_unchanged(&file, b"before", format!("edit{i}").as_bytes())
+                    save_if_unchanged(&file, &[root], b"before", format!("edit{i}").as_bytes())
                 })
             })
             .collect();
         gate.wait();
-        let results: Vec<_> = writers.into_iter().map(|w| w.join().unwrap()).collect();
-        assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 1);
+        let results: Vec<_> = writers
+            .into_iter()
+            .map(|writer| writer.join().unwrap())
+            .collect();
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
         assert_eq!(
             results
                 .iter()
-                .filter(|r| r.as_ref().err().is_some_and(|e| e == "FILE_CONFLICT"))
+                .filter(|result| result
+                    .as_ref()
+                    .err()
+                    .is_some_and(|error| error == "FILE_CONFLICT"))
                 .count(),
             1
         );
+        assert!(roots[0].join("entry.txt").exists());
         fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn target_symlink_and_oversized_draft_are_denied() {
         let (dir, file) = fixture();
+        let roots = [dir.clone()];
         assert_eq!(
-            save_if_unchanged(&file, b"before", &vec![b'a'; MAX_EDITOR_BYTES + 1]),
+            save_if_unchanged(&file, &roots, b"before", &vec![b'a'; MAX_EDITOR_BYTES + 1]),
             Err("FILE_SAVE_TOO_LARGE".into())
         );
         #[cfg(unix)]
@@ -236,7 +268,7 @@ mod tests {
             let link = dir.join("link.txt");
             std::os::unix::fs::symlink(&file, &link).unwrap();
             assert_eq!(
-                save_if_unchanged(&link, b"before", b"new"),
+                save_if_unchanged(&link, &roots, b"before", b"new"),
                 Err("FILE_TARGET_NOT_REGULAR".into())
             );
             assert_eq!(fs::read_to_string(&file).unwrap(), "before");

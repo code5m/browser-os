@@ -6,6 +6,7 @@ mod crashlog;
 mod domain;
 mod grid_ipc;
 mod grid_process;
+mod hang_diagnostics;
 mod shared {
     pub mod clipboard;
     pub mod images;
@@ -25,6 +26,7 @@ mod session;
 mod shutdown;
 mod capabilities {
     pub mod agent;
+    pub mod bfc;
     pub mod browser;
     pub mod database;
     pub mod git;
@@ -159,6 +161,63 @@ fn native_tab_position(
 }
 fn native_hide_all_webviews(app: tauri::AppHandle) -> Result<(), String> {
     bridge::hide_all_webviews(native_main_webview(&app)?, app)
+}
+
+/// The GTK thread must never run the terminal/grid/WebView cleanup chain.
+#[derive(Default)]
+struct ExitLifecycleState {
+    started: std::sync::atomic::AtomicBool,
+    completed: std::sync::atomic::AtomicBool,
+}
+
+impl ExitLifecycleState {
+    fn claim(&self) -> bool {
+        !self.started.swap(true, std::sync::atomic::Ordering::AcqRel)
+    }
+
+    fn completed(&self) -> bool {
+        self.completed.load(std::sync::atomic::Ordering::Acquire)
+    }
+}
+
+fn begin_graceful_shutdown(app: tauri::AppHandle, trigger: &'static str) {
+    let state = app.state::<ExitLifecycleState>();
+    if !state.claim() {
+        return;
+    }
+    let worker_app = app.clone();
+    let spawn = std::thread::Builder::new()
+        .name("browseros-shutdown".into())
+        .spawn(move || {
+            let started = std::time::Instant::now();
+            eprintln!("[shutdown] begin trigger={trigger}");
+            // Cleanup work is serialized by ShutdownCoordinator and runs OFF
+            // the GTK loop. The app remains alive until its report is ready.
+            let report = worker_app
+                .state::<shutdown::ShutdownCoordinator>()
+                .shutdown();
+            eprintln!(
+                "[shutdown] cleanup_finished trigger={trigger} elapsed_ms={}",
+                started.elapsed().as_millis()
+            );
+            log_shutdown_report(&report);
+            worker_app
+                .state::<ExitLifecycleState>()
+                .completed
+                .store(true, std::sync::atomic::Ordering::Release);
+            let exit_handle = worker_app.clone();
+            if let Err(error) = worker_app.run_on_main_thread(move || exit_handle.exit(0)) {
+                eprintln!("[shutdown] scheduling final exit failed: {error}");
+                worker_app.exit(1);
+            }
+        });
+    if let Err(error) = spawn {
+        // A failed thread creation must not leave an unclosable window.
+        state
+            .started
+            .store(false, std::sync::atomic::Ordering::Release);
+        eprintln!("[shutdown] unable to start cleanup worker: {error}");
+    }
 }
 
 fn log_shutdown_report(report: &shutdown::ShutdownReport) {
@@ -517,9 +576,10 @@ fn dispatch_grid_cmd(
             match manager.create_tab(CreateTabOptions {
                 id: id.clone(),
                 url,
-                // 1x1 占位 + auto_resize：子窗口尺寸由主进程 UpdateRect 控制，
-                // webview 自动跟随窗口铺满。
-                rect: LogicalRect::new(0.0, 0.0, 1.0, 1.0),
+                // Start at the hidden host's real 400x300 viewport, never
+                // force a rendering WebKitGTK WebView through a 1x1 resize.
+                // The main process later supplies the final UpdateRect.
+                rect: LogicalRect::new(0.0, 0.0, 400.0, 300.0),
                 visible: true,
                 auto_resize: true,
                 user_agent: None,
@@ -548,7 +608,7 @@ fn dispatch_grid_cmd(
                 (rect.h as u32).max(1),
             ))
             .map_err(|e| format!("set_size 失败: {e}"))?;
-            // 关键：显式把宫格 webview 铺满壳窗口。创建时是 1x1 + auto_resize，
+            // 关键：显式把宫格 webview 铺满壳窗口。创建时是 400x300 + auto_resize，
             // 但 GDK_BACKEND=x11 下 auto_resize 不可靠（WebKitGTK size_allocate
             // 老问题），webview 会保持小尺寸/漂移（实测"大白壳+小内容"）。
             // rect 是屏幕绝对物理坐标，webview 用相对壳窗口的逻辑坐标 (0,0,w,h)。
@@ -1373,7 +1433,7 @@ fn main() {
                 match payload.get("type").and_then(|t| t.as_str()) {
                     Some("newWindowRequested") => {
                         if let Some(url) = payload.get("url").and_then(|u| u.as_str()) {
-                            eprintln!("[main] forward new-tab-request url={}", url);
+                            eprintln!("[main] forward new-tab-request url_bytes={}", url.len());
                             let _ =
                                 forward.emit("new-tab-request", serde_json::json!({ "url": url }));
                         }
@@ -1382,9 +1442,15 @@ fn main() {
                     Some("navigationFinished") => {
                         let id = payload.get("id").and_then(|i| i.as_str()).unwrap_or("");
                         let url = payload.get("url").and_then(|u| u.as_str()).unwrap_or("");
-                        eprintln!("[main] emit tab-navigated id={} url={}", id, url);
+                        // Navigation URLs may contain query credentials. Only the
+                        // trusted frontend event carries the full URL; disk logs
+                        // record tab identity and URL length, never its contents.
+                        static NAV_SEQUENCE: std::sync::atomic::AtomicU64 =
+                            std::sync::atomic::AtomicU64::new(1);
+                        let seq = NAV_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        eprintln!("[navigation] main_forward seq={} tab={} url_bytes={}", seq, id, url.len());
                         let _ = forward
-                            .emit("tab-navigated", serde_json::json!({ "id": id, "url": url }));
+                            .emit("tab-navigated", serde_json::json!({ "id": id, "url": url, "seq": seq }));
                     }
                     // 插件只暴露 loadFailed（网络/TLS/站点加载失败），不等价于渲染进程崩溃。
                     // 这里仅转为可观察事件，不自动重建，避免坏 URL 进入恢复循环。
@@ -1436,6 +1502,10 @@ fn main() {
                 .maximized(true)
                 .build()?;
             eprintln!("[main] main window url={:?}", window.url());
+            // Out-of-band GTK health sampler. The timer posts at most one
+            // callback; the dedicated worker can still snapshot thread wait
+            // channels and memory pressure when the window loop is blocked.
+            hang_diagnostics::start(app.handle().clone());
             let _ = window.show();
             let _ = window.set_focus();
             // 修正主 UI webview 的 GTK allocation / CSS 视口（WebKitGTK 偶发卡在小尺寸，
@@ -1486,7 +1556,9 @@ fn main() {
                     let state = handle.state::<AppState>();
                     match event {
                         WindowEvent::Moved(_) | WindowEvent::Resized(_) => {
-                            state.grid_manager.reposition_visible();
+                            // Bounded latest-value work: never acquire a grid
+                            // UDS writer lock on the GTK window event thread.
+                            state.grid_manager.request_reposition_async();
                         }
                         WindowEvent::Focused(false) => {
                             // 延迟判定：点击宫格子窗口同样触发主窗 blur，
@@ -1500,11 +1572,19 @@ fn main() {
                             });
                         }
                         WindowEvent::Focused(true) => {
-                            state.grid_manager.show_for_focus();
+                            // show_for_focus sends UDS messages; avoid blocking GTK
+                            // behind an unresponsive grid child.
+                            let h = handle.clone();
+                            std::thread::spawn(move || {
+                                h.state::<AppState>().grid_manager.show_for_focus();
+                            });
                         }
-                        WindowEvent::CloseRequested { .. } => {
-                            let report = handle.state::<shutdown::ShutdownCoordinator>().shutdown();
-                            log_shutdown_report(&report);
+                        WindowEvent::CloseRequested { api, .. } => {
+                            // Prevent the main window from disappearing while
+                            // resource cleanup is still in progress. GTK only
+                            // schedules work and never waits for it.
+                            api.prevent_close();
+                            begin_graceful_shutdown(handle.clone(), "window_close");
                         }
                         _ => {}
                     }
@@ -1557,9 +1637,11 @@ fn main() {
             Ok(())
         })
         .manage(AppState::default())
+        .manage(capabilities::bfc::runtime::BfcRuntime::default())
         // M0-2.b：注入统一生命周期核心。本检查点只提供核心，不迁移任何退出路径
         // （M0-2.c 负责把窗口关闭/菜单退出/系统退出与 grid/PTY/tab/线程调用方切到它）。
         .manage(shutdown::ShutdownCoordinator::new())
+        .manage(ExitLifecycleState::default())
         // M0-3.b：一次性用户意图令牌登记表（外部页面发起副作用调用时校验）。
         .manage(security_policy::IntentRegistry::new())
         // M4-3（Lane A4）：数据库连接配置登记簿（不含非 Send 的池句柄，按需重连）。
@@ -1574,6 +1656,12 @@ fn main() {
             capabilities::database::studio::db_studio_close,
             capabilities::database::studio::db_studio_call,
             capabilities::database::studio::db_studio_open,
+            capabilities::bfc::commands::bfc_readback_begin,
+            capabilities::bfc::commands::bfc_readback_submit,
+            capabilities::bfc::commands::bfc_readback_status,
+            capabilities::bfc::commands::bfc_readback_cancel,
+            capabilities::bfc::commands::bfc_readback_finish,
+            capabilities::bfc::commands::bfc_service_status,
             capabilities::git::studio::git_studio_cancel,
             capabilities::git::studio::git_studio_confirm,
             capabilities::git::studio::git_studio_preview,
@@ -1615,6 +1703,9 @@ fn main() {
             capabilities::workspace::weixin_drafts::wechat_upload_cover,
             capabilities::workspace::weixin_drafts::wechat_create_draft,
             capabilities::workspace::weixin_drafts::wechat_get_draft_status,
+            capabilities::workspace::weixin_drafts::wechat_working_draft_load,
+            capabilities::workspace::weixin_drafts::wechat_working_draft_save,
+            capabilities::workspace::weixin_drafts::wechat_working_draft_clear,
             bridge::get_start_dirs,
             bridge::reveal_artifact,
             fs_cmds::reveal_path,
@@ -1782,11 +1873,51 @@ fn main() {
                         bridge::handle_open_url(app, u.as_str());
                     }
                 }
-                tauri::RunEvent::ExitRequested { .. } => {
-                    let report = app.state::<shutdown::ShutdownCoordinator>().shutdown();
-                    log_shutdown_report(&report);
+                tauri::RunEvent::ExitRequested { api, .. } => {
+                    if !app.state::<ExitLifecycleState>().completed() {
+                        api.prevent_exit();
+                        begin_graceful_shutdown(app.clone(), "exit_requested");
+                    }
                 }
                 _ => {}
             }
         });
+}
+
+#[cfg(test)]
+mod graceful_exit_state_tests {
+    use super::*;
+
+    #[test]
+    fn only_one_cleanup_worker_claims_close_and_exit_events() {
+        let exit = ExitLifecycleState::default();
+        assert!(exit.claim());
+        assert!(!exit.claim());
+        assert!(!exit.completed());
+        exit.completed
+            .store(true, std::sync::atomic::Ordering::Release);
+        assert!(exit.completed());
+        assert!(!exit.claim());
+    }
+
+    #[test]
+    fn concurrent_close_callbacks_do_not_spawn_duplicate_cleanup() {
+        let exit = std::sync::Arc::new(ExitLifecycleState::default());
+        let wins = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let handles: Vec<_> = (0..24)
+            .map(|_| {
+                let exit = exit.clone();
+                let wins = wins.clone();
+                std::thread::spawn(move || {
+                    if exit.claim() {
+                        wins.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+                    }
+                })
+            })
+            .collect();
+        for handle in handles {
+            handle.join().unwrap();
+        }
+        assert_eq!(wins.load(std::sync::atomic::Ordering::Acquire), 1);
+    }
 }

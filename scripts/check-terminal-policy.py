@@ -387,8 +387,8 @@ def run_self_test(root: Path) -> int:
         "Channel 从顶层 @tauri-apps/api 导入",
         mutate(
             bridge_ts=good["bridge_ts"].replace(
-                'import { invoke, Channel } from "@tauri-apps/api/core";',
-                'import { invoke } from "@tauri-apps/api/core";\nimport { Channel } from "@tauri-apps/api";',
+                'import { invoke as nativeInvoke, Channel } from "@tauri-apps/api/core";',
+                'import { invoke as nativeInvoke } from "@tauri-apps/api/core";\nimport { Channel } from "@tauri-apps/api";',
             )
         ),
         "bridge_ts",

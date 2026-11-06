@@ -30,7 +30,11 @@ export default defineConfig({
     // downlevel helpers for modern JS syntax. This reduces shipped bytes rather
     // than changing the frozen M0 growth threshold or metrics baseline.
     target: "es2022",
-    cssCodeSplit: false,
+    // Keep styles attached to their lazy chunks. The production size audit then
+    // attributes editor-only CSS only when every importing chunk is editor-owned;
+    // shared/global CSS remains in Core + Shared. This is real delivery splitting,
+    // not a budget reclassification.
+    cssCodeSplit: true,
     // Build-only standards-aware CSS minification; source styles and selectors stay readable.
     cssMinify: "lightningcss",
     // Hoist constant-object properties during dead-code elimination. This

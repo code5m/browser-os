@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "bfc-readback"
+description = "仅允许 Bilibili 已授权 tab WebView 提交有限 DOM 只读证据；不允许主窗口及其他站点"
+commands.allow = ["bfc_readback_submit"]

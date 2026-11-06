@@ -9,7 +9,5 @@
     "core_and_shared_bytes": 1572864,
     "total_bytes": 13893632
   },
-  "dependencies": {"monaco-editor": "0.57.0", "dompurify": "3.4.17"},
-  "historicalBaseline": "logs/m0-build-metrics/build-metrics-052b18a.json",
-  "historicalGrowthLimitPct": 45
+  "dependencies": {"monaco-editor": "0.57.0", "dompurify": "3.4.17"}
 }
