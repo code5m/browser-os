@@ -54,15 +54,21 @@ try{
  });
  const fail=error=>{for(const waiter of pending.values()){clearTimeout(waiter.timer);waiter.reject(error);}pending.clear();};
  child.on('error',fail);child.on('exit',()=>fail(Error('XTERM_DOM_BROWSER_EXIT '+stderr)));
- function call(method,params={},sessionId){
+ function call(method,params={},sessionId,timeoutMs=20000){
   return new Promise((resolve,reject)=>{
-   const id=++sequence,timer=setTimeout(()=>{pending.delete(id);reject(Error('XTERM_DOM_CDP_TIMEOUT '+method+' '+stderr));},20000);
+   const id=++sequence,timer=setTimeout(()=>{pending.delete(id);reject(Error('XTERM_DOM_CDP_TIMEOUT '+method+' '+stderr));},timeoutMs);
    pending.set(id,{resolve,reject,timer});child.stdio[3].write(JSON.stringify({id,method,params,...sessionId?{sessionId}:{}})+'\0');
   });
  }
  let report='';
  try{
-  const target=await call('Target.createTarget',{url:'about:blank'});
+  // Hosted CI concurrently compiles a native Release; Chromium can take over
+  // 20s to initialize its CDP pipe or create a renderer under transient
+  // CPU contention. Require a real browser handshake and allow a bounded 60s
+  // startup/target-creation window. Keep the 20s timeout for subsequent DOM
+  // commands and preserve every differential assertion (no skipping).
+  await call('Browser.getVersion',{},undefined,60000);
+  const target=await call('Target.createTarget',{url:'about:blank'},undefined,60000);
   const attached=await call('Target.attachToTarget',{targetId:target.targetId,flatten:true});
   const session=attached.sessionId;await call('Page.enable',{},session);
   const frame=await call('Page.getFrameTree',{},session);
