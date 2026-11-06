@@ -12,3 +12,7 @@
 `.github/workflows/capability-v2-validation.yml` 运行 `scripts/check-frontend-size-dual-budget.py`，生成 `browseros-frontend-size-budget.json` 和 `browseros-editor-budget-audit.json`。报告仅以当轮实际构建的预算和增量为结论；历史累积超限提示已从当前 CI 结果移除。
 
 历史构建档案仍可用于回溯原始测量，但不产生当轮构建的超限状态，也不得代替安装包体积、内存、冷启动或 GUI 测试证据。未来调整预算须提交经过审查的独立变更，不得篡改构建清单、源代码归属或跳过验证。
+
+### 独立旧采集器的处理（2026-11-06）
+
+`scripts/measure-build-metrics.py --compare` 仍允许以任意历史样本查询体积差异与 Rust warning 变化，但只做诊断，不再包含旧的百分比硬上限、BREACH 判定或批准例外。新的正式阻断点是绝对预算、逐文件 SHA256 与同轮 master 1% 增量审查。旧原始日志可以单独回溯，但不再作为当前超限提示。

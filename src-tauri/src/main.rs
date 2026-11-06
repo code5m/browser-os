@@ -576,9 +576,10 @@ fn dispatch_grid_cmd(
             match manager.create_tab(CreateTabOptions {
                 id: id.clone(),
                 url,
-                // 1x1 占位 + auto_resize：子窗口尺寸由主进程 UpdateRect 控制，
-                // webview 自动跟随窗口铺满。
-                rect: LogicalRect::new(0.0, 0.0, 1.0, 1.0),
+                // Start at the hidden host's real 400x300 viewport, never
+                // force a rendering WebKitGTK WebView through a 1x1 resize.
+                // The main process later supplies the final UpdateRect.
+                rect: LogicalRect::new(0.0, 0.0, 400.0, 300.0),
                 visible: true,
                 auto_resize: true,
                 user_agent: None,
@@ -607,7 +608,7 @@ fn dispatch_grid_cmd(
                 (rect.h as u32).max(1),
             ))
             .map_err(|e| format!("set_size 失败: {e}"))?;
-            // 关键：显式把宫格 webview 铺满壳窗口。创建时是 1x1 + auto_resize，
+            // 关键：显式把宫格 webview 铺满壳窗口。创建时是 400x300 + auto_resize，
             // 但 GDK_BACKEND=x11 下 auto_resize 不可靠（WebKitGTK size_allocate
             // 老问题），webview 会保持小尺寸/漂移（实测"大白壳+小内容"）。
             // rect 是屏幕绝对物理坐标，webview 用相对壳窗口的逻辑坐标 (0,0,w,h)。

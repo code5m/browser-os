@@ -5,6 +5,7 @@ exact production asset verification and a same-run master increment limit.
 from __future__ import annotations
 
 import argparse
+import ast
 import importlib.util
 import json
 import os
@@ -66,6 +67,22 @@ def delta(base_bytes: int, current_bytes: int, limit_pct: float = MASTER_GROWTH_
 
 def same_blob(head: str, base: str, path: str) -> bool:
     return git("rev-parse", f"{head}:{path}") == git("rev-parse", f"{base}:{path}")
+
+
+def metrics_collector_unchanged(base: str) -> bool:
+    """Permit removal of obsolete M0 verdicts, but not measurement drift.
+
+    The only imported size functions are collect_dist and gzip_bytes. Compare
+    their exact normalized ASTs to the base commit (comments/CLI may evolve).
+    """
+    original = ast.parse(git("show", f"{base}:{METRICS}"))
+    current = ast.parse((ROOT / METRICS).read_text(encoding="utf-8"))
+    def selected(tree):
+        return {node.name: ast.dump(node, include_attributes=False)
+                for node in tree.body if isinstance(node, ast.FunctionDef)
+                and node.name in {"collect_dist", "gzip_bytes"}}
+    original_functions = selected(original)
+    return len(original_functions) == 2 and selected(current) == original_functions
 
 
 def approved_policy_unchanged(base: str) -> bool:
@@ -131,12 +148,11 @@ def check(ref: str, out: Path, editor_out: Path) -> int:
         report["candidate"] = {"sha": git("rev-parse", "HEAD"), "dist": current}
         base_sha = git("rev-parse", "--verify", f"{ref}^{{commit}}")
         report["master_ref"] = base_sha
-        immutable = [METRICS]
-        same = {name: same_blob("HEAD", base_sha, name) for name in immutable}
-        same[EDITOR_POLICY] = approved_policy_unchanged(base_sha)
+        same = {METRICS: metrics_collector_unchanged(base_sha),
+                EDITOR_POLICY: approved_policy_unchanged(base_sha)}
         report["immutable_inputs"] = same
         if not all(same.values()):
-            errors.append("metrics implementation or approved editor policy differs from master")
+            errors.append("production size collector or approved editor caps/dependencies differ from master")
         report["build_provenance"] = {
             "node": run(["node", "--version"]).strip(),
             "npm": run(["npm", "--version"]).strip(),

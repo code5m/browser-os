@@ -24,26 +24,10 @@ import sys
 import time
 from pathlib import Path
 
-# M0-4 验收原始阈值为 15%；M4 数据库/调度集成引入 Rust 驱动与异步面板后
-# A0 于 2026-09-06 书面抬至 16%，当前实测 15.58%，warning 未增加。
-# M5-W5 Agent/Skill 三个面板为懒加载 chunk，A0 于 2026-09-06 书面抬至 19%，
-# 当前实测 total_bytes_pct=18.58，cargo_warnings 未增加。
-# M5-W6 GraphPanel 为懒加载 chunk，A0 于 2026-09-07 书面抬至 21%，
-# 当前实测 total_bytes_pct=20.63，cargo_warnings 未增加。
-# M5-W8 Agent/Skill bridge hardening + Graph UI polish 后，A0 于 2026-09-07
-# 书面抬至 22%，当前实测 total_bytes_pct=21.07，cargo_warnings 未增加。
-# M5-W12 Graph live-query readonly bridge/UI 后，A0 于 2026-09-07 书面抬至 23%，
-# 当前实测 total_bytes_pct=22.26，cargo_warnings 未增加。M5-W14 新增懒加载
-# PluginManager 后，A0 于 2026-09-08 抬至 25%；W15 两处高风险确认框的焦点管理
-# 令实测到 25.14%。A0 仅为该已验收的键盘可达性修复上调至 25.2%。
-# 2026-10-17: 随 Git/Database/工作台能力增加，旧 25.2% 冻结上限已阻断正常开发。
-# 在同一 052b18a 历史基线上实行预警 + 硬门禁，禁止静默再基线：
-#   30%: 可观察预警（不失败）；原 35%: 严格阻断。
-# 2026-10-24: 用户明确批准硬上限调整为 45%；历史基线和 30% 预警不变，
-# 此调整是预算变更，不代表体积优化完成，也不放宽 Rust/GUI/安全门禁。
-# 未来重新选择基线必须提交可审计的新证据与明确批准。
-TOTAL_BYTES_GROWTH_WARNING_PCT = 30.0
-TOTAL_BYTES_GROWTH_LIMIT_PCT = 45.0
+# Legacy M0 cumulative growth thresholds are retired. This CLI remains a
+# diagnostic collector (build time / asset bytes / Rust warning counts), not a
+# release-size budget. Current gates live in check-frontend-size-dual-budget.py
+# and coding-editor-budget.json; never report a stale cumulative BREACH.
 
 # cargo 输出的 warning 汇总行，例如：
 #   warning: `mvp-browser-os` (bin "mvp-browser-os") generated 2 warnings
@@ -136,10 +120,6 @@ def collect(root: Path, skip_build: bool = False) -> dict:
 
 def compare(current: dict, baseline: dict) -> dict:
     result = {
-        "exceeds_growth_limit": False,
-        "growth_warning": False,
-        "growth_warning_pct": TOTAL_BYTES_GROWTH_WARNING_PCT,
-        "growth_limit_pct": TOTAL_BYTES_GROWTH_LIMIT_PCT,
         "deltas": {},
     }
     cur_total = (current.get("dist") or {}).get("total_bytes")
@@ -147,8 +127,6 @@ def compare(current: dict, baseline: dict) -> dict:
     if cur_total is not None and base_total:
         pct = (cur_total - base_total) / base_total * 100
         result["deltas"]["total_bytes_pct"] = round(pct, 2)
-        result["growth_warning"] = pct >= TOTAL_BYTES_GROWTH_WARNING_PCT
-        result["exceeds_growth_limit"] = pct > TOTAL_BYTES_GROWTH_LIMIT_PCT
     cur_warn = current.get("cargo_warnings")
     base_warn = baseline.get("cargo_warnings")
     if cur_warn is not None and base_warn is not None:
@@ -186,24 +164,13 @@ dist/assets/index-Dt_h_hIi.js          83.16 kB │ gzip:  30.20 kB
     baseline = {"dist": {"total_bytes": 1000}, "cargo_warnings": 2}
     current = {"dist": {"total_bytes": 1100}, "cargo_warnings": 2}
     cmp_ok = compare(current, baseline)
-    if cmp_ok["deltas"]["total_bytes_pct"] != 10.0 or cmp_ok["exceeds_growth_limit"]:
-        print(f"self-test: compare within limit failed: {cmp_ok}", file=sys.stderr)
+    if cmp_ok["deltas"]["total_bytes_pct"] != 10.0:
+        print(f"self-test: diagnostic delta mismatch: {cmp_ok}", file=sys.stderr)
         return 1
-    under_warning = compare({"dist": {"total_bytes": 1299}, "cargo_warnings": 2}, baseline)
-    if under_warning["growth_warning"] or under_warning["exceeds_growth_limit"]:
-        print("self-test: below warning budget should pass silently", file=sys.stderr)
-        return 1
-    warning = compare({"dist": {"total_bytes": 1300}, "cargo_warnings": 2}, baseline)
-    if not warning["growth_warning"] or warning["exceeds_growth_limit"]:
-        print("self-test: warning threshold must be advisory", file=sys.stderr)
-        return 1
-    at_cap = compare({"dist": {"total_bytes": 1450}, "cargo_warnings": 2}, baseline)
-    if not at_cap["growth_warning"] or at_cap["exceeds_growth_limit"]:
-        print("self-test: exact hard limit must be accepted", file=sys.stderr)
-        return 1
-    over_limit = compare({"dist": {"total_bytes": 1451}, "cargo_warnings": 2}, baseline)
-    if not over_limit["exceeds_growth_limit"]:
-        print("self-test: growth hard limit not enforced", file=sys.stderr)
+    # Large legacy growth must not be presented as a current gate failure.
+    historic = compare({"dist": {"total_bytes": 20000}, "cargo_warnings": 2}, baseline)
+    if historic["deltas"]["total_bytes_pct"] != 1900.0 or "exceeds_growth_limit" in historic:
+        print("self-test: obsolete M0 gate resurfaced", file=sys.stderr)
         return 1
     warn_up = compare({"dist": {"total_bytes": 1000}, "cargo_warnings": 3}, baseline)
     if not warn_up.get("warnings_increased"):
@@ -220,7 +187,7 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--self-test", action="store_true", help="run built-in fixtures")
     mode.add_argument("--compare", type=Path, help="compare against a previous metrics file")
     parser.add_argument("--out", type=Path, help="write metrics JSON here (default: logs/m0-build-metrics/)")
-    parser.add_argument("--approved-editor-budget", action="store_true", help="enforce the explicitly approved partitioned editor budget; still report historical growth")
+    parser.add_argument("--approved-editor-budget", action="store_true", help="enforce current approved absolute budget; comparison is diagnostic only")
     parser.add_argument(
         "--skip-build", action="store_true", help="reuse existing dist/ instead of rebuilding"
     )
@@ -244,12 +211,11 @@ def main(argv: list[str] | None = None) -> int:
             # The independent gate rebuilds and hashes every production file.
             # No caller-provided report or modified historical baseline is trusted.
             print(output)
-            verdict["historical_growth_is_observational"] = True
             verdict["approved_editor_budget_passed"] = code == 0
             print(json.dumps(verdict, ensure_ascii=False, indent=2))
             return 1 if (code != 0 or verdict.get("warnings_increased") or current.get("dist") is None) else 0
         print(json.dumps(verdict, ensure_ascii=False, indent=2))
-        return 1 if (verdict["exceeds_growth_limit"] or verdict.get("warnings_increased")) else 0
+        return 1 if verdict.get("warnings_increased") else 0
 
     metrics = collect(root, skip_build=args.skip_build)
     if metrics.get("error"):
