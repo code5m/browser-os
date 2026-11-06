@@ -207,9 +207,9 @@ def main(argv: list[str] | None = None) -> int:
         current = collect(root, skip_build=args.skip_build)
         verdict = compare(current, baseline)
         if args.approved_editor_budget:
-            code, output, _ = run(["node", "scripts/report-coding-editor-budget.mjs", "--verify-dist", "--enforce-budget"], root)
-            # The independent gate rebuilds and hashes every production file.
-            # No caller-provided report or modified historical baseline is trusted.
+            code, output, _ = run(["node", "scripts/report-coding-editor-budget.mjs", "--verify-dist", "--audit-budget"], root)
+            # The independent audit rebuilds and hashes every production file;
+            # size overages are WARN and cannot trip this strict integrity check.
             print(output)
             verdict["approved_editor_budget_passed"] = code == 0
             print(json.dumps(verdict, ensure_ascii=False, indent=2))

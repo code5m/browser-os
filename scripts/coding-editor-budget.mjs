@@ -24,7 +24,7 @@ export function evaluateEditorBudget(report, policy) {
   }
   assert.equal(report.exclusive_editor_bytes + report.core_and_shared_bytes, report.total_bytes, 'Unaccounted bytes');
   const failures = fields.filter(field => report[field] > policy.limitsBytes[field]);
-  return { status: failures.length ? 'FAIL' : 'PASS', failures, limits_bytes: policy.limitsBytes };
+  return { status: failures.length ? 'WARN' : 'PASS', advisory_only: true, failures, limits_bytes: policy.limitsBytes, overage_bytes: Object.fromEntries(failures.map(field=>[field,report[field]-policy.limitsBytes[field]])) };
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url) && process.argv.includes('--self-test')) {
@@ -43,6 +43,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url) && process.argv.includes(
   for (const field of ['exclusive_editor_bytes','core_and_shared_bytes']) {
     const probe = {...sample, [field]:policy.limitsBytes[field]+1};
     probe.total_bytes=probe.exclusive_editor_bytes+probe.core_and_shared_bytes;
+    assert.equal(evaluateEditorBudget(probe, policy).status,'WARN');
+    assert.equal(evaluateEditorBudget(probe, policy).advisory_only,true);
     assert.ok(evaluateEditorBudget(probe, policy).failures.includes(field));
   }
   const editorAtLimit=policy.limitsBytes.exclusive_editor_bytes;
@@ -50,8 +52,10 @@ if (process.argv[1] === fileURLToPath(import.meta.url) && process.argv.includes(
   assert.ok(coreForTotalFailure>=0&&coreForTotalFailure<=policy.limitsBytes.core_and_shared_bytes,'Total gate must independently constrain the two component budgets');
   const totalProbe={...sample,exclusive_editor_bytes:editorAtLimit,core_and_shared_bytes:coreForTotalFailure,total_bytes:policy.limitsBytes.total_bytes+1};
   assert.deepEqual(evaluateEditorBudget(totalProbe, policy).failures,['total_bytes']);
+  assert.equal(evaluateEditorBudget(totalProbe, policy).status,'WARN');
+  assert.equal(evaluateEditorBudget(totalProbe, policy).overage_bytes.total_bytes,1);
   for (const probe of [{...sample,css_split:'true'},{...sample,dist_verification:null},{...sample,total_bytes:1},{...sample,total_bytes:NaN},{...sample,initial_js_graph:{editor_js_files:['editor.js']}}]) {
     assert.throws(()=>evaluateEditorBudget(probe,policy));
   }
-  console.log('CODING_EDITOR_BUDGET_SELF_TEST=PASS caps/unaccounted/invalid/unverified/eager-editor');
+  console.log('CODING_EDITOR_BUDGET_SELF_TEST=PASS advisory-caps/strict-accounting/invalid/unverified/eager-editor');
 }

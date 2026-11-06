@@ -74,8 +74,8 @@ pre-merge.sh — M0-1.c 本地 pre-merge 门禁（M0-1 脚本合并前检查入�
   lifecycle fixture             check-lifecycle-contract.py --self-test / --expect-current-gaps / 默认门禁
   security fixture              check-security-policy.py --self-test / --expect-current-gaps
                                 （默认模式按设计 EXIT=1，见 logs/m0-security-threat-matrix-v1.md）
-  build metrics                 approved editor/core/total budgets + exact dist hashes;
-                                historical 45% comparison retained, warning 不增加
+  build metrics                 advisory editor/core/total sizes + strict dist hashes;
+                                same-run master increment recorded in CI
   GUI regression harness        m0-6c-gui-regression.py --self-test（不启动 GUI）
   git write policy fixture      check-git-write-policy.py --self-test / 默认门禁
   git UI policy fixture         check-git-ui-policy.py --self-test / 默认门禁
@@ -258,21 +258,21 @@ run_pre_merge() {
   python3 "$SCRIPT_DIR/check-lifecycle-contract.py" >/dev/null 2>&1 \
     || pm_fail "check-lifecycle-contract.py 默认生命周期门禁"
 
-  pm_log "M0-4.c approved editor/core/total budgets and exact dist SHA256..."
+  pm_log "M0-4.c advisory size envelopes and mandatory exact dist SHA256..."
   node "$SCRIPT_DIR/coding-editor-budget.mjs" --self-test || pm_fail "coding editor budget negative fixtures"
   # Native compilation is deliberately optional in the fast validation job.
-  # The approved budget audit is identical in both modes, and does not report
-  # an obsolete cumulative percentage against the pre-editor M0 snapshot.
+  # The audit still fails on missing/unverified asset hashes, incorrect owner
+  # attribution or dependency drift; budget overshoot is warning-only.
   if [[ "${PREMERGE_SKIP_NATIVE_COMPILE:-0}" == "1" ]]; then
     pm_log "Cargo warning regression: SKIPPED (native not compiled in fast mode)"
   fi
   local metrics_output
-  if metrics_output="$(node "$SCRIPT_DIR/report-coding-editor-budget.mjs" --verify-dist --enforce-budget 2>&1)"; then
+  if metrics_output="$(node "$SCRIPT_DIR/report-coding-editor-budget.mjs" --verify-dist --audit-budget 2>&1)"; then
     printf '%s\n' "$metrics_output"
-    pm_log "approved editor/core/total budgets PASS (exact production dist verified)"
+    pm_log "production dist SHA256/ownership PASS (size envelopes advisory-only)"
   else
     printf '%s\n' "$metrics_output"
-    pm_fail "approved editor/core/total budget audit"
+    pm_fail "production dist SHA256/owner audit"
   fi
 
   pm_log "M0-3.a 安全边界夹具（现状缺口，默认模式按设计 EXIT=1，不入门禁）…"

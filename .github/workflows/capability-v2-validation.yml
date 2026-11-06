@@ -220,9 +220,9 @@ jobs:
       - name: Terminal Chromium DOM differential tests
         if: needs.impact.outputs.mode == 'full'
         run: dbus-run-session -- node scripts/check-xterm-dom.mjs
-      # Check the exact shipped bytes against approved finite caps and the
-      # same-run master increment; do not report obsolete cumulative M0 breaches.
-      - name: Audited frontend size (approved caps, exact hashes, master delta)
+      # Strict SHA256, source ownership and dependency checks; absolute size
+      # envelopes and same-run master delta are reported as advisories only.
+      - name: Verified frontend assets and advisory size trend
         if: needs.impact.outputs.mode == 'full'
         env:
           SIZE_BASE_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || 'origin/master' }}

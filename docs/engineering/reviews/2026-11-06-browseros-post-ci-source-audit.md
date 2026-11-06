@@ -38,3 +38,7 @@ Acceptance: `cargo fmt --check`, `cargo check --locked`, `cargo test --locked`, 
 - **Unresolved external validation:** 58 Native effects still lack separately demonstrated installed-GUI side-effect evidence; Bilibili and WeChat require real authorized account actions, and the large `bridge.rs` still needs bounded Owner extraction. These are not replaced with fixture PASS assertions.
 
 Do not merge until the **new exact commit** has all selected mandatory Full Validation and packaged-GUI checks PASS. Any source test results reported for this follow-up must be tied to that commit, not `d323bbb4` or prior run IDs.
+
+## Frontend size governance update (2026-11-06)
+
+User approved converting the three absolute size envelopes and same-run master +1% threshold from merge-blocking failures into warning-only audit signals. We retain exact SHA256 production verification, complete asset/owner accounting, pinned dependency and eager editor checks, provenance checks, build and all other native/security/GUI quality gates as strict failures. The `check-frontend-size-dual-budget.py` JSON now distinguishes `errors` (blocking integrity issues) from `warnings` (nonblocking size observations), and base-build inability is visible as `UNAVAILABLE` rather than a false successful comparison. The historical M0 45% breach remains retired.

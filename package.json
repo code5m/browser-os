@@ -49,7 +49,7 @@
     "prebuild": "npm run generate:rust-contracts",
     "precheck": "npm run generate:rust-contracts && npm run check:ai-config && npm run check:coding-workbench",
     "check:coding-workbench": "node tests/check-coding-workbench.mjs && node tests/check-coding-lsp.mjs",
-    "check:coding-budget": "node scripts/coding-editor-budget.mjs --self-test && node scripts/report-coding-editor-budget.mjs --verify-dist --enforce-budget",
+    "check:coding-budget": "node scripts/coding-editor-budget.mjs --self-test && node scripts/report-coding-editor-budget.mjs --verify-dist --audit-budget",
     "check:coding-ui": "node tests/check-coding-workbench-ui.cjs && node tests/check-coding-command-ui.cjs && node tests/check-coding-operation-ui.cjs && node tests/check-coding-workspace-context.cjs && node tests/check-coding-lsp-ui.cjs && node tests/check-coding-typescript-ui.cjs && node tests/check-coding-typescript-workbench-ui.cjs",
     "check:ai-config": "python3 tests/check-local-ai-import.py && python3 scripts/check-local-ai-secrets.py",
     "ai:import": "/usr/bin/python3 scripts/import-local-ai.py --apply",
