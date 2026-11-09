@@ -21,6 +21,8 @@ mod framework {
     pub mod commands;
 }
 mod mcp;
+#[cfg(not(test))]
+mod native_58_gui_review;
 mod security_policy;
 mod session;
 mod shutdown;
@@ -1633,6 +1635,13 @@ fn main() {
                 if let Ok(mut g) = app.state::<crate::graph::GraphState>().store.write() {
                     *g = store;
                 }
+            }
+            // Opt-in installed-client audit: all 58 legacy commands are invoked
+            // through the real main WebView IPC; remote-only telemetry is tested
+            // by a separate loopback browser tab. Never enabled in normal runs.
+            #[cfg(not(test))]
+            if std::env::var("NATIVE_58_GUI_REVIEW").is_ok() {
+                native_58_gui_review::start(app.handle().clone()).map_err(std::io::Error::other)?;
             }
             Ok(())
         })

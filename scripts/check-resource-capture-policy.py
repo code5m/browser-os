@@ -30,6 +30,7 @@ import argparse
 import re
 import sys
 from pathlib import Path
+from native_bridge_owner_sources import read_native_bridge_owners
 
 RESOURCE_COMMANDS = (
     "list_tab_resources",
@@ -285,6 +286,7 @@ def scan_repository(root: Path) -> list[str]:
         if path.is_file() and path.suffix in {".ts", ".vue"}:
             src_files.append((str(path.relative_to(root)), path.read_text(encoding="utf-8")))
     files["src_files"] = src_files  # type: ignore[assignment]
+    files["bridge"] = read_native_bridge_owners(root, "resource_commands")
     return detect_violations(files)
 
 

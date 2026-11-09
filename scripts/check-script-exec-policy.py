@@ -30,6 +30,7 @@ import argparse
 import re
 import sys
 from pathlib import Path
+from native_bridge_owner_sources import read_native_bridge_owners
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNNER = ROOT / "src-tauri" / "src" / "capabilities" / "script" / "script_runner.rs"
@@ -290,7 +291,7 @@ def read_ctx() -> dict[str, str]:
         "main": strip_comments(read(MAIN_RS)),
         # bridge.rs contains large embedded JS/CSS strings where naive block-comment stripping
         # can eat real Rust that follows. For c-card command checks, raw source is safer.
-        "bridge": read(BRIDGE_RS),
+        "bridge": read_native_bridge_owners(ROOT, "automation_commands", owner_first=True),
         "acl": read(ACL_TOML),
         "capability": read(CAPABILITY_JSON),
         "cargo_toml": read(CARGO_TOML),

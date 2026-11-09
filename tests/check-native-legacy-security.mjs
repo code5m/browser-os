@@ -33,10 +33,12 @@ assert.match(readFileSync(join(root,'src/capabilities/script/state/useSnippetSto
 assert.match(readFileSync(join(root,'src/capabilities/session/state/useSessionStore.ts'),'utf8'),/window\.confirm\(/)
 const serverSession=sourceFiles.find(([path])=>path.endsWith('/capabilities/session/commands.rs'))[1]
 const serverBridge=sourceFiles.find(([path])=>path.endsWith('/bridge.rs'))[1]
+const serverAutomation=sourceFiles.find(([path])=>path.endsWith('/bridge/automation_commands.rs'))[1]
+const serverSystem=sourceFiles.find(([path])=>path.endsWith('/bridge/system_commands.rs'))[1]
 assert.ok(serverSession.includes('session_delete:{id}') && serverSession.includes('.consume('))
-assert.ok(serverBridge.includes('snippet_remove:{id}') && serverBridge.includes('.consume('))
+assert.ok(serverAutomation.includes('snippet_remove:{id}') && serverAutomation.includes('.consume('))
 assert.match(serverBridge,/is_confirmed_effect/)
-assert.ok(serverBridge.includes('.consume(') && serverBridge.includes('NATIVE_USER_CONFIRMATION_REQUIRED') && serverBridge.includes('set_default_browser', serverBridge.indexOf('pub fn set_default_browser(')))
+assert.ok(serverSystem.includes('.consume(') && serverSystem.includes('NATIVE_USER_CONFIRMATION_REQUIRED') && serverSystem.includes('set_default_browser', serverSystem.indexOf('pub fn set_default_browser(')))
 const userSettings=readFileSync(join(root,'src/components/system/SettingsPanel.vue'),'utf8')
 assert.ok(userSettings.includes("bridge.nativeIssueIntent('set_default_browser')"))
 assert.ok(userSettings.includes('bridge.setDefaultBrowser(intent)'))

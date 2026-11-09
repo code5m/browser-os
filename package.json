@@ -63,7 +63,7 @@
     "check:module-contracts": "node tests/check-capability-module-contract.mjs --all && node tests/check-unified-tab-resource-projection.mjs && node tests/check-cross-workbench-document-ownership.mjs && node --experimental-strip-types tests/check-cross-workbench-file-store.mjs && node tests/check-workspace-draft-recovery.mjs && node tests/check-bfc-readback-scripts.mjs && node tests/check-bfc-native-contract.mjs && node tests/check-wechat-working-draft-contract.mjs && node tests/check-browser-navigation-and-hang-diagnostics.mjs",
     "check:async-bootstrap": "node tests/check-async-production-bootstrap.mjs",
     "check:lifecycle-perf-fixtures": "node scripts/measure-lifecycle-comparison.mjs --self-test",
-    "check:native-effect-audit": "node scripts/check-native-owner-effect-audit.mjs --self-test && node scripts/check-native-owner-effect-audit.mjs --check",
+    "check:native-effect-audit": "node scripts/check-native-owner-effect-audit.mjs --self-test && node scripts/check-native-owner-effect-audit.mjs --check && node scripts/check-native-58-gui-contract.mjs",
     "check:native-legacy-security": "node tests/check-native-legacy-security.mjs",
     "check:studio-folding": "node tests/check-studio-folding.mjs && node tests/check-workbench-fold-persistence.mjs"
   },

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-const rust=readFileSync("src-tauri/src/bridge.rs","utf8");
+const rust=readFileSync("src-tauri/src/bridge/resource_commands.rs","utf8");
 const browser=readFileSync("src/capabilities/browser/state/useBrowserStore.ts","utf8");
 const app=readFileSync("src/App.vue","utf8");
 assert.match(rust,/let id = webview\.label\(\)\.to_string\(\)/);
