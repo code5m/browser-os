@@ -27,6 +27,51 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
         return Err("NATIVE_58_REVIEW_BASE_URL_MUST_BE_LOOPBACK".into());
     }
 
+    // This opt-in reviewer is compiled into the installed Release, but it MUST
+    // never run against a real user's HOME/XDG display or xdg-settings binary.
+    // The Python launcher creates an owned /tmp/browseros-native58-* profile
+    // and puts its fake xdg-settings command first in PATH. Reject all other
+    // environments before even creating a fixture, tab, or consent token.
+    let home = PathBuf::from(std::env::var("HOME").map_err(|_| "NATIVE_58_ISOLATION_REQUIRED")?);
+    let isolation_root = home.parent().ok_or("NATIVE_58_ISOLATION_REQUIRED")?;
+    let allowed_prefix = isolation_root
+        .file_name()
+        .and_then(|part| part.to_str())
+        .is_some_and(|part| part.starts_with("browseros-native58-"));
+    let xdg_root =
+        PathBuf::from(std::env::var("XDG_DATA_HOME").map_err(|_| "NATIVE_58_ISOLATION_REQUIRED")?);
+    let xdg_config = PathBuf::from(
+        std::env::var("XDG_CONFIG_HOME").map_err(|_| "NATIVE_58_ISOLATION_REQUIRED")?,
+    );
+    let xdg_cache =
+        PathBuf::from(std::env::var("XDG_CACHE_HOME").map_err(|_| "NATIVE_58_ISOLATION_REQUIRED")?);
+    let stub = std::env::var("PATH")
+        .map_err(|_| "NATIVE_58_ISOLATION_REQUIRED")?
+        .split(':')
+        .next()
+        .map(PathBuf::from)
+        .ok_or("NATIVE_58_ISOLATION_REQUIRED")?;
+    let xdg_log = PathBuf::from(
+        std::env::var("NATIVE_58_XDG_LOG").map_err(|_| "NATIVE_58_ISOLATION_REQUIRED")?,
+    );
+    let xdg_current = PathBuf::from(
+        std::env::var("NATIVE_58_XDG_CURRENT").map_err(|_| "NATIVE_58_ISOLATION_REQUIRED")?,
+    );
+    if !allowed_prefix
+        || !isolation_root.starts_with(std::env::temp_dir())
+        || !xdg_root.starts_with(isolation_root)
+        || !xdg_config.starts_with(isolation_root)
+        || !xdg_cache.starts_with(isolation_root)
+        || !report_path.starts_with(std::env::temp_dir())
+        || !stub.starts_with(isolation_root.join("bin"))
+        || !stub.join("xdg-settings").is_file()
+        || !xdg_current.starts_with(isolation_root)
+        || !xdg_log.starts_with(std::env::temp_dir())
+        || std::env::var("DISPLAY").unwrap_or_default().is_empty()
+    {
+        return Err("NATIVE_58_ISOLATION_REQUIRED".into());
+    }
+
     // Isolated deterministic fixtures. The Python runner supplies a temporary
     // XDG_DATA_HOME/HOME and an xdg-settings stub, so no host browser setting or
     // real user data is changed by this review.

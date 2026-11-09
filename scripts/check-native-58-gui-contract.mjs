@@ -33,6 +33,7 @@ assert.match(js,/tauri\.event\.emit\('native-58-review-finished'/,'must emit rea
 assert.match(js,/resourceRecordsBeforeClear/,'must include before/after WebKit resource evidence');
 assert.match(rust,/items\.len\(\) == 58/,'native must verify exact 58 results');
 assert.match(rust,/nativePostconditionsStatus/,'native side effects require postcondition proof');
+assert.match(rust,/NATIVE_58_ISOLATION_REQUIRED/,'reviewer must reject live production HOME/XDG before issuing native effects');
 assert.match(rust,/native-58-review-progress/,'native must record real pre-effect progress before a GUI deadlock');
 assert.match(js,/await progress\(command,'start'\)/,'driver must persist command start before issuing a native effect');
 assert.match(main,/NATIVE_58_GUI_REVIEW/,'installed app must provide an opt-in test entry');
