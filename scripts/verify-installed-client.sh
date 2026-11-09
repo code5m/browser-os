@@ -14,13 +14,14 @@ INSTALL=0
 PREBUILT_FRONTEND=0
 START_CLIENT=1
 RESOURCE_MINUTES=0
+NATIVE_58_REVIEW=0
 FAILURES=0
 WARNINGS=0
 OWN_PID=""
 
 usage() {
   cat <<'EOF'
-Usage: bash scripts/verify-installed-client.sh [--build] [--install] [--prebuilt-frontend] [--no-start] [--resource-minutes 5|30]
+Usage: bash scripts/verify-installed-client.sh [--build] [--install] [--prebuilt-frontend] [--no-start] [--resource-minutes 5|30] [--native-58-review]
 
 Checks the real packaged Tauri client, not only the Vite browser page.
 
@@ -31,6 +32,8 @@ Options:
                        Tauri beforeBuildCommand to avoid a second frontend build.
   --no-start  Skip the GUI cold-start check. Useful on headless machines.
   --resource-minutes 5|30  Measure sustained RSS/PSS/CPU after first paint.
+  --native-58-review  Run all 58 legacy Native commands through the installed
+                      Tauri GUI under an isolated Xvfb/XDG profile; requires --install.
 EOF
 }
 
@@ -57,6 +60,7 @@ while [[ $# -gt 0 ]]; do
       shift
       case "${1:-}" in 5|30) RESOURCE_MINUTES="$1" ;; *) fail "--resource-minutes must be 5 or 30"; usage; exit 2 ;; esac
       ;;
+    --native-58-review) NATIVE_58_REVIEW=1 ;;
     -h|--help) usage; exit 0 ;;
     *) fail "Unknown option: $1"; usage; exit 2 ;;
   esac
@@ -136,6 +140,16 @@ if [[ "$BUILD" -eq 1 ]]; then
     fi
     ok "Locked frontend dependencies restored."
   fi
+fi
+
+if [[ "$NATIVE_58_REVIEW" -eq 1 && ( "$START_CLIENT" -eq 0 || "$INSTALL" -eq 0 ) ]]; then
+  fail "--native-58-review requires --install and the installed GUI cold-start check."
+  exit 2
+fi
+
+if [[ "$NATIVE_58_REVIEW" -eq 1 && -z "${DISPLAY:-}" ]]; then
+  fail "--native-58-review requires an isolated Xvfb DISPLAY; refusing to touch the user's clipboard."
+  exit 2
 fi
 
 if [[ "$RESOURCE_MINUTES" -gt 0 && ( "$START_CLIENT" -eq 0 || "$INSTALL" -eq 0 ) ]]; then
@@ -358,6 +372,21 @@ if [[ "$START_CLIENT" -eq 1 ]]; then
         fi
       fi
       grep -E '\[main\] main window url=|\[FE\].*vue mounted|first-paint probe|\[M0\] m0_ready' "$LOG_FILE" | tail -n 8 | sed 's/^/       /'
+      if [[ "$NATIVE_58_REVIEW" -eq 1 ]]; then
+        # End the cold-start process before the isolated effect runner launches
+        # its own instance; never route the review to a pre-existing singleton.
+        kill "$OWN_PID" 2>/dev/null || true
+        wait "$OWN_PID" 2>/dev/null || true
+        OWN_PID=""
+        printf '\n== Native 58 installed-GUI side-effect review ==\n'
+        if ! python3 "$ROOT/scripts/native-58-gui-regression.py" \
+          --binary "$CLIENT_BIN" \
+          --evidence-dir "${TMPDIR:-/tmp}/browseros-native-58-evidence"; then
+          fail "Native 58 installed-GUI side-effect review did not pass."
+        else
+          ok "All 58 legacy Native commands produced installed-GUI side-effect evidence."
+        fi
+      fi
     else
       fail "Extracted package did not report Vue mount + first-paint."
       sed -n '1,160p' "$LOG_FILE" | sed 's/^/       /'

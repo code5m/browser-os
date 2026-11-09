@@ -91,7 +91,7 @@ commands:
     current_boundary: "Capability-owned Developer Studio native module"
     target_boundary: "Capability-owned Developer Studio native module"
   open_browser:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/browser_commands.rs"
     owner: "browser"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/browser/**"
@@ -101,7 +101,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   close_browser:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/browser_commands.rs"
     owner: "browser"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/browser/**"
@@ -111,7 +111,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   position_browser:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/browser_commands.rs"
     owner: "browser"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/browser/**"
@@ -121,7 +121,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   hide_webview:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/browser_commands.rs"
     owner: "browser"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/browser/**"
@@ -131,7 +131,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   hide_all_webviews:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/browser_commands.rs"
     owner: "browser"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/browser/**"
@@ -427,7 +427,7 @@ commands:
     current_boundary: "BFC capability-owned native adapter"
     target_boundary: "BFC capability-owned native adapter"
   report_title:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/resource_commands.rs"
     owner: "browser"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/browser/**"
@@ -477,7 +477,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   list_artifacts:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/workspace_commands.rs"
     owner: "workspace"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/workspace/state/useArtifactStore.ts"
@@ -487,7 +487,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   configure_repo:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/workspace_commands.rs"
     owner: "workspace"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/workspace/state/useRepoStore.ts"
@@ -497,7 +497,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   list_repos:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/workspace_commands.rs"
     owner: "workspace"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/workspace/state/useRepoStore.ts"
@@ -677,7 +677,7 @@ commands:
     current_boundary: "framework/commands.rs（Native Physical Boundary 分解迁入）"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   read_artifact:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/workspace_commands.rs"
     owner: "workspace"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/workspace/state/useArtifactStore.ts"
@@ -687,7 +687,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   update_artifact:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/workspace_commands.rs"
     owner: "workspace"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/workspace/state/useArtifactStore.ts"
@@ -697,7 +697,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   delete_artifact:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/workspace_commands.rs"
     owner: "workspace"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/workspace/state/useArtifactStore.ts"
@@ -707,7 +707,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   save_image:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/workspace_commands.rs"
     owner: "workspace"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/workspace/state/useArtifactStore.ts"
@@ -717,7 +717,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   list_artifact_images:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/workspace_commands.rs"
     owner: "workspace"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/workspace/state/useArtifactStore.ts"
@@ -727,7 +727,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   workspace_images_dir:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/workspace_commands.rs"
     owner: "workspace"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/browser/state/useImagePreviewStore.ts"
@@ -739,7 +739,7 @@ commands:
     current_boundary: "workspace 路径 helper，bridge.rs 委托（workspace.rs 按设计不含 #[tauri::command]）"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   script_list:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/automation_commands.rs"
     owner: "script"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/script/state/useScriptStore.ts"
@@ -751,7 +751,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   script_add:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/automation_commands.rs"
     owner: "script"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/script/state/useScriptStore.ts"
@@ -763,7 +763,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   script_update:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/automation_commands.rs"
     owner: "script"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/script/state/useScriptStore.ts"
@@ -775,7 +775,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   script_remove:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/automation_commands.rs"
     owner: "script"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/script/state/useScriptStore.ts"
@@ -787,7 +787,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   snippet_list:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/automation_commands.rs"
     owner: "script"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/script/state/useSnippetStore.ts"
@@ -797,7 +797,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   snippet_add:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/automation_commands.rs"
     owner: "script"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/script/state/useSnippetStore.ts"
@@ -807,7 +807,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   snippet_update:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/automation_commands.rs"
     owner: "script"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/script/state/useSnippetStore.ts"
@@ -817,7 +817,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   snippet_remove:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/automation_commands.rs"
     owner: "script"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/script/state/useSnippetStore.ts"
@@ -827,7 +827,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   run_command:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/automation_commands.rs"
     owner: "script"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/script/state/useScriptStore.ts"
@@ -839,7 +839,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   run_script:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/automation_commands.rs"
     owner: "script"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/script/state/useScriptStore.ts"
@@ -851,7 +851,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   cancel_script:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/automation_commands.rs"
     owner: "script"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/script/state/useScriptStore.ts"
@@ -863,7 +863,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   script_status:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/automation_commands.rs"
     owner: "script"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/script/state/useScriptStore.ts"
@@ -875,7 +875,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   script_runs_list:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/automation_commands.rs"
     owner: "script"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/script/state/useScriptStore.ts"
@@ -887,7 +887,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   add_bookmark:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/filesystem_commands.rs"
     owner: "bookmark"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/bookmark/**"
@@ -897,7 +897,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   list_bookmarks:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/filesystem_commands.rs"
     owner: "bookmark"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/bookmark/**"
@@ -907,7 +907,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   remove_bookmark:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/filesystem_commands.rs"
     owner: "bookmark"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/bookmark/**"
@@ -917,7 +917,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   browse_workspace:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/filesystem_commands.rs"
     owner: "workspace"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/workspace/state/useFileStore.ts"
@@ -927,7 +927,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   list_dir:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/filesystem_commands.rs"
     owner: "workspace"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/workspace/state/useFileStore.ts"
@@ -937,7 +937,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   read_file:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/filesystem_commands.rs"
     owner: "workspace"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/workspace/state/useFileStore.ts"
@@ -947,7 +947,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   read_image_data_url:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/filesystem_commands.rs"
     owner: "workspace"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/workspace/state/useFileStore.ts"
@@ -1097,7 +1097,7 @@ commands:
     current_boundary: "capability-owned workspace CAS file adapter"
     target_boundary: "capability-owned workspace CAS file adapter"
   write_file:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/filesystem_commands.rs"
     owner: "workspace"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/workspace/state/useFileStore.ts"
@@ -1107,7 +1107,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   reveal_artifact:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/filesystem_commands.rs"
     owner: "workspace"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/workspace/state/useArtifactStore.ts"
@@ -1117,7 +1117,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   open_source:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/filesystem_commands.rs"
     owner: "workspace"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/workspace/state/useArtifactStore.ts"
@@ -1127,7 +1127,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   get_start_dirs:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/filesystem_commands.rs"
     owner: "workspace"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/workspace/state/useFileStore.ts"
@@ -1139,7 +1139,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   create_file:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/filesystem_commands.rs"
     owner: "workspace"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/workspace/state/useFileStore.ts"
@@ -1149,7 +1149,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   create_dir:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/filesystem_commands.rs"
     owner: "workspace"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/workspace/state/useFileStore.ts"
@@ -1159,7 +1159,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   delete_path:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/filesystem_commands.rs"
     owner: "workspace"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/workspace/state/useFileStore.ts"
@@ -1169,7 +1169,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   rename_path:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/filesystem_commands.rs"
     owner: "workspace"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/workspace/state/useFileStore.ts"
@@ -1201,7 +1201,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   create_grid:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/grid_runtime.rs"
     owner: "grid"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/grid/**"
@@ -1211,7 +1211,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   close_grid:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/grid_runtime.rs"
     owner: "grid"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/grid/**"
@@ -1221,7 +1221,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   grid_open:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/grid_runtime.rs"
     owner: "grid"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/grid/**"
@@ -1231,7 +1231,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   grid_set_zoom:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/grid_runtime.rs"
     owner: "grid"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/grid/**"
@@ -1241,7 +1241,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   grid_position:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/grid_runtime.rs"
     owner: "grid"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/grid/**"
@@ -1251,7 +1251,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   grid_close_one:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/grid_runtime.rs"
     owner: "grid"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/grid/**"
@@ -1261,7 +1261,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   list_apps:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/grid_runtime.rs"
     owner: "apps"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/apps/**"
@@ -1283,7 +1283,7 @@ commands:
     current_boundary: "framework/commands.rs（Native Physical Boundary 分解迁入）"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   tab_new:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/tab_runtime.rs"
     owner: "browser"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/browser/**"
@@ -1293,7 +1293,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   tab_close:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/tab_runtime.rs"
     owner: "browser"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/browser/**"
@@ -1303,7 +1303,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   tab_open:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/tab_runtime.rs"
     owner: "browser"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/browser/**"
@@ -1313,7 +1313,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   tab_position:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/tab_runtime.rs"
     owner: "browser"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/browser/**"
@@ -1323,7 +1323,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   report_grid_load_failed:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/tab_runtime.rs"
     owner: "grid"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/grid/**"
@@ -1333,7 +1333,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   resource_stats:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/tab_runtime.rs"
     owner: "framework"
     category: "FRAMEWORK_NATIVE_SERVICE"
     callers: "src/stores (resource stats) + Shell"
@@ -1343,7 +1343,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   set_tab_hibernation:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/tab_runtime.rs"
     owner: "settings"
     category: "FRAMEWORK_NATIVE_SERVICE"
     callers: "src/stores/useSettingsStore.ts"
@@ -1353,7 +1353,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   tab_list:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/tab_runtime.rs"
     owner: "browser"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/browser/**"
@@ -1363,7 +1363,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   tab_set_title:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/tab_runtime.rs"
     owner: "browser"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/browser/**"
@@ -1373,7 +1373,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   tab_go_back:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/tab_runtime.rs"
     owner: "browser"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/browser/**"
@@ -1383,7 +1383,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   tab_go_forward:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/tab_runtime.rs"
     owner: "browser"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/browser/**"
@@ -1393,7 +1393,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   tab_reload:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/tab_runtime.rs"
     owner: "browser"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/browser/**"
@@ -1403,7 +1403,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   eval_in_tab:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/tab_runtime.rs"
     owner: "framework"
     category: "FRAMEWORK_NATIVE_SERVICE"
     callers: "src/capabilities/browser/** + src/capabilities/grid/** + src/capability/platform/legacy-host-adapters.ts"
@@ -1413,7 +1413,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "shared webview execution service; capability state remains owned by callers"
   tab_activate:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/tab_runtime.rs"
     owner: "browser"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/browser/**"
@@ -1423,7 +1423,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   term_spawn:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/terminal_commands.rs"
     owner: "terminal"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/terminal/**"
@@ -1433,7 +1433,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   term_spawn_channel:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/terminal_commands.rs"
     owner: "terminal"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/terminal/**"
@@ -1443,7 +1443,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   term_write:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/terminal_commands.rs"
     owner: "terminal"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/terminal/**"
@@ -1453,7 +1453,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   term_resize:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/terminal_commands.rs"
     owner: "terminal"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/terminal/**"
@@ -1463,7 +1463,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   term_kill:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/terminal_commands.rs"
     owner: "terminal"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/terminal/**"
@@ -1473,7 +1473,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   take_pending_open_urls:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/system_commands.rs"
     owner: "workbench"
     category: "FRAMEWORK_NATIVE_SERVICE"
     callers: "src/App.vue + framework"
@@ -1483,7 +1483,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   get_default_browser:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/system_commands.rs"
     owner: "browser"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/browser/**"
@@ -1493,7 +1493,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   set_default_browser:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/system_commands.rs"
     owner: "browser"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/browser/**"
@@ -1503,7 +1503,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   m0_ready:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/system_commands.rs"
     owner: "workbench"
     category: "FRAMEWORK_NATIVE_SERVICE"
     callers: "src/App.vue + framework"
@@ -1513,7 +1513,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   m0_term_report:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/system_commands.rs"
     owner: "terminal"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/terminal/**"
@@ -1523,7 +1523,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   m0_config:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/system_commands.rs"
     owner: "terminal"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/terminal/**"
@@ -1563,7 +1563,7 @@ commands:
     current_boundary: "capabilities/database/commands.rs（Native Physical Boundary 分解迁入）"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   vault_open:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/workbench_commands.rs"
     owner: "vault"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "packages/capability-vault/src/**"
@@ -1573,7 +1573,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   vault_save_note:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/workbench_commands.rs"
     owner: "vault"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "packages/capability-vault/src/**"
@@ -1583,7 +1583,7 @@ commands:
     current_boundary: "centralized in bridge.rs; implemented through workbench::save_vault_note"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   grid_read_replies:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/workbench_commands.rs"
     owner: "grid"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/grid/**"
@@ -1593,7 +1593,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   archive_replies:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/workbench_commands.rs"
     owner: "grid"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/grid/**"
@@ -1693,7 +1693,7 @@ commands:
     current_boundary: "capabilities/database/commands.rs（Native Physical Boundary 分解迁入）"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   agent_parse:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/workbench_commands.rs"
     owner: "agent"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/agent/**"
@@ -1783,7 +1783,7 @@ commands:
     current_boundary: "framework Agent Channel host; main-window-only opt-in experiment"
     target_boundary: "agent-owned Public API host with explicit Owner and approval contracts"
   agent_validate:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/workbench_commands.rs"
     owner: "agent"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/agent/**"
@@ -1793,7 +1793,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   agent_permission_preview:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/workbench_commands.rs"
     owner: "agent"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/agent/**"
@@ -1833,7 +1833,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   import_browser_credentials:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/credential_commands.rs"
     owner: "credential"
     category: "SECURITY_INFRASTRUCTURE"
     callers: "src/capabilities/browser/** (secure flow)"
@@ -1843,7 +1843,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   list_browser_credentials:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/credential_commands.rs"
     owner: "credential"
     category: "SECURITY_INFRASTRUCTURE"
     callers: "src/capabilities/browser/** (secure flow)"
@@ -1853,7 +1853,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   fill_browser_credential:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/credential_commands.rs"
     owner: "credential"
     category: "SECURITY_INFRASTRUCTURE"
     callers: "src/capabilities/browser/** (secure flow)"
@@ -1863,7 +1863,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   mcp_policy_get:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/integration_commands.rs"
     owner: "agent"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/agent/**"
@@ -1873,7 +1873,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   mcp_registry_list:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/integration_commands.rs"
     owner: "agent"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/agent/**"
@@ -1883,7 +1883,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   mcp_capability_preview:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/integration_commands.rs"
     owner: "agent"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/agent/**"
@@ -1953,7 +1953,7 @@ commands:
     current_boundary: "capability-owned graph native adapter"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   plugin_install:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/integration_commands.rs"
     owner: "plugin"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/plugin/**"
@@ -1963,7 +1963,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   plugin_enable:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/integration_commands.rs"
     owner: "plugin"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/plugin/**"
@@ -1973,7 +1973,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   plugin_disable:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/integration_commands.rs"
     owner: "plugin"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/plugin/**"
@@ -1983,7 +1983,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   plugin_list:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/integration_commands.rs"
     owner: "plugin"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/plugin/**"
@@ -1993,7 +1993,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   plugin_get:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/integration_commands.rs"
     owner: "plugin"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/plugin/**"
@@ -2003,7 +2003,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   plugin_keys_add:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/integration_commands.rs"
     owner: "plugin"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/plugin/**"
@@ -2013,7 +2013,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   plugin_keys_list:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/integration_commands.rs"
     owner: "plugin"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/plugin/**"
@@ -2023,7 +2023,7 @@ commands:
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
   plugin_keys_remove:
-    file: "src-tauri/src/bridge.rs"
+    file: "src-tauri/src/bridge/integration_commands.rs"
     owner: "plugin"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/plugin/**"

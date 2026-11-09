@@ -421,6 +421,18 @@ jobs:
           echo "===== M0-6.c app log tail ====="
           tail -n 120 /tmp/m0-6c-browseros/app.log 2>/dev/null || true
           exit "$status"
+      - name: Native 58 side-effect review with the SAME installed Release
+        if: needs.impact.outputs.native_mode == 'packaged-gui' || needs.impact.outputs.native_mode == 'packaged-resource'
+        shell: bash
+        run: |
+          set +e
+          dbus-run-session -- xvfb-run -a python3 scripts/native-58-gui-regression.py --binary /usr/bin/mvp-browser-os --evidence-dir /tmp/browseros-native-58-evidence --timeout 165
+          status=$?
+          echo "===== Native 58 installed GUI review ====="
+          cat /tmp/browseros-native-58-evidence/summary.md 2>/dev/null || true
+          echo "===== Native 58 app log tail ====="
+          tail -n 110 /tmp/browseros-native-58-evidence/app.log 2>/dev/null || true
+          exit "$status"
       - name: Upload opted-in GUI evidence
         if: always() && (needs.impact.outputs.native_mode == 'packaged-gui' || needs.impact.outputs.native_mode == 'packaged-resource')
         uses: actions/upload-artifact@v4
@@ -432,6 +444,14 @@ jobs:
             /tmp/m0-6c-browseros/mock-events.jsonl
             /tmp/m0-6c-browseros/summary.json
             /tmp/m0-6c-browseros/app.log
+            /tmp/browseros-native-58-evidence/summary.json
+            /tmp/browseros-native-58-evidence/summary.md
+            /tmp/browseros-native-58-evidence/native-58-report.json
+            /tmp/browseros-native-58-evidence/remote-results.json
+            /tmp/browseros-native-58-evidence/remote-events.json
+            /tmp/browseros-native-58-evidence/xdg-settings.log
+            /tmp/browseros-native-58-evidence/app.log
+            /tmp/browseros-native-58-evidence/installed-gui.png
             /tmp/mvp-browser-os-verify-startup.log
             /tmp/browseros-native-source-sha
             /tmp/browseros-native-package-sha256
