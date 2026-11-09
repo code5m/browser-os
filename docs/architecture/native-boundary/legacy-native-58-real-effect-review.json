@@ -11,7 +11,7 @@
   "commands": [
     {
       "command": "add_bookmark",
-      "physicalFile": "src-tauri/src/bridge.rs",
+      "physicalFile": "src-tauri/src/bridge/filesystem_commands.rs",
       "declaredEffect": "bookmark CRUD (backend persistence)",
       "sourcePolicy": "main-webview-guard",
       "boundedPrimitiveInputs": [
@@ -63,7 +63,7 @@
     },
     {
       "command": "close_browser",
-      "physicalFile": "src-tauri/src/bridge.rs",
+      "physicalFile": "src-tauri/src/bridge/browser_commands.rs",
       "declaredEffect": "create/destroy/control native webview",
       "sourcePolicy": "main-webview-guard",
       "boundedPrimitiveInputs": [],
@@ -98,7 +98,7 @@
     },
     {
       "command": "eval_in_tab",
-      "physicalFile": "src-tauri/src/bridge.rs",
+      "physicalFile": "src-tauri/src/bridge/tab_runtime.rs",
       "declaredEffect": "evaluate script in an existing capability-owned webview",
       "sourcePolicy": "main-webview-guard",
       "boundedPrimitiveInputs": [
@@ -123,7 +123,7 @@
     },
     {
       "command": "get_default_browser",
-      "physicalFile": "src-tauri/src/bridge.rs",
+      "physicalFile": "src-tauri/src/bridge/system_commands.rs",
       "declaredEffect": "create/destroy/control native webview",
       "sourcePolicy": "main-webview-guard",
       "boundedPrimitiveInputs": [],
@@ -191,7 +191,7 @@
     },
     {
       "command": "hide_all_webviews",
-      "physicalFile": "src-tauri/src/bridge.rs",
+      "physicalFile": "src-tauri/src/bridge/browser_commands.rs",
       "declaredEffect": "create/destroy/control native webview",
       "sourcePolicy": "main-webview-guard",
       "boundedPrimitiveInputs": [],
@@ -202,7 +202,7 @@
     },
     {
       "command": "hide_webview",
-      "physicalFile": "src-tauri/src/bridge.rs",
+      "physicalFile": "src-tauri/src/bridge/browser_commands.rs",
       "declaredEffect": "create/destroy/control native webview",
       "sourcePolicy": "main-webview-guard",
       "boundedPrimitiveInputs": [
@@ -228,7 +228,7 @@
     },
     {
       "command": "list_bookmarks",
-      "physicalFile": "src-tauri/src/bridge.rs",
+      "physicalFile": "src-tauri/src/bridge/filesystem_commands.rs",
       "declaredEffect": "bookmark CRUD (backend persistence)",
       "sourcePolicy": "main-webview-guard",
       "boundedPrimitiveInputs": [],
@@ -263,7 +263,7 @@
     },
     {
       "command": "m0_ready",
-      "physicalFile": "src-tauri/src/bridge.rs",
+      "physicalFile": "src-tauri/src/bridge/system_commands.rs",
       "declaredEffect": "framework diagnostics / intent bus / boot ready / pending URL handoff",
       "sourcePolicy": "main-webview-guard",
       "boundedPrimitiveInputs": [],
@@ -274,7 +274,7 @@
     },
     {
       "command": "open_browser",
-      "physicalFile": "src-tauri/src/bridge.rs",
+      "physicalFile": "src-tauri/src/bridge/browser_commands.rs",
       "declaredEffect": "create/destroy/control native webview",
       "sourcePolicy": "main-webview-guard",
       "boundedPrimitiveInputs": [
@@ -300,7 +300,7 @@
     },
     {
       "command": "position_browser",
-      "physicalFile": "src-tauri/src/bridge.rs",
+      "physicalFile": "src-tauri/src/bridge/browser_commands.rs",
       "declaredEffect": "create/destroy/control native webview",
       "sourcePolicy": "main-webview-guard",
       "boundedPrimitiveInputs": [
@@ -316,7 +316,7 @@
     },
     {
       "command": "remove_bookmark",
-      "physicalFile": "src-tauri/src/bridge.rs",
+      "physicalFile": "src-tauri/src/bridge/filesystem_commands.rs",
       "declaredEffect": "bookmark CRUD (backend persistence)",
       "sourcePolicy": "main-webview-guard",
       "boundedPrimitiveInputs": [
@@ -342,7 +342,7 @@
     },
     {
       "command": "report_title",
-      "physicalFile": "src-tauri/src/bridge.rs",
+      "physicalFile": "src-tauri/src/bridge/resource_commands.rs",
       "declaredEffect": "create/destroy/control native webview",
       "sourcePolicy": "remote-origin-policy",
       "boundedPrimitiveInputs": [
@@ -355,7 +355,7 @@
     },
     {
       "command": "resource_stats",
-      "physicalFile": "src-tauri/src/bridge.rs",
+      "physicalFile": "src-tauri/src/bridge/tab_runtime.rs",
       "declaredEffect": "report/collect/clear resource telemetry, capture settings",
       "sourcePolicy": "main-webview-guard",
       "boundedPrimitiveInputs": [],
@@ -457,7 +457,7 @@
     },
     {
       "command": "set_default_browser",
-      "physicalFile": "src-tauri/src/bridge.rs",
+      "physicalFile": "src-tauri/src/bridge/system_commands.rs",
       "declaredEffect": "create/destroy/control native webview",
       "sourcePolicy": "main-webview-guard",
       "boundedPrimitiveInputs": [
@@ -492,7 +492,7 @@
     },
     {
       "command": "set_tab_hibernation",
-      "physicalFile": "src-tauri/src/bridge.rs",
+      "physicalFile": "src-tauri/src/bridge/tab_runtime.rs",
       "declaredEffect": "apply tab-hibernation policy to webviews (framework preference)",
       "sourcePolicy": "main-webview-guard",
       "boundedPrimitiveInputs": [],
@@ -542,7 +542,7 @@
     },
     {
       "command": "snippet_add",
-      "physicalFile": "src-tauri/src/bridge.rs",
+      "physicalFile": "src-tauri/src/bridge/automation_commands.rs",
       "declaredEffect": "snippet CRUD (backend persistence)",
       "sourcePolicy": "main-webview-guard",
       "boundedPrimitiveInputs": [
@@ -557,7 +557,7 @@
     },
     {
       "command": "snippet_list",
-      "physicalFile": "src-tauri/src/bridge.rs",
+      "physicalFile": "src-tauri/src/bridge/automation_commands.rs",
       "declaredEffect": "snippet CRUD (backend persistence)",
       "sourcePolicy": "main-webview-guard",
       "boundedPrimitiveInputs": [],
@@ -568,7 +568,7 @@
     },
     {
       "command": "snippet_remove",
-      "physicalFile": "src-tauri/src/bridge.rs",
+      "physicalFile": "src-tauri/src/bridge/automation_commands.rs",
       "declaredEffect": "snippet CRUD (backend persistence)",
       "sourcePolicy": "main-webview-guard",
       "boundedPrimitiveInputs": [
@@ -582,7 +582,7 @@
     },
     {
       "command": "snippet_update",
-      "physicalFile": "src-tauri/src/bridge.rs",
+      "physicalFile": "src-tauri/src/bridge/automation_commands.rs",
       "declaredEffect": "snippet CRUD (backend persistence)",
       "sourcePolicy": "main-webview-guard",
       "boundedPrimitiveInputs": [
@@ -598,7 +598,7 @@
     },
     {
       "command": "tab_activate",
-      "physicalFile": "src-tauri/src/bridge.rs",
+      "physicalFile": "src-tauri/src/bridge/tab_runtime.rs",
       "declaredEffect": "create/destroy/control native webview",
       "sourcePolicy": "main-webview-guard",
       "boundedPrimitiveInputs": [
@@ -611,7 +611,7 @@
     },
     {
       "command": "tab_close",
-      "physicalFile": "src-tauri/src/bridge.rs",
+      "physicalFile": "src-tauri/src/bridge/tab_runtime.rs",
       "declaredEffect": "create/destroy/control native webview",
       "sourcePolicy": "main-webview-guard",
       "boundedPrimitiveInputs": [
@@ -624,7 +624,7 @@
     },
     {
       "command": "tab_go_back",
-      "physicalFile": "src-tauri/src/bridge.rs",
+      "physicalFile": "src-tauri/src/bridge/tab_runtime.rs",
       "declaredEffect": "create/destroy/control native webview",
       "sourcePolicy": "main-webview-guard",
       "boundedPrimitiveInputs": [
@@ -637,7 +637,7 @@
     },
     {
       "command": "tab_go_forward",
-      "physicalFile": "src-tauri/src/bridge.rs",
+      "physicalFile": "src-tauri/src/bridge/tab_runtime.rs",
       "declaredEffect": "create/destroy/control native webview",
       "sourcePolicy": "main-webview-guard",
       "boundedPrimitiveInputs": [
@@ -650,7 +650,7 @@
     },
     {
       "command": "tab_list",
-      "physicalFile": "src-tauri/src/bridge.rs",
+      "physicalFile": "src-tauri/src/bridge/tab_runtime.rs",
       "declaredEffect": "create/destroy/control native webview",
       "sourcePolicy": "main-webview-guard",
       "boundedPrimitiveInputs": [],
@@ -661,7 +661,7 @@
     },
     {
       "command": "tab_new",
-      "physicalFile": "src-tauri/src/bridge.rs",
+      "physicalFile": "src-tauri/src/bridge/tab_runtime.rs",
       "declaredEffect": "create/destroy/control native webview",
       "sourcePolicy": "main-webview-guard",
       "boundedPrimitiveInputs": [
@@ -674,7 +674,7 @@
     },
     {
       "command": "tab_open",
-      "physicalFile": "src-tauri/src/bridge.rs",
+      "physicalFile": "src-tauri/src/bridge/tab_runtime.rs",
       "declaredEffect": "create/destroy/control native webview",
       "sourcePolicy": "main-webview-guard",
       "boundedPrimitiveInputs": [
@@ -688,7 +688,7 @@
     },
     {
       "command": "tab_position",
-      "physicalFile": "src-tauri/src/bridge.rs",
+      "physicalFile": "src-tauri/src/bridge/tab_runtime.rs",
       "declaredEffect": "create/destroy/control native webview",
       "sourcePolicy": "main-webview-guard",
       "boundedPrimitiveInputs": [
@@ -705,7 +705,7 @@
     },
     {
       "command": "tab_reload",
-      "physicalFile": "src-tauri/src/bridge.rs",
+      "physicalFile": "src-tauri/src/bridge/tab_runtime.rs",
       "declaredEffect": "create/destroy/control native webview",
       "sourcePolicy": "main-webview-guard",
       "boundedPrimitiveInputs": [
@@ -718,7 +718,7 @@
     },
     {
       "command": "tab_set_title",
-      "physicalFile": "src-tauri/src/bridge.rs",
+      "physicalFile": "src-tauri/src/bridge/tab_runtime.rs",
       "declaredEffect": "create/destroy/control native webview",
       "sourcePolicy": "main-webview-guard",
       "boundedPrimitiveInputs": [
@@ -732,7 +732,7 @@
     },
     {
       "command": "take_pending_open_urls",
-      "physicalFile": "src-tauri/src/bridge.rs",
+      "physicalFile": "src-tauri/src/bridge/system_commands.rs",
       "declaredEffect": "framework diagnostics / intent bus / boot ready / pending URL handoff",
       "sourcePolicy": "main-webview-guard",
       "boundedPrimitiveInputs": [],

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
-const rust=readFileSync("src-tauri/src/bridge.rs","utf8");
+const rust=readFileSync("src-tauri/src/bridge/grid_runtime.rs","utf8");
 const grid=readFileSync("src-tauri/src/grid_process.rs","utf8");
 const ui=readFileSync("src/capabilities/grid/ui/GridRows.vue","utf8");
 assert.match(rust,/CORE_MEMORY_RESERVE_MB:\s*u64\s*=\s*1800/);
