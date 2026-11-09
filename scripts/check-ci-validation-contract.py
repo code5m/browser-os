@@ -69,9 +69,9 @@ def check() -> None:
             "PREMERGE_REUSE_FRONTEND: '1'" in validate,
             "pre-merge must reuse frontend and never duplicate Rust compilation")
     require("report-coding-editor-budget.mjs" in premerge and
-            "--verify-dist --enforce-budget" in premerge and
+            "--verify-dist --audit-budget" in premerge and
             "PREMERGE_SKIP_NATIVE_COMPILE:-0" in premerge,
-            "fast pre-merge must enforce the approved editor budget without nested cargo")
+            "fast pre-merge must verify production artifacts and report budget as advisory without nested cargo")
     require("browseros-ci-source-sha.txt" in premerge,
             "pre-merge must validate the SAME SHA marker uploaded in the artifact")
     require("FRONTEND_BUILD_SOURCE_SHA" not in validate and

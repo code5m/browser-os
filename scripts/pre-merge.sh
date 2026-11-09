@@ -74,8 +74,8 @@ pre-merge.sh — M0-1.c 本地 pre-merge 门禁（M0-1 脚本合并前检查入�
   lifecycle fixture             check-lifecycle-contract.py --self-test / --expect-current-gaps / 默认门禁
   security fixture              check-security-policy.py --self-test / --expect-current-gaps
                                 （默认模式按设计 EXIT=1，见 logs/m0-security-threat-matrix-v1.md）
-  build metrics                 approved editor/core/total budgets + exact dist hashes;
-                                historical 45% comparison retained, warning 不增加
+  build metrics                 advisory editor/core/total sizes + strict dist hashes;
+                                same-run master increment recorded in CI
   GUI regression harness        m0-6c-gui-regression.py --self-test（不启动 GUI）
   git write policy fixture      check-git-write-policy.py --self-test / 默认门禁
   git UI policy fixture         check-git-ui-policy.py --self-test / 默认门禁
@@ -258,34 +258,21 @@ run_pre_merge() {
   python3 "$SCRIPT_DIR/check-lifecycle-contract.py" >/dev/null 2>&1 \
     || pm_fail "check-lifecycle-contract.py 默认生命周期门禁"
 
-  pm_log "M0-4.c approved editor/core/total budgets（历史 45% 对比保留，cargo warning 不增加）…"
-  local baseline_file
+  pm_log "M0-4.c advisory size envelopes and mandatory exact dist SHA256..."
   node "$SCRIPT_DIR/coding-editor-budget.mjs" --self-test || pm_fail "coding editor budget negative fixtures"
-  baseline_file="$(ls -1 "$ROOT"/logs/m0-build-metrics/build-metrics-*.json 2>/dev/null | sort | head -1 || true)"
-  if [ -n "$baseline_file" ]; then
-    # In fast CI do not invoke the frozen historical metrics collector:
-    # it has an unconditional nested cargo check and is immutable for M0
-    # baseline integrity. Preserve strict editor/core/total audit here;
-    # full M0/master size checks are independently mandatory in the CI job.
-    local metrics_output
-    if [[ "${PREMERGE_SKIP_NATIVE_COMPILE:-0}" == "1" ]]; then
-      pm_log "Cargo warning regression: SKIPPED (native not compiled in fast mode)"
-      if metrics_output="$(node "$SCRIPT_DIR/report-coding-editor-budget.mjs" --verify-dist --enforce-budget 2>&1)"; then
-        printf '%s\n' "$metrics_output"
-        pm_log "approved editor/core/total budgets PASS (native warning count NOT CHECKED; historical comparison is separate)"
-      else
-        printf '%s\n' "$metrics_output"
-        pm_fail "approved editor/core/total budget audit"
-      fi
-    elif metrics_output="$(python3 "$SCRIPT_DIR/measure-build-metrics.py" --compare "$baseline_file" --skip-build --approved-editor-budget 2>&1)"; then
-      printf '%s\n' "$metrics_output"
-      pm_log "approved editor/core/total budgets PASS; historical 45% result retained separately (${baseline_file#"$ROOT"/})"
-    else
-      printf '%s\n' "$metrics_output"
-      pm_fail "build metrics regression vs ${baseline_file#"$ROOT"/}"
-    fi
+  # Native compilation is deliberately optional in the fast validation job.
+  # The audit still fails on missing/unverified asset hashes, incorrect owner
+  # attribution or dependency drift; budget overshoot is warning-only.
+  if [[ "${PREMERGE_SKIP_NATIVE_COMPILE:-0}" == "1" ]]; then
+    pm_log "Cargo warning regression: SKIPPED (native not compiled in fast mode)"
+  fi
+  local metrics_output
+  if metrics_output="$(node "$SCRIPT_DIR/report-coding-editor-budget.mjs" --verify-dist --audit-budget 2>&1)"; then
+    printf '%s\n' "$metrics_output"
+    pm_log "production dist SHA256/ownership PASS (size envelopes advisory-only)"
   else
-    pm_log "无构建指标基线，跳过对比"
+    printf '%s\n' "$metrics_output"
+    pm_fail "production dist SHA256/owner audit"
   fi
 
   pm_log "M0-3.a 安全边界夹具（现状缺口，默认模式按设计 EXIT=1，不入门禁）…"

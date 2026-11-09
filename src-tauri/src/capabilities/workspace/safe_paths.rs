@@ -6,9 +6,10 @@ use std::path::{Path, PathBuf};
 #[cfg(target_os = "linux")]
 mod linux {
     use super::*;
+    use sha2::Digest;
     use std::ffi::{CString, OsStr};
     use std::fs::File;
-    use std::io::{self, Read};
+    use std::io::{self, Read, Write};
     use std::os::fd::{AsRawFd, FromRawFd};
     use std::os::unix::ffi::OsStrExt;
     use std::path::Component;
@@ -152,6 +153,203 @@ mod linux {
         rename_bound(&source_dir, filename, &target_dir, filename)
     }
 
+    fn open_lock_at(parent: &File, lock_name: &OsStr) -> io::Result<File> {
+        let lock_name = name(lock_name)?;
+        let fd = unsafe {
+            libc::openat(
+                parent.as_raw_fd(),
+                lock_name.as_ptr(),
+                libc::O_RDWR | libc::O_CREAT | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                0o600,
+            )
+        };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let file = unsafe { File::from_raw_fd(fd) };
+        if !file.metadata()?.is_file() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "lock is not regular",
+            ));
+        }
+        Ok(file)
+    }
+
+    fn create_temp_at(parent: &File, temp_name: &OsStr) -> io::Result<File> {
+        let temp_name = name(temp_name)?;
+        let fd = unsafe {
+            libc::openat(
+                parent.as_raw_fd(),
+                temp_name.as_ptr(),
+                libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                0o600,
+            )
+        };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(unsafe { File::from_raw_fd(fd) })
+    }
+
+    fn unlink_at(parent: &File, filename: &OsStr) {
+        if let Ok(filename) = name(filename) {
+            unsafe {
+                libc::unlinkat(parent.as_raw_fd(), filename.as_ptr(), 0);
+            }
+        }
+    }
+
+    fn replace_at(parent: &File, source: &OsStr, target: &OsStr) -> io::Result<()> {
+        let source = name(source)?;
+        let target = name(target)?;
+        let result = unsafe {
+            libc::renameat(
+                parent.as_raw_fd(),
+                source.as_ptr(),
+                parent.as_raw_fd(),
+                target.as_ptr(),
+            )
+        };
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
+
+    fn sync_directory(parent: &File) -> io::Result<()> {
+        let dot = CString::new(".").expect("static path");
+        let fd = unsafe {
+            libc::openat(
+                parent.as_raw_fd(),
+                dot.as_ptr(),
+                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
+            )
+        };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let directory = unsafe { File::from_raw_fd(fd) };
+        directory.sync_all()
+    }
+
+    fn same_file_identity(left: &std::fs::Metadata, right: &std::fs::Metadata) -> bool {
+        use std::os::unix::fs::MetadataExt;
+        (
+            left.dev(),
+            left.ino(),
+            left.mtime(),
+            left.mtime_nsec(),
+            left.len(),
+        ) == (
+            right.dev(),
+            right.ino(),
+            right.mtime(),
+            right.mtime_nsec(),
+            right.len(),
+        )
+    }
+
+    /// Compare and replace an existing regular file using only a pinned parent
+    /// directory FD. The advisory sidecar lock serializes cooperating BrowserOS
+    /// writers; the second content/identity check detects ordinary external
+    /// edits before rename. A non-cooperating writer can still race the final
+    /// rename syscall, which is not a kernel CAS primitive.
+    fn save_if_unchanged_at(
+        parent: &File,
+        filename: &OsStr,
+        expected: &[u8],
+        content: &[u8],
+        limit: usize,
+    ) -> Result<(), String> {
+        if expected.len() > limit || content.len() > limit {
+            return Err("FILE_SAVE_TOO_LARGE".into());
+        }
+        let digest = format!("{:x}", sha2::Sha256::digest(filename.as_bytes()));
+        let lock_name = std::ffi::OsString::from(format!(".browseros-cas-{digest}.lock"));
+        let lock = open_lock_at(parent, &lock_name).map_err(|_| "FILE_LOCK_UNAVAILABLE")?;
+        lock.lock().map_err(|_| "FILE_LOCK_UNAVAILABLE")?;
+
+        let result = (|| {
+            let current_file = open_regular_at(parent, filename).map_err(|error| {
+                if error.kind() == io::ErrorKind::NotFound {
+                    "FILE_TARGET_MISSING"
+                } else {
+                    "FILE_TARGET_NOT_REGULAR"
+                }
+            })?;
+            let initial_meta = current_file.metadata().map_err(|_| "FILE_READ_FAILED")?;
+            if initial_meta.len() > limit as u64 {
+                return Err("FILE_SAVE_TOO_LARGE".into());
+            }
+            let mut current = Vec::with_capacity(initial_meta.len() as usize);
+            current_file
+                .take(limit as u64 + 1)
+                .read_to_end(&mut current)
+                .map_err(|_| "FILE_READ_FAILED")?;
+            if current.len() > limit {
+                return Err("FILE_SAVE_TOO_LARGE".into());
+            }
+            if current != expected {
+                return Err("FILE_CONFLICT".into());
+            }
+
+            let temp_name =
+                std::ffi::OsString::from(format!(".browseros-cas-{}.tmp", uuid::Uuid::new_v4()));
+            let stage_result = (|| {
+                let mut staged =
+                    create_temp_at(parent, &temp_name).map_err(|_| "FILE_STAGE_FAILED")?;
+                staged.write_all(content).map_err(|_| "FILE_STAGE_FAILED")?;
+                use std::os::unix::fs::PermissionsExt;
+                staged
+                    .set_permissions(std::fs::Permissions::from_mode(
+                        initial_meta.permissions().mode() & 0o777,
+                    ))
+                    .map_err(|_| "FILE_STAGE_FAILED")?;
+                staged.sync_all().map_err(|_| "FILE_STAGE_FAILED")?;
+
+                let latest_file = open_regular_at(parent, filename).map_err(|_| "FILE_CONFLICT")?;
+                let latest_meta = latest_file.metadata().map_err(|_| "FILE_CONFLICT")?;
+                if !same_file_identity(&initial_meta, &latest_meta) {
+                    return Err("FILE_CONFLICT".into());
+                }
+                let mut latest = Vec::with_capacity(latest_meta.len() as usize);
+                latest_file
+                    .take(limit as u64 + 1)
+                    .read_to_end(&mut latest)
+                    .map_err(|_| "FILE_CONFLICT")?;
+                if latest != expected {
+                    return Err("FILE_CONFLICT".into());
+                }
+
+                replace_at(parent, &temp_name, filename).map_err(|_| "FILE_REPLACE_FAILED")?;
+                sync_directory(parent).map_err(|_| "FILE_DURABILITY_UNCERTAIN")?;
+                Ok(())
+            })();
+            if stage_result.is_err() {
+                unlink_at(parent, &temp_name);
+            }
+            stage_result
+        })();
+        drop(lock);
+        result
+    }
+
+    pub(super) fn save_if_unchanged(
+        canonical: &Path,
+        roots: &[PathBuf],
+        expected: &[u8],
+        content: &[u8],
+        limit: usize,
+    ) -> Result<(), String> {
+        let parent_path = canonical.parent().ok_or("FILE_PARENT_INVALID")?;
+        let filename = canonical.file_name().ok_or("FILE_NAME_INVALID")?;
+        let parent =
+            open_allowed_dir(parent_path, roots).map_err(|_| "FILE_PARENT_NOT_AUTHORIZED")?;
+        save_if_unchanged_at(&parent, filename, expected, content, limit)
+    }
+
     #[cfg(test)]
     mod tests {
         use super::*;
@@ -222,6 +420,42 @@ mod linux {
             std::fs::remove_dir_all(base).unwrap();
         }
         #[test]
+        fn parent_directory_replacement_cannot_redirect_pinned_cas_write() {
+            let base = fixture();
+            let trusted = base.join("trusted");
+            let parent = trusted.join("workspace");
+            let outside = base.join("outside");
+            std::fs::create_dir_all(&parent).unwrap();
+            std::fs::create_dir(&outside).unwrap();
+            let target = parent.join("entry.txt");
+            std::fs::write(&target, b"before").unwrap();
+            let outside_target = outside.join("entry.txt");
+            std::fs::write(&outside_target, b"outside").unwrap();
+            let roots = [trusted.clone()];
+            let pinned_parent = open_allowed_dir(&parent, &roots).unwrap();
+
+            std::fs::rename(&parent, trusted.join("workspace-original")).unwrap();
+            symlink(&outside, &parent).unwrap();
+
+            save_if_unchanged_at(
+                &pinned_parent,
+                OsStr::new("entry.txt"),
+                b"before",
+                b"saved",
+                1024,
+            )
+            .unwrap();
+
+            assert_eq!(
+                std::fs::read(trusted.join("workspace-original/entry.txt")).unwrap(),
+                b"saved"
+            );
+            assert_eq!(std::fs::read(&outside_target).unwrap(), b"outside");
+            assert!(open_allowed_dir(&parent, &roots).is_err());
+            std::fs::remove_dir_all(base).unwrap();
+        }
+
+        #[test]
         fn ordinary_sibling_move_works_and_conflicts_fail_closed() {
             let base = fixture();
             let trusted = base.join("trusted");
@@ -268,5 +502,23 @@ pub fn read_regular(canonical: &Path, roots: &[PathBuf], limit: usize) -> std::i
             std::io::ErrorKind::Unsupported,
             "descriptor-anchored reads require Linux",
         ))
+    }
+}
+
+pub fn save_if_unchanged(
+    canonical: &Path,
+    roots: &[PathBuf],
+    expected: &[u8],
+    content: &[u8],
+    limit: usize,
+) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        linux::save_if_unchanged(canonical, roots, expected, content, limit)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (canonical, roots, expected, content, limit);
+        Err("FILE_DESCRIPTOR_CAS_UNSUPPORTED".into())
     }
 }

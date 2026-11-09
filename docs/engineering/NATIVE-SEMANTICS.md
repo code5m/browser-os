@@ -15,7 +15,7 @@ BrowserOS treats Rust/Tauri semantics as a first-class support system.
 
 `node scripts/check-native-semantic-closure.mjs --report artifacts/native-semantic-report.json` creates the machine-readable audit artifact used by CI. This report is derived evidence, never a new permission or ownership source.
 
-Current governed baseline at this change: **194 registered native commands / 27 AppState fields** (11 new main-only workspace CAS, encrypted draft, and WeChat draft-only commands in the 2026-11-03 batch). These numbers are drift tripwires, not targets; legitimate Rust changes update code, authoritative registries and governance together.
+Current governed baseline (2026-11-05): **203 registered native commands / 27 AppState fields**. Relative to the 2026-11-03 baseline of 194 commands, this integration registers **six BFC owner commands** (five main-window-only, one restricted Bilibili tab submission) and **three main-window-only WeChat working-draft commands**. All nine commands are declared in the Native registry and the appropriate Tauri ACL, and `check-native-command-inventory` reconciles them against Rust definitions. These numbers are drift tripwires, not targets; legitimate Rust changes update code, authoritative registries, and governance together.
 
 ## Runtime Event / IPC cross-layer observation
 

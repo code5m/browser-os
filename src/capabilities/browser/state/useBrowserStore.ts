@@ -199,7 +199,11 @@ export const useBrowserStore = defineStore("browser", () => {
   // 子 webview 内导航完成（点链接/前进/后退/刷新）：同步页签 URL 与地址栏
   function setNavigated(id: string, navUrl: string) {
     const t = tabs.find((x) => x.id === id);
-    if (t && t.url !== navUrl) {
+    // A late event from a closed tab or an empty native URI must not rewrite
+    // the visible address. Linux navigation events now come from the native
+    // top-level WebKit URI property rather than iframe on_navigation hooks.
+    if (!t || !navUrl.trim()) return;
+    if (t.url !== navUrl) {
       t.url = navUrl;
       t.title = navUrl; // Placeholder until document.title arrives.
     }

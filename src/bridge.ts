@@ -1,5 +1,35 @@
-import { invoke, Channel } from "@tauri-apps/api/core";
+import { invoke as nativeInvoke, Channel } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+
+// Uniform, metadata-only IPC diagnostics across all capability owners.
+// No command arguments/results/errors are logged, so browsing URLs, document
+// contents, SQL, model prompts, credentials and tokens stay in their owners.
+// Normal fast calls have no log I/O. Slow/failed calls are rate-limited.
+const ipcLogAt = new Map<string, number>();
+function diagnosticIpc(command: string, started: number, status: "ok" | "error") {
+  if (command === "debug_log" || !/^[a-z][a-z0-9_]{1,80}$/.test(command)) return;
+  const duration = Math.max(0, Math.round(performance.now() - started));
+  if (duration < 1_200 && status === "ok") return;
+  const now = Date.now();
+  const key = command + ":" + status;
+  if (now - (ipcLogAt.get(key) ?? 0) < 10_000) return;
+  if (ipcLogAt.size > 256) ipcLogAt.clear();
+  ipcLogAt.set(key, now);
+  void nativeInvoke("debug_log", {
+    msg: `[ipc] command=${command} status=${status} elapsed_ms=${duration} unix_ms=${now}`,
+  }).catch(() => {});
+}
+function invoke<T>(
+  command: string,
+  args?: Parameters<typeof nativeInvoke>[1],
+  options?: Parameters<typeof nativeInvoke>[2],
+): Promise<T> {
+  const started = performance.now();
+  return nativeInvoke<T>(command, args, options).then(
+    (value) => { diagnosticIpc(command, started, "ok"); return value; },
+    (error) => { diagnosticIpc(command, started, "error"); throw error; },
+  );
+}
 import type {
   Artifact,
   ImageRef,
@@ -115,6 +145,59 @@ export interface M0Config {
   driver: string;
   ready_file: string | null;
   report_dir: string | null;
+}
+
+export interface BfcReadbackTicket {
+  ticket: string;
+  scan_id: string;
+  expires_in_seconds: number;
+}
+
+export interface BfcImportResult {
+  scan_id: string;
+  pages: number;
+  cards: number;
+  unique: number;
+  gap: number | null;
+}
+
+export interface BfcReadbackStatus {
+  state: "awaiting_login_probe" | "logged_in" | "logged_out" | "access_limited" | "unknown" | "ready" | "importing" | "imported" | "failed" | "outcome_unknown";
+  login_status: "logged_in" | "logged_out" | "access_limited" | "unknown" | null;
+  mid: string | null;
+  folder_id: string | null;
+  folder_name: string | null;
+  pages_captured: number;
+  expected_pages: number | null;
+  reported_total: number | null;
+  items_captured: number;
+  message_code: string | null;
+  imported: BfcImportResult | null;
+}
+
+export interface BfcServiceStatus {
+  online: boolean;
+  local_only: boolean | null;
+  bilibili_network_requests: number | null;
+  read_snapshot_only: boolean | null;
+  complete_snapshot: boolean | null;
+  message_code: string | null;
+}
+
+export interface WechatWorkingDraft {
+  version: number;
+  title: string;
+  author: string;
+  digest: string;
+  content_html: string;
+  cover_path: string;
+  body_image_path: string;
+  cover_media_id: string;
+  body_image_url: string;
+  draft_media_id: string;
+  verified: boolean;
+  outcome_unknown: boolean;
+  updated_at_ms: number;
 }
 
 export type AgentRuntimeMode = "native" | "rig" | "canary";
@@ -409,6 +492,19 @@ export const bridge = {
   }) => invoke<CommandSnippet>("snippet_update", p),
 
   nativeIssueIntent: (scope: string) => invoke<string>("issue_intent", { scope }),
+
+  // BFC readback is a short-lived, user-started DOM capture. The remote tab
+  // can submit only the ticket-bound rendered evidence; final local import is
+  // main-window-only and targets the fixed loopback BFC service.
+  bfcReadbackBegin: (tabId: string) =>
+    invoke<BfcReadbackTicket>("bfc_readback_begin", { tabId }),
+  bfcReadbackStatus: (ticket: string) =>
+    invoke<BfcReadbackStatus>("bfc_readback_status", { ticket }),
+  bfcReadbackCancel: (ticket: string) =>
+    invoke<void>("bfc_readback_cancel", { ticket }),
+  bfcReadbackFinish: (ticket: string) =>
+    invoke<BfcImportResult>("bfc_readback_finish", { ticket }),
+  bfcServiceStatus: () => invoke<BfcServiceStatus>("bfc_service_status"),
   snippetRemove: (id: string, intent: string) => invoke("snippet_remove", { id, intent }),
 
   // M2-6.c 命令片段执行：复用脚本执行态事件和运行历史。
@@ -647,6 +743,9 @@ export const bridge = {
   wechatCreateDraft: (title: string, author: string, digest: string, contentHtml: string, coverMediaId: string) =>
     invoke<{ media_id: string; verified: boolean; status: string }>("wechat_create_draft", { title, author, digest, contentHtml, coverMediaId }),
   wechatGetDraftStatus: (mediaId: string) => invoke<{ media_id: string; verified: boolean }>("wechat_get_draft_status", { mediaId }),
+  wechatWorkingDraftLoad: () => invoke<WechatWorkingDraft | null>("wechat_working_draft_load"),
+  wechatWorkingDraftSave: (draft: WechatWorkingDraft) => invoke<number>("wechat_working_draft_save", { draft }),
+  wechatWorkingDraftClear: () => invoke<void>("wechat_working_draft_clear"),
 
   getStartDirs: () => invoke<DirEntry[]>("get_start_dirs"),
 
@@ -765,8 +864,8 @@ export const bridge = {
     listen<{ url: string }>("new-tab-request", (e) => cb(e.payload)),
 
   // 子 webview 内导航完成（点链接/前进/后退/刷新后）同步地址栏与页签 URL。
-  onTabNavigated: (cb: (d: { id: string; url: string }) => void) =>
-    listen<{ id: string; url: string }>("tab-navigated", (e) => cb(e.payload)),
+  onTabNavigated: (cb: (d: { id: string; url: string; seq?: number }) => void) =>
+    listen<{ id: string; url: string; seq?: number }>("tab-navigated", (e) => cb(e.payload)),
 
   // tab-N 主进程 WebView 恢复状态（有限预算；失败/耗尽可被前端提示和日志观测）。
   onTabRecovery: (cb: (d: TabRecoveryEvent) => void) =>

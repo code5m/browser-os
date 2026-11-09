@@ -1274,19 +1274,34 @@ pub async fn coding_service(
         .map_err(|_| "AGENT_STREAM_DISCONNECTED")?;
     let worker_channel = on_event.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
+        let mut request = request;
         let root = std::path::PathBuf::from(request["root"].as_str().ok_or("AGENT_ROOT_REQUIRED")?);
         if !root.is_absolute() || root.parent().is_none() {
             return Err("AGENT_ROOT_INVALID".into());
         }
         let id = request["model_id"].as_str().unwrap_or("").to_owned();
         let cancel_root = root.canonicalize().map_err(|_| "AGENT_ROOT_INVALID")?;
+        if let Some(session_id) = crate::capabilities::agent::public_api::prepare_coding_session(
+            &cancel_root,
+            &storage,
+            &mut request,
+        )? {
+            // Allows a newly-created session to be cancelled or recovered even
+            // if the model stream disconnects before the command result arrives.
+            worker_channel
+                .send(json!({"type":"session","session_id":session_id}))
+                .map_err(|_| "AGENT_STREAM_DISCONNECTED".to_string())?;
+        }
         let mut emit_delta = |text: &str| -> Result<(), String> {
             worker_channel
                 .send(json!({"type":"delta","text":text}))
                 .map_err(|_| "AGENT_STREAM_DISCONNECTED".to_string())
         };
         let execution =
-            crate::capabilities::agent::execution_owner::ProductionExecution::begin("coding")?;
+            crate::capabilities::agent::execution_owner::ProductionExecution::begin_coding(
+                &cancel_root,
+                request["session_id"].as_str(),
+            )?;
         let response = crate::capabilities::agent::public_api::dispatch_coding_request(
             &root,
             &storage,

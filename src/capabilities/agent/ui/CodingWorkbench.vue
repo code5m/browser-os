@@ -276,7 +276,11 @@ async function send(){
   try{
     const attachments=context.value.map(item=>`<untrusted-context name=${JSON.stringify(item.name)}>\n${item.text}\n</untrusted-context>`).join('\n');
     const stream = new Channel<any>();
+    const sessionEventEpoch=projectEpoch;
     stream.onmessage = (event:any) => {
+      // Native Coding Owner has already atomically persisted this identity.
+      // Keep it for cancellation/recovery even if the provider later fails.
+      if (event?.type === 'session' && typeof event.session_id === 'string' && projectEpoch===sessionEventEpoch) sessionId.value=event.session_id;
       if (event?.type === 'delta' && typeof event.text === 'string') streamingText.value += event.text;
       if (event?.type === 'error') notice.value = '流式响应中断：' + String(event.message || '未知错误');
     };
