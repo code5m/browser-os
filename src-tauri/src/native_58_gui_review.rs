@@ -133,8 +133,28 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
     app.listen("native-58-review-finished", move |event| {
         let mut report: serde_json::Value = serde_json::from_str(event.payload())
             .unwrap_or_else(|_| serde_json::json!({"status":"FAIL","error":"INVALID_REPORT_JSON"}));
+        // Never accept 58 green rows if one command is missing or duplicated.
+        // Read the authoritative frozen Native-58 inventory at compile time,
+        // so runtime evidence must cover each exact command once.
+        let frozen: serde_json::Value = serde_json::from_str(include_str!(
+            "../../docs/architecture/native-boundary/native-permission-debt-baseline.json"
+        ))
+        .unwrap_or_default();
+        let expected: std::collections::HashSet<&str> = frozen["pending_side_effect_reviews"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|item| item.as_str())
+            .collect();
         let commands_pass = report["commands"].as_array().is_some_and(|items| {
-            items.len() == 58 && items.iter().all(|item| item["status"] == "PASS")
+            let seen: std::collections::HashSet<&str> = items
+                .iter()
+                .filter_map(|item| item["command"].as_str())
+                .collect();
+            items.len() == 58
+                && expected.len() == 58
+                && seen == expected
+                && items.iter().all(|item| item["status"] == "PASS")
         });
         let state = report_app.state::<crate::AppState>();
         let resource_tab = report["resourceTabId"].as_str().unwrap_or("");

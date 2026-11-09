@@ -32,6 +32,8 @@ assert.match(js,/const invoke = tauri\?\.core\?\.invoke;/,'must use the actual i
 assert.match(js,/tauri\.event\.emit\('native-58-review-finished'/,'must emit real completed command outcomes');
 assert.match(js,/resourceRecordsBeforeClear/,'must include before/after WebKit resource evidence');
 assert.match(rust,/items\.len\(\) == 58/,'native must verify exact 58 results');
+assert.match(rust,/pending_side_effect_reviews/,'native runtime must compare reported names against the frozen 58-command inventory');
+assert.match(rust,/seen == expected/,'missing or duplicate green rows must never pass runtime evidence');
 assert.match(rust,/nativePostconditionsStatus/,'native side effects require postcondition proof');
 assert.match(rust,/NATIVE_58_ISOLATION_REQUIRED/,'reviewer must reject live production HOME/XDG before issuing native effects');
 assert.match(rust,/native-58-review-progress/,'native must record real pre-effect progress before a GUI deadlock');
