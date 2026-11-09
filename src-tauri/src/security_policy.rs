@@ -625,6 +625,20 @@ pub fn check_remote_invocation(
     if label == "main" {
         return Ok(());
     }
+    // Tauri remote-collect exposes ONLY these telemetry handlers. Neither
+    // writes user data, starts processes nor opens windows; a remote page
+    // cannot request a main-window intent token. Their command-specific
+    // payload bounds and source checks remain mandatory inside each handler.
+    // A supplied token must still be consumed rather than silently ignored.
+    let telemetry_without_intent = token.is_none()
+        && match scope {
+            "report_title" => label.starts_with("tab-"),
+            "report_resources" => label.starts_with("tab-") || label.starts_with("grid-"),
+            _ => false,
+        };
+    if telemetry_without_intent {
+        return Ok(());
+    }
     let token = token.ok_or(PolicyError::MissingUserIntent {
         scope: scope.to_string(),
     })?;
@@ -1458,6 +1472,46 @@ mod security_policy_tests {
         let registry = IntentRegistry::new();
         // 主窗口 UI 的点击本身就是用户手势的结果，不需要令牌。
         assert!(check_remote_invocation("main", INTENT_SAVE_NOTE, None, &registry).is_ok());
+    }
+
+    #[test]
+    fn remote_telemetry_is_allowed_only_for_known_tab_and_grid_labels() {
+        let registry = IntentRegistry::new();
+        for label in ["tab-1", "tab-200"] {
+            for scope in ["report_title", "report_resources"] {
+                assert!(check_remote_invocation(label, scope, None, &registry).is_ok());
+            }
+        }
+        assert!(check_remote_invocation("grid-1", "report_resources", None, &registry).is_ok());
+        assert!(check_remote_invocation("grid-1", "report_title", None, &registry).is_err());
+        for label in ["browser", "tool-json", "main-fake"] {
+            for scope in ["report_title", "report_resources"] {
+                assert!(check_remote_invocation(label, scope, None, &registry).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn remote_telemetry_scope_is_exact_and_does_not_bypass_sensitive_effects() {
+        let registry = IntentRegistry::new();
+        for scope in [
+            "report_title_mutation",
+            "report_resources_delete",
+            "collect_selection",
+            "save_note",
+            "request_open_terminal",
+            "clipboard_write",
+            "session_delete",
+            "snippet_remove",
+        ] {
+            assert!(
+                check_remote_invocation("tab-1", scope, None, &registry).is_err(),
+                "{scope}"
+            );
+        }
+        assert!(
+            check_remote_invocation("tab-1", "report_resources", Some("fake"), &registry).is_err()
+        );
     }
 
     #[test]

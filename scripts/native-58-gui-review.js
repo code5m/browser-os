@@ -127,12 +127,19 @@
     // The remote page invokes report_title/report_resources using its own
     // remote capability and attempts a main-only clipboard command. Results are
     // posted to the loopback evidence server and checked below.
-    await poll(async()=>({...remote}),value=>value.title>0&&value.resources>0,12000);
+    let remoteTelemetryFailure = '';
+    try {
+      await poll(async()=>({...remote}),value=>value.title>0&&value.resources>0,12000);
+    } catch(error) {
+      // Preserve a full 58-command diagnostic ledger when external-origin
+      // telemetry is denied; the two failed remote outcomes still block PASS.
+      remoteTelemetryFailure = text(error);
+    }
     // These events can only be emitted after the remote-origin commands pass
     // their Tauri capability and invocation-source checks. The runner separately
     // verifies the remote denial of clipboard_write from its loopback server.
-    record('report_title',remote.title>0?'PASS':'FAIL',`remote-origin report_title emitted ${remote.title} tab-title event(s)`);
-    record('report_resources',remote.resources>0?'PASS':'FAIL',`remote-origin report_resources emitted ${remote.resources} browser-resources event(s)`);
+    record('report_title',remote.title>0?'PASS':'FAIL',`remote-origin report_title emitted ${remote.title} tab-title event(s); ${remoteTelemetryFailure}`);
+    record('report_resources',remote.resources>0?'PASS':'FAIL',`remote-origin report_resources emitted ${remote.resources} browser-resources event(s); ${remoteTelemetryFailure}`);
 
     await run('tab_open', async () => {
       await invoke('tab_open',{id:remoteTab.id,url:`${base}/page?name=history-one`});
