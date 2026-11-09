@@ -13,6 +13,7 @@ import re
 import sys
 import tempfile
 from pathlib import Path
+from native_bridge_owner_sources import read_native_bridge_owners
 
 # M0-3.b 已收口：capability 删除了残留的 `browser` label，远程权限集不再向外部页面
 # 开放写盘/开终端类副作用命令，且上报类命令带来源校验与载荷边界。
@@ -180,7 +181,14 @@ def load_policy_source(root: Path) -> str:
 
 
 def scan_repository(root: Path) -> list[str]:
-    bridge_source = (root / "src-tauri" / "src" / "bridge.rs").read_text(encoding="utf-8")
+    # Real repo owns these commands in physical bridge owner files; the self-test
+    # fixture intentionally builds a minimal legacy bridge.rs without an owner
+    # directory. Both paths are scanned using the SAME detect_gaps rules.
+    owner_dir = root / "src-tauri/src/bridge"
+    if owner_dir.is_dir():
+        bridge_source = read_native_bridge_owners(root, "filesystem_commands", "resource_commands", "tab_runtime", "automation_commands", "workspace_commands", "integration_commands")
+    else:
+        bridge_source = (root / "src-tauri/src/bridge.rs").read_text(encoding="utf-8")
     # launch_app 已迁入 framework；继续校验真实实现，不把迁移误判成保护缺失。
     framework = root / "src-tauri/src/framework/commands.rs"
     if framework.is_file():

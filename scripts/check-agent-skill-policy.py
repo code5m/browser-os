@@ -277,7 +277,7 @@ def c_readonly_command_parity(rel, text, repo):
     )
     if not present:
         return None
-    bridge_rs = repo.get("src-tauri/src/bridge.rs", "")
+    bridge_rs = repo.get("src-tauri/src/bridge.rs", "") + "\n" + repo.get("src-tauri/src/bridge/workbench_commands.rs", "")
     main_rs = repo.get("src-tauri/src/main.rs", "")
     acl = repo.get("src-tauri/permissions/default-commands.toml", "")
     bts = repo.get("src/bridge.ts", "")

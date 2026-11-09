@@ -42,6 +42,8 @@
 # ---------------------------------------------------------------------------
 import argparse
 import os
+from pathlib import Path
+from native_bridge_owner_sources import read_native_bridge_owners
 import re
 import sys
 import glob
@@ -136,7 +138,7 @@ def _repo_files():
     """按逻辑名装载 W13 检查所需的仓库文件文本。"""
     base = os.path.join(ROOT, "src-tauri")
     return {
-        "bridge": _read(os.path.join(base, "src", "bridge.rs")),
+        "bridge": read_native_bridge_owners(Path(ROOT), "integration_commands"),
         "plugin": _read(os.path.join(base, "src", "capabilities", "plugin", "plugin.rs")),
         "main": _read(os.path.join(base, "src", "main.rs")),
         "domain": _read(os.path.join(base, "src", "domain.rs")),

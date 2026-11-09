@@ -32,6 +32,7 @@ import json
 import re
 import sys
 from pathlib import Path
+from native_bridge_owner_sources import read_native_bridge_owners
 
 from dependency_lock_policy import lock_declared_deps_match, mutate_lock_root_dependency
 
@@ -303,6 +304,8 @@ def read_repo(root: Path) -> dict[str, str]:
     ]:
         p = root / rel
         out[rel] = p.read_text(encoding="utf-8") if p.exists() else ""
+
+    out["src-tauri/src/bridge.rs"] = read_native_bridge_owners(root, "workspace_commands")
 
     comps: dict[str, str] = {}
     for p in sorted((root / "src/components").rglob("*")):

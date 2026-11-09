@@ -29,6 +29,7 @@ import argparse
 import re
 import sys
 from pathlib import Path
+from native_bridge_owner_sources import read_native_bridge_owners
 
 IMAGE_COMMANDS = ("save_image", "list_artifact_images")
 
@@ -249,7 +250,7 @@ def read_repo(root: Path) -> dict[str, str]:
     return {
         "domain": read("src-tauri/src/domain.rs"),
         "images": read("src-tauri/src/shared/images.rs"),
-        "bridge": read("src-tauri/src/bridge.rs") + "\n" + read("src-tauri/src/capabilities/session/commands.rs"),
+        "bridge": read_native_bridge_owners(root, "workspace_commands") + "\n" + read("src-tauri/src/capabilities/session/commands.rs"),
         "main_rs": read("src-tauri/src/main.rs"),
         "acl": read("src-tauri/permissions/default-commands.toml"),
         "workspace": read("src-tauri/src/capabilities/workspace/workspace.rs"),

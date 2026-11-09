@@ -4,6 +4,6 @@
   "description": "允许主窗口内的浏览器子 webview(外部域)调用 collect_selection 与 report_resources",
   "windows": ["main", "grid-child-*"],
   "webviews": ["tab-*", "grid-*"],
-  "remote": {"urls": ["https://*", "http://*"]},
+  "remote": {"urls": ["https://*", "http://*", "http://127.0.0.1:*"]},
   "permissions": ["core:default", "remote-collect"]
 }

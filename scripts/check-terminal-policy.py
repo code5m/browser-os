@@ -26,6 +26,7 @@ import argparse
 import re
 import sys
 from pathlib import Path
+from native_bridge_owner_sources import read_native_bridge_owners
 
 
 def detect_violations(files: dict) -> list[str]:
@@ -200,7 +201,7 @@ def read_repo(root: Path) -> dict:
 
     return {
         "terminal_rs": read("src-tauri/src/capabilities/terminal/terminal.rs"),
-        "bridge_rs": read("src-tauri/src/bridge.rs"),
+        "bridge_rs": read_native_bridge_owners(root, "terminal_commands"),
         "main_rs": read("src-tauri/src/main.rs"),
         "cargo_toml": read("src-tauri/Cargo.toml"),
         "acl_toml": read("src-tauri/permissions/default-commands.toml"),

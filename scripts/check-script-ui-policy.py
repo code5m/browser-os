@@ -41,6 +41,7 @@ import json
 import re
 import sys
 from pathlib import Path
+from native_bridge_owner_sources import read_native_bridge_owners
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = ROOT / "src" / "capabilities" / "script" / "ui"
@@ -258,7 +259,7 @@ def read_ctx() -> dict[str, str]:
         "snippetui": read(SNIPPET_UI),
         "layout": read(LAYOUT_STORE),
         "activity": read(ACTIVITY_BAR),
-        "bridge_rs": read(BRIDGE_RS),
+        "bridge_rs": read_native_bridge_owners(ROOT, "automation_commands"),
         "package_json": pkg,
         "package_lock": lock,
         "base_deps": count_deps(pkg, lock),
