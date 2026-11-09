@@ -22,7 +22,15 @@ pub fn open_browser(webview: tauri::Webview, app: AppHandle, url: String) -> Res
 pub fn close_browser(webview: tauri::Webview, app: AppHandle) -> Result<(), String> {
     crate::shared::native_legacy_policy::require_main(&webview, "close_browser")?;
 
-    if let Some(id) = app.state::<AppState>().active_tab.lock().unwrap().clone() {
+    // Copy the active id then DROP its mutex guard before close_tab().
+    // An if-let scrutinee temporary can keep the lock alive across the body;
+    // close_tab() also locks active_tab, causing a self-deadlock in real GTK.
+    let active_id = {
+        let state = app.state::<AppState>();
+        let active = state.active_tab.lock().unwrap();
+        active.clone()
+    };
+    if let Some(id) = active_id {
         close_tab(&app, &id)?;
     }
     Ok(())

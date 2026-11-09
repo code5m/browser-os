@@ -212,6 +212,14 @@ exit 2
             report = json.loads(report_path.read_text(encoding="utf-8"))
         except Exception as error:
             report = {"status":"FAIL","error":f"invalid report: {error}"}
+    progress_path = evidence / "native-58-progress.jsonl"
+    progress_lines = progress_path.read_text(encoding="utf-8").splitlines() if progress_path.is_file() else []
+    try:
+        progress_records = [json.loads(row) for row in progress_lines]
+    except (json.JSONDecodeError, ValueError):
+        progress_records = [{"phase": "INVALID_PROGRESS_EVIDENCE"}]
+    report["progressRecordCount"] = len(progress_records)
+    report["lastNativeProgress"] = progress_records[-1] if progress_records else None
     remote_by_name = {item.get("command"): item for item in state.remote_results}
     remote_ok = (
         remote_by_name.get("report_title", {}).get("status") == "PASS"
@@ -227,7 +235,7 @@ exit 2
     report["pythonEvidence"] = {"remote_origin_allow_and_deny": "PASS" if remote_ok else "FAIL", "child_webview_eval_side_effect": "PASS" if eval_event else "FAIL", "isolated_xdg_settings": "PASS" if xdg_ok else "FAIL", "isolated_xvfb": "PASS", "process_exit_code": code}
     report["status"] = "PASS" if report.get("status") == "PASS" and remote_ok and eval_event and xdg_ok and code == 0 else "FAIL"
     (evidence / "summary.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-    lines = ["# BrowserOS Native 58 installed-GUI evidence", "", f"- Result: **{report['status']}**", f"- Installed binary: `{binary}`", f"- Process exit: `{code}`", f"- Command coverage: {len(report.get('commands', []))}/58", "", "| Command | Result | Evidence |", "|---|---|---|"]
+    lines = ["# BrowserOS Native 58 installed-GUI evidence", "", f"- Result: **{report['status']}**", f"- Installed binary: `{binary}`", f"- Process exit: `{code}`", f"- Command coverage: {len(report.get('commands', []))}/58", f"- Last native progress: `{report['lastNativeProgress']}`", "", "| Command | Result | Evidence |", "|---|---|---|"]
     for item in report.get("commands", []):
         lines.append(f"| `{item.get('command','')}` | {item.get('status','FAIL')} | {str(item.get('detail','')).replace('|','/')} |")
     lines += ["", "## Native postconditions", "", "```json", json.dumps(report.get("nativePostconditions", {}), ensure_ascii=False, indent=2), "```", "", "## Remote-origin evidence", "", "```json", json.dumps(state.remote_results, ensure_ascii=False, indent=2), "```", ""]

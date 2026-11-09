@@ -447,6 +447,7 @@ jobs:
             /tmp/browseros-native-58-evidence/summary.json
             /tmp/browseros-native-58-evidence/summary.md
             /tmp/browseros-native-58-evidence/native-58-report.json
+            /tmp/browseros-native-58-evidence/native-58-progress.jsonl
             /tmp/browseros-native-58-evidence/remote-results.json
             /tmp/browseros-native-58-evidence/remote-events.json
             /tmp/browseros-native-58-evidence/xdg-settings.log

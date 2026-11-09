@@ -14,9 +14,11 @@
   const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
   const text = (error) => String(error?.message || error || 'unknown error');
   const record = (command, status, detail) => results.push({command,status,detail:String(detail ?? '').slice(0,600)});
+  const progress = (command, phase) => tauri?.event?.emit?.('native-58-review-progress',{command,phase}).catch(()=>{});
   const run = async (command, operation) => {
-    try { const detail = await operation(); record(command,'PASS',detail ?? 'IPC completed'); return detail; }
-    catch (error) { record(command,'FAIL',text(error)); return undefined; }
+    await progress(command,'start');
+    try { const detail = await operation(); record(command,'PASS',detail ?? 'IPC completed'); await progress(command,'pass'); return detail; }
+    catch (error) { record(command,'FAIL',text(error)); await progress(command,'fail'); return undefined; }
   };
   const expectError = async (operation, expected) => {
     try { await operation(); throw new Error('expected rejection was not returned'); }

@@ -51,6 +51,38 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
         }
     }
 
+    // Crash-safe incremental progress, for diagnosing a GTK main-loop freeze.
+    // Never log caller payloads, URLs or user data: command and state only.
+    let progress_path = report_path.with_file_name("native-58-progress.jsonl");
+    app.listen("native-58-review-progress", move |event| {
+        let Ok(progress) = serde_json::from_str::<serde_json::Value>(event.payload()) else {
+            return;
+        };
+        let command = progress["command"].as_str().unwrap_or("");
+        let phase = progress["phase"].as_str().unwrap_or("");
+        if command.is_empty()
+            || command.len() > 64
+            || !command
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+            || !matches!(phase, "start" | "pass" | "fail")
+        {
+            return;
+        }
+        let line = format!(
+            "{}\n",
+            serde_json::json!({"command": command, "phase": phase})
+        );
+        if let Ok(mut file) = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&progress_path)
+        {
+            use std::io::Write;
+            let _ = file.write_all(line.as_bytes());
+        }
+    });
+
     let report_app = app.clone();
     let report_path_for_event = report_path.clone();
     app.listen("native-58-review-finished", move |event| {
