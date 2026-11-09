@@ -175,11 +175,8 @@ fn query(
     match pool {
         DbPool::Sqlite(conn) => {
             let mut statement = conn.prepare(sql).map_err(|_| "DB_TABLE_QUERY_FAILED")?;
-            output.columns = statement
-                .column_names()
-                .iter()
-                .map(|v| v.to_string())
-                .collect();
+            // rusqlite 0.41 exposes column names as an iterator directly.
+            output.columns = statement.column_names().map(|v| v.to_string()).collect();
             let width = statement.column_count();
             let values = parameters.iter().map(|v| match v {
                 Some(text) => rusqlite::types::Value::Text(text.clone()),

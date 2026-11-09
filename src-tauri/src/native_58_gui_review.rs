@@ -50,7 +50,6 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
             );
         }
     }
-    crate::bridge::handle_open_url(&app, "https://example.invalid/native-58-pending");
 
     let report_app = app.clone();
     let report_path_for_event = report_path.clone();
@@ -189,6 +188,15 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
             app.exit(2);
             return;
         };
+        // Seed after the real Vue mount and immediately before the IPC review.
+        // The production onMounted URL handoff otherwise consumes this
+        // fixture before take_pending_open_urls can inspect it. Never emit a
+        // URL-pending event that causes the normal UI to race the review.
+        app.state::<crate::AppState>()
+            .pending_open_urls
+            .lock()
+            .unwrap()
+            .push("https://example.invalid/native-58-pending".into());
         if let Err(error) = main.eval(&script) {
             eprintln!("NATIVE_58_GUI_REVIEW_FAIL=INJECT:{error}");
             app.exit(2);

@@ -1011,7 +1011,7 @@ fn from_sqlite_value(value: rusqlite::types::Value) -> DbValue {
 ///
 /// `deadline` 可注入，便于测试**不改生产常量**地验证超时边界（M4-1.c §6）。
 pub(crate) fn query_sqlite_with_deadline(
-    conn: &rusqlite::Connection,
+    conn: &mut rusqlite::Connection,
     sql: &str,
     cancel: &QueryCancel,
     deadline: &QueryDeadline,
@@ -1032,13 +1032,22 @@ pub(crate) fn query_sqlite_with_deadline(
             "Cannot install cancellation handler",
         )
     })?;
-    struct ResetProgress<'a>(&'a rusqlite::Connection);
+    // rusqlite 0.41 requires exclusive access when installing/removing the
+    // VM progress callback. Keep the handler installed only for this query,
+    // including all early-return and timeout/cancel paths.
+    struct ResetProgress<'a>(&'a mut rusqlite::Connection);
+    impl ResetProgress<'_> {
+        fn connection(&self) -> &rusqlite::Connection {
+            self.0
+        }
+    }
     impl Drop for ResetProgress<'_> {
         fn drop(&mut self) {
             let _ = self.0.progress_handler(0, None::<fn() -> bool>);
         }
     }
-    let _reset = ResetProgress(conn);
+    let reset = ResetProgress(conn);
+    let conn = reset.connection();
 
     if sql.trim().is_empty() {
         return Err(DbError::new(DbErrorCode::SqlEmpty, "SQL 为空"));
@@ -1270,7 +1279,7 @@ mod tests {
 
     #[test]
     fn workbench_cancel_interrupts_before_first_aggregate_row() {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
         let cancel = QueryCancel::new();
         let signal = cancel.clone();
         let worker = std::thread::spawn(move || {
@@ -1278,7 +1287,7 @@ mod tests {
             signal.cancel();
         });
         let deadline = QueryDeadline::new(Duration::from_secs(3));
-        let error = query_sqlite_with_deadline(&conn,
+        let error = query_sqlite_with_deadline(&mut conn,
             "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<100000000) SELECT sum(x) FROM n",
             &cancel, &deadline, "cancel-test").unwrap_err();
         worker.join().unwrap();
@@ -1293,9 +1302,9 @@ mod tests {
 
     #[test]
     fn workbench_deadline_interrupts_before_first_aggregate_row() {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
         let deadline = QueryDeadline::new(Duration::from_millis(5));
-        let error = query_sqlite_with_deadline(&conn,
+        let error = query_sqlite_with_deadline(&mut conn,
             "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<100000000) SELECT sum(x) FROM n",
             &QueryCancel::new(), &deadline, "timeout-test").unwrap_err();
         assert_eq!(error.code, DbErrorCode::Timeout);
@@ -1721,12 +1730,12 @@ mod tests {
         let root = temp_root("soft");
         let db = root.join("s.db");
         let cfg = sqlite_config("id-1", &db.to_string_lossy());
-        let pool = DbPool::connect(&cfg, None, &[root.clone()]).expect("连接");
+        let mut pool = DbPool::connect(&cfg, None, &[root.clone()]).expect("连接");
         if let DbPool::Sqlite(conn) = &pool {
             conn.execute_batch("CREATE TABLE t (v INTEGER); INSERT INTO t VALUES (1);")
                 .expect("建表");
         }
-        let DbPool::Sqlite(conn) = &pool else {
+        let DbPool::Sqlite(conn) = &mut pool else {
             panic!("期望 SQLite 连接");
         };
         // soft = 0 → 首轮检查即命中（deterministic，不依赖真实等待）
@@ -1749,12 +1758,12 @@ mod tests {
         let root = temp_root("hard");
         let db = root.join("h.db");
         let cfg = sqlite_config("id-1", &db.to_string_lossy());
-        let pool = DbPool::connect(&cfg, None, &[root.clone()]).expect("连接");
+        let mut pool = DbPool::connect(&cfg, None, &[root.clone()]).expect("连接");
         if let DbPool::Sqlite(conn) = &pool {
             conn.execute_batch("CREATE TABLE t (v INTEGER); INSERT INTO t VALUES (1);")
                 .expect("建表");
         }
-        let DbPool::Sqlite(conn) = &pool else {
+        let DbPool::Sqlite(conn) = &mut pool else {
             panic!("期望 SQLite 连接");
         };
         // 把起点推到过去，使 hard 先于 soft 判定命中
