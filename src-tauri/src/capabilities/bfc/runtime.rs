@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 const SESSION_TTL: Duration = Duration::from_secs(10 * 60);
 const MAX_SESSIONS: usize = 8;
-const MAX_PAGES: u32 = 200;
+const MAX_PAGES: u32 = 300;
 const MAX_ITEMS: usize = 5_000;
 const MAX_TITLE_BYTES: usize = 1_000;
 const MAX_IMPORT_BYTES: usize = 4_500_000;
@@ -57,6 +57,8 @@ pub struct BfcReadbackPayload {
     pub mid: Option<String>,
     pub expected_pages: Option<u32>,
     pub reported_total: Option<u32>,
+    pub pages_captured: Option<u32>,
+    pub items_captured: Option<u32>,
     pub folder_id: Option<String>,
     pub folder_name: Option<String>,
     pub message_code: Option<String>,
@@ -71,6 +73,8 @@ impl Default for BfcReadbackPayload {
             mid: None,
             expected_pages: None,
             reported_total: None,
+            pages_captured: None,
+            items_captured: None,
             folder_id: None,
             folder_name: None,
             message_code: None,
@@ -139,6 +143,16 @@ struct Capture {
 }
 
 #[derive(Clone, Debug)]
+struct Progress {
+    expected_pages: u32,
+    reported_total: u32,
+    pages_captured: u32,
+    items_captured: u32,
+    folder_id: String,
+    folder_name: String,
+}
+
+#[derive(Clone, Debug)]
 struct Session {
     tab_id: String,
     scan_id: String,
@@ -146,6 +160,7 @@ struct Session {
     login_status: Option<BfcLoginStatus>,
     mid: Option<String>,
     capture: Option<Capture>,
+    progress: Option<Progress>,
     state: String,
     message_code: Option<String>,
     imported: Option<BfcImportResult>,
@@ -181,6 +196,7 @@ impl BfcRuntime {
                 login_status: None,
                 mid: None,
                 capture: None,
+                progress: None,
                 state: "awaiting_login_probe".into(),
                 message_code: None,
                 imported: None,
@@ -227,7 +243,7 @@ impl BfcRuntime {
             .get_mut(ticket)
             .ok_or("BFC_READBACK_TICKET_UNKNOWN")?;
         if session.tab_id != tab_id {
-            return Err("BFC_READBACK_TAB_MISMATCH".into());
+            return Err("BFC_TAB_ID_MISMATCH".into());
         }
         if session.imported.is_some()
             || session.state == "importing"
@@ -262,7 +278,13 @@ impl BfcRuntime {
                 session.state = status.as_str().into();
                 session.login_status = Some(status);
                 session.mid = mid;
-                session.message_code = None;
+                session.message_code = if matches!(status, BfcLoginStatus::Unknown) {
+                    Some("BFC_LOGIN_IDENTITY_NOT_FOUND".into())
+                } else if matches!(status, BfcLoginStatus::AccessLimited) {
+                    Some("BFC_BILIBILI_ACCESS_LIMITED".into())
+                } else {
+                    None
+                };
                 Ok(())
             }
             "abort" => {
@@ -288,8 +310,85 @@ impl BfcRuntime {
                 session.message_code = Some(code);
                 Ok(())
             }
-            "favorites" => {
+            "favorites_start" => {
                 if session.state != "logged_in"
+                    || !matches!(session.login_status, Some(BfcLoginStatus::LoggedIn))
+                {
+                    return Err("BFC_LOGIN_REQUIRED".into());
+                }
+                let mid = session
+                    .mid
+                    .as_deref()
+                    .ok_or("BFC_LOGIN_IDENTITY_NOT_FOUND")?;
+                let mut segments = url.path().split('/').filter(|part| !part.is_empty());
+                if url.host_str() != Some("space.bilibili.com")
+                    || segments.next() != Some(mid)
+                    || segments.next() != Some("favlist")
+                {
+                    return Err("BFC_FAVORITES_PAGE_REQUIRED".into());
+                }
+                session.state = "reading_favorites".into();
+                Ok(())
+            }
+            "progress" => {
+                if !matches!(session.state.as_str(), "logged_in" | "reading_favorites")
+                    || !matches!(session.login_status, Some(BfcLoginStatus::LoggedIn))
+                {
+                    return Err("BFC_LOGIN_REQUIRED".into());
+                }
+                let mid = session
+                    .mid
+                    .as_deref()
+                    .ok_or("BFC_LOGIN_IDENTITY_NOT_FOUND")?;
+                let mut segments = url.path().split('/').filter(|segment| !segment.is_empty());
+                if url.host_str() != Some("space.bilibili.com")
+                    || segments.next() != Some(mid)
+                    || segments.next() != Some("favlist")
+                {
+                    return Err("BFC_FAVORITES_PAGE_REQUIRED".into());
+                }
+                let expected_pages = payload.expected_pages.ok_or("BFC_PAGINATION_UNKNOWN")?;
+                let reported_total = payload.reported_total.ok_or("BFC_TOTAL_UNKNOWN")?;
+                let pages = payload.pages_captured.ok_or("BFC_PAGINATION_UNKNOWN")?;
+                let items = payload.items_captured.ok_or("BFC_PAGINATION_UNKNOWN")?;
+                let folder_id = payload.folder_id.unwrap_or_else(|| "unknown".into());
+                let folder_name = payload.folder_name.unwrap_or_else(|| "当前收藏夹".into());
+                if expected_pages == 0
+                    || expected_pages > MAX_PAGES
+                    || pages == 0
+                    || pages > expected_pages
+                    || reported_total as usize > MAX_ITEMS
+                    || items > reported_total
+                    || folder_id.len() > 64
+                    || folder_name.len() > 128
+                {
+                    return Err("BFC_READBACK_BOUNDS_INVALID".into());
+                }
+                if let Some(previous) = &session.progress {
+                    if previous.expected_pages != expected_pages
+                        || previous.reported_total != reported_total
+                        || previous.folder_id != folder_id
+                        || previous.folder_name != folder_name
+                        || pages != previous.pages_captured + 1
+                        || items <= previous.items_captured
+                    {
+                        return Err("BFC_READBACK_PROGRESS_INVALID".into());
+                    }
+                } else if pages != 1 {
+                    return Err("BFC_READBACK_PROGRESS_INVALID".into());
+                }
+                session.progress = Some(Progress {
+                    expected_pages,
+                    reported_total,
+                    pages_captured: pages,
+                    items_captured: items,
+                    folder_id,
+                    folder_name,
+                });
+                Ok(())
+            }
+            "favorites" => {
+                if !matches!(session.state.as_str(), "logged_in" | "reading_favorites")
                     || !matches!(session.login_status, Some(BfcLoginStatus::LoggedIn))
                 {
                     return Err("BFC_LOGIN_REQUIRED".into());
@@ -351,6 +450,17 @@ impl BfcRuntime {
                         return Err("BFC_READBACK_PAGE_DUPLICATE".into());
                     }
                 }
+                if let Some(progress) = &session.progress {
+                    if progress.expected_pages != expected_pages
+                        || progress.reported_total != reported_total
+                        || progress.pages_captured != expected_pages
+                        || progress.items_captured != reported_total
+                        || progress.folder_id != folder_id
+                        || progress.folder_name != folder_name
+                    {
+                        return Err("BFC_READBACK_PROGRESS_INVALID".into());
+                    }
+                }
                 if total != reported_total as usize
                     || (1..=expected_pages).any(|page| !collected.contains_key(&page))
                 {
@@ -393,13 +503,41 @@ impl BfcRuntime {
                 .as_ref()
                 .map(|value| value.as_str().to_string()),
             mid: session.mid.clone(),
-            folder_id: capture.map(|value| value.folder_id.clone()),
-            folder_name: capture.map(|value| value.folder_name.clone()),
-            pages_captured: capture.map(|value| value.pages.len()).unwrap_or(0),
-            expected_pages: capture.map(|value| value.expected_pages),
-            reported_total: capture.map(|value| value.reported_total),
+            folder_id: capture.map(|value| value.folder_id.clone()).or_else(|| {
+                session
+                    .progress
+                    .as_ref()
+                    .map(|value| value.folder_id.clone())
+            }),
+            folder_name: capture.map(|value| value.folder_name.clone()).or_else(|| {
+                session
+                    .progress
+                    .as_ref()
+                    .map(|value| value.folder_name.clone())
+            }),
+            pages_captured: capture
+                .map(|value| value.pages.len())
+                .or_else(|| {
+                    session
+                        .progress
+                        .as_ref()
+                        .map(|value| value.pages_captured as usize)
+                })
+                .unwrap_or(0),
+            expected_pages: capture
+                .map(|value| value.expected_pages)
+                .or_else(|| session.progress.as_ref().map(|value| value.expected_pages)),
+            reported_total: capture
+                .map(|value| value.reported_total)
+                .or_else(|| session.progress.as_ref().map(|value| value.reported_total)),
             items_captured: capture
                 .map(|value| value.pages.values().map(Vec::len).sum())
+                .or_else(|| {
+                    session
+                        .progress
+                        .as_ref()
+                        .map(|value| value.items_captured as usize)
+                })
                 .unwrap_or(0),
             message_code: session.message_code.clone(),
             imported: session.imported.clone(),
@@ -656,7 +794,7 @@ mod tests {
                 "https://space.bilibili.com/42/favlist",
                 base.clone()
             ),
-            Err("BFC_READBACK_TAB_MISMATCH".into())
+            Err("BFC_TAB_ID_MISMATCH".into())
         );
         assert_eq!(
             runtime.submit(
@@ -676,6 +814,142 @@ mod tests {
             ),
             Err("BFC_READBACK_PAGE_DUPLICATE".into())
         );
+    }
+
+    #[test]
+    fn logged_in_wrong_native_tab_never_becomes_logged_out() {
+        let (runtime, ticket, _) = runtime();
+        let login = BfcReadbackPayload {
+            kind: "login".into(),
+            login_status: Some("logged_in".into()),
+            mid: Some("471851304".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            runtime.submit(
+                &ticket,
+                "tab-8",
+                "https://space.bilibili.com/471851304/favlist",
+                login.clone()
+            ),
+            Err("BFC_TAB_ID_MISMATCH".into())
+        );
+        let unchanged = runtime.status(&ticket).unwrap();
+        assert_eq!(unchanged.state, "awaiting_login_probe");
+        assert!(unchanged.login_status.is_none());
+        runtime
+            .submit(
+                &ticket,
+                "tab-7",
+                "https://space.bilibili.com/471851304/favlist",
+                login,
+            )
+            .unwrap();
+        let accepted = runtime.status(&ticket).unwrap();
+        assert_eq!(accepted.state, "logged_in");
+        assert_eq!(accepted.mid.as_deref(), Some("471851304"));
+    }
+
+    #[test]
+    fn injection_failure_does_not_claim_logged_out() {
+        let (runtime, ticket, _) = runtime();
+        runtime
+            .submit(
+                &ticket,
+                "tab-7",
+                "https://www.bilibili.com/",
+                BfcReadbackPayload {
+                    kind: "abort".into(),
+                    message_code: Some("BFC_LOGIN_PROBE_INJECTION_FAILED".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let status = runtime.status(&ticket).unwrap();
+        assert_eq!(status.state, "failed");
+        assert_eq!(status.login_status, None);
+        assert_eq!(
+            status.message_code.as_deref(),
+            Some("BFC_LOGIN_PROBE_INJECTION_FAILED")
+        );
+    }
+
+    #[test]
+    fn readback_page_progress_is_monotonic_and_final_snapshot_validated() {
+        let (runtime, ticket, _) = runtime();
+        let url = "https://space.bilibili.com/471851304/favlist";
+        runtime
+            .submit(
+                &ticket,
+                "tab-7",
+                url,
+                BfcReadbackPayload {
+                    kind: "login".into(),
+                    mid: Some("471851304".into()),
+                    login_status: Some("logged_in".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let progress = |page, items| BfcReadbackPayload {
+            kind: "progress".into(),
+            pages_captured: Some(page),
+            items_captured: Some(items),
+            expected_pages: Some(2),
+            reported_total: Some(2),
+            folder_id: Some("default".into()),
+            folder_name: Some("默认收藏夹".into()),
+            ..Default::default()
+        };
+        let first_page_item_count = 1u32;
+        runtime
+            .submit(&ticket, "tab-7", url, progress(1, first_page_item_count))
+            .unwrap();
+        let status = runtime.status(&ticket).unwrap();
+        assert_eq!(status.pages_captured, 1);
+        assert_eq!(status.items_captured, 1);
+        assert_eq!(status.expected_pages, Some(2));
+        assert_eq!(status.folder_name.as_deref(), Some("默认收藏夹"));
+        assert_eq!(
+            runtime.submit(&ticket, "tab-7", url, progress(1, first_page_item_count)),
+            Err("BFC_READBACK_PROGRESS_INVALID".into())
+        );
+        runtime
+            .submit(&ticket, "tab-7", url, progress(2, 2))
+            .unwrap();
+        let pages = vec![
+            BfcPage {
+                page: 1,
+                items: vec![BfcItem {
+                    bvid: "BV1234567890".into(),
+                    title: "one".into(),
+                }],
+            },
+            BfcPage {
+                page: 2,
+                items: vec![BfcItem {
+                    bvid: "BV1234567891".into(),
+                    title: "two".into(),
+                }],
+            },
+        ];
+        runtime
+            .submit(
+                &ticket,
+                "tab-7",
+                url,
+                BfcReadbackPayload {
+                    kind: "favorites".into(),
+                    expected_pages: Some(2),
+                    reported_total: Some(2),
+                    folder_id: Some("default".into()),
+                    folder_name: Some("默认收藏夹".into()),
+                    pages: Some(pages),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(runtime.status(&ticket).unwrap().state, "ready");
     }
 
     #[test]

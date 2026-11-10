@@ -12,12 +12,13 @@ import {
   buildFavoritesReadbackScript,
   buildLoginProbeScript,
 } from "../model/readbackScripts.mjs";
+import { isBilibiliPage, selectBfcReadbackTab, safeBfcTabSummary } from "../model/tabBinding.mjs";
 
 const BILIBILI_HOME = "https://www.bilibili.com/";
 const BFC_UPDATES = "http://127.0.0.1:4198/#updates";
 const BFC_IMPORT = "http://127.0.0.1:4198/manage#sync";
 const LOGIN_TIMEOUT_MS = 25_000;
-const READBACK_TIMEOUT_MS = 7 * 60_000;
+const READBACK_TIMEOUT_MS = 25 * 60_000;
 const POLL_INTERVAL_MS = 750;
 
 type BfcPhase =
@@ -74,8 +75,11 @@ function messageForCode(code: string | null | undefined): string {
     BFC_PAGINATION_INCOMPLETE: "页面没有提供可用的下一页入口；没有导入快照。",
     BFC_START_FROM_FIRST_PAGE: "无法回到收藏列表第一页；没有导入快照。",
     BFC_FAVORITES_PAGE_REQUIRED: "当前不是已登录账号对应的收藏夹页面。",
-    BFC_LOGIN_IDENTITY_NOT_FOUND: "页面未能提供可核实的账号主页 ID，不能确认登录身份。",
     BFC_BROWSER_SCRIPT_ERROR: "页面读取脚本执行失败。请确认 B站页面正常显示后再试。",
+    BFC_TAB_NOT_ACTIVE: "没有选中的 BrowserOS 网页标签。请先选择已登录的 B站收藏夹标签，再返回 BFC。",
+    BFC_TAB_ID_MISMATCH: "选中标签与原生 B站 WebView 不一致；已停止读取，未修改登录状态。",
+    BFC_LOGIN_PROBE_INJECTION_FAILED: "没有收到 B站原生 WebView 的登录脚本回执。不能判断为未登录，请检查标签页后重试。",
+    BFC_LOGIN_IDENTITY_NOT_FOUND: "页面能打开，但未从可见头像或公开页面状态取得账号 MID；不能确认身份。",
   };
   return code ? (messages[code] || `读取未完成：${code}`) : "读取未完成。";
 }
@@ -104,9 +108,9 @@ export const useBfcStore = defineStore("bfc", () => {
 
   async function ensureBilibiliTab(): Promise<string> {
     const active = browser.tabs.find((tab) => tab.id === browser.activeTabId);
-    const existing = active && isBilibiliUrl(active.url)
+    const existing = active && isBilibiliPage(active.url)
       ? active
-      : browser.tabs.find((tab) => isBilibiliUrl(tab.url));
+      : browser.tabs.find((tab) => isBilibiliPage(tab.url));
 
     layout.activateView("browser");
     if (existing) {
@@ -124,6 +128,25 @@ export const useBfcStore = defineStore("bfc", () => {
     return id;
   }
 
+  async function bindSelectedReadbackTab(): Promise<string> {
+    const selected = selectBfcReadbackTab(browser.tabs, browser.activeTabId);
+    const id = selected.id;
+    // UnifiedTabBar uses browser.activeTabId; force the matching native
+    // WebView active (not a BFC module tab or a random Bilibili tab).
+    layout.activateView("browser");
+    await browser.tabSwitch(id);
+    selectBfcReadbackTab(browser.tabs, browser.activeTabId, id);
+    const safe = safeBfcTabSummary(selected);
+    bridge.debugLog(`BFC_TAB_BIND tabId=${safe.tabId} title=${safe.title} url=${safe.url} favorites=${safe.isFavorites}`);
+    activeTabId.value = id;
+    return id;
+  }
+
+  function safeBfcError(error: unknown, fallback = "BFC_BROWSER_SCRIPT_ERROR"): string {
+    const raw = String(error instanceof Error ? error.message : error);
+    return raw.match(/BFC_[A-Z0-9_]+/)?.[0] || fallback;
+  }
+
   async function navigateTab(tabId: string, target: string): Promise<void> {
     const tab = browser.tabs.find((item) => item.id === tabId);
     if (!tab) throw new Error("BFC_BILIBILI_TAB_NOT_FOUND");
@@ -136,16 +159,20 @@ export const useBfcStore = defineStore("bfc", () => {
     readbackTicket: string,
     terminalStates: string[],
     timeoutMs: number,
+    timeoutCode = "BFC_READBACK_TIMEOUT",
   ): Promise<BfcReadbackStatus> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       if (cancelRequested.value) throw new Error("BFC_READBACK_CANCELLED");
       const next = await bridge.bfcReadbackStatus(readbackTicket);
       readbackStatus.value = next;
+      if (phase.value === "reading_favorites" && next.reported_total != null) {
+        message.value = `已读取 ${next.items_captured}/${next.reported_total} 条，${next.pages_captured}/${next.expected_pages ?? "?"} 页；只读取可见页面。`;
+      }
       if (terminalStates.includes(next.state)) return next;
       await wait(POLL_INTERVAL_MS);
     }
-    throw new Error("BFC_READBACK_TIMEOUT");
+    throw new Error(timeoutCode);
   }
 
   async function stopAndShow(phaseValue: BfcPhase, text: string): Promise<void> {
@@ -196,21 +223,27 @@ export const useBfcStore = defineStore("bfc", () => {
         throw new Error(service.message_code || "BFC_LOCAL_SERVICE_UNSAFE_OR_UNAVAILABLE");
       }
 
-      const tabId = await ensureBilibiliTab();
+      const tabId = await bindSelectedReadbackTab();
       const created = await bridge.bfcReadbackBegin(tabId);
       activeTicket = created.ticket;
       ticket.value = activeTicket;
 
       phase.value = "checking_login";
       message.value = "正在检查当前 B站官方页面的可见登录状态；不会读取 Cookie 或账号凭据。";
-      await bridge.evalInTab(tabId, "delete window.__browserosBfcCancelScan;");
-      await wait(1800);
-      await bridge.evalInTab(tabId, buildLoginProbeScript(activeTicket));
+      try {
+        selectBfcReadbackTab(browser.tabs, browser.activeTabId, tabId);
+        await bridge.evalInTab(tabId, "delete window.__browserosBfcCancelScan;");
+        await bridge.evalInTab(tabId, buildLoginProbeScript(activeTicket));
+      } catch (error) {
+        if (safeBfcError(error) === "BFC_TAB_ID_MISMATCH") throw error;
+        throw new Error("BFC_LOGIN_PROBE_INJECTION_FAILED");
+      }
 
       const login = await waitForStatus(
         activeTicket,
         ["logged_in", "logged_out", "access_limited", "unknown", "failed"],
         LOGIN_TIMEOUT_MS,
+        "BFC_LOGIN_PROBE_INJECTION_FAILED",
       );
       if (login.state === "logged_out") {
         await stopAndShow("logged_out", "当前页面没有检测到已登录账号。请打开 B站正常登录，再回到这里重新开始；不会读取或导出 Cookie。");
@@ -221,7 +254,8 @@ export const useBfcStore = defineStore("bfc", () => {
         return;
       }
       if (login.state !== "logged_in" || !login.mid) {
-        await stopAndShow("unknown", messageForCode(login.message_code || "BFC_LOGIN_IDENTITY_NOT_FOUND"));
+        await stopAndShow(login.state === "failed" ? "failed" : "unknown",
+          messageForCode(login.message_code || "BFC_LOGIN_IDENTITY_NOT_FOUND"));
         return;
       }
 
@@ -237,7 +271,22 @@ export const useBfcStore = defineStore("bfc", () => {
 
       phase.value = "reading_favorites";
       message.value = "正在按页面显示顺序读取收藏夹分页。若页面出现 HTTP 412、安全验证或数量不一致，将立即停止。";
-      await bridge.evalInTab(tabId, buildFavoritesReadbackScript(activeTicket, mid));
+      try {
+        selectBfcReadbackTab(browser.tabs, browser.activeTabId, tabId);
+        await bridge.evalInTab(tabId, buildFavoritesReadbackScript(activeTicket, mid));
+      } catch (error) {
+        if (safeBfcError(error) === "BFC_TAB_ID_MISMATCH") throw error;
+        throw new Error("BFC_BROWSER_SCRIPT_ERROR");
+      }
+      const started = await waitForStatus(
+        activeTicket, ["reading_favorites", "access_limited", "failed"],
+        25_000, "BFC_BROWSER_SCRIPT_ERROR",
+      );
+      if (started.state !== "reading_favorites") {
+        await stopAndShow(started.state === "access_limited" ? "access_limited" : "failed",
+          messageForCode(started.message_code || "BFC_BROWSER_SCRIPT_ERROR"));
+        return;
+      }
 
       const captured = await waitForStatus(
         activeTicket,
@@ -268,7 +317,7 @@ export const useBfcStore = defineStore("bfc", () => {
         layout.activateView("bfc");
         return;
       }
-      const code = String(error instanceof Error ? error.message : error);
+      const code = safeBfcError(error);
       lastErrorCode.value = code;
       if (activeTicket) {
         try {
@@ -287,9 +336,7 @@ export const useBfcStore = defineStore("bfc", () => {
           // The session may have expired or already been removed.
         }
       }
-      await stopAndShow("failed", code === "BFC_READBACK_TIMEOUT"
-        ? "等待 B站页面读取超时。已停止本次流程；请确认页面可正常打开，之后可重新开始。"
-        : `读取失败：${code}`);
+      await stopAndShow("failed", messageForCode(code));
     } finally {
       busy.value = false;
     }

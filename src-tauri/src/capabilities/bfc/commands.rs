@@ -4,12 +4,14 @@ use super::runtime::{
     BfcImportPayload, BfcImportResult, BfcReadbackPayload, BfcReadbackStatus, BfcReadbackTicket,
     BfcRuntime,
 };
+use crate::bridge::AppState;
 use crate::shared::invocation::check_invocation_source;
 use reqwest::header::{HeaderName, HeaderValue, ORIGIN};
 use serde::Serialize;
 use serde_json::Value;
 use std::{collections::HashSet, time::Duration};
 use tauri::{AppHandle, Manager, Webview};
+use url::Url;
 
 const BFC_ORIGIN: &str = "http://127.0.0.1:4198";
 const BFC_SESSION_URL: &str = "http://127.0.0.1:4198/api/session";
@@ -38,6 +40,60 @@ fn main_only(app: &AppHandle, webview: &Webview, scope: &str) -> Result<(), Stri
     check_invocation_source(webview, scope, None, app)
 }
 
+// Validate against the native Owner, not a stale frontend tab metadata list.
+// Child WebViews belong to TabManagerState, not app.get_webview(label).
+fn validate_bfc_tab_binding(
+    tab_id: &str,
+    active_id: Option<&str>,
+    known: bool,
+) -> Result<(), String> {
+    if active_id.is_none() {
+        return Err("BFC_TAB_NOT_ACTIVE".into());
+    }
+    if !tab_id.starts_with("tab-")
+        || tab_id[4..].is_empty()
+        || !tab_id[4..].bytes().all(|b| b.is_ascii_digit())
+        || active_id != Some(tab_id)
+        || !known
+    {
+        return Err("BFC_TAB_ID_MISMATCH".into());
+    }
+    Ok(())
+}
+
+fn verify_native_bfc_tab(app: &AppHandle, tab_id: &str) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let active = state.active_tab.lock().unwrap().clone();
+    let url = state
+        .tabs
+        .lock()
+        .unwrap()
+        .get(tab_id)
+        .map(|t| t.url.clone());
+    validate_bfc_tab_binding(tab_id, active.as_deref(), url.is_some())?;
+    // These are plugin-owned native child WebViews, not app.get_webview entries.
+    let owned = app
+        .state::<tauri_plugin_browser_tabs::TabManagerState>()
+        .get_tab_ids()
+        .iter()
+        .any(|id| id == tab_id);
+    if !owned {
+        return Err("BFC_TAB_ID_MISMATCH".into());
+    }
+    let url = Url::parse(url.as_deref().unwrap_or_default())
+        .map_err(|_| "BFC_FAVORITES_PAGE_REQUIRED")?;
+    if url.scheme() != "https"
+        || url.port_or_known_default() != Some(443)
+        || !matches!(
+            url.host_str(),
+            Some("www.bilibili.com" | "space.bilibili.com")
+        )
+    {
+        return Err("BFC_FAVORITES_PAGE_REQUIRED".into());
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub fn bfc_readback_begin(
     app: AppHandle,
@@ -45,6 +101,7 @@ pub fn bfc_readback_begin(
     tab_id: String,
 ) -> Result<BfcReadbackTicket, String> {
     main_only(&app, &webview, "bfc_readback_begin")?;
+    verify_native_bfc_tab(&app, &tab_id)?;
     app.state::<BfcRuntime>().begin(&tab_id)
 }
 
@@ -263,6 +320,23 @@ async fn import_to_local_bfc(payload: &BfcImportPayload) -> Result<BfcImportResu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn selected_native_tab_must_match_even_when_other_bilibili_tab_is_logged_in() {
+        assert_eq!(
+            validate_bfc_tab_binding("tab-9", Some("tab-8"), true),
+            Err("BFC_TAB_ID_MISMATCH".into())
+        );
+        assert_eq!(
+            validate_bfc_tab_binding("tab-9", Some("tab-9"), false),
+            Err("BFC_TAB_ID_MISMATCH".into())
+        );
+        assert_eq!(
+            validate_bfc_tab_binding("tab-9", None, true),
+            Err("BFC_TAB_NOT_ACTIVE".into())
+        );
+        assert!(validate_bfc_tab_binding("tab-9", Some("tab-9"), true).is_ok());
+    }
 
     #[test]
     fn local_bfc_endpoint_is_fixed_to_loopback() {
