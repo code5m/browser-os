@@ -30,6 +30,7 @@
 - 基于提交 `3c4f6aafed934658f2ad4fa5edf39d80abae556e`，执行 `cargo build --release --locked --manifest-path src-tauri/Cargo.toml`，**PASS**；可执行文件 SHA256：`75bc8af1fcd3b7d803ae41a37b8368d7094a96a03b55c16702094ceb9d1832d5`。
 - 在用户 GNOME 桌面以 BrowserOS 原生 Release 启动（非普通 Chrome，亦非安装 `/usr/bin` 的新 `.deb`），通过 B站收藏 URL 尝试读取。日志证明 Tauri `tab-1` 原生子 WebView 创建、定位和导航转发成功。
 - **实测阻塞**：原生 WebView 后续导航到 `https://space.bilibili.com/471851304` 并上报 `SETTINGS_ERROR: Load failed`。无法核实当前登录 MID、收藏夹名、分页数据或 4869 条回执；该页面加载错误既不能当作 `logged_out`，也不能解释成收藏夹为空。没有尝试重放 Cookie、自动登录、绕过 HTTP 412 或验证码。
+- **独立 TLS 诊断**：在未读取任何 Cookie/登录凭据的情况下，机器通过现有系统代理对同一 B站公开页面执行一次普通 `curl --head`，代理返回 `HTTP/1.1 200 Connection established`，随后 OpenSSL 报 `SSL_ERROR_SYSCALL`、最终 HTTP 状态 `000`；WebKitGTK 2.52.6 亦报告 `Peer failed to perform TLS handshake`。系统 GNOME 代理模式为 `manual`，但未记录代理地址、密钥或令牌。说明本次阻塞发生在 HTTP 内容/登录探测之前，不能凭此判断 B站 412、未登录或收藏夹为空；没有改动系统代理配置、绕过原代理链路、禁用 TLS 校验或重试敏感站点。
 - 开发机 `sudo -n true` 不可用，无法无交互地替换 `/usr/bin/mvp-browser-os`。GitHub 安装版 GUI 工作流 [run 42734977725](https://github.com/code5m/browser-os/actions/runs/42734977725) 可验证真实安装包与冷启动，但不能替代用户账号登录与分页读取。
 
 ## 真实安装版验收步骤（必须由完成者提供实测证据）
