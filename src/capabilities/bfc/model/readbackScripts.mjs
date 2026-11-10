@@ -1,53 +1,68 @@
 const invokeLine = "const invoke = window.__TAURI__?.core?.invoke; if (typeof invoke !== 'function') throw new Error('BFC_BROWSER_BRIDGE_UNAVAILABLE');";
 export function buildLoginProbeScript(ticket) {
   const encodedTicket = JSON.stringify(String(ticket));
-  return `(async () => {
-    ${invokeLine}
-    const blockedPattern = /(?:^|\\b)412(?:\\b|$)|访问被拒绝|请求被拦截|安全验证|人机验证|访问过于频繁|操作频繁|风控验证/i;
+  return String.raw`(async () => {
     const ticket = ${encodedTicket};
-    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-    let ready = false;
-    for (let attempt = 0; attempt < 40; attempt++) {
-      if (window.__browserosBfcCancelScan === ticket) return;
-      if ((location.hostname === 'www.bilibili.com' || location.hostname === 'space.bilibili.com') &&
-          document.readyState !== 'loading' && document.body) { ready = true; break; }
-      await wait(250);
-    }
-    const header = document.querySelector('#bili-header-container, header, .bili-header__bar') || document;
-    const text = String(document.title || '') + '\\n' + String(header.innerText || '').slice(0, 5000);
-    const body = String(document.body?.innerText || '').slice(0, 5000);
-    let login_status = 'unknown';
-    let mid = null;
-    if (!ready) {
-      login_status = 'unknown';
-    } else if (blockedPattern.test(text + '\\n' + body)) {
-      login_status = 'access_limited';
-    } else {
-      const avatar = Array.from(header.querySelectorAll('a[href*="space.bilibili.com"]'))
-        .find((node) => node.querySelector('img') || /avatar|header-entry-avatar/i.test(String(node.className || '')));
-      const href = avatar?.getAttribute('href') || '';
-      mid = href.match(/space\\.bilibili\\.com\\/(\\d{1,20})/)?.[1] || null;
-      const loginControl = Array.from(header.querySelectorAll('a,button,[role="button"]'))
-        .some((node) => /登录/.test(String(node.innerText || '').trim()) ||
-          /passport\\.bilibili\\.com\\/login/i.test(String(node.getAttribute('href') || '')));
-      if (mid) login_status = 'logged_in';
-      else if (loginControl) login_status = 'logged_out';
+    const invoke = window.__TAURI__?.core?.invoke;
+    const root = document.documentElement;
+    // An eval dispatch acknowledgement is NOT proof of a successful page IPC.
+    // The trusted main window treats an absent readback reply as injection failure.
+    if (typeof invoke !== 'function') {
+      if (root) root.dataset.browserosBfcError = 'BFC_LOGIN_PROBE_INJECTION_FAILED';
+      return;
     }
     try {
+      const blockedPattern = /(?:^|\b)412(?:\b|$)|访问被拒绝|请求被拦截|安全验证|人机验证|访问过于频繁|操作频繁|风控验证/i;
+      const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      let ready = false;
+      let login_status = 'unknown';
+      let mid = null;
+      let loginControlSeen = false;
+      for (let attempt = 0; attempt < 40; attempt++) {
+        if (window.__browserosBfcCancelScan === ticket) return;
+        ready = (location.hostname === 'www.bilibili.com' || location.hostname === 'space.bilibili.com') &&
+          document.readyState !== 'loading' && Boolean(document.body);
+        if (ready) {
+          const header = document.querySelector('#bili-header-container, .bili-header__bar, header, [class*="bili-header"]');
+          const text = String(document.title || '') + '\n' + String(header?.innerText || '').slice(0, 5000);
+          const body = String(document.body?.innerText || '').slice(0, 5000);
+          if (blockedPattern.test(text + '\n' + body)) { login_status = 'access_limited'; break; }
+          // Only a signed-in header avatar or a narrow public loginInfo field
+          // identifies the logged-in account. A visited profile UID is NOT
+          // evidence of the current session's identity.
+          const anchors = Array.from(header?.querySelectorAll('a[href*="space.bilibili.com"]') || []);
+          const avatar = anchors.find((node) => node.querySelector('img') ||
+            /avatar|user-face|header-entry/i.test(String(node.className || '')));
+          const href = String(avatar?.getAttribute('href') || '');
+          mid = href.match(/space\.bilibili\.com\/(\d{1,20})(?:[/?#]|$)/)?.[1] || null;
+          const publicMid = window.__INITIAL_STATE__?.loginInfo?.mid;
+          if (!mid && /^\d{1,20}$/.test(String(publicMid ?? '')))
+            mid = String(publicMid);
+          const signedInPublicInfo = window.__BILI_USER_INFO__;
+          if (!mid && signedInPublicInfo?.isLogin === true &&
+              /^\d{1,20}$/.test(String(signedInPublicInfo.mid ?? '')))
+            mid = String(signedInPublicInfo.mid);
+          if (mid) { login_status = 'logged_in'; break; }
+          if (Array.from(header?.querySelectorAll('a,button,[role="button"]') || [])
+            .some((node) => /^(?:登\s*录|立即登录)$/.test(String(node.innerText || '').trim()) ||
+              /passport\.bilibili\.com\/login/i.test(String(node.getAttribute('href') || ''))))
+            loginControlSeen = true;
+        }
+        await wait(250);
+      }
+      // A short-lived login placeholder is not proof of logged-out state.
+      if (ready && login_status === 'unknown' && loginControlSeen) login_status = 'logged_out';
       await invoke('bfc_readback_submit', {
-        ticket,
-        payload: { kind: 'login', login_status, mid }
+        ticket, payload: { kind: 'login', login_status, mid }
       });
-      document.documentElement.dataset.browserosBfcLoginProbe = login_status;
-    } catch (error) {
+      if (root) root.dataset.browserosBfcLoginProbe = login_status;
+    } catch {
+      if (root) root.dataset.browserosBfcError = 'BFC_LOGIN_PROBE_INJECTION_FAILED';
       try {
         await invoke('bfc_readback_submit', {
-          ticket,
-          payload: { kind: 'abort', message_code: 'BFC_BROWSER_SCRIPT_ERROR' }
+          ticket, payload: { kind: 'abort', message_code: 'BFC_LOGIN_PROBE_INJECTION_FAILED' }
         });
-      } catch {}
-      document.documentElement.dataset.browserosBfcLoginProbe = 'bridge_error';
-      document.documentElement.dataset.browserosBfcError = String(error).slice(0, 120);
+      } catch { /* The trusted main window will detect missing acknowledgement. */ }
     }
   })();`;
 }
@@ -64,7 +79,7 @@ export function buildFavoritesReadbackScript(ticket, mid) {
     const url = () => new URL(location.href);
     const abort = async (message_code) => {
       try { await invoke('bfc_readback_submit', { ticket, payload: { kind: 'abort', message_code } }); }
-      catch (error) { document.documentElement.dataset.browserosBfcError = String(error).slice(0, 120); }
+      catch (error) { document.documentElement.dataset.browserosBfcError = 'BFC_BROWSER_SCRIPT_ERROR'; }
     };
     const pageNumber = () => {
       const u = url();
@@ -88,11 +103,33 @@ export function buildFavoritesReadbackScript(ticket, mid) {
       return {root, numeric, next};
     };
     const reportedTotal = () => {
+      // Prefer the visibly selected folder; body-wide counts can refer to
+      // unrelated videos, views or other collections.
+      const selected = Array.from(document.querySelectorAll(
+        '.fav-item.active,.fav-item.cur,.favlist-item.active,.favlist-item--active,' +
+        '[class*="fav-item"][class*="selected"],[class*="fav-item"][class*="active"]'
+      ));
+      for (const folder of selected) {
+        const match = String(folder.innerText || '').trim().match(/(?:收藏夹|收藏)\\s*[（(]?\\s*([\\d,]{1,8})\\s*(?:条|个|视频)?\\s*[）)]?\\s*$/);
+        if (match) {
+          const value = Number(match[1].replaceAll(',', ''));
+          if (Number.isSafeInteger(value) && value >= 0) return value;
+        }
+      }
+      for (const selector of ['.fav-count', '.fav-info .count', '.favlist-info .count', '.favlist-title .count', '[class*="fav-count"]']) {
+        const node = document.querySelector(selector);
+        if (!node || !node.getClientRects().length) continue;
+        const match = String(node.innerText || '').trim().match(/^\\s*([\\d,]{1,8})\\s*(?:条|个|视频)?\\s*$/);
+        if (match) {
+          const value = Number(match[1].replaceAll(',', ''));
+          if (Number.isSafeInteger(value) && value >= 0) return value;
+        }
+      }
       const text = String(document.body?.innerText || '').slice(0, 30000);
       const patterns = [
-        /共\\s*([\\d,]+)\\s*(?:个视频|条视频|个收藏|条收藏)/,
-        /总计\\s*([\\d,]+)\\s*(?:个视频|条视频|个收藏|条收藏)?/,
-        /([\\d,]+)\\s*个视频/
+        /共\s*([\d,]+)\s*(?:个视频|条视频|个收藏|条收藏)/,
+        /总计\s*([\d,]+)\s*(?:个视频|条视频|个收藏|条收藏)?/,
+        /([\d,]+)\s*个视频/
       ];
       for (const pattern of patterns) {
         const match = text.match(pattern);
@@ -158,6 +195,9 @@ export function buildFavoritesReadbackScript(ticket, mid) {
         return;
       }
       if (isBlocked()) { await abort('BFC_BILIBILI_ACCESS_LIMITED'); return; }
+      // Native-only acknowledgement: eval dispatch alone does not mean the
+      // Bilibili child WebView executed or had a working scoped Tauri bridge.
+      await invoke('bfc_readback_submit', { ticket, payload: { kind: 'favorites_start' } });
       let container = null;
       for (let attempt = 0; attempt < 60; attempt++) {
         if (isCancelled()) return;
@@ -190,8 +230,12 @@ export function buildFavoritesReadbackScript(ticket, mid) {
       const pageSize = firstItems.length;
       if (total > 0 && pageSize === 0) { await abort('BFC_FAVORITES_PAGE_EMPTY'); return; }
       const expected = total === 0 ? 1 : Math.ceil(total / pageSize);
-      if (expected < 1 || expected > 200) { await abort('BFC_PAGINATION_LIMIT'); return; }
+      if (expected < 1 || expected > 300) { await abort('BFC_PAGINATION_LIMIT'); return; }
+      const folderId = url().searchParams.get('fid') || 'unknown';
+      const titleNode = document.querySelector('[class*="fav"][class*="title"],[class*="fav-title"]');
+      const folderName = String(titleNode?.innerText || document.title || '当前收藏夹').trim().slice(0,128);
       const pages = [];
+      let itemsCaptured = 0;
       for (let page = 1; page <= expected; page++) {
         if (isCancelled()) return;
         if (isBlocked()) { await abort('BFC_BILIBILI_ACCESS_LIMITED'); return; }
@@ -201,6 +245,12 @@ export function buildFavoritesReadbackScript(ticket, mid) {
         const expectedCount = Math.max(0, Math.min(pageSize, total - (page - 1) * pageSize));
         if (items.length !== expectedCount) { await abort('BFC_READBACK_PAGE_COUNT_MISMATCH'); return; }
         pages.push({page, items});
+        itemsCaptured += items.length;
+        await invoke('bfc_readback_submit', {
+          ticket,
+          payload: { kind: 'progress', pages_captured: page, items_captured: itemsCaptured,
+            expected_pages: expected, reported_total: total, folder_id: folderId, folder_name: folderName }
+        });
         if (page === expected) break;
         const pager = pageControls();
         if (!pager.next || pager.next.hasAttribute('disabled') ||
@@ -227,9 +277,6 @@ export function buildFavoritesReadbackScript(ticket, mid) {
         await abort('BFC_READBACK_TOTAL_MISMATCH');
         return;
       }
-      const folderId = url().searchParams.get('fid') || 'unknown';
-      const titleNode = document.querySelector('[class*="fav"][class*="title"],[class*="fav-title"]');
-      const folderName = String(titleNode?.innerText || document.title || '当前收藏夹').trim().slice(0,128);
       await invoke('bfc_readback_submit', {
         ticket,
         payload: {
@@ -245,7 +292,7 @@ export function buildFavoritesReadbackScript(ticket, mid) {
     } catch (error) {
       try { await abort('BFC_BROWSER_SCRIPT_ERROR'); } catch {}
       document.documentElement.dataset.browserosBfcReadback = 'failed';
-      document.documentElement.dataset.browserosBfcError = String(error).slice(0, 160);
+      document.documentElement.dataset.browserosBfcError = 'BFC_BROWSER_SCRIPT_ERROR';
     }
   })();`;
 }
