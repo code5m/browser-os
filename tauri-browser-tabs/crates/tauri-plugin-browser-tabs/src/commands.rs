@@ -4,6 +4,10 @@ use crate::models::{
 use crate::platform;
 use parking_lot::RwLock;
 use std::collections::HashMap;
+#[cfg(target_os = "linux")]
+use std::os::unix::fs::PermissionsExt;
+#[cfg(target_os = "linux")]
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tauri::{
     webview::NewWindowResponse, AppHandle, Emitter, Manager, State, Webview, WebviewBuilder,
@@ -17,6 +21,64 @@ fn epoch_millis() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or_default()
+}
+
+// External browser tabs share one dedicated persistent WebKit context.
+// A WebContext without an explicit data_directory does not configure WebKit's
+// persistent session storage; a Bilibili login can disappear on restart.
+// Keep the browser profile separate from the trusted local app UI WebView and
+// never expose its contents through native commands or the BFC readback.
+#[cfg(target_os = "linux")]
+fn browser_profile_path(app_data_dir: &Path) -> PathBuf {
+    app_data_dir.join("browser-webview-profile")
+}
+
+#[cfg(target_os = "linux")]
+fn ensure_private_browser_profile(app: &AppHandle<Wry>) -> Result<PathBuf> {
+    let base = app
+        .path()
+        .app_data_dir()
+        .map_err(|_| BrowserTabError::Platform("browser profile directory unavailable".into()))?;
+    let profile = browser_profile_path(&base);
+    if let Ok(meta) = std::fs::symlink_metadata(&profile) {
+        if !meta.file_type().is_dir() {
+            return Err(BrowserTabError::Platform(
+                "browser profile is not a directory".into(),
+            ));
+        }
+    }
+    std::fs::create_dir_all(&profile)
+        .map_err(|_| BrowserTabError::Platform("cannot create browser profile".into()))?;
+    let canonical_base = std::fs::canonicalize(&base)
+        .map_err(|_| BrowserTabError::Platform("browser profile base unavailable".into()))?;
+    let canonical_profile = std::fs::canonicalize(&profile)
+        .map_err(|_| BrowserTabError::Platform("browser profile unavailable".into()))?;
+    if canonical_profile != canonical_base.join("browser-webview-profile") {
+        return Err(BrowserTabError::Platform(
+            "browser profile path invalid".into(),
+        ));
+    }
+    std::fs::set_permissions(&profile, std::fs::Permissions::from_mode(0o700))
+        .map_err(|_| BrowserTabError::Platform("cannot secure browser profile".into()))?;
+    Ok(profile)
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod browser_profile_tests {
+    use super::*;
+
+    #[test]
+    fn native_browser_tabs_share_one_app_scoped_profile_directory() {
+        let base = Path::new("/some-app-user-data");
+        assert_eq!(
+            browser_profile_path(base),
+            base.join("browser-webview-profile")
+        );
+        assert!(!browser_profile_path(base)
+            .to_string_lossy()
+            .contains("tab-1"));
+        assert!(!browser_profile_path(base).to_string_lossy().contains("bfc"));
+    }
 }
 
 /// Internal state for managing tabs.
@@ -88,6 +150,15 @@ impl TabManager {
                 true
             })
             .transparent(options.transparent);
+
+        // Linux native browser tabs require a stable, private WebKit context
+        // so official website logins survive app restarts. This is controlled
+        // entirely by WebKit; BFC never reads or exports session credentials.
+        #[cfg(target_os = "linux")]
+        {
+            let profile = ensure_private_browser_profile(&self.app)?;
+            builder = builder.data_directory(profile);
+        }
 
         // Intercept window.open / target="_blank": deny the popup and notify
         // the host app so it can open a new tab instead.

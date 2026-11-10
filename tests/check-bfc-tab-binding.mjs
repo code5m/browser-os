@@ -18,10 +18,12 @@ assert.equal(safe.isFavorites,true);
 assert.equal(safe.url,'https://space.bilibili.com/471851304/favlist');
 assert.ok(!JSON.stringify(safe).includes('secret-value'));
 
-function fixture({withBridge,midInHeader=false,midInPublicState=false}) {
+function fixture({withBridge,midInHeader=false,midInPublicState=false,loginDivVisible=false}) {
   const calls=[];
   const anchor={className:'header-entry-avatar',getAttribute:(key)=>key==='href'?'https://space.bilibili.com/471851304':null,querySelector:()=>({tagName:'IMG'})};
-  const header={innerText:'个人中心',querySelectorAll:(selector)=>selector.includes('space.bilibili.com') ? (midInHeader?[anchor]:[]) : []};
+  const signedOutControl={className:'bili-header-login-btn',innerText:'立即登录',getClientRects:()=>[{}],getAttribute:()=>null};
+  const header={innerText:loginDivVisible?'立即登录':'个人中心',querySelectorAll:(selector)=>selector.includes('space.bilibili.com')
+    ? (midInHeader?[anchor]:[]) : selector.includes('[class*="login"]') && loginDivVisible ? [signedOutControl] : []};
   const dataset={};
   const document={readyState:'complete',body:{innerText:'默认收藏夹 4869'},title:'我的收藏',documentElement:{dataset},querySelector:()=>header};
   const window={__INITIAL_STATE__:midInPublicState?{loginInfo:{mid:471851304}}:undefined};
@@ -54,5 +56,17 @@ const script=buildLoginProbeScript('01234567-89ab-cdef-0123-456789abcdef');
  await runInNewContext(script,env);
  assert.equal(env.calls[0].data.payload.login_status,'unknown');
  assert.notEqual(env.calls[0].data.payload.login_status,'logged_out');
+}
+{
+ const env=fixture({withBridge:true,loginDivVisible:true});
+ await runInNewContext(script,env);
+ assert.equal(env.calls[0].data.payload.login_status,'logged_out');
+ assert.equal(env.calls[0].data.payload.mid,null);
+}
+{
+ const env=fixture({withBridge:true,loginDivVisible:true,midInPublicState:true});
+ await runInNewContext(script,env);
+ assert.equal(env.calls[0].data.payload.login_status,'logged_in');
+ assert.equal(env.calls[0].data.payload.mid,'471851304');
 }
 console.log('BFC_TAB_ID_AND_LOGIN_PROBE_REGRESSION=PASS (correct tab, wrong tab, public MID, injection failure != logged_out)');
