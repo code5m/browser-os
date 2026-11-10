@@ -1,0 +1,13 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+const native = readFileSync(new URL('../tauri-browser-tabs/crates/tauri-plugin-browser-tabs/src/commands.rs', import.meta.url),'utf8');
+const login = readFileSync(new URL('../src/capabilities/bfc/model/readbackScripts.mjs', import.meta.url),'utf8');
+assert.match(native,/\.path\(\)\s*\.app_data_dir\(\)/);
+assert.match(native,/app_data_dir\.join\("browser-webview-profile"\)/);
+assert.match(native,/builder\s*=\s*builder\.data_directory\(profile\)/);
+assert.match(native,/std::fs::Permissions::from_mode\(0o700\)/);
+assert.match(native,/canonical_profile != canonical_base\.join\("browser-webview-profile"\)/);
+assert.doesNotMatch(native,/get_cookies|cookies\s*\(\)|cookie_manager\s*\.|document\.cookie|localStorage\./i);
+assert.match(login,/\[class\*="login"\]/);
+assert.match(login,/loginControlSeen/);
+console.log('BROWSER_NATIVE_PROFILE_CONTRACT=PASS (stable app-owned WebKit context, private mode 0700, native session only, no credential exports)');

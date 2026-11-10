@@ -43,10 +43,18 @@ export function buildLoginProbeScript(ticket) {
               /^\d{1,20}$/.test(String(signedInPublicInfo.mid ?? '')))
             mid = String(signedInPublicInfo.mid);
           if (mid) { login_status = 'logged_in'; break; }
-          if (Array.from(header?.querySelectorAll('a,button,[role="button"]') || [])
-            .some((node) => /^(?:登\s*录|立即登录)$/.test(String(node.innerText || '').trim()) ||
-              /passport\.bilibili\.com\/login/i.test(String(node.getAttribute('href') || ''))))
-            loginControlSeen = true;
+          // Bilibili can render the signed-out action as a styled div/span
+          // rather than an anchor or button. Treat ONLY a visible, exact
+          // header login control as an explicit logged-out signal, and still
+          // wait for delayed public login MID during the bounded probe.
+          if (Array.from(header?.querySelectorAll(
+                'a,button,[role="button"],[class*="login"],[class*="Login"]'
+              ) || []).some((node) => {
+                const rects = node.getClientRects?.();
+                if (rects && rects.length === 0) return false;
+                return /^(?:登\s*录|立即登录)$/.test(String(node.innerText || '').trim()) ||
+                  /passport\.bilibili\.com\/login/i.test(String(node.getAttribute('href') || ''));
+              })) loginControlSeen = true;
         }
         await wait(250);
       }
