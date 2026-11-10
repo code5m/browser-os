@@ -76,6 +76,8 @@ function messageForCode(code: string | null | undefined): string {
     BFC_START_FROM_FIRST_PAGE: "无法回到收藏列表第一页；没有导入快照。",
     BFC_FAVORITES_PAGE_REQUIRED: "当前不是已登录账号对应的收藏夹页面。",
     BFC_BROWSER_SCRIPT_ERROR: "页面读取脚本执行失败。请确认 B站页面正常显示后再试。",
+    BFC_NATIVE_TAB_TLS_FAILED: "BrowserOS 原生 B站标签页 TLS 握手失败，不能据此判断为未登录。请先检查系统代理 / Clash Verge TUN Fake-IP 和 IPv6 配置，恢复 B站页面正常加载后再读取。不得关闭 TLS 校验或绕过风控。",
+    BFC_NATIVE_TAB_LOAD_FAILED: "BrowserOS 原生 B站标签页没有完成网页加载，不能确认登录状态。请先恢复官方页面正常加载，再重新读取。",
     BFC_TAB_NOT_ACTIVE: "没有选中的 BrowserOS 网页标签。请先选择已登录的 B站收藏夹标签，再返回 BFC。",
     BFC_TAB_ID_MISMATCH: "选中标签与原生 B站 WebView 不一致；已停止读取，未修改登录状态。",
     BFC_LOGIN_PROBE_INJECTION_FAILED: "没有收到 B站原生 WebView 的登录脚本回执。不能判断为未登录，请检查标签页后重试。",
@@ -142,6 +144,13 @@ export const useBfcStore = defineStore("bfc", () => {
     return id;
   }
 
+  function throwIfNativePageFailed(tabId: string): void {
+    const failure = browser.getRecentNativeTabFailure(tabId);
+    if (failure === "tls") throw new Error("BFC_NATIVE_TAB_TLS_FAILED");
+    if (failure === "platform-limited") throw new Error("BFC_BILIBILI_HTTP_412");
+    if (failure === "load") throw new Error("BFC_NATIVE_TAB_LOAD_FAILED");
+  }
+
   function safeBfcError(error: unknown, fallback = "BFC_BROWSER_SCRIPT_ERROR"): string {
     const raw = String(error instanceof Error ? error.message : error);
     return raw.match(/BFC_[A-Z0-9_]+/)?.[0] || fallback;
@@ -164,6 +173,7 @@ export const useBfcStore = defineStore("bfc", () => {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       if (cancelRequested.value) throw new Error("BFC_READBACK_CANCELLED");
+      if (activeTabId.value) throwIfNativePageFailed(activeTabId.value);
       const next = await bridge.bfcReadbackStatus(readbackTicket);
       readbackStatus.value = next;
       if (phase.value === "reading_favorites" && next.reported_total != null) {
@@ -224,6 +234,7 @@ export const useBfcStore = defineStore("bfc", () => {
       }
 
       const tabId = await bindSelectedReadbackTab();
+      throwIfNativePageFailed(tabId);
       const created = await bridge.bfcReadbackBegin(tabId);
       activeTicket = created.ticket;
       ticket.value = activeTicket;
@@ -236,6 +247,7 @@ export const useBfcStore = defineStore("bfc", () => {
         await bridge.evalInTab(tabId, buildLoginProbeScript(activeTicket));
       } catch (error) {
         if (safeBfcError(error) === "BFC_TAB_ID_MISMATCH") throw error;
+        throwIfNativePageFailed(tabId);
         throw new Error("BFC_LOGIN_PROBE_INJECTION_FAILED");
       }
 
@@ -276,6 +288,7 @@ export const useBfcStore = defineStore("bfc", () => {
         await bridge.evalInTab(tabId, buildFavoritesReadbackScript(activeTicket, mid));
       } catch (error) {
         if (safeBfcError(error) === "BFC_TAB_ID_MISMATCH") throw error;
+        throwIfNativePageFailed(tabId);
         throw new Error("BFC_BROWSER_SCRIPT_ERROR");
       }
       const started = await waitForStatus(
