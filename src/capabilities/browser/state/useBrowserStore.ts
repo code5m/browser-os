@@ -4,6 +4,7 @@ import { bridge } from "../../../bridge";
 import { WEBVIEW_FREEZE_JS, WEBVIEW_UNFREEZE_JS } from "../../../utils/webviewFreeze";
 import { isBrowserResourceAllowed } from "../resource/guard";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
+import { classifyNativeTabLoadFailure, recentNativeTabLoadFailure, type NativeTabLoadFailureRecord } from "../model/nativeTabLoadFailure.mjs";
 import { recordRecentUrl } from "../../../composables/recentsNav";
 import { registerBrowserLifecycleBinding } from "../lifecycle";
 import type { RecentlyClosedEntry, TabRecoveryEvent } from "../../../types";
@@ -20,6 +21,11 @@ export const useBrowserStore = defineStore("browser", () => {
   const url = ref("");
   const tabs = reactive<TabInfo[]>([]);
   const activeTabId = ref("");
+  const nativeTabFailures = new Map<string, NativeTabLoadFailureRecord>();
+  function getRecentNativeTabFailure(id: string) {
+    return recentNativeTabLoadFailure(nativeTabFailures.get(id));
+  }
+
   const resources = ref<BrowserResources | null>(null);
   const aiNavOpen = ref(false);
   const aiFilter = ref<"全部" | "国内" | "海外">("全部");
@@ -114,6 +120,7 @@ export const useBrowserStore = defineStore("browser", () => {
     const idx = tabs.findIndex((t) => t.id === id);
     if (idx < 0) return;
     await bridge.tabClose(id);
+    nativeTabFailures.delete(id);
     tabs.splice(idx, 1);
     if (activeTabId.value === id) {
       const next = tabs[idx] || tabs[idx - 1];
@@ -150,6 +157,7 @@ export const useBrowserStore = defineStore("browser", () => {
     const t = tabs.find((x) => x.id === id);
     if (!t) return;
     t.title = t.url;
+    nativeTabFailures.delete(id);
     await bridge.tabOpen(id, t.url);
     if (activeTabId.value === id) url.value = t.url;
     await nextTick();
@@ -160,6 +168,7 @@ export const useBrowserStore = defineStore("browser", () => {
     if (!t) return;
     const u = t.url.trim() || "about:blank";
     t.title = u;
+    nativeTabFailures.delete(id);
     await bridge.tabOpen(id, u);
     if (activeTabId.value === id) url.value = u;
     layout.showToast("页签导航: " + u);
@@ -168,16 +177,19 @@ export const useBrowserStore = defineStore("browser", () => {
   }
   async function goBack() {
     if (!activeTabId.value) return;
+    nativeTabFailures.delete(activeTabId.value);
     await bridge.tabGoBack(activeTabId.value);
   }
   async function goForward() {
     if (!activeTabId.value) return;
+    nativeTabFailures.delete(activeTabId.value);
     await bridge.tabGoForward(activeTabId.value);
   }
   async function reloadActive() {
     if (!activeTabId.value) return;
     const current = tabs.find((t) => t.id === activeTabId.value);
     if (current) current.title = current.url;
+    nativeTabFailures.delete(activeTabId.value);
     await bridge.tabReload(activeTabId.value);
     layout.showToast("已刷新当前页签");
     await nextTick();
@@ -210,6 +222,12 @@ export const useBrowserStore = defineStore("browser", () => {
     if (id === activeTabId.value) url.value = navUrl;
   }
   function handleTabRecovery(event: TabRecoveryEvent) {
+    const failureKind = classifyNativeTabLoadFailure(event.status, event.message);
+    if (failureKind && (event.status === "load-failed" || !getRecentNativeTabFailure(event.id))) {
+      nativeTabFailures.set(event.id, { kind: failureKind, at: Date.now() });
+    } else if (event.status === "recovered") {
+      nativeTabFailures.delete(event.id);
+    }
     bridge.debugLog(
       `tabRecovery id=${event.id} status=${event.status} attempt=${event.attempt}/${event.max_attempts} reason=${event.reason}`
     );
@@ -260,6 +278,7 @@ export const useBrowserStore = defineStore("browser", () => {
       return;
     }
     current.title = target;
+    nativeTabFailures.delete(current.id);
     await bridge.tabOpen(current.id, target);
     current.url = target;
     await nextTick();
@@ -344,6 +363,7 @@ export const useBrowserStore = defineStore("browser", () => {
       hideAllWebviews();
       await Promise.all(tabs.map(({ id }) => bridge.tabClose(id).catch(() => {})));
       tabs.splice(0);
+      nativeTabFailures.clear();
       activeTabId.value = "";
       resources.value = null;
       url.value = "";
@@ -377,6 +397,7 @@ export const useBrowserStore = defineStore("browser", () => {
     setTitle,
     setNavigated,
     handleTabRecovery,
+    getRecentNativeTabFailure,
     closeBrowser,
     setResources,
     clearResources,
