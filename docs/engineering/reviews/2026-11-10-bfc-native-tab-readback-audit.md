@@ -25,6 +25,13 @@
 | BrowserOS 原生 B 站子 WebView + 已登录 MID | **待验证**。实查时原安装版进程未运行，没有可控且仍登录的真实子 WebView；不能宣称在此轮读取出 MID `471851304`，也不能宣称分页 4869 条已读取。 |
 | 修复后安装版 `.deb` GUI | **待验证**，需基于修复提交构建并安装、确认产物哈希，启用用户已授权 B 站登录原生 tab，执行完整开始读取、分页/总数验证。不要拿普通 Chrome 页面、模拟脚本或旧安装版替代。 |
 
+## 本轮真实原生 WebView 尝试（修复版 Release，独立于模拟脚本）
+
+- 基于提交 `3c4f6aafed934658f2ad4fa5edf39d80abae556e`，执行 `cargo build --release --locked --manifest-path src-tauri/Cargo.toml`，**PASS**；可执行文件 SHA256：`75bc8af1fcd3b7d803ae41a37b8368d7094a96a03b55c16702094ceb9d1832d5`。
+- 在用户 GNOME 桌面以 BrowserOS 原生 Release 启动（非普通 Chrome，亦非安装 `/usr/bin` 的新 `.deb`），通过 B站收藏 URL 尝试读取。日志证明 Tauri `tab-1` 原生子 WebView 创建、定位和导航转发成功。
+- **实测阻塞**：原生 WebView 后续导航到 `https://space.bilibili.com/471851304` 并上报 `SETTINGS_ERROR: Load failed`。无法核实当前登录 MID、收藏夹名、分页数据或 4869 条回执；该页面加载错误既不能当作 `logged_out`，也不能解释成收藏夹为空。没有尝试重放 Cookie、自动登录、绕过 HTTP 412 或验证码。
+- 开发机 `sudo -n true` 不可用，无法无交互地替换 `/usr/bin/mvp-browser-os`。GitHub 安装版 GUI 工作流 [run 42734977725](https://github.com/code5m/browser-os/actions/runs/42734977725) 可验证真实安装包与冷启动，但不能替代用户账号登录与分页读取。
+
 ## 真实安装版验收步骤（必须由完成者提供实测证据）
 
 1. 从修复 SHA 打包，校验 SHA256 并在机器上安装；浏览器启动登录用户的真实原生 B 站收藏页，选中 UnifiedTabBar 中正确的 `tab-N`，确认可见 URL、标题及收藏夹数。
