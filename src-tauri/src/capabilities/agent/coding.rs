@@ -1282,7 +1282,7 @@ pub fn execute(
     save(storage, &session)
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
     struct Fixture(PathBuf);
@@ -2089,5 +2089,27 @@ mod tests {
             "fn main() {}"
         );
         assert!(applied["changes"].as_array().unwrap().is_empty());
+    }
+}
+
+// Native Windows coding must not accidentally execute unconfined scripts or
+// follow path-based file reads until a restricted-token sandbox is implemented.
+#[cfg(all(test, target_os = "windows"))]
+mod windows_safe_boundary_tests {
+    use super::*;
+    #[test]
+    fn windows_coding_agent_denies_execution_before_root_or_file_side_effects() {
+        let root = std::env::temp_dir().join(format!("coding-win-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let file = root.join("untouched.txt");
+        std::fs::write(&file, b"original").unwrap();
+        let result = execute(
+            &root, &root,
+            serde_json::json!({"action":"write_file","path":"untouched.txt","content":"modified"}),
+            |_,_| unreachable!("provider must never be invoked"),
+        );
+        assert_eq!(result, Err("AGENT_CODING_PLATFORM_UNSUPPORTED".into()));
+        assert_eq!(std::fs::read(file).unwrap(), b"original");
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
