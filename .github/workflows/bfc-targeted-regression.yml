@@ -1,0 +1,38 @@
+name: BFC targeted readback regression
+
+on:
+  push:
+    paths:
+      - 'src/capabilities/bfc/**'
+      - 'src-tauri/src/capabilities/bfc/**'
+      - 'tests/check-bfc-*.mjs'
+      - '.github/workflows/bfc-targeted-regression.yml'
+  pull_request:
+    paths:
+      - 'src/capabilities/bfc/**'
+      - 'src-tauri/src/capabilities/bfc/**'
+      - 'tests/check-bfc-*.mjs'
+      - '.github/workflows/bfc-targeted-regression.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  bfc-js:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Targeted syntax and DOM readback checks
+        run: |
+          node --check src/capabilities/bfc/model/readbackScripts.mjs
+          node --check tests/check-bfc-readback-scripts.mjs
+          node tests/check-bfc-readback-scripts.mjs
+          node tests/check-bfc-favorites-dom.mjs
+          node tests/check-bfc-tab-binding.mjs
+          git diff --check "$(git merge-base HEAD origin/master)" HEAD
