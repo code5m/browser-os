@@ -25,6 +25,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           repository: code5m/bfc-workbench
           ref: 8ded529a2fcaf97a9249e2174a09273d5ee1179c
@@ -85,6 +86,29 @@ jobs:
             Write-Host 'BFC_WINDOWS_LOCAL_IMPORT=PASS (synthetic data only)'
           } finally {
             Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
+          }
+      - name: Validate bundled Windows BFC foreground launcher and ACL
+        shell: pwsh
+        run: |
+          $launcher = (Resolve-Path scripts/windows/start-bfc-local.ps1).Path
+          $serviceDir = (Resolve-Path bfc-workbench).Path
+          $dataDir = Join-Path $env:RUNNER_TEMP 'browseros-bfc-launcher'
+          $arguments = "-NoProfile -File `"$launcher`" -ServiceDirectory `"$serviceDir`" -DataDirectory `"$dataDir`""
+          $process = Start-Process pwsh -ArgumentList $arguments -PassThru -NoNewWindow
+          try {
+            $ready = $false
+            for ($i = 0; $i -lt 30; $i++) {
+              Start-Sleep -Milliseconds 500
+              try {
+                $health = Invoke-RestMethod 'http://127.0.0.1:4198/api/health'
+                if ($health.ok -eq $true) { $ready = $true; break }
+              } catch { }
+            }
+            if (-not $ready) { throw 'BFC launcher failed to open loopback service' }
+            if (-not (Test-Path -LiteralPath $dataDir -PathType Container)) { throw 'BFC launcher did not create isolated user data directory' }
+            Write-Host 'BFC_WINDOWS_LAUNCHER=PASS (no real user login)'
+          } finally {
+            & taskkill.exe /PID $process.Id /T /F 2>$null | Out-Null
           }
   windows-cargo:
     runs-on: windows-latest
