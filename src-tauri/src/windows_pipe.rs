@@ -130,3 +130,33 @@ impl Write for WindowsPipeStream {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> { self.0.write(buf) }
     fn flush(&mut self) -> io::Result<()> { self.0.flush() }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::grid_ipc::{read_wire, write_wire, GridCmd, Wire};
+    #[test]
+    fn local_owner_pipe_roundtrip_validates_actual_client_pid() {
+        let name = format!(
+            r"\\.\pipe\BrowserOS-grid-test-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4().simple(),
+        );
+        let path = std::path::PathBuf::from(name);
+        let listener = WindowsPipeListener::bind(&path).expect("owner-private pipe");
+        let server = std::thread::spawn(move || {
+            let (mut connection, _) = listener.accept().expect("client connection");
+            assert_eq!(connection.peer_pid().expect("peer PID"), std::process::id());
+            let mut reader = std::io::BufReader::new(connection.try_clone().expect("reader"));
+            let received = read_wire(&mut reader).expect("read").expect("frame");
+            assert!(matches!(received, Wire::Request { seq: 7, cmd: GridCmd::Ping }));
+            write_wire(&mut connection, &Wire::ok(7)).expect("write response");
+        });
+        let mut client = WindowsPipeStream::connect(&path).expect("client");
+        write_wire(&mut client, &Wire::Request { seq: 7, cmd: GridCmd::Ping })
+            .expect("write request");
+        let mut reader = std::io::BufReader::new(client);
+        assert!(matches!(read_wire(&mut reader).unwrap(), Some(Wire::Response {seq:7,ok:true,..})));
+        server.join().expect("server thread");
+    }
+}
