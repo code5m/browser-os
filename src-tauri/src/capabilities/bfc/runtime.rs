@@ -125,6 +125,10 @@ pub struct BfcImportPayload {
     pub expected_pages: u32,
     #[serde(rename = "traversalFinished")]
     pub traversal_finished: bool,
+    // Native runtime only reports stability for a completed, validated
+    // readback. Count reconciliation alone is not pagination evidence.
+    #[serde(rename = "paginationStable")]
+    pub pagination_stable: bool,
     pub pages: BTreeMap<String, BfcImportPage>,
 }
 
@@ -588,6 +592,7 @@ impl BfcRuntime {
             reported_total: capture.reported_total,
             expected_pages: capture.expected_pages,
             traversal_finished: capture.complete,
+            pagination_stable: capture.complete,
             pages,
         };
         let encoded = serde_json::to_vec(&payload).map_err(|_| "BFC_IMPORT_SERIALIZE")?;
