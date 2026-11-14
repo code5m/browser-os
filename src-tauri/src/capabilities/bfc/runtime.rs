@@ -129,6 +129,12 @@ pub struct BfcImportPayload {
     // readback. Count reconciliation alone is not pagination evidence.
     #[serde(rename = "paginationStable")]
     pub pagination_stable: bool,
+    // Identity of the user-visible source collection. No MID or Cookie is
+    // exported; remote operations remain explicitly disabled in readback.
+    #[serde(rename = "folderId")]
+    pub folder_id: String,
+    #[serde(rename = "folderName")]
+    pub folder_name: String,
     pub pages: BTreeMap<String, BfcImportPage>,
 }
 
@@ -593,6 +599,8 @@ impl BfcRuntime {
             expected_pages: capture.expected_pages,
             traversal_finished: capture.complete,
             pagination_stable: capture.complete,
+            folder_id: capture.folder_id.clone(),
+            folder_name: capture.folder_name.clone(),
             pages,
         };
         let encoded = serde_json::to_vec(&payload).map_err(|_| "BFC_IMPORT_SERIALIZE")?;
