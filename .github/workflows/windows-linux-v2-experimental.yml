@@ -150,6 +150,8 @@ jobs:
           cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os pinned_handle_move -- --test-threads=1
           cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os local_owner_pipe_roundtrip -- --test-threads=1
           cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os job_tree_is_terminated -- --test-threads=1
+          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os windows_script_whitelist_rejects_shell_execution -- --test-threads=1
+          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os windows_coding_can_read_an_authorized_regular_file -- --test-threads=1
           cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os read_only_context_rejects_process_execution -- --test-threads=1
           cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os knowledge_search_redacts_sensitive_lines -- --test-threads=1
       - name: Build release NSIS after successful Windows compilation
