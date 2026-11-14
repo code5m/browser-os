@@ -176,4 +176,77 @@ for (const pageCount of [4, 5]) {
   assert.deepEqual(Array.from(saved.pages[0].items),[]);
 }
 
+
+// A transient 0 header before favorites hydration must not be imported as an
+// empty collection. The same fixture becomes a populated folder after 1s.
+{
+  let clock=0,loaded=false;
+  const cards=[0,1].map(i=>({
+    getAttribute:key=>key==='href'?'https://www.bilibili.com/video/BV'+String(i).padStart(10,'0'):
+      key==='title'?'视频标题'+i:null,
+    innerText:'',closest:()=>null,parentElement:{querySelectorAll:()=>[]}
+  }));
+  const list={getClientRects:()=>[{}],querySelectorAll:()=>loaded?cards:[]};
+  const header={getClientRects:()=>[{}],
+    get innerText(){return loaded?'默认收藏夹 公开 视频数: 2':'未命名收藏夹 公开 视频数: 0 播放量:';}};
+  const calls=[];
+  const document={title:'fixture',body:{innerText:''},documentElement:{dataset:{}},
+    querySelector:()=>({innerText:'默认收藏夹'}),
+    querySelectorAll:selector=>selector.includes('fav-item')&&selector.includes('active')
+      ? (loaded?[{innerText:'默认收藏夹 (2)',getClientRects:()=>[{}]}]:[]):
+      selector.includes('.fav-info')?[header]:
+      selector.includes('fav-list')?[list]:[]};
+  const window={__TAURI__:{core:{invoke:async(_,data)=>calls.push(data.payload)}}};
+  await runInNewContext(buildFavoritesReadbackScript('hydration-fixture','123456'),{
+    document,window,URL,Date:{now:()=>clock},
+    setTimeout:callback=>{clock+=250;if(clock>=1000)loaded=true;callback();},
+    location:{href:'https://space.bilibili.com/123456/favlist?fid=99'}
+  });
+  const saved=calls.find(v=>v.kind==='favorites');
+  assert.equal(saved?.reported_total,2,'transient zero must not replace real collection total');
+  assert.equal(saved?.pages[0].items.length,2);
+}
+
+// A video cover link may have no text while its sibling title link is
+// populated asynchronously. Never persist an all-placeholder page.
+for(const titlesHydrate of [true,false]){
+  let clock=0;
+  const links=[];
+  for(let i=0;i<2;i++){
+    const href='https://www.bilibili.com/video/BV'+String(i+1).padStart(10,'0');
+    const card={querySelectorAll:()=>[]};
+    const cover={getAttribute:key=>key==='href'?href:null,
+      querySelector:()=>({getAttribute:()=> '视频封面'}),
+      innerText:'00:28',textContent:'00:28',closest:()=>card};
+    const titleLink={getAttribute:key=>key==='href'?href:null,closest:()=>card,
+      get innerText(){return titlesHydrate&&clock>=750?'视频标题'+(i+1):'';},
+      get textContent(){return titlesHydrate&&clock>=750?'视频标题'+(i+1):'';}};
+    card.querySelectorAll=selector=>selector.includes('a[href*="/video/BV"]')?[cover,titleLink]:
+      selector.includes('[class*="title"]')&&titlesHydrate&&clock>=750?[titleLink]:[];
+    links.push(cover,titleLink);
+  }
+  const list={getClientRects:()=>[{}],querySelectorAll:()=>links};
+  const calls=[];
+  const document={title:'fixture',body:{innerText:''},documentElement:{dataset:{}},
+    querySelector:()=>({innerText:'默认收藏夹'}),
+    querySelectorAll:selector=>selector.includes('fav-item')&&selector.includes('active')
+      ?[{innerText:'默认收藏夹 (2)',getClientRects:()=>[{}]}]:
+      selector.includes('fav-list')?[list]:[]};
+  const window={__TAURI__:{core:{invoke:async(_,data)=>calls.push(data.payload)}}};
+  await runInNewContext(buildFavoritesReadbackScript('title-fixture','123456'),{
+    document,window,URL,Date:{now:()=>clock},
+    setTimeout:callback=>{clock+=250;callback();},
+    location:{href:'https://space.bilibili.com/123456/favlist?fid=99'}
+  });
+  if(titlesHydrate){
+    const saved=calls.find(v=>v.kind==='favorites');
+    assert.ok(saved,'sibling BV title links must be picked up once rendered');
+    assert.deepEqual(Array.from(saved.pages[0].items,v=>v.title),['视频标题1','视频标题2']);
+    assert.ok(clock>=750,'must wait for title hydration, not only BV anchors');
+  }else{
+    assert.equal(calls.at(-1)?.message_code,'BFC_TITLES_NOT_READY');
+    assert.equal(calls.some(v=>v.kind==='favorites'),false);
+  }
+}
+
 console.log('BFC_FAVORITES_VISIBLE_DOM=PASS (counts, delayed pagination, bounded timeout, access limit, cancellation)');
