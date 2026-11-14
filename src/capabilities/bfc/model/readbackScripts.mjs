@@ -185,7 +185,7 @@ export function buildFavoritesReadbackScript(ticket, mid) {
       };
       const cleanTitle = (value) => {
         const text = String(value || '').replace(/[\\s]+/g, ' ').trim();
-        if (!text || isMetric(text) || /^BV[0-9A-Za-z]{10}$/.test(text)) return '';
+        if (!text || isMetric(text) || /^BV[0-9A-Za-z]{7,}$/.test(text)) return '';
         return text.slice(0, 1000);
       };
       for (const anchor of container.querySelectorAll('a[href*="/video/BV"]')) {
