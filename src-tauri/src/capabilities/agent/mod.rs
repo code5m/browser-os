@@ -18,7 +18,7 @@ pub mod coding;
 #[cfg(target_os = "linux")]
 pub mod coding_context;
 #[cfg(not(target_os = "linux"))]
-#[path = "coding_context_unsupported.rs"]
+#[path = "coding_context_windows.rs"]
 pub mod coding_context;
 #[cfg(target_os = "linux")]
 pub mod coding_lsp;
