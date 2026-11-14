@@ -35,4 +35,5 @@ jobs:
           node tests/check-bfc-readback-scripts.mjs
           node tests/check-bfc-favorites-dom.mjs
           node tests/check-bfc-tab-binding.mjs
+          node tests/check-bfc-native-contract.mjs
           git diff --check "$(git merge-base HEAD origin/master)" HEAD
