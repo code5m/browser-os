@@ -13,11 +13,15 @@ mod grid_ipc;
 mod windows_process;
 #[cfg(target_os = "windows")]
 mod windows_pipe;
+#[cfg(target_os = "linux")]
+type GridStream = std::os::unix::net::UnixStream;
+#[cfg(target_os = "windows")]
+type GridStream = windows_pipe::WindowsPipeStream;
 
 #[cfg(target_os = "linux")]
 mod grid_process;
-#[cfg(not(target_os = "linux"))]
-#[path = "grid_process_unsupported.rs"]
+#[cfg(target_os = "windows")]
+#[path = "grid_process_windows.rs"]
 mod grid_process;
 #[cfg(target_os = "linux")]
 mod hang_diagnostics;
@@ -256,7 +260,7 @@ fn log_shutdown_report(report: &shutdown::ShutdownReport) {
 
 /// Phase 0 最小验证原型：解析 `--grid-child N`，有则以"宫格子进程"身份启动。
 /// 返回 Some(N) 表示应走子进程分支；None 表示主进程。
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 fn parse_grid_child_arg() -> Option<u32> {
     let args: Vec<String> = std::env::args().collect();
     for (i, a) in args.iter().enumerate() {
@@ -283,7 +287,7 @@ fn parse_grid_child_arg() -> Option<u32> {
 /// - 注册宫格 webview 内 collect.js 需要的桥命令（采集/笔记/开终端）。
 /// - UDS client：connect 主进程 → 命令循环（GridCmd → 本地 TabManagerState）；
 ///   插件事件与桥命令事件经 UDS Event 回传主进程。主进程断开 → 自行退出（防孤儿窗口）。
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 fn run_grid_child(index: u32) {
     eprintln!(
         "[grid-child-{}] starting (pid={})",
@@ -291,12 +295,15 @@ fn run_grid_child(index: u32) {
         std::process::id()
     );
     crashlog::init();
-    if std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err() {
-        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
-    }
-    std::env::set_var("GDK_BACKEND", "x11");
-    if std::env::var("GTK_USE_PORTAL").is_err() {
-        std::env::set_var("GTK_USE_PORTAL", "0");
+    #[cfg(target_os = "linux")]
+    {
+        if std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err() {
+            std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+        }
+        std::env::set_var("GDK_BACKEND", "x11");
+        if std::env::var("GTK_USE_PORTAL").is_err() {
+            std::env::set_var("GTK_USE_PORTAL", "0");
+        }
     }
 
     let label = format!("grid-child-{}", index);
@@ -365,13 +372,13 @@ fn run_grid_child(index: u32) {
 }
 
 /// 子进程全局 UDS 写端（connect 成功后设置；窗口事件回调里取用）。
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 static CHILD_WRITER: std::sync::OnceLock<
-    std::sync::Arc<std::sync::Mutex<std::os::unix::net::UnixStream>>,
+    std::sync::Arc<std::sync::Mutex<GridStream>>,
 > = std::sync::OnceLock::new();
 
 /// 子进程 → 主进程 发异步事件（焦点上报 / 导航 / 新窗口 / 桥命令事件转发）。
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 fn grid_child_send_event(name: &str, payload: serde_json::Value) {
     if let Some(w) = CHILD_WRITER.get() {
         let mut guard = w.lock().unwrap();
@@ -386,11 +393,11 @@ fn grid_child_send_event(name: &str, payload: serde_json::Value) {
 }
 
 /// 子进程 UDS client：连接主进程 socket（重试至 15s）→ 注册事件转发 → 命令循环。
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, sock_path: String) {
     use tauri::Listener;
     std::thread::spawn(move || {
-        use std::os::unix::net::UnixStream;
+        use crate::GridStream as UnixStream;
         let start = std::time::Instant::now();
         let stream = loop {
             match UnixStream::connect(&sock_path) {
@@ -586,7 +593,7 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
 }
 
 /// 子进程本地执行 GridCmd（插件命令原样复用，插件代码零改动）。
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 fn dispatch_grid_cmd(
     app: &tauri::AppHandle,
     host_label: &str,
@@ -1377,7 +1384,7 @@ fn run_m0_driver(app: tauri::AppHandle, cfg: bridge::M0Config) {
 
 fn main() {
     // Phase 0：宫格子进程分支（在最前判断，避免初始化主进程逻辑）
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     if let Some(index) = parse_grid_child_arg() {
         run_grid_child(index);
         return;
