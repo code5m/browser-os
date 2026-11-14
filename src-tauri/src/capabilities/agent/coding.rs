@@ -1038,7 +1038,7 @@ pub fn execute(
 ) -> Result<Value, String> {
     #[cfg(not(unix))]
     {
-        let _ = (root, storage, request, &mut provider);
+        let _ = (root, storage, &request, &mut provider);
         return Err("AGENT_CODING_PLATFORM_UNSUPPORTED".into());
     }
     let root = root.canonicalize().map_err(|_| "AGENT_ROOT_INVALID")?;
