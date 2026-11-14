@@ -574,7 +574,7 @@ pub fn spawn_terminal(
     let shell = std::env::var("BROWSEROS_WINDOWS_SHELL")
         .ok()
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|_| "powershell.exe".to_string());
+        .unwrap_or_else(|| "powershell.exe".to_string());
     let mut cmd = CommandBuilder::new(shell);
     #[cfg(windows)]
     {
