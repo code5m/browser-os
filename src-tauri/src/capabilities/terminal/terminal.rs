@@ -568,8 +568,20 @@ pub fn spawn_terminal(
         })
         .map_err(|e| format!("无法创建 PTY: {e}"))?;
 
+    #[cfg(unix)]
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
+    #[cfg(windows)]
+    let shell = std::env::var("BROWSEROS_WINDOWS_SHELL")
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|_| "powershell.exe".to_string());
     let mut cmd = CommandBuilder::new(shell);
+    #[cfg(windows)]
+    {
+        // Native ConPTY + PowerShell, no requirement for WSL/Git Bash.
+        // Disable user profile scripts for reproducible, bounded startup.
+        cmd.arg("-NoLogo");
+        cmd.arg("-NoProfile");
+    }
     // xterm.js 是完整终端模拟器，需要正常 TERM 与 ANSI 序列，不能过滤。
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
