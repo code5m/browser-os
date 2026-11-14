@@ -1036,7 +1036,38 @@ pub fn execute(
     request: Value,
     mut provider: impl FnMut(&[Value], &[Value]) -> Result<Value, String>,
 ) -> Result<Value, String> {
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        let _ = (storage, &mut provider);
+        // Keep the existing read-only Agent tool useful on Windows while all
+        // writes and untrusted subprocesses await a restricted-token sandbox.
+        let root = root.canonicalize().map_err(|_| "AGENT_ROOT_INVALID")?;
+        if !root.is_dir() { return Err("AGENT_ROOT_INVALID".into()); }
+        if request["action"] == "read" {
+            let relative = request["path"].as_str().ok_or("AGENT_PATH_REQUIRED")?;
+            if relative.is_empty() || relative.len() > 1024 {
+                return Err("AGENT_PATH_DENIED".into());
+            }
+            let path = Path::new(relative);
+            if path.is_absolute() || path.components().any(|component| {
+                !matches!(component, Component::Normal(_))
+            }) || relative.contains(':') {
+                return Err("AGENT_PATH_DENIED".into());
+            }
+            let allowed = root.join(path);
+            let bytes = crate::capabilities::workspace::safe_paths::read_regular(
+                &allowed, &[root.clone()], MAX_FILE,
+            ).map_err(|_| "AGENT_READ_FAILED")?;
+            let content = String::from_utf8(bytes).map_err(|_| "AGENT_TEXT_ONLY")?;
+            if secret(&content) {
+                return Err("AGENT_SECRET_CONTENT_DENIED".into());
+            }
+            return Ok(json!({"path":relative, "hash":hash(content.as_bytes()),
+                "content":content}));
+        }
+        return Err("AGENT_CODING_PLATFORM_UNSUPPORTED".into());
+    }
+    #[cfg(all(not(unix), not(windows)))]
     {
         let _ = (root, storage, &request, &mut provider);
         return Err("AGENT_CODING_PLATFORM_UNSUPPORTED".into());
@@ -2097,6 +2128,25 @@ mod tests {
 #[cfg(all(test, target_os = "windows"))]
 mod windows_safe_boundary_tests {
     use super::*;
+    #[test]
+    fn windows_coding_can_read_an_authorized_regular_file_but_never_escape_root() {
+        let root = std::env::temp_dir().join(format!("coding-win-{}", uuid::Uuid::new_v4()));
+        let outside = std::env::temp_dir().join(format!("coding-outside-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(root.join("allowed.rs"), "pub fn answer() -> u32 { 42 }").unwrap();
+        std::fs::write(outside.join("outside.rs"), "not allowed").unwrap();
+        let read = execute(&root, &root,
+            serde_json::json!({"action":"read","path":"allowed.rs"}),
+            |_,_| unreachable!()).unwrap();
+        assert_eq!(read["content"], "pub fn answer() -> u32 { 42 }");
+        let denied = execute(&root, &root,
+            serde_json::json!({"action":"read","path":"../outside.rs"}),
+            |_,_| unreachable!());
+        assert_eq!(denied, Err("AGENT_PATH_DENIED".into()));
+        std::fs::remove_dir_all(root).unwrap();
+        std::fs::remove_dir_all(outside).unwrap();
+    }
     #[test]
     fn windows_coding_agent_denies_execution_before_root_or_file_side_effects() {
         let root = std::env::temp_dir().join(format!("coding-win-{}", uuid::Uuid::new_v4()));
