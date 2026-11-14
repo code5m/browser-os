@@ -203,7 +203,7 @@ for (const pageCount of [4, 5]) {
     location:{href:'https://space.bilibili.com/123456/favlist?fid=99'}
   });
   const saved=calls.find(v=>v.kind==='favorites');
-  assert.equal(saved?.reported_total,2,'transient zero must not replace real collection total');
+  assert.equal(saved?.reported_total,2,'transient zero must not replace real collection total: '+JSON.stringify({clock,loaded,calls:calls.map(v=>({kind:v.kind,message_code:v.message_code,reported_total:v.reported_total}))}));
   assert.equal(saved?.pages[0].items.length,2);
 }
 
