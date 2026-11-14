@@ -9,6 +9,7 @@ use std::io::{self, Read, Write};
 use std::os::windows::io::{AsRawHandle, FromRawHandle, RawHandle};
 use std::path::Path;
 use std::ptr;
+use std::sync::Mutex;
 use windows_sys::Win32::Foundation::{GetLastError, LocalFree, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::Security::Authorization::{
     ConvertStringSecurityDescriptorToSecurityDescriptorW,
@@ -60,23 +61,39 @@ fn pipe_security() -> io::Result<(SECURITY_ATTRIBUTES, *mut c_void)> {
     Ok((attrs, descriptor))
 }
 
-pub struct WindowsPipeListener { name: Vec<u16> }
+fn create_instance(name: &[u16], first: bool) -> io::Result<File> {
+    let (attrs, descriptor) = pipe_security()?;
+    let first_flag = if first { FILE_FLAG_FIRST_PIPE_INSTANCE } else { 0 };
+    let raw = unsafe {
+        CreateNamedPipeW(name.as_ptr(), PIPE_ACCESS_DUPLEX | first_flag,
+            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
+            255, 65536, 65536, 3000, &attrs)
+    };
+    unsafe { LocalFree(descriptor as *mut c_void); }
+    if raw == INVALID_HANDLE_VALUE { return Err(io::Error::last_os_error()); }
+    Ok(unsafe { File::from_raw_handle(raw as RawHandle) })
+}
+
+pub struct WindowsPipeListener {
+    name: Vec<u16>,
+    initial: Mutex<Option<File>>,
+}
 impl WindowsPipeListener {
     pub fn bind(path: &Path) -> io::Result<Self> {
-        Ok(Self { name: wide(&validate_name(path)?) })
+        // Bind synchronously before spawning; FIRST_PIPE_INSTANCE detects
+        // name squatting, owner ACL rejects other users and remote clients.
+        let name = wide(&validate_name(path)?);
+        let initial = create_instance(&name, true)?;
+        Ok(Self { name, initial: Mutex::new(Some(initial)) })
     }
     pub fn accept(&self) -> io::Result<(WindowsPipeStream, ())> {
-        let (attrs, descriptor) = pipe_security()?;
-        let raw = unsafe {
-            CreateNamedPipeW(self.name.as_ptr(),
-                PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE,
-                PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
-                1, 65536, 65536, 3000, &attrs)
+        // The existing reader may still have its pipe instance open.
+        // Subsequent instances therefore MUST omit FIRST_PIPE_INSTANCE.
+        let file = match self.initial.lock().unwrap().take() {
+            Some(file) => file,
+            None => create_instance(&self.name, false)?,
         };
-        unsafe { LocalFree(descriptor as *mut c_void); }
-        if raw == INVALID_HANDLE_VALUE { return Err(io::Error::last_os_error()); }
-        // The File takes ownership even when ConnectNamedPipe fails.
-        let file = unsafe { File::from_raw_handle(raw as RawHandle) };
+        let raw = file.as_raw_handle() as _;
         let connected = unsafe { ConnectNamedPipe(raw, ptr::null_mut()) };
         if connected == 0 && unsafe { GetLastError() } != ERROR_PIPE_CONNECTED {
             return Err(io::Error::last_os_error());
