@@ -956,6 +956,7 @@ mod tests {
 
     /// T4：真实 resize —— `master.resize` 之后 PTY 尺寸确实变了（F5 的运行时取证，
     /// 静态夹具只能证明代码里调了 resize，证明不了它生效）。
+    #[cfg(unix)]
     #[test]
     fn resize_changes_real_pty_size() {
         let pair = native_pty_system()

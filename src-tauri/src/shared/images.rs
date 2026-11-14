@@ -942,6 +942,7 @@ mod image_contract_tests {
     }
 
     // T-img-18：落盘目录逃逸——canonicalize 前缀校验（软链接指向工作区外）
+    #[cfg(unix)]
     #[test]
     fn symlinked_image_dir_cannot_escape() {
         let ws = temp_workspace("symlink");

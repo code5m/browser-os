@@ -1745,7 +1745,18 @@ mod tests {
     use super::*;
     #[test]
     fn provider_timeout_is_distinct_from_other_failures() {
+        #[cfg(unix)]
         use std::os::unix::process::ExitStatusExt;
+        #[cfg(windows)]
+        use std::os::windows::process::ExitStatusExt;
+        // Rust ExitStatusExt::from_raw on Linux expects the encoded waitpid
+        // status; Windows consumes the native process exit code unshifted.
+        let exit_status = |code: i32| -> std::process::ExitStatus {
+            #[cfg(unix)]
+            { std::process::ExitStatus::from_raw(code << 8) }
+            #[cfg(windows)]
+            { std::process::ExitStatus::from_raw(code as u32) }
+        };
         let mut successful = b"{\"fixture\":123}200".to_vec();
         assert_eq!(split_http_status(&mut successful), Some(200));
         assert_eq!(successful, b"{\"fixture\":123}");
@@ -1753,14 +1764,14 @@ mod tests {
         assert_eq!(split_http_status(&mut malformed), None);
         assert_eq!(malformed, b"bad");
         assert_eq!(
-            curl_failure(std::process::ExitStatus::from_raw(28 << 8)),
+            curl_failure(exit_status(28)),
             "AI_PROVIDER_TIMEOUT"
         );
         assert_eq!(
-            curl_failure(std::process::ExitStatus::from_raw(22 << 8)),
+            curl_failure(exit_status(22)),
             "AI_PROVIDER_HTTP_ERROR"
         );
-        let http_failure = std::process::ExitStatus::from_raw(22 << 8);
+        let http_failure = exit_status(22);
         for (status, expected) in [
             (401, "AI_PROVIDER_AUTH_FAILED"),
             (403, "AI_PROVIDER_AUTH_FAILED"),
@@ -1779,7 +1790,7 @@ mod tests {
             (99, "AI_PROVIDER_REQUEST_FAILED"),
         ] {
             assert_eq!(
-                curl_failure(std::process::ExitStatus::from_raw(code << 8)),
+                curl_failure(exit_status(code)),
                 expected
             );
         }
