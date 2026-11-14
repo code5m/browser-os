@@ -173,12 +173,9 @@ export function buildFavoritesReadbackScript(ticket, mid) {
       return reportedTotal() === 0 ? (visible[0] || null) : null;
     };
     const extractItems = (container) => {
-      const items = [];
-      const seen = new Set();
-      // This injected script uses a normal template literal: regex escapes
-      // would be lost if written with a single backslash.
       const isMetric = (value) => {
         const text = String(value || '').replaceAll(',', '').trim();
+        // Avoid literal regex escapes in the template-generated JavaScript.
         const quantity = '[0-9]+(?:[.][0-9]+)?[ ]*[万亿千百]?';
         const duration = '[0-9]{1,2}(?::[0-9]{2}){1,2}';
         return new RegExp('^' + quantity + '(?:播放|观看|次)?$').test(text)
@@ -188,24 +185,57 @@ export function buildFavoritesReadbackScript(ticket, mid) {
       };
       const cleanTitle = (value) => {
         const text = String(value || '').replace(/\\s+/g, ' ').trim();
-        if (!text || isMetric(text) || /^BV[0-9A-Za-z]{7,}$/.test(text)) return '';
+        if (!text || isMetric(text) || /^BV[0-9A-Za-z]{7,}$/.test(text) ||
+            /^(?:标题未获取|加载中[.。…]*|视频封面|封面|播放|查看详情|点击播放|暂无标题)$/.test(text)) return '';
         return text.slice(0, 1000);
       };
+      const bvidOf = (anchor) => String(anchor?.getAttribute?.('href') || '')
+        .match(/\\/video\\/(BV[0-9A-Za-z]{10})/)?.[1] || null;
+      const byBvid = new Map();
       for (const anchor of container.querySelectorAll('a[href*="/video/BV"]')) {
-        const href = String(anchor.getAttribute('href') || '');
-        const bvid = href.match(/\\/video\\/(BV[0-9A-Za-z]{10})/)?.[1];
-        if (!bvid || seen.has(bvid)) continue;
-        const card = anchor.closest('[class*="fav"],[class*="video-card"],li') || anchor.parentElement || anchor;
-        // Prefer video title nodes. Generic name nodes and the entire card
-        // can contain uploader names, counts, and durations instead of titles.
-        const titleNodes = Array.from(card.querySelectorAll?.('[class*="title"]') || []);
+        const bvid = bvidOf(anchor);
+        if (!bvid) continue;
+        if (!byBvid.has(bvid)) byBvid.set(bvid, []);
+        byBvid.get(bvid).push(anchor);
+      }
+      const items = [];
+      for (const [bvid, matchingAnchors] of byBvid) {
+        const anchor = matchingAnchors[0];
+        // A cover link and its title link can be siblings; group both by BV.
+        // Never use the collection-wide .fav container as an item card.
+        let card = anchor.closest?.('li.small-item,li,[class*="video-card"],[class*="video-item"],[class*="fav-video-item"],[data-bvid]');
+        if (!card) {
+          let node = anchor.parentElement || anchor;
+          for (let depth = 0; node && node !== container && depth < 4; depth++, node = node.parentElement) {
+            const links = Array.from(node.querySelectorAll?.('a[href*="/video/BV"]') || []);
+            if (links.some((link) => bvidOf(link) !== bvid)) break;
+            card = node;
+            if (node.querySelectorAll?.('[class*="title"],[class*="info--tit"],[class*="video-name"],h3,h4')?.length) break;
+          }
+        }
+        card = card || anchor;
+        // Candidate elements must belong to this video, not to its uploader
+        // or a different BV card. Title text and image alt are both DOM only.
+        const cardLinks = Array.from(card.querySelectorAll?.('a[href*="/video/BV"]') || []);
+        const scoped = !cardLinks.some((link) => bvidOf(link) !== bvid);
+        const titleNodes = scoped ? Array.from(card.querySelectorAll?.(
+          'a.title,[class*="title"],[class*="info--tit"],[class*="video-name"],h3,h4'
+        ) || []) : [];
         const candidates = [
-          anchor.getAttribute?.('title'), anchor.getAttribute?.('aria-label'),
-          ...titleNodes.flatMap((node) => [node.getAttribute?.('title'), node.getAttribute?.('aria-label'), node.innerText]),
-          ...String(anchor.innerText || '').split('\\n'),
+          ...matchingAnchors.flatMap((link) => [
+            link.getAttribute?.('title'), link.getAttribute?.('data-title'),
+            link.getAttribute?.('aria-label')
+          ]),
+          ...titleNodes.flatMap((node) => [
+            node.getAttribute?.('title'), node.getAttribute?.('data-title'),
+            node.getAttribute?.('aria-label'), node.innerText, node.textContent
+          ]),
+          ...matchingAnchors.flatMap((link) => [
+            link.querySelector?.('img[alt]')?.getAttribute?.('alt'),
+            link.innerText, link.textContent
+          ])
         ];
         const title = candidates.map(cleanTitle).find(Boolean) || '标题未获取';
-        seen.add(bvid);
         items.push({bvid, title});
       }
       return items;
