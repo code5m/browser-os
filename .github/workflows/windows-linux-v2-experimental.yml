@@ -58,6 +58,31 @@ jobs:
               throw 'Windows BFC service contract invalid'
             }
             Write-Host 'BFC_WINDOWS_LOOPBACK_HEALTH=PASS'
+            # No real user data or Bilibili network calls. Verify that a
+            # minimal synthetic readback snapshot reaches disk with receipt.
+            $fixture = @{
+              source = 'authorized_browser_readback'
+              scanId = 'windows_ci_fixture_001'
+              reportedTotal = 1
+              expectedPages = 1
+              folderId = '9'
+              folderName = 'CI synthetic'
+              traversalFinished = $true
+              pages = @{
+                '1' = @{items = @(@{bvid='BV1234567890'; title='CI only'})}
+              }
+            } | ConvertTo-Json -Depth 10
+            $receipt = Invoke-RestMethod 'http://127.0.0.1:4198/api/readback/import' -Method POST -ContentType 'application/json' -Headers @{
+              Origin = 'http://127.0.0.1:4198'
+              'X-Local-CSRF' = $session.token
+            } -Body $fixture
+            if ($receipt.ok -ne $true -or $receipt.scanId -ne 'windows_ci_fixture_001' -or
+                $receipt.pages -ne 1 -or $receipt.cards -ne 1) {
+              throw 'Windows BFC synthetic import receipt mismatch'
+            }
+            $saved = Join-Path $env:BILIBILI_FAVORITES_DATA_DIR 'browser-readback-windows_ci_fixture_001.json'
+            if (-not (Test-Path -LiteralPath $saved)) { throw 'Windows BFC did not save the synthetic snapshot' }
+            Write-Host 'BFC_WINDOWS_LOCAL_IMPORT=PASS (synthetic data only)'
           } finally {
             Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
           }
