@@ -11,6 +11,8 @@ mod domain;
 mod grid_ipc;
 #[cfg(target_os = "windows")]
 mod windows_process;
+#[cfg(target_os = "windows")]
+mod windows_pipe;
 
 #[cfg(target_os = "linux")]
 mod grid_process;

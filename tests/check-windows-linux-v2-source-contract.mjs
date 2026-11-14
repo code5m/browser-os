@@ -12,11 +12,16 @@ const cargo = read('../src-tauri/Cargo.toml');
 const lock = read('../src-tauri/Cargo.lock');
 const process = read('../src-tauri/src/windows_process.rs');
 const terminal = read('../src-tauri/src/capabilities/terminal/terminal.rs');
+const windowsPipe = read('../src-tauri/src/windows_pipe.rs');
+const gridIpc = read('../src-tauri/src/grid_ipc.rs');
 
 assert.match(cargo, /keyring = \{ version = "3", features = \["sync-secret-service", "windows-native"\] \}/);
 assert.match(lock, /name = "keyring"[\s\S]*?"windows-sys 0\.60\.2"/);
 assert.match(cargo, /Win32_System_JobObjects/);
 assert.match(process, /JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE/);
+assert.match(windowsPipe, /PIPE_REJECT_REMOTE_CLIENTS/);
+assert.match(windowsPipe, /GetNamedPipeClientProcessId/);
+assert.match(gridIpc, /MAX_GRID_WIRE_BYTES/);
 assert.match(process, /AssignProcessToJobObject/);
 assert.match(terminal, /WINDOWS_TERMINAL_JOB_FAILED/);
 assert.match(cas, /FILE_SAVE_PLATFORM_UNSUPPORTED/);

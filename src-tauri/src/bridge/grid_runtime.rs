@@ -17,6 +17,7 @@ const MIN_GRID: usize = 2;
 /// Keep enough memory for Browser, file manager and desktop shell.
 const CORE_MEMORY_RESERVE_MB: u64 = 1800;
 
+#[cfg(target_os = "linux")]
 pub(crate) fn mem_available_mb() -> Option<u64> {
     let s = std::fs::read_to_string("/proc/meminfo").ok()?;
     for line in s.lines() {
@@ -26,6 +27,17 @@ pub(crate) fn mem_available_mb() -> Option<u64> {
         }
     }
     None
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn mem_available_mb() -> Option<u64> {
+    use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+    let mut memory: MEMORYSTATUSEX = unsafe { std::mem::zeroed() };
+    memory.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
+    if unsafe { GlobalMemoryStatusEx(&mut memory) } == 0 {
+        return None;
+    }
+    Some(memory.ullAvailPhys / (1024 * 1024))
 }
 
 /// Reuse existing Grid children without charging their already-allocated RSS

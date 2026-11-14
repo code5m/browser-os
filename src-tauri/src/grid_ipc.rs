@@ -104,10 +104,17 @@ impl Wire {
     }
 }
 
+// Cross-platform IPC bound. Remote/webpage data may be embedded in messages;
+// refuse oversized frames before allocation or a synchronous pipe write.
+pub const MAX_GRID_WIRE_BYTES: usize = 1024 * 1024;
+
 /// 写一帧（JSON + '\n'）。
 pub fn write_wire<W: std::io::Write>(w: &mut W, msg: &Wire) -> std::io::Result<()> {
     let mut line = serde_json::to_vec(msg)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    if line.len() >= MAX_GRID_WIRE_BYTES {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "GRID_WIRE_LIMIT"));
+    }
     line.push(b'\n');
     w.write_all(&line)?;
     w.flush()
@@ -116,9 +123,12 @@ pub fn write_wire<W: std::io::Write>(w: &mut W, msg: &Wire) -> std::io::Result<(
 /// 读一帧。Ok(None) = 对端关闭（EOF）。
 pub fn read_wire<R: std::io::BufRead>(r: &mut R) -> std::io::Result<Option<Wire>> {
     let mut line = String::new();
-    let n = r.read_line(&mut line)?;
+    let n = r.take((MAX_GRID_WIRE_BYTES + 1) as u64).read_line(&mut line)?;
     if n == 0 {
         return Ok(None);
+    }
+    if n > MAX_GRID_WIRE_BYTES || !line.ends_with('\n') {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "GRID_WIRE_LIMIT"));
     }
     let msg = serde_json::from_str(line.trim())
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
