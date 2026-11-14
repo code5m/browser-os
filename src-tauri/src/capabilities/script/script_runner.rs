@@ -598,6 +598,7 @@ fn join_output_readers(readers: Vec<thread::JoinHandle<()>>) {
 
 /// 终止整个进程组：SIGTERM → 轮询等待 → 超时未死则 SIGKILL。
 /// `pgid == None`（非 unix 或 setsid 假设不成立）时无进程组可杀，只登记能力缺口。
+#[cfg(unix)]
 fn terminate_group(pgid: Option<i32>, grace_secs: u32) {
     let Some(pgid) = pgid else {
         return;
@@ -612,6 +613,11 @@ fn terminate_group(pgid: Option<i32>, grace_secs: u32) {
     }
     kill_group(pgid, libc::SIGKILL);
 }
+
+// Windows process termination requires Job Object ownership. Do not launch
+// scripts unsandboxed until its native ProcessControl implementation exists.
+#[cfg(not(unix))]
+fn terminate_group(_pgid: Option<i32>, _grace_secs: u32) {}
 
 /// supervisor：轮询 wait + 超时/取消 + 收尾状态。
 /// **`Child` 的所有权在此线程**，进程表不持 `Child`。
