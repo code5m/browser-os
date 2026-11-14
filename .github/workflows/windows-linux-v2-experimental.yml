@@ -141,11 +141,20 @@ jobs:
       - name: 'Windows native compile (experimental: do not hide failure)'
         shell: pwsh
         run: cargo check --manifest-path src-tauri/Cargo.toml --locked
+      - name: Windows Grid, IPC, Job Object and safe-file unit tests
+        shell: pwsh
+        run: |
+          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os windows_grid_tests -- --test-threads=1
+          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os framing_tests -- --test-threads=1
+          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os authorized_windows_read -- --test-threads=1
+          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os pinned_handle_move -- --test-threads=1
+          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os job_tree_is_terminated -- --test-threads=1
       - name: Build release NSIS after successful Windows compilation
+        if: github.event_name == 'workflow_dispatch'
         shell: pwsh
         run: npx tauri build --bundles nsis --ci
       - name: Upload NSIS installer and hashes
-        if: success()
+        if: github.event_name == 'workflow_dispatch' && success()
         uses: actions/upload-artifact@v4
         with:
           name: browseros-windows-nsis-${{ github.sha }}
@@ -178,3 +187,5 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev pkg-config
       - name: Linux native compile (X11 GTK/WebKit regression)
         run: cargo check --manifest-path src-tauri/Cargo.toml --locked
+      - name: Linux Grid IPC framing unit tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os framing_tests -- --test-threads=1
