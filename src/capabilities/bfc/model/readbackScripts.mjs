@@ -89,7 +89,7 @@ export function buildFavoritesReadbackScript(ticket, mid) {
       try { await invoke('bfc_readback_submit', { ticket, payload: { kind: 'abort', message_code } }); }
       catch (error) { document.documentElement.dataset.browserosBfcError = 'BFC_BROWSER_SCRIPT_ERROR'; }
     };
-    const pageNumber = () => {
+    const observedPageNumber = () => {
       const u = url();
       const fromUrl = Number(u.searchParams.get('pn') || u.searchParams.get('page') || 0);
       if (Number.isInteger(fromUrl) && fromUrl > 0) return fromUrl;
@@ -97,8 +97,9 @@ export function buildFavoritesReadbackScript(ticket, mid) {
         .find((node) => node.getClientRects().length);
       const active = pager && pager.querySelector('[aria-current="page"],[class*="active"],[class*="current"]');
       const activeNumber = Number(String(active?.innerText || '').trim());
-      return Number.isInteger(activeNumber) && activeNumber > 0 ? activeNumber : 1;
+      return Number.isInteger(activeNumber) && activeNumber > 0 ? activeNumber : null;
     };
+    const pageNumber = () => observedPageNumber() || 1;
     const pageControls = () => {
       const roots = Array.from(document.querySelectorAll('[class*="pager"],[class*="pagination"],[class*="pagenation"]'))
         .filter((node) => node.getClientRects().length);
@@ -118,7 +119,8 @@ export function buildFavoritesReadbackScript(ticket, mid) {
         '[class*="fav-item"][class*="selected"],[class*="fav-item"][class*="active"]'
       ));
       for (const folder of selected) {
-        const match = String(folder.innerText || '').trim().match(/(?:收藏夹|收藏)\\s*[（(]?\\s*([\\d,]{1,8})\\s*(?:条|个|视频)?\\s*[）)]?\\s*$/);
+        if (!folder.getClientRects().length) continue;
+        const match = String(folder.innerText || '').trim().match(/(?:收藏夹|收藏|\\n)\\s*[（(]?\\s*([\\d,]{1,8})\\s*(?:条|个|视频)?\\s*[）)]?\\s*$/);
         if (match) {
           const value = Number(match[1].replaceAll(',', ''));
           if (Number.isSafeInteger(value) && value >= 0) return value;
@@ -133,20 +135,28 @@ export function buildFavoritesReadbackScript(ticket, mid) {
           if (Number.isSafeInteger(value) && value >= 0) return value;
         }
       }
-      const text = String(document.body?.innerText || '').slice(0, 30000);
+      // Read only the current folder's detail header. Other sidebar folders,
+      // recommendations and account-wide totals are not collection evidence.
+      const headers = Array.from(document.querySelectorAll('.fav-info,.favlist-info,.favlist-title,.fav-header-info'))
+        .filter((node) => node.getClientRects().length);
       const patterns = [
-        /共\s*([\d,]+)\s*(?:个视频|条视频|个收藏|条收藏)/,
-        /总计\s*([\d,]+)\s*(?:个视频|条视频|个收藏|条收藏)?/,
-        /([\d,]+)\s*个视频/
+        /视频数\\s*[:：]\\s*([\\d,]+)/,
+        /共\\s*([\\d,]+)\\s*(?:个视频|条视频|个收藏|条收藏)/,
+        /总计\\s*([\\d,]+)\\s*(?:个视频|条视频|个收藏|条收藏)/,
+        /([\\d,]+)\\s*个视频/
       ];
-      for (const pattern of patterns) {
-        const match = text.match(pattern);
-        if (match) {
-          const value = Number(match[1].replaceAll(',', ''));
-          if (Number.isSafeInteger(value) && value >= 0) return value;
+      const values = new Set();
+      for (const header of headers) {
+        const text = String(header.innerText || '').slice(0, 2000);
+        for (const pattern of patterns) {
+          const match = text.match(pattern);
+          if (match) {
+            const value = Number(match[1].replaceAll(',', ''));
+            if (Number.isSafeInteger(value) && value >= 0) values.add(value);
+          }
         }
       }
-      return null;
+      return values.size === 1 ? [...values][0] : null;
     };
     const findFavoritesContainer = () => {
       const selectors = [
@@ -162,35 +172,75 @@ export function buildFavoritesReadbackScript(ticket, mid) {
     const extractItems = (container) => {
       const items = [];
       const seen = new Set();
+      const isMetric = (value) => {
+        const text = value.replaceAll(',', '').trim();
+        return /^(?:\d+(?:\.\d+)?\s*[万亿千百]?|\d+[万亿])(?:播放|次)?$/.test(text)
+          || /^(?:\d+(?:\.\d+)?\s*[万亿千百]?|\d+[万亿])(?:播放|次)?(?:\s+\S+)*\s+\d{1,2}(?::\d{2}){1,2}$/.test(text);
+      };
+      const cleanTitle = (value) => {
+        const text = String(value || '').replace(/\s+/g, ' ').trim();
+        if (!text || isMetric(text) || /^BV[0-9A-Za-z]{10}$/.test(text)) return '';
+        return text.slice(0, 1000);
+      };
       for (const anchor of container.querySelectorAll('a[href*="/video/BV"]')) {
         const href = String(anchor.getAttribute('href') || '');
         const bvid = href.match(/\\/video\\/(BV[0-9A-Za-z]{10})/)?.[1];
         if (!bvid || seen.has(bvid)) continue;
         const card = anchor.closest('[class*="fav"],[class*="video-card"],li') || anchor.parentElement || anchor;
-        const titleNode = card.querySelector('[title],[aria-label]');
-        const title = String(anchor.getAttribute('title') || anchor.getAttribute('aria-label') ||
-          titleNode?.getAttribute('title') || titleNode?.getAttribute('aria-label') ||
-          card.innerText || anchor.innerText || '').trim().split('\\n')[0].slice(0, 1000);
+        const titleNodes = [
+          ...Array.from(card.querySelectorAll?.('[class*="title"],[class*="name"]') || []),
+          anchor,
+        ];
+        const textLines = String(card.innerText || anchor.innerText || '').split('\\n').map(cleanTitle);
+        const title = [
+          ...titleNodes.flatMap((node) => [node.getAttribute?.('title'), node.getAttribute?.('aria-label'), node.innerText]),
+          ...textLines,
+        ].map(cleanTitle).find(Boolean) || '标题未获取';
         seen.add(bvid);
         items.push({bvid, title});
       }
       return items;
     };
     const isBlocked = () => blockedPattern.test(String(document.title || '') + '\\n' + String(document.body?.innerText || '').slice(0, 5000));
-    const waitForPageChange = async (beforeSignature) => {
+    let paginationFailureCode = 'BFC_PAGINATION_TIMEOUT';
+    const waitForPageChange = async (beforeSignature, expectedCount, targetPage) => {
       let changedAt = 0;
+      let lastSignature = '';
+      const startedAt = Date.now();
+      let diagnostic = null;
+      paginationFailureCode = 'BFC_PAGINATION_TIMEOUT';
+      delete document.documentElement.dataset.browserosBfcPaginationDiagnostic;
       for (let attempt = 0; attempt < 80; attempt++) {
         await new Promise((resolve) => setTimeout(resolve, 250));
         if (isCancelled() || isBlocked()) return false;
         const container = findFavoritesContainer();
-        const signature = container ? Array.from(container.querySelectorAll('a[href*="/video/BV"]'))
-          .slice(0, 5).map((node) => node.getAttribute('href')).join('|') : '';
-        if (signature && signature !== beforeSignature) {
-          if (!changedAt) changedAt = Date.now();
-          if (Date.now() - changedAt >= 1200) return true;
+        const items = container ? extractItems(container) : [];
+        const signature = items.map((item) => item.bvid).join('|');
+        const observedPage = observedPageNumber();
+        const links = container ? Array.from(container.querySelectorAll('a[href*="/video/BV"]')) : [];
+        // 只保留计数与页码，不记录网页正文、账号、URL、BV 或凭据。
+        diagnostic = { targetPage, observedPage, expectedItems: expectedCount ?? null,
+          uniqueItems: items.length, videoLinks: links.length,
+          visibleVideoLinks: links.filter((node) => node.getClientRects?.().length > 0).length,
+          containerFound: Boolean(container), contentChanged: Boolean(signature && signature !== beforeSignature),
+          waitedMs: Date.now() - startedAt };
+        if (signature && signature !== beforeSignature &&
+            (observedPage === null || observedPage === targetPage) &&
+            (expectedCount === undefined || items.length <= expectedCount)) {
+          if (!changedAt || signature !== lastSignature) changedAt = Date.now();
+          lastSignature = signature;
+          if (Date.now() - changedAt >= (expectedCount !== undefined && items.length < expectedCount ? 3000 : 1200)) return true;
         } else {
           changedAt = 0;
         }
+      }
+      if (diagnostic) {
+        document.documentElement.dataset.browserosBfcPaginationDiagnostic = JSON.stringify(diagnostic);
+        paginationFailureCode = !diagnostic.containerFound ? 'BFC_FAVORITES_CONTAINER_UNRECOGNIZED'
+          : !diagnostic.contentChanged || (diagnostic.observedPage !== null && diagnostic.observedPage !== targetPage)
+            ? 'BFC_PAGINATION_NOT_ADVANCED'
+            : expectedCount !== undefined && diagnostic.uniqueItems !== expectedCount
+              ? 'BFC_PAGINATION_ITEM_COUNT_MISMATCH' : 'BFC_PAGINATION_UNSTABLE';
       }
       return false;
     };
@@ -226,10 +276,12 @@ export function buildFavoritesReadbackScript(ticket, mid) {
       if (current !== 1) {
         const first = controls.numeric.find((item) => item.value === 1)?.node;
         if (!first) { await abort('BFC_START_FROM_FIRST_PAGE'); return; }
-        const beforeSignature = Array.from(container.querySelectorAll('a[href*="/video/BV"]'))
-          .slice(0, 5).map((node) => node.getAttribute('href')).join('|');
+        const beforeSignature = extractItems(container).map((item) => item.bvid).join('|');
         first.click();
-        if (!await waitForPageChange(beforeSignature)) { await abort('BFC_PAGINATION_TIMEOUT'); return; }
+        if (!await waitForPageChange(beforeSignature, undefined, 1)) {
+          if (!isCancelled()) await abort(isBlocked() ? 'BFC_BILIBILI_ACCESS_LIMITED' : paginationFailureCode);
+          return;
+        }
         container = findFavoritesContainer();
         if (!container) { await abort('BFC_FAVORITES_CONTAINER_UNRECOGNIZED'); return; }
       }
@@ -237,21 +289,34 @@ export function buildFavoritesReadbackScript(ticket, mid) {
       const firstItems = extractItems(container);
       const pageSize = firstItems.length;
       if (total > 0 && pageSize === 0) { await abort('BFC_FAVORITES_PAGE_EMPTY'); return; }
-      const expected = total === 0 ? 1 : Math.ceil(total / pageSize);
+      const pagerText = String(pageControls().root?.innerText || '');
+      const declaredPages = Number(pagerText.match(/共\\s*([0-9]+)\\s*页/)?.[1] || 0);
+      const expected = declaredPages || (total === 0 ? 1 : Math.ceil(total / pageSize));
       if (expected < 1 || expected > 300) { await abort('BFC_PAGINATION_LIMIT'); return; }
       const folderId = url().searchParams.get('fid') || 'unknown';
       const titleNode = document.querySelector('[class*="fav"][class*="title"],[class*="fav-title"]');
       const folderName = String(titleNode?.innerText || document.title || '当前收藏夹').trim().slice(0,128);
       const pages = [];
+      const seenAcrossPages = new Set();
+      const submitPages = (kind) => invoke('bfc_readback_submit', { ticket, payload: {
+        kind, expected_pages: expected, reported_total: total, folder_id: folderId, folder_name: folderName, pages
+      }});
       let itemsCaptured = 0;
       for (let page = 1; page <= expected; page++) {
         if (isCancelled()) return;
         if (isBlocked()) { await abort('BFC_BILIBILI_ACCESS_LIMITED'); return; }
+        if ((url().searchParams.get('fid') || 'unknown') !== folderId || reportedTotal() !== total) {
+          await abort('BFC_COLLECTION_CHANGED'); return;
+        }
         container = findFavoritesContainer();
         if (!container) { await abort('BFC_FAVORITES_CONTAINER_UNRECOGNIZED'); return; }
         const items = page === 1 ? firstItems : extractItems(container);
         const expectedCount = Math.max(0, Math.min(pageSize, total - (page - 1) * pageSize));
-        if (items.length !== expectedCount) { await abort('BFC_READBACK_PAGE_COUNT_MISMATCH'); return; }
+        if (items.length > expectedCount) { await abort('BFC_READBACK_PAGE_COUNT_MISMATCH'); return; }
+        if (items.some((item) => seenAcrossPages.has(item.bvid))) {
+          await abort('BFC_READBACK_CROSS_PAGE_DUPLICATE'); return;
+        }
+        items.forEach((item) => seenAcrossPages.add(item.bvid));
         pages.push({page, items});
         itemsCaptured += items.length;
         await invoke('bfc_readback_submit', {
@@ -259,6 +324,11 @@ export function buildFavoritesReadbackScript(ticket, mid) {
           payload: { kind: 'progress', pages_captured: page, items_captured: itemsCaptured,
             expected_pages: expected, reported_total: total, folder_id: folderId, folder_name: folderName }
         });
+        await submitPages('checkpoint');
+        // 数量缺口或单轮三页预算触发停止，保留部分数据，不自动扫描全部收藏。
+        if (items.length !== expectedCount || (page >= 3 && page < expected)) {
+          await submitPages('partial'); return;
+        }
         if (page === expected) break;
         const pager = pageControls();
         if (!pager.next || pager.next.hasAttribute('disabled') ||
@@ -267,11 +337,11 @@ export function buildFavoritesReadbackScript(ticket, mid) {
           await abort('BFC_PAGINATION_INCOMPLETE');
           return;
         }
-        const beforeSignature = Array.from(container.querySelectorAll('a[href*="/video/BV"]'))
-          .slice(0, 5).map((node) => node.getAttribute('href')).join('|');
+        const beforeSignature = items.map((item) => item.bvid).join('|');
         pager.next.click();
-        if (!await waitForPageChange(beforeSignature)) {
-          if (!isCancelled()) await abort(isBlocked() ? 'BFC_BILIBILI_ACCESS_LIMITED' : 'BFC_PAGINATION_TIMEOUT');
+        const nextExpectedCount = Math.min(pageSize, total - page * pageSize);
+        if (!await waitForPageChange(beforeSignature, nextExpectedCount, page + 1)) {
+          if (!isCancelled()) await abort(isBlocked() ? 'BFC_BILIBILI_ACCESS_LIMITED' : paginationFailureCode);
           return;
         }
         const explicitPage = Number(url().searchParams.get('pn') || url().searchParams.get('page') || 0);

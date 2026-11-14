@@ -285,15 +285,28 @@ async fn import_to_local_bfc(payload: &BfcImportPayload) -> Result<BfcImportResu
         return Err(ImportFailure::Unknown);
     }
     let body: Value = response.json().await.map_err(|_| ImportFailure::Unknown)?;
+    parse_import_receipt(payload, &body)
+}
+
+fn parse_import_receipt(
+    payload: &BfcImportPayload,
+    body: &Value,
+) -> Result<BfcImportResult, ImportFailure> {
     if body.get("ok").and_then(Value::as_bool) != Some(true) {
         return Err(ImportFailure::Unknown);
     }
     let returned_scan = body.get("scanId").and_then(Value::as_str);
     let returned_pages = body.get("pages").and_then(Value::as_u64);
     let returned_cards = body.get("cards").and_then(Value::as_u64);
+    let captured_pages = payload.pages.len() as u32;
+    let captured_cards = payload
+        .pages
+        .values()
+        .map(|page| page.items.len() as u32)
+        .sum::<u32>();
     if returned_scan != Some(payload.scan_id.as_str())
-        || returned_pages != Some(payload.expected_pages as u64)
-        || returned_cards != Some(payload.reported_total as u64)
+        || returned_pages != Some(captured_pages as u64)
+        || returned_cards != Some(captured_cards as u64)
     {
         return Err(ImportFailure::Unknown);
     }
@@ -310,8 +323,8 @@ async fn import_to_local_bfc(payload: &BfcImportPayload) -> Result<BfcImportResu
         .and_then(|value| u32::try_from(value).ok());
     Ok(BfcImportResult {
         scan_id: payload.scan_id.clone(),
-        pages: payload.expected_pages,
-        cards: payload.reported_total,
+        pages: captured_pages,
+        cards: captured_cards,
         unique,
         gap,
     })
@@ -320,6 +333,38 @@ async fn import_to_local_bfc(payload: &BfcImportPayload) -> Result<BfcImportResu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn partial_receipt_matches_captured_counts_not_reported_totals() {
+        use super::super::runtime::{BfcImportPage, BfcItem};
+        let payload = BfcImportPayload {
+            source: "authorized_browser_readback",
+            scan_id: "fixture".into(),
+            reported_total: 4875,
+            expected_pages: 136,
+            traversal_finished: false,
+            pages: [(
+                "1".into(),
+                BfcImportPage {
+                    items: vec![BfcItem {
+                        bvid: "BV1234567890".into(),
+                        title: "fixture".into(),
+                    }],
+                },
+            )]
+            .into(),
+        };
+        let body = serde_json::json!({"ok":true,"scanId":"fixture","pages":1,"cards":1});
+        let receipt = parse_import_receipt(&payload, &body).ok().unwrap();
+        assert_eq!(receipt.pages, 1);
+        assert_eq!(receipt.cards, 1);
+        assert!(parse_import_receipt(
+            &payload,
+            &serde_json::json!({"ok":true,"scanId":"fixture","pages":136,"cards":4875})
+        )
+        .is_err());
+        assert!(!payload.traversal_finished);
+    }
 
     #[test]
     fn selected_native_tab_must_match_even_when_other_bilibili_tab_is_logged_in() {

@@ -14,6 +14,7 @@ const phaseLabel = computed(() => ({
   opening_favorites: "打开收藏夹",
   reading_favorites: "读取收藏分页",
   ready_to_import: "快照已读取，等待保存",
+  partial: "部分读取 · 待核对",
   importing: "保存到本地 BFC",
   imported: "已交给本地 BFC",
   outcome_unknown: "保存结果不确定",
@@ -99,6 +100,7 @@ onMounted(() => {
           <button type="button" class="bfc-secondary" :disabled="bfc.busy" @click="bfc.openBiliPage">打开 B站 / 登录</button>
           <button v-if="bfc.busy && bfc.ticket && ['checking_login', 'opening_favorites', 'reading_favorites'].includes(bfc.phase)" type="button" class="bfc-danger" @click="bfc.cancelReadback">停止本次读取</button>
           <button v-if="bfc.phase === 'ready_to_import'" type="button" class="bfc-primary" :disabled="bfc.busy" @click="bfc.finishReadback">重试保存到本地 BFC</button>
+          <button v-if="bfc.phase === 'partial' || (bfc.phase === 'failed' && (bfc.readbackStatus?.pages_captured ?? 0) > 0)" type="button" :disabled="bfc.busy" @click="bfc.finishReadback">保存部分结果（非完整同步）</button>
         </div>
         <div class="bfc-result" :class="{danger:phaseIsError}" role="status" aria-live="polite">
           <strong>{{phaseLabel}}</strong>
@@ -109,7 +111,7 @@ onMounted(() => {
             <div><dt>账号 MID</dt><dd>{{bfc.readbackStatus?.mid || "—"}}</dd></div>
             <div><dt>收藏夹</dt><dd>{{bfc.readbackStatus?.folder_name || "—"}}</dd></div>
             <div><dt>分页进度</dt><dd>{{bfc.readbackStatus?.pages_captured ?? 0}} / {{bfc.readbackStatus?.expected_pages ?? "—"}}</dd></div>
-            <div><dt>页面条目数</dt><dd>{{bfc.readbackStatus?.items_captured ?? 0}}</dd></div>
+            <div><dt>累计已读取条目</dt><dd>{{bfc.readbackStatus?.items_captured ?? 0}}</dd></div>
           </dl>
         </div>
         <div v-if="bfc.importResult" class="bfc-import-result">

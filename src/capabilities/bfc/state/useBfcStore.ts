@@ -31,6 +31,7 @@ type BfcPhase =
   | "opening_favorites"
   | "reading_favorites"
   | "ready_to_import"
+  | "partial"
   | "importing"
   | "imported"
   | "outcome_unknown"
@@ -71,7 +72,12 @@ function messageForCode(code: string | null | undefined): string {
     BFC_FAVORITES_CONTAINER_UNRECOGNIZED: "无法识别当前收藏列表结构。可能是页面改版或尚未加载完成；没有导入快照。",
     BFC_READBACK_PAGE_COUNT_MISMATCH: "当前页实际读取数量与页面总数推算不一致；没有导入快照。",
     BFC_READBACK_TOTAL_MISMATCH: "分页合计与页面报告的收藏总数不一致；没有导入快照。",
+    BFC_READBACK_CROSS_PAGE_DUPLICATE: "发现跨页重复条目，列表可能发生变化；已停止翻页，之前已读页面保留在本次会话中。",
+    BFC_COLLECTION_CHANGED: "读取期间收藏夹或报告总数发生变化，已停止，避免混合不同列表；之前已读结果保留在本次会话中。",
     BFC_PAGINATION_TIMEOUT: "等待下一页加载超时；没有导入快照。",
+    BFC_PAGINATION_NOT_ADVANCED: "点击翻页后，页码或列表内容未确认切换到目标页；已停止，没有导入快照。下方是最后成功读取的累计进度。",
+    BFC_PAGINATION_ITEM_COUNT_MISMATCH: "翻页内容已变化，但等待 20 秒后，提取的去重 BV 数仍与预计条目数不符；可能存在失效条目、提取遗漏或页容量推算问题，尚不能确定。没有导入快照。",
+    BFC_PAGINATION_UNSTABLE: "翻页后列表内容持续变化，等待 20 秒仍未稳定；已停止，没有导入快照。",
     BFC_PAGINATION_INCOMPLETE: "页面没有提供可用的下一页入口；没有导入快照。",
     BFC_START_FROM_FIRST_PAGE: "无法回到收藏列表第一页；没有导入快照。",
     BFC_FAVORITES_PAGE_REQUIRED: "当前不是已登录账号对应的收藏夹页面。",
@@ -282,7 +288,7 @@ export const useBfcStore = defineStore("bfc", () => {
       }
 
       phase.value = "reading_favorites";
-      message.value = "正在按页面显示顺序读取收藏夹分页。若页面出现 HTTP 412、安全验证或数量不一致，将立即停止。";
+      message.value = "正在读取收藏夹，单轮最多 3 页。遇数量缺口保留部分结果，遇安全验证或列表变化立即停止。";
       try {
         selectBfcReadbackTab(browser.tabs, browser.activeTabId, tabId);
         await bridge.evalInTab(tabId, buildFavoritesReadbackScript(activeTicket, mid));
@@ -292,10 +298,10 @@ export const useBfcStore = defineStore("bfc", () => {
         throw new Error("BFC_BROWSER_SCRIPT_ERROR");
       }
       const started = await waitForStatus(
-        activeTicket, ["reading_favorites", "access_limited", "failed"],
+        activeTicket, ["reading_favorites", "ready", "partial", "access_limited", "failed"],
         25_000, "BFC_BROWSER_SCRIPT_ERROR",
       );
-      if (started.state !== "reading_favorites") {
+      if (!["reading_favorites", "ready", "partial"].includes(started.state)) {
         await stopAndShow(started.state === "access_limited" ? "access_limited" : "failed",
           messageForCode(started.message_code || "BFC_BROWSER_SCRIPT_ERROR"));
         return;
@@ -303,9 +309,13 @@ export const useBfcStore = defineStore("bfc", () => {
 
       const captured = await waitForStatus(
         activeTicket,
-        ["ready", "access_limited", "failed", "outcome_unknown"],
+        ["ready", "partial", "access_limited", "failed", "outcome_unknown"],
         READBACK_TIMEOUT_MS,
       );
+      if (captured.state === "partial") {
+        await stopAndShow("partial", `已保留部分结果：${captured.items_captured} 条，${captured.pages_captured}/${captured.expected_pages} 页。发现数量缺口或达到单轮 3 页上限，已停止翻页。尚未完整核对；可手动保存到本地 BFC。本次结果仅在客户端会话内保留，重启后不保留。`);
+        return;
+      }
       if (captured.state === "access_limited") {
         await stopAndShow("access_limited", messageForCode(captured.message_code));
         return;
@@ -357,6 +367,7 @@ export const useBfcStore = defineStore("bfc", () => {
 
   async function finishReadback(): Promise<void> {
     if (busy.value || !ticket.value) return;
+    const partial = readbackStatus.value?.state !== "ready";
     busy.value = true;
     phase.value = "importing";
     message.value = "正在使用本机 BFC 的 CSRF 会话保存快照。不会执行账号收藏写入。";
@@ -365,7 +376,9 @@ export const useBfcStore = defineStore("bfc", () => {
       importResult.value = result;
       readbackStatus.value = await bridge.bfcReadbackStatus(ticket.value);
       phase.value = "imported";
-      message.value = serviceStatus.value?.complete_snapshot === false
+      message.value = partial
+        ? `BFC 已接收部分结果 ${result.cards} 条；未完成遍历和总数核对，不能视为完整同步。`
+        : serviceStatus.value?.complete_snapshot === false
         ? `BFC 已接收 ${result.cards} 条收藏（${result.pages} 页，${result.unique} 个唯一 BV）。注意：当前 BFC 服务声明 completeSnapshot=false，因此该快照在工作台中仍应视为待核实/不完整，不代表完整同步。`
         : `BFC 已接收 ${result.cards} 条收藏（${result.pages} 页，${result.unique} 个唯一 BV）。`;
       layout.activateView("bfc");
@@ -374,8 +387,8 @@ export const useBfcStore = defineStore("bfc", () => {
       lastErrorCode.value = code;
       const current = await bridge.bfcReadbackStatus(ticket.value).catch(() => null);
       if (current) readbackStatus.value = current;
-      if (current?.state === "ready") {
-        phase.value = "ready_to_import";
+      if (current?.state === "ready" || current?.state === "partial") {
+        phase.value = current.state === "partial" ? "partial" : "ready_to_import";
         message.value = `本地 BFC 未确认收到本次快照（${code}）。读取结果仍保留在内存中；检查本地服务后可手动重试保存。`;
       } else if (current?.state === "outcome_unknown") {
         phase.value = "outcome_unknown";

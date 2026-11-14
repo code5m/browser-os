@@ -135,6 +135,7 @@ pub struct BfcImportPage {
 
 #[derive(Clone, Debug)]
 struct Capture {
+    complete: bool,
     expected_pages: u32,
     reported_total: u32,
     folder_id: String,
@@ -387,7 +388,9 @@ impl BfcRuntime {
                 });
                 Ok(())
             }
-            "favorites" => {
+            "favorites" | "partial" | "checkpoint" => {
+                let partial = payload.kind != "favorites";
+                let checkpoint = payload.kind == "checkpoint";
                 if !matches!(session.state.as_str(), "logged_in" | "reading_favorites")
                     || !matches!(session.login_status, Some(BfcLoginStatus::LoggedIn))
                 {
@@ -412,7 +415,9 @@ impl BfcRuntime {
                 let folder_name = payload.folder_name.unwrap_or_else(|| "当前收藏夹".into());
                 if expected_pages == 0
                     || expected_pages > MAX_PAGES
-                    || pages.len() != expected_pages as usize
+                    || pages.is_empty()
+                    || pages.len() > expected_pages as usize
+                    || (!partial && pages.len() != expected_pages as usize)
                     || reported_total as usize > MAX_ITEMS
                     || folder_id.len() > 64
                     || folder_name.len() > 128
@@ -453,27 +458,36 @@ impl BfcRuntime {
                 if let Some(progress) = &session.progress {
                     if progress.expected_pages != expected_pages
                         || progress.reported_total != reported_total
-                        || progress.pages_captured != expected_pages
-                        || progress.items_captured != reported_total
+                        || progress.pages_captured as usize != collected.len()
+                        || progress.items_captured as usize != total
                         || progress.folder_id != folder_id
                         || progress.folder_name != folder_name
                     {
                         return Err("BFC_READBACK_PROGRESS_INVALID".into());
                     }
                 }
-                if total != reported_total as usize
-                    || (1..=expected_pages).any(|page| !collected.contains_key(&page))
+                if total > reported_total as usize
+                    || (!partial && total != reported_total as usize)
+                    || (1..=collected.len() as u32).any(|page| !collected.contains_key(&page))
                 {
                     return Err("BFC_READBACK_INCOMPLETE".into());
                 }
                 session.capture = Some(Capture {
+                    complete: !partial,
                     expected_pages,
                     reported_total,
                     folder_id,
                     folder_name,
                     pages: collected,
                 });
-                session.state = "ready".into();
+                session.state = if checkpoint {
+                    "reading_favorites"
+                } else if partial {
+                    "partial"
+                } else {
+                    "ready"
+                }
+                .into();
                 session.message_code = None;
                 Ok(())
             }
@@ -555,7 +569,7 @@ impl BfcRuntime {
         if session.expires_at <= Instant::now() {
             return Err("BFC_READBACK_TICKET_EXPIRED".into());
         }
-        if session.state != "ready" {
+        if !matches!(session.state.as_str(), "ready" | "partial" | "failed") {
             return Err("BFC_READBACK_NOT_READY".into());
         }
         let capture = session.capture.as_ref().ok_or("BFC_READBACK_NOT_READY")?;
@@ -573,7 +587,7 @@ impl BfcRuntime {
             scan_id: session.scan_id.clone(),
             reported_total: capture.reported_total,
             expected_pages: capture.expected_pages,
-            traversal_finished: true,
+            traversal_finished: capture.complete,
             pages,
         };
         let encoded = serde_json::to_vec(&payload).map_err(|_| "BFC_IMPORT_SERIALIZE")?;
@@ -605,7 +619,16 @@ impl BfcRuntime {
             .get_mut(ticket)
         {
             if session.state == "importing" {
-                session.state = "ready".into();
+                session.state = if session
+                    .capture
+                    .as_ref()
+                    .is_some_and(|capture| capture.complete)
+                {
+                    "ready"
+                } else {
+                    "partial"
+                }
+                .into();
             }
         }
     }
@@ -670,6 +693,63 @@ mod tests {
         let runtime = BfcRuntime::default();
         let ticket = runtime.begin("tab-7").unwrap();
         (runtime, ticket.ticket, ticket.scan_id)
+    }
+
+    #[test]
+    fn partial_checkpoint_survives_abort_and_never_claims_complete() {
+        let (runtime, ticket, _) = runtime();
+        runtime
+            .submit(
+                &ticket,
+                "tab-7",
+                "https://www.bilibili.com/",
+                BfcReadbackPayload {
+                    kind: "login".into(),
+                    login_status: Some("logged_in".into()),
+                    mid: Some("42".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let payload = BfcReadbackPayload {
+            kind: "checkpoint".into(),
+            expected_pages: Some(136),
+            reported_total: Some(4875),
+            folder_id: Some("99".into()),
+            folder_name: Some("fixture".into()),
+            pages: Some(vec![BfcPage {
+                page: 1,
+                items: vec![BfcItem {
+                    bvid: "BV1234567890".into(),
+                    title: "fixture".into(),
+                }],
+            }]),
+            ..Default::default()
+        };
+        let url = "https://space.bilibili.com/42/favlist?fid=99";
+        runtime
+            .submit(&ticket, "tab-7", url, payload.clone())
+            .unwrap();
+        assert!(runtime.prepare_import(&ticket).is_err());
+        runtime
+            .submit(
+                &ticket,
+                "tab-7",
+                url,
+                BfcReadbackPayload {
+                    kind: "abort".into(),
+                    message_code: Some("BFC_PAGINATION_NOT_ADVANCED".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(runtime.status(&ticket).unwrap().items_captured, 1);
+        let (_, imported) = runtime.prepare_import(&ticket).unwrap();
+        assert!(!imported.traversal_finished);
+        assert_eq!(imported.reported_total, 4875);
+        assert_eq!(imported.pages.len(), 1);
+        runtime.reset_ready(&ticket);
+        assert_eq!(runtime.status(&ticket).unwrap().state, "partial");
     }
 
     #[test]
