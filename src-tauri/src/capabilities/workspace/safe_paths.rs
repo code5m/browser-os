@@ -528,6 +528,95 @@ mod windows {
         // enforces a whole-directory boundary rather than a prefix match.
         Ok(String::from_utf16_lossy(&buf[..used as usize]).to_lowercase())
     }
+    fn authorize(file: &File, roots: &[PathBuf]) -> io::Result<String> {
+        let actual = final_path(file)?;
+        for root in roots {
+            let Ok(root_handle) = open(root, true) else { continue };
+            let Ok(mut root_path) = final_path(&root_handle) else { continue };
+            if !root_path.ends_with('\\') { root_path.push('\\'); }
+            if actual.starts_with(&root_path) {
+                return Ok(actual);
+            }
+        }
+        Err(denied())
+    }
+    /// No-overwrite rename by existing source/destination OS handles.
+    /// FILE_RENAME_INFO RootDirectory pins the actual destination directory,
+    /// and ReplaceIfExists=false avoids path-only check-then-rename races.
+    pub(super) fn move_no_replace(
+        src: &Path, dest_dir: &Path, roots: &[PathBuf]
+    ) -> io::Result<()> {
+        use std::ffi::c_void;
+        use std::os::windows::{ffi::OsStrExt, io::AsRawHandle};
+        use windows_sys::Win32::Storage::FileSystem::{
+            SetFileInformationByHandle, FileRenameInfo,
+        };
+        const DELETE: u32 = 0x0001_0000;
+        const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
+
+        if !src.is_absolute() || !dest_dir.is_absolute() {
+            return Err(denied());
+        }
+        let filename = src.file_name().ok_or_else(denied)?;
+        let text = filename.to_string_lossy();
+        if text.is_empty() || text.contains(':') || text.ends_with('.') || text.ends_with(' ') {
+            // Reject alternate data streams, path aliases and Win32 trailing
+            // dot/space normalization before constructing an OS rename.
+            return Err(denied());
+        }
+
+        let mut source_opts = OpenOptions::new();
+        source_opts.access_mode(DELETE | FILE_READ_ATTRIBUTES)
+            .share_mode(FILE_SHARE_READ_WRITE_DELETE)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS);
+        let source = source_opts.open(src)?;
+        let meta = source.metadata()?;
+        if meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+            || !(meta.is_file() || meta.is_dir()) {
+            return Err(denied());
+        }
+        let source_path = authorize(&source, roots)?;
+        let destination = open(dest_dir, true)?;
+        let destination_path = authorize(&destination, roots)?;
+        if destination_path == source_path
+            || meta.is_dir() && destination_path.starts_with(&(source_path + "\\")) {
+            return Err(denied());
+        }
+
+        #[repr(C)]
+        struct RenameHeader {
+            flags: u32,
+            root_directory: *mut c_void,
+            filename_length: u32,
+            filename: [u16; 1],
+        }
+        let chars: Vec<u16> = filename.encode_wide().collect();
+        if chars.is_empty() || chars.len() > 32000 {
+            return Err(denied());
+        }
+        let offset = std::mem::offset_of!(RenameHeader, filename);
+        let size = offset + (chars.len() + 1) * std::mem::size_of::<u16>();
+        let mut aligned = vec![0u64; (size + 7) / 8];
+        let header = aligned.as_mut_ptr() as *mut RenameHeader;
+        unsafe {
+            (*header).flags = 0; // FileRenameInfo: FALSE = NO REPLACE
+            (*header).root_directory = destination.as_raw_handle() as *mut c_void;
+            (*header).filename_length = (chars.len() * 2) as u32;
+            std::ptr::copy_nonoverlapping(
+                chars.as_ptr(),
+                (aligned.as_mut_ptr() as *mut u8).add(offset) as *mut u16,
+                chars.len(),
+            );
+            if SetFileInformationByHandle(
+                source.as_raw_handle() as _, FileRenameInfo,
+                aligned.as_ptr() as *const c_void, size as u32,
+            ) == 0 {
+                return Err(io::Error::last_os_error());
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn read_regular(path: &Path, roots: &[PathBuf], limit: usize) -> io::Result<Vec<u8>> {
         if !path.is_absolute() || limit == 0 || limit > 64 * 1024 * 1024 {
             return Err(denied());
@@ -535,18 +624,7 @@ mod windows {
         // A final-file reparse point is denied even when it points inside the
         // allowed root; intermediate junctions are checked by final handle.
         let file = open(path, false)?;
-        let actual = final_path(&file)?;
-        let mut authorized = false;
-        for root in roots {
-            let Ok(root_handle) = open(root, true) else { continue };
-            let Ok(mut root_path) = final_path(&root_handle) else { continue };
-            if !root_path.ends_with('\\') { root_path.push('\\'); }
-            if actual.starts_with(&root_path) {
-                authorized = true;
-                break;
-            }
-        }
-        if !authorized { return Err(denied()); }
+        authorize(&file, roots)?;
         let length = file.metadata()?.len();
         if length > limit as u64 {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "FILE_READ_SIZE_LIMIT"));
@@ -578,6 +656,28 @@ mod windows {
             assert!(read_regular(&file, &[safe.clone()], 2).is_err());
             std::fs::remove_dir_all(base).unwrap();
         }
+        #[test]
+        fn pinned_handle_move_is_no_replace_and_does_not_touch_external_root() {
+            let base = std::env::temp_dir()
+                .join(format!("browseros-winmove-{}", uuid::Uuid::new_v4()));
+            let allowed = base.join("allowed");
+            let a = allowed.join("a");
+            let b = allowed.join("b");
+            let outside = base.join("outside");
+            std::fs::create_dir_all(&a).unwrap();
+            std::fs::create_dir_all(&b).unwrap();
+            std::fs::create_dir_all(&outside).unwrap();
+            let src = a.join("one.txt");
+            std::fs::write(&src, b"first").unwrap();
+            move_no_replace(&src, &b, &[allowed.clone()]).unwrap();
+            assert!(!src.exists());
+            assert_eq!(std::fs::read(b.join("one.txt")).unwrap(), b"first");
+            std::fs::write(&src, b"second").unwrap();
+            assert!(move_no_replace(&src, &b, &[allowed.clone()]).is_err());
+            assert_eq!(std::fs::read(b.join("one.txt")).unwrap(), b"first");
+            assert!(move_no_replace(&src, &outside, &[allowed.clone()]).is_err());
+            std::fs::remove_dir_all(base).unwrap();
+        }
     }
 }
 
@@ -586,12 +686,16 @@ pub fn move_no_replace(src: &Path, dest_dir: &Path, roots: &[PathBuf]) -> std::i
     {
         linux::move_no_replace(src, dest_dir, roots)
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "windows")]
+    {
+        windows::move_no_replace(src, dest_dir, roots)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     {
         let _ = (src, dest_dir, roots);
         Err(std::io::Error::new(
             std::io::ErrorKind::Unsupported,
-            "descriptor-anchored move requires Linux",
+            "secure move requires a supported platform",
         ))
     }
 }
