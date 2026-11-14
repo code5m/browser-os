@@ -82,7 +82,7 @@ jobs:
           $config = Get-Content src-tauri/tauri.windows.conf.json -Raw | ConvertFrom-Json
           if ($config.bundle.targets[0] -ne 'nsis' -or $config.bundle.windows.nsis.installMode -ne 'currentUser') { throw 'NSIS config invalid' }
           node tests/check-windows-linux-v2-source-contract.mjs
-      - name: Windows native compile (experimental: do not hide failure)
+      - name: 'Windows native compile (experimental: do not hide failure)'
         shell: pwsh
         run: cargo check --manifest-path src-tauri/Cargo.toml --locked
       - name: Build release NSIS after successful Windows compilation
