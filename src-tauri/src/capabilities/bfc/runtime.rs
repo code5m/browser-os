@@ -907,14 +907,14 @@ mod tests {
         let login = BfcReadbackPayload {
             kind: "login".into(),
             login_status: Some("logged_in".into()),
-            mid: Some("471851304".into()),
+            mid: Some("123456".into()),
             ..Default::default()
         };
         assert_eq!(
             runtime.submit(
                 &ticket,
                 "tab-8",
-                "https://space.bilibili.com/471851304/favlist",
+                "https://space.bilibili.com/123456/favlist",
                 login.clone()
             ),
             Err("BFC_TAB_ID_MISMATCH".into())
@@ -926,13 +926,13 @@ mod tests {
             .submit(
                 &ticket,
                 "tab-7",
-                "https://space.bilibili.com/471851304/favlist",
+                "https://space.bilibili.com/123456/favlist",
                 login,
             )
             .unwrap();
         let accepted = runtime.status(&ticket).unwrap();
         assert_eq!(accepted.state, "logged_in");
-        assert_eq!(accepted.mid.as_deref(), Some("471851304"));
+        assert_eq!(accepted.mid.as_deref(), Some("123456"));
     }
 
     #[test]
@@ -962,7 +962,7 @@ mod tests {
     #[test]
     fn readback_page_progress_is_monotonic_and_final_snapshot_validated() {
         let (runtime, ticket, _) = runtime();
-        let url = "https://space.bilibili.com/471851304/favlist";
+        let url = "https://space.bilibili.com/123456/favlist";
         runtime
             .submit(
                 &ticket,
@@ -970,7 +970,7 @@ mod tests {
                 url,
                 BfcReadbackPayload {
                     kind: "login".into(),
-                    mid: Some("471851304".into()),
+                    mid: Some("123456".into()),
                     login_status: Some("logged_in".into()),
                     ..Default::default()
                 },
