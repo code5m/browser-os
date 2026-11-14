@@ -1,0 +1,98 @@
+name: BrowserOS Windows V2 experimental native and BFC service
+on:
+  push:
+    branches:
+      - 'feature/browseros-windows-linux-v2-onepass-*'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  static-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node tests/check-windows-linux-v2-source-contract.mjs
+      - run: node tests/check-bfc-native-contract.mjs
+      - run: git diff --check HEAD^ HEAD
+  windows-bfc-loopback:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: code5m/bfc-workbench
+          ref: 931db347d21aecd9ad827407ab9b90f2fc5e5118
+          path: bfc-workbench
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: BFC local service regression
+        working-directory: bfc-workbench
+        run: npm test
+      - name: Windows local service health and csrf contract
+        shell: pwsh
+        run: |
+          $env:BILIBILI_FAVORITES_DATA_DIR = Join-Path $env:RUNNER_TEMP 'browseros-bfc-ci'
+          New-Item -ItemType Directory -Path $env:BILIBILI_FAVORITES_DATA_DIR -Force | Out-Null
+          $server = Start-Process node -ArgumentList 'server.mjs' -WorkingDirectory 'bfc-workbench' -PassThru -NoNewWindow
+          try {
+            $ready = $false
+            for ($i = 0; $i -lt 30; $i++) {
+              Start-Sleep -Milliseconds 500
+              try {
+                $health = Invoke-RestMethod 'http://127.0.0.1:4198/api/health'
+                if ($health.ok -eq $true) { $ready = $true; break }
+              } catch { }
+            }
+            if (-not $ready) { throw 'Windows BFC local service failed to start' }
+            $session = Invoke-RestMethod 'http://127.0.0.1:4198/api/session'
+            $caps = Invoke-RestMethod 'http://127.0.0.1:4198/api/capabilities'
+            if ($health.localOnly -ne $true -or $health.bilibiliNetworkRequests -ne 0 -or
+                -not $session.token -or $caps.bilibili.readSnapshotOnly -ne $true) {
+              throw 'Windows BFC service contract invalid'
+            }
+            Write-Host 'BFC_WINDOWS_LOOPBACK_HEALTH=PASS'
+          } finally {
+            Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
+          }
+  windows-cargo:
+    runs-on: windows-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Confirm Windows platform config and JS boundary
+        shell: pwsh
+        run: |
+          $config = Get-Content src-tauri/tauri.windows.conf.json -Raw | ConvertFrom-Json
+          if ($config.bundle.targets[0] -ne 'nsis' -or $config.bundle.windows.nsis.installMode -ne 'currentUser') { throw 'NSIS config invalid' }
+          node tests/check-windows-linux-v2-source-contract.mjs
+      - name: Windows native compile (experimental: do not hide failure)
+        shell: pwsh
+        run: cargo check --manifest-path src-tauri/Cargo.toml --locked
+      - name: Build release NSIS after successful Windows compilation
+        shell: pwsh
+        run: npx tauri build --bundles nsis --ci
+      - name: Upload NSIS installer and hashes
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browseros-windows-nsis-${{ github.sha }}
+          path: src-tauri/target/release/bundle/nsis/*
+          if-no-files-found: error
+          retention-days: 7

@@ -5,6 +5,7 @@ Workflow registration is machine-enforced by `docs/engineering/governance.json`.
 | File | Role | Trigger policy |
 | --- | --- | --- |
 | `bfc-targeted-regression.yml` | BFC script syntax, synthetic DOM, readback and tab-binding regression | relevant BFC changes on all branch pushes / PRs; no real B站 requests or native builds |
+| `windows-linux-v2-experimental.yml` | Windows x64 experimental Rust and NSIS build; Windows BFC local service smoke; static code contract | V2 onepass branch pushes and manual; failures visible, separate from desktop GUI acceptance |
 | `capability-v2-ui-safety.yml` | fast UI policy feedback | all branch pushes / PR to master; risk-aware jobs; manual full |
 | `capability-v2-validation.yml` | fast merge gate with explicit optional native and installed GUI modes | master pushes / non-draft PRs targeting master (including ready-for-review); manual full |
 | `capability-v3-hotplug.yml` | focused Hot-Plug acceptance | all branch pushes / PR to master; risk-aware jobs; manual full |

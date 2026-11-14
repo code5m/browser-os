@@ -3,6 +3,8 @@ use crate::models::{
 };
 use crate::platform;
 use parking_lot::RwLock;
+#[cfg(not(target_os = "linux"))]
+use std::sync::Mutex;
 use std::collections::HashMap;
 #[cfg(target_os = "linux")]
 use std::os::unix::fs::PermissionsExt;
@@ -558,10 +560,63 @@ impl TabManager {
         })?;
         #[cfg(not(target_os = "linux"))]
         {
-            let _ = (webview, js);
-            callback(Err("GRID_PLATFORM_UNSUPPORTED".into()));
+            // Tauri delegates to WebView2's native script evaluation callback.
+            // It returns a JSON-serialized value; normalize a JS string result
+            // to match Linux WebKit's existing raw-string callback contract.
+            // The mutex enforces the original FnOnce callback even if a
+            // platform runtime unexpectedly invokes its Fn callback twice.
+            let pending = Mutex::new(Some(callback));
+            webview.eval_with_callback(js, move |raw_json| {
+                if let Ok(mut guard) = pending.lock() {
+                    if let Some(complete) = guard.take() {
+                        complete(decode_native_eval_result(&raw_json));
+                    }
+                }
+            })?;
         }
         Ok(())
+    }
+}
+
+// Tauri returns a JSON value on Windows; Linux WebKit already returns the
+// string payload directly. Avoid double-encoding JSON.stringify(...) results.
+#[cfg(any(not(target_os = "linux"), test))]
+fn decode_native_eval_result(raw: &str) -> std::result::Result<String, String> {
+    const MAX_BYTES: usize = 512 * 1024;
+    // JSON escaping can inflate the serialized WebView2 response. Bound it
+    // before parsing so an untrusted remote page cannot force huge allocations.
+    if raw.len() > MAX_BYTES * 6 {
+        return Err("GRID_RESULT_LIMIT".into());
+    }
+    if raw == "null" {
+        return Err("GRID_NO_RESULT".into());
+    }
+    let value = serde_json::from_str::<String>(raw).unwrap_or_else(|_| raw.to_string());
+    if value.len() > MAX_BYTES {
+        Err("GRID_RESULT_LIMIT".into())
+    } else {
+        Ok(value)
+    }
+}
+
+#[cfg(test)]
+mod native_eval_result_tests {
+    use super::decode_native_eval_result;
+
+    #[test]
+    fn decodes_windows_json_string_into_the_linux_callback_contract() {
+        assert_eq!(
+            decode_native_eval_result(r#""{\"safe\":true,\"url\":\"about:blank\"}""#),
+            Ok(r#"{"safe":true,"url":"about:blank"}"#.to_string())
+        );
+        assert_eq!(decode_native_eval_result("42"), Ok("42".into()));
+        assert_eq!(decode_native_eval_result("null"), Err("GRID_NO_RESULT".into()));
+    }
+
+    #[test]
+    fn script_result_is_bounded_before_decoding() {
+        let long = format!("\"{}\"", "x".repeat(512 * 1024 + 1));
+        assert_eq!(decode_native_eval_result(&long), Err("GRID_RESULT_LIMIT".into()));
     }
 }
 

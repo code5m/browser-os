@@ -21,7 +21,9 @@ assert.match(tabs, /PageLoadEvent::Finished/);
 assert.match(tabs, /browser_profile_path/);
 assert.match(tabs, /#\[cfg\(target_os = "windows"\)\]\s*fn ensure_private_browser_profile/);
 assert.match(tabs, /builder\.data_directory\(profile\)/);
-assert.match(tabs, /GRID_PLATFORM_UNSUPPORTED/, 'script result remains blocked until native Windows POC');
+assert.match(tabs, /webview\.eval_with_callback\(js, move \|raw_json\|/);
+assert.match(tabs, /decode_native_eval_result\(&raw_json\)/);
+assert.doesNotMatch(tabs, /GRID_PLATFORM_UNSUPPORTED/);
 assert.doesNotMatch(tabs, /on_navigation\(move \|next_url\|/);
 
 console.log('WINDOWS_LINUX_V2_SOURCE_CONTRACT=PASS (static-only, Windows GUI pending)');

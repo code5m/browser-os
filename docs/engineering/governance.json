@@ -28,6 +28,12 @@
       "scope": "bounded BFC JS syntax, DOM fixtures and git diff hygiene; every relevant branch push and pull request"
     },
     {
+      "id": "windows-linux-v2-experimental",
+      "path": ".github/workflows/windows-linux-v2-experimental.yml",
+      "role": "experimental_platform_feedback",
+      "scope": "V2 integration branch pushes and manual dispatch; Windows native Rust check and NSIS only after success, BFC service loopback smoke; not GUI PASS"
+    },
+    {
       "id": "ui-safety",
       "path": ".github/workflows/capability-v2-ui-safety.yml",
       "role": "blocking_quality_gate",
