@@ -343,6 +343,7 @@ mod tests {
             reported_total: 4875,
             expected_pages: 136,
             traversal_finished: false,
+            pagination_stable: false,
             pages: [(
                 "1".into(),
                 BfcImportPage {
