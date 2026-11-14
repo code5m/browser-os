@@ -607,9 +607,12 @@ pub fn spawn_terminal(
     };
     // F2/F3：测量模式不合并（窗口 0）、不丢帧（lossy = false）。
     let flush_interval_ms = if measure { 0 } else { TERM_FLUSH_INTERVAL_MS };
+    #[cfg(unix)]
     let on_dead: Option<Arc<dyn Fn() + Send + Sync>> = pgid.map(|pgid| {
         Arc::new(move || kill_group(pgid, libc::SIGKILL)) as Arc<dyn Fn() + Send + Sync>
     });
+    #[cfg(not(unix))]
+    let on_dead: Option<Arc<dyn Fn() + Send + Sync>> = None;
 
     let probe = Arc::new(TermProbe::default());
     let handles = start_pipeline(
@@ -694,6 +697,13 @@ pub fn terminate_group(
             if process_group_alive(pgid) {
                 kill_group(pgid, libc::SIGKILL);
             }
+        }
+        // Non-Unix platforms cannot send process-group signals. Both a
+        // missing group and an unexpected legacy group value kill only the
+        // owned terminal child, never an unrelated OS process.
+        #[cfg(not(unix))]
+        Some(_) => {
+            let _ = child.kill();
         }
         // 非 unix / 无进程组：降级为杀直接子进程（与改造前一致）。
         None => {
