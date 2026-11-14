@@ -12,6 +12,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -25,7 +27,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: code5m/bfc-workbench
-          ref: 931db347d21aecd9ad827407ab9b90f2fc5e5118
+          ref: 8ded529a2fcaf97a9249e2174a09273d5ee1179c
           path: bfc-workbench
       - uses: actions/setup-node@v4
         with:
