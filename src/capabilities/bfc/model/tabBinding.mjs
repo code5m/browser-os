@@ -20,12 +20,14 @@ export function selectBfcReadbackTab(tabs, selectedId, requestedId = selectedId)
 
 export function safeBfcTabSummary(tab) {
   const url = new URL(tab.url);
-  const path = url.pathname.slice(0, 200);
-  const originalTitle = String(tab.title || '').replace(/[\r\n\t]/g, ' ');
-  const title = (/^https?:\/\//i.test(originalTitle)
-    ? `${url.origin}${path}` : originalTitle.replace(/(token|secret|password|auth|key)=[^&\s]+/gi, '$1=[redacted]')).slice(0, 80);
+  const isFavorites = url.hostname === 'space.bilibili.com' &&
+    /^\/[0-9]{1,20}\/favlist(?:\/|$)/.test(url.pathname);
+  // Debug summaries must never contain account MID, a full URL, query,
+  // fragments, page titles, tokens, or user-controlled content.
   return {
-    tabId: tab.id, title, url: `${url.origin}${path}`,
-    isFavorites: url.hostname === 'space.bilibili.com' && /^\/[0-9]{1,20}\/favlist(?:\/|$)/.test(path)
+    tabId: tab.id,
+    title: isFavorites ? 'Bilibili favorites' : 'Bilibili page',
+    url: url.origin,
+    isFavorites
   };
 }
