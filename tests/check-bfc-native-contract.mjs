@@ -45,6 +45,14 @@ assert.match(runtime, /url\.host_str\(\)/);
 assert.match(runtime, /BFC_BILIBILI_HTTP_412/);
 assert.match(runtime, /global_ids\.insert/);
 assert.match(runtime, /SESSION_TTL/);
+// The optional original-folder plan needs provenance, but not an account
+// token or write-capable Tauri command.
+assert.match(runtime, /serde\(rename = "folderId"\)/);
+assert.match(runtime, /serde\(rename = "folderName"\)/);
+assert.match(runtime, /folder_id: capture\.folder_id\.clone\(\)/);
+assert.match(runtime, /folder_name: capture\.folder_name\.clone\(\)/);
+assert.doesNotMatch(commands, /x\/v3\/fav\/resource\/(?:copy|move)/);
+assert.doesNotMatch(runtime, /x\/v3\/fav\/resource\/(?:copy|move)/);
 assert.match(runtime, /BFC_IMPORT_CANCEL_UNSAFE/);
 assert.match(commands, /state::<BfcRuntime>\(\)\.cancel\(&ticket\)/);
 assert.match(store, /JSON\.stringify\(currentTicket\)/);
