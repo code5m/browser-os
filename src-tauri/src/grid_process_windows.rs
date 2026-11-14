@@ -222,10 +222,26 @@ impl GridProcessManager {
                 Ok((stream, _)) => {
                     // Reject any same-user process other than the child we
                     // actually spawned; named-pipe ACL alone is not identity.
-                    let expected = app.as_ref().and_then(|app| {
-                        app.state::<crate::bridge::AppState>().grid_manager.pid_of(index)
+                    let peer = stream.peer_pid().ok();
+                    // The child may connect immediately after spawn(), before
+                    // spawn_with_state has inserted it in the tracked map.
+                    // Give this narrow startup race 500ms; still reject all
+                    // unknown or wrong peer PIDs before registering a writer.
+                    let accepted = peer.is_some_and(|pid| {
+                        let start = std::time::Instant::now();
+                        loop {
+                            let expected = app.as_ref().and_then(|app| {
+                                app.state::<crate::bridge::AppState>()
+                                    .grid_manager.pid_of(index)
+                            });
+                            if expected == Some(pid) { break true; }
+                            if start.elapsed() >= std::time::Duration::from_millis(500) {
+                                break false;
+                            }
+                            std::thread::sleep(std::time::Duration::from_millis(10));
+                        }
                     });
-                    if expected.is_none() || stream.peer_pid().ok() != expected {
+                    if !accepted {
                         eprintln!("[grid-manager] grid-child-{index} pipe peer refused");
                         continue;
                     }
