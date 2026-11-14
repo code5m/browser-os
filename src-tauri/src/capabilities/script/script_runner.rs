@@ -473,8 +473,14 @@ fn spawn_in_new_group(cmd: &mut Command) -> std::io::Result<Child> {
     cmd.spawn()
 }
 
-/// 非 Unix：`setsid`/`killpg` 不可用，显式降级（a 卡 §4）。
-#[cfg(not(unix))]
+/// Windows uses the native Win32 process handle and an owner-scoped Job Object
+/// immediately after spawn; no WSL, Bash, or pseudo-Unix process group.
+#[cfg(windows)]
+fn spawn_in_new_group(cmd: &mut Command) -> std::io::Result<Child> {
+    cmd.spawn()
+}
+
+#[cfg(all(not(unix), not(windows)))]
 fn spawn_in_new_group(_cmd: &mut Command) -> std::io::Result<Child> {
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
@@ -508,7 +514,7 @@ pub fn process_group_alive(_pgid: i32) -> bool {
 /// `comm` 可能含空格与括号，故从最后一个 `)` 之后开始切分。
 ///
 /// 仅用于测试取证（B12），非 test 编译不产出，避免 dead_code。
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 pub fn process_group_id_of(pid: u32) -> Option<i32> {
     let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
     let rest = stat.rsplit_once(')')?.1;
@@ -624,6 +630,7 @@ fn terminate_group(_pgid: Option<i32>, _grace_secs: u32) {}
 fn supervise(
     mut child: Child,
     pgid: Option<i32>,
+    #[cfg(windows)] job: crate::windows_process::JobObject,
     timeout_secs: u32,
     cancel: Arc<AtomicBool>,
     state: Arc<Mutex<RunSnapshot>>,
@@ -674,6 +681,8 @@ fn supervise(
                 // A background child can inherit the output pipe after the leader exits.
                 // Close the process group before joining readers so the supervisor cannot
                 // remain Running forever waiting for EOF from an orphaned descendant.
+                #[cfg(windows)]
+                let _ = job.terminate();
                 terminate_group(pgid, HARD_GRACE_SECS);
                 join_output_readers(readers.take().unwrap_or_default());
                 finish(status, code, None);
@@ -681,6 +690,8 @@ fn supervise(
             }
             Ok(None) => {
                 if cancel.load(Ordering::SeqCst) {
+                    #[cfg(windows)]
+                    let _ = job.terminate();
                     terminate_group(pgid, CANCEL_GRACE_SECS);
                     let code = child.wait().ok().and_then(|s| s.code());
                     join_output_readers(readers.take().unwrap_or_default());
@@ -688,6 +699,8 @@ fn supervise(
                     return;
                 }
                 if started.elapsed().as_secs() >= timeout_secs as u64 {
+                    #[cfg(windows)]
+                    let _ = job.terminate();
                     terminate_group(pgid, HARD_GRACE_SECS);
                     let code = child.wait().ok().and_then(|s| s.code());
                     join_output_readers(readers.take().unwrap_or_default());
@@ -774,14 +787,36 @@ fn start_argv_run(
         RunError::ScriptPathRejected("argv 为空".to_string())
     })?;
 
+    #[cfg(windows)]
+    {
+        // The Windows run path is opt-in for explicitly approved Node/Python
+        // scripts. Shell/Bash/shebang or command snippets require a separate
+        // Windows interpreter contract; do not invoke arbitrary executables.
+        let executable = Path::new(program).file_name()
+            .and_then(|part| part.to_str()).unwrap_or("").to_ascii_lowercase();
+        if !["node", "node.exe", "python", "python.exe", "python3", "python3.exe"]
+            .contains(&executable.as_str()) {
+            table.lock_runs().remove(&run_id);
+            return Err(RunError::UnsupportedPlatform);
+        }
+    }
     let mut cmd = Command::new(program);
-    cmd.args(rest)
-        .current_dir(&cwd)
-        .env_clear()
-        .env("PATH", MINIMAL_ENV_PATH)
+    cmd.args(rest).current_dir(&cwd).env_clear();
+    #[cfg(windows)]
+    {
+        // Preserve only variables required for Windows loader, temporary
+        // files, and executable discovery. No user secrets/tokens are passed.
+        for name in ["SystemRoot", "WINDIR", "PATH", "PATHEXT", "TEMP", "TMP",
+            "LOCALAPPDATA", "APPDATA", "USERPROFILE"] {
+            if let Some(value) = std::env::var_os(name) { cmd.env(name, value); }
+        }
+        cmd.env("PYTHONUTF8", "1");
+    }
+    #[cfg(not(windows))]
+    cmd.env("PATH", MINIMAL_ENV_PATH)
         .env("HOME", home_dir)
-        .env("LANG", "C.UTF-8")
-        .env("TERM", "dumb")
+        .env("LANG", "C.UTF-8");
+    cmd.env("TERM", "dumb")
         .stdin(Stdio::null())
         // M2-4.d：piped + reader 线程，输出进入有界环形缓冲并发送有限大小事件。
         .stdout(Stdio::piped())
@@ -800,6 +835,16 @@ fn start_argv_run(
         }
     };
 
+    #[cfg(windows)]
+    let job = match crate::windows_process::JobObject::attach_pid(child.id()) {
+        Ok(job) => job,
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            table.lock_runs().remove(&run_id);
+            return Err(RunError::SpawnFailed(format!("WINDOWS_SCRIPT_JOB_FAILED: {error}")));
+        }
+    };
     let pgid = child.id() as i32;
 
     // --- 4) 输出 reader 线程（必须在 supervisor 之前，否则管道无人读） ---
@@ -833,6 +878,8 @@ fn start_argv_run(
         supervise(
             child,
             Some(pgid),
+            #[cfg(windows)]
+            job,
             timeout,
             cancel,
             st,
@@ -1000,7 +1047,7 @@ fn persist_run_record(path: &Path, snapshot: &RunSnapshot) {
 
 // ----------------------------- 测试（B1~B14） -----------------------------
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod script_runner_tests {
     use super::*;
     use std::fs;
@@ -1750,5 +1797,28 @@ mod script_runner_tests {
             started.elapsed()
         );
         let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+
+#[cfg(all(test, windows))]
+mod windows_script_lifecycle_tests {
+    use super::*;
+
+    #[test]
+    fn windows_script_whitelist_rejects_shell_execution_without_side_effects() {
+        let dir = std::env::temp_dir().join(format!("windows-script-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let marker = dir.join("never.txt");
+        let table = Arc::new(ScriptProcessTable::new());
+        let result = start_argv_run(
+            &table, "test", 2,
+            vec!["powershell.exe".to_string(), "-Command".to_string(),
+                format!("Set-Content '{}' hello", marker.display())],
+            dir.clone(), &dir, None, None,
+        );
+        assert!(matches!(result, Err(RunError::UnsupportedPlatform)));
+        assert!(!marker.exists());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }
