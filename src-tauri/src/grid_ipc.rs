@@ -120,17 +120,51 @@ pub fn write_wire<W: std::io::Write>(w: &mut W, msg: &Wire) -> std::io::Result<(
     w.flush()
 }
 
-/// 读一帧。Ok(None) = 对端关闭（EOF）。
+/// Read at most one bounded JSON line without allocating for untrusted
+/// oversized messages. Preserve BufRead's extra bytes for the next frame.
 pub fn read_wire<R: std::io::BufRead>(r: &mut R) -> std::io::Result<Option<Wire>> {
-    let mut line = String::new();
-    let n = r.take((MAX_GRID_WIRE_BYTES + 1) as u64).read_line(&mut line)?;
-    if n == 0 {
-        return Ok(None);
+    use std::io::{Error, ErrorKind};
+    let mut bytes = Vec::new();
+    loop {
+        let available = r.fill_buf()?;
+        if available.is_empty() {
+            if bytes.is_empty() { return Ok(None); }
+            return Err(Error::new(ErrorKind::UnexpectedEof, "GRID_WIRE_TRUNCATED"));
+        }
+        let n = available.iter().position(|b| *b == b'\n')
+            .map(|i| i + 1).unwrap_or(available.len());
+        if bytes.len().saturating_add(n) > MAX_GRID_WIRE_BYTES {
+            return Err(Error::new(ErrorKind::InvalidData, "GRID_WIRE_LIMIT"));
+        }
+        let terminated = available[n - 1] == b'\n';
+        bytes.extend_from_slice(&available[..n]);
+        r.consume(n);
+        if terminated { break; }
     }
-    if n > MAX_GRID_WIRE_BYTES || !line.ends_with('\n') {
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "GRID_WIRE_LIMIT"));
+    let message = serde_json::from_slice::<Wire>(&bytes[..bytes.len() - 1])
+        .map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
+    Ok(Some(message))
+}
+
+#[cfg(test)]
+mod framing_tests {
+    use super::*;
+    #[test]
+    fn two_requests_survive_shared_bufreader_without_losing_prefetched_frames() {
+        let mut buffer = Vec::new();
+        write_wire(&mut buffer, &Wire::Request { seq: 1, cmd: GridCmd::Ping }).unwrap();
+        write_wire(&mut buffer, &Wire::Request { seq: 2, cmd: GridCmd::Ping }).unwrap();
+        let mut reader = std::io::BufReader::new(buffer.as_slice());
+        assert!(matches!(read_wire(&mut reader).unwrap(), Some(Wire::Request { seq: 1, .. })));
+        assert!(matches!(read_wire(&mut reader).unwrap(), Some(Wire::Request { seq: 2, .. })));
+        assert!(read_wire(&mut reader).unwrap().is_none());
     }
-    let msg = serde_json::from_str(line.trim())
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-    Ok(Some(msg))
+    #[test]
+    fn rejects_oversized_line_and_truncated_frame() {
+        let huge = vec![b'x'; MAX_GRID_WIRE_BYTES + 2];
+        let mut reader = std::io::BufReader::new(huge.as_slice());
+        assert_eq!(read_wire(&mut reader).unwrap_err().kind(), std::io::ErrorKind::InvalidData);
+        let mut reader = std::io::BufReader::new(b"{".as_slice());
+        assert_eq!(read_wire(&mut reader).unwrap_err().kind(), std::io::ErrorKind::UnexpectedEof);
+    }
 }
