@@ -215,9 +215,10 @@ for(const titlesHydrate of [true,false]){
   for(let i=0;i<2;i++){
     const href='https://www.bilibili.com/video/BV'+String(i+1).padStart(10,'0');
     const card={querySelectorAll:()=>[]};
+    const coverWrapper={parentElement:card,querySelectorAll:()=>[]};
     const cover={getAttribute:key=>key==='href'?href:null,
       querySelector:()=>({getAttribute:()=> '视频封面'}),
-      innerText:'00:28',textContent:'00:28',closest:()=>card};
+      parentElement:coverWrapper,innerText:'00:28',textContent:'00:28',closest:()=>coverWrapper};
     const titleLink={getAttribute:key=>key==='href'?href:null,closest:()=>card,
       get innerText(){return titlesHydrate&&clock>=750?'视频标题'+(i+1):'';},
       get textContent(){return titlesHydrate&&clock>=750?'视频标题'+(i+1):'';}};
