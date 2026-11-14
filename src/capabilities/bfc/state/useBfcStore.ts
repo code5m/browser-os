@@ -68,6 +68,8 @@ function messageForCode(code: string | null | undefined): string {
     BFC_BILIBILI_ACCESS_LIMITED: "B站页面显示访问受限或安全验证。已停止翻页，不会重试、轮换代理或绕过验证。",
     BFC_BILIBILI_HTTP_412: "检测到 B站 HTTP 412 / 风控状态。已停止读取，请等待平台限制解除。",
     BFC_TOTAL_UNKNOWN: "页面没有提供可核实的收藏总数，无法证明分页完整；没有导入快照。",
+    BFC_FAVORITES_NOT_READY: "收藏页尚未完整加载或出现暂时的 0 条占位内容；已停止，没有保存空快照。请确认当前 B站收藏夹标题、总数和视频卡片都已正常显示。",
+    BFC_TITLES_NOT_READY: "已看到 BV 号，但视频名称尚未足够加载完成；为避免再次将整页保存为“标题未获取”，本轮已停止，不会把此页作为有效标题快照。",
     BFC_PAGINATION_UNKNOWN: "无法识别收藏分页信息，已停止读取。",
     BFC_FAVORITES_CONTAINER_UNRECOGNIZED: "无法识别当前收藏列表结构。可能是页面改版或尚未加载完成；没有导入快照。",
     BFC_READBACK_PAGE_COUNT_MISMATCH: "当前页实际读取数量与页面总数推算不一致；没有导入快照。",
