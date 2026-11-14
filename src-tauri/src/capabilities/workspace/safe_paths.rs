@@ -475,6 +475,112 @@ mod linux {
     }
 }
 
+// Windows read-only authorization: open an actual OS handle first and
+// validate its kernel-resolved final path against pinned allowed-root handles.
+// Nothing is read until authorization passes; a swapped junction cannot make
+// BrowserOS read bytes from an external directory through a stale path check.
+// Mutating operations remain unavailable until handle-relative rename/CAS.
+#[cfg(target_os = "windows")]
+mod windows {
+    use super::*;
+    use std::fs::{File, OpenOptions};
+    use std::io::{self, Read};
+    use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::GetFinalPathNameByHandleW;
+
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+    const FILE_SHARE_READ_WRITE_DELETE: u32 = 0x0000_0007;
+
+    fn denied() -> io::Error {
+        io::Error::new(io::ErrorKind::PermissionDenied, "WINDOWS_FILE_OUTSIDE_ALLOWED_ROOT")
+    }
+    fn open(path: &Path, directory: bool) -> io::Result<File> {
+        let mut options = OpenOptions::new();
+        options.read(true)
+            .share_mode(FILE_SHARE_READ_WRITE_DELETE)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT |
+                if directory { FILE_FLAG_BACKUP_SEMANTICS } else { 0 });
+        let file = options.open(path)?;
+        let meta = file.metadata()?;
+        if meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(denied());
+        }
+        if directory && !meta.is_dir() || !directory && !meta.is_file() {
+            return Err(denied());
+        }
+        Ok(file)
+    }
+    fn final_path(file: &File) -> io::Result<String> {
+        let handle = file.as_raw_handle() as _;
+        let n = unsafe { GetFinalPathNameByHandleW(handle, std::ptr::null_mut(), 0, 0) };
+        if n == 0 || n > 32768 {
+            return Err(io::Error::last_os_error());
+        }
+        let mut buf = vec![0u16; n as usize + 1];
+        let used = unsafe { GetFinalPathNameByHandleW(handle, buf.as_mut_ptr(), buf.len() as u32, 0) };
+        if used == 0 || used as usize >= buf.len() {
+            return Err(io::Error::last_os_error());
+        }
+        // Windows paths are case-insensitive. The trailing path separator
+        // enforces a whole-directory boundary rather than a prefix match.
+        Ok(String::from_utf16_lossy(&buf[..used as usize]).to_lowercase())
+    }
+    pub(super) fn read_regular(path: &Path, roots: &[PathBuf], limit: usize) -> io::Result<Vec<u8>> {
+        if !path.is_absolute() || limit == 0 || limit > 64 * 1024 * 1024 {
+            return Err(denied());
+        }
+        // A final-file reparse point is denied even when it points inside the
+        // allowed root; intermediate junctions are checked by final handle.
+        let file = open(path, false)?;
+        let actual = final_path(&file)?;
+        let mut authorized = false;
+        for root in roots {
+            let Ok(root_handle) = open(root, true) else { continue };
+            let Ok(mut root_path) = final_path(&root_handle) else { continue };
+            if !root_path.ends_with('\\') { root_path.push('\\'); }
+            if actual.starts_with(&root_path) {
+                authorized = true;
+                break;
+            }
+        }
+        if !authorized { return Err(denied()); }
+        let length = file.metadata()?.len();
+        if length > limit as u64 {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "FILE_READ_SIZE_LIMIT"));
+        }
+        let mut bytes = Vec::new();
+        file.take(limit as u64 + 1).read_to_end(&mut bytes)?;
+        if bytes.len() > limit {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "FILE_READ_SIZE_LIMIT"));
+        }
+        Ok(bytes)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        #[test]
+        fn authorized_windows_read_returns_bytes_and_denies_external_files() {
+            let base = std::env::temp_dir().join(format!("browseros-windows-read-{}", uuid::Uuid::new_v4()));
+            let safe = base.join("safe");
+            let external = base.join("external");
+            std::fs::create_dir_all(&safe).unwrap();
+            std::fs::create_dir_all(&external).unwrap();
+            let file = safe.join("one.txt");
+            let outside = external.join("two.txt");
+            std::fs::write(&file,b"inside").unwrap();
+            std::fs::write(&outside,b"external").unwrap();
+            assert_eq!(read_regular(&file, &[safe.clone()], 128).unwrap(), b"inside");
+            assert!(read_regular(&outside, &[safe.clone()], 128).is_err());
+            assert!(read_regular(&file, &[safe.clone()], 2).is_err());
+            std::fs::remove_dir_all(base).unwrap();
+        }
+    }
+}
+
 pub fn move_no_replace(src: &Path, dest_dir: &Path, roots: &[PathBuf]) -> std::io::Result<()> {
     #[cfg(target_os = "linux")]
     {
@@ -495,12 +601,16 @@ pub fn read_regular(canonical: &Path, roots: &[PathBuf], limit: usize) -> std::i
     {
         linux::read_regular(canonical, roots, limit)
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "windows")]
+    {
+        windows::read_regular(canonical, roots, limit)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     {
         let _ = (canonical, roots, limit);
         Err(std::io::Error::new(
             std::io::ErrorKind::Unsupported,
-            "descriptor-anchored reads require Linux",
+            "safe read requires a supported platform",
         ))
     }
 }
