@@ -8,7 +8,11 @@ const cas = read('../src-tauri/src/capabilities/workspace/cas.rs');
 const moves = read('../src-tauri/src/capabilities/workspace/fs_cmds.rs');
 const session = read('../src-tauri/src/session.rs');
 const tabs = read('../tauri-browser-tabs/crates/tauri-plugin-browser-tabs/src/commands.rs');
+const cargo = read('../src-tauri/Cargo.toml');
+const lock = read('../src-tauri/Cargo.lock');
 
+assert.match(cargo, /keyring = \{ version = "3", features = \["sync-secret-service", "windows-native"\] \}/);
+assert.match(lock, /name = "keyring"[\s\S]*?"windows-sys 0\.60\.2"/);
 assert.match(cas, /FILE_SAVE_PLATFORM_UNSUPPORTED/);
 assert.doesNotMatch(cas, /save_if_unchanged_path\s*\(/);
 assert.match(cas, /non_linux_save_is_denied_without_mutating_the_file/);
