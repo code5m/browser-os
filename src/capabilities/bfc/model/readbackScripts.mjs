@@ -240,6 +240,23 @@ export function buildFavoritesReadbackScript(ticket, mid) {
       }
       return items;
     };
+    const waitForReadableTitles = async (initialItems) => {
+      let items = initialItems;
+      if (!items.length) return items;
+      // A BV link often appears before the title. Do not checkpoint a page
+      // whose video cards are almost entirely missing their text metadata.
+      for (let attempt = 0; attempt <= 12; attempt++) {
+        if (isCancelled() || isBlocked()) return null;
+        const required = Math.max(1, Math.ceil(items.length * 0.6));
+        const titled = items.filter((item) => item.title !== '标题未获取').length;
+        if (titled >= required) return items;
+        if (attempt === 12) break;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        const refreshed = findFavoritesContainer();
+        if (refreshed) items = extractItems(refreshed);
+      }
+      return null;
+    };
     const isBlocked = () => blockedPattern.test(String(document.title || '') + '\\n' + String(document.body?.innerText || '').slice(0, 5000));
     let paginationFailureCode = 'BFC_PAGINATION_TIMEOUT';
     const waitForPageChange = async (beforeSignature, expectedCount, targetPage) => {
@@ -362,7 +379,8 @@ export function buildFavoritesReadbackScript(ticket, mid) {
         if (!container) { await abort('BFC_FAVORITES_CONTAINER_UNRECOGNIZED'); return; }
       }
 
-      const firstItems = extractItems(container);
+      const firstItems = await waitForReadableTitles(extractItems(container));
+      if (firstItems === null) { await abort(isBlocked() ? 'BFC_BILIBILI_ACCESS_LIMITED' : 'BFC_TITLES_NOT_READY'); return; }
       const pageSize = firstItems.length;
       if (total > 0 && pageSize === 0) { await abort('BFC_FAVORITES_PAGE_EMPTY'); return; }
       const pagerText = String(pageControls().root?.innerText || '');
@@ -386,7 +404,11 @@ export function buildFavoritesReadbackScript(ticket, mid) {
         }
         container = findFavoritesContainer();
         if (!container) { await abort('BFC_FAVORITES_CONTAINER_UNRECOGNIZED'); return; }
-        const items = page === 1 ? firstItems : extractItems(container);
+        const items = page === 1 ? firstItems : await waitForReadableTitles(extractItems(container));
+        if (items === null) {
+          await abort(isBlocked() ? 'BFC_BILIBILI_ACCESS_LIMITED' : 'BFC_TITLES_NOT_READY');
+          return;
+        }
         const expectedCount = Math.max(0, Math.min(pageSize, total - (page - 1) * pageSize));
         if (items.length > expectedCount) { await abort('BFC_READBACK_PAGE_COUNT_MISMATCH'); return; }
         if (items.some((item) => seenAcrossPages.has(item.bvid))) {
