@@ -320,6 +320,29 @@ fn save(path: &Path, config: &AiConfig) -> Result<(), String> {
     }
     result.map_err(String::from)
 }
+// Windows 11 ships curl.exe in the trusted system directory. Do not
+// resolve HTTP transport from the user-writable PATH or pass secrets as argv.
+#[cfg(windows)]
+fn ai_curl_binary() -> Result<std::path::PathBuf, String> {
+    use std::os::windows::ffi::OsStringExt;
+    use windows_sys::Win32::System::SystemInformation::GetSystemDirectoryW;
+    let mut chars = [0u16; 512];
+    let used = unsafe { GetSystemDirectoryW(chars.as_mut_ptr(), chars.len() as u32) };
+    if used == 0 || used as usize >= chars.len() {
+        return Err("AI_HTTP_CLIENT_UNAVAILABLE".into());
+    }
+    let base = std::ffi::OsString::from_wide(&chars[..used as usize]);
+    let path = std::path::PathBuf::from(base).join("curl.exe");
+    if !path.is_file() { return Err("AI_HTTP_CLIENT_UNAVAILABLE".into()); }
+    Ok(path)
+}
+#[cfg(not(windows))]
+fn ai_curl_binary() -> Result<std::path::PathBuf, String> {
+    let path = std::path::PathBuf::from("/usr/bin/curl");
+    if !path.is_file() { return Err("AI_HTTP_CLIENT_UNAVAILABLE".into()); }
+    Ok(path)
+}
+
 fn quote(value: &str) -> String {
     // curl config quoting is not shell quoting. No shell is launched.
     format!(
@@ -422,7 +445,7 @@ fn provider_turn_cancelable(
         quote(&format!("Authorization: Bearer {credential}")),
         quote(&body)
     );
-    let child = Command::new("/usr/bin/curl")
+    let child = Command::new(ai_curl_binary()?)
         .args([
             "-q",
             "--config",
@@ -503,7 +526,7 @@ fn provider_turn_cancelable_stream(
         quote(&format!("Authorization: Bearer {credential}")),
         quote(&body)
     );
-    let child = Command::new("/usr/bin/curl")
+    let child = Command::new(ai_curl_binary()?)
         .args([
             "-q",
             "--config",
@@ -1030,8 +1053,14 @@ pub fn execute(path: &Path, request: AiRequest) -> Result<Value, String> {
     match request.action.as_str() {
         "list" => serde_json::to_value(config).map_err(|_| "AI_CONFIG_ENCODE_FAILED".into()),
         "import" => {
-            let output = Command::new("/usr/bin/python3")
-                .args(["-c", IMPORTER, "--apply", "--destination"])
+            #[cfg(windows)]
+            let python = std::env::var("BROWSEROS_PYTHON")
+                .ok().filter(|path| !path.trim().is_empty())
+                .unwrap_or_else(|| "python.exe".to_string());
+            #[cfg(not(windows))]
+            let python = "/usr/bin/python3".to_string();
+            let output = Command::new(&python)
+                .args(["-I", "-c", IMPORTER, "--apply", "--destination"])
                 .arg(path)
                 .stdin(Stdio::null())
                 .stderr(Stdio::null())
