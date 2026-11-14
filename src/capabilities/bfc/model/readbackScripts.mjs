@@ -295,15 +295,45 @@ export function buildFavoritesReadbackScript(ticket, mid) {
       // Native-only acknowledgement: eval dispatch alone does not mean the
       // Bilibili child WebView executed or had a working scoped Tauri bridge.
       await invoke('bfc_readback_submit', { ticket, payload: { kind: 'favorites_start' } });
+      const selectedFolderSelector = '.fav-item.active,.fav-item.cur,.favlist-item.active,.favlist-item--active,' +
+        '[class*="fav-item"][class*="selected"],[class*="fav-item"][class*="active"]';
+      const confirmedEmptyFolder = (list) => {
+        if (reportedTotal() !== 0 || !list) return false;
+        const selected = Array.from(document.querySelectorAll(selectedFolderSelector))
+          .some((folder) => folder.getClientRects().length && /(?:[（(][ ]*0[ ]*[）)]|[ ]0)$/.test(String(folder.innerText || '').trim()));
+        const detail = String(list.innerText || list.textContent || '').slice(0, 600);
+        const emptyMessage = /(?:暂无|还没有|没有|空空如也).{0,30}(?:收藏|视频|内容)|(?:收藏夹|收藏内容).{0,12}(?:为空|空的)/.test(detail);
+        return selected && emptyMessage && extractItems(list).length === 0;
+      };
       let container = null;
+      let ready = false;
+      let zeroReadyAt = 0;
       for (let attempt = 0; attempt < 60; attempt++) {
         if (isCancelled()) return;
         if (isBlocked()) { await abort('BFC_BILIBILI_ACCESS_LIMITED'); return; }
         container = findFavoritesContainer();
-        if (container) break;
+        const currentTotal = reportedTotal();
+        const observedItems = container ? extractItems(container) : [];
+        if (container && currentTotal !== null && currentTotal > 0 && observedItems.length > 0) {
+          ready = true; break;
+        }
+        if (container && currentTotal === null && observedItems.length > 0) {
+          await abort('BFC_TOTAL_UNKNOWN'); return;
+        }
+        // A transient "unnamed folder / 0 videos" is often an unhydrated
+        // header. Never save it as a complete empty account snapshot.
+        if (confirmedEmptyFolder(container)) {
+          if (!zeroReadyAt) zeroReadyAt = Date.now();
+          if (Date.now() - zeroReadyAt >= 1500) { ready = true; break; }
+        } else {
+          zeroReadyAt = 0;
+        }
         await new Promise((resolve) => setTimeout(resolve, 250));
       }
-      if (!container) { await abort('BFC_FAVORITES_CONTAINER_UNRECOGNIZED'); return; }
+      if (!ready) {
+        await abort(container ? 'BFC_FAVORITES_NOT_READY' : 'BFC_FAVORITES_CONTAINER_UNRECOGNIZED');
+        return;
+      }
 
       const total = reportedTotal();
       if (total === null || !Number.isSafeInteger(total) || total < 0 || total > 5000) {
