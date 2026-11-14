@@ -28,7 +28,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: code5m/bfc-workbench
-          ref: 8ded529a2fcaf97a9249e2174a09273d5ee1179c
+          ref: f98f280e8194e40df106d7176c92c9402215e330
           path: bfc-workbench
       - uses: actions/setup-node@v4
         with:
