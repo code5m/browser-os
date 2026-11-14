@@ -101,8 +101,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - name: Install frontend dependencies
         run: npm ci
+      - name: Build frontend and generated Rust contracts for Tauri frontendDist
+        run: npm run build
       - name: Confirm Windows platform config and JS boundary
         shell: pwsh
         run: |

@@ -15,6 +15,10 @@ pub mod agent;
 pub mod agent_memory;
 
 pub mod coding;
+#[cfg(target_os = "linux")]
+pub mod coding_context;
+#[cfg(not(target_os = "linux"))]
+#[path = "coding_context_unsupported.rs"]
 pub mod coding_context;
 #[cfg(target_os = "linux")]
 pub mod coding_lsp;

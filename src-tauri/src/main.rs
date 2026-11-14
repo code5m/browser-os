@@ -14,6 +14,10 @@ mod grid_process;
 #[cfg(not(target_os = "linux"))]
 #[path = "grid_process_unsupported.rs"]
 mod grid_process;
+#[cfg(target_os = "linux")]
+mod hang_diagnostics;
+#[cfg(not(target_os = "linux"))]
+#[path = "hang_diagnostics_windows.rs"]
 mod hang_diagnostics;
 mod shared {
     pub mod clipboard;
@@ -750,6 +754,7 @@ fn run_grid_selftest(app: tauri::AppHandle) {
         match pid0 {
             Some(pid) => {
                 log(&format!("kill -11 grid-child-0 pid={pid}"));
+                #[cfg(unix)]
                 unsafe { libc::kill(pid as i32, libc::SIGSEGV) };
             }
             None => fails.borrow_mut().push("pid_of(0) 为空".to_string()),
@@ -1052,6 +1057,7 @@ fn run_grid_gui_regression(app: tauri::AppHandle) {
                     .grid_manager
                     .pid_of(0)
                     .ok_or_else(|| "grid-0 pid missing before crash".to_string())?;
+                #[cfg(unix)]
                 unsafe { libc::kill(old as i32, libc::SIGSEGV) };
                 sleep_ms(12_000);
                 let new = app
@@ -1111,6 +1117,7 @@ fn run_grid_gui_regression(app: tauri::AppHandle) {
                     .grid_manager
                     .pid_of(0)
                     .ok_or_else(|| "grid-0 pid missing before login-state restart".to_string())?;
+                #[cfg(unix)]
                 unsafe { libc::kill(old as i32, libc::SIGSEGV) };
                 sleep_ms(12_000);
                 let new = app

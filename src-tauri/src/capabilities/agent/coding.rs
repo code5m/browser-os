@@ -242,6 +242,7 @@ fn resolve(root: &Path, relative: &str, create: bool) -> Result<PathBuf, String>
     }
     Ok(resolved)
 }
+#[cfg(unix)]
 fn read_file(root: &Path, path: &str) -> Result<Value, String> {
     use std::os::unix::fs::OpenOptionsExt;
     let resolved = resolve(root, path, false)?;
@@ -266,6 +267,12 @@ fn read_file(root: &Path, path: &str) -> Result<Value, String> {
         return Err("AGENT_SECRET_CONTENT_DENIED".into());
     }
     Ok(json!({"path":path,"hash":hash(content.as_bytes()),"content":content}))
+}
+// Source inspection requires descriptor-anchored safe reads; path-only
+// access on Windows is not an acceptable fallback for coding agents.
+#[cfg(not(unix))]
+fn read_file(_root: &Path, _path: &str) -> Result<Value, String> {
+    Err("AGENT_READ_PLATFORM_UNSUPPORTED".into())
 }
 fn read_model_file(root: &Path, request: &Value) -> Result<Value, String> {
     let path = request["path"].as_str().ok_or("AGENT_PATH_REQUIRED")?;
@@ -1029,6 +1036,11 @@ pub fn execute(
     request: Value,
     mut provider: impl FnMut(&[Value], &[Value]) -> Result<Value, String>,
 ) -> Result<Value, String> {
+    #[cfg(not(unix))]
+    {
+        let _ = (root, storage, request, &mut provider);
+        return Err("AGENT_CODING_PLATFORM_UNSUPPORTED".into());
+    }
     let root = root.canonicalize().map_err(|_| "AGENT_ROOT_INVALID")?;
     if !root.is_dir() {
         return Err("AGENT_ROOT_INVALID".into());

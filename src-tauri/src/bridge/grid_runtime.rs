@@ -550,6 +550,7 @@ fn parse_desktop_file(path: &std::path::Path) -> Option<AppEntry> {
 
 /// 解析 .desktop 的 Icon 字段为真实图标文件路径。
 /// Icon 可能是：绝对路径 / 主题图标名（如 firefox）/ 空。
+#[cfg(target_os = "linux")]
 fn resolve_icon(icon: &str) -> Option<String> {
     if icon.is_empty() {
         return None;
@@ -623,6 +624,9 @@ fn find_icon_recursive(
     }
     None
 }
+
+#[cfg(not(target_os = "linux"))]
+fn resolve_icon(_icon: &str) -> Option<String> { None }
 
 #[tauri::command]
 pub fn list_apps() -> Vec<AppEntry> {
