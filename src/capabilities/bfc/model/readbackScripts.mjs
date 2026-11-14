@@ -201,17 +201,16 @@ export function buildFavoritesReadbackScript(ticket, mid) {
       const items = [];
       for (const [bvid, matchingAnchors] of byBvid) {
         const anchor = matchingAnchors[0];
-        // A cover link and its title link can be siblings; group both by BV.
-        // Never use the collection-wide .fav container as an item card.
-        let card = anchor.closest?.('li.small-item,li,[class*="video-card"],[class*="video-item"],[class*="fav-video-item"],[data-bvid]');
-        if (!card) {
-          let node = anchor.parentElement || anchor;
-          for (let depth = 0; node && node !== container && depth < 4; depth++, node = node.parentElement) {
-            const links = Array.from(node.querySelectorAll?.('a[href*="/video/BV"]') || []);
-            if (links.some((link) => bvidOf(link) !== bvid)) break;
-            card = node;
-            if (node.querySelectorAll?.('[class*="title"],[class*="info--tit"],[class*="video-name"],h3,h4')?.length) break;
-          }
+        // A cover link and its title link can be siblings. Walk at most five
+        // ancestors to locate the nearest title-bearing card, but stop before
+        // an ancestor contains a DIFFERENT BV (a whole-list container).
+        let card = anchor.parentElement ||
+          anchor.closest?.('li.small-item,li,[class*="video-card"],[class*="video-item"],[data-bvid]') || anchor;
+        for (let node = card, depth = 0; node && node !== container && depth < 5; node = node.parentElement, depth++) {
+          const links = Array.from(node.querySelectorAll?.('a[href*="/video/BV"]') || []);
+          if (links.some((link) => bvidOf(link) !== bvid)) break;
+          card = node;
+          if (node.querySelectorAll?.('a.title,[class*="title"],[class*="info--tit"],[class*="video-name"],h3,h4')?.length) break;
         }
         card = card || anchor;
         // Candidate elements must belong to this video, not to its uploader
