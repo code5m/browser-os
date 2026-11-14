@@ -163,9 +163,20 @@ fn write_journal(
             .map_err(|_| "DRAFT_WRITE_FAILED")?;
         file.sync_all().map_err(|_| "DRAFT_WRITE_FAILED")?;
         fs::rename(&tmp, final_path).map_err(|_| "DRAFT_REPLACE_FAILED")?;
-        File::open(dir)
-            .and_then(|f| f.sync_all())
-            .map_err(|_| "DRAFT_DURABILITY_UNCERTAIN".into())
+        // Windows cannot fsync() a directory through std::fs::File::open(dir).
+        // Keep the Linux durability contract; Windows currently guarantees
+        // temp-file flush + rename, with full crash recovery still requiring
+        // native Windows filesystem validation before declaring GUI PASS.
+        #[cfg(unix)]
+        {
+            File::open(dir)
+                .and_then(|f| f.sync_all())
+                .map_err(|_| "DRAFT_DURABILITY_UNCERTAIN".into())
+        }
+        #[cfg(not(unix))]
+        {
+            Ok(())
+        }
     })();
     if result.is_err() {
         let _ = fs::remove_file(tmp);
