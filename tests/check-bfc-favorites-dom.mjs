@@ -191,7 +191,7 @@ for (const pageCount of [4, 5]) {
     get innerText(){return loaded?'默认收藏夹 公开 视频数: 2':'未命名收藏夹 公开 视频数: 0 播放量:';}};
   const calls=[];
   const document={title:'fixture',body:{innerText:''},documentElement:{dataset:{}},
-    querySelector:()=>({innerText:'默认收藏夹'}),
+    querySelector:selector=>selector.includes('fav-title')?{innerText:'默认收藏夹'}:null,
     querySelectorAll:selector=>selector.includes('fav-item')&&selector.includes('active')
       ? (loaded?[{innerText:'默认收藏夹 (2)',getClientRects:()=>[{}]}]:[]):
       selector.includes('.fav-info')?[header]:
@@ -228,7 +228,7 @@ for(const titlesHydrate of [true,false]){
   const list={getClientRects:()=>[{}],querySelectorAll:()=>links};
   const calls=[];
   const document={title:'fixture',body:{innerText:''},documentElement:{dataset:{}},
-    querySelector:()=>({innerText:'默认收藏夹'}),
+    querySelector:selector=>selector.includes('fav-title')?{innerText:'默认收藏夹'}:null,
     querySelectorAll:selector=>selector.includes('fav-item')&&selector.includes('active')
       ?[{innerText:'默认收藏夹 (2)',getClientRects:()=>[{}]}]:
       selector.includes('fav-list')?[list]:[]};
