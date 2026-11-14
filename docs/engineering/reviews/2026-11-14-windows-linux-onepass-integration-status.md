@@ -1,35 +1,65 @@
-# Windows / Linux V2 单分支集成记录（2026-11-14）
+# Windows / Linux V2 single-branch integration ledger (2026-11-14)
 
-- 集成分支：`feature/browseros-windows-linux-v2-onepass-20261114`
-- 唯一上游基线：`fix/bfc-readback-workbench-hardening-20261114` 的 `908a506bd1855ab97b4e0446a4c8321bc77ce853`
-- 目标：所有 XP 任务可在同一集成分支持续提交，最后才评审合并 `master`；**不为每项 XP 任务单独合并 master**。
-- 状态：**PARTIAL IMPLEMENTATION / NOT VALIDATED**。不可宣称 Windows R1、R2 或跨平台构建已完成。
-- V2 方案：[设计](../../design/browseros-windows-linux-support-v2-20261114.md) · [Backlog](./2026-11-14-windows-linux-implementation-backlog-v2.md)
+- Integration branch: feature/browseros-windows-linux-v2-onepass-20261114
+- Base: fix/bfc-readback-workbench-hardening-20261114 @ 908a506bd1855ab97b4e0446a4c8321bc77ce853
+- Merge policy: **one integrated branch; do not repeatedly merge individual XP tasks into master**.
+- Status: **PARTIAL_IMPLEMENTATION**. Not R1/R2 release acceptance; no real Windows GUI or signed-in Bilibili acceptance evidence.
+- Source of design: docs/design/browseros-windows-linux-support-v2-20261114.md
+- Task backlog: docs/engineering/reviews/2026-11-14-windows-linux-implementation-backlog-v2.md
 
-## 已写入源码的部分（本次集中提交）
+## Implemented and committed (see branch history)
 
-| 关联任务 | 改动 | 意义 | 验证现状 |
+| Workstream | Production change | Verified evidence | Unverified / not supported |
 | --- | --- | --- | --- |
-| XP-011R1 | `workspace/cas.rs` 删除非 Linux 的路径式写入回退、在 `write_file_cas` Rust 命令入口拒绝，补负例测试 | 未实现 handle-based CAS 的 Windows 不能通过原生 API 写入，避免 TOCTOU 风险 | 静态复核；Windows Rust/GUI 未运行 |
-| XP-011R1 | `workspace/fs_cmds.rs` 在非 Linux 的 `move_path` 原生命令入口明确拒绝 | 不依赖前端隐藏功能，未实现 Windows 安全移动之前不产生文件写入 | 静态复核；Windows Rust 未运行 |
-| XP-006（部分） | 浏览器插件为 Windows 新增应用专属稳定 User Data Folder，按 WebView2 目录语义复用；Linux 原 Profile 保留 | 为 B 站网页重启后登录态提供持久化基础，浏览器页与主可信 UI 分离 | Windows ACL、WebView2 选项冲突、重启真实验证待完成 |
-| XP-008（部分） | 非 Linux 导航事件改由 Tauri `on_page_load` 发出 Started/Finished，不再用 `on_navigation` 伪装 Finished | 消除“导航已批准=页面加载完成”的错误上报 | Windows 原生导航、TLS、412 及崩溃事件仍待验证 |
-| XP-011R1（部分） | `session.rs` 将固定 `json.tmp` 改为 `create_new` 唯一同目录 tmp + `sync_all`，rename 失败清理 tmp；沿用 `.json.tmp` 后缀兼容旧恢复逻辑 | 避免多个落盘调用共享同一暂存文件；减少崩溃时丢失数据风险 | 文件替换/目录持久化/Windows 真实锁冲突未验收 |
+| XP-007 Windows JS result | WebView2/Tauri eval_with_callback added to the native tab manager with JSON-string normalization, one-shot callback and 512 KiB result cap; eliminated previous GRID_PLATFORM_UNSUPPORTED from the Windows eval path | Windows Rust cargo check reached NSIS packaging in run 43587288672 for older branch snapshot; static JS contract passed | No independent real Windows native WebView2 callback/DOM readback test, timeout and page process failure acceptance |
+| XP-006 Windows Profile | Stable app-private WebView2 User Data Folder for external browser tabs, separate from trusted main UI | Static source contract passed | Actual Bilibili login remains signed in after cold restart: **NOT TESTED**; Windows ACL/environment options require GUI confirmation |
+| XP-008 navigation | Tauri on_page_load Started/Finished instead of falsely emitting NavigationFinished on request callback | Windows Cargo code type-checked | TLS/HTTP 412/redirect/process crash semantics on real Windows still incomplete |
+| XP-011R1 file safety | Fail-closed non-Linux write_file_cas and move_path native commands; removed unsafe path-write fallback; unique temp and file fsync for session JSON writes | Static source contract and Rust build for older snapshot | Windows handle-anchored CAS/move, Windows crash/lock/reparse/ACL regression and full user data migration pending |
+| XP-004 platform compile isolation | Isolated Unix Grid, LSP sandbox, MCP context, crash logging and Linux GTK/Freedesktop code behind platform cfg; Windows fail-closed Grid/LSP/MCP; nonUnix terminal signal fix and code permission checks | First Windows cargo check progressed to release NSIS step after Windows-only fixes; the latest source requires its own CI result | **Windows Grid/Job Object/Named Pipe, Agent sandbox, ConPTY/AI/full DB functionality NOT implemented** |
+| Windows credential store | Added keyring Windows-native feature and updated Cargo.lock to avoid mock credentials | Cargo config and static source contract checked | Windows Credential Manager real secure save/load/delete after upgrade pending |
+| XP-018A packaging | Tauri Windows NSIS current-user config, WebView2 Evergreen bootstrapper; experimental Windows build workflow | Windows job entered release NSIS stage in run 43587288672 | NSIS artifact hash, install/upgrade/desktop GUI release evidence not yet established |
+| Windows BFC local service | Pinned code5m/bfc-workbench service at 8ded529a2fcaf97a9249e2174a09273d5ee1179c; fixed NTFS-oriented test; PowerShell foreground launcher, isolated user app-data folder, CSRF and loopback import | GitHub Windows runner npm tests, /api/health, /api/capabilities, /api/session and synthetic /api/readback/import receipt + persisted snapshot **PASS**; launcher smoke **PASS** | Not bundled into NSIS, requires locally installed Node >= 20 and pinned service source; no real signed-in Bilibili readback |
+| XP-019 Linux regression | Added Ubuntu 22.04 native Rust CI and corrected Tauri frontendDist prerequisite by building Vue frontend first | Earlier Linux run isolated missing dist to CI setup; newer Linux Cargo check underway | Installed DEB GUI, Ubuntu 24.04, AppImage and Linux BFC real-site regression **NOT TESTED** |
 
-## 尚未完成（必须如实标记）
+## Concrete CI evidence (results apply only to recorded commit/run)
 
-- **XP-000/001/002/003/004：** 尚未完成最终范围批准、完整平台清单、Windows experimental CI、全仓 AppPaths 及 Unix 专用模块编译隔离。当前仓库其他模块仍有 Unix-only API，Windows 构建尚未证明可通过。
-- **XP-005A/005B/007：** 尚无独立真实 Windows WebView2 原型、原生带结果的 JavaScript 回执通道。现有插件非 Linux `eval_result` 仍返回 `GRID_PLATFORM_UNSUPPORTED`，BFC Windows 全链无法完成。
-- **XP-008/009/010：** 尚无 Windows 完整导航失败语义、BFC 本地服务的 Windows 部署合同、B站真实站点导入/重启验收。
-- **XP-011（完整）与 XP-012～020：** Windows handle-safe 文件系统、Job/Named Pipe、ConPTY、凭据/数据库、Agent sandbox、NSIS 安装、Windows 实机验收、Linux 发行矩阵与最终发布准入均未完成。
-- **未执行：** Linux Rust/Cargo 编译与单元测试、Windows Cargo 编译、安装版 GUI、真实用户登录、BFC 本地服务 Windows 验证、B 站写回操作。
+- Windows native Cargo check entered NSIS release build:
+  https://github.com/code5m/browser-os/actions/runs/43587288672
+- Windows BFC local loopback, synthetic import and actual launcher smoke:
+  https://github.com/code5m/browser-os/actions/runs/43587526840
+- Linux/Windows independent experimental builds after fixes:
+  https://github.com/code5m/browser-os/actions/runs/43587563037
+- Original Windows-only compiler error reproduction:
+  https://github.com/code5m/browser-os/actions/runs/43586726338
 
-## 为什么不跳过门禁
+CI results change as commits are added; read the HEAD-specific jobs before making any PASS claim.
 
-“只合并 master 一次”是减少 Git 集成成本，不意味着跳过安全验证。禁止把 Linux 编译当 Windows 编译、把源码改动当 Windows GUI PASS。GitHub API 可以直接提交源码，但**不能凭此证明 Windows 本机 WebView2、安装版、登录态和进程隔离正常**。
+## Windows real GUI acceptance (NOT RUN)
 
-此分支用作集成，不调整 master 现有规则，也不删除已有检查、降低 BFC Tauri ACL、增加 CDP/Cookie 导出或 B 站写回权限。提交后如发现 Windows build/GUI 风险，保持能力 unavailable/blocked，不能静默放开。
+See docs/engineering/windows-v2-gui-validation.md and
+scripts/windows/verify-installed-browseros.ps1. The script must run on an
+interactive Windows 11 desktop against the installed release binary, and its
+WINDOW_SMOKE_PASS_GUI_PENDING result is still **not GUI_PASS**. The Bilibili
+user must authenticate through the site's own UI; never collect/export Cookie,
+activate CDP, or put personal account screenshots in GitHub Actions artifacts.
 
-## 合并条件
+## R1/R2 remaining blockers
 
-只有 Windows 11 x64 与 Ubuntu X11 的各目标能力经过真实机器验证，Windows BFC 服务及 Profile/JS 回执形成闭环，安全和安装/升级回归可核验时，才对 `master` 做**一次性集成评审**。如用户决定缩减为 R1 或 R2 Core，先明确支持范围与未交付能力，再进行一次性合并。
+- R1: Actual installed Windows WebView2 tab geometry, native JavaScript
+  execution callback against live DOM, Profile cold restart with Bilibili
+  login; local BFC readback + true import receipt on real account; complete
+  native filesystem/persistence secure operations that R1 exposes.
+- R1: Installer verification and supportability of local Node BFC backend
+  (currently a separate manual dependency, not NSIS-bundled).
+- R2: Windows handle-anchored SecureFileSystem, Job Object + Named Pipe,
+  ConPTY/PowerShell terminal, Grid, external DB, Agent/LSP isolation,
+  full Windows credential/OS integration, update/rollback; Linux AppImage
+  and real GUI regression. Stubs are **unavailable**, not feature parity.
+- Read-only BFC does not grant permission to create, move, delete or reorder
+  original Bilibili favorites; writeback is a separate product decision.
+
+## Release/merge rule
+
+Only merge to master **once**, after review of the integrated diff and OS-specific
+CODE/PACKAGE/GUI/BFC_REAL evidence. Do not bypass or disable existing safety,
+governance or supply-chain checks; do not invent tests, screenshots or real logins.
