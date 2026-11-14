@@ -707,6 +707,40 @@ fn dispatch_grid_cmd(
     }
 }
 
+/// Test-only force-exit for a Grid child owned by this BrowserOS process.
+/// The PID is verified against the active Grid manager before any OS call.
+fn force_exit_owned_grid_child(
+    app: &tauri::AppHandle, index: u32, pid: u32
+) -> Result<(), String> {
+    if app.state::<AppState>().grid_manager.pid_of(index) != Some(pid) {
+        return Err("GRID_SELFTEST_CHILD_PID_MISMATCH".into());
+    }
+    #[cfg(unix)]
+    {
+        if unsafe { libc::kill(pid as i32, libc::SIGSEGV) } != 0 {
+            return Err("GRID_SELFTEST_SIGSEGV_FAILED".into());
+        }
+    }
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, TerminateProcess, PROCESS_TERMINATE,
+        };
+        let process = unsafe { OpenProcess(PROCESS_TERMINATE, 0, pid) };
+        if process.is_null() {
+            return Err(format!("GRID_SELFTEST_OPEN_PROCESS: {}", std::io::Error::last_os_error()));
+        }
+        let ok = unsafe { TerminateProcess(process, 139) };
+        let error = if ok == 0 {
+            Some(format!("GRID_SELFTEST_TERMINATE: {}", std::io::Error::last_os_error()))
+        } else { None };
+        unsafe { CloseHandle(process); }
+        if let Some(error) = error { return Err(error); }
+    }
+    Ok(())
+}
+
 /// GRID_SELFTEST=1 端到端自检（Phase 2 + Phase 3 验收，无需手工点 UI）：
 /// 1) create_grid(2) → 两子进程 UDS 建 webview
 /// 2) grid_open / grid_position / eval_in_tab 经 UDS 正常
@@ -720,10 +754,10 @@ fn run_grid_selftest(app: tauri::AppHandle) {
             let _ = std::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
-                .open("/tmp/grid-selftest-result.txt")
+                .open(std::env::temp_dir().join("grid-selftest-result.txt"))
                 .and_then(|mut f| std::io::Write::write_all(&mut f, format!("{m}\n").as_bytes()));
         };
-        let _ = std::fs::remove_file("/tmp/grid-selftest-result.txt");
+        let _ = std::fs::remove_file(std::env::temp_dir().join("grid-selftest-result.txt"));
         // 等主窗起来
         std::thread::sleep(std::time::Duration::from_secs(3));
         let fails = std::cell::RefCell::new(Vec::<String>::new());
@@ -765,9 +799,10 @@ fn run_grid_selftest(app: tauri::AppHandle) {
         let pid0 = app.state::<AppState>().grid_manager.pid_of(0);
         match pid0 {
             Some(pid) => {
-                log(&format!("kill -11 grid-child-0 pid={pid}"));
-                #[cfg(unix)]
-                unsafe { libc::kill(pid as i32, libc::SIGSEGV) };
+                log(&format!("force-exit grid-child-0 pid={pid}"));
+                if let Err(e) = force_exit_owned_grid_child(&app, 0, pid) {
+                    fails.borrow_mut().push(e);
+                }
             }
             None => fails.borrow_mut().push("pid_of(0) 为空".to_string()),
         }
@@ -1069,8 +1104,7 @@ fn run_grid_gui_regression(app: tauri::AppHandle) {
                     .grid_manager
                     .pid_of(0)
                     .ok_or_else(|| "grid-0 pid missing before crash".to_string())?;
-                #[cfg(unix)]
-                unsafe { libc::kill(old as i32, libc::SIGSEGV) };
+                force_exit_owned_grid_child(&app, 0, old)?;
                 sleep_ms(12_000);
                 let new = app
                     .state::<AppState>()
@@ -1129,8 +1163,7 @@ fn run_grid_gui_regression(app: tauri::AppHandle) {
                     .grid_manager
                     .pid_of(0)
                     .ok_or_else(|| "grid-0 pid missing before login-state restart".to_string())?;
-                #[cfg(unix)]
-                unsafe { libc::kill(old as i32, libc::SIGSEGV) };
+                force_exit_owned_grid_child(&app, 0, old)?;
                 sleep_ms(12_000);
                 let new = app
                     .state::<AppState>()
