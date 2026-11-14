@@ -344,6 +344,8 @@ mod tests {
             expected_pages: 136,
             traversal_finished: false,
             pagination_stable: false,
+            folder_id: "99".into(),
+            folder_name: "测试收藏夹".into(),
             pages: [(
                 "1".into(),
                 BfcImportPage {
@@ -355,6 +357,10 @@ mod tests {
             )]
             .into(),
         };
+        let serialized = serde_json::to_value(&payload).unwrap();
+        assert_eq!(serialized["folderId"], "99");
+        assert_eq!(serialized["folderName"], "测试收藏夹");
+        assert!(serialized.get("mid").is_none());
         let body = serde_json::json!({"ok":true,"scanId":"fixture","pages":1,"cards":1});
         let receipt = parse_import_receipt(&payload, &body).ok().unwrap();
         assert_eq!(receipt.pages, 1);
