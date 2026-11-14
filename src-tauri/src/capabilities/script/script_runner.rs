@@ -1806,6 +1806,37 @@ mod windows_script_lifecycle_tests {
     use super::*;
 
     #[test]
+    fn windows_node_script_executes_in_job_and_captures_bounded_output() {
+        let dir = std::env::temp_dir().join(format!("windows-node-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("fixture.js");
+        std::fs::write(&script,
+            "setTimeout(() => { console.log('WINDOWS_NODE_JOB_OK'); }, 200);"
+        ).unwrap();
+        let table = Arc::new(ScriptProcessTable::new());
+        let run = start_argv_run(
+            &table, "node-test", 15,
+            vec!["node.exe".to_string(), script.to_string_lossy().into_owned()],
+            dir.clone(), &dir, None, None,
+        ).expect("start reviewed Node fixture");
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            let status = table.snapshot(&run).expect("record");
+            if status.status.is_terminal() {
+                assert_eq!(status.status, RunStatus::Succeeded);
+                assert!(status.output_tail.contains("WINDOWS_NODE_JOB_OK"),
+                    "expected captured stdout: {}",status.output_tail);
+                break;
+            }
+            if Instant::now() >= deadline {
+                let _ = table.cancel(&run);
+                panic!("Windows Node child did not finish");
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
     fn windows_script_whitelist_rejects_shell_execution_without_side_effects() {
         let dir = std::env::temp_dir().join(format!("windows-script-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
