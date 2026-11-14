@@ -22,6 +22,12 @@
   },
   "workflows": [
     {
+      "id": "bfc-targeted",
+      "path": ".github/workflows/bfc-targeted-regression.yml",
+      "role": "blocking_bfc_readback_quality_gate",
+      "scope": "bounded BFC JS syntax, DOM fixtures and git diff hygiene; every relevant branch push and pull request"
+    },
+    {
       "id": "ui-safety",
       "path": ".github/workflows/capability-v2-ui-safety.yml",
       "role": "blocking_quality_gate",
