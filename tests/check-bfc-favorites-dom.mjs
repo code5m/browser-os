@@ -32,8 +32,8 @@ const document={
   querySelector:(selector)=>selector.includes('fav-title')?{innerText:'默认收藏夹'}:null
 };
 const window={__TAURI__:{core:{invoke:async(command,data)=>calls.push({command,data})}}};
-await runInNewContext(buildFavoritesReadbackScript('01234567-89ab-cdef-0123-456789abcdef','471851304'),{
-  window,document,location:{href:'https://space.bilibili.com/471851304/favlist?fid=99'},URL,setTimeout
+await runInNewContext(buildFavoritesReadbackScript('01234567-89ab-cdef-0123-456789abcdef','123456'),{
+  window,document,location:{href:'https://space.bilibili.com/123456/favlist?fid=99'},URL,setTimeout
 });
 if (scenario.unknown) {
   assert.deepEqual(calls.map(call=>call.data.payload.kind),['favorites_start','abort']);
