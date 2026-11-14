@@ -58,13 +58,17 @@ base64 = "0.22"
 open = "5"
 arboard = "3"
 portable-pty = "0.8"
-freedesktop-icons = "0.4"
 strip-ansi-escapes = "0.2"
 # crashlog：stderr fd 镜像 + 致命信号捕获
 libc = "0.2"
 rusqlite = { version = "0.41.0", features = ["bundled", "hooks"] }
 mysql = "28.0.2"
 postgres = "0.19.14"
+
+# Only Linux uses FreeDesktop icon/theme XDG lookup. xdg::BaseDirectories
+# is not exported on Windows; do not compile this Linux dependency there.
+[target.'cfg(target_os = "linux")'.dependencies]
+freedesktop-icons = "0.4"
 
 [profile.release]
 panic = "abort"
