@@ -5,7 +5,7 @@ import { selectBfcReadbackTab, safeBfcTabSummary } from '../src/capabilities/bfc
 
 const tabs = [
   {id:'tab-3',title:'旧 B站',url:'https://www.bilibili.com/'},
-  {id:'tab-9',title:'默认收藏夹',url:'https://space.bilibili.com/471851304/favlist?token=secret-value'},
+  {id:'tab-9',title:'默认收藏夹',url:'https://space.bilibili.com/123456/favlist?token=secret-value'},
   {id:'tab-10',title:'BFC 工作台',url:'http://127.0.0.1:4198/'}
 ];
 assert.equal(selectBfcReadbackTab(tabs,'tab-9').id,'tab-9');
@@ -15,18 +15,20 @@ assert.throws(()=>selectBfcReadbackTab(tabs,''),/BFC_TAB_NOT_ACTIVE/);
 assert.throws(()=>selectBfcReadbackTab(tabs,'tab-10'),/BFC_FAVORITES_PAGE_REQUIRED/);
 const safe = safeBfcTabSummary(tabs[1]);
 assert.equal(safe.isFavorites,true);
-assert.equal(safe.url,'https://space.bilibili.com/471851304/favlist');
+assert.equal(safe.url,'https://space.bilibili.com');
+assert.ok(!JSON.stringify(safe).includes('123456'));
+assert.ok(!JSON.stringify(safe).includes('默认收藏夹'));
 assert.ok(!JSON.stringify(safe).includes('secret-value'));
 
 function fixture({withBridge,midInHeader=false,midInPublicState=false,loginDivVisible=false}) {
   const calls=[];
-  const anchor={className:'header-entry-avatar',getAttribute:(key)=>key==='href'?'https://space.bilibili.com/471851304':null,querySelector:()=>({tagName:'IMG'})};
+  const anchor={className:'header-entry-avatar',getAttribute:(key)=>key==='href'?'https://space.bilibili.com/123456':null,querySelector:()=>({tagName:'IMG'})};
   const signedOutControl={className:'bili-header-login-btn',innerText:'立即登录',getClientRects:()=>[{}],getAttribute:()=>null};
   const header={innerText:loginDivVisible?'立即登录':'个人中心',querySelectorAll:(selector)=>selector.includes('space.bilibili.com')
     ? (midInHeader?[anchor]:[]) : selector.includes('[class*="login"]') && loginDivVisible ? [signedOutControl] : []};
   const dataset={};
   const document={readyState:'complete',body:{innerText:'默认收藏夹 4869'},title:'我的收藏',documentElement:{dataset},querySelector:()=>header};
-  const window={__INITIAL_STATE__:midInPublicState?{loginInfo:{mid:471851304}}:undefined};
+  const window={__INITIAL_STATE__:midInPublicState?{loginInfo:{mid:123456}}:undefined};
   if(withBridge)window.__TAURI__={core:{invoke:async(command,data)=>{calls.push({command,data});}}};
   return {calls,dataset,document,window,location:{hostname:'space.bilibili.com'},setTimeout:(cb)=>queueMicrotask(cb)};
 }
@@ -36,12 +38,12 @@ const script=buildLoginProbeScript('01234567-89ab-cdef-0123-456789abcdef');
  await runInNewContext(script,env);
  assert.deepEqual(env.calls.map(x=>x.command),['bfc_readback_submit']);
  assert.equal(env.calls[0].data.payload.login_status,'logged_in');
- assert.equal(env.calls[0].data.payload.mid,'471851304');
+ assert.equal(env.calls[0].data.payload.mid,'123456');
 }
 {
  const env=fixture({withBridge:true,midInPublicState:true});
  await runInNewContext(script,env);
- assert.equal(env.calls[0].data.payload.mid,'471851304');
+ assert.equal(env.calls[0].data.payload.mid,'123456');
  assert.equal(env.calls[0].data.payload.login_status,'logged_in');
 }
 {
@@ -67,6 +69,6 @@ const script=buildLoginProbeScript('01234567-89ab-cdef-0123-456789abcdef');
  const env=fixture({withBridge:true,loginDivVisible:true,midInPublicState:true});
  await runInNewContext(script,env);
  assert.equal(env.calls[0].data.payload.login_status,'logged_in');
- assert.equal(env.calls[0].data.payload.mid,'471851304');
+ assert.equal(env.calls[0].data.payload.mid,'123456');
 }
 console.log('BFC_TAB_ID_AND_LOGIN_PROBE_REGRESSION=PASS (correct tab, wrong tab, public MID, injection failure != logged_out)');
