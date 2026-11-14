@@ -29,7 +29,7 @@ const titleFilter=runInNewContext('(()=>{' + favorites.slice(metricStart,titleEn
 for(const metric of [
   '5.2万 00:28','3.6万 13:00:52','3968 02:46','8533 2 01:22',
   '00:28','3968','播放 3968','评论数 29','收藏 128',
-  'BV1xxxxxxxxx'
+  'BV1xxxxxxxxx','BV1xxxxxxx'
 ]) assert.equal(titleFilter(metric),'','metric should not become a title: '+metric);
 for(const title of [
   '如何使用 AI 自动整理收藏夹','从零实现一个浏览器工作台',
