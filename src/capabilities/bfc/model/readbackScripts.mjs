@@ -174,11 +174,14 @@ export function buildFavoritesReadbackScript(ticket, mid) {
       const seen = new Set();
       const isMetric = (value) => {
         const text = value.replaceAll(',', '').trim();
-        // This code is embedded in a template literal: avoid backslash-sensitive
-        // regex escapes, which silently change meaning when injected.
-        const count = '[0-9]+(?:[.][0-9]+)?[ \\t]*[万亿千百]?';
+        // Character classes avoid losing regex escapes in the injected template.
+        const quantity = '[0-9]+(?:[.][0-9]+)?[ ]*[万亿千百]?';
         const duration = '[0-9]{1,2}(?::[0-9]{2}){1,2}';
-        return new RegExp('^(?:' + count + ')(?:播放|次|观看)?
+        return new RegExp('^' + quantity + '(?:播放|次|观看)?$').test(text)
+          || new RegExp('^' + quantity + '[ ]+' + duration + '$').test(text)
+          || new RegExp('^' + duration + '$').test(text)
+          || new RegExp('^' + quantity + '(?:[ ]+[0-9]+)?[ ]+' + duration + '$').test(text)
+          || /^(?:播放|收藏|评论|弹幕|点赞)(?:数)?[ :：]*[0-9]+(?:[.][0-9]+)?[万亿千百]?$/.test(text);
       };
       const cleanTitle = (value) => {
         const text = String(value || '').replace(/[\\s]+/g, ' ').trim();
