@@ -99,7 +99,6 @@ export function buildFavoritesReadbackScript(ticket, mid) {
       const activeNumber = Number(String(active?.innerText || '').trim());
       return Number.isInteger(activeNumber) && activeNumber > 0 ? activeNumber : null;
     };
-    const pageNumber = () => observedPageNumber() || 1;
     const pageControls = () => {
       const roots = Array.from(document.querySelectorAll('[class*="pager"],[class*="pagination"],[class*="pagenation"]'))
         .filter((node) => node.getClientRects().length);
@@ -165,9 +164,13 @@ export function buildFavoritesReadbackScript(ticket, mid) {
         '[class*="fav-video-list"]','[class*="fav-list"]','[id*="fav-list"]'
       ];
       const candidates = selectors.flatMap((selector) => Array.from(document.querySelectorAll(selector)));
-      return candidates
-        .filter((node) => node.getClientRects().length && node.querySelectorAll('a[href*="/video/BV"]').length > 0)
-        .sort((a,b) => b.querySelectorAll('a[href*="/video/BV"]').length - a.querySelectorAll('a[href*="/video/BV"]').length)[0] || null;
+      const visible = candidates.filter((node) => node.getClientRects().length);
+      const populated = visible.filter((node) => node.querySelectorAll('a[href*="/video/BV"]').length > 0);
+      if (populated.length) return populated
+        .sort((a,b) => b.querySelectorAll('a[href*="/video/BV"]').length - a.querySelectorAll('a[href*="/video/BV"]').length)[0];
+      // Only a visibly selected, explicitly zero-count folder may use an
+      // empty list container. Never infer zero from missing video links alone.
+      return reportedTotal() === 0 ? (visible[0] || null) : null;
     };
     const extractItems = (container) => {
       const items = [];
