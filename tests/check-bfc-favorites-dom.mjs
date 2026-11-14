@@ -163,11 +163,12 @@ for (const pageCount of [4, 5]) {
     querySelectorAll:selector=>selector.includes('fav-item')&&selector.includes('active')
       ? [{innerText:'空收藏夹 (0)',getClientRects:()=>[{}]}]
       : selector.includes('fav-list')
-        ? [{getClientRects:()=>[{}],querySelectorAll:()=>[]}] : []
+        ? [{getClientRects:()=>[{}],innerText:'暂无收藏的视频',querySelectorAll:()=>[]}] : []
   };
   const window={__TAURI__:{core:{invoke:async(_,data)=>calls.push(data.payload)}}};
+  let clock=0;
   await runInNewContext(buildFavoritesReadbackScript('empty-folder-fixture','123456'),{
-    document,window,URL,setTimeout,location:{href:'https://space.bilibili.com/123456/favlist?fid=9'}
+    document,window,URL,Date:{now:()=>clock},setTimeout:callback=>{clock+=250;callback();},location:{href:'https://space.bilibili.com/123456/favlist?fid=9'}
   });
   const saved=calls.find(call=>call.kind==='favorites');
   assert.ok(saved,'selected zero-count collection should be capturable');
