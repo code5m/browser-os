@@ -279,7 +279,12 @@ export function buildFavoritesReadbackScript(ticket, mid) {
       }
       const controls = pageControls();
       let current = pageNumber();
-      if (observedPageNumber() === null && total !== 0) { await abort('BFC_START_FROM_FIRST_PAGE'); return; }
+      if (observedPageNumber() === null && total !== 0 &&
+          (pageControls().root || extractItems(container).length !== total)) {
+        // A truly single-page collection can lack page controls. Multi-page
+        // collections must not silently treat an unknown page as page one.
+        await abort('BFC_START_FROM_FIRST_PAGE'); return;
+      }
       if (current !== 1) {
         const first = controls.numeric.find((item) => item.value === 1)?.node;
         if (!first) { await abort('BFC_START_FROM_FIRST_PAGE'); return; }
