@@ -2815,6 +2815,7 @@ dependencies = [
  "url",
  "urlencoding",
  "uuid",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]

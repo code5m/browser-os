@@ -9,6 +9,9 @@ mod crashlog;
 mod crashlog;
 mod domain;
 mod grid_ipc;
+#[cfg(target_os = "windows")]
+mod windows_process;
+
 #[cfg(target_os = "linux")]
 mod grid_process;
 #[cfg(not(target_os = "linux"))]

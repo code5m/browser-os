@@ -10,9 +10,15 @@ const session = read('../src-tauri/src/session.rs');
 const tabs = read('../tauri-browser-tabs/crates/tauri-plugin-browser-tabs/src/commands.rs');
 const cargo = read('../src-tauri/Cargo.toml');
 const lock = read('../src-tauri/Cargo.lock');
+const process = read('../src-tauri/src/windows_process.rs');
+const terminal = read('../src-tauri/src/capabilities/terminal/terminal.rs');
 
 assert.match(cargo, /keyring = \{ version = "3", features = \["sync-secret-service", "windows-native"\] \}/);
 assert.match(lock, /name = "keyring"[\s\S]*?"windows-sys 0\.60\.2"/);
+assert.match(cargo, /Win32_System_JobObjects/);
+assert.match(process, /JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE/);
+assert.match(process, /AssignProcessToJobObject/);
+assert.match(terminal, /WINDOWS_TERMINAL_JOB_FAILED/);
 assert.match(cas, /FILE_SAVE_PLATFORM_UNSUPPORTED/);
 assert.doesNotMatch(cas, /save_if_unchanged_path\s*\(/);
 assert.match(cas, /non_linux_save_is_denied_without_mutating_the_file/);

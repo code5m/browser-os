@@ -543,6 +543,8 @@ pub struct TerminalSession {
     pub child: Box<dyn Child + Send + Sync>,
     /// F6：unix 下 = shell pid（`setsid` 后 `pid == pgid`）；非 unix 为 None（降级）。
     pub pgid: Option<i32>,
+    #[cfg(windows)]
+    pub job: Option<Arc<crate::windows_process::JobObject>>,
     /// F7：置位后 worker/pump 在排空后退出。
     pub stop: Arc<AtomicBool>,
     pub handles: Option<TerminalHandles>,
@@ -580,6 +582,21 @@ pub fn spawn_terminal(
         .map_err(|e| format!("无法启动 shell: {e}"))?;
     drop(pair.slave);
 
+    // A ConPTY child must belong to a kill-on-close Job Object. Returning an
+    // unsafe direct-child-only fallback would orphan PowerShell descendants.
+    #[cfg(windows)]
+    let job = {
+        let pid = child.process_id().ok_or("WINDOWS_TERMINAL_PID_MISSING")?;
+        match crate::windows_process::JobObject::attach_pid(pid) {
+            Ok(job) => Some(Arc::new(job)),
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("WINDOWS_TERMINAL_JOB_FAILED: {error}"));
+            }
+        }
+    };
+
     let master = pair.master;
     let mut writer = match master.take_writer() {
         Ok(writer) => writer,
@@ -611,7 +628,12 @@ pub fn spawn_terminal(
     let on_dead: Option<Arc<dyn Fn() + Send + Sync>> = pgid.map(|pgid| {
         Arc::new(move || kill_group(pgid, libc::SIGKILL)) as Arc<dyn Fn() + Send + Sync>
     });
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    let on_dead: Option<Arc<dyn Fn() + Send + Sync>> = job.as_ref().map(|job| {
+        let job = Arc::clone(job);
+        Arc::new(move || { let _ = job.terminate(); }) as Arc<dyn Fn() + Send + Sync>
+    });
+    #[cfg(all(not(unix), not(windows)))]
     let on_dead: Option<Arc<dyn Fn() + Send + Sync>> = None;
 
     let probe = Arc::new(TermProbe::default());
@@ -641,6 +663,8 @@ pub fn spawn_terminal(
             master,
             child,
             pgid,
+            #[cfg(windows)]
+            job,
             stop,
             handles: Some(handles),
         },
@@ -664,6 +688,10 @@ pub fn resize(session: &mut TerminalSession, cols: u16, rows: u16) -> Result<(),
 pub fn terminate_session(session: &mut TerminalSession) -> Result<(), String> {
     session.stop.store(true, Ordering::SeqCst);
     let mut errors = Vec::new();
+    #[cfg(windows)]
+    if let Some(job) = &session.job {
+        if let Err(e) = job.terminate() { errors.push(e); }
+    }
     if let Err(error) = terminate_group(&mut session.child, session.pgid, TERM_GROUP_GRACE_MS) {
         errors.push(error);
     }
@@ -951,6 +979,7 @@ mod tests {
     }
 
     /// T3：进程组回收 —— `sleep 300` 随 shell 一起被杀，不留孤儿（F6）。
+    #[cfg(unix)]
     #[test]
     fn terminate_group_kills_whole_process_group() {
         let pair = native_pty_system()
