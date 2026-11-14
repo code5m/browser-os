@@ -153,4 +153,26 @@ for (const pageCount of [4, 5]) {
   }
 }
 
+// Empty folders can be captured only if an explicitly selected visible folder
+// reports zero and an actual empty list container exists.
+{
+  const calls=[];
+  const document={
+    title:'fixture',body:{innerText:''},documentElement:{dataset:{}},
+    querySelector:()=>null,
+    querySelectorAll:selector=>selector.includes('fav-item')&&selector.includes('active')
+      ? [{innerText:'空收藏夹 (0)',getClientRects:()=>[{}]}]
+      : selector.includes('fav-list')
+        ? [{getClientRects:()=>[{}],querySelectorAll:()=>[]}] : []
+  };
+  const window={__TAURI__:{core:{invoke:async(_,data)=>calls.push(data.payload)}}};
+  await runInNewContext(buildFavoritesReadbackScript('empty-folder-fixture','123456'),{
+    document,window,URL,setTimeout,location:{href:'https://space.bilibili.com/123456/favlist?fid=9'}
+  });
+  const saved=calls.find(call=>call.kind==='favorites');
+  assert.ok(saved,'selected zero-count collection should be capturable');
+  assert.equal(saved.reported_total,0);
+  assert.deepEqual(Array.from(saved.pages[0].items),[]);
+}
+
 console.log('BFC_FAVORITES_VISIBLE_DOM=PASS (counts, delayed pagination, bounded timeout, access limit, cancellation)');
