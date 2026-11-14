@@ -106,4 +106,51 @@ for (const scenario of ['delayed', 'incomplete', 'budget', 'duplicate', 'not-adv
     }
   }
 }
+// The candidate selection must ignore uploader-name nodes and card metrics,
+// but preserve genuine titles that begin with a number. Synthetic DOM only.
+for (const pageCount of [4, 5]) {
+  const expectedTitles = [
+    '如何使用 AI 自动整理收藏夹',
+    '从零实现一个浏览器工作台',
+    '5.2 万用户都在看的教程',
+    '标题未获取'
+  ];
+  const metrics = ['5.2万 00:28','3968 02:46','3.6万 13:00:52','8533 2 01:22'];
+  const anchors = expectedTitles.map((title, index) => {
+    const card = {
+      innerText: 'UP主名称\n' + metrics[index],
+      querySelectorAll: selector => selector.includes('[class*="title"]') && title !== '标题未获取'
+        ? [{innerText:title,getAttribute:()=>null}] :
+          selector.includes('[class*="name"]') ? [{innerText:'UP主名称',getAttribute:()=>null}] : []
+    };
+    return {
+      getAttribute: key => key === 'href'
+        ? 'https://www.bilibili.com/video/BV' + String(index+1).padStart(10,'0')
+        : null,
+      closest:()=>card,
+      innerText:metrics[index],
+    };
+  });
+  const folder={innerText:'默认收藏夹 ('+pageCount+')',getClientRects:()=>[{}]};
+  const wrapper={getClientRects:()=>[{}],querySelectorAll:()=>anchors};
+  const calls=[];
+  const document={
+    title:'fixture',body:{innerText:''},documentElement:{dataset:{}},
+    querySelector:selector=>selector.includes('fav-title')?{innerText:'默认收藏夹'}:null,
+    querySelectorAll:selector=>selector.includes('fav-item')&&selector.includes('active')?[folder]:
+      selector.includes('fav-list')?[wrapper]:[]
+  };
+  const window={__TAURI__:{core:{invoke:async(_,data)=>calls.push(data.payload)}}};
+  await runInNewContext(buildFavoritesReadbackScript('test-fixture','123456'),{
+    document,window,URL,setTimeout,location:{href:'https://space.bilibili.com/123456/favlist?fid=99'}
+  });
+  if (pageCount === 5) {
+    assert.equal(calls.at(-1)?.message_code,'BFC_START_FROM_FIRST_PAGE');
+  } else {
+    const saved=calls.find(call=>call.kind==='favorites');
+    assert.ok(saved,'single-page collection without a pager should still succeed');
+    assert.deepEqual(Array.from(saved.pages[0].items,item=>item.title),expectedTitles);
+  }
+}
+
 console.log('BFC_FAVORITES_VISIBLE_DOM=PASS (counts, delayed pagination, bounded timeout, access limit, cancellation)');
