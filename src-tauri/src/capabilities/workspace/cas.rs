@@ -7,10 +7,6 @@
 //! but a non-cooperating writer can still race the final rename syscall.
 use crate::security_policy as sp;
 use crate::shared::invocation::check_invocation_source;
-#[cfg(not(target_os = "linux"))]
-use std::fs::{self, File, OpenOptions};
-#[cfg(not(target_os = "linux"))]
-use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use tauri::AppHandle;
 
@@ -25,6 +21,10 @@ pub async fn write_file_cas(
     content: String,
 ) -> Result<(), String> {
     check_invocation_source(&webview, "write_file_cas", None, &app)?;
+    // XP-011R1: Windows has no handle-anchored CAS backend yet. Do not allow
+    // the former path-only fallback to write after checking a canonical path.
+    #[cfg(not(target_os = "linux"))]
+    return Err("FILE_SAVE_PLATFORM_UNSUPPORTED".into());
     sp::check_text_field("content", &content, MAX_EDITOR_BYTES).map_err(|e| e.to_string())?;
     sp::check_text_field("expected_content", &expected_content, MAX_EDITOR_BYTES)
         .map_err(|e| e.to_string())?;
@@ -57,139 +57,16 @@ fn save_if_unchanged(
     }
     #[cfg(not(target_os = "linux"))]
     {
-        save_if_unchanged_path(path, expected, content)
+        let _ = (path, roots, expected, content);
+        Err("FILE_SAVE_PLATFORM_UNSUPPORTED".into())
     }
-}
-
-#[cfg(not(target_os = "linux"))]
-fn save_if_unchanged_path(path: &Path, expected: &[u8], content: &[u8]) -> Result<(), String> {
-    if expected.len() > MAX_EDITOR_BYTES || content.len() > MAX_EDITOR_BYTES {
-        return Err("FILE_SAVE_TOO_LARGE".into());
-    }
-    let parent = path.parent().ok_or("FILE_PARENT_INVALID")?;
-    let name = path
-        .file_name()
-        .ok_or("FILE_NAME_INVALID")?
-        .to_string_lossy();
-    let metadata = fs::symlink_metadata(path).map_err(|_| "FILE_TARGET_MISSING")?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err("FILE_TARGET_NOT_REGULAR".into());
-    }
-    let lock_path = parent.join(format!(".{name}.browseros.lock"));
-    let mut lock_options = OpenOptions::new();
-    lock_options.read(true).write(true).create(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        lock_options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
-    }
-    let lock = lock_options
-        .open(&lock_path)
-        .map_err(|_| "FILE_LOCK_UNAVAILABLE")?;
-    lock.lock().map_err(|_| "FILE_LOCK_UNAVAILABLE")?;
-
-    let result = (|| {
-        let live_meta = fs::symlink_metadata(path).map_err(|_| "FILE_TARGET_MISSING")?;
-        if live_meta.file_type().is_symlink() || !live_meta.is_file() {
-            return Err("FILE_TARGET_NOT_REGULAR".into());
-        }
-        if live_meta.len() > MAX_EDITOR_BYTES as u64 {
-            return Err("FILE_SAVE_TOO_LARGE".into());
-        }
-        let mut current = Vec::with_capacity(live_meta.len() as usize);
-        let mut reader = OpenOptions::new();
-        reader.read(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            reader.custom_flags(libc::O_NOFOLLOW);
-        }
-        reader
-            .open(path)
-            .and_then(|file| {
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::MetadataExt;
-                    let opened = file.metadata()?;
-                    if (opened.dev(), opened.ino()) != (live_meta.dev(), live_meta.ino()) {
-                        return Err(std::io::Error::other("FILE_CHANGED"));
-                    }
-                }
-                file.take(MAX_EDITOR_BYTES as u64 + 1)
-                    .read_to_end(&mut current)
-            })
-            .map_err(|_| "FILE_READ_FAILED")?;
-        if current != expected {
-            return Err("FILE_CONFLICT".into());
-        }
-
-        let temp = parent.join(format!(".{name}.browseros-{}.tmp", uuid::Uuid::new_v4()));
-        let staged_result = (|| {
-            let mut options = OpenOptions::new();
-            options.write(true).create_new(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt;
-                options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
-            }
-            let mut staged = options.open(&temp).map_err(|_| "FILE_STAGE_FAILED")?;
-            staged.write_all(content).map_err(|_| "FILE_STAGE_FAILED")?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                staged
-                    .set_permissions(fs::Permissions::from_mode(
-                        live_meta.permissions().mode() & 0o777,
-                    ))
-                    .map_err(|_| "FILE_STAGE_FAILED")?;
-            }
-            #[cfg(not(unix))]
-            staged
-                .set_permissions(live_meta.permissions())
-                .map_err(|_| "FILE_STAGE_FAILED")?;
-            staged.sync_all().map_err(|_| "FILE_STAGE_FAILED")?;
-
-            let latest = fs::symlink_metadata(path).map_err(|_| "FILE_TARGET_MISSING")?;
-            if latest.file_type().is_symlink() || !latest.is_file() {
-                return Err("FILE_TARGET_NOT_REGULAR".into());
-            }
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::MetadataExt;
-                if (
-                    latest.dev(),
-                    latest.ino(),
-                    latest.mtime(),
-                    latest.mtime_nsec(),
-                    latest.len(),
-                ) != (
-                    live_meta.dev(),
-                    live_meta.ino(),
-                    live_meta.mtime(),
-                    live_meta.mtime_nsec(),
-                    live_meta.len(),
-                ) {
-                    return Err("FILE_CONFLICT".into());
-                }
-            }
-            fs::rename(&temp, path).map_err(|_| "FILE_REPLACE_FAILED")?;
-            File::open(parent)
-                .and_then(|directory| directory.sync_all())
-                .map_err(|_| "FILE_DURABILITY_UNCERTAIN".to_string())
-        })();
-        if staged_result.is_err() {
-            let _ = fs::remove_file(&temp);
-        }
-        staged_result
-    })();
-    drop(lock);
-    result
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
+    #[cfg(target_os = "linux")]
     use std::sync::{Arc, Barrier};
 
     fn fixture() -> (PathBuf, PathBuf) {
@@ -200,6 +77,7 @@ mod tests {
         (dir, file)
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn replace_is_atomic_and_conflicts_preserve_external_content() {
         let (dir, file) = fixture();
@@ -219,6 +97,7 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn concurrent_cooperating_writers_from_distinct_file_descriptors_have_one_winner() {
         let (dir, file) = fixture();
@@ -255,6 +134,7 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn target_symlink_and_oversized_draft_are_denied() {
         let (dir, file) = fixture();
@@ -273,6 +153,19 @@ mod tests {
             );
             assert_eq!(fs::read_to_string(&file).unwrap(), "before");
         }
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn non_linux_save_is_denied_without_mutating_the_file() {
+        let (dir, file) = fixture();
+        let roots = [dir.clone()];
+        assert_eq!(
+            save_if_unchanged(&file, &roots, b"before", b"unexpected"),
+            Err("FILE_SAVE_PLATFORM_UNSUPPORTED".into())
+        );
+        assert_eq!(fs::read(&file).unwrap(), b"before");
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
         fs::remove_dir_all(dir).unwrap();
     }
 }

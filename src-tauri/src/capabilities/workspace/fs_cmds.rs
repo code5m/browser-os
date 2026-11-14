@@ -28,6 +28,10 @@ pub fn move_path(
     dst_dir: String,
 ) -> Result<(), String> {
     check_invocation_source(&webview, "move_path", None, &app)?;
+    // Windows requires a handle-anchored, no-replace implementation. Keep
+    // this native command unavailable rather than using path-only fallback.
+    #[cfg(not(target_os = "linux"))]
+    return Err("FILE_MOVE_PLATFORM_UNSUPPORTED".into());
     let src_p = std::path::Path::new(&src);
     if !src_p.exists() {
         return Err("源路径不存在".into());

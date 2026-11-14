@@ -11,7 +11,8 @@
 //!   4. **容量上限**：单会话资源 ≤ `SESSION_MAX_RESOURCES`，会话总数 ≤ `SESSION_MAX_COUNT`
 //!      （超出按 `updated_at` 从旧到新删除）。
 
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use chrono::Utc;
@@ -26,15 +27,34 @@ pub fn session_file(dir: &Path, id: &str) -> PathBuf {
     dir.join(format!("{id}.json"))
 }
 
-/// 原子写：先写同目录 `.tmp`，再 rename（同分区 rename 是原子的）。
+/// 同目录唯一临时文件 + create_new + sync_all + rename。
+/// 避免多个写入共享固定 json.tmp 时相互覆盖；rename 失败则保留旧目标。
+/// Windows 的覆盖/崩溃恢复还需真实系统验收，不能凭此宣称 Windows PASS。
 pub fn atomic_write(path: &Path, content: &str) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("创建会话目录失败: {e}"))?;
     }
-    let tmp = path.with_extension("json.tmp");
-    fs::write(&tmp, content).map_err(|e| format!("写临时文件失败: {e}"))?;
-    fs::rename(&tmp, path).map_err(|e| format!("会话落盘 rename 失败: {e}"))?;
-    Ok(())
+    // Keep the .json.tmp suffix so existing prune_tmp_files can recover
+    // interrupted writes without a separate migration or cleanup format.
+    let tmp = path.with_extension(format!("{}.json.tmp", uuid::Uuid::new_v4()));
+    let staged = (|| -> Result<(), String> {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)
+            .map_err(|e| format!("创建临时文件失败: {e}"))?;
+        file.write_all(content.as_bytes())
+            .map_err(|e| format!("写临时文件失败: {e}"))?;
+        file.sync_all()
+            .map_err(|e| format!("同步临时文件失败: {e}"))?;
+        drop(file);
+        fs::rename(&tmp, path).map_err(|e| format!("会话落盘 rename 失败: {e}"))?;
+        Ok(())
+    })();
+    if staged.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    staged
 }
 
 /// 按字节截断（回退 UTF-8 字符边界），返回 (文本, 是否被截断)。

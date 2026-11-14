@@ -6,8 +6,10 @@ use parking_lot::RwLock;
 use std::collections::HashMap;
 #[cfg(target_os = "linux")]
 use std::os::unix::fs::PermissionsExt;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 use std::path::{Path, PathBuf};
+#[cfg(not(target_os = "linux"))]
+use tauri::webview::PageLoadEvent;
 use std::sync::Arc;
 use tauri::{
     webview::NewWindowResponse, AppHandle, Emitter, Manager, State, Webview, WebviewBuilder,
@@ -28,7 +30,7 @@ fn epoch_millis() -> i64 {
 // persistent session storage; a Bilibili login can disappear on restart.
 // Keep the browser profile separate from the trusted local app UI WebView and
 // never expose its contents through native commands or the BFC readback.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 fn browser_profile_path(app_data_dir: &Path) -> PathBuf {
     app_data_dir.join("browser-webview-profile")
 }
@@ -63,7 +65,37 @@ fn ensure_private_browser_profile(app: &AppHandle<Wry>) -> Result<PathBuf> {
     Ok(profile)
 }
 
-#[cfg(all(test, target_os = "linux"))]
+// Browser sub-WebViews use a single app-owned WebView2 user data folder.
+// The trusted main UI keeps its default, separate storage environment. This
+// directory inherits the current user's app-data ACL; ACL hardening and
+// WebView2 environment-option compatibility require Windows GUI verification.
+#[cfg(target_os = "windows")]
+fn ensure_private_browser_profile(app: &AppHandle<Wry>) -> Result<PathBuf> {
+    let base = app
+        .path()
+        .app_data_dir()
+        .map_err(|_| BrowserTabError::Platform("browser profile directory unavailable".into()))?;
+    std::fs::create_dir_all(&base)
+        .map_err(|_| BrowserTabError::Platform("browser profile base unavailable".into()))?;
+    let canonical_base = std::fs::canonicalize(&base)
+        .map_err(|_| BrowserTabError::Platform("browser profile base unavailable".into()))?;
+    let profile = browser_profile_path(&canonical_base);
+    if let Ok(meta) = std::fs::symlink_metadata(&profile) {
+        if !meta.is_dir() || meta.file_type().is_symlink() {
+            return Err(BrowserTabError::Platform("browser profile path invalid".into()));
+        }
+    }
+    std::fs::create_dir_all(&profile)
+        .map_err(|_| BrowserTabError::Platform("cannot create browser profile".into()))?;
+    let canonical_profile = std::fs::canonicalize(&profile)
+        .map_err(|_| BrowserTabError::Platform("browser profile unavailable".into()))?;
+    if canonical_profile != profile {
+        return Err(BrowserTabError::Platform("browser profile path invalid".into()));
+    }
+    Ok(canonical_profile)
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "windows")))]
 mod browser_profile_tests {
     use super::*;
 
@@ -123,38 +155,38 @@ impl TabManager {
             .parse()
             .map_err(|_| BrowserTabError::InvalidUrl(options.url.clone()))?;
 
-        // Linux WebKitGTK invokes on_navigation for subframe navigations as
-        // well as the main document. A busy page with srcdoc/about:blank
-        // iframes would overwrite the BrowserOS address bar. On Linux,
-        // notify::uri on the native WebView provides the authoritative MAIN
-        // frame URL; use that instead, below. Other platforms keep the
-        // original on_navigation path until equivalent native evidence exists.
-        #[cfg(not(target_os = "linux"))]
-        let nav_id = options.id.clone();
-        #[cfg(not(target_os = "linux"))]
-        let nav_app = self.app.clone();
+        // Navigation permission callbacks are NOT completion notifications.
+        // On Windows, use Tauri's page-load lifecycle rather than emitting
+        // NavigationFinished before the document actually finishes loading.
+        // Linux continues to use native WebKit main-frame URI observations.
         let mut builder = WebviewBuilder::new(&options.id, WebviewUrl::External(url))
-            .on_navigation(move |next_url| {
-                #[cfg(not(target_os = "linux"))]
-                {
-                    let _ = nav_app.emit(
-                        "browser-tabs://event",
-                        BrowserTabEvent::NavigationFinished {
-                            id: nav_id.clone(),
-                            url: next_url.to_string(),
-                        },
-                    );
-                }
-                #[cfg(target_os = "linux")]
-                let _ = next_url;
-                true
-            })
+            .on_navigation(|_| true)
             .transparent(options.transparent);
 
-        // Linux native browser tabs require a stable, private WebKit context
-        // so official website logins survive app restarts. This is controlled
-        // entirely by WebKit; BFC never reads or exports session credentials.
-        #[cfg(target_os = "linux")]
+        #[cfg(not(target_os = "linux"))]
+        {
+            let nav_id = options.id.clone();
+            let nav_app = self.app.clone();
+            builder = builder.on_page_load(move |_webview, payload| {
+                let url = payload.url().to_string();
+                let event = match payload.event() {
+                    PageLoadEvent::Started => BrowserTabEvent::NavigationStarted {
+                        id: nav_id.clone(),
+                        url,
+                    },
+                    PageLoadEvent::Finished => BrowserTabEvent::NavigationFinished {
+                        id: nav_id.clone(),
+                        url,
+                    },
+                };
+                let _ = nav_app.emit("browser-tabs://event", event);
+            });
+        }
+
+        // Linux and Windows browser tabs share one app-scoped persistent
+        // external-page profile. The trusted main UI uses a separate profile;
+        // BFC never reads or exports browser session credentials.
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         {
             let profile = ensure_private_browser_profile(&self.app)?;
             builder = builder.data_directory(profile);
