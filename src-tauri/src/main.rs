@@ -924,7 +924,8 @@ fn gui_mock_url(base: &str, case_id: &str, grid: usize) -> String {
 fn run_grid_gui_regression(app: tauri::AppHandle) {
     std::thread::spawn(move || {
         let report_path = std::env::var("M0_GUI_REGRESSION_REPORT")
-            .unwrap_or_else(|_| "/tmp/m0-6c-gui-regression.json".to_string());
+            .unwrap_or_else(|_| std::env::temp_dir()
+                .join("m0-6c-gui-regression.json").to_string_lossy().to_string());
         let mock_base = std::env::var("M0_GUI_MOCK_BASE").unwrap_or_default();
         let mut steps: Vec<GuiRegressionStep> = Vec::new();
         let mut fails: Vec<String> = Vec::new();
@@ -1220,7 +1221,8 @@ fn run_m0_driver(app: tauri::AppHandle, cfg: bridge::M0Config) {
         let report_dir = cfg
             .report_dir
             .clone()
-            .unwrap_or_else(|| "/tmp/mvp-browser-os-m0".to_string());
+            .unwrap_or_else(|| std::env::temp_dir()
+                .join("mvp-browser-os-m0").to_string_lossy().to_string());
         let _ = std::fs::create_dir_all(&report_dir);
         let result_file = format!("{report_dir}/{}.driver.result", cfg.driver);
         let start_file = format!("{report_dir}/{}.driver.start", cfg.driver);
@@ -1585,7 +1587,7 @@ fn main() {
             if let Some(main_wv) = app.get_webview("main") {
                 let _ = tauri_plugin_browser_tabs::ensure_native_layout(&main_wv);
             }
-            let _ = std::fs::write("/tmp/mvp-life.log", "main-window-created-and-shown\n");
+            let _ = std::fs::write(std::env::temp_dir().join("mvp-life.log"), "main-window-created-and-shown\n");
             // 宫格子进程管理器：注入 AppHandle（事件转发/定位换算/崩溃自愈）
             app.state::<AppState>()
                 .grid_manager
@@ -1939,7 +1941,7 @@ fn main() {
         ])
         .build(tauri::generate_context!())
         .unwrap_or_else(|e| {
-            let _ = std::fs::write("/tmp/mvp-life.log", format!("RUN_ERROR: {e}\n"));
+            let _ = std::fs::write(std::env::temp_dir().join("mvp-life.log"), format!("RUN_ERROR: {e}\n"));
             std::process::exit(1);
         })
         .run(|app, event| {
