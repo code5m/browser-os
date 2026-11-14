@@ -73,6 +73,7 @@ pub fn take_pending_open_urls(webview: tauri::Webview, app: AppHandle) -> Vec<St
 }
 
 /// M1-4：desktop 条目是否可用于 URL 路由（声明了 http(s) handler 且 Exec 带 %u）。
+#[cfg(target_os = "linux")]
 fn desktop_entry_usable(path: &str) -> bool {
     std::fs::read_to_string(path)
         .map(|c| c.contains("x-scheme-handler/http") && c.contains("%u"))
@@ -84,6 +85,7 @@ fn desktop_entry_usable(path: &str) -> bool {
 /// MimeType/%u）时，在 ~/.local/share/applications 生成指向当前二进制的同名
 /// 条目（XDG 用户级优先，自然遮蔽旧系统条目）。本函数只声明 MIME，不改变
 /// 系统默认浏览器。返回条目文件名（如 mvp-browser-os.desktop）。
+#[cfg(target_os = "linux")]
 fn ensure_desktop_entry() -> Result<String, String> {
     const DESKTOP_NAME: &str = "mvp-browser-os.desktop";
     let home = std::env::var("HOME").map_err(|e| format!("HOME 未设置: {e}"))?;
@@ -124,6 +126,38 @@ fn ensure_desktop_entry() -> Result<String, String> {
 pub fn get_default_browser(webview: tauri::Webview) -> Result<String, String> {
     crate::shared::native_legacy_policy::require_main(&webview, "get_default_browser")?;
 
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::System::Registry::{
+            RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_SZ,
+        };
+        let wide = |value: &str| -> Vec<u16> {
+            value.encode_utf16().chain(std::iter::once(0)).collect()
+        };
+        let subkey = wide(r"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\https\UserChoice");
+        let name = wide("ProgId");
+        let mut value = vec![0u16; 1024];
+        let mut bytes = (value.len() * 2) as u32;
+        let status = unsafe {
+            RegGetValueW(
+                HKEY_CURRENT_USER, subkey.as_ptr(), name.as_ptr(),
+                RRF_RT_REG_SZ, std::ptr::null_mut(),
+                value.as_mut_ptr() as *mut std::ffi::c_void, &mut bytes,
+            )
+        };
+        if status != 0 {
+            return Err(format!("WINDOWS_DEFAULT_BROWSER_LOOKUP_FAILED: {status}"));
+        }
+        let len = (bytes as usize / 2).min(value.len());
+        let name = String::from_utf16_lossy(&value[..len])
+            .trim_end_matches('\0').to_string();
+        if name.trim().is_empty() {
+            return Err("WINDOWS_DEFAULT_BROWSER_UNKNOWN".into());
+        }
+        return Ok(name);
+    }
+    #[cfg(target_os = "linux")]
+    {
     let out = std::process::Command::new("xdg-settings")
         .args(["get", "default-web-browser"])
         .output()
@@ -135,6 +169,8 @@ pub fn get_default_browser(webview: tauri::Webview) -> Result<String, String> {
         ));
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }
+
 }
 
 /// M1-4：把本应用设为系统默认浏览器。
@@ -156,6 +192,18 @@ pub fn set_default_browser(
         )
         .map_err(|_| "NATIVE_USER_CONFIRMATION_DENIED")?;
 
+    #[cfg(target_os = "windows")]
+    {
+        // Windows 11 requires the user to choose their defaults in Settings.
+        // BrowserOS opens the official UI only after the existing native
+        // one-time intent has been consumed; it does not rewrite UserChoice.
+        open::that("ms-settings:defaultapps")
+            .map_err(|e| format!("WINDOWS_DEFAULT_APPS_OPEN_FAILED: {e}"))?;
+        workspace::log_audit(&app, "open_windows_default_apps", "user_confirmed".into());
+        return Ok("WINDOWS_DEFAULT_APPS_SETTINGS_OPENED".into());
+    }
+    #[cfg(target_os = "linux")]
+    {
     let desktop = ensure_desktop_entry()?;
     let out = std::process::Command::new("xdg-settings")
         .args(["set", "default-web-browser", &desktop])
@@ -174,6 +222,7 @@ pub fn set_default_browser(
     eprintln!("[open-url] set default browser -> {desktop}");
     workspace::log_audit(&app, "set_default_browser", desktop.clone());
     Ok(desktop)
+    }
 }
 
 /// ready 信号（契约 §6.1）：主前端完成 mount + 2×rAF 后调用本命令，作为
