@@ -13,12 +13,14 @@ use windows_sys::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Thread32First, Thread32Next, THREADENTRY32, TH32CS_SNAPTHREAD,
 };
 use windows_sys::Win32::System::Threading::{
-    OpenProcess, OpenThread, ResumeThread, PROCESS_SET_QUOTA, PROCESS_TERMINATE,
+    GetProcessIdOfThread, OpenProcess, OpenThread, ResumeThread,
+    PROCESS_SET_QUOTA, PROCESS_TERMINATE,
 };
 
 pub const CREATE_SUSPENDED: u32 = 0x0000_0004;
 const PROCESS_SUSPEND_RESUME: u32 = 0x0800;
 const THREAD_SUSPEND_RESUME: u32 = 0x0002;
+const THREAD_QUERY_LIMITED_INFORMATION: u32 = 0x0800;
 const WAIT_OBJECT_0: u32 = 0;
 const SYNCHRONIZE: u32 = 0x0010_0000;
 const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
@@ -122,12 +124,25 @@ impl JobObject {
                 let _ = owner.terminate();
                 return Err(format!("WINDOWS_SUSPENDED_PROCESS_THREAD_COUNT:{thread_count}"));
             }
-            let thread = OpenThread(THREAD_SUSPEND_RESUME, 0, primary_tid);
+            let thread = OpenThread(
+                THREAD_SUSPEND_RESUME | THREAD_QUERY_LIMITED_INFORMATION,
+                0,
+                primary_tid,
+            );
             if thread.is_null() {
                 let error = std::io::Error::last_os_error();
                 CloseHandle(process);
                 let _ = owner.terminate();
                 return Err(format!("WINDOWS_PRIMARY_THREAD_OPEN: {error}"));
+            }
+            // Thread IDs can be reused between the Toolhelp snapshot and
+            // OpenThread. Re-check ownership on the opened kernel handle
+            // before resuming; never resume a recycled thread ID.
+            if GetProcessIdOfThread(thread) != pid {
+                CloseHandle(thread);
+                CloseHandle(process);
+                let _ = owner.terminate();
+                return Err("WINDOWS_PRIMARY_THREAD_OWNER_MISMATCH".into());
             }
             let previous = ResumeThread(thread);
             CloseHandle(thread);
