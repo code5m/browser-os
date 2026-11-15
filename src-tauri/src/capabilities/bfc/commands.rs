@@ -7,18 +7,148 @@ use super::runtime::{
 use crate::bridge::AppState;
 use crate::shared::invocation::check_invocation_source;
 use reqwest::header::{HeaderName, HeaderValue, ORIGIN};
-use serde::Serialize;
+use ring::hmac;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{collections::HashSet, time::Duration};
+use std::{collections::HashSet, path::PathBuf, time::Duration};
 use tauri::{AppHandle, Manager, Webview};
 use url::Url;
 
 const BFC_ORIGIN: &str = "http://127.0.0.1:4198";
-const BFC_SESSION_URL: &str = "http://127.0.0.1:4198/api/session";
-const BFC_HEALTH_URL: &str = "http://127.0.0.1:4198/api/health";
-const BFC_CAPABILITIES_URL: &str = "http://127.0.0.1:4198/api/capabilities";
-const BFC_IMPORT_URL: &str = "http://127.0.0.1:4198/api/readback/import";
+const BFC_BROWSEROS_SESSION_PATH: &str = "/api/browseros/session";
+const BFC_IDENTITY_PATH: &str = "/api/identity";
+const BFC_HEALTH_PATH: &str = "/api/health";
+const BFC_CAPABILITIES_PATH: &str = "/api/capabilities";
+const BFC_IMPORT_PATH: &str = "/api/readback/import";
+const BFC_IDENTITY_FILE: &str = ".browseros-service-identity.json";
+const BFC_PROTOCOL_VERSION: u32 = 1;
 const MAX_REMOTE_READBACK_BYTES: usize = 4_500_000;
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BfcServiceIdentity {
+    protocol_version: u32,
+    service_id: String,
+    token: String,
+}
+
+fn bfc_data_dir() -> PathBuf {
+    if let Some(path) = std::env::var_os("BILIBILI_FAVORITES_DATA_DIR")
+        .or_else(|| std::env::var_os("BROWSEROS_BFC_DATA_DIR"))
+        .filter(|path| !path.is_empty())
+    {
+        return PathBuf::from(path);
+    }
+    #[cfg(windows)]
+    {
+        let base = std::env::var_os("LOCALAPPDATA")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .map(PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir);
+        return base.join("BrowserOS").join("Bilibili-Favorites-Review");
+    }
+    #[cfg(not(windows))]
+    {
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir);
+        home.join("Documents").join("Bilibili-Favorites-Review")
+    }
+}
+
+fn decode_hex(value: &str) -> Option<Vec<u8>> {
+    if value.len() % 2 != 0 {
+        return None;
+    }
+    value.as_bytes().chunks_exact(2).map(|pair| {
+        let high = (pair[0] as char).to_digit(16)?;
+        let low = (pair[1] as char).to_digit(16)?;
+        Some(((high << 4) | low) as u8)
+    }).collect()
+}
+
+fn load_bfc_service_identity() -> Result<BfcServiceIdentity, &'static str> {
+    let directory = bfc_data_dir();
+    let path = directory.join(BFC_IDENTITY_FILE);
+    let bytes = crate::capabilities::workspace::safe_paths::read_regular(
+        &path, &[directory], 4096,
+    ).map_err(|_| "BFC_LOCAL_IDENTITY_UNAVAILABLE")?;
+    let identity: BfcServiceIdentity =
+        serde_json::from_slice(&bytes).map_err(|_| "BFC_LOCAL_IDENTITY_INVALID")?;
+    if identity.protocol_version != BFC_PROTOCOL_VERSION
+        || uuid::Uuid::parse_str(&identity.service_id).is_err()
+        || decode_hex(&identity.token).is_none_or(|token| token.len() != 32)
+    {
+        return Err("BFC_LOCAL_IDENTITY_INVALID");
+    }
+    Ok(identity)
+}
+
+async fn verify_local_bfc_service(
+    client: &reqwest::Client,
+    origin: &str,
+    identity: &BfcServiceIdentity,
+) -> Result<(Value, Value), &'static str> {
+    let health: Value = client.get(format!("{origin}{BFC_HEALTH_PATH}"))
+        .send().await.map_err(|_| "BFC_LOCAL_SERVICE_UNAVAILABLE")?
+        .error_for_status().map_err(|_| "BFC_LOCAL_SERVICE_UNTRUSTED")?
+        .json().await.map_err(|_| "BFC_LOCAL_SERVICE_UNTRUSTED")?;
+    if health.get("ok").and_then(Value::as_bool) != Some(true)
+        || health.get("localOnly").and_then(Value::as_bool) != Some(true)
+        || health.get("bilibiliNetworkRequests").and_then(Value::as_u64) != Some(0)
+        || health.get("protocolVersion").and_then(Value::as_u64)
+            != Some(identity.protocol_version as u64)
+        || health.get("serviceId").and_then(Value::as_str) != Some(identity.service_id.as_str())
+    {
+        return Err("BFC_LOCAL_SERVICE_UNTRUSTED");
+    }
+
+    let capabilities: Value = client.get(format!("{origin}{BFC_CAPABILITIES_PATH}"))
+        .send().await.map_err(|_| "BFC_LOCAL_SERVICE_UNAVAILABLE")?
+        .error_for_status().map_err(|_| "BFC_LOCAL_SERVICE_UNTRUSTED")?
+        .json().await.map_err(|_| "BFC_LOCAL_SERVICE_UNTRUSTED")?;
+    if capabilities.get("version").and_then(Value::as_u64)
+            != Some(identity.protocol_version as u64)
+        || capabilities.get("protocolVersion").and_then(Value::as_u64)
+            != Some(identity.protocol_version as u64)
+        || capabilities.get("serviceId").and_then(Value::as_str)
+            != Some(identity.service_id.as_str())
+        || capabilities.pointer("/bilibili/readSnapshotOnly").and_then(Value::as_bool) != Some(true)
+        || capabilities.pointer("/bilibili/accountWrites").and_then(Value::as_bool) != Some(false)
+    {
+        return Err("BFC_LOCAL_SERVICE_UNTRUSTED");
+    }
+
+    // The token is read from the per-user identity file protected by the
+    // service's Windows ACL / Unix 0600 mode. A port occupant can spoof public
+    // health/capability JSON, but cannot produce this challenge proof.
+    let nonce = uuid::Uuid::new_v4().simple().to_string();
+    let identity_response: Value = client.get(format!("{origin}{BFC_IDENTITY_PATH}"))
+        .header("x-browseros-service-token", &identity.token)
+        .header("x-browseros-challenge", &nonce)
+        .send().await.map_err(|_| "BFC_LOCAL_SERVICE_UNAVAILABLE")?
+        .error_for_status().map_err(|_| "BFC_LOCAL_SERVICE_UNTRUSTED")?
+        .json().await.map_err(|_| "BFC_LOCAL_SERVICE_UNTRUSTED")?;
+    let proof = identity_response.get("proof").and_then(Value::as_str)
+        .and_then(decode_hex).ok_or("BFC_LOCAL_SERVICE_UNTRUSTED")?;
+    if identity_response.get("ok").and_then(Value::as_bool) != Some(true)
+        || identity_response.get("serviceId").and_then(Value::as_str)
+            != Some(identity.service_id.as_str())
+        || identity_response.get("protocolVersion").and_then(Value::as_u64)
+            != Some(identity.protocol_version as u64)
+    {
+        return Err("BFC_LOCAL_SERVICE_UNTRUSTED");
+    }
+    let token = decode_hex(&identity.token).ok_or("BFC_LOCAL_IDENTITY_INVALID")?;
+    let key = hmac::Key::new(hmac::HMAC_SHA256, &token);
+    let transcript = format!(
+        "browseros-bfc-identity|{nonce}|{}|{}",
+        identity.service_id, identity.protocol_version
+    );
+    hmac::verify(&key, transcript.as_bytes(), &proof)
+        .map_err(|_| "BFC_LOCAL_SERVICE_UNTRUSTED")?;
+    Ok((health, capabilities))
+}
 
 #[derive(Clone, Debug, Serialize)]
 pub struct BfcServiceStatus {
@@ -157,55 +287,46 @@ pub async fn bfc_service_status(
     webview: Webview,
 ) -> Result<BfcServiceStatus, String> {
     main_only(&app, &webview, "bfc_service_status")?;
-    let client = match client() {
-        Ok(client) => client,
-        Err(_) => {
-            return Ok(BfcServiceStatus {
-                online: false,
-                local_only: None,
-                bilibili_network_requests: None,
-                read_snapshot_only: None,
-                complete_snapshot: None,
-                message_code: Some("BFC_LOCAL_SERVICE_UNAVAILABLE".into()),
-            });
-        }
-    };
-    let health = match client.get(BFC_HEALTH_URL).send().await {
-        Ok(response) if response.status().is_success() => response.json::<Value>().await.ok(),
-        _ => None,
-    };
-    let Some(health) = health else {
-        return Ok(BfcServiceStatus {
+    let identity = match load_bfc_service_identity() {
+        Ok(identity) => identity,
+        Err(code) => return Ok(BfcServiceStatus {
             online: false,
             local_only: None,
             bilibili_network_requests: None,
             read_snapshot_only: None,
             complete_snapshot: None,
-            message_code: Some("BFC_LOCAL_SERVICE_UNAVAILABLE".into()),
-        });
+            message_code: Some(code.into()),
+        }),
     };
-    let capabilities = match client.get(BFC_CAPABILITIES_URL).send().await {
-        Ok(response) if response.status().is_success() => response.json::<Value>().await.ok(),
-        _ => None,
+    let client = match client() {
+        Ok(client) => client,
+        Err(_) => return Ok(BfcServiceStatus {
+            online: false,
+            local_only: None,
+            bilibili_network_requests: None,
+            read_snapshot_only: None,
+            complete_snapshot: None,
+            message_code: Some("BFC_HTTP_CLIENT_UNAVAILABLE".into()),
+        }),
     };
-    Ok(BfcServiceStatus {
-        online: health.get("ok").and_then(Value::as_bool).unwrap_or(true),
-        local_only: health.get("localOnly").and_then(Value::as_bool),
-        bilibili_network_requests: health
-            .get("bilibiliNetworkRequests")
-            .and_then(Value::as_u64),
-        read_snapshot_only: capabilities
-            .as_ref()
-            .and_then(|value| value.get("bilibili"))
-            .and_then(|value| value.get("readSnapshotOnly"))
-            .and_then(Value::as_bool),
-        complete_snapshot: capabilities
-            .as_ref()
-            .and_then(|value| value.get("bilibili"))
-            .and_then(|value| value.get("completeSnapshot"))
-            .and_then(Value::as_bool),
-        message_code: None,
-    })
+    match verify_local_bfc_service(&client, BFC_ORIGIN, &identity).await {
+        Ok((health, capabilities)) => Ok(BfcServiceStatus {
+            online: true,
+            local_only: health.get("localOnly").and_then(Value::as_bool),
+            bilibili_network_requests: health.get("bilibiliNetworkRequests").and_then(Value::as_u64),
+            read_snapshot_only: capabilities.pointer("/bilibili/readSnapshotOnly").and_then(Value::as_bool),
+            complete_snapshot: capabilities.pointer("/bilibili/completeSnapshot").and_then(Value::as_bool),
+            message_code: None,
+        }),
+        Err(code) => Ok(BfcServiceStatus {
+            online: false,
+            local_only: None,
+            bilibili_network_requests: None,
+            read_snapshot_only: None,
+            complete_snapshot: None,
+            message_code: Some(code.into()),
+        }),
+    }
 }
 
 #[tauri::command]
@@ -217,7 +338,7 @@ pub async fn bfc_readback_finish(
     main_only(&app, &webview, "bfc_readback_finish")?;
     let runtime = app.state::<BfcRuntime>();
     let (_scan_id, payload) = runtime.prepare_import(&ticket)?;
-    match import_to_local_bfc(&payload).await {
+    match import_to_local_bfc(&app, &payload).await {
         Ok(result) => {
             runtime.mark_imported(&ticket, result.clone())?;
             Ok(result)
@@ -247,12 +368,32 @@ fn client() -> Result<reqwest::Client, String> {
         .map_err(|_| "BFC_HTTP_CLIENT_UNAVAILABLE".into())
 }
 
-async fn import_to_local_bfc(payload: &BfcImportPayload) -> Result<BfcImportResult, ImportFailure> {
+async fn import_to_local_bfc(
+    app: &AppHandle,
+    payload: &BfcImportPayload,
+) -> Result<BfcImportResult, ImportFailure> {
+    let identity = load_bfc_service_identity()
+        .map_err(ImportFailure::NotSent)?;
     let client = client().map_err(|_| ImportFailure::NotSent("BFC_HTTP_CLIENT_UNAVAILABLE"))?;
-    let origin = HeaderValue::from_static(BFC_ORIGIN);
+    import_to_local_bfc_with_identity(&client, payload, &identity, BFC_ORIGIN).await
+}
+
+async fn import_to_local_bfc_with_identity(
+    client: &reqwest::Client,
+    payload: &BfcImportPayload,
+    identity: &BfcServiceIdentity,
+    origin: &str,
+) -> Result<BfcImportResult, ImportFailure> {
+    // Complete identity, protocol and capability checks before any snapshot
+    // body is serialized or transmitted to the loopback port.
+    verify_local_bfc_service(client, origin, identity)
+        .await.map_err(ImportFailure::NotSent)?;
+    let origin_header = HeaderValue::from_str(origin)
+        .map_err(|_| ImportFailure::NotSent("BFC_HTTP_ORIGIN_INVALID"))?;
     let session_response = client
-        .get(BFC_SESSION_URL)
-        .header(ORIGIN, origin.clone())
+        .get(format!("{origin}{BFC_BROWSEROS_SESSION_PATH}"))
+        .header(ORIGIN, origin_header.clone())
+        .header("x-browseros-service-token", &identity.token)
         .send()
         .await
         .map_err(|_| ImportFailure::NotSent("BFC_LOCAL_SERVICE_UNAVAILABLE"))?;
@@ -263,15 +404,20 @@ async fn import_to_local_bfc(payload: &BfcImportPayload) -> Result<BfcImportResu
         .json()
         .await
         .map_err(|_| ImportFailure::NotSent("BFC_LOCAL_SESSION_INVALID"))?;
-    let csrf = session
-        .get("token")
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty())
+    let csrf = session.get("token").and_then(Value::as_str)
+        .filter(|value| decode_hex(value).is_some_and(|bytes| bytes.len() == 32))
         .ok_or(ImportFailure::NotSent("BFC_LOCAL_SESSION_INVALID"))?;
+    if session.get("serviceId").and_then(Value::as_str) != Some(identity.service_id.as_str())
+        || session.get("protocolVersion").and_then(Value::as_u64)
+            != Some(identity.protocol_version as u64)
+    {
+        return Err(ImportFailure::NotSent("BFC_LOCAL_SERVICE_UNTRUSTED"));
+    }
 
     let response = client
-        .post(BFC_IMPORT_URL)
-        .header(ORIGIN, origin)
+        .post(format!("{origin}{BFC_IMPORT_PATH}"))
+        .header(ORIGIN, origin_header)
+        .header("x-browseros-service-token", &identity.token)
         .header(HeaderName::from_static("x-local-csrf"), csrf)
         .json(payload)
         .send()
