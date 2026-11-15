@@ -98,6 +98,8 @@ while ($servicePending.Count -gt 0) {
   }
 }
 foreach ($child in $serviceChildren) {
+  & $icacls $child '/setowner' "*$($currentSid.Value)" | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw "Cannot set BFC service source owner: $child" }
   & $icacls $child '/reset' | Out-Null
   if ($LASTEXITCODE -ne 0) { throw "Cannot reset BFC service source ACL: $child" }
 }
@@ -157,6 +159,8 @@ while ($pending.Count -gt 0) {
 # Reset each existing child separately so it inherits only the protected root
 # DACL. Then verify every object's effective explicit/inherited rules.
 foreach ($child in $children) {
+  & $icacls $child '/setowner' "*$($currentSid.Value)" | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw "Cannot set BFC data object owner: $child" }
   & $icacls $child '/reset' | Out-Null
   if ($LASTEXITCODE -ne 0) { throw "Cannot reset BFC data ACL: $child" }
 }
