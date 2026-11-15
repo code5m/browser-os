@@ -149,6 +149,7 @@ jobs:
           cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os authorized_windows_read -- --test-threads=1
           cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os pinned_handle_move -- --test-threads=1
           cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os local_owner_pipe_roundtrip -- --test-threads=1
+          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os suspended_spawn_assigns_job_before_immediate_grandchild_can_run -- --test-threads=1
           cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os job_tree_is_terminated -- --test-threads=1
           cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os windows_script_whitelist_rejects_shell_execution -- --test-threads=1
           cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os windows_node_script_executes_in_job -- --test-threads=1
