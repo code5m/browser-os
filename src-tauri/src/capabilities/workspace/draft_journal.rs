@@ -76,9 +76,8 @@ fn raw_key(create: bool, dir: &Path) -> Result<Option<[u8; 32]>, String> {
     }
     #[cfg(windows)]
     {
-        use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+        use std::os::windows::fs::OpenOptionsExt;
         b.custom_flags(0x0020_0000); // FILE_FLAG_OPEN_REPARSE_POINT
-        let _ = MetadataExt::file_attributes;
     }
     // A stable process-shared lock prevents concurrent first-run key rotation.
     let guard = b
