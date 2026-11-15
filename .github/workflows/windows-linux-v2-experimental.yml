@@ -19,6 +19,7 @@ jobs:
           node-version: '22'
       - run: node tests/check-windows-linux-v2-source-contract.mjs
       - run: node tests/check-bfc-native-contract.mjs
+      - run: node tests/check-browser-navigation-and-hang-diagnostics.mjs
       - run: git diff --check HEAD^ HEAD
   windows-bfc-loopback:
     runs-on: windows-latest
