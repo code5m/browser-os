@@ -28,7 +28,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: code5m/bfc-workbench
-          ref: f98f280e8194e40df106d7176c92c9402215e330
+          ref: 6aedd62ebe911fe75cc039c3600403c51166b339
           path: bfc-workbench
       - uses: actions/setup-node@v4
         with:
@@ -52,13 +52,33 @@ jobs:
               } catch { }
             }
             if (-not $ready) { throw 'Windows BFC local service failed to start' }
-            $session = Invoke-RestMethod 'http://127.0.0.1:4198/api/session'
+            $identityPath = Join-Path $env:BILIBILI_FAVORITES_DATA_DIR '.browseros-service-identity.json'
+            $identity = Get-Content -LiteralPath $identityPath -Raw | ConvertFrom-Json
             $caps = Invoke-RestMethod 'http://127.0.0.1:4198/api/capabilities'
-            if ($health.localOnly -ne $true -or $health.bilibiliNetworkRequests -ne 0 -or
-                -not $session.token -or $caps.bilibili.readSnapshotOnly -ne $true) {
-              throw 'Windows BFC service contract invalid'
+            $nonce = [Guid]::NewGuid().ToString('N')
+            $tokenBytes = [Convert]::FromHexString($identity.token)
+            $hmac = [Security.Cryptography.HMACSHA256]::new($tokenBytes)
+            $transcript = "browseros-bfc-identity|$nonce|$($identity.serviceId)|$($identity.protocolVersion)"
+            $expectedProof = [Convert]::ToHexString($hmac.ComputeHash([Text.Encoding]::UTF8.GetBytes($transcript))).ToLowerInvariant()
+            $serviceHeaders = @{
+              'X-BrowserOS-Service-Token' = $identity.token
+              'X-BrowserOS-Challenge' = $nonce
             }
-            Write-Host 'BFC_WINDOWS_LOOPBACK_HEALTH=PASS'
+            $proof = Invoke-RestMethod 'http://127.0.0.1:4198/api/identity' -Headers $serviceHeaders
+            if ($health.ok -ne $true -or $health.localOnly -ne $true -or
+                $health.bilibiliNetworkRequests -ne 0 -or $health.protocolVersion -ne 1 -or
+                $caps.version -ne 1 -or $caps.protocolVersion -ne 1 -or
+                $caps.serviceId -ne $identity.serviceId -or $caps.bilibili.readSnapshotOnly -ne $true -or
+                $caps.bilibili.accountWrites -ne $false -or
+                $proof.proof -ne $expectedProof -or $proof.serviceId -ne $identity.serviceId) {
+              throw 'Windows BFC service identity/capability contract invalid'
+            }
+            $session = Invoke-RestMethod 'http://127.0.0.1:4198/api/browseros/session' -Headers @{
+              'X-BrowserOS-Service-Token' = $identity.token
+            }
+            if (-not $session.token -or $session.serviceId -ne $identity.serviceId -or
+                $session.protocolVersion -ne 1) { throw 'Authenticated BFC session invalid' }
+            Write-Host 'BFC_WINDOWS_LOOPBACK_IDENTITY=PASS'
             # No real user data or Bilibili network calls. Verify that a
             # minimal synthetic readback snapshot reaches disk with receipt.
             $fixture = @{
@@ -76,6 +96,7 @@ jobs:
             $receipt = Invoke-RestMethod 'http://127.0.0.1:4198/api/readback/import' -Method POST -ContentType 'application/json' -Headers @{
               Origin = 'http://127.0.0.1:4198'
               'X-Local-CSRF' = $session.token
+              'X-BrowserOS-Service-Token' = $identity.token
             } -Body $fixture
             if ($receipt.ok -ne $true -or $receipt.scanId -ne 'windows_ci_fixture_001' -or
                 $receipt.pages -ne 1 -or $receipt.cards -ne 1) {
