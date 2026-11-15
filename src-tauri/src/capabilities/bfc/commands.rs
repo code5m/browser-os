@@ -9,7 +9,7 @@ use crate::shared::invocation::check_invocation_source;
 use ring::hmac;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{collections::HashSet, io, net::SocketAddr, path::PathBuf, time::Duration};
+use std::{collections::HashSet, net::SocketAddr, path::PathBuf, time::Duration};
 use tokio::{
     io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     net::TcpStream,
@@ -161,8 +161,8 @@ impl BfcHttpConnection {
             || !path.starts_with('/')
             || path.contains('\r') || path.contains('\n')
             || headers.iter().any(|(name, value)|
-                name.is_empty() || name.contains(['\r', '\n', ':'])
-                || value.contains(['\r', '\n']))
+                name.is_empty() || name.contains('\r') || name.contains('\n') || name.contains(':')
+                || value.contains('\r') || value.contains('\n'))
         {
             return Err("BFC_HTTP_REQUEST_INVALID");
         }
@@ -179,7 +179,7 @@ impl BfcHttpConnection {
         }
         head.push_str("\r\n");
 
-        // Do not let reqwest/Hyper silently establish a new connection after
+        // Do not let an HTTP client silently establish a new connection after
         // the identity challenge. The payload is written only on this socket.
         let stream = self.reader.get_mut();
         tokio::time::timeout(Duration::from_secs(5), async {
