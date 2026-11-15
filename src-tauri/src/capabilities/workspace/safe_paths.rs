@@ -513,6 +513,28 @@ mod windows {
         }
         Ok(file)
     }
+    fn open_destination_directory(path: &Path) -> io::Result<File> {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
+        const FILE_ADD_FILE: u32 = 0x0000_0002;
+        const FILE_ADD_SUBDIRECTORY: u32 = 0x0000_0004;
+        const SYNCHRONIZE: u32 = 0x0010_0000;
+        let mut options = OpenOptions::new();
+        options.access_mode(
+            FILE_READ_ATTRIBUTES | FILE_ADD_FILE | FILE_ADD_SUBDIRECTORY | SYNCHRONIZE
+        )
+        .share_mode(FILE_SHARE_READ_WRITE_DELETE)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS);
+        let directory = options.open(path)?;
+        let metadata = directory.metadata()?;
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+            || !metadata.is_dir()
+        {
+            return Err(denied());
+        }
+        Ok(directory)
+    }
+
     fn final_path(file: &File) -> io::Result<String> {
         let handle = file.as_raw_handle() as _;
         let n = unsafe { GetFinalPathNameByHandleW(handle, std::ptr::null_mut(), 0, 0) };
@@ -576,7 +598,10 @@ mod windows {
             return Err(denied());
         }
         let source_path = authorize(&source, roots)?;
-        let destination = open(dest_dir, true)?;
+        // Rename requires FILE_ADD_FILE / FILE_ADD_SUBDIRECTORY rights on
+        // the pinned destination directory handle. A read-only directory
+        // handle passes path checks but fails every real FileRenameInfo call.
+        let destination = open_destination_directory(dest_dir)?;
         let destination_path = authorize(&destination, roots)?;
         if destination_path == source_path
             || meta.is_dir() && destination_path.starts_with(&(source_path + "\\")) {
