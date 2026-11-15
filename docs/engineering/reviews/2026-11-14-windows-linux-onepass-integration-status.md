@@ -18,7 +18,7 @@
 | 终端与脚本 | Windows PowerShell/ConPTY、Job Object 回收；审核后的 Node/Python 脚本允许 Job Object 调度、取消/超时，其他 shell 解释器拒绝 | Job Object 并非受限 Token 沙箱；Windows 长时间与多子进程压力测试待结果 |
 | Agent 与 MCP | Windows 限定工作区只读 Agent 文件查看；skills list/read、knowledge_search 实现，敏感行隐去、跨目录拒绝 | Windows Agent 写文件/MCP 子进程/LSP 沙箱尚未安全实现，仍拒绝危险命令 |
 | AI 与 OS | Credential Manager keyring、Windows 系统目录 curl.exe、可选 Python profile 导入；默认浏览器 ProgId 查看和经用户确认打开 Windows Settings | 真实 AI Provider/凭据生命周期及 OS 功能验收待结果 |
-| BFC 本地服务 | Windows loopback health/session/CSRF、模拟 readback import receipt + 文件落盘、PowerShell foreground launcher；外部 bfc-workbench pin f98f280e8194e40df106d7176c92c9402215e330 | 真实 B 站授权会话及打包后置；曾发生仅 200ms 轮询导致偶发 async 测试超时，保留断言改为最多 5s 等实际完成 |
+| BFC 本地服务 | Windows loopback health/session/CSRF、模拟 readback import receipt + 文件落盘、PowerShell foreground launcher；外部 bfc-workbench pin 6aedd62ebe911fe75cc039c3600403c51166b339 | 真实 B 站授权会话及打包后置；曾发生仅 200ms 轮询导致偶发 async 测试超时，保留断言改为最多 5s 等实际完成 |
 
 ## 证据（按提交 SHA，不跨版本传递）
 
