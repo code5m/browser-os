@@ -22,6 +22,33 @@ use crate::domain::{
     SESSION_PREVIEW_MAX_BYTES, SESSION_TITLE_MAX_BYTES,
 };
 
+/// Atomically replace a file staged in the same directory.
+/// Unix rename replaces an existing destination. Windows std::fs::rename does
+/// not, so use MoveFileExW(REPLACE_EXISTING | WRITE_THROUGH) explicitly.
+pub fn atomic_replace_file(source: &Path, target: &Path) -> std::io::Result<()> {
+    use std::io::{Error, ErrorKind};
+    if source.parent() != target.parent() {
+        return Err(Error::new(ErrorKind::InvalidInput, "ATOMIC_REPLACE_REQUIRES_SAME_DIRECTORY"));
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Storage::FileSystem::MoveFileExW;
+        const MOVEFILE_REPLACE_EXISTING: u32 = 0x0000_0001;
+        const MOVEFILE_WRITE_THROUGH: u32 = 0x0000_0008;
+        let from: Vec<u16> = source.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+        let to: Vec<u16> = target.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+        if unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) } == 0 {
+            return Err(Error::last_os_error());
+        }
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        fs::rename(source, target)
+    }
+}
+
 /// 单会话存档文件名。
 pub fn session_file(dir: &Path, id: &str) -> PathBuf {
     dir.join(format!("{id}.json"))
@@ -38,17 +65,26 @@ pub fn atomic_write(path: &Path, content: &str) -> Result<(), String> {
     // interrupted writes without a separate migration or cleanup format.
     let tmp = path.with_extension(format!("{}.json.tmp", uuid::Uuid::new_v4()));
     let staged = (|| -> Result<(), String> {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp)
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&tmp)
             .map_err(|e| format!("创建临时文件失败: {e}"))?;
         file.write_all(content.as_bytes())
             .map_err(|e| format!("写临时文件失败: {e}"))?;
         file.sync_all()
             .map_err(|e| format!("同步临时文件失败: {e}"))?;
         drop(file);
-        fs::rename(&tmp, path).map_err(|e| format!("会话落盘 rename 失败: {e}"))?;
+        atomic_replace_file(&tmp, path).map_err(|e| format!("会话落盘 replace 失败: {e}"))?;
+        #[cfg(unix)]
+        if let Some(parent) = path.parent() {
+            fs::File::open(parent).and_then(|directory| directory.sync_all())
+                .map_err(|e| format!("会话目录同步失败: {e}"))?;
+        }
         Ok(())
     })();
     if staged.is_err() {
