@@ -7,7 +7,7 @@ unless the separate service is running. This is a release dependency, not an onl
 ## Pinned source (review before distribution)
 
 - Repository: https://github.com/code5m/bfc-workbench
-- Commit pinned for Windows CI: `6aedd62ebe911fe75cc039c3600403c51166b339`
+- Commit pinned for Windows CI: `b0367952020a162ad59b4fc48fb830d744fbffc8`
 - Runtime: Node.js 20+, PowerShell on Windows 11 x64.
 - Service root (example): `$env:LOCALAPPDATA\BrowserOS\bfc-workbench`
 - User data: `$env:LOCALAPPDATA\BrowserOS\Bilibili-Favorites-Review`.
@@ -18,7 +18,7 @@ unless the separate service is running. This is a release dependency, not an onl
 ```powershell
 New-Item -ItemType Directory -Path (Join-Path $env:LOCALAPPDATA 'BrowserOS') -Force
 git clone https://github.com/code5m/bfc-workbench.git "$env:LOCALAPPDATA\BrowserOS\bfc-workbench"
-git -C "$env:LOCALAPPDATA\BrowserOS\bfc-workbench" checkout 6aedd62ebe911fe75cc039c3600403c51166b339
+git -C "$env:LOCALAPPDATA\BrowserOS\bfc-workbench" checkout b0367952020a162ad59b4fc48fb830d744fbffc8
 pwsh -File scripts/windows/start-bfc-local.ps1
 ```
 
@@ -42,7 +42,7 @@ the localhost service is **not** a system-wide privileged service.
 
 - Service unavailable → show `BFC_LOCAL_SERVICE_UNAVAILABLE`, do not claim import.
 - Port 4198 occupied by different app → stop, do not send personal snapshots to unknown server;
-  future versions must authenticate the service identity before automatic startup.
+  the current integration verifies the per-user service identity and HMAC challenge before transmitting any snapshot body.
 - No WebView2 logged-in DOM, HTTP 412, unsafe partial, receipt mismatch, timeout → preserve
   the existing partial / unknown / rejected semantics without retrying blindly.
 - This document does not claim an interactive Windows GUI, installer or a real Bilibili
