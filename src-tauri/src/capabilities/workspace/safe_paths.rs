@@ -179,51 +179,44 @@ fn find_root(path: &Path, roots: &[PathBuf]) -> Result<(PathBuf, PathBuf), SafeW
 #[cfg(target_os = "windows")]
 mod windows {
     use super::{SafeWriteError, SafeWriteOutcome, validate_relative};
-    use std::ffi::{CString, c_void};
+    use std::ffi::{c_void};
     use std::fs;
     use std::io;
     use std::mem::{size_of, zeroed};
     use std::path::{Path, PathBuf};
     use std::ptr::{null, null_mut};
     use windows_sys::Win32::Foundation::{
-        CloseHandle, ERROR_ALREADY_EXISTS, ERROR_FILE_NOT_FOUND, ERROR_NO_MORE_FILES, HANDLE,
-        INVALID_HANDLE_VALUE, STATUS_SUCCESS,
+        CloseHandle, HANDLE, INVALID_HANDLE_VALUE, STATUS_SUCCESS,
     };
     use windows_sys::Win32::Security::{
         DACL_SECURITY_INFORMATION, GetSecurityInfo, OWNER_SECURITY_INFORMATION,
         PROTECTED_DACL_SECURITY_INFORMATION, SE_FILE_OBJECT, SetSecurityInfo,
-        UNPROTECTED_DACL_SECURITY_INFORMATION,
     };
     use windows_sys::Win32::Storage::FileSystem::{
-        CREATE_ALWAYS, CreateFileW, FILE_ACCESS_FLAGS, FILE_ATTRIBUTE_NORMAL, FILE_CREATE,
-        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_FLAG_WRITE_THROUGH,
-        FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_LIST_DIRECTORY, FILE_OPEN, FILE_OPEN_IF,
-        FILE_READ_ATTRIBUTES, FILE_READ_DATA, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-        FILE_WRITE_ATTRIBUTES, FILE_WRITE_DATA, FILE_WRITE_EA, FindClose, FindFirstFileW,
-        FindNextFileW, FlushFileBuffers, OPEN_EXISTING, SYNCHRONIZE, SetEndOfFile, WIN32_FIND_DATAW,
-        WRITE_DAC, WRITE_OWNER,
+        FILE_ACCESS_FLAGS, FILE_ATTRIBUTE_NORMAL, FILE_CREATE,
+        FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
+        FILE_LIST_DIRECTORY, FILE_OPEN, FILE_OPEN_IF, FILE_READ_ATTRIBUTES,
+        FILE_READ_DATA, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+        FILE_WRITE_ATTRIBUTES, FlushFileBuffers, OPEN_EXISTING, SYNCHRONIZE,
+        SetEndOfFile,
     };
     use windows_sys::Win32::System::IO::DeviceIoControl;
-    use windows_sys::Win32::System::Ioctl::FSCTL_SET_REPARSE_POINT;
     use windows_sys::Win32::System::WindowsProgramming::{
-        FILE_DISPOSITION_FLAG_DELETE, FILE_DISPOSITION_FLAG_POSIX_SEMANTICS, FILE_DISPOSITION_INFO,
-        FILE_RENAME_FLAG_POSIX_SEMANTICS, FILE_RENAME_FLAG_REPLACE_IF_EXISTS, FILE_RENAME_INFO,
-        NtCreateFile,
+        FILE_DISPOSITION_FLAG_DELETE, FILE_DISPOSITION_FLAG_POSIX_SEMANTICS,
+        FILE_DISPOSITION_INFO, FILE_RENAME_FLAG_POSIX_SEMANTICS,
+        FILE_RENAME_FLAG_REPLACE_IF_EXISTS, FILE_RENAME_INFO, NtCreateFile,
     };
     use windows_sys::Win32::System::Kernel::{
-        FILE_ATTRIBUTE_TAG_INFO, FILE_ID_BOTH_DIR_INFO, IO_STATUS_BLOCK, OBJ_CASE_INSENSITIVE,
-        OBJECT_ATTRIBUTES, NT_SUCCESS, RtlInitUnicodeString, UNICODE_STRING,
-    };
-    use windows_sys::Win32::System::Threading::{
-        AcquireSRWLockExclusive, AcquireSRWLockShared, InitializeSRWLock, ReleaseSRWLockExclusive,
-        ReleaseSRWLockShared, SRWLOCK,
+        FILE_ATTRIBUTE_TAG_INFO, IO_STATUS_BLOCK, OBJ_CASE_INSENSITIVE,
+        OBJECT_ATTRIBUTES, UNICODE_STRING,
     };
     use windows_sys::Win32::System::SystemServices::{
-        FileAttributeTagInfo, FileDispositionInfo, FileDispositionInfoEx, FileIdBothDirectoryInfo,
-        FileRenameInfoEx,
+        FileAttributeTagInfo, FileDispositionInfoEx, FileRenameInfoEx,
     };
-    use windows_sys::Win32::System::IO::GetFileInformationByHandleEx;
-    use windows_sys::Win32::System::SystemInformation::{GetSystemDirectoryW, GetTickCount64};
+    use windows_sys::Win32::System::IO::{
+        GetFileInformationByHandleEx, OVERLAPPED, SetFileInformationByHandle,
+    };
+    use windows_sys::Win32::System::SystemInformation::GetTickCount64;
 
     const FILE_DIRECTORY_FILE: u32 = 0x0000_0001;
     const FILE_NON_DIRECTORY_FILE: u32 = 0x0000_0040;
@@ -231,11 +224,10 @@ mod windows {
     const FILE_DELETE_ON_CLOSE: u32 = 0x0000_1000;
     const FILE_SYNCHRONOUS_IO_NONALERT: u32 = 0x0000_0020;
     const FILE_OPEN_FOR_BACKUP_INTENT: u32 = 0x0000_4000;
-    const FILE_VALID_SET_FLAGS: u32 = 0x0000_0002;
     const FILE_RENAME_FLAGS: u32 = FILE_RENAME_FLAG_REPLACE_IF_EXISTS | FILE_RENAME_FLAG_POSIX_SEMANTICS;
     const MAX_LOCK_WAIT_MS: u64 = 10_000;
-    const MAX_TREE_ENTRIES: usize = 100_000;
-    const MAX_TREE_DEPTH: usize = 128;
+    const FILE_TRAVERSE: u32 = 0x0020;
+    const DELETE: u32 = 0x0001_0000;
 
     struct Handle(HANDLE);
     impl Drop for Handle {
@@ -326,8 +318,6 @@ mod windows {
         )?;
         Ok((canonical, handle))
     }
-    // Imported here to keep all Win32 flag use in one module.
-    const FILE_TRAVERSE: u32 = 0x0020;
     fn open_child_directory(parent: HANDLE, name: &std::ffi::OsStr, create: bool) -> Result<Handle, SafeWriteError> {
         let mut name = name_wide(name)?;
         match nt_open(
@@ -356,46 +346,22 @@ mod windows {
     }
     fn open_parent(root: HANDLE, relative: &Path, create: bool) -> Result<(Handle, Vec<u16>), SafeWriteError> {
         validate_relative(relative)?;
-        let mut parent = Handle(root);
-        // Ownership of the root is retained by the caller; duplicate it for a uniform guard.
-        let mut initial = Vec::new();
         let components: Vec<_> = relative.components().filter_map(|part| match part { std::path::Component::Normal(value) => Some(value), _ => None }).collect();
         let name = name_wide(components.last().ok_or_else(|| err(io::ErrorKind::InvalidInput, "PATH_INVALID"))?)?;
-        if components.len() > 1 {
-            initial = nt_open(
-                root, &mut name_wide(components[0])?,
-                FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | FILE_READ_DATA | FILE_TRAVERSE | SYNCHRONIZE,
-                0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_OPEN,
-                FILE_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_FOR_BACKUP_INTENT | FILE_OPEN_REPARSE_POINT_FLAG,
-            ).map(|h| vec![h]).unwrap_or_default();
-        }
         let mut current = if components.len() > 1 {
-            if initial.is_empty() {
-                open_child_directory(root, components[0], create)?
-            } else {
-                let handle = initial.pop().unwrap();
-                if is_reparse(handle.0)? { return Err(err(io::ErrorKind::PermissionDenied, "SAFE_PATH_ESCAPE")); }
-                handle
-            }
+            open_child_directory(root, components[0], create)?
         } else {
-            // A null handle is not dereferenced: this branch is replaced below.
-            Handle(null_mut())
-        };
-        if components.len() == 1 {
-            // Open the root again instead of duplicating a borrowed HANDLE.
-            let root_name = final_path(root)?;
-            let mut root_name = root_name;
-            current = nt_open(
+            let mut root_name = final_path(root)?;
+            nt_open(
                 null_mut(), &mut root_name,
                 FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | FILE_READ_DATA | FILE_TRAVERSE | SYNCHRONIZE,
                 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_OPEN,
                 FILE_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_FOR_BACKUP_INTENT,
-            )?;
-        }
+            )?
+        };
         for component in components.iter().skip(1).take(components.len().saturating_sub(2)) {
             current = open_child_directory(current.0, component, create)?;
         }
-        let _ = parent;
         Ok((current, name))
     }
     fn is_reparse(handle: HANDLE) -> Result<bool, SafeWriteError> {
@@ -424,9 +390,7 @@ mod windows {
         use std::os::windows::io::FromRawHandle;
         use std::io::Read;
         unsafe {
-            let owned = Handle(handle);
             let metadata = fs::File::from_raw_handle(handle).metadata().map_err(|_| err(io::ErrorKind::Other, "FILE_STAT_FAILED"))?;
-            std::mem::forget(owned);
             if !metadata.is_file() || metadata.len() > max_bytes as u64 {
                 return Err(err(io::ErrorKind::InvalidData, "FILE_TOO_LARGE"));
             }
@@ -478,7 +442,7 @@ mod windows {
         ).map_err(|_| err(io::ErrorKind::PermissionDenied, "CAS_LOCK_FAILED"))?;
         if is_reparse(handle.0)? { return Err(err(io::ErrorKind::PermissionDenied, "CAS_LOCK_FAILED")); }
         let start = unsafe { GetTickCount64() };
-        let mut offset: windows_sys::Win32::System::IO::OVERLAPPED = unsafe { zeroed() };
+        let mut offset: OVERLAPPED = unsafe { zeroed() };
         loop {
             let result = unsafe { windows_sys::Win32::Storage::FileSystem::LockFileEx(handle.0, 0x0000_0002 | 0x0000_0001, 0, u32::MAX, u32::MAX, &mut offset) };
             if result != 0 { return Ok(FileLock { handle, name, parent }); }
@@ -491,7 +455,7 @@ mod windows {
     impl Drop for FileLock {
         fn drop(&mut self) {
             unsafe {
-                let mut offset: windows_sys::Win32::System::IO::OVERLAPPED = zeroed();
+                let mut offset: OVERLAPPED = zeroed();
                 windows_sys::Win32::Storage::FileSystem::UnlockFileEx(self.handle.0, 0, u32::MAX, u32::MAX, &mut offset);
                 let mut unicode = unicode(&mut self.name);
                 let mut object = object_attributes(&mut unicode, self.parent.0);
@@ -503,7 +467,6 @@ mod windows {
             }
         }
     }
-    const DELETE: u32 = 0x0001_0000;
     fn preserve_security(source: HANDLE, destination: HANDLE) -> Result<(), SafeWriteError> {
         unsafe {
             let mut owner = null_mut();
@@ -536,9 +499,9 @@ mod windows {
             info.RootDirectory = parent;
             info.FileNameLength = (target.len() * 2) as u32;
             std::ptr::copy_nonoverlapping(target.as_ptr(), info.FileName.as_mut_ptr(), target.len());
-            if !windows_sys::Win32::System::IO::SetFileInformationByHandle(
+            if SetFileInformationByHandle(
                 source, FileRenameInfoEx, buffer.as_mut_ptr() as *mut c_void, buffer.len() as u32,
-            ) {
+            ) == 0 {
                 return Err(winerr("CAS_RENAME_FAILED"));
             }
             Ok(())
@@ -638,9 +601,9 @@ mod windows {
         if is_reparse(target.0)? { return Err(err(io::ErrorKind::PermissionDenied, "SAFE_PATH_ESCAPE")); }
         unsafe {
             let info = FILE_DISPOSITION_INFO { Flags: FILE_DISPOSITION_FLAG_DELETE | FILE_DISPOSITION_FLAG_POSIX_SEMANTICS };
-            if !windows_sys::Win32::System::IO::SetFileInformationByHandle(
+            if SetFileInformationByHandle(
                 target.0, FileDispositionInfoEx, &info as *const _ as *mut c_void, size_of::<FILE_DISPOSITION_INFO>() as u32,
-            ) {
+            ) == 0 {
                 return Err(winerr("AGENT_RECOVERY_DELETE_FAILED"));
             }
             FlushFileBuffers(parent.0);
