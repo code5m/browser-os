@@ -36,8 +36,13 @@ assert.doesNotMatch(defaults, /"bfc_readback_submit"/);
 assert.ok(registry.includes('  bfc_readback_submit:'));
 
 assert.match(commands, /http:\/\/127\.0\.0\.1:4198/);
-assert.match(commands, /\.no_proxy\(\)/);
-assert.match(commands, /redirect\(reqwest::redirect::Policy::none\(\)\)/);
+assert.match(commands, /fn bfc_addr\(\) -> SocketAddr/);
+assert.match(commands, /if !addr\.ip\(\)\.is_loopback\(\)/);
+assert.match(commands, /Connection: keep-alive/);
+assert.match(commands, /one authenticated TCP socket/);
+assert.match(commands, /verify_local_bfc_service/);
+assert.match(commands, /X-BrowserOS-Challenge/);
+assert.doesNotMatch(commands, /reqwest::Client|\.no_proxy\(\)|redirect\(reqwest/);
 assert.match(commands, /returned_scan != Some\(payload\.scan_id\.as_str\(\)\)/);
 assert.match(commands, /MAX_REMOTE_READBACK_BYTES/);
 assert.match(runtime, /session\.tab_id != tab_id/);
