@@ -17,7 +17,7 @@ if (-not (Test-Path -LiteralPath $entry -PathType Leaf)) {
   throw "BFC service not installed at $entry. Use the pinned code5m/bfc-workbench source."
 }
 $DataDirectory = [IO.Path]::GetFullPath($DataDirectory)
-if ($DataDirectory.StartsWith('\\\\')) {
+if ($DataDirectory.StartsWith('\\')) {
   throw 'BFC data directory must be on a local Windows volume.'
 }
 # Reject reparse points in every existing path component, not only the leaf.
