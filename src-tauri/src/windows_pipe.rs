@@ -27,6 +27,7 @@ use windows_sys::Win32::Storage::FileSystem::{CreateFileW, ReadFile, WriteFile};
 use windows_sys::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
 use windows_sys::Win32::System::Pipes::{
     ConnectNamedPipe, CreateNamedPipeW, GetNamedPipeClientProcessId,
+    GetNamedPipeServerProcessId,
 };
 use windows_sys::Win32::System::Threading::{
     CreateEventW, DuplicateHandle, GetCurrentProcess, WaitForSingleObject,
@@ -222,6 +223,18 @@ impl WindowsPipeStream {
     pub fn peer_pid(&self) -> io::Result<u32> {
         let mut pid = 0u32;
         if unsafe { GetNamedPipeClientProcessId(self.0, &mut pid) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(pid)
+    }
+
+    /// Authenticate the named-pipe server before accepting commands from it.
+    /// The child compares this PID with the parent PID inherited at suspended
+    /// process creation; owner-only ACLs alone do not distinguish same-user
+    /// processes that can create another instance of the same pipe name.
+    pub fn server_pid(&self) -> io::Result<u32> {
+        let mut pid = 0u32;
+        if unsafe { GetNamedPipeServerProcessId(self.0, &mut pid) } == 0 {
             return Err(io::Error::last_os_error());
         }
         Ok(pid)
