@@ -34,11 +34,15 @@ pub struct DraftSnapshot {
 fn valid_session(id: &str) -> bool {
     id.len() == 32 && id.bytes().all(|b| b.is_ascii_hexdigit())
 }
+fn path_identity(path: &Path) -> String {
+    let value = path.to_string_lossy().replace('/', "\\");
+    #[cfg(windows)]
+    { value.to_lowercase() }
+    #[cfg(not(windows))]
+    { value }
+}
 fn path_hash(path: &Path) -> String {
-    format!(
-        "{:x}",
-        Sha256::digest(path.as_os_str().to_string_lossy().as_bytes())
-    )
+    format!("{:x}", Sha256::digest(path_identity(path).as_bytes()))
 }
 fn private_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = crate::workspace::data_dir(app).join("encrypted-drafts-v1");
@@ -229,7 +233,7 @@ fn read_journals(dir: &Path, target: &Path, key: &[u8; 32]) -> Result<Vec<DraftS
         let snap: DraftSnapshot =
             serde_json::from_slice(&text).map_err(|_| "DRAFT_JOURNAL_INVALID")?;
         if !valid_session(&snap.session_id)
-            || snap.path != target.to_string_lossy()
+            || snap.path != path_identity(target)
             || name != format!("{prefix}{}.bin", snap.session_id)
         {
             return Err("DRAFT_JOURNAL_INVALID".into());
@@ -270,7 +274,7 @@ pub async fn editor_draft_save(
             &target,
             &DraftSnapshot {
                 session_id,
-                path: target.to_string_lossy().into_owned(),
+                path: path_identity(&target),
                 baseline,
                 content,
                 updated_at_ms,
