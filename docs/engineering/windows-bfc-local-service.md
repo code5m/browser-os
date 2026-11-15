@@ -7,7 +7,7 @@ unless the separate service is running. This is a release dependency, not an onl
 ## Pinned source (review before distribution)
 
 - Repository: https://github.com/code5m/bfc-workbench
-- Commit pinned for Windows CI: `b0367952020a162ad59b4fc48fb830d744fbffc8`
+- Commit pinned for Windows CI: `cb113c219a90df06db6ceeec10d1a9be46ad3694`
 - Runtime: Node.js 20+, PowerShell on Windows 11 x64.
 - Service root (example): `$env:LOCALAPPDATA\BrowserOS\bfc-workbench`
 - User data: `$env:LOCALAPPDATA\BrowserOS\Bilibili-Favorites-Review`.
@@ -18,7 +18,7 @@ unless the separate service is running. This is a release dependency, not an onl
 ```powershell
 New-Item -ItemType Directory -Path (Join-Path $env:LOCALAPPDATA 'BrowserOS') -Force
 git clone https://github.com/code5m/bfc-workbench.git "$env:LOCALAPPDATA\BrowserOS\bfc-workbench"
-git -C "$env:LOCALAPPDATA\BrowserOS\bfc-workbench" checkout b0367952020a162ad59b4fc48fb830d744fbffc8
+git -C "$env:LOCALAPPDATA\BrowserOS\bfc-workbench" checkout cb113c219a90df06db6ceeec10d1a9be46ad3694
 pwsh -File scripts/windows/start-bfc-local.ps1
 ```
 
