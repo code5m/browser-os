@@ -155,6 +155,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
+          components: rust-analyzer
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
@@ -181,6 +182,8 @@ jobs:
           cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os framing_tests -- --test-threads=1
           cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os authorized_windows_read -- --test-threads=1
           cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os pinned_handle_move -- --test-threads=1
+          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os windows_cas -- --test-threads=1
+          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os capabilities::workspace::cas::tests -- --test-threads=1
           cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os local_owner_pipe_roundtrip -- --test-threads=1
           cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os suspended_spawn_assigns_job_before_immediate_grandchild_can_run -- --test-threads=1
           cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os dropping_job_after_parent_crash_kills_grandchild -- --test-threads=1
@@ -192,8 +195,14 @@ jobs:
           cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os windows_script_whitelist_rejects_shell_execution -- --test-threads=1
           cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os windows_node_script_executes_in_job -- --test-threads=1
           cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os windows_coding_can_read_an_authorized_regular_file -- --test-threads=1
+          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os windows_agent_ -- --test-threads=1
+          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os capabilities::agent::windows_sandbox::tests -- --test-threads=1
+          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os real_appcontainer_stdio_initializes_lists_calls_and_scrubs_secrets -- --test-threads=1
+          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os stdin_backpressure_obeys_deadline -- --test-threads=1
+          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os snapshot_rejects_junctions_instead_of_copying_external_sources -- --test-threads=1
+          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os real_rust_analyzer_runs_against_private_snapshot -- --test-threads=1
           cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os fake_loopback_port_occupant_cannot_receive_snapshot_before_identity_proof -- --test-threads=1
-          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os read_only_context_rejects_process_execution -- --test-threads=1
+          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os process_execution_requires_explicit_approval_and_rejects_shell_actions -- --test-threads=1
           cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os knowledge_search_redacts_sensitive_lines -- --test-threads=1
       - name: Build release NSIS after successful Windows compilation
         if: github.event_name == 'workflow_dispatch'

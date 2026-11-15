@@ -22,10 +22,17 @@ pub mod coding_context;
 pub mod coding_context;
 #[cfg(target_os = "linux")]
 pub mod coding_lsp;
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "windows")]
+#[path = "coding_lsp_windows.rs"]
+pub mod coding_lsp;
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 #[path = "coding_lsp_unsupported.rs"]
 pub mod coding_lsp;
+#[cfg(target_os = "windows")]
+pub mod coding_mcp_windows;
 pub mod local_provider;
+#[cfg(target_os = "windows")]
+pub mod windows_sandbox;
 
 // Cross-module native consumers use this Owner-reviewed narrow facade.
 pub(crate) mod public_api;
