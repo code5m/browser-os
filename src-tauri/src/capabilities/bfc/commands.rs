@@ -229,61 +229,77 @@ impl BfcHttpConnection {
         }).await.map_err(|_| "BFC_LOCAL_SERVICE_UNAVAILABLE")?
             .map_err(|_| "BFC_LOCAL_SERVICE_UNAVAILABLE")?;
 
-        let status_line = Self::read_line_limited(&mut self.reader, 8192).await?;
-        let status_line = std::str::from_utf8(&status_line)
-            .map_err(|_| "BFC_LOCAL_SERVICE_UNTRUSTED")?;
-        let mut status_parts = status_line.split_whitespace();
-        let protocol = status_parts.next().unwrap_or("");
-        let status = status_parts.next().and_then(|value| value.parse::<u16>().ok())
-            .ok_or("BFC_LOCAL_SERVICE_UNTRUSTED")?;
-        if !protocol.starts_with("HTTP/1.") {
-            return Err("BFC_LOCAL_SERVICE_UNTRUSTED");
-        }
-
-        let mut content_length = None;
-        let mut chunked = false;
-        let mut connection_close = false;
-        let mut content_type_json = false;
-        let mut header_bytes = status_line.len();
-        loop {
-            let line = Self::read_line_limited(&mut self.reader, 8192).await?;
-            header_bytes = header_bytes.saturating_add(line.len());
-            if header_bytes > 64 * 1024 {
+        // Bound the entire response (status, all headers and JSON body).
+        // A process that squats on 127.0.0.1:4198 must not be able to hang the
+        // BrowserOS command indefinitely by drip-feeding HTTP header bytes.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let status_line = Self::read_line_limited(&mut self.reader, 8192).await?;
+            let status_line = std::str::from_utf8(&status_line)
+                .map_err(|_| "BFC_LOCAL_SERVICE_UNTRUSTED")?;
+            let mut status_parts = status_line.split_whitespace();
+            let protocol = status_parts.next().unwrap_or("");
+            let status = status_parts.next().and_then(|value| value.parse::<u16>().ok())
+                .ok_or("BFC_LOCAL_SERVICE_UNTRUSTED")?;
+            if protocol != "HTTP/1.1" || !(100..=599).contains(&status) {
                 return Err("BFC_LOCAL_SERVICE_UNTRUSTED");
             }
-            if line == b"\r\n" { break; }
-            let text = std::str::from_utf8(&line)
-                .map_err(|_| "BFC_LOCAL_SERVICE_UNTRUSTED")?;
-            let (name, value) = text.trim_end_matches(['\r', '\n']).split_once(':')
-                .ok_or("BFC_LOCAL_SERVICE_UNTRUSTED")?;
-            match name.trim().to_ascii_lowercase().as_str() {
-                "content-length" => {
-                    let parsed = value.trim().parse::<usize>()
-                        .map_err(|_| "BFC_LOCAL_SERVICE_UNTRUSTED")?;
-                    if content_length.replace(parsed).is_some() {
-                        return Err("BFC_LOCAL_SERVICE_UNTRUSTED");
-                    }
+
+            let mut content_length = None;
+            let mut transfer_encoding = false;
+            let mut connection_close = false;
+            let mut content_type_json = false;
+            let mut content_type_seen = false;
+            let mut header_bytes = status_line.len();
+            loop {
+                let line = Self::read_line_limited(&mut self.reader, 8192).await?;
+                header_bytes = header_bytes.saturating_add(line.len());
+                if header_bytes > 64 * 1024 {
+                    return Err("BFC_LOCAL_SERVICE_UNTRUSTED");
                 }
-                "transfer-encoding" => chunked = true,
-                "connection" if value.trim().eq_ignore_ascii_case("close") => connection_close = true,
-                "content-type" if value.trim().to_ascii_lowercase().starts_with("application/json") => content_type_json = true,
-                _ => {}
+                if line == b"\\r\\n" { break; }
+                let text = std::str::from_utf8(&line)
+                    .map_err(|_| "BFC_LOCAL_SERVICE_UNTRUSTED")?;
+                let (name, value) = text.trim_end_matches(['\\r', '\\n']).split_once(':')
+                    .ok_or("BFC_LOCAL_SERVICE_UNTRUSTED")?;
+                match name.trim().to_ascii_lowercase().as_str() {
+                    "content-length" => {
+                        let parsed = value.trim().parse::<usize>()
+                            .map_err(|_| "BFC_LOCAL_SERVICE_UNTRUSTED")?;
+                        if content_length.replace(parsed).is_some() {
+                            return Err("BFC_LOCAL_SERVICE_UNTRUSTED");
+                        }
+                    }
+                    "transfer-encoding" => transfer_encoding = true,
+                    "connection" => {
+                        connection_close |= value.split(',')
+                            .any(|token| token.trim().eq_ignore_ascii_case("close"));
+                    }
+                    "content-type" => {
+                        if content_type_seen {
+                            return Err("BFC_LOCAL_SERVICE_UNTRUSTED");
+                        }
+                        content_type_seen = true;
+                        content_type_json = value.trim().split(';').next()
+                            .is_some_and(|mime| mime.trim().eq_ignore_ascii_case("application/json"));
+                    }
+                    _ => {}
+                }
             }
-        }
-        if chunked || connection_close || !content_type_json {
-            return Err("BFC_LOCAL_CONNECTION_NOT_PERSISTENT");
-        }
-        let length = content_length.ok_or("BFC_LOCAL_SERVICE_UNTRUSTED")?;
-        if length == 0 || length > MAX_BFC_HTTP_RESPONSE_BYTES {
-            return Err("BFC_LOCAL_SERVICE_UNTRUSTED");
-        }
-        let mut bytes = vec![0u8; length];
-        tokio::time::timeout(Duration::from_secs(5), self.reader.read_exact(&mut bytes))
-            .await.map_err(|_| "BFC_LOCAL_SERVICE_UNAVAILABLE")?
-            .map_err(|_| "BFC_LOCAL_SERVICE_UNAVAILABLE")?;
-        let value = serde_json::from_slice(&bytes)
-            .map_err(|_| "BFC_LOCAL_SERVICE_UNTRUSTED")?;
-        Ok((status, value))
+            if transfer_encoding || connection_close || !content_type_json {
+                return Err("BFC_LOCAL_CONNECTION_NOT_PERSISTENT");
+            }
+            let length = content_length.ok_or("BFC_LOCAL_SERVICE_UNTRUSTED")?;
+            if length == 0 || length > MAX_BFC_HTTP_RESPONSE_BYTES {
+                return Err("BFC_LOCAL_SERVICE_UNTRUSTED");
+            }
+            let mut bytes = vec![0u8; length];
+            self.reader.read_exact(&mut bytes).await
+                .map_err(|_| "BFC_LOCAL_SERVICE_UNAVAILABLE")?;
+            let value = serde_json::from_slice(&bytes)
+                .map_err(|_| "BFC_LOCAL_SERVICE_UNTRUSTED")?;
+            Ok::<(u16, Value), &'static str>((status, value))
+        }).await.map_err(|_| "BFC_LOCAL_SERVICE_UNAVAILABLE")?
+
     }
 }
 
