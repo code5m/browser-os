@@ -10,12 +10,12 @@
 use std::ffi::c_void;
 use std::fs::File;
 use std::io::{self, Read, Write};
-use std::os::windows::io::{FromRawHandle, IntoRawHandle, RawHandle};
+use std::os::windows::io::{AsRawHandle, FromRawHandle, IntoRawHandle, RawHandle};
 use std::path::Path;
 use std::ptr;
 use std::time::Duration;
 use windows_sys::Win32::Foundation::{
-    CloseHandle, GetLastError, HANDLE, INVALID_HANDLE_VALUE,
+    CloseHandle, GetLastError, LocalFree, HANDLE, INVALID_HANDLE_VALUE,
     ERROR_BROKEN_PIPE, ERROR_IO_PENDING, ERROR_OPERATION_ABORTED,
     WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
@@ -136,7 +136,7 @@ fn create_instance(name: &[u16], first: bool) -> io::Result<File> {
             255, 65536, 65536, 3000, &attrs,
         )
     };
-    unsafe { CloseHandle(descriptor as HANDLE); }
+    unsafe { LocalFree(descriptor as *mut c_void); }
     if raw == INVALID_HANDLE_VALUE { return Err(io::Error::last_os_error()); }
     Ok(unsafe { File::from_raw_handle(raw as RawHandle) })
 }
