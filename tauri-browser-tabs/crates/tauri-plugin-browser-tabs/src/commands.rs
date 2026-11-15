@@ -5,6 +5,8 @@ use crate::platform;
 use parking_lot::RwLock;
 #[cfg(not(target_os = "linux"))]
 use std::sync::Mutex;
+#[cfg(target_os = "windows")]
+use std::sync::OnceLock;
 use std::collections::HashMap;
 #[cfg(target_os = "linux")]
 use std::os::unix::fs::PermissionsExt;
@@ -72,6 +74,96 @@ fn ensure_private_browser_profile(app: &AppHandle<Wry>) -> Result<PathBuf> {
 // directory inherits the current user's app-data ACL; ACL hardening and
 // WebView2 environment-option compatibility require Windows GUI verification.
 #[cfg(target_os = "windows")]
+static BROWSER_PROFILE_ACL: OnceLock<PathBuf> = OnceLock::new();
+
+#[cfg(target_os = "windows")]
+fn windows_system_binary(name: &str) -> Result<PathBuf> {
+    let root = std::env::var_os("SystemRoot")
+        .ok_or_else(|| BrowserTabError::Platform("Windows system directory unavailable".into()))?;
+    let path = PathBuf::from(root).join("System32").join(name);
+    if !path.is_file() {
+        return Err(BrowserTabError::Platform(format!("Windows system tool unavailable: {name}")));
+    }
+    Ok(path)
+}
+
+#[cfg(target_os = "windows")]
+fn current_windows_user() -> Result<(String, String)> {
+    let whoami = windows_system_binary("whoami.exe")?;
+    let output = std::process::Command::new(whoami)
+        .args(["/user", "/fo", "csv", "/nh"])
+        .output()
+        .map_err(|_| BrowserTabError::Platform("cannot identify Windows profile owner".into()))?;
+    if !output.status.success() {
+        return Err(BrowserTabError::Platform("cannot identify Windows profile owner".into()));
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let line = text.lines().find(|line| line.contains("S-1-"))
+        .ok_or_else(|| BrowserTabError::Platform("Windows user SID unavailable".into()))?;
+    let fields: Vec<_> = line.trim_start_matches('\u{feff}').split(',').collect();
+    let account = fields.first().map(|value| value.trim().trim_matches('"'))
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| BrowserTabError::Platform("Windows account name unavailable".into()))?;
+    let sid = fields.get(1).map(|value| value.trim().trim_matches('"'))
+        .filter(|value| value.starts_with("S-1-")
+            && value.bytes().all(|byte| byte.is_ascii_digit() || byte == b'-'))
+        .ok_or_else(|| BrowserTabError::Platform("Windows user SID invalid".into()))?;
+    Ok((account.to_string(), sid.to_string()))
+}
+
+#[cfg(target_os = "windows")]
+fn secure_windows_browser_profile(profile: &Path) -> Result<()> {
+    let icacls = windows_system_binary("icacls.exe")?;
+    let (account, sid) = current_windows_user()?;
+
+    // Reset all existing descendants to inherited ACLs before protecting the
+    // profile root. This runs once per app process, before the first WebView2
+    // child opens the user-data folder.
+    let reset = std::process::Command::new(&icacls)
+        .arg(profile)
+        .args(["/reset", "/T", "/C"])
+        .output()
+        .map_err(|_| BrowserTabError::Platform("cannot reset WebView2 profile ACL".into()))?;
+    if !reset.status.success() {
+        return Err(BrowserTabError::Platform("cannot reset WebView2 profile ACL".into()));
+    }
+
+    let grant_user = format!("*{sid}:(OI)(CI)F");
+    let secure = std::process::Command::new(&icacls)
+        .arg(profile)
+        .args(["/inheritance:r", "/grant:r"])
+        .arg(grant_user)
+        .arg("*S-1-5-18:(OI)(CI)F")
+        .output()
+        .map_err(|_| BrowserTabError::Platform("cannot secure WebView2 profile ACL".into()))?;
+    if !secure.status.success() {
+        return Err(BrowserTabError::Platform("cannot secure WebView2 profile ACL".into()));
+    }
+
+    let verify = std::process::Command::new(&icacls)
+        .arg(profile)
+        .output()
+        .map_err(|_| BrowserTabError::Platform("cannot verify WebView2 profile ACL".into()))?;
+    if !verify.status.success() {
+        return Err(BrowserTabError::Platform("cannot verify WebView2 profile ACL".into()));
+    }
+    let listing = String::from_utf8_lossy(&verify.stdout);
+    let entries: Vec<_> = listing.lines().filter(|line| line.contains(":(")).collect();
+    let has_user = entries.iter().any(|line| line.contains(&sid) || line.contains(&account));
+    let has_system = entries.iter().any(|line| line.contains("S-1-5-18")
+        || line.to_ascii_uppercase().contains("SYSTEM"));
+    if entries.len() != 2 || !has_user || !has_system
+        || listing.to_ascii_lowercase().contains("everyone")
+        || listing.to_ascii_lowercase().contains("authenticated users")
+        || listing.contains("S-1-1-0")
+        || listing.contains("S-1-5-32-545")
+    {
+        return Err(BrowserTabError::Platform("WebView2 profile ACL is not owner-exclusive".into()));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
 fn ensure_private_browser_profile(app: &AppHandle<Wry>) -> Result<PathBuf> {
     let base = app
         .path()
@@ -94,12 +186,41 @@ fn ensure_private_browser_profile(app: &AppHandle<Wry>) -> Result<PathBuf> {
     if canonical_profile != profile {
         return Err(BrowserTabError::Platform("browser profile path invalid".into()));
     }
+    if let Some(verified) = BROWSER_PROFILE_ACL.get() {
+        if verified != &canonical_profile {
+            return Err(BrowserTabError::Platform("browser profile identity changed".into()));
+        }
+    } else {
+        secure_windows_browser_profile(&canonical_profile)?;
+        let _ = BROWSER_PROFILE_ACL.set(canonical_profile.clone());
+    }
     Ok(canonical_profile)
 }
 
 #[cfg(all(test, any(target_os = "linux", target_os = "windows")))]
 mod browser_profile_tests {
     use super::*;
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_profile_acl_contains_only_current_user_and_system() {
+        let dir = std::env::temp_dir().join(format!(
+            "browseros-webview-acl-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("profile.dat"), b"fixture").unwrap();
+        secure_windows_browser_profile(&dir).expect("owner-only profile ACL");
+        let icacls = windows_system_binary("icacls.exe").unwrap();
+        let output = std::process::Command::new(icacls).arg(&dir).output().unwrap();
+        let listing = String::from_utf8_lossy(&output.stdout);
+        assert!(output.status.success());
+        assert!(!listing.to_ascii_lowercase().contains("everyone"));
+        assert!(!listing.to_ascii_lowercase().contains("authenticated users"));
+        assert!(!listing.contains("S-1-1-0"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn native_browser_tabs_share_one_app_scoped_profile_directory() {
