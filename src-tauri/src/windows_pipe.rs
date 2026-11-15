@@ -17,7 +17,7 @@ use windows_sys::Win32::Security::Authorization::{
 use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
 use windows_sys::Win32::Storage::FileSystem::CreateFileW;
 use windows_sys::Win32::System::Pipes::{
-    ConnectNamedPipe, CreateNamedPipeW, GetNamedPipeClientProcessId,
+    ConnectNamedPipe, CreateNamedPipeW, GetNamedPipeClientProcessId, SetNamedPipeHandleState,
 };
 
 // Win32 named pipe flags, supplied explicitly for one private byte-mode pipe.
@@ -25,12 +25,15 @@ const PIPE_ACCESS_DUPLEX: u32 = 3;
 const PIPE_TYPE_BYTE: u32 = 0;
 const PIPE_READMODE_BYTE: u32 = 0;
 const PIPE_WAIT: u32 = 0;
+const PIPE_NOWAIT: u32 = 1;
 const PIPE_REJECT_REMOTE_CLIENTS: u32 = 8;
 const FILE_FLAG_FIRST_PIPE_INSTANCE: u32 = 0x0008_0000;
 const FILE_GENERIC_RW: u32 = 0xC000_0000;
 const OPEN_EXISTING: u32 = 3;
 const FILE_ATTRIBUTE_NORMAL: u32 = 0x80;
 const ERROR_PIPE_CONNECTED: u32 = 535;
+const ERROR_PIPE_LISTENING: u32 = 536;
+const ACCEPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 fn wide(s: &str) -> Vec<u16> { s.encode_utf16().chain(std::iter::once(0)).collect() }
 fn validate_name(path: &Path) -> io::Result<String> {
@@ -66,7 +69,7 @@ fn create_instance(name: &[u16], first: bool) -> io::Result<File> {
     let first_flag = if first { FILE_FLAG_FIRST_PIPE_INSTANCE } else { 0 };
     let raw = unsafe {
         CreateNamedPipeW(name.as_ptr(), PIPE_ACCESS_DUPLEX | first_flag,
-            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
+            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_NOWAIT | PIPE_REJECT_REMOTE_CLIENTS,
             255, 65536, 65536, 3000, &attrs)
     };
     unsafe { LocalFree(descriptor as *mut c_void); }
@@ -94,8 +97,31 @@ impl WindowsPipeListener {
             None => create_instance(&self.name, false)?,
         };
         let raw = file.as_raw_handle() as _;
-        let connected = unsafe { ConnectNamedPipe(raw, ptr::null_mut()) };
-        if connected == 0 && unsafe { GetLastError() } != ERROR_PIPE_CONNECTED {
+        // ConnectNamedPipe in PIPE_WAIT mode can block forever if the child
+        // exits before opening its endpoint. Accept in PIPE_NOWAIT mode with
+        // a deadline so a crashed child cannot leak one permanent listener
+        // thread per Grid generation.
+        let deadline = std::time::Instant::now() + ACCEPT_TIMEOUT;
+        loop {
+            let connected = unsafe { ConnectNamedPipe(raw, ptr::null_mut()) };
+            if connected != 0 {
+                break;
+            }
+            let error = unsafe { GetLastError() };
+            if error == ERROR_PIPE_CONNECTED {
+                break;
+            }
+            if error != ERROR_PIPE_LISTENING {
+                return Err(io::Error::from_raw_os_error(error as i32));
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(io::Error::new(io::ErrorKind::TimedOut, "GRID_PIPE_ACCEPT_TIMEOUT"));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        // Once connected, switch the byte-mode pipe back to blocking reads.
+        let mut mode = PIPE_READMODE_BYTE | PIPE_WAIT;
+        if unsafe { SetNamedPipeHandleState(raw, &mut mode, ptr::null_mut(), ptr::null_mut()) } == 0 {
             return Err(io::Error::last_os_error());
         }
         Ok((WindowsPipeStream(file), ()))
