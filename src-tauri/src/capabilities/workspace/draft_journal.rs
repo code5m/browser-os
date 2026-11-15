@@ -162,7 +162,8 @@ fn write_journal(
         file.write_all(&encrypted)
             .map_err(|_| "DRAFT_WRITE_FAILED")?;
         file.sync_all().map_err(|_| "DRAFT_WRITE_FAILED")?;
-        fs::rename(&tmp, final_path).map_err(|_| "DRAFT_REPLACE_FAILED")?;
+        crate::session::atomic_replace_file(&tmp, &final_path)
+            .map_err(|_| "DRAFT_REPLACE_FAILED")?;
         // Windows cannot fsync() a directory through std::fs::File::open(dir).
         // Keep the Linux durability contract; Windows currently guarantees
         // temp-file flush + rename, with full crash recovery still requiring
@@ -302,9 +303,19 @@ pub async fn editor_draft_clear(
     tauri::async_runtime::spawn_blocking(move || {
         let journal = journal_path(&dir, &target, &session_id);
         match fs::remove_file(journal) {
-            Ok(()) => File::open(dir)
-                .and_then(|f| f.sync_all())
-                .map_err(|_| "DRAFT_CLEAR_DURABILITY_UNCERTAIN".into()),
+            Ok(()) => {
+                #[cfg(unix)]
+                {
+                    File::open(dir)
+                        .and_then(|f| f.sync_all())
+                        .map_err(|_| "DRAFT_CLEAR_DURABILITY_UNCERTAIN".into())
+                }
+                #[cfg(not(unix))]
+                {
+                    // Windows directory handles cannot be flushed with File::open.
+                    Ok(())
+                }
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(_) => Err("DRAFT_CLEAR_FAILED".into()),
         }
