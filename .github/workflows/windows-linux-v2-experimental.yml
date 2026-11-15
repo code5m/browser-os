@@ -29,7 +29,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: code5m/bfc-workbench
-          ref: cb113c219a90df06db6ceeec10d1a9be46ad3694
+          ref: 2d3665b2336298df21fce5f9cef7b5d75b2bf473
           path: bfc-workbench
       - uses: actions/setup-node@v4
         with:
@@ -62,7 +62,7 @@ jobs:
             $transcript = "browseros-bfc-identity|$nonce|$($identity.serviceId)|$($identity.protocolVersion)"
             $expectedProof = [Convert]::ToHexString($hmac.ComputeHash([Text.Encoding]::UTF8.GetBytes($transcript))).ToLowerInvariant()
             $serviceHeaders = @{
-              'X-BrowserOS-Service-Token' = $identity.token
+              # Public nonce challenge: never send the secret before proof.
               'X-BrowserOS-Challenge' = $nonce
             }
             $proof = Invoke-RestMethod 'http://127.0.0.1:4198/api/identity' -Headers $serviceHeaders
@@ -183,6 +183,10 @@ jobs:
           cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os pinned_handle_move -- --test-threads=1
           cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os local_owner_pipe_roundtrip -- --test-threads=1
           cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os suspended_spawn_assigns_job_before_immediate_grandchild_can_run -- --test-threads=1
+          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os dropping_job_after_parent_crash_kills_grandchild -- --test-threads=1
+          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os windows_script_cancel_reaps_immediate_node_grandchild -- --test-threads=1
+          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os windows_script_timeout_reaps_immediate_node_grandchild -- --test-threads=1
+          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os windows_script_parent_crash_drops_job_and_reaps_grandchild -- --test-threads=1
           cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os conpty_terminal_uses_suspended_spawn -- --test-threads=1
           cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os job_tree_is_terminated -- --test-threads=1
           cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os windows_script_whitelist_rejects_shell_execution -- --test-threads=1
