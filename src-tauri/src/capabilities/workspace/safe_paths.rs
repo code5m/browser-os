@@ -586,8 +586,9 @@ mod windows {
             }
         }
 
+        let owner_sid = format!("*{sid}");
         let set_root_owner = std::process::Command::new(&icacls)
-            .arg(path).args(["/setowner", &format!("*{sid}")]).output()?;
+            .arg(path).arg("/setowner").arg(&owner_sid).output()?;
         if !set_root_owner.status.success() {
             return Err(io::Error::new(io::ErrorKind::PermissionDenied, "WINDOWS_PRIVATE_DIR_OWNER_SET"));
         }
@@ -607,7 +608,7 @@ mod windows {
         }
         for child in &objects {
             let owner = std::process::Command::new(&icacls)
-                .arg(child).args(["/setowner", &format!("*{sid}")]).output()?;
+                .arg(child).arg("/setowner").arg(&owner_sid).output()?;
             if !owner.status.success() {
                 return Err(io::Error::new(io::ErrorKind::PermissionDenied, "WINDOWS_PRIVATE_CHILD_OWNER_SET"));
             }
