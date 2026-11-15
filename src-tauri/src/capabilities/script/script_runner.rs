@@ -473,6 +473,32 @@ fn spawn_in_new_group(cmd: &mut Command) -> std::io::Result<Child> {
     cmd.spawn()
 }
 
+/// Resolve a Windows interpreter to an absolute executable path using only
+/// absolute PATH entries. Command::new("node.exe") may otherwise search the
+/// current workspace directory and execute an attacker-planted node.exe.
+#[cfg(windows)]
+fn resolve_windows_interpreter(program: &str, cwd: &Path) -> Result<PathBuf, RunError> {
+    let requested = Path::new(program);
+    if requested.components().count() > 1 || requested.is_absolute() {
+        let resolved = requested.canonicalize()
+            .map_err(|_| RunError::UnsupportedPlatform)?;
+        if !resolved.is_file() || resolved.starts_with(cwd) {
+            return Err(RunError::UnsupportedPlatform);
+        }
+        return Ok(resolved);
+    }
+    let path = std::env::var_os("PATH").ok_or(RunError::UnsupportedPlatform)?;
+    for directory in std::env::split_paths(&path) {
+        if !directory.is_absolute() { continue; }
+        let candidate = directory.join(program);
+        let Ok(resolved) = candidate.canonicalize() else { continue };
+        if resolved.is_file() && !resolved.starts_with(cwd) {
+            return Ok(resolved);
+        }
+    }
+    Err(RunError::UnsupportedPlatform)
+}
+
 /// Windows uses the native Win32 process handle and an owner-scoped Job Object
 /// immediately after spawn; no WSL, Bash, or pseudo-Unix process group.
 #[cfg(windows)]
@@ -798,10 +824,9 @@ fn start_argv_run(
     })?;
 
     #[cfg(windows)]
-    {
-        // The Windows run path is opt-in for explicitly approved Node/Python
-        // scripts. Shell/Bash/shebang or command snippets require a separate
-        // Windows interpreter contract; do not invoke arbitrary executables.
+    let resolved_program = {
+        // The Windows run path is opt-in for Node/Python only. Resolve the
+        // executable from an absolute PATH entry, never the workspace cwd.
         let executable = Path::new(program).file_name()
             .and_then(|part| part.to_str()).unwrap_or("").to_ascii_lowercase();
         if !["node", "node.exe", "python", "python.exe", "python3", "python3.exe"]
@@ -809,7 +834,17 @@ fn start_argv_run(
             table.lock_runs().remove(&run_id);
             return Err(RunError::UnsupportedPlatform);
         }
-    }
+        match resolve_windows_interpreter(program, &cwd) {
+            Ok(path) => path,
+            Err(error) => {
+                table.lock_runs().remove(&run_id);
+                return Err(error);
+            }
+        }
+    };
+    #[cfg(windows)]
+    let mut cmd = Command::new(&resolved_program);
+    #[cfg(not(windows))]
     let mut cmd = Command::new(program);
     cmd.args(rest).current_dir(&cwd).env_clear();
     #[cfg(windows)]
