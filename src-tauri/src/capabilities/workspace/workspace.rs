@@ -390,10 +390,8 @@ fn atomic_write_body(target: &Path, body: &str) -> Result<(), String> {
         let _ = fs::remove_file(&tmp);
         return Err(format!("写脚本临时文件失败: {e}"));
     }
-    if let Err(e) = fs::rename(&tmp, target) {
-        let _ = fs::remove_file(&tmp);
-        return Err(format!("脚本落盘 rename 失败: {e}"));
-    }
+    crate::session::atomic_replace_file(&tmp, target)
+        .map_err(|e| format!("脚本落盘 replace 失败: {e}"))?;
     Ok(())
 }
 
