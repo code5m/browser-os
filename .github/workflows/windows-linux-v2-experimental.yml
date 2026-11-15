@@ -183,7 +183,18 @@ jobs:
           node tests/check-windows-linux-v2-source-contract.mjs
       - name: 'Windows native compile (experimental: do not hide failure)'
         shell: pwsh
-        run: cargo check --manifest-path src-tauri/Cargo.toml --locked
+        run: |
+          $output = cargo check --manifest-path src-tauri/Cargo.toml --locked --message-format short 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          $output | Write-Host
+          if ($code -ne 0) {
+            $output -split "`r?`n" | Where-Object { $_ -match '(^|\s)error(\[|:)' } |
+              Select-Object -First 10 | ForEach-Object {
+                $message = $_ -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A'
+                Write-Host "::error::$message"
+              }
+            exit $code
+          }
       - name: Windows Grid, IPC, Job Object and safe-file unit tests
         shell: pwsh
         run: |
