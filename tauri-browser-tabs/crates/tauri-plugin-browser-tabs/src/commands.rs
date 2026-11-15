@@ -219,6 +219,9 @@ fn secure_windows_browser_profile(profile: &Path) -> Result<()> {
     {
         return Err(BrowserTabError::Platform("WebView2 profile ACL tree is not owner-exclusive".into()));
     }
+    if profile_tree_object_count(profile)? != object_count {
+        return Err(BrowserTabError::Platform("WebView2 profile changed during ACL verification".into()));
+    }
     Ok(())
 }
 
