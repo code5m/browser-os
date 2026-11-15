@@ -1838,6 +1838,105 @@ mod windows_script_lifecycle_tests {
         }
         std::fs::remove_dir_all(dir).unwrap();
     }
+    fn wait_for_marker_pid(path: &std::path::Path) -> u32 {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Ok(text) = std::fs::read_to_string(path) {
+                if let Ok(pid) = text.trim().parse::<u32>() { return pid; }
+            }
+            assert!(Instant::now() < deadline, "Node child PID marker was not written");
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
+
+    fn wait_process_exit(pid: u32, timeout: Duration) -> bool {
+        use windows_sys::Win32::Foundation::{CloseHandle, GetLastError};
+        use windows_sys::Win32::System::Threading::{OpenProcess, WaitForSingleObject};
+        const SYNCHRONIZE: u32 = 0x0010_0000;
+        const WAIT_OBJECT_0: u32 = 0;
+        unsafe {
+            let process = OpenProcess(SYNCHRONIZE, 0, pid);
+            if process.is_null() {
+                return GetLastError() == 87;
+            }
+            let result = WaitForSingleObject(
+                process, timeout.as_millis().min(u32::MAX as u128) as u32,
+            );
+            CloseHandle(process);
+            result == WAIT_OBJECT_0
+        }
+    }
+
+    fn write_node_tree_fixture(dir: &std::path::Path, tail: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let script = dir.join("spawn-child.js");
+        let marker = dir.join("child.pid");
+        let marker_js = serde_json::to_string(&marker.to_string_lossy().to_string()).unwrap();
+        let source = format!(
+            "const fs=require('node:fs'); const {{spawn}}=require('node:child_process');              const child=spawn(process.execPath,['-e','setTimeout(()=>{{}},60000)'],{{stdio:'ignore'}});              fs.writeFileSync({marker_js},String(child.pid)); {tail}"
+        );
+        std::fs::write(&script, source).unwrap();
+        (script, marker)
+    }
+
+    fn wait_run_terminal(table: &ScriptProcessTable, run: &str, timeout: Duration) -> RunStatus {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let status = table.snapshot(run).expect("run snapshot").status;
+            if status.is_terminal() { return status; }
+            assert!(Instant::now() < deadline, "script did not reach terminal state");
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
+
+    #[test]
+    fn windows_script_cancel_reaps_immediate_node_grandchild() {
+        let dir = std::env::temp_dir().join(format!("windows-node-cancel-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (script, marker) = write_node_tree_fixture(&dir, "setInterval(()=>{},1000);");
+        let table = Arc::new(ScriptProcessTable::new());
+        let run = start_argv_run(&table, "node-cancel", 20,
+            vec!["node.exe".into(), script.to_string_lossy().into_owned()],
+            dir.clone(), &dir, None, None).expect("start Node tree");
+        let child_pid = wait_for_marker_pid(&marker);
+        table.cancel(&run).expect("cancel Node tree");
+        assert_eq!(wait_run_terminal(&table, &run, Duration::from_secs(10)), RunStatus::Cancelled);
+        assert!(wait_process_exit(child_pid, Duration::from_secs(8)),
+            "Node grandchild PID {child_pid} survived cancellation");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn windows_script_timeout_reaps_immediate_node_grandchild() {
+        let dir = std::env::temp_dir().join(format!("windows-node-timeout-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (script, marker) = write_node_tree_fixture(&dir, "setInterval(()=>{},1000);");
+        let table = Arc::new(ScriptProcessTable::new());
+        let run = start_argv_run(&table, "node-timeout", 1,
+            vec!["node.exe".into(), script.to_string_lossy().into_owned()],
+            dir.clone(), &dir, None, None).expect("start Node tree");
+        let child_pid = wait_for_marker_pid(&marker);
+        assert_eq!(wait_run_terminal(&table, &run, Duration::from_secs(10)), RunStatus::Timeout);
+        assert!(wait_process_exit(child_pid, Duration::from_secs(8)),
+            "Node grandchild PID {child_pid} survived timeout");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn windows_script_parent_crash_drops_job_and_reaps_grandchild() {
+        let dir = std::env::temp_dir().join(format!("windows-node-crash-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (script, marker) = write_node_tree_fixture(&dir, "process.exit(23);");
+        let table = Arc::new(ScriptProcessTable::new());
+        let run = start_argv_run(&table, "node-crash", 20,
+            vec!["node.exe".into(), script.to_string_lossy().into_owned()],
+            dir.clone(), &dir, None, None).expect("start Node tree");
+        let child_pid = wait_for_marker_pid(&marker);
+        assert_eq!(wait_run_terminal(&table, &run, Duration::from_secs(10)), RunStatus::Failed);
+        assert!(wait_process_exit(child_pid, Duration::from_secs(8)),
+            "Node grandchild PID {child_pid} survived parent crash");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn windows_script_whitelist_rejects_shell_execution_without_side_effects() {
         let dir = std::env::temp_dir().join(format!("windows-script-{}", uuid::Uuid::new_v4()));
