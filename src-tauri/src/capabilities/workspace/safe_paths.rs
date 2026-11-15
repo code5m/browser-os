@@ -497,6 +497,136 @@ mod windows {
     fn denied() -> io::Error {
         io::Error::new(io::ErrorKind::PermissionDenied, "WINDOWS_FILE_OUTSIDE_ALLOWED_ROOT")
     }
+
+    fn reject_reparse_ancestors(path: &Path) -> io::Result<()> {
+        if !path.is_absolute() || path.to_string_lossy().starts_with(r"\\") {
+            return Err(denied());
+        }
+        let mut current = PathBuf::new();
+        for component in path.components() {
+            current.push(component.as_os_str());
+            match std::fs::symlink_metadata(&current) {
+                Ok(metadata) if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 => {
+                    return Err(denied());
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(())
+    }
+
+    fn system_tool(name: &str) -> io::Result<PathBuf> {
+        use std::os::windows::ffi::OsStringExt;
+        use windows_sys::Win32::System::SystemInformation::GetSystemDirectoryW;
+        let mut buffer = [0u16; 512];
+        let length = unsafe { GetSystemDirectoryW(buffer.as_mut_ptr(), buffer.len() as u32) };
+        if length == 0 || length as usize >= buffer.len() {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(PathBuf::from(std::ffi::OsString::from_wide(&buffer[..length as usize])).join(name))
+    }
+
+    fn current_user_identity() -> io::Result<(String, String)> {
+        let whoami = system_tool("whoami.exe")?;
+        let output = std::process::Command::new(whoami)
+            .args(["/user", "/fo", "csv", "/nh"])
+            .output()?;
+        if !output.status.success() { return Err(io::Error::new(io::ErrorKind::PermissionDenied, "WINDOWS_USER_SID_UNAVAILABLE")); }
+        let text = String::from_utf8_lossy(&output.stdout);
+        let line = text.lines().find(|line| line.contains("S-1-"))
+            .ok_or_else(|| io::Error::new(io::ErrorKind::PermissionDenied, "WINDOWS_USER_SID_UNAVAILABLE"))?;
+        let fields: Vec<_> = line.trim_start_matches('\u{feff}').split(',').collect();
+        let account = fields.first().map(|value| value.trim().trim_matches('"'))
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| io::Error::new(io::ErrorKind::PermissionDenied, "WINDOWS_USER_ACCOUNT_UNAVAILABLE"))?;
+        let sid = fields.get(1).map(|value| value.trim().trim_matches('"'))
+            .filter(|value| value.starts_with("S-1-")
+                && value.bytes().all(|byte| byte.is_ascii_digit() || byte == b'-'))
+            .ok_or_else(|| io::Error::new(io::ErrorKind::PermissionDenied, "WINDOWS_USER_SID_INVALID"))?;
+        Ok((account.to_string(), sid.to_string()))
+    }
+
+    /// Protect a private app-owned directory and every existing descendant.
+    /// The root DACL is owner/SYSTEM-only; children are reset to inherit only
+    /// that DACL. Reparse points, UNC paths and special files fail closed.
+    pub(super) fn ensure_private_directory(path: &Path) -> io::Result<()> {
+        reject_reparse_ancestors(path)?;
+        std::fs::create_dir_all(path)?;
+        reject_reparse_ancestors(path)?;
+        let root = open(path, true)?;
+        let expected = final_path(&root)?;
+        let (account, sid) = current_user_identity()?;
+        let icacls = system_tool("icacls.exe")?;
+        let mut pending = vec![path.to_path_buf()];
+        let mut objects = Vec::<PathBuf>::new();
+        const MAX_OBJECTS: usize = 50_000;
+        const MAX_DEPTH: usize = 64;
+        while let Some(directory) = pending.pop() {
+            let depth = directory.strip_prefix(path).map(|relative| relative.components().count()).unwrap_or(MAX_DEPTH);
+            if depth > MAX_DEPTH { return Err(denied()); }
+            for entry in std::fs::read_dir(&directory)? {
+                let entry = entry?;
+                let child = entry.path();
+                let metadata = std::fs::symlink_metadata(&child)?;
+                if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+                    || !(metadata.is_file() || metadata.is_dir()) {
+                    return Err(denied());
+                }
+                if final_path(&open(&child, metadata.is_dir())?)?
+                    .to_lowercase().starts_with(&(expected.trim_end_matches('\\').to_lowercase() + "\\"))
+                    == false
+                {
+                    return Err(denied());
+                }
+                objects.push(child.clone());
+                if objects.len() > MAX_OBJECTS { return Err(denied()); }
+                if metadata.is_dir() { pending.push(child); }
+            }
+        }
+
+        let reset_root = std::process::Command::new(&icacls)
+            .arg(path).arg("/reset").output()?;
+        if !reset_root.status.success() {
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "WINDOWS_PRIVATE_DIR_ACL_RESET"));
+        }
+        let suffix = ":(OI)(CI)F";
+        let grant_user = format!("*{sid}{suffix}");
+        let grant_system = format!("*S-1-5-18{suffix}");
+        let secure_root = std::process::Command::new(&icacls)
+            .arg(path).args(["/inheritance:r", "/grant:r"])
+            .arg(&grant_user).arg(&grant_system).output()?;
+        if !secure_root.status.success() {
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "WINDOWS_PRIVATE_DIR_ACL_SET"));
+        }
+        for child in &objects {
+            let reset = std::process::Command::new(&icacls).arg(child).arg("/reset").output()?;
+            if !reset.status.success() {
+                return Err(io::Error::new(io::ErrorKind::PermissionDenied, "WINDOWS_PRIVATE_CHILD_ACL_RESET"));
+            }
+        }
+        let verify = std::process::Command::new(&icacls)
+            .arg(path).arg("/T").output()?;
+        if !verify.status.success() {
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "WINDOWS_PRIVATE_DIR_ACL_VERIFY"));
+        }
+        let listing = String::from_utf8_lossy(&verify.stdout);
+        let entries: Vec<_> = listing.lines().filter(|line| line.contains(":(")).collect();
+        let object_count = objects.len() + 1;
+        let user_entries = entries.iter().filter(|line| line.contains(&sid) || line.contains(&account)).count();
+        let system_entries = entries.iter().filter(|line| line.contains("S-1-5-18")
+            || line.to_ascii_uppercase().contains("SYSTEM")).count();
+        if entries.len() != object_count * 2 || user_entries != object_count
+            || system_entries != object_count
+            || listing.to_ascii_lowercase().contains("everyone")
+            || listing.to_ascii_lowercase().contains("authenticated users")
+            || listing.contains("S-1-1-0") || listing.contains("S-1-5-32-545")
+        {
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "WINDOWS_PRIVATE_DIR_ACL_NOT_EXCLUSIVE"));
+        }
+        Ok(())
+    }
     fn open(path: &Path, directory: bool) -> io::Result<File> {
         let mut options = OpenOptions::new();
         options.read(true)
@@ -722,6 +852,19 @@ pub fn move_no_replace(src: &Path, dest_dir: &Path, roots: &[PathBuf]) -> std::i
             std::io::ErrorKind::Unsupported,
             "secure move requires a supported platform",
         ))
+    }
+}
+
+/// Secure a private app-owned directory on Windows. Other platforms keep
+/// their existing directory ownership/mode policy.
+pub fn ensure_private_directory(path: &Path) -> std::io::Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        windows::ensure_private_directory(path)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::fs::create_dir_all(path)
     }
 }
 
