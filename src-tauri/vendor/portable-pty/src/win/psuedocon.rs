@@ -17,7 +17,8 @@ use winapi::shared::winerror::{HRESULT, S_OK};
 use winapi::um::handleapi::*;
 use winapi::um::processthreadsapi::*;
 use winapi::um::winbase::{
-    CREATE_UNICODE_ENVIRONMENT, EXTENDED_STARTUPINFO_PRESENT, STARTF_USESTDHANDLES, STARTUPINFOEXW,
+    CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, EXTENDED_STARTUPINFO_PRESENT,
+    STARTF_USESTDHANDLES, STARTUPINFOEXW,
 };
 use winapi::um::wincon::COORD;
 use winapi::um::winnt::HANDLE;
@@ -117,7 +118,7 @@ impl PsuedoCon {
     /// CreateProcessW returns before the child can execute user code. The
     /// caller must assign the process to its Job Object before resuming it.
     pub fn spawn_command_suspended(&self, cmd: CommandBuilder) -> anyhow::Result<WinChild> {
-        self.spawn_command_with_flags(cmd, 0x0000_0004)
+        self.spawn_command_with_flags(cmd, CREATE_SUSPENDED)
     }
 
     fn spawn_command_with_flags(&self, cmd: CommandBuilder, extra_flags: u32) -> anyhow::Result<WinChild> {
