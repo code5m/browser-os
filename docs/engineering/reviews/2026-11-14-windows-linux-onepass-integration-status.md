@@ -15,10 +15,10 @@
 | Grid Windows | Windows Grid child 进程、PID 验证、owner-only Named Pipe、IPC seq 与 generation、CreateTab/UpdateRect/Navigate/JS/事件、Job Object 进程树回收和 crash replay | 整条 Windows Grid 实机/运行时验证；阻塞同步管道写取消还需加固 |
 | Grid Linux | 保留 UDS/GTK 原有代码，IPC 增加长度上限与不丢帧 BufRead | 发行版 GUI 回归后置 |
 | Win32 文件 | 内核句柄校验的 safe read、拒绝 Junction/reparse 和目录逃逸；句柄相对 FileRenameInfo 无覆盖 move；单元/负例测试 | Windows 安全 CAS 保存仍 fail-closed，不提供不安全路径 fallback |
-| 终端与脚本 | Windows PowerShell/ConPTY、Job Object 回收；审核后的 Node/Python 脚本允许 Job Object 调度、取消/超时，其他 shell 解释器拒绝 | Job Object 并非受限 Token 沙箱；Windows 长时间与多子进程压力测试待结果 |
+| 终端与脚本 | Windows PowerShell/ConPTY、Job Object 回收；Grid、Node/Python 和 ConPTY 现在均通过 CREATE_SUSPENDED → Job assignment → ResumeThread，其他 shell 解释器拒绝 | Job Object 并非受限 Token 沙箱；新增 ConPTY 整树测试须以最新 Windows CI 结果为准 |
 | Agent 与 MCP | Windows 限定工作区只读 Agent 文件查看；skills list/read、knowledge_search 实现，敏感行隐去、跨目录拒绝 | Windows Agent 写文件/MCP 子进程/LSP 沙箱尚未安全实现，仍拒绝危险命令 |
 | AI 与 OS | Credential Manager keyring、Windows 系统目录 curl.exe、可选 Python profile 导入；默认浏览器 ProgId 查看和经用户确认打开 Windows Settings | 真实 AI Provider/凭据生命周期及 OS 功能验收待结果 |
-| BFC 本地服务 | Windows loopback health/session/CSRF、模拟 readback import receipt + 文件落盘、PowerShell foreground launcher；外部 bfc-workbench pin 6aedd62ebe911fe75cc039c3600403c51166b339 | 真实 B 站授权会话及打包后置；曾发生仅 200ms 轮询导致偶发 async 测试超时，保留断言改为最多 5s 等实际完成 |
+| BFC 本地服务 | Windows loopback health/capabilities、每用户身份令牌、nonce-HMAC 证明、认证 session/import、PowerShell foreground launcher；外部 bfc-workbench pin b0367952020a162ad59b4fc48fb830d744fbffc8 | 真实 B 站授权会话及打包后置；端口占用负例确保未经证明不发送 token 或快照正文 |
 
 ## 证据（按提交 SHA，不跨版本传递）
 
