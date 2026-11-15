@@ -313,7 +313,12 @@ fn save(path: &Path, config: &AiConfig) -> Result<(), String> {
         file.write_all(&bytes)
             .and_then(|_| file.sync_all())
             .map_err(|_| "AI_CONFIG_WRITE_FAILED")?;
-        fs::rename(&tmp, path).map_err(|_| "AI_CONFIG_WRITE_FAILED")
+        crate::session::atomic_replace_file(&tmp, path)
+            .map_err(|_| "AI_CONFIG_WRITE_FAILED")?;
+        #[cfg(unix)]
+        fs::File::open(dir).and_then(|directory| directory.sync_all())
+            .map_err(|_| "AI_CONFIG_WRITE_FAILED")?;
+        Ok::<(), &str>(())
     })();
     if result.is_err() {
         let _ = fs::remove_file(tmp);
@@ -982,7 +987,9 @@ fn save_legacy_agents(path: &Path, definitions: &[crate::domain::AgentDef]) -> R
         file.write_all(&serialized)
             .and_then(|_| file.sync_all())
             .map_err(|_| "AGENT_LEGACY_WRITE_FAILED")?;
-        fs::rename(&temp, path).map_err(|_| "AGENT_LEGACY_WRITE_FAILED")?;
+        crate::session::atomic_replace_file(&temp, path)
+            .map_err(|_| "AGENT_LEGACY_WRITE_FAILED")?;
+        #[cfg(unix)]
         fs::File::open(parent)
             .and_then(|f| f.sync_all())
             .map_err(|_| "AGENT_LEGACY_WRITE_FAILED")?;
