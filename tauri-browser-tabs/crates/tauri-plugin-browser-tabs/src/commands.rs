@@ -170,6 +170,18 @@ fn secure_windows_browser_profile(profile: &Path) -> Result<()> {
     reject_profile_reparse_tree(profile)?;
     let object_count = profile_tree_object_count(profile)?;
 
+    // Normalize object ownership before resetting ACLs. A copied legacy
+    // profile may otherwise remain owned by another account that can rewrite
+    // its DACL despite the current user's explicit access grant.
+    let set_owner = std::process::Command::new(&icacls)
+        .arg(profile)
+        .args(["/setowner", &format!("*{sid}"), "/T"])
+        .output()
+        .map_err(|_| BrowserTabError::Platform("cannot set WebView2 profile owner".into()))?;
+    if !set_owner.status.success() {
+        return Err(BrowserTabError::Platform("cannot set WebView2 profile owner".into()));
+    }
+
     // Reset all existing descendants to inherited ACLs before protecting the
     // profile root. This runs before the first WebView2 child opens the folder.
     let reset = std::process::Command::new(&icacls)
