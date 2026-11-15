@@ -7,7 +7,7 @@ unless the separate service is running. This is a release dependency, not an onl
 ## Pinned source (review before distribution)
 
 - Repository: https://github.com/code5m/bfc-workbench
-- Commit pinned for Windows CI: `f98f280e8194e40df106d7176c92c9402215e330`
+- Commit pinned for Windows CI: `6aedd62ebe911fe75cc039c3600403c51166b339`
 - Runtime: Node.js 20+, PowerShell on Windows 11 x64.
 - Service root (example): `$env:LOCALAPPDATA\BrowserOS\bfc-workbench`
 - User data: `$env:LOCALAPPDATA\BrowserOS\Bilibili-Favorites-Review`.
@@ -18,7 +18,7 @@ unless the separate service is running. This is a release dependency, not an onl
 ```powershell
 New-Item -ItemType Directory -Path (Join-Path $env:LOCALAPPDATA 'BrowserOS') -Force
 git clone https://github.com/code5m/bfc-workbench.git "$env:LOCALAPPDATA\BrowserOS\bfc-workbench"
-git -C "$env:LOCALAPPDATA\BrowserOS\bfc-workbench" checkout f98f280e8194e40df106d7176c92c9402215e330
+git -C "$env:LOCALAPPDATA\BrowserOS\bfc-workbench" checkout 6aedd62ebe911fe75cc039c3600403c51166b339
 pwsh -File scripts/windows/start-bfc-local.ps1
 ```
 
@@ -35,7 +35,7 @@ Invoke-RestMethod http://127.0.0.1:4198/api/capabilities
 
 Require health `ok:true`, `localOnly:true`, `bilibiliNetworkRequests:0`,
 and capabilities `bilibili.readSnapshotOnly:true`.
-BrowserOS still verifies `/api/session`, origin and CSRF for imports;
+BrowserOS verifies health/capabilities, then proves the service identity with a per-user token challenge before requesting `/api/browseros/session` or sending any snapshot. The token file is `.browseros-service-identity.json` in the data directory; Windows ACL is reset for the current SID and SYSTEM on every service launch, Linux mode is 0600. Import also requires origin, CSRF and `X-BrowserOS-Service-Token`;
 the localhost service is **not** a system-wide privileged service.
 
 ## Failure and lifecycle
