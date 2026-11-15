@@ -59,6 +59,7 @@ assert.match(tabs, /PageLoadEvent::Finished/);
 assert.match(tabs, /browser_profile_path/);
 assert.match(tabs, /#\[cfg\(target_os = "windows"\)\]\s*fn ensure_private_browser_profile/);
 assert.match(tabs, /secure_windows_browser_profile/);
+assert.match(tabs, /reject_profile_reparse_tree/);
 assert.match(tabs, /BROWSER_PROFILE_ACL/);
 assert.match(tabs, /whoami\.exe/);
 assert.match(tabs, /icacls\.exe/);
