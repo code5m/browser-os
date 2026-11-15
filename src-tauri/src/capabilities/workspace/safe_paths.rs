@@ -780,10 +780,17 @@ mod windows {
         const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
         const FILE_ADD_FILE: u32 = 0x0000_0002;
         const FILE_ADD_SUBDIRECTORY: u32 = 0x0000_0004;
+        const FILE_TRAVERSE: u32 = 0x0000_0020;
         const SYNCHRONIZE: u32 = 0x0010_0000;
         let mut options = OpenOptions::new();
         options
-            .access_mode(FILE_READ_ATTRIBUTES | FILE_ADD_FILE | FILE_ADD_SUBDIRECTORY | SYNCHRONIZE)
+            .access_mode(
+                FILE_READ_ATTRIBUTES
+                    | FILE_ADD_FILE
+                    | FILE_ADD_SUBDIRECTORY
+                    | FILE_TRAVERSE
+                    | SYNCHRONIZE,
+            )
         .share_mode(FILE_SHARE_READ_WRITE_DELETE)
         .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS);
         reject_reparse_ancestors(path)?;
@@ -1221,7 +1228,7 @@ mod windows {
         Ok(())
     }
 
-    fn rename_replace_at(source: &File, parent: &File, target: &std::ffi::OsStr) -> io::Result<()> {
+    fn rename_replace_at(source: &File, _parent: &File, target: &std::ffi::OsStr) -> io::Result<()> {
         use std::ffi::c_void;
         use std::os::windows::ffi::OsStrExt;
         use windows_sys::Win32::Storage::FileSystem::{FileRenameInfo, SetFileInformationByHandle};
@@ -1242,7 +1249,11 @@ mod windows {
         let header = aligned.as_mut_ptr() as *mut RenameHeader;
         unsafe {
             (*header).flags = 1; // FileRenameInfo: TRUE = atomic replace in same directory.
-            (*header).root_directory = parent.as_raw_handle() as *mut c_void;
+            // The staging file is already opened inside the pinned parent.
+            // For a same-directory rename Windows requires the simple target
+            // name with a NULL RootDirectory; a non-null root is reserved for
+            // moving the entry to a different directory.
+            (*header).root_directory = std::ptr::null_mut();
             (*header).filename_length = (chars.len() * 2) as u32;
             std::ptr::copy_nonoverlapping(
                 chars.as_ptr(),
@@ -1562,7 +1573,8 @@ mod windows {
             std::fs::create_dir_all(&outside).unwrap();
             let src = a.join("one.txt");
             std::fs::write(&src, b"first").unwrap();
-            move_no_replace(&src, &b, &[allowed.clone()]).unwrap();
+            move_no_replace(&src, &b, &[allowed.clone()])
+                .unwrap_or_else(|error| panic!("WINDOWS_PINNED_MOVE_FAILED: {error:?}"));
             assert!(!src.exists());
             assert_eq!(std::fs::read(b.join("one.txt")).unwrap(), b"first");
             std::fs::write(&src, b"second").unwrap();
