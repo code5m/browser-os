@@ -124,7 +124,8 @@ async fn verify_local_bfc_service(
     // health/capability JSON, but cannot produce this challenge proof.
     let nonce = uuid::Uuid::new_v4().simple().to_string();
     let identity_response: Value = client.get(format!("{origin}{BFC_IDENTITY_PATH}"))
-        .header("x-browseros-service-token", &identity.token)
+        // The challenge endpoint is intentionally public. Never disclose the
+        // shared service token until the endpoint has proven possession of it.
         .header("x-browseros-challenge", &nonce)
         .send().await.map_err(|_| "BFC_LOCAL_SERVICE_UNAVAILABLE")?
         .error_for_status().map_err(|_| "BFC_LOCAL_SERVICE_UNTRUSTED")?
