@@ -6,11 +6,14 @@ use super::runtime::{
 };
 use crate::bridge::AppState;
 use crate::shared::invocation::check_invocation_source;
-use reqwest::header::{HeaderName, HeaderValue, ORIGIN};
 use ring::hmac;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{collections::HashSet, path::PathBuf, time::Duration};
+use std::{collections::HashSet, io, net::SocketAddr, path::PathBuf, time::Duration};
+use tokio::{
+    io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
+    net::TcpStream,
+};
 use tauri::{AppHandle, Manager, Webview};
 use url::Url;
 
@@ -84,16 +87,174 @@ fn load_bfc_service_identity() -> Result<BfcServiceIdentity, &'static str> {
     Ok(identity)
 }
 
+const MAX_BFC_HTTP_RESPONSE_BYTES: usize = 1024 * 1024;
+
+fn bfc_addr() -> SocketAddr {
+    SocketAddr::from(([127, 0, 0, 1], 4198))
+}
+
+/// A single authenticated loopback connection. All preflight, challenge,
+/// session and snapshot requests use this exact TCP socket. If it closes,
+/// requests fail closed; we never reconnect to a new process after proof.
+struct BfcHttpConnection {
+    reader: BufReader<TcpStream>,
+    origin: String,
+    host: String,
+}
+
+impl BfcHttpConnection {
+    async fn connect(addr: SocketAddr) -> Result<Self, &'static str> {
+        if !addr.ip().is_loopback() {
+            return Err("BFC_LOCAL_ORIGIN_NOT_LOOPBACK");
+        }
+        let stream = tokio::time::timeout(
+            Duration::from_secs(1), TcpStream::connect(addr)
+        ).await.map_err(|_| "BFC_LOCAL_SERVICE_UNAVAILABLE")?
+            .map_err(|_| "BFC_LOCAL_SERVICE_UNAVAILABLE")?;
+        stream.set_nodelay(true).map_err(|_| "BFC_LOCAL_SERVICE_UNAVAILABLE")?;
+        let peer = stream.peer_addr().map_err(|_| "BFC_LOCAL_SERVICE_UNAVAILABLE")?;
+        if !peer.ip().is_loopback() || peer.port() != addr.port() {
+            return Err("BFC_LOCAL_SERVICE_UNTRUSTED");
+        }
+        let host = addr.to_string();
+        Ok(Self {
+            reader: BufReader::new(stream),
+            origin: format!("http://{host}"),
+            host,
+        })
+    }
+
+    async fn read_line_limited(
+        reader: &mut BufReader<TcpStream>,
+        max_bytes: usize,
+    ) -> Result<Vec<u8>, &'static str> {
+        let mut line = Vec::new();
+        loop {
+            let (chunk, complete) = {
+                let available = reader.fill_buf().await
+                    .map_err(|_| "BFC_LOCAL_SERVICE_UNAVAILABLE")?;
+                if available.is_empty() {
+                    return Err("BFC_LOCAL_SERVICE_UNAVAILABLE");
+                }
+                let count = available.iter().position(|byte| *byte == b'\n')
+                    .map(|index| index + 1).unwrap_or(available.len());
+                if line.len().saturating_add(count) > max_bytes {
+                    return Err("BFC_LOCAL_SERVICE_UNTRUSTED");
+                }
+                (available[..count].to_vec(), available[count - 1] == b'\n')
+            };
+            let count = chunk.len();
+            reader.consume(count);
+            line.extend_from_slice(&chunk);
+            if complete { return Ok(line); }
+        }
+    }
+
+    async fn request_json(
+        &mut self,
+        method: &str,
+        path: &str,
+        headers: &[(&str, &str)],
+        body: Option<&[u8]>,
+    ) -> Result<(u16, Value), &'static str> {
+        if !matches!(method, "GET" | "POST")
+            || !path.starts_with('/')
+            || path.contains('\r') || path.contains('\n')
+            || headers.iter().any(|(name, value)|
+                name.is_empty() || name.contains(['\r', '\n', ':'])
+                || value.contains(['\r', '\n']))
+        {
+            return Err("BFC_HTTP_REQUEST_INVALID");
+        }
+        let body = body.unwrap_or_default();
+        let mut head = format!(
+            "{method} {path} HTTP/1.1\r\nHost: {}\r\nConnection: keep-alive\r\nContent-Length: {}\r\n",
+            self.host, body.len(),
+        );
+        for (name, value) in headers {
+            head.push_str(name);
+            head.push_str(": ");
+            head.push_str(value);
+            head.push_str("\r\n");
+        }
+        head.push_str("\r\n");
+
+        // Do not let reqwest/Hyper silently establish a new connection after
+        // the identity challenge. The payload is written only on this socket.
+        let stream = self.reader.get_mut();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            stream.write_all(head.as_bytes()).await?;
+            if !body.is_empty() { stream.write_all(body).await?; }
+            stream.flush().await
+        }).await.map_err(|_| "BFC_LOCAL_SERVICE_UNAVAILABLE")?
+            .map_err(|_| "BFC_LOCAL_SERVICE_UNAVAILABLE")?;
+
+        let status_line = Self::read_line_limited(&mut self.reader, 8192).await?;
+        let status_line = std::str::from_utf8(&status_line)
+            .map_err(|_| "BFC_LOCAL_SERVICE_UNTRUSTED")?;
+        let mut status_parts = status_line.split_whitespace();
+        let protocol = status_parts.next().unwrap_or("");
+        let status = status_parts.next().and_then(|value| value.parse::<u16>().ok())
+            .ok_or("BFC_LOCAL_SERVICE_UNTRUSTED")?;
+        if !protocol.starts_with("HTTP/1.") {
+            return Err("BFC_LOCAL_SERVICE_UNTRUSTED");
+        }
+
+        let mut content_length = None;
+        let mut chunked = false;
+        let mut connection_close = false;
+        let mut content_type_json = false;
+        let mut header_bytes = status_line.len();
+        loop {
+            let line = Self::read_line_limited(&mut self.reader, 8192).await?;
+            header_bytes = header_bytes.saturating_add(line.len());
+            if header_bytes > 64 * 1024 {
+                return Err("BFC_LOCAL_SERVICE_UNTRUSTED");
+            }
+            if line == b"\r\n" { break; }
+            let text = std::str::from_utf8(&line)
+                .map_err(|_| "BFC_LOCAL_SERVICE_UNTRUSTED")?;
+            let (name, value) = text.trim_end_matches(['\r', '\n']).split_once(':')
+                .ok_or("BFC_LOCAL_SERVICE_UNTRUSTED")?;
+            match name.trim().to_ascii_lowercase().as_str() {
+                "content-length" => {
+                    let parsed = value.trim().parse::<usize>()
+                        .map_err(|_| "BFC_LOCAL_SERVICE_UNTRUSTED")?;
+                    if content_length.replace(parsed).is_some() {
+                        return Err("BFC_LOCAL_SERVICE_UNTRUSTED");
+                    }
+                }
+                "transfer-encoding" => chunked = true,
+                "connection" if value.trim().eq_ignore_ascii_case("close") => connection_close = true,
+                "content-type" if value.trim().to_ascii_lowercase().starts_with("application/json") => content_type_json = true,
+                _ => {}
+            }
+        }
+        if chunked || connection_close || !content_type_json {
+            return Err("BFC_LOCAL_CONNECTION_NOT_PERSISTENT");
+        }
+        let length = content_length.ok_or("BFC_LOCAL_SERVICE_UNTRUSTED")?;
+        if length == 0 || length > MAX_BFC_HTTP_RESPONSE_BYTES {
+            return Err("BFC_LOCAL_SERVICE_UNTRUSTED");
+        }
+        let mut bytes = vec![0u8; length];
+        tokio::time::timeout(Duration::from_secs(5), self.reader.read_exact(&mut bytes))
+            .await.map_err(|_| "BFC_LOCAL_SERVICE_UNAVAILABLE")?
+            .map_err(|_| "BFC_LOCAL_SERVICE_UNAVAILABLE")?;
+        let value = serde_json::from_slice(&bytes)
+            .map_err(|_| "BFC_LOCAL_SERVICE_UNTRUSTED")?;
+        Ok((status, value))
+    }
+}
+
 async fn verify_local_bfc_service(
-    client: &reqwest::Client,
-    origin: &str,
+    connection: &mut BfcHttpConnection,
     identity: &BfcServiceIdentity,
 ) -> Result<(Value, Value), &'static str> {
-    let health: Value = client.get(format!("{origin}{BFC_HEALTH_PATH}"))
-        .send().await.map_err(|_| "BFC_LOCAL_SERVICE_UNAVAILABLE")?
-        .error_for_status().map_err(|_| "BFC_LOCAL_SERVICE_UNTRUSTED")?
-        .json().await.map_err(|_| "BFC_LOCAL_SERVICE_UNTRUSTED")?;
-    if health.get("ok").and_then(Value::as_bool) != Some(true)
+    let (health_status, health) = connection
+        .request_json("GET", BFC_HEALTH_PATH, &[], None).await?;
+    if health_status != 200
+        || health.get("ok").and_then(Value::as_bool) != Some(true)
         || health.get("localOnly").and_then(Value::as_bool) != Some(true)
         || health.get("bilibiliNetworkRequests").and_then(Value::as_u64) != Some(0)
         || health.get("protocolVersion").and_then(Value::as_u64)
@@ -103,11 +264,10 @@ async fn verify_local_bfc_service(
         return Err("BFC_LOCAL_SERVICE_UNTRUSTED");
     }
 
-    let capabilities: Value = client.get(format!("{origin}{BFC_CAPABILITIES_PATH}"))
-        .send().await.map_err(|_| "BFC_LOCAL_SERVICE_UNAVAILABLE")?
-        .error_for_status().map_err(|_| "BFC_LOCAL_SERVICE_UNTRUSTED")?
-        .json().await.map_err(|_| "BFC_LOCAL_SERVICE_UNTRUSTED")?;
-    if capabilities.get("version").and_then(Value::as_u64)
+    let (cap_status, capabilities) = connection
+        .request_json("GET", BFC_CAPABILITIES_PATH, &[], None).await?;
+    if cap_status != 200
+        || capabilities.get("version").and_then(Value::as_u64)
             != Some(identity.protocol_version as u64)
         || capabilities.get("protocolVersion").and_then(Value::as_u64)
             != Some(identity.protocol_version as u64)
@@ -119,20 +279,16 @@ async fn verify_local_bfc_service(
         return Err("BFC_LOCAL_SERVICE_UNTRUSTED");
     }
 
-    // The token is read from the per-user identity file protected by the
-    // service's Windows ACL / Unix 0600 mode. A port occupant can spoof public
-    // health/capability JSON, but cannot produce this challenge proof.
+    // Prove service identity on this same TCP connection. No token is sent
+    // until the challenge response has been verified locally.
     let nonce = uuid::Uuid::new_v4().simple().to_string();
-    let identity_response: Value = client.get(format!("{origin}{BFC_IDENTITY_PATH}"))
-        // The challenge endpoint is intentionally public. Never disclose the
-        // shared service token until the endpoint has proven possession of it.
-        .header("x-browseros-challenge", &nonce)
-        .send().await.map_err(|_| "BFC_LOCAL_SERVICE_UNAVAILABLE")?
-        .error_for_status().map_err(|_| "BFC_LOCAL_SERVICE_UNTRUSTED")?
-        .json().await.map_err(|_| "BFC_LOCAL_SERVICE_UNTRUSTED")?;
+    let challenge_headers = [("X-BrowserOS-Challenge", nonce.as_str())];
+    let (identity_status, identity_response) = connection
+        .request_json("GET", BFC_IDENTITY_PATH, &challenge_headers, None).await?;
     let proof = identity_response.get("proof").and_then(Value::as_str)
         .and_then(decode_hex).ok_or("BFC_LOCAL_SERVICE_UNTRUSTED")?;
-    if identity_response.get("ok").and_then(Value::as_bool) != Some(true)
+    if identity_status != 200
+        || identity_response.get("ok").and_then(Value::as_bool) != Some(true)
         || identity_response.get("serviceId").and_then(Value::as_str)
             != Some(identity.service_id.as_str())
         || identity_response.get("protocolVersion").and_then(Value::as_u64)
@@ -150,6 +306,7 @@ async fn verify_local_bfc_service(
         .map_err(|_| "BFC_LOCAL_SERVICE_UNTRUSTED")?;
     Ok((health, capabilities))
 }
+
 
 #[derive(Clone, Debug, Serialize)]
 pub struct BfcServiceStatus {
@@ -299,18 +456,18 @@ pub async fn bfc_service_status(
             message_code: Some(code.into()),
         }),
     };
-    let client = match client() {
-        Ok(client) => client,
-        Err(_) => return Ok(BfcServiceStatus {
+    let mut connection = match BfcHttpConnection::connect(bfc_addr()).await {
+        Ok(connection) => connection,
+        Err(code) => return Ok(BfcServiceStatus {
             online: false,
             local_only: None,
             bilibili_network_requests: None,
             read_snapshot_only: None,
             complete_snapshot: None,
-            message_code: Some("BFC_HTTP_CLIENT_UNAVAILABLE".into()),
+            message_code: Some(code.into()),
         }),
     };
-    match verify_local_bfc_service(&client, BFC_ORIGIN, &identity).await {
+    match verify_local_bfc_service(&mut connection, &identity).await {
         Ok((health, capabilities)) => Ok(BfcServiceStatus {
             online: true,
             local_only: health.get("localOnly").and_then(Value::as_bool),
@@ -359,51 +516,38 @@ pub async fn bfc_readback_finish(
     }
 }
 
-fn client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(1))
-        .timeout(Duration::from_secs(5))
-        .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|_| "BFC_HTTP_CLIENT_UNAVAILABLE".into())
-}
-
 async fn import_to_local_bfc(
     payload: &BfcImportPayload,
 ) -> Result<BfcImportResult, ImportFailure> {
     let identity = load_bfc_service_identity()
         .map_err(ImportFailure::NotSent)?;
-    let client = client().map_err(|_| ImportFailure::NotSent("BFC_HTTP_CLIENT_UNAVAILABLE"))?;
-    import_to_local_bfc_with_identity(&client, payload, &identity, BFC_ORIGIN).await
+    let connection = BfcHttpConnection::connect(bfc_addr()).await
+        .map_err(ImportFailure::NotSent)?;
+    import_to_local_bfc_with_identity(connection, payload, &identity).await
 }
 
 async fn import_to_local_bfc_with_identity(
-    client: &reqwest::Client,
+    mut connection: BfcHttpConnection,
     payload: &BfcImportPayload,
     identity: &BfcServiceIdentity,
-    origin: &str,
 ) -> Result<BfcImportResult, ImportFailure> {
-    // Complete identity, protocol and capability checks before any snapshot
-    // body is serialized or transmitted to the loopback port.
-    verify_local_bfc_service(client, origin, identity)
+    // Preflight, HMAC challenge, authenticated session and import all remain
+    // on one TCP socket. If the server exits or the socket closes, we fail
+    // rather than reconnecting to a process that may have rebound port 4198.
+    verify_local_bfc_service(&mut connection, identity).await
+        .map_err(ImportFailure::NotSent)?;
+
+    let origin = connection.origin.clone();
+    let session_headers = [
+        ("Origin", origin.as_str()),
+        ("X-BrowserOS-Service-Token", identity.token.as_str()),
+    ];
+    let (session_status, session) = connection
+        .request_json("GET", BFC_BROWSEROS_SESSION_PATH, &session_headers, None)
         .await.map_err(ImportFailure::NotSent)?;
-    let origin_header = HeaderValue::from_str(origin)
-        .map_err(|_| ImportFailure::NotSent("BFC_HTTP_ORIGIN_INVALID"))?;
-    let session_response = client
-        .get(format!("{origin}{BFC_BROWSEROS_SESSION_PATH}"))
-        .header(ORIGIN, origin_header.clone())
-        .header("x-browseros-service-token", &identity.token)
-        .send()
-        .await
-        .map_err(|_| ImportFailure::NotSent("BFC_LOCAL_SERVICE_UNAVAILABLE"))?;
-    if !session_response.status().is_success() {
+    if session_status != 200 {
         return Err(ImportFailure::NotSent("BFC_LOCAL_SESSION_UNAVAILABLE"));
     }
-    let session: Value = session_response
-        .json()
-        .await
-        .map_err(|_| ImportFailure::NotSent("BFC_LOCAL_SESSION_INVALID"))?;
     let csrf = session.get("token").and_then(Value::as_str)
         .filter(|value| decode_hex(value).is_some_and(|bytes| bytes.len() == 32))
         .ok_or(ImportFailure::NotSent("BFC_LOCAL_SESSION_INVALID"))?;
@@ -414,24 +558,25 @@ async fn import_to_local_bfc_with_identity(
         return Err(ImportFailure::NotSent("BFC_LOCAL_SERVICE_UNTRUSTED"));
     }
 
-    let response = client
-        .post(format!("{origin}{BFC_IMPORT_PATH}"))
-        .header(ORIGIN, origin_header)
-        .header("x-browseros-service-token", &identity.token)
-        .header(HeaderName::from_static("x-local-csrf"), csrf)
-        .json(payload)
-        .send()
-        .await
-        .map_err(|_| ImportFailure::Unknown)?;
-    let status = response.status();
-    if status.is_client_error() {
+    // Serialize only after the server proved its identity on this socket.
+    let body = serde_json::to_vec(payload)
+        .map_err(|_| ImportFailure::NotSent("BFC_LOCAL_PAYLOAD_INVALID"))?;
+    let import_headers = [
+        ("Origin", origin.as_str()),
+        ("Content-Type", "application/json"),
+        ("X-BrowserOS-Service-Token", identity.token.as_str()),
+        ("X-Local-CSRF", csrf),
+    ];
+    let (status, response) = connection
+        .request_json("POST", BFC_IMPORT_PATH, &import_headers, Some(&body))
+        .await.map_err(|_| ImportFailure::Unknown)?;
+    if (400..500).contains(&status) {
         return Err(ImportFailure::Rejected("BFC_LOCAL_IMPORT_REJECTED"));
     }
-    if status.is_server_error() || !status.is_success() {
+    if status >= 500 || !(200..300).contains(&status) {
         return Err(ImportFailure::Unknown);
     }
-    let body: Value = response.json().await.map_err(|_| ImportFailure::Unknown)?;
-    parse_import_receipt(payload, &body)
+    parse_import_receipt(payload, &response)
 }
 
 fn parse_import_receipt(
