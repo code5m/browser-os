@@ -160,7 +160,7 @@ while ($pending.Count -gt 0) {
       throw 'BFC data tree object limit exceeded.'
     }
     if (($attributes -band [IO.FileAttributes]::Directory) -ne 0) {
-      $servicePending.Push($child)
+      $pending.Push($child)
     }
   }
 }
