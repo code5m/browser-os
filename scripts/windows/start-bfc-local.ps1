@@ -7,6 +7,13 @@ param(
   [string]$DataDirectory = (Join-Path $env:LOCALAPPDATA 'BrowserOS\Bilibili-Favorites-Review')
 )
 $ErrorActionPreference = 'Stop'
+if (-not $env:LOCALAPPDATA -or -not $env:SystemRoot) {
+  throw 'LOCALAPPDATA and SystemRoot are required for the per-user BFC service.'
+}
+$icacls = Join-Path $env:SystemRoot 'System32\icacls.exe'
+if (-not (Test-Path -LiteralPath $icacls -PathType Leaf)) {
+  throw 'Windows icacls.exe is unavailable.'
+}
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
   throw 'Node.js 20+ required. Install Node before starting the local BFC service.'
 }
@@ -16,60 +23,128 @@ $entry = Join-Path $ServiceDirectory 'server.mjs'
 if (-not (Test-Path -LiteralPath $entry -PathType Leaf)) {
   throw "BFC service not installed at $entry. Use the pinned code5m/bfc-workbench source."
 }
+
+function Assert-NoReparsePath([string]$Path) {
+  $full = [IO.Path]::GetFullPath($Path)
+  $root = [IO.Path]::GetPathRoot($full)
+  $cursor = $root
+  $remaining = $full.Substring($root.Length)
+  foreach ($part in $remaining.Split([char[]]@('\','/'), [StringSplitOptions]::RemoveEmptyEntries)) {
+    $cursor = Join-Path $cursor $part
+    if (Test-Path -LiteralPath $cursor) {
+      $attributes = [IO.File]::GetAttributes($cursor)
+      if (($attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "BFC path contains a reparse point: $cursor"
+      }
+    }
+  }
+}
+
+function Set-OwnerSystemDirectoryAcl([string]$Path) {
+  $acl = Get-Acl -LiteralPath $Path
+  $acl.SetAccessRuleProtection($true, $false)
+  foreach ($rule in @($acl.Access)) { $acl.RemoveAccessRuleSpecific($rule) | Out-Null }
+  $acl.SetOwner($currentSid)
+  $inheritance = [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
+    [Security.AccessControl.InheritanceFlags]::ObjectInherit
+  $propagation = [Security.AccessControl.PropagationFlags]::None
+  $allow = [Security.AccessControl.AccessControlType]::Allow
+  $full = [Security.AccessControl.FileSystemRights]::FullControl
+  $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($currentSid, $full, $inheritance, $propagation, $allow))
+  $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($systemSid, $full, $inheritance, $propagation, $allow))
+  Set-Acl -LiteralPath $Path -AclObject $acl
+  $verified = Get-Acl -LiteralPath $Path
+  $rules = @($verified.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+  if ($rules.Count -ne 2 -or
+      @($rules | Where-Object {
+        $_.IdentityReference.Value -notin @($currentSid.Value, $systemSid.Value) -or
+        $_.AccessControlType -ne $allow -or
+        $_.FileSystemRights -ne $full -or
+        $_.IsInherited
+      }).Count -ne 0) {
+    throw "Directory ACL is not exactly current-user and SYSTEM: $Path"
+  }
+}
+
+$currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+$systemSid = [Security.Principal.SecurityIdentifier]::new('S-1-5-18')
 $DataDirectory = [IO.Path]::GetFullPath($DataDirectory)
 if ($DataDirectory.StartsWith('\\')) {
   throw 'BFC data directory must be on a local Windows volume.'
 }
-# Reject reparse points in every existing path component, not only the leaf.
-$cursor = $DataDirectory
-while ($cursor) {
-  if (Test-Path -LiteralPath $cursor) {
-    $entryAtPath = Get-Item -LiteralPath $cursor -Force
-    if (($entryAtPath.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-      throw "BFC data path contains a reparse point: $cursor"
+Assert-NoReparsePath $DataDirectory
+New-Item -ItemType Directory -Path $DataDirectory -Force | Out-Null
+Assert-NoReparsePath $DataDirectory
+Set-OwnerSystemDirectoryAcl $DataDirectory
+
+# Enumerate without following junctions/reparse points. Do not use
+# Get-ChildItem -Recurse or icacls /T against an untrusted existing tree.
+$pending = [System.Collections.Generic.Stack[string]]::new()
+$children = [System.Collections.Generic.List[string]]::new()
+$pending.Push($DataDirectory)
+while ($pending.Count -gt 0) {
+  $directory = $pending.Pop()
+  foreach ($child in [IO.Directory]::EnumerateFileSystemEntries($directory)) {
+    $attributes = [IO.File]::GetAttributes($child)
+    if (($attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+      throw "BFC data tree contains a reparse point: $child"
+    }
+    $children.Add($child)
+    if (($attributes -band [IO.FileAttributes]::Directory) -ne 0) {
+      $pending.Push($child)
     }
   }
-  $parent = Split-Path -Path $cursor -Parent
-  if (-not $parent -or $parent -eq $cursor) { break }
-  $cursor = $parent
 }
-New-Item -ItemType Directory -Path $DataDirectory -Force | Out-Null
-# Rebuild the DACL on every launch. Existing explicit grants are removed too.
-$currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
-$systemSid = [Security.Principal.SecurityIdentifier]::new('S-1-5-18')
-$acl = Get-Acl -LiteralPath $DataDirectory
-$acl.SetAccessRuleProtection($true, $false)
-foreach ($rule in @($acl.Access)) { $acl.RemoveAccessRuleSpecific($rule) }
-$acl.SetOwner($currentSid)
-$inheritance = [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
-  [Security.AccessControl.InheritanceFlags]::ObjectInherit
-$propagation = [Security.AccessControl.PropagationFlags]::None
+
+# Reset each existing child separately so it inherits only the protected root
+# DACL. Then verify every object's effective explicit/inherited rules.
+foreach ($child in $children) {
+  & $icacls $child '/reset' | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw "Cannot reset BFC data ACL: $child" }
+}
+$allowedSids = @($currentSid.Value, $systemSid.Value)
 $allow = [Security.AccessControl.AccessControlType]::Allow
 $full = [Security.AccessControl.FileSystemRights]::FullControl
-$acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($currentSid, $full, $inheritance, $propagation, $allow))
-$acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($systemSid, $full, $inheritance, $propagation, $allow))
-Set-Acl -LiteralPath $DataDirectory -AclObject $acl
-# Existing snapshot files may carry explicit ACLs from before this launcher
-# existed. Reject reparse points, reset every child to inherit from the now
-# owner-only root, then verify the complete data tree before Node can open it.
-$children = @(Get-ChildItem -LiteralPath $DataDirectory -Force -Recurse -ErrorAction Stop)
-if ($children | Where-Object { ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 }) {
-  throw 'BFC data tree contains a reparse point.'
+foreach ($child in $children) {
+  $acl = Get-Acl -LiteralPath $child
+  $rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+  if ($rules.Count -ne 2 -or
+      @($rules | Where-Object {
+        $_.IdentityReference.Value -notin $allowedSids -or
+        $_.AccessControlType -ne $allow -or
+        $_.FileSystemRights -ne $full -or
+        -not $_.IsInherited
+      }).Count -ne 0) {
+    throw "BFC data object ACL is not inherited exclusively from the protected root: $child"
+  }
 }
-$childPattern = Join-Path $DataDirectory '*'
-& icacls.exe $childPattern '/reset' '/T' '/C' | Out-Null
-if ($LASTEXITCODE -ne 0) { throw 'Cannot reset existing BFC snapshot file ACLs.' }
-$treeAcl = (& icacls.exe $DataDirectory '/T' '/C' | Out-String)
-if ($LASTEXITCODE -ne 0 -or $treeAcl -match '(?i)Everyone|BUILTIN\\Users|Authenticated Users|S-1-1-0|S-1-5-32-545') {
-  throw 'BFC data tree contains a broad or unverifiable ACL.'
+
+# BrowserOS and the service may be launched independently. Persist the
+# selected data directory in a protected per-user config file so both resolve
+# the same identity token even when -DataDirectory is customized.
+$configDirectory = Join-Path $env:LOCALAPPDATA 'BrowserOS\bfc-config'
+Assert-NoReparsePath $configDirectory
+New-Item -ItemType Directory -Path $configDirectory -Force | Out-Null
+Assert-NoReparsePath $configDirectory
+Set-OwnerSystemDirectoryAcl $configDirectory
+$configPath = Join-Path $configDirectory 'data-directory.json'
+$tempConfig = Join-Path $configDirectory ("data-directory.{0}.tmp" -f $PID)
+$configJson = @{ dataDirectory = $DataDirectory } | ConvertTo-Json -Compress
+[IO.File]::WriteAllText($tempConfig, $configJson, [Text.UTF8Encoding]::new($false))
+Move-Item -LiteralPath $tempConfig -Destination $configPath -Force
+Assert-NoReparsePath $configPath
+$configAcl = Get-Acl -LiteralPath $configPath
+$configRules = @($configAcl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+if ($configRules.Count -ne 2 -or
+    @($configRules | Where-Object {
+      $_.IdentityReference.Value -notin $allowedSids -or
+      $_.AccessControlType -ne $allow -or
+      $_.FileSystemRights -ne $full -or
+      -not $_.IsInherited
+    }).Count -ne 0) {
+  throw 'BFC data-directory config ACL is not inherited exclusively from its protected directory.'
 }
-$verifiedAcl = Get-Acl -LiteralPath $DataDirectory
-$verifiedRules = @($verifiedAcl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
-if ($verifiedRules.Count -ne 2 -or
-    -not ($verifiedRules | Where-Object { $_.IdentityReference.Value -eq $currentSid.Value -and $_.AccessControlType -eq $allow -and $_.FileSystemRights -eq $full -and -not $_.IsInherited }) -or
-    -not ($verifiedRules | Where-Object { $_.IdentityReference.Value -eq $systemSid.Value -and $_.AccessControlType -eq $allow -and $_.FileSystemRights -eq $full -and -not $_.IsInherited })) {
-  throw 'BFC data directory DACL is not exactly current-user and SYSTEM FullControl.'
-}
+
 $env:BILIBILI_FAVORITES_DATA_DIR = $DataDirectory
 $env:BROWSEROS_BFC_DATA_DIR = $DataDirectory
 # Standalone foreground service: stop with Ctrl+C. Port always loopback only.
