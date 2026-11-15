@@ -162,6 +162,9 @@ pub struct GridChildHandle {
 /// 宫格子进程管理器：登记所有存活子进程，负责 spawn/重启/关闭/UDS 转发/崩溃自愈。
 #[derive(Default)]
 pub struct GridProcessManager {
+    // Serialize process creation/restart/close so two concurrent tab requests
+    // cannot spawn duplicate Grid children for the same index.
+    lifecycle_lock: Mutex<()>,
     children: Mutex<HashMap<u32, GridChildHandle>>,
     /// Hibernated children retain URL/rect/visibility metadata but no WebKit process.
     hibernated: Mutex<HashMap<u32, SavedChildState>>,
@@ -364,6 +367,14 @@ impl GridProcessManager {
     /// spawn 并可携带崩溃前保存的状态（崩溃重启时保留 last_url/last_rect，
     /// 否则 replay 读不到历史 url 会跳过重放）。
     fn spawn_with_state(&self, index: u32, saved: Option<SavedChildState>) -> Result<(), String> {
+        let _lifecycle = self.lifecycle_lock.lock().unwrap();
+        self.spawn_with_state_locked(index, saved)
+    }
+
+    fn spawn_with_state_locked(&self, index: u32, saved: Option<SavedChildState>) -> Result<(), String> {
+        if self.children.lock().unwrap().contains_key(&index) {
+            return Err(format!("GRID_CHILD_ALREADY_RUNNING:{index}"));
+        }
         self.ensure_listener(index)?;
         let exe = std::env::current_exe().map_err(|e| format!("获取当前可执行文件失败: {e}"))?;
         let mut command = Command::new(exe);
@@ -420,11 +431,12 @@ impl GridProcessManager {
 
     /// 获取或 spawn：若该 index 的子进程不存在则创建。返回是否为新创建。
     pub fn get_or_spawn(&self, index: u32) -> Result<bool, String> {
+        let _lifecycle = self.lifecycle_lock.lock().unwrap();
         if self.children.lock().unwrap().contains_key(&index) {
             return Ok(false);
         }
         let saved = self.hibernated.lock().unwrap().remove(&index);
-        if let Err(error) = self.spawn_with_state(index, saved.clone()) {
+        if let Err(error) = self.spawn_with_state_locked(index, saved.clone()) {
             if let Some(saved) = saved {
                 self.hibernated.lock().unwrap().insert(index, saved);
             }
@@ -442,6 +454,10 @@ impl GridProcessManager {
     /// Preserve child metadata while releasing its process. Used to roll back
     /// a failed resume without losing the URL/layout that existed pre-resume.
     pub fn hibernate_child(&self, index: u32) -> bool {
+        // Keep get_or_spawn from reporting an existing child while this
+        // operation is closing and removing it. Pipe write timeouts terminate
+        // the Job directly and do not re-enter the lifecycle lock.
+        let _lifecycle = self.lifecycle_lock.lock().unwrap();
         let _ = self.request(
             index,
             GridCmd::CloseTab {
@@ -578,7 +594,7 @@ impl GridProcessManager {
                 // JSON frame. Never reuse that byte stream: kill the Job-owned
                 // child tree so the reader clone closes and the generation is
                 // discarded before any subsequent request can be sent.
-                self.kill_child(index);
+                self.terminate_child_job(index);
                 return Err("写 NamedPipe 超时，Grid 子进程已终止".into());
             }
             return Err(format!("写 NamedPipe 失败: {e}"));
@@ -611,7 +627,7 @@ impl GridProcessManager {
         } else { false };
         drop(guard);
         if timed_out {
-            self.kill_child(index);
+            self.terminate_child_job(index);
         }
     }
 
@@ -1002,6 +1018,7 @@ impl GridProcessManager {
                         }
                     }
                 }
+                let _lifecycle = manager.lifecycle_lock.lock().unwrap();
                 let mut exited: Vec<(u32, i32, SavedChildState)> = Vec::new();
                 {
                     let mut children = manager.children.lock().unwrap();
@@ -1068,7 +1085,7 @@ impl GridProcessManager {
                             .get(&index)
                             .map_or(1, |h| h.len()) as u64,
                     ));
-                    if let Err(e) = manager.spawn_with_state(index, Some(saved)) {
+                    if let Err(e) = manager.spawn_with_state_locked(index, Some(saved)) {
                         eprintln!("[grid-manager] grid-child-{} 重启失败: {e}", index);
                         continue;
                     }
@@ -1147,9 +1164,20 @@ impl GridProcessManager {
         });
     }
 
+    fn terminate_child_job(&self, index: u32) {
+        if let Some(child) = self.children.lock().unwrap().get(&index) {
+            // Do not remove the map entry here: the monitor owns crash/restart
+            // bookkeeping. Closing the Job immediately prevents partial IPC
+            // frames from being reused while the monitor observes exit.
+            if let Err(error) = child.job.terminate() {
+                eprintln!("[grid-manager] terminate Grid Job {index} failed: {error}");
+            }
+        }
+    }
+
     /// 主动关闭单个宫格子进程（grid_close_one/close_grid）：先移出表（监控不重启），
     /// 再 kill。返回是否存在。
-    pub fn kill_child(&self, index: u32) -> bool {
+    fn kill_child_locked(&self, index: u32) -> bool {
         self.crash_history.lock().unwrap().remove(&index);
         self.hibernated.lock().unwrap().remove(&index);
         let removed = self.children.lock().unwrap().remove(&index);
@@ -1162,11 +1190,17 @@ impl GridProcessManager {
         }
     }
 
+    pub fn kill_child(&self, index: u32) -> bool {
+        let _lifecycle = self.lifecycle_lock.lock().unwrap();
+        self.kill_child_locked(index)
+    }
+
     /// 重启指定宫格子进程：先 kill 旧的（若还在），再 spawn 新的。
     #[allow(dead_code)]
     pub fn restart(&self, index: u32) -> Result<(), String> {
-        self.kill_child(index);
-        self.spawn(index)?;
+        let _lifecycle = self.lifecycle_lock.lock().unwrap();
+        self.kill_child_locked(index);
+        self.spawn_with_state_locked(index, None)?;
         eprintln!("[grid-manager] restarted grid-child-{}", index);
         Ok(())
     }
@@ -1175,6 +1209,7 @@ impl GridProcessManager {
     /// 返回 Some(exit_code) 表示已退出（信号杀死时为 128+signal，如 SIGSEGV=139），None 表示仍在运行。
     #[allow(dead_code)]
     pub fn check_exited(&self, index: u32) -> Option<i32> {
+        let _lifecycle = self.lifecycle_lock.lock().unwrap();
         let mut children = self.children.lock().unwrap();
         if let Some(h) = children.get_mut(&index) {
             match h.child.try_wait() {
@@ -1217,6 +1252,7 @@ impl GridProcessManager {
 
     /// 关闭所有宫格子进程（主进程退出前/close_grid 调用）。
     pub fn shutdown_all(&self) {
+        let _lifecycle = self.lifecycle_lock.lock().unwrap();
         self.crash_history.lock().unwrap().clear();
         self.hibernated.lock().unwrap().clear();
         let mut children = self.children.lock().unwrap();
