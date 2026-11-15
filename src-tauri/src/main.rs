@@ -414,6 +414,16 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
                 }
             }
         };
+        #[cfg(windows)]
+        {
+            let expected_parent = std::env::var("GRID_PARENT_PID")
+                .ok().and_then(|value| value.parse::<u32>().ok());
+            let actual_server = stream.server_pid().ok();
+            if expected_parent.is_none() || actual_server != expected_parent {
+                eprintln!("[grid-child-{index}] refused unauthenticated named-pipe server");
+                std::process::exit(1);
+            }
+        }
         eprintln!("[grid-child-{}] UDS 已连接 {}", index, sock_path);
         let writer = match stream.try_clone() {
             Ok(w) => std::sync::Arc::new(std::sync::Mutex::new(w)),
