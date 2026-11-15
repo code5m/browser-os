@@ -205,7 +205,12 @@ $configJson = @{ dataDirectory = $DataDirectory } | ConvertTo-Json -Compress
 [IO.File]::WriteAllText($tempConfig, $configJson, [Text.UTF8Encoding]::new($false))
 Move-Item -LiteralPath $tempConfig -Destination $configPath -Force
 Assert-NoReparsePath $configPath
+& $icacls $configPath '/setowner' "*$($currentSid.Value)" | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'Cannot set BFC data-directory config owner.' }
 $configAcl = Get-Acl -LiteralPath $configPath
+if ($configAcl.Owner -ne $currentSid.Value) {
+  throw 'BFC data-directory config is not owned by the current user.'
+}
 $configRules = @($configAcl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
 if ($configRules.Count -ne 2 -or
     @($configRules | Where-Object {
