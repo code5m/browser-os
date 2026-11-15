@@ -68,6 +68,7 @@ $systemSid = [Security.Principal.SecurityIdentifier]::new('S-1-5-18')
 # Pass the OS-resolved SID, never a caller-controlled DOMAIN\USERNAME string,
 # so the Node service applies the same current-user ACL as this launcher.
 $env:BROWSEROS_USER_SID = $currentSid.Value
+$env:BROWSEROS_ICACLS_PATH = $icacls
 
 # The service source is executable input. Reject junctions and protect the
 # checkout before resolving server.mjs or invoking the Node runtime.
