@@ -35,7 +35,7 @@ Invoke-RestMethod http://127.0.0.1:4198/api/capabilities
 
 Require health `ok:true`, `localOnly:true`, `bilibiliNetworkRequests:0`,
 and capabilities `bilibili.readSnapshotOnly:true`.
-BrowserOS verifies health/capabilities, then proves the service identity with a per-user token challenge before requesting `/api/browseros/session` or sending any snapshot. The token file is `.browseros-service-identity.json` in the data directory; Windows ACL is reset for the current SID and SYSTEM on every service launch, Linux mode is 0600. Import also requires origin, CSRF and `X-BrowserOS-Service-Token`;
+BrowserOS verifies health/capabilities, then proves the service identity with a per-user token challenge before requesting `/api/browseros/session` or sending any snapshot. The token file is `.browseros-service-identity.json` in the data directory; Windows ACL is rebuilt for the current SID and SYSTEM on every service launch; reparse points are rejected and existing child-file ACLs are reset to inherit from the protected root. Linux mode is 0600. Import also requires origin, CSRF and `X-BrowserOS-Service-Token`;
 the localhost service is **not** a system-wide privileged service.
 
 ## Failure and lifecycle
