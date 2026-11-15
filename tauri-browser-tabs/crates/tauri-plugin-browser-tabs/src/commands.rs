@@ -201,9 +201,9 @@ fn secure_windows_browser_profile(profile: &Path) -> Result<()> {
         .arg(grant_user)
         .arg("*S-1-5-18:(OI)(CI)F")
         .output()
-        .map_err(|_| BrowserTabError::Platform("cannot secure WebView2 profile ACL".into()))?;
+        .map_err(|_| BrowserTabError::Platform("BROWSER_PROFILE_ACL: cannot secure WebView2 profile ACL".into()))?;
     if !secure.status.success() {
-        return Err(BrowserTabError::Platform("cannot secure WebView2 profile ACL".into()));
+        return Err(BrowserTabError::Platform("BROWSER_PROFILE_ACL: cannot secure WebView2 profile ACL".into()));
     }
 
     // Verify every object, not only the profile root. A legacy child file
@@ -410,7 +410,7 @@ impl TabManager {
         });
 
         // auto_resize 让子 webview 跟随主窗 resize 自动调整，配合 force_allocation
-        // 的 set_size_request + queue_resize 保证撑满。此为 v0.3.0 正确行为，
+        // 的 set_size_request + queue_resize 保证撑满。此为 v0.3.0 确立行为，
         // 【禁止改动】（曾因误以为与前端定位冲突而关闭，导致网页撑不满回退）。
         if options.auto_resize {
             builder = builder.auto_resize();
@@ -561,7 +561,7 @@ impl TabManager {
         // resource-load-started 记录方法与开始时刻，finished/failed 时取真实
         // URIResponse（status/mime/content_length）后上报。字段全部来自原生信号，
         // 无响应时 status/mime/size_bytes 为 None，绝不伪造；错误信息不上报
-        // （GError 文本可能含原始 URL，隐私红线）。
+        //（GError 文本可能含原始 URL，隐私红线）。
         // 隐私注意：此处**不打印、不落盘**任何资源 URL（含 query 的原始 URL
         // 可能带 token）；脱敏与容量上限由主进程 bridge 统一负责。
         #[cfg(target_os = "linux")]
@@ -662,7 +662,7 @@ impl TabManager {
     }
 
     /// 设置子 webview 内容缩放（WebKitGTK set_zoom_level）。
-    /// 用于宫格小格子按比例缩小网页内容，实现"自适应"展示。
+    /// 用于宫格小窗按比例缩小网页内容，实现"自适应"展示。
     pub fn set_zoom(&self, id: &TabId, scale_factor: f64) -> Result<()> {
         let tabs = self.tabs.read();
         let webview = tabs
