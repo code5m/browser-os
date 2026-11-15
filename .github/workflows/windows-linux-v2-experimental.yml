@@ -29,7 +29,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: code5m/bfc-workbench
-          ref: 6aedd62ebe911fe75cc039c3600403c51166b339
+          ref: b0367952020a162ad59b4fc48fb830d744fbffc8
           path: bfc-workbench
       - uses: actions/setup-node@v4
         with:
@@ -172,6 +172,7 @@ jobs:
           cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os pinned_handle_move -- --test-threads=1
           cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os local_owner_pipe_roundtrip -- --test-threads=1
           cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os suspended_spawn_assigns_job_before_immediate_grandchild_can_run -- --test-threads=1
+          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os conpty_terminal_uses_suspended_spawn -- --test-threads=1
           cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os job_tree_is_terminated -- --test-threads=1
           cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os windows_script_whitelist_rejects_shell_execution -- --test-threads=1
           cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os windows_node_script_executes_in_job -- --test-threads=1
