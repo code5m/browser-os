@@ -59,7 +59,8 @@ base64 = "0.22"
 # 若将来真的要上 C3，请重新引入并在代码里给出引用点，不要只加依赖。
 open = "5"
 arboard = "3"
-portable-pty = "0.8"
+# Local 0.8.1 fork exposes CREATE_SUSPENDED ConPTY spawn so Job assignment precedes execution.
+portable-pty = { path = "vendor/portable-pty" }
 strip-ansi-escapes = "0.2"
 # crashlog：stderr fd 镜像 + 致命信号捕获
 libc = "0.2"
