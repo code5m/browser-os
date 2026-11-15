@@ -15,15 +15,11 @@ $icacls = Join-Path ([Environment]::SystemDirectory) 'icacls.exe'
 if (-not (Test-Path -LiteralPath $icacls -PathType Leaf)) {
   throw 'Windows icacls.exe is unavailable.'
 }
-if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+$nodeCommand = Get-Command node -CommandType Application -ErrorAction SilentlyContinue
+if (-not $nodeCommand) {
   throw 'Node.js 20+ required. Install Node before starting the local BFC service.'
 }
-$version = (& node -p "Number(process.versions.node.split('.')[0])").Trim()
-if ([int]$version -lt 20) { throw 'Node.js >= 20 is required.' }
-$entry = Join-Path $ServiceDirectory 'server.mjs'
-if (-not (Test-Path -LiteralPath $entry -PathType Leaf)) {
-  throw "BFC service not installed at $entry. Use the pinned code5m/bfc-workbench source."
-}
+$nodeExe = [IO.Path]::GetFullPath($nodeCommand.Source)
 
 function Assert-NoReparsePath([string]$Path) {
   $full = [IO.Path]::GetFullPath($Path)
@@ -72,6 +68,63 @@ $systemSid = [Security.Principal.SecurityIdentifier]::new('S-1-5-18')
 # Pass the OS-resolved SID, never a caller-controlled DOMAIN\USERNAME string,
 # so the Node service applies the same current-user ACL as this launcher.
 $env:BROWSEROS_USER_SID = $currentSid.Value
+
+# The service source is executable input. Reject junctions and protect the
+# checkout before resolving server.mjs or invoking the Node runtime.
+$ServiceDirectory = [IO.Path]::GetFullPath($ServiceDirectory)
+if ($ServiceDirectory.StartsWith('\\')) {
+  throw 'BFC service directory must be on a local Windows volume.'
+}
+Assert-NoReparsePath $ServiceDirectory
+if (-not (Test-Path -LiteralPath $ServiceDirectory -PathType Container)) {
+  throw "BFC service directory does not exist: $ServiceDirectory"
+}
+Set-OwnerSystemDirectoryAcl $ServiceDirectory
+$servicePending = [System.Collections.Generic.Stack[string]]::new()
+$serviceChildren = [System.Collections.Generic.List[string]]::new()
+$servicePending.Push($ServiceDirectory)
+while ($servicePending.Count -gt 0) {
+  $directory = $servicePending.Pop()
+  foreach ($child in [IO.Directory]::EnumerateFileSystemEntries($directory)) {
+    $attributes = [IO.File]::GetAttributes($child)
+    if (($attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+      throw "BFC service source contains a reparse point: $child"
+    }
+    $serviceChildren.Add($child)
+    if (($attributes -band [IO.FileAttributes]::Directory) -ne 0) {
+      $servicePending.Push($child)
+    }
+  }
+}
+foreach ($child in $serviceChildren) {
+  & $icacls $child '/reset' | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw "Cannot reset BFC service source ACL: $child" }
+}
+$serviceAllowedSids = @($currentSid.Value, $systemSid.Value)
+$serviceAllow = [Security.AccessControl.AccessControlType]::Allow
+$serviceFull = [Security.AccessControl.FileSystemRights]::FullControl
+foreach ($child in $serviceChildren) {
+  $acl = Get-Acl -LiteralPath $child
+  $rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+  if ($rules.Count -ne 2 -or
+      @($rules | Where-Object {
+        $_.IdentityReference.Value -notin $serviceAllowedSids -or
+        $_.AccessControlType -ne $serviceAllow -or
+        $_.FileSystemRights -ne $serviceFull -or
+        -not $_.IsInherited
+      }).Count -ne 0) {
+    throw "BFC service source ACL is not inherited exclusively from the protected root: $child"
+  }
+}
+$entry = Join-Path $ServiceDirectory 'server.mjs'
+Assert-NoReparsePath $entry
+if (-not (Test-Path -LiteralPath $entry -PathType Leaf)) {
+  throw "BFC service not installed at $entry. Use the pinned code5m/bfc-workbench source."
+}
+Assert-NoReparsePath $nodeExe
+$version = (& $nodeExe -p "Number(process.versions.node.split('.')[0])").Trim()
+if ([int]$version -lt 20) { throw 'Node.js >= 20 is required.' }
+
 $DataDirectory = [IO.Path]::GetFullPath($DataDirectory)
 if ($DataDirectory.StartsWith('\\')) {
   throw 'BFC data directory must be on a local Windows volume.'
@@ -154,4 +207,4 @@ if ($configRules.Count -ne 2 -or
 $env:BILIBILI_FAVORITES_DATA_DIR = $DataDirectory
 $env:BROWSEROS_BFC_DATA_DIR = $DataDirectory
 # Standalone foreground service: stop with Ctrl+C. Port always loopback only.
-& node $entry
+& $nodeExe $entry
