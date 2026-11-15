@@ -2,40 +2,54 @@
 //! A second authorization check compares the kernel-reported client PID to
 //! the actual Job-owned Grid child. Per-connection generation checks happen
 //! in the Grid manager. No TCP listener or CDP debug port is created.
+//!
+//! All connected pipe handles use overlapped I/O. Reads wait for the child,
+//! writes have a hard deadline, and ConnectNamedPipe has its own timeout.
+//! This prevents a hung Grid child from pinning the UI writer lock forever.
 #![cfg(windows)]
 use std::ffi::c_void;
 use std::fs::File;
 use std::io::{self, Read, Write};
-use std::os::windows::io::{AsRawHandle, FromRawHandle, RawHandle};
+use std::os::windows::io::{FromRawHandle, IntoRawHandle, RawHandle};
 use std::path::Path;
 use std::ptr;
-use std::sync::Mutex;
-use windows_sys::Win32::Foundation::{GetLastError, LocalFree, INVALID_HANDLE_VALUE};
+use std::time::Duration;
+use windows_sys::Win32::Foundation::{
+    CloseHandle, GetLastError, HANDLE, INVALID_HANDLE_VALUE,
+    ERROR_BROKEN_PIPE, ERROR_IO_PENDING, ERROR_OPERATION_ABORTED,
+    WAIT_OBJECT_0, WAIT_TIMEOUT,
+};
 use windows_sys::Win32::Security::Authorization::{
     ConvertStringSecurityDescriptorToSecurityDescriptorW,
 };
 use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
-use windows_sys::Win32::Storage::FileSystem::CreateFileW;
+use windows_sys::Win32::Storage::FileSystem::{CreateFileW, ReadFile, WriteFile};
+use windows_sys::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
 use windows_sys::Win32::System::Pipes::{
-    ConnectNamedPipe, CreateNamedPipeW, GetNamedPipeClientProcessId, SetNamedPipeHandleState,
+    ConnectNamedPipe, CreateNamedPipeW, GetNamedPipeClientProcessId,
+};
+use windows_sys::Win32::System::Threading::{
+    CreateEventW, DuplicateHandle, GetCurrentProcess, WaitForSingleObject,
 };
 
-// Win32 named pipe flags, supplied explicitly for one private byte-mode pipe.
 const PIPE_ACCESS_DUPLEX: u32 = 3;
 const PIPE_TYPE_BYTE: u32 = 0;
 const PIPE_READMODE_BYTE: u32 = 0;
 const PIPE_WAIT: u32 = 0;
-const PIPE_NOWAIT: u32 = 1;
 const PIPE_REJECT_REMOTE_CLIENTS: u32 = 8;
 const FILE_FLAG_FIRST_PIPE_INSTANCE: u32 = 0x0008_0000;
+const FILE_FLAG_OVERLAPPED: u32 = 0x4000_0000;
 const FILE_GENERIC_RW: u32 = 0xC000_0000;
 const OPEN_EXISTING: u32 = 3;
 const FILE_ATTRIBUTE_NORMAL: u32 = 0x80;
 const ERROR_PIPE_CONNECTED: u32 = 535;
-const ERROR_PIPE_LISTENING: u32 = 536;
-const ACCEPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+const DUPLICATE_SAME_ACCESS: u32 = 0x0000_0002;
+const INFINITE: u32 = u32::MAX;
+const ACCEPT_TIMEOUT: Duration = Duration::from_secs(5);
+const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 
 fn wide(s: &str) -> Vec<u16> { s.encode_utf16().chain(std::iter::once(0)).collect() }
+
 fn validate_name(path: &Path) -> io::Result<String> {
     let name = path.to_string_lossy().into_owned();
     if !name.starts_with(r"\\.\pipe\BrowserOS-grid-") || name.len() > 240 ||
@@ -64,22 +78,72 @@ fn pipe_security() -> io::Result<(SECURITY_ATTRIBUTES, *mut c_void)> {
     Ok((attrs, descriptor))
 }
 
+struct Event(HANDLE);
+impl Event {
+    fn new() -> io::Result<Self> {
+        let handle = unsafe { CreateEventW(ptr::null(), 1, 0, ptr::null()) };
+        if handle.is_null() { return Err(io::Error::last_os_error()); }
+        Ok(Self(handle))
+    }
+}
+impl Drop for Event {
+    fn drop(&mut self) { unsafe { CloseHandle(self.0); } }
+}
+
+fn overlapped_wait(
+    handle: HANDLE,
+    event: HANDLE,
+    overlapped: &mut OVERLAPPED,
+    timeout_ms: u32,
+) -> io::Result<u32> {
+    let wait = unsafe { WaitForSingleObject(event, timeout_ms) };
+    if wait == WAIT_TIMEOUT {
+        unsafe { CancelIoEx(handle, overlapped); }
+        // Do not return while the kernel may still reference the caller's
+        // buffer/OVERLAPPED memory.
+        let _ = unsafe { WaitForSingleObject(event, INFINITE) };
+        let mut transferred = 0u32;
+        if unsafe { GetOverlappedResult(handle, overlapped, &mut transferred, 0) } != 0 {
+            return Ok(transferred);
+        }
+        let error = unsafe { GetLastError() };
+        if error == ERROR_OPERATION_ABORTED {
+            return Err(io::Error::new(io::ErrorKind::TimedOut, "GRID_PIPE_IO_TIMEOUT"));
+        }
+        return Err(io::Error::from_raw_os_error(error as i32));
+    }
+    if wait != WAIT_OBJECT_0 {
+        let error = io::Error::last_os_error();
+        unsafe { CancelIoEx(handle, overlapped); }
+        let _ = unsafe { WaitForSingleObject(event, INFINITE) };
+        return Err(error);
+    }
+    let mut transferred = 0u32;
+    if unsafe { GetOverlappedResult(handle, overlapped, &mut transferred, 0) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(transferred)
+}
+
 fn create_instance(name: &[u16], first: bool) -> io::Result<File> {
     let (attrs, descriptor) = pipe_security()?;
     let first_flag = if first { FILE_FLAG_FIRST_PIPE_INSTANCE } else { 0 };
     let raw = unsafe {
-        CreateNamedPipeW(name.as_ptr(), PIPE_ACCESS_DUPLEX | first_flag,
-            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_NOWAIT | PIPE_REJECT_REMOTE_CLIENTS,
-            255, 65536, 65536, 3000, &attrs)
+        CreateNamedPipeW(
+            name.as_ptr(),
+            PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED | first_flag,
+            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
+            255, 65536, 65536, 3000, &attrs,
+        )
     };
-    unsafe { LocalFree(descriptor as *mut c_void); }
+    unsafe { CloseHandle(descriptor as HANDLE); }
     if raw == INVALID_HANDLE_VALUE { return Err(io::Error::last_os_error()); }
     Ok(unsafe { File::from_raw_handle(raw as RawHandle) })
 }
 
 pub struct WindowsPipeListener {
     name: Vec<u16>,
-    initial: Mutex<Option<File>>,
+    initial: std::sync::Mutex<Option<File>>,
 }
 impl WindowsPipeListener {
     pub fn bind(path: &Path) -> io::Result<Self> {
@@ -87,74 +151,139 @@ impl WindowsPipeListener {
         // name squatting, owner ACL rejects other users and remote clients.
         let name = wide(&validate_name(path)?);
         let initial = create_instance(&name, true)?;
-        Ok(Self { name, initial: Mutex::new(Some(initial)) })
+        Ok(Self { name, initial: std::sync::Mutex::new(Some(initial)) })
     }
+
     pub fn accept(&self) -> io::Result<(WindowsPipeStream, ())> {
-        // The existing reader may still have its pipe instance open.
-        // Subsequent instances therefore MUST omit FIRST_PIPE_INSTANCE.
         let file = match self.initial.lock().unwrap().take() {
             Some(file) => file,
             None => create_instance(&self.name, false)?,
         };
-        let raw = file.as_raw_handle() as _;
-        // ConnectNamedPipe in PIPE_WAIT mode can block forever if the child
-        // exits before opening its endpoint. Accept in PIPE_NOWAIT mode with
-        // a deadline so a crashed child cannot leak one permanent listener
-        // thread per Grid generation.
-        let deadline = std::time::Instant::now() + ACCEPT_TIMEOUT;
-        loop {
-            let connected = unsafe { ConnectNamedPipe(raw, ptr::null_mut()) };
-            if connected != 0 {
-                break;
-            }
+        let raw = file.as_raw_handle() as HANDLE;
+        let event = Event::new()?;
+        let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
+        overlapped.hEvent = event.0;
+        let connected = unsafe { ConnectNamedPipe(raw, &mut overlapped) };
+        if connected == 0 {
             let error = unsafe { GetLastError() };
             if error == ERROR_PIPE_CONNECTED {
-                break;
-            }
-            if error != ERROR_PIPE_LISTENING {
+                // The client connected between CreateNamedPipe and ConnectNamedPipe.
+            } else if error == ERROR_IO_PENDING {
+                overlapped_wait(
+                    raw,
+                    event.0,
+                    &mut overlapped,
+                    ACCEPT_TIMEOUT.as_millis() as u32,
+                )?;
+            } else {
                 return Err(io::Error::from_raw_os_error(error as i32));
             }
-            if std::time::Instant::now() >= deadline {
-                return Err(io::Error::new(io::ErrorKind::TimedOut, "GRID_PIPE_ACCEPT_TIMEOUT"));
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        // Once connected, switch the byte-mode pipe back to blocking reads.
-        let mut mode = PIPE_READMODE_BYTE | PIPE_WAIT;
-        if unsafe { SetNamedPipeHandleState(raw, &mut mode, ptr::null_mut(), ptr::null_mut()) } == 0 {
-            return Err(io::Error::last_os_error());
-        }
-        Ok((WindowsPipeStream(file), ()))
+        drop(event);
+        let handle = file.into_raw_handle() as HANDLE;
+        Ok((WindowsPipeStream(handle), ()))
     }
 }
 
-pub struct WindowsPipeStream(File);
+pub struct WindowsPipeStream(HANDLE);
+unsafe impl Send for WindowsPipeStream {}
+
 impl WindowsPipeStream {
+    fn from_raw(handle: HANDLE) -> Self { Self(handle) }
+
     pub fn connect(path: impl AsRef<Path>) -> io::Result<Self> {
         let name = wide(&validate_name(path.as_ref())?);
-        let raw = unsafe { CreateFileW(
-            name.as_ptr(), FILE_GENERIC_RW, 0,
-            ptr::null(), OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL,
-            ptr::null_mut(),
-        )};
+        let raw = unsafe {
+            CreateFileW(
+                name.as_ptr(), FILE_GENERIC_RW, 0,
+                ptr::null(), OPEN_EXISTING,
+                FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED,
+                ptr::null_mut(),
+            )
+        };
         if raw == INVALID_HANDLE_VALUE { return Err(io::Error::last_os_error()); }
-        Ok(Self(unsafe { File::from_raw_handle(raw as RawHandle) }))
+        Ok(Self::from_raw(raw))
     }
-    pub fn try_clone(&self) -> io::Result<Self> { self.0.try_clone().map(Self) }
+
+    pub fn try_clone(&self) -> io::Result<Self> {
+        let mut duplicate: HANDLE = ptr::null_mut();
+        let current = unsafe { GetCurrentProcess() };
+        if unsafe {
+            DuplicateHandle(
+                current, self.0, current, &mut duplicate,
+                0, 0, DUPLICATE_SAME_ACCESS,
+            )
+        } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(Self(duplicate))
+    }
+
     pub fn peer_pid(&self) -> io::Result<u32> {
         let mut pid = 0u32;
-        if unsafe { GetNamedPipeClientProcessId(self.0.as_raw_handle() as _, &mut pid) } == 0 {
+        if unsafe { GetNamedPipeClientProcessId(self.0, &mut pid) } == 0 {
             return Err(io::Error::last_os_error());
         }
         Ok(pid)
     }
 }
-impl Read for WindowsPipeStream {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> { self.0.read(buf) }
+
+impl Drop for WindowsPipeStream {
+    fn drop(&mut self) { unsafe { CloseHandle(self.0); } }
 }
+
+impl Read for WindowsPipeStream {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if buf.is_empty() { return Ok(0); }
+        let event = Event::new()?;
+        let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
+        overlapped.hEvent = event.0;
+        let mut transferred = 0u32;
+        let ok = unsafe {
+            ReadFile(
+                self.0, buf.as_mut_ptr(), buf.len().min(u32::MAX as usize) as u32,
+                &mut transferred, &mut overlapped,
+            )
+        };
+        if ok != 0 { return Ok(transferred as usize); }
+        let error = unsafe { GetLastError() };
+        if error == ERROR_BROKEN_PIPE { return Ok(0); }
+        if error != ERROR_IO_PENDING {
+            return Err(io::Error::from_raw_os_error(error as i32));
+        }
+        match overlapped_wait(self.0, event.0, &mut overlapped, INFINITE)? {
+            count => Ok(count as usize),
+        }
+    }
+}
+
 impl Write for WindowsPipeStream {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> { self.0.write(buf) }
-    fn flush(&mut self) -> io::Result<()> { self.0.flush() }
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if buf.is_empty() { return Ok(0); }
+        let event = Event::new()?;
+        let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
+        overlapped.hEvent = event.0;
+        let mut transferred = 0u32;
+        let ok = unsafe {
+            WriteFile(
+                self.0, buf.as_ptr(), buf.len().min(u32::MAX as usize) as u32,
+                &mut transferred, &mut overlapped,
+            )
+        };
+        if ok != 0 { return Ok(transferred as usize); }
+        let error = unsafe { GetLastError() };
+        if error != ERROR_IO_PENDING {
+            return Err(io::Error::from_raw_os_error(error as i32));
+        }
+        overlapped_wait(
+            self.0,
+            event.0,
+            &mut overlapped,
+            WRITE_TIMEOUT.as_millis() as u32,
+        ).map(|count| count as usize)
+    }
+
+    fn flush(&mut self) -> io::Result<()> { Ok(()) }
 }
 
 #[cfg(test)]
