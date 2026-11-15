@@ -203,32 +203,48 @@ jobs:
       - name: Windows Grid, IPC, Job Object and safe-file unit tests
         shell: pwsh
         run: |
-          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os windows_grid_tests -- --test-threads=1
-          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os framing_tests -- --test-threads=1
-          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os authorized_windows_read -- --test-threads=1
-          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os pinned_handle_move -- --test-threads=1
-          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os windows_cas -- --test-threads=1
-          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os capabilities::workspace::cas::tests -- --test-threads=1
-          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os local_owner_pipe_roundtrip -- --test-threads=1
-          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os suspended_spawn_assigns_job_before_immediate_grandchild_can_run -- --test-threads=1
-          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os dropping_job_after_parent_crash_kills_grandchild -- --test-threads=1
-          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os windows_script_cancel_reaps_immediate_node_grandchild -- --test-threads=1
-          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os windows_script_timeout_reaps_immediate_node_grandchild -- --test-threads=1
-          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os windows_script_parent_crash_drops_job_and_reaps_grandchild -- --test-threads=1
-          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os conpty_terminal_uses_suspended_spawn -- --test-threads=1
-          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os job_tree_is_terminated -- --test-threads=1
-          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os windows_script_whitelist_rejects_shell_execution -- --test-threads=1
-          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os windows_node_script_executes_in_job -- --test-threads=1
-          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os windows_coding_can_read_an_authorized_regular_file -- --test-threads=1
-          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os windows_agent_ -- --test-threads=1
-          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os capabilities::agent::windows_sandbox::tests -- --test-threads=1
-          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os real_appcontainer_stdio_initializes_lists_calls_and_scrubs_secrets -- --test-threads=1
-          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os stdin_backpressure_obeys_deadline -- --test-threads=1
-          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os snapshot_rejects_junctions_instead_of_copying_external_sources -- --test-threads=1
-          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os real_rust_analyzer_runs_against_private_snapshot -- --test-threads=1
-          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os fake_loopback_port_occupant_cannot_receive_snapshot_before_identity_proof -- --test-threads=1
-          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os process_execution_requires_explicit_approval_and_rejects_shell_actions -- --test-threads=1
-          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os knowledge_search_redacts_sensitive_lines -- --test-threads=1
+          function Invoke-NativeCargoTest([string]$filter) {
+            $output = cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os $filter -- --test-threads=1 2>&1 | Out-String
+            $code = $LASTEXITCODE
+            $output | Write-Host
+            if ($code -ne 0) {
+              $details = @($output -split "`r?`n" | Where-Object {
+                $_ -match 'FAILED|panicked at|error(\[|:)|failures:'
+              } | Select-Object -Last 8)
+              $details += "Native test failed: $filter"
+              $details | ForEach-Object {
+                $message = "$_" -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A'
+                Write-Host "::error::$message"
+              }
+              throw "Native test failed: $filter"
+            }
+          }
+          Invoke-NativeCargoTest 'windows_grid_tests'
+          Invoke-NativeCargoTest 'framing_tests'
+          Invoke-NativeCargoTest 'authorized_windows_read'
+          Invoke-NativeCargoTest 'pinned_handle_move'
+          Invoke-NativeCargoTest 'windows_cas'
+          Invoke-NativeCargoTest 'capabilities::workspace::cas::tests'
+          Invoke-NativeCargoTest 'local_owner_pipe_roundtrip'
+          Invoke-NativeCargoTest 'suspended_spawn_assigns_job_before_immediate_grandchild_can_run'
+          Invoke-NativeCargoTest 'dropping_job_after_parent_crash_kills_grandchild'
+          Invoke-NativeCargoTest 'windows_script_cancel_reaps_immediate_node_grandchild'
+          Invoke-NativeCargoTest 'windows_script_timeout_reaps_immediate_node_grandchild'
+          Invoke-NativeCargoTest 'windows_script_parent_crash_drops_job_and_reaps_grandchild'
+          Invoke-NativeCargoTest 'conpty_terminal_uses_suspended_spawn'
+          Invoke-NativeCargoTest 'job_tree_is_terminated'
+          Invoke-NativeCargoTest 'windows_script_whitelist_rejects_shell_execution'
+          Invoke-NativeCargoTest 'windows_node_script_executes_in_job'
+          Invoke-NativeCargoTest 'windows_coding_can_read_an_authorized_regular_file'
+          Invoke-NativeCargoTest 'windows_agent_'
+          Invoke-NativeCargoTest 'capabilities::agent::windows_sandbox::tests'
+          Invoke-NativeCargoTest 'real_appcontainer_stdio_initializes_lists_calls_and_scrubs_secrets'
+          Invoke-NativeCargoTest 'stdin_backpressure_obeys_deadline'
+          Invoke-NativeCargoTest 'snapshot_rejects_junctions_instead_of_copying_external_sources'
+          Invoke-NativeCargoTest 'real_rust_analyzer_runs_against_private_snapshot'
+          Invoke-NativeCargoTest 'fake_loopback_port_occupant_cannot_receive_snapshot_before_identity_proof'
+          Invoke-NativeCargoTest 'process_execution_requires_explicit_approval_and_rejects_shell_actions'
+          Invoke-NativeCargoTest 'knowledge_search_redacts_sensitive_lines'
       - name: Build release NSIS after successful Windows compilation
         if: github.event_name == 'workflow_dispatch'
         shell: pwsh
