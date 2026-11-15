@@ -132,14 +132,37 @@ fn reject_profile_reparse_tree(directory: &Path) -> Result<()> {
 }
 
 #[cfg(target_os = "windows")]
+fn count_profile_objects(directory: &Path) -> Result<usize> {
+    let mut count = 1usize;
+    for entry in std::fs::read_dir(directory)
+        .map_err(|_| BrowserTabError::Platform("cannot enumerate WebView2 profile ACL tree".into()))?
+    {
+        let entry = entry.map_err(|_| BrowserTabError::Platform("cannot enumerate WebView2 profile ACL entry".into()))?;
+        let path = entry.path();
+        let metadata = std::fs::symlink_metadata(&path)
+            .map_err(|_| BrowserTabError::Platform("cannot inspect WebView2 profile ACL entry".into()))?;
+        if metadata.file_attributes() & 0x0000_0400 != 0 {
+            return Err(BrowserTabError::Platform("WebView2 profile contains a reparse point".into()));
+        }
+        count = count.checked_add(1)
+            .ok_or_else(|| BrowserTabError::Platform("WebView2 profile tree too large".into()))?;
+        if metadata.is_dir() {
+            count = count.checked_add(count_profile_objects(&path)? - 1)
+                .ok_or_else(|| BrowserTabError::Platform("WebView2 profile tree too large".into()))?;
+        }
+    }
+    Ok(count)
+}
+
+#[cfg(target_os = "windows")]
 fn secure_windows_browser_profile(profile: &Path) -> Result<()> {
     let icacls = windows_system_binary("icacls.exe")?;
     let (account, sid) = current_windows_user()?;
     reject_profile_reparse_tree(profile)?;
+    let object_count = count_profile_objects(profile)?;
 
     // Reset all existing descendants to inherited ACLs before protecting the
-    // profile root. This runs once per app process, before the first WebView2
-    // child opens the user-data folder.
+    // profile root. This runs before the first WebView2 child opens the folder.
     let reset = std::process::Command::new(&icacls)
         .arg(profile)
         .args(["/reset", "/T", "/C"])
@@ -161,8 +184,12 @@ fn secure_windows_browser_profile(profile: &Path) -> Result<()> {
         return Err(BrowserTabError::Platform("cannot secure WebView2 profile ACL".into()));
     }
 
+    // Verify every object, not only the profile root. A legacy child file
+    // with an explicit broad ACE must not survive a correct root DACL.
+    reject_profile_reparse_tree(profile)?;
     let verify = std::process::Command::new(&icacls)
         .arg(profile)
+        .args(["/T", "/C"])
         .output()
         .map_err(|_| BrowserTabError::Platform("cannot verify WebView2 profile ACL".into()))?;
     if !verify.status.success() {
@@ -170,16 +197,18 @@ fn secure_windows_browser_profile(profile: &Path) -> Result<()> {
     }
     let listing = String::from_utf8_lossy(&verify.stdout);
     let entries: Vec<_> = listing.lines().filter(|line| line.contains(":(")).collect();
-    let has_user = entries.iter().any(|line| line.contains(&sid) || line.contains(&account));
-    let has_system = entries.iter().any(|line| line.contains("S-1-5-18")
-        || line.to_ascii_uppercase().contains("SYSTEM"));
-    if entries.len() != 2 || !has_user || !has_system
+    let user_entries = entries.iter().filter(|line| line.contains(&sid) || line.contains(&account)).count();
+    let system_entries = entries.iter().filter(|line| line.contains("S-1-5-18")
+        || line.to_ascii_uppercase().contains("SYSTEM")).count();
+    if entries.len() != object_count * 2
+        || user_entries != object_count
+        || system_entries != object_count
         || listing.to_ascii_lowercase().contains("everyone")
         || listing.to_ascii_lowercase().contains("authenticated users")
         || listing.contains("S-1-1-0")
         || listing.contains("S-1-5-32-545")
     {
-        return Err(BrowserTabError::Platform("WebView2 profile ACL is not owner-exclusive".into()));
+        return Err(BrowserTabError::Platform("WebView2 profile ACL tree is not owner-exclusive".into()));
     }
     Ok(())
 }
