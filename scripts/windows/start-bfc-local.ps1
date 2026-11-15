@@ -7,10 +7,11 @@ param(
   [string]$DataDirectory = (Join-Path $env:LOCALAPPDATA 'BrowserOS\Bilibili-Favorites-Review')
 )
 $ErrorActionPreference = 'Stop'
-if (-not $env:LOCALAPPDATA -or -not $env:SystemRoot) {
-  throw 'LOCALAPPDATA and SystemRoot are required for the per-user BFC service.'
+if (-not $env:LOCALAPPDATA) {
+  throw 'LOCALAPPDATA is required for the per-user BFC service.'
 }
-$icacls = Join-Path $env:SystemRoot 'System32\icacls.exe'
+# Resolve the real OS directory rather than trusting inherited SystemRoot.
+$icacls = Join-Path ([Environment]::SystemDirectory) 'icacls.exe'
 if (-not (Test-Path -LiteralPath $icacls -PathType Leaf)) {
   throw 'Windows icacls.exe is unavailable.'
 }
