@@ -497,14 +497,14 @@ impl GridProcessManager {
                     index, first
                 );
                 let comms = self.wait_connected(index, 8000)?;
-                self.request_once_with(comms, &cmd, timeout_ms).map(|_| ())
+                self.request_once_with(index, comms, &cmd, timeout_ms).map(|_| ())
             }
         }
     }
 
     fn request_once(&self, index: u32, cmd: &GridCmd, timeout_ms: u64) -> Result<(), String> {
         let comms = self.wait_connected(index, 15000)?;
-        self.request_once_with(comms, cmd, timeout_ms).map(|_| ())
+        self.request_once_with(index, comms, cmd, timeout_ms).map(|_| ())
     }
 
     /// Fail-closed native probe of the actual Grid page. Stored last_url is
@@ -514,6 +514,7 @@ impl GridProcessManager {
             return false;
         };
         match self.request_once_with(
+            index,
             comms,
             &GridCmd::HibernationProbe {
                 id: format!("grid-{index}"),
@@ -531,6 +532,7 @@ impl GridProcessManager {
         }
         let comms = self.wait_connected(index, 500)?;
         self.request_once_with(
+            index,
             comms,
             &GridCmd::ReadReplies {
                 id: format!("grid-{index}"),
@@ -542,6 +544,7 @@ impl GridProcessManager {
 
     fn request_once_with(
         &self,
+        index: u32,
         comms: Arc<ChildComms>,
         cmd: &GridCmd,
         timeout_ms: u64,
@@ -570,7 +573,15 @@ impl GridProcessManager {
         };
         if let Err(e) = write_res {
             comms.pending.lock().unwrap().remove(&seq);
-            return Err(format!("写 UDS 失败: {e}"));
+            if e.kind() == std::io::ErrorKind::TimedOut {
+                // An overlapped write may have delivered only a prefix of the
+                // JSON frame. Never reuse that byte stream: kill the Job-owned
+                // child tree so the reader clone closes and the generation is
+                // discarded before any subsequent request can be sent.
+                self.kill_child(index);
+                return Err("写 NamedPipe 超时，Grid 子进程已终止".into());
+            }
+            return Err(format!("写 NamedPipe 失败: {e}"));
         }
         match rx.recv_timeout(std::time::Duration::from_millis(timeout_ms)) {
             Ok(r) => r,
@@ -588,11 +599,19 @@ impl GridProcessManager {
             None => return,
         };
         let mut guard = comms.writer.lock().unwrap();
-        if let Some(w) = guard.as_mut() {
+        let timed_out = if let Some(w) = guard.as_mut() {
             let seq = comms.seq.fetch_add(1, Ordering::SeqCst);
-            if let Err(e) = crate::grid_ipc::write_wire(w, &Wire::Request { seq, cmd }) {
-                eprintln!("[grid-manager] grid-{} send 失败: {e}", index);
+            match crate::grid_ipc::write_wire(w, &Wire::Request { seq, cmd }) {
+                Ok(()) => false,
+                Err(error) => {
+                    eprintln!("[grid-manager] grid-{} send 失败: {error}", index);
+                    error.kind() == std::io::ErrorKind::TimedOut
+                }
             }
+        } else { false };
+        drop(guard);
+        if timed_out {
+            self.kill_child(index);
         }
     }
 
