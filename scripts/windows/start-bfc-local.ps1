@@ -69,6 +69,9 @@ function Set-OwnerSystemDirectoryAcl([string]$Path) {
 
 $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
 $systemSid = [Security.Principal.SecurityIdentifier]::new('S-1-5-18')
+# Pass the OS-resolved SID, never a caller-controlled DOMAIN\USERNAME string,
+# so the Node service applies the same current-user ACL as this launcher.
+$env:BROWSEROS_USER_SID = $currentSid.Value
 $DataDirectory = [IO.Path]::GetFullPath($DataDirectory)
 if ($DataDirectory.StartsWith('\\')) {
   throw 'BFC data directory must be on a local Windows volume.'
