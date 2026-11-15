@@ -70,11 +70,10 @@ fn ensure_private_browser_profile(app: &AppHandle<Wry>) -> Result<PathBuf> {
 }
 
 // Browser sub-WebViews use a single app-owned WebView2 user data folder.
-// The trusted main UI keeps its default, separate storage environment. This
-// directory inherits the current user's app-data ACL; ACL hardening and
-// WebView2 environment-option compatibility require Windows GUI verification.
+// The trusted main UI keeps its default, separate storage environment. The
+// profile DACL is reset and verified before the first child WebView is created.
 #[cfg(target_os = "windows")]
-static BROWSER_PROFILE_ACL: OnceLock<PathBuf> = OnceLock::new();
+static BROWSER_PROFILE_ACL: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
 
 #[cfg(target_os = "windows")]
 fn windows_system_binary(name: &str) -> Result<PathBuf> {
@@ -186,13 +185,15 @@ fn ensure_private_browser_profile(app: &AppHandle<Wry>) -> Result<PathBuf> {
     if canonical_profile != profile {
         return Err(BrowserTabError::Platform("browser profile path invalid".into()));
     }
-    if let Some(verified) = BROWSER_PROFILE_ACL.get() {
-        if verified != &canonical_profile {
+    let acl_state = BROWSER_PROFILE_ACL.get_or_init(|| Mutex::new(None));
+    let mut verified = acl_state.lock().unwrap_or_else(|poison| poison.into_inner());
+    if let Some(existing) = verified.as_ref() {
+        if existing != &canonical_profile {
             return Err(BrowserTabError::Platform("browser profile identity changed".into()));
         }
     } else {
         secure_windows_browser_profile(&canonical_profile)?;
-        let _ = BROWSER_PROFILE_ACL.set(canonical_profile.clone());
+        *verified = Some(canonical_profile.clone());
     }
     Ok(canonical_profile)
 }
