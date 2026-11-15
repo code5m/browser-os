@@ -712,6 +712,14 @@ fn supervise(
                 thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
             }
             Err(e) => {
+                // A failed wait handle must not leave a Job-owned descendant
+                // holding stdout/stderr open. Tear down the entire Windows
+                // process tree before joining readers; Linux keeps its process
+                // group cleanup path.
+                #[cfg(windows)]
+                let _ = job.terminate();
+                terminate_group(pgid, HARD_GRACE_SECS);
+                let _ = child.wait();
                 join_output_readers(readers.take().unwrap_or_default());
                 finish(
                     RunStatus::Failed,
