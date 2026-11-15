@@ -93,7 +93,7 @@ fn bfc_addr() -> SocketAddr {
     SocketAddr::from(([127, 0, 0, 1], 4198))
 }
 
-/// A single authenticated TCP socket. All preflight, challenge, session
+/// Use one authenticated TCP socket for all preflight, challenge, session
 /// and snapshot requests use this exact loopback connection. If it closes,
 /// requests fail closed; we never reconnect to a new process after proof.
 struct BfcHttpConnection {
