@@ -49,6 +49,20 @@ $full = [Security.AccessControl.FileSystemRights]::FullControl
 $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($currentSid, $full, $inheritance, $propagation, $allow))
 $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($systemSid, $full, $inheritance, $propagation, $allow))
 Set-Acl -LiteralPath $DataDirectory -AclObject $acl
+# Existing snapshot files may carry explicit ACLs from before this launcher
+# existed. Reject reparse points, reset every child to inherit from the now
+# owner-only root, then verify the complete data tree before Node can open it.
+$children = @(Get-ChildItem -LiteralPath $DataDirectory -Force -Recurse -ErrorAction Stop)
+if ($children | Where-Object { ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 }) {
+  throw 'BFC data tree contains a reparse point.'
+}
+$childPattern = Join-Path $DataDirectory '*'
+& icacls.exe $childPattern '/reset' '/T' '/C' | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'Cannot reset existing BFC snapshot file ACLs.' }
+$treeAcl = (& icacls.exe $DataDirectory '/T' '/C' | Out-String)
+if ($LASTEXITCODE -ne 0 -or $treeAcl -match '(?i)Everyone|BUILTIN\\Users|Authenticated Users|S-1-1-0|S-1-5-32-545') {
+  throw 'BFC data tree contains a broad or unverifiable ACL.'
+}
 $verifiedAcl = Get-Acl -LiteralPath $DataDirectory
 $verifiedRules = @($verifiedAcl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
 if ($verifiedRules.Count -ne 2 -or
