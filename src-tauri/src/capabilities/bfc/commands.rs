@@ -338,7 +338,7 @@ pub async fn bfc_readback_finish(
     main_only(&app, &webview, "bfc_readback_finish")?;
     let runtime = app.state::<BfcRuntime>();
     let (_scan_id, payload) = runtime.prepare_import(&ticket)?;
-    match import_to_local_bfc(&app, &payload).await {
+    match import_to_local_bfc(&payload).await {
         Ok(result) => {
             runtime.mark_imported(&ticket, result.clone())?;
             Ok(result)
@@ -369,7 +369,6 @@ fn client() -> Result<reqwest::Client, String> {
 }
 
 async fn import_to_local_bfc(
-    app: &AppHandle,
     payload: &BfcImportPayload,
 ) -> Result<BfcImportResult, ImportFailure> {
     let identity = load_bfc_service_identity()
@@ -534,6 +533,97 @@ mod tests {
             Err("BFC_TAB_NOT_ACTIVE".into())
         );
         assert!(validate_bfc_tab_binding("tab-9", Some("tab-9"), true).is_ok());
+    }
+
+    #[tokio::test]
+    async fn fake_loopback_port_occupant_cannot_receive_snapshot_before_identity_proof() {
+        use std::io::{BufRead, BufReader, Write};
+        use std::net::TcpListener;
+        use std::sync::{Arc, Mutex};
+        use std::thread;
+        use super::super::runtime::{BfcImportPage, BfcItem};
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let service_id = uuid::Uuid::new_v4().to_string();
+        let requests = Arc::new(Mutex::new(Vec::<String>::new()));
+        let seen = Arc::clone(&requests);
+        let expected_service = service_id.clone();
+        let server = thread::spawn(move || {
+            for _ in 0..3 {
+                let (mut stream, _) = listener.accept().expect("fake service accepts request");
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut request_line = String::new();
+                reader.read_line(&mut request_line).unwrap();
+                let mut header = String::new();
+                loop {
+                    header.clear();
+                    if reader.read_line(&mut header).unwrap() == 0 || header == "\r\n" {
+                        break;
+                    }
+                }
+                let path = request_line.split_whitespace().nth(1).unwrap_or("");
+                seen.lock().unwrap().push(request_line.trim().to_string());
+                let body = match path {
+                    "/api/health" => serde_json::json!({
+                        "ok":true,"localOnly":true,"bilibiliNetworkRequests":0,
+                        "protocolVersion":1,"serviceId":expected_service
+                    }),
+                    "/api/capabilities" => serde_json::json!({
+                        "version":1,"protocolVersion":1,"serviceId":expected_service,
+                        "bilibili":{"readSnapshotOnly":true,"accountWrites":false}
+                    }),
+                    "/api/identity" => serde_json::json!({
+                        "ok":true,"serviceId":expected_service,"protocolVersion":1,
+                        "proof":"0000000000000000000000000000000000000000000000000000000000000000"
+                    }),
+                    _ => panic!("unexpected request reached fake service: {request_line}"),
+                }.to_string();
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(), body
+                ).unwrap();
+            }
+        });
+
+        let identity = BfcServiceIdentity {
+            protocol_version: 1,
+            service_id,
+            token: "a".repeat(64),
+        };
+        let payload = BfcImportPayload {
+            source: "authorized_browser_readback",
+            scan_id: "fake-port-fixture".into(),
+            reported_total: 1,
+            expected_pages: 1,
+            traversal_finished: true,
+            pagination_stable: true,
+            folder_id: "9".into(),
+            folder_name: "CI fake port".into(),
+            pages: [(
+                "1".into(),
+                BfcImportPage {
+                    items: vec![BfcItem {
+                        bvid: "BV1234567890".into(),
+                        title: "must-not-leak".into(),
+                    }],
+                },
+            )].into(),
+        };
+        let client = client().unwrap();
+        let result = import_to_local_bfc_with_identity(&client, &payload, &identity, &origin).await;
+        assert!(matches!(
+            result,
+            Err(ImportFailure::NotSent("BFC_LOCAL_SERVICE_UNTRUSTED"))
+        ));
+        server.join().unwrap();
+        let observed = requests.lock().unwrap().clone();
+        assert_eq!(observed.len(), 3);
+        assert!(observed.iter().all(|request| request.starts_with("GET ")));
+        assert!(observed.iter().any(|request| request.starts_with("GET /api/identity ")));
+        assert!(!observed.iter().any(|request| request.starts_with("POST /api/readback/import ")),
+            "snapshot payload must never be sent to a port occupant that cannot prove service identity");
     }
 
     #[test]
