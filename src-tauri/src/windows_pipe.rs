@@ -15,7 +15,7 @@ use std::path::Path;
 use std::ptr;
 use std::time::Duration;
 use windows_sys::Win32::Foundation::{
-    CloseHandle, GetLastError, LocalFree, HANDLE, INVALID_HANDLE_VALUE,
+    CloseHandle, DuplicateHandle, GetLastError, LocalFree, HANDLE, INVALID_HANDLE_VALUE,
     ERROR_BROKEN_PIPE, ERROR_IO_PENDING, ERROR_OPERATION_ABORTED,
     WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
@@ -30,7 +30,7 @@ use windows_sys::Win32::System::Pipes::{
     GetNamedPipeServerProcessId,
 };
 use windows_sys::Win32::System::Threading::{
-    CreateEventW, DuplicateHandle, GetCurrentProcess, WaitForSingleObject,
+    CreateEventW, GetCurrentProcess, WaitForSingleObject,
 };
 
 const PIPE_ACCESS_DUPLEX: u32 = 3;
