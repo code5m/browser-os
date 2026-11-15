@@ -3,12 +3,8 @@ use crate::models::{
 };
 use crate::platform;
 use parking_lot::RwLock;
-#[cfg(not(target_os = "linux"))]
-use std::sync::Mutex;
 #[cfg(target_os = "windows")]
 use std::os::windows::fs::MetadataExt;
-#[cfg(target_os = "windows")]
-use std::sync::OnceLock;
 use std::collections::HashMap;
 #[cfg(target_os = "linux")]
 use std::os::unix::fs::PermissionsExt;
@@ -75,7 +71,24 @@ fn ensure_private_browser_profile(app: &AppHandle<Wry>) -> Result<PathBuf> {
 // The trusted main UI keeps its default, separate storage environment. The
 // profile DACL is reset and verified before the first child WebView is created.
 #[cfg(target_os = "windows")]
-static BROWSER_PROFILE_ACL: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
+fn reject_windows_reparse_path(path: &Path) -> Result<()> {
+    if !path.is_absolute() {
+        return Err(BrowserTabError::Platform("browser profile path is not absolute".into()));
+    }
+    let mut current = PathBuf::new();
+    for component in path.components() {
+        current.push(component.as_os_str());
+        match std::fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_attributes() & 0x0000_0400 != 0 => {
+                return Err(BrowserTabError::Platform("browser profile path contains a reparse point".into()));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err(BrowserTabError::Platform("cannot inspect browser profile path".into())),
+        }
+    }
+    Ok(())
+}
 
 #[cfg(target_os = "windows")]
 fn windows_system_binary(name: &str) -> Result<PathBuf> {
@@ -97,7 +110,7 @@ fn windows_system_binary(name: &str) -> Result<PathBuf> {
 }
 
 #[cfg(target_os = "windows")]
-fn current_windows_user() -> Result<(String, String)> {
+fn current_windows_user_sid() -> Result<String> {
     let whoami = windows_system_binary("whoami.exe")?;
     let output = std::process::Command::new(whoami)
         .args(["/user", "/fo", "csv", "/nh"])
@@ -110,53 +123,41 @@ fn current_windows_user() -> Result<(String, String)> {
     let line = text.lines().find(|line| line.contains("S-1-"))
         .ok_or_else(|| BrowserTabError::Platform("Windows user SID unavailable".into()))?;
     let fields: Vec<_> = line.trim_start_matches('\u{feff}').split(',').collect();
-    let account = fields.first().map(|value| value.trim().trim_matches('"'))
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| BrowserTabError::Platform("Windows account name unavailable".into()))?;
     let sid = fields.get(1).map(|value| value.trim().trim_matches('"'))
         .filter(|value| value.starts_with("S-1-")
             && value.bytes().all(|byte| byte.is_ascii_digit() || byte == b'-'))
         .ok_or_else(|| BrowserTabError::Platform("Windows user SID invalid".into()))?;
-    Ok((account.to_string(), sid.to_string()))
+    Ok(sid.to_string())
 }
 
 #[cfg(target_os = "windows")]
-fn reject_profile_reparse_tree(directory: &Path) -> Result<()> {
-    for entry in std::fs::read_dir(directory)
-        .map_err(|_| BrowserTabError::Platform("cannot inspect WebView2 profile tree".into()))?
-    {
-        let entry = entry.map_err(|_| BrowserTabError::Platform("cannot inspect WebView2 profile entry".into()))?;
-        let path = entry.path();
-        let metadata = std::fs::symlink_metadata(&path)
-            .map_err(|_| BrowserTabError::Platform("cannot inspect WebView2 profile metadata".into()))?;
-        if metadata.file_attributes() & 0x0000_0400 != 0 {
-            return Err(BrowserTabError::Platform("WebView2 profile contains a reparse point".into()));
-        }
-        if metadata.is_dir() {
-            reject_profile_reparse_tree(&path)?;
-        }
-    }
-    Ok(())
-}
-
-#[cfg(target_os = "windows")]
-fn count_profile_objects(directory: &Path) -> Result<usize> {
+fn profile_tree_object_count(directory: &Path) -> Result<usize> {
+    const MAX_OBJECTS: usize = 200_000;
+    const MAX_DEPTH: usize = 128;
+    let mut pending = vec![(directory.to_path_buf(), 0usize)];
     let mut count = 1usize;
-    for entry in std::fs::read_dir(directory)
-        .map_err(|_| BrowserTabError::Platform("cannot enumerate WebView2 profile ACL tree".into()))?
-    {
-        let entry = entry.map_err(|_| BrowserTabError::Platform("cannot enumerate WebView2 profile ACL entry".into()))?;
-        let path = entry.path();
-        let metadata = std::fs::symlink_metadata(&path)
-            .map_err(|_| BrowserTabError::Platform("cannot inspect WebView2 profile ACL entry".into()))?;
-        if metadata.file_attributes() & 0x0000_0400 != 0 {
-            return Err(BrowserTabError::Platform("WebView2 profile contains a reparse point".into()));
+    while let Some((current, depth)) = pending.pop() {
+        if depth >= MAX_DEPTH {
+            return Err(BrowserTabError::Platform("WebView2 profile tree depth limit".into()));
         }
-        count = count.checked_add(1)
-            .ok_or_else(|| BrowserTabError::Platform("WebView2 profile tree too large".into()))?;
-        if metadata.is_dir() {
-            count = count.checked_add(count_profile_objects(&path)? - 1)
-                .ok_or_else(|| BrowserTabError::Platform("WebView2 profile tree too large".into()))?;
+        for entry in std::fs::read_dir(&current)
+            .map_err(|_| BrowserTabError::Platform("cannot enumerate WebView2 profile tree".into()))?
+        {
+            let entry = entry.map_err(|_| BrowserTabError::Platform("cannot inspect WebView2 profile entry".into()))?;
+            let path = entry.path();
+            let metadata = std::fs::symlink_metadata(&path)
+                .map_err(|_| BrowserTabError::Platform("cannot inspect WebView2 profile metadata".into()))?;
+            if metadata.file_attributes() & 0x0000_0400 != 0 {
+                return Err(BrowserTabError::Platform("WebView2 profile contains a reparse point".into()));
+            }
+            count = count.checked_add(1)
+                .filter(|value| *value <= MAX_OBJECTS)
+                .ok_or_else(|| BrowserTabError::Platform("WebView2 profile object limit".into()))?;
+            if metadata.is_dir() {
+                pending.push((path, depth + 1));
+            } else if !metadata.is_file() {
+                return Err(BrowserTabError::Platform("WebView2 profile contains a special file".into()));
+            }
         }
     }
     Ok(count)
@@ -165,15 +166,15 @@ fn count_profile_objects(directory: &Path) -> Result<usize> {
 #[cfg(target_os = "windows")]
 fn secure_windows_browser_profile(profile: &Path) -> Result<()> {
     let icacls = windows_system_binary("icacls.exe")?;
-    let (account, sid) = current_windows_user()?;
+    let sid = current_windows_user_sid()?;
     reject_profile_reparse_tree(profile)?;
-    let object_count = count_profile_objects(profile)?;
+    let object_count = profile_tree_object_count(profile)?;
 
     // Reset all existing descendants to inherited ACLs before protecting the
     // profile root. This runs before the first WebView2 child opens the folder.
     let reset = std::process::Command::new(&icacls)
         .arg(profile)
-        .args(["/reset", "/T", "/C"])
+        .args(["/reset", "/T"])
         .output()
         .map_err(|_| BrowserTabError::Platform("cannot reset WebView2 profile ACL".into()))?;
     if !reset.status.success() {
@@ -205,7 +206,7 @@ fn secure_windows_browser_profile(profile: &Path) -> Result<()> {
     }
     let listing = String::from_utf8_lossy(&verify.stdout);
     let entries: Vec<_> = listing.lines().filter(|line| line.contains(":(")).collect();
-    let user_entries = entries.iter().filter(|line| line.contains(&sid) || line.contains(&account)).count();
+    let user_entries = entries.iter().filter(|line| line.contains(&sid)).count();
     let system_entries = entries.iter().filter(|line| line.contains("S-1-5-18")
         || line.to_ascii_uppercase().contains("SYSTEM")).count();
     if entries.len() != object_count * 2
@@ -227,33 +228,30 @@ fn ensure_private_browser_profile(app: &AppHandle<Wry>) -> Result<PathBuf> {
         .path()
         .app_data_dir()
         .map_err(|_| BrowserTabError::Platform("browser profile directory unavailable".into()))?;
+    reject_windows_reparse_path(&base)?;
     std::fs::create_dir_all(&base)
         .map_err(|_| BrowserTabError::Platform("browser profile base unavailable".into()))?;
+    reject_windows_reparse_path(&base)?;
     let canonical_base = std::fs::canonicalize(&base)
         .map_err(|_| BrowserTabError::Platform("browser profile base unavailable".into()))?;
     let profile = browser_profile_path(&canonical_base);
+    reject_windows_reparse_path(&profile)?;
     if let Ok(meta) = std::fs::symlink_metadata(&profile) {
-        if !meta.is_dir() || meta.file_type().is_symlink() {
+        if !meta.is_dir() || meta.file_attributes() & 0x0000_0400 != 0 {
             return Err(BrowserTabError::Platform("browser profile path invalid".into()));
         }
     }
     std::fs::create_dir_all(&profile)
         .map_err(|_| BrowserTabError::Platform("cannot create browser profile".into()))?;
+    reject_windows_reparse_path(&profile)?;
     let canonical_profile = std::fs::canonicalize(&profile)
         .map_err(|_| BrowserTabError::Platform("browser profile unavailable".into()))?;
     if canonical_profile != profile {
         return Err(BrowserTabError::Platform("browser profile path invalid".into()));
     }
-    let acl_state = BROWSER_PROFILE_ACL.get_or_init(|| Mutex::new(None));
-    let mut verified = acl_state.lock().unwrap_or_else(|poison| poison.into_inner());
-    if let Some(existing) = verified.as_ref() {
-        if existing != &canonical_profile {
-            return Err(BrowserTabError::Platform("browser profile identity changed".into()));
-        }
-    } else {
-        secure_windows_browser_profile(&canonical_profile)?;
-        *verified = Some(canonical_profile.clone());
-    }
+    // ACLs are verified on every child-WebView creation, not cached forever:
+    // an ACL change or a newly inserted reparse point must fail closed.
+    secure_windows_browser_profile(&canonical_profile)?;
     Ok(canonical_profile)
 }
 
