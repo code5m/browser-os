@@ -1,770 +1,1765 @@
-use std::fs;
-use std::io;
-use std::path::{Component, Path, PathBuf};
+//! Root-anchored filesystem operations. No path-based I/O after authorization.
+//! For Linux, each directory component is opened without following symlinks;
+//! rename uses those pinned directory descriptors. If unavailable, fail closed.
+use std::path::{Path, PathBuf};
 
-#[derive(Debug)]
-pub struct SafeWriteError {
-    kind: io::ErrorKind,
-    code: &'static str,
-}
-
-impl SafeWriteError {
-    pub fn new(kind: io::ErrorKind, code: &'static str) -> Self { Self { kind, code } }
-    pub fn kind(&self) -> io::ErrorKind { self.kind }
-    pub fn code(&self) -> &'static str { self.code }
-}
-impl std::fmt::Display for SafeWriteError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "{}", self.code) }
-}
-impl std::error::Error for SafeWriteError {}
-impl From<SafeWriteError> for io::Error {
-    fn from(value: SafeWriteError) -> Self { io::Error::new(value.kind, value.code) }
-}
-
-pub struct SafeWriteOutcome {
-    pub saved: bool,
-    pub current_hash: Option<String>,
-}
-
-fn validate_relative(path: &Path) -> Result<(), SafeWriteError> {
-    if path.as_os_str().is_empty() || path.is_absolute() || path.components().any(|c| !matches!(c, Component::Normal(_))) {
-        return Err(SafeWriteError::new(io::ErrorKind::PermissionDenied, "PATH_OUTSIDE_WORKSPACE"));
-    }
-    Ok(())
-}
-
-#[cfg(unix)]
-fn open_beneath(root: &Path, relative: &Path, create_dirs: bool) -> Result<(std::os::fd::OwnedFd, PathBuf), SafeWriteError> {
-    use std::ffi::CString;
+#[cfg(target_os = "linux")]
+mod linux {
+    use super::*;
+    use sha2::Digest;
+    use std::ffi::{CString, OsStr};
+    use std::fs::File;
+    use std::io::{self, Read, Write};
+    use std::os::fd::{AsRawFd, FromRawFd};
     use std::os::unix::ffi::OsStrExt;
-    use std::os::unix::io::FromRawFd;
-    validate_relative(relative)?;
-    let root = CString::new(root.as_os_str().as_bytes()).map_err(|_| SafeWriteError::new(io::ErrorKind::InvalidInput, "PATH_INVALID"))?;
-    let root_fd = unsafe { libc::open(root.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC) };
-    if root_fd < 0 { return Err(SafeWriteError::new(io::ErrorKind::NotFound, "WORKSPACE_ROOT_INVALID")); }
-    let mut fd = unsafe { std::os::fd::OwnedFd::from_raw_fd(root_fd) };
-    use std::os::fd::AsRawFd;
-    let components: Vec<_> = relative.components().filter_map(|c| match c { Component::Normal(v) => Some(v), _ => None }).collect();
-    for component in components.iter().take(components.len().saturating_sub(1)) {
-        let name = CString::new(component.as_bytes()).map_err(|_| SafeWriteError::new(io::ErrorKind::InvalidInput, "PATH_INVALID"))?;
-        let next = unsafe { libc::openat(fd.as_raw_fd(), name.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC) };
-        if next < 0 {
-            let error = io::Error::last_os_error();
-            if create_dirs && error.kind() == io::ErrorKind::NotFound {
-                if unsafe { libc::mkdirat(fd.as_raw_fd(), name.as_ptr(), 0o700) } != 0 { return Err(SafeWriteError::new(io::ErrorKind::PermissionDenied, "SAFE_DIRECTORY_CREATE_FAILED")); }
-                let opened = unsafe { libc::openat(fd.as_raw_fd(), name.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC) };
-                if opened < 0 { return Err(SafeWriteError::new(io::ErrorKind::PermissionDenied, "SAFE_DIRECTORY_OPEN_FAILED")); }
-                fd = unsafe { std::os::fd::OwnedFd::from_raw_fd(opened) };
-            } else { return Err(SafeWriteError::new(error.kind(), "SAFE_PATH_ESCAPE")); }
-        } else { fd = unsafe { std::os::fd::OwnedFd::from_raw_fd(next) }; }
+    use std::path::Component;
+
+    fn bad_path() -> io::Error {
+        io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "path outside allowed roots",
+        )
     }
-    let name = components.last().ok_or_else(|| SafeWriteError::new(io::ErrorKind::InvalidInput, "PATH_INVALID"))?;
-    let mut name_buf = name.as_bytes().to_vec();
-    if name_buf.len() > 255 { return Err(SafeWriteError::new(io::ErrorKind::InvalidInput, "PATH_INVALID")); }
-    let mut name = PathBuf::from(relative);
-    name.pop();
-    Ok((fd, PathBuf::from(components.last().unwrap())))
+    fn name(value: &OsStr) -> io::Result<CString> {
+        CString::new(value.as_bytes())
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "NUL in path"))
+    }
+    fn open_child_dir(parent: &File, child: &OsStr) -> io::Result<File> {
+        let segment = name(child)?;
+        let fd = unsafe {
+            libc::openat(
+                parent.as_raw_fd(),
+                segment.as_ptr(),
+                libc::O_PATH | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            )
+        };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(unsafe { File::from_raw_fd(fd) })
+    }
+    fn walk_beneath(mut dir: File, relative: &Path) -> io::Result<File> {
+        for component in relative.components() {
+            match component {
+                Component::Normal(part) => dir = open_child_dir(&dir, part)?,
+                Component::CurDir => {}
+                _ => return Err(bad_path()),
+            }
+        }
+        Ok(dir)
+    }
+    fn open_abs_dir_no_symlinks(path: &Path) -> io::Result<File> {
+        if !path.is_absolute() {
+            return Err(bad_path());
+        }
+        let root = File::open("/")?;
+        walk_beneath(root, path.strip_prefix("/").map_err(|_| bad_path())?)
+    }
+    // Canonical path is a preflight only: the final access is always rooted in
+    // a verified root directory FD, with no following symlinks during lookup.
+    pub(super) fn open_allowed_dir(canonical: &Path, roots: &[PathBuf]) -> io::Result<File> {
+        for root in roots {
+            let Ok(root_path) = root.canonicalize() else {
+                continue;
+            };
+            let Ok(relative) = canonical.strip_prefix(&root_path) else {
+                continue;
+            };
+            // The root itself must not be reached by following a swapped symlink.
+            let base = open_abs_dir_no_symlinks(&root_path)?;
+            return walk_beneath(base, relative);
+        }
+        Err(bad_path())
+    }
+    fn open_regular_at(parent: &File, filename: &OsStr) -> io::Result<File> {
+        let filename = name(filename)?;
+        // NONBLOCK avoids a FIFO/block-device stall before fstat rejects it.
+        let fd = unsafe {
+            libc::openat(
+                parent.as_raw_fd(),
+                filename.as_ptr(),
+                libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC,
+            )
+        };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let file = unsafe { File::from_raw_fd(fd) };
+        if !file.metadata()?.is_file() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "not a regular file",
+            ));
+        }
+        Ok(file)
+    }
+    pub(super) fn read_regular(
+        canonical: &Path,
+        roots: &[PathBuf],
+        limit: usize,
+    ) -> io::Result<Vec<u8>> {
+        let parent = canonical.parent().ok_or_else(bad_path)?;
+        let filename = canonical.file_name().ok_or_else(bad_path)?;
+        let dir = open_allowed_dir(parent, roots)?;
+        let file = open_regular_at(&dir, filename)?;
+        if file.metadata()?.len() > limit as u64 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "file size limit exceeded",
+            ));
+        }
+        let mut bytes = Vec::new();
+        file.take((limit as u64) + 1).read_to_end(&mut bytes)?;
+        if bytes.len() > limit {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "file size limit exceeded",
+            ));
+        }
+        Ok(bytes)
+    }
+    fn rename_bound(
+        src_parent: &File,
+        source: &OsStr,
+        dst_parent: &File,
+        dest: &OsStr,
+    ) -> io::Result<()> {
+        let source = name(source)?;
+        let dest = name(dest)?;
+        let status = unsafe {
+            libc::renameat2(
+                src_parent.as_raw_fd(),
+                source.as_ptr(),
+                dst_parent.as_raw_fd(),
+                dest.as_ptr(),
+                libc::RENAME_NOREPLACE,
+            )
+        };
+        if status == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
+    pub(super) fn move_no_replace(
+        src: &Path,
+        dest_dir: &Path,
+        roots: &[PathBuf],
+    ) -> io::Result<()> {
+        let parent = src.parent().ok_or_else(bad_path)?;
+        let filename = src.file_name().ok_or_else(bad_path)?;
+        let source_dir = open_allowed_dir(parent, roots)?;
+        let target_dir = open_allowed_dir(dest_dir, roots)?;
+        rename_bound(&source_dir, filename, &target_dir, filename)
+    }
+
+    fn open_lock_at(parent: &File, lock_name: &OsStr) -> io::Result<File> {
+        let lock_name = name(lock_name)?;
+        let fd = unsafe {
+            libc::openat(
+                parent.as_raw_fd(),
+                lock_name.as_ptr(),
+                libc::O_RDWR | libc::O_CREAT | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                0o600,
+            )
+        };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let file = unsafe { File::from_raw_fd(fd) };
+        if !file.metadata()?.is_file() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "lock is not regular",
+            ));
+        }
+        Ok(file)
+    }
+
+    fn create_temp_at(parent: &File, temp_name: &OsStr) -> io::Result<File> {
+        let temp_name = name(temp_name)?;
+        let fd = unsafe {
+            libc::openat(
+                parent.as_raw_fd(),
+                temp_name.as_ptr(),
+                libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                0o600,
+            )
+        };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(unsafe { File::from_raw_fd(fd) })
+    }
+
+    fn unlink_at(parent: &File, filename: &OsStr) {
+        if let Ok(filename) = name(filename) {
+            unsafe {
+                libc::unlinkat(parent.as_raw_fd(), filename.as_ptr(), 0);
+            }
+        }
+    }
+
+    fn replace_at(parent: &File, source: &OsStr, target: &OsStr) -> io::Result<()> {
+        let source = name(source)?;
+        let target = name(target)?;
+        let result = unsafe {
+            libc::renameat(
+                parent.as_raw_fd(),
+                source.as_ptr(),
+                parent.as_raw_fd(),
+                target.as_ptr(),
+            )
+        };
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
+
+    fn sync_directory(parent: &File) -> io::Result<()> {
+        let dot = CString::new(".").expect("static path");
+        let fd = unsafe {
+            libc::openat(
+                parent.as_raw_fd(),
+                dot.as_ptr(),
+                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
+            )
+        };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let directory = unsafe { File::from_raw_fd(fd) };
+        directory.sync_all()
+    }
+
+    fn same_file_identity(left: &std::fs::Metadata, right: &std::fs::Metadata) -> bool {
+        use std::os::unix::fs::MetadataExt;
+        (
+            left.dev(),
+            left.ino(),
+            left.mtime(),
+            left.mtime_nsec(),
+            left.len(),
+        ) == (
+            right.dev(),
+            right.ino(),
+            right.mtime(),
+            right.mtime_nsec(),
+            right.len(),
+        )
+    }
+
+    /// Compare and replace an existing regular file using only a pinned parent
+    /// directory FD. The advisory sidecar lock serializes cooperating BrowserOS
+    /// writers; the second content/identity check detects ordinary external
+    /// edits before rename. A non-cooperating writer can still race the final
+    /// rename syscall, which is not a kernel CAS primitive.
+    fn save_if_unchanged_at(
+        parent: &File,
+        filename: &OsStr,
+        expected: &[u8],
+        content: &[u8],
+        limit: usize,
+    ) -> Result<(), String> {
+        if expected.len() > limit || content.len() > limit {
+            return Err("FILE_SAVE_TOO_LARGE".into());
+        }
+        let digest = format!("{:x}", sha2::Sha256::digest(filename.as_bytes()));
+        let lock_name = std::ffi::OsString::from(format!(".browseros-cas-{digest}.lock"));
+        let lock = open_lock_at(parent, &lock_name).map_err(|_| "FILE_LOCK_UNAVAILABLE")?;
+        lock.lock().map_err(|_| "FILE_LOCK_UNAVAILABLE")?;
+
+        let result = (|| {
+            let current_file = open_regular_at(parent, filename).map_err(|error| {
+                if error.kind() == io::ErrorKind::NotFound {
+                    "FILE_TARGET_MISSING"
+                } else {
+                    "FILE_TARGET_NOT_REGULAR"
+                }
+            })?;
+            let initial_meta = current_file.metadata().map_err(|_| "FILE_READ_FAILED")?;
+            if initial_meta.len() > limit as u64 {
+                return Err("FILE_SAVE_TOO_LARGE".into());
+            }
+            let mut current = Vec::with_capacity(initial_meta.len() as usize);
+            current_file
+                .take(limit as u64 + 1)
+                .read_to_end(&mut current)
+                .map_err(|_| "FILE_READ_FAILED")?;
+            if current.len() > limit {
+                return Err("FILE_SAVE_TOO_LARGE".into());
+            }
+            if current != expected {
+                return Err("FILE_CONFLICT".into());
+            }
+
+            let temp_name =
+                std::ffi::OsString::from(format!(".browseros-cas-{}.tmp", uuid::Uuid::new_v4()));
+            let stage_result = (|| {
+                let mut staged =
+                    create_temp_at(parent, &temp_name).map_err(|_| "FILE_STAGE_FAILED")?;
+                staged.write_all(content).map_err(|_| "FILE_STAGE_FAILED")?;
+                use std::os::unix::fs::PermissionsExt;
+                staged
+                    .set_permissions(std::fs::Permissions::from_mode(
+                        initial_meta.permissions().mode() & 0o777,
+                    ))
+                    .map_err(|_| "FILE_STAGE_FAILED")?;
+                staged.sync_all().map_err(|_| "FILE_STAGE_FAILED")?;
+
+                let latest_file = open_regular_at(parent, filename).map_err(|_| "FILE_CONFLICT")?;
+                let latest_meta = latest_file.metadata().map_err(|_| "FILE_CONFLICT")?;
+                if !same_file_identity(&initial_meta, &latest_meta) {
+                    return Err("FILE_CONFLICT".into());
+                }
+                let mut latest = Vec::with_capacity(latest_meta.len() as usize);
+                latest_file
+                    .take(limit as u64 + 1)
+                    .read_to_end(&mut latest)
+                    .map_err(|_| "FILE_CONFLICT")?;
+                if latest != expected {
+                    return Err("FILE_CONFLICT".into());
+                }
+
+                replace_at(parent, &temp_name, filename).map_err(|_| "FILE_REPLACE_FAILED")?;
+                sync_directory(parent).map_err(|_| "FILE_DURABILITY_UNCERTAIN")?;
+                Ok(())
+            })();
+            if stage_result.is_err() {
+                unlink_at(parent, &temp_name);
+            }
+            stage_result
+        })();
+        drop(lock);
+        result
+    }
+
+    pub(super) fn save_if_unchanged(
+        canonical: &Path,
+        roots: &[PathBuf],
+        expected: &[u8],
+        content: &[u8],
+        limit: usize,
+    ) -> Result<(), String> {
+        let parent_path = canonical.parent().ok_or("FILE_PARENT_INVALID")?;
+        let filename = canonical.file_name().ok_or("FILE_NAME_INVALID")?;
+        let parent =
+            open_allowed_dir(parent_path, roots).map_err(|_| "FILE_PARENT_NOT_AUTHORIZED")?;
+        save_if_unchanged_at(&parent, filename, expected, content, limit)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use std::os::unix::fs::symlink;
+        fn fixture() -> PathBuf {
+            let root = std::env::temp_dir().join(format!(
+                "browseros_descriptor_{}_{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            std::fs::create_dir(&root).unwrap();
+            root
+        }
+        #[test]
+        fn destination_symlink_swap_cannot_escape_authorized_root() {
+            let base = fixture();
+            let trusted = base.join("trusted");
+            let outside = base.join("outside");
+            let dest = trusted.join("dest");
+            std::fs::create_dir(&trusted).unwrap();
+            std::fs::create_dir(&dest).unwrap();
+            std::fs::create_dir(&outside).unwrap();
+            std::fs::write(trusted.join("source"), b"safe").unwrap();
+            let roots = [trusted.clone()];
+            let source_fd = open_allowed_dir(&trusted, &roots).unwrap();
+            let destination_fd = open_allowed_dir(&dest, &roots).unwrap();
+            std::fs::rename(&dest, trusted.join("original-dest")).unwrap();
+            symlink(&outside, &dest).unwrap();
+            rename_bound(
+                &source_fd,
+                OsStr::new("source"),
+                &destination_fd,
+                OsStr::new("source"),
+            )
+            .unwrap();
+            assert!(!outside.join("source").exists());
+            assert_eq!(
+                std::fs::read(trusted.join("original-dest/source")).unwrap(),
+                b"safe"
+            );
+            assert!(
+                open_allowed_dir(&dest, &roots).is_err(),
+                "swapped symlink denied"
+            );
+            std::fs::remove_dir_all(base).unwrap();
+        }
+        #[test]
+        fn image_path_swapped_for_external_symlink_is_denied() {
+            let base = fixture();
+            let trusted = base.join("trusted");
+            let outside = base.join("outside");
+            std::fs::create_dir(&trusted).unwrap();
+            std::fs::create_dir(&outside).unwrap();
+            let image = trusted.join("image.jpg");
+            std::fs::write(&image, b"safe").unwrap();
+            let canonical = image.canonicalize().unwrap();
+            let roots = [trusted.clone()];
+            assert_eq!(read_regular(&canonical, &roots, 1024).unwrap(), b"safe");
+            std::fs::rename(&image, trusted.join("original.jpg")).unwrap();
+            let external = outside.join("external.jpg");
+            std::fs::write(&external, b"secret").unwrap();
+            symlink(external, image).unwrap();
+            assert!(read_regular(&canonical, &roots, 1024).is_err());
+            assert!(read_regular(&trusted.join("original.jpg"), &roots, 3).is_err());
+            std::fs::remove_dir_all(base).unwrap();
+        }
+        #[test]
+        fn parent_directory_replacement_cannot_redirect_pinned_cas_write() {
+            let base = fixture();
+            let trusted = base.join("trusted");
+            let parent = trusted.join("workspace");
+            let outside = base.join("outside");
+            std::fs::create_dir_all(&parent).unwrap();
+            std::fs::create_dir(&outside).unwrap();
+            let target = parent.join("entry.txt");
+            std::fs::write(&target, b"before").unwrap();
+            let outside_target = outside.join("entry.txt");
+            std::fs::write(&outside_target, b"outside").unwrap();
+            let roots = [trusted.clone()];
+            let pinned_parent = open_allowed_dir(&parent, &roots).unwrap();
+
+            std::fs::rename(&parent, trusted.join("workspace-original")).unwrap();
+            symlink(&outside, &parent).unwrap();
+
+            save_if_unchanged_at(
+                &pinned_parent,
+                OsStr::new("entry.txt"),
+                b"before",
+                b"saved",
+                1024,
+            )
+            .unwrap();
+
+            assert_eq!(
+                std::fs::read(trusted.join("workspace-original/entry.txt")).unwrap(),
+                b"saved"
+            );
+            assert_eq!(std::fs::read(&outside_target).unwrap(), b"outside");
+            assert!(open_allowed_dir(&parent, &roots).is_err());
+            std::fs::remove_dir_all(base).unwrap();
+        }
+
+        #[test]
+        fn ordinary_sibling_move_works_and_conflicts_fail_closed() {
+            let base = fixture();
+            let trusted = base.join("trusted");
+            let a = trusted.join("a");
+            let b = trusted.join("b");
+            std::fs::create_dir_all(&a).unwrap();
+            std::fs::create_dir(&b).unwrap();
+            std::fs::write(a.join("file"), b"first").unwrap();
+            let roots = [trusted.clone()];
+            move_no_replace(&a.join("file"), &b, &roots).unwrap();
+            assert_eq!(std::fs::read(b.join("file")).unwrap(), b"first");
+            std::fs::write(a.join("file"), b"second").unwrap();
+            assert!(move_no_replace(&a.join("file"), &b, &roots).is_err());
+            assert_eq!(std::fs::read(b.join("file")).unwrap(), b"first");
+            std::fs::remove_dir_all(base).unwrap();
+        }
+    }
 }
 
-#[cfg(unix)]
-fn read_at(root: &Path, relative: &Path, max_bytes: usize) -> Result<Vec<u8>, SafeWriteError> {
-    use std::os::fd::AsRawFd;
-    use std::os::unix::ffi::OsStrExt;
-    use std::ffi::CString;
-    use std::io::Read;
-    let (parent, name) = open_beneath(root, relative, false)?;
-    let name = CString::new(name.as_os_str().as_bytes()).map_err(|_| SafeWriteError::new(io::ErrorKind::InvalidInput, "PATH_INVALID"))?;
-    let fd = unsafe { libc::openat(parent.as_raw_fd(), name.as_ptr(), libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK) };
-    if fd < 0 { let e = io::Error::last_os_error(); return Err(SafeWriteError::new(e.kind(), if e.kind() == io::ErrorKind::NotFound { "FILE_NOT_FOUND" } else { "SAFE_PATH_ESCAPE" })); }
-    let owned = unsafe { std::os::fd::OwnedFd::from_raw_fd(fd) };
-    let mut stat = unsafe { std::mem::zeroed::<libc::stat>() };
-    if unsafe { libc::fstat(owned.as_raw_fd(), &mut stat) } != 0 { return Err(SafeWriteError::new(io::ErrorKind::Other, "FILE_STAT_FAILED")); }
-    if stat.st_mode & libc::S_IFMT != libc::S_IFREG { return Err(SafeWriteError::new(io::ErrorKind::PermissionDenied, "NOT_REGULAR_FILE")); }
-    if stat.st_size < 0 || stat.st_size as usize > max_bytes { return Err(SafeWriteError::new(io::ErrorKind::InvalidData, "FILE_TOO_LARGE")); }
-    let mut file = fs::File::from(owned);
-    let mut bytes = Vec::with_capacity(stat.st_size as usize);
-    file.take(max_bytes as u64 + 1).read_to_end(&mut bytes).map_err(|_| SafeWriteError::new(io::ErrorKind::Other, "FILE_READ_FAILED"))?;
-    if bytes.len() > max_bytes { return Err(SafeWriteError::new(io::ErrorKind::InvalidData, "FILE_TOO_LARGE")); }
-    Ok(bytes)
-}
-
-#[cfg(unix)]
-fn save_at(root: &Path, relative: &Path, content: &[u8], expected: &str, max_bytes: usize) -> Result<SafeWriteOutcome, SafeWriteError> {
-    use std::ffi::CString;
-    use std::os::fd::AsRawFd;
-    use std::os::unix::ffi::OsStrExt;
-    use std::io::{Read, Write};
-    validate_relative(relative)?;
-    let current = match read_at(root, relative, max_bytes) {
-        Ok(bytes) => Some(bytes),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => None,
-        Err(e) => return Err(e),
-    };
-    let actual = current.as_deref().map(crate::capabilities::workspace::cas::hash_bytes);
-    if actual.as_deref() != Some(expected) { return Ok(SafeWriteOutcome { saved: false, current_hash: actual }); }
-    let lock_relative = PathBuf::from(format!(".{}.browseros-cas.lock", relative.file_name().unwrap().to_string_lossy()));
-    let (parent, name) = open_beneath(root, relative, false)?;
-    let (_, lock_name) = open_beneath(root, &lock_relative, false).or_else(|e| if e.kind() == io::ErrorKind::NotFound { open_beneath(root, &lock_relative, true) } else { Err(e) })?;
-    let lock_name = CString::new(lock_name.as_os_str().as_bytes()).map_err(|_| SafeWriteError::new(io::ErrorKind::InvalidInput, "PATH_INVALID"))?;
-    let lock_fd = unsafe { libc::openat(parent.as_raw_fd(), lock_name.as_ptr(), libc::O_RDWR | libc::O_CREAT | libc::O_NOFOLLOW | libc::O_CLOEXEC, 0o600) };
-    if lock_fd < 0 { return Err(SafeWriteError::new(io::ErrorKind::PermissionDenied, "CAS_LOCK_FAILED")); }
-    let lock = unsafe { std::os::fd::OwnedFd::from_raw_fd(lock_fd) };
-    if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX) } != 0 { return Err(SafeWriteError::new(io::ErrorKind::Other, "CAS_LOCK_FAILED")); }
-    let current = match read_at(root, relative, max_bytes) { Ok(bytes) => Some(bytes), Err(e) if e.kind() == io::ErrorKind::NotFound => None, Err(e) => return Err(e) };
-    let actual = current.as_deref().map(crate::capabilities::workspace::cas::hash_bytes);
-    if actual.as_deref() != Some(expected) { return Ok(SafeWriteOutcome { saved: false, current_hash: actual }); }
-    let old = current.ok_or_else(|| SafeWriteError::new(io::ErrorKind::NotFound, "FILE_NOT_FOUND"))?;
-    let name = CString::new(name.as_os_str().as_bytes()).map_err(|_| SafeWriteError::new(io::ErrorKind::InvalidInput, "PATH_INVALID"))?;
-    let old_fd = unsafe { libc::openat(parent.as_raw_fd(), name.as_ptr(), libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC) };
-    if old_fd < 0 { return Err(SafeWriteError::new(io::ErrorKind::PermissionDenied, "SAFE_PATH_ESCAPE")); }
-    let old_owned = unsafe { std::os::fd::OwnedFd::from_raw_fd(old_fd) };
-    let mut stat = unsafe { std::mem::zeroed::<libc::stat>() };
-    if unsafe { libc::fstat(old_owned.as_raw_fd(), &mut stat) } != 0 { return Err(SafeWriteError::new(io::ErrorKind::Other, "FILE_STAT_FAILED")); }
-    if stat.st_mode & libc::S_IFMT != libc::S_IFREG { return Err(SafeWriteError::new(io::ErrorKind::PermissionDenied, "NOT_REGULAR_FILE")); }
-    let mut verify = fs::File::from(old_owned);
-    let mut bytes = Vec::new();
-    verify.read_to_end(&mut bytes).map_err(|_| SafeWriteError::new(io::ErrorKind::Other, "FILE_READ_FAILED"))?;
-    if bytes != old { return Ok(SafeWriteOutcome { saved: false, current_hash: Some(crate::capabilities::workspace::cas::hash_bytes(&bytes)) }); }
-    let temp_name = format!(".{}.browseros-cas.{}.tmp", relative.file_name().unwrap().to_string_lossy(), uuid::Uuid::new_v4());
-    let temp_c = CString::new(temp_name.clone()).map_err(|_| SafeWriteError::new(io::ErrorKind::InvalidInput, "PATH_INVALID"))?;
-    let temp_fd = unsafe { libc::openat(parent.as_raw_fd(), temp_c.as_ptr(), libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC, stat.st_mode & 0o777) };
-    if temp_fd < 0 { return Err(SafeWriteError::new(io::ErrorKind::PermissionDenied, "CAS_TEMP_CREATE_FAILED")); }
-    let temp_owned = unsafe { std::os::fd::OwnedFd::from_raw_fd(temp_fd) };
-    let mut temp = fs::File::from(temp_owned);
-    temp.write_all(content).and_then(|_| temp.sync_all()).map_err(|_| SafeWriteError::new(io::ErrorKind::Other, "CAS_TEMP_WRITE_FAILED"))?;
-    drop(temp);
-    let renamed = unsafe { libc::renameat(parent.as_raw_fd(), temp_c.as_ptr(), parent.as_raw_fd(), name.as_ptr()) };
-    if renamed != 0 {
-        unsafe { libc::unlinkat(parent.as_raw_fd(), temp_c.as_ptr(), 0); }
-        return Err(SafeWriteError::new(io::ErrorKind::Other, "CAS_RENAME_FAILED"));
-    }
-    unsafe { libc::fsync(parent.as_raw_fd()); }
-    Ok(SafeWriteOutcome { saved: true, current_hash: actual })
-}
-
-#[cfg(not(any(unix, target_os = "windows")))]
-fn save_if_unchanged_path(path: &Path, roots: &[PathBuf], content: &[u8], expected: &str, max_bytes: usize) -> Result<SafeWriteOutcome, SafeWriteError> {
-    let (root, relative) = find_root(path, roots)?;
-    let _ = (root, relative);
-    let current = read_regular(path, roots, max_bytes).ok();
-    let actual = current.as_deref().map(crate::capabilities::workspace::cas::hash_bytes);
-    if actual.as_deref() != Some(expected) { return Ok(SafeWriteOutcome { saved: false, current_hash: actual }); }
-    let old = current.ok_or_else(|| SafeWriteError::new(io::ErrorKind::NotFound, "FILE_NOT_FOUND"))?;
-    let parent = path.parent().ok_or_else(|| SafeWriteError::new(io::ErrorKind::PermissionDenied, "SAFE_PATH_ESCAPE"))?;
-    let temp = parent.join(format!(".{}.browseros-cas.{}.tmp", path.file_name().unwrap().to_string_lossy(), uuid::Uuid::new_v4()));
-    {
-        use std::io::Write;
-        let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&temp).map_err(|_| SafeWriteError::new(io::ErrorKind::PermissionDenied, "CAS_TEMP_CREATE_FAILED"))?;
-        file.write_all(content).and_then(|_| file.sync_all()).map_err(|_| SafeWriteError::new(io::ErrorKind::Other, "CAS_TEMP_WRITE_FAILED"))?;
-    }
-    let verify = read_regular(path, roots, max_bytes)?;
-    if verify != old {
-        let _ = fs::remove_file(&temp);
-        return Ok(SafeWriteOutcome { saved: false, current_hash: Some(crate::capabilities::workspace::cas::hash_bytes(&verify)) });
-    }
-    fs::rename(&temp, path).map_err(|_| SafeWriteError::new(io::ErrorKind::Other, "CAS_RENAME_FAILED"))?;
-    Ok(SafeWriteOutcome { saved: true, current_hash: actual })
-}
-
-#[cfg(not(unix))]
-fn find_root(path: &Path, roots: &[PathBuf]) -> Result<(PathBuf, PathBuf), SafeWriteError> {
-    let canonical_path = path.canonicalize().map_err(|e| SafeWriteError::new(e.kind(), "PATH_NOT_FOUND"))?;
-    for root in roots {
-        let root = root.canonicalize().map_err(|_| SafeWriteError::new(io::ErrorKind::NotFound, "WORKSPACE_ROOT_INVALID"))?;
-        if let Ok(relative) = canonical_path.strip_prefix(&root) { validate_relative(relative)?; return Ok((root, relative.to_path_buf())); }
-    }
-    Err(SafeWriteError::new(io::ErrorKind::PermissionDenied, "PATH_OUTSIDE_WORKSPACE"))
-}
-
+// Windows read authorization and handle-relative mutation. Existing OS
+// handles and kernel-resolved paths are checked against pinned allowed roots.
+// CAS creates lock/stage files relative to the pinned parent and never falls
+// back to path-only writes after authorization.
 #[cfg(target_os = "windows")]
 mod windows {
-    use super::{SafeWriteError, SafeWriteOutcome, validate_relative};
-    use std::ffi::{c_void};
-    use std::fs;
-    use std::io;
-    use std::mem::{size_of, zeroed};
-    use std::path::{Path, PathBuf};
-    use std::ptr::{null, null_mut};
-    use windows_sys::Win32::Foundation::{
-        CloseHandle, HANDLE, INVALID_HANDLE_VALUE, STATUS_SUCCESS,
-    };
-    use windows_sys::Win32::Security::{
-        DACL_SECURITY_INFORMATION, GetSecurityInfo, OWNER_SECURITY_INFORMATION,
-        PROTECTED_DACL_SECURITY_INFORMATION, SE_FILE_OBJECT, SetSecurityInfo,
-    };
-    use windows_sys::Win32::Storage::FileSystem::{
-        FILE_ACCESS_FLAGS, FILE_ATTRIBUTE_NORMAL, FILE_CREATE,
-        FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
-        FILE_LIST_DIRECTORY, FILE_OPEN, FILE_OPEN_IF, FILE_READ_ATTRIBUTES,
-        FILE_READ_DATA, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-        FILE_WRITE_ATTRIBUTES, FlushFileBuffers, OPEN_EXISTING, SYNCHRONIZE,
-        SetEndOfFile,
-    };
-    use windows_sys::Win32::System::IO::DeviceIoControl;
-    use windows_sys::Win32::System::WindowsProgramming::{
-        FILE_DISPOSITION_FLAG_DELETE, FILE_DISPOSITION_FLAG_POSIX_SEMANTICS,
-        FILE_DISPOSITION_INFO, FILE_RENAME_FLAG_POSIX_SEMANTICS,
-        FILE_RENAME_FLAG_REPLACE_IF_EXISTS, FILE_RENAME_INFO, NtCreateFile,
-    };
-    use windows_sys::Win32::System::Kernel::{
-        FILE_ATTRIBUTE_TAG_INFO, IO_STATUS_BLOCK, OBJ_CASE_INSENSITIVE,
-        OBJECT_ATTRIBUTES, UNICODE_STRING,
-    };
-    use windows_sys::Win32::System::SystemServices::{
-        FileAttributeTagInfo, FileDispositionInfoEx, FileRenameInfoEx,
-    };
-    use windows_sys::Win32::System::IO::{
-        GetFileInformationByHandleEx, OVERLAPPED, SetFileInformationByHandle,
-    };
-    use windows_sys::Win32::System::SystemInformation::GetTickCount64;
+    use super::*;
+    use std::fs::{File, OpenOptions};
+    use std::io::{self, Read};
+    use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::GetFinalPathNameByHandleW;
 
-    const FILE_DIRECTORY_FILE: u32 = 0x0000_0001;
-    const FILE_NON_DIRECTORY_FILE: u32 = 0x0000_0040;
-    const FILE_OPEN_REPARSE_POINT_FLAG: u32 = 0x0020_0000;
-    const FILE_DELETE_ON_CLOSE: u32 = 0x0000_1000;
-    const FILE_SYNCHRONOUS_IO_NONALERT: u32 = 0x0000_0020;
-    const FILE_OPEN_FOR_BACKUP_INTENT: u32 = 0x0000_4000;
-    const FILE_RENAME_FLAGS: u32 = FILE_RENAME_FLAG_REPLACE_IF_EXISTS | FILE_RENAME_FLAG_POSIX_SEMANTICS;
-    const MAX_LOCK_WAIT_MS: u64 = 10_000;
-    const FILE_TRAVERSE: u32 = 0x0020;
-    const DELETE: u32 = 0x0001_0000;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+    const FILE_SHARE_READ_WRITE_DELETE: u32 = 0x0000_0007;
 
-    struct Handle(HANDLE);
-    impl Drop for Handle {
-        fn drop(&mut self) { unsafe { CloseHandle(self.0); } }
-    }
-    unsafe impl Send for Handle {}
-    unsafe impl Sync for Handle {}
-
-    struct FileLock {
-        handle: Handle,
-        name: Vec<u16>,
-        parent: Handle,
+    fn denied() -> io::Error {
+        io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "WINDOWS_FILE_OUTSIDE_ALLOWED_ROOT",
+        )
     }
 
-    fn err(kind: io::ErrorKind, code: &'static str) -> SafeWriteError { SafeWriteError::new(kind, code) }
-    fn winerr(code: &'static str) -> SafeWriteError { SafeWriteError::new(io::Error::last_os_error().kind(), code) }
-    fn wide(value: &std::ffi::OsStr) -> Result<Vec<u16>, SafeWriteError> {
-        use std::os::windows::ffi::OsStrExt;
-        let value: Vec<u16> = value.encode_wide().collect();
-        if value.contains(&0) { return Err(err(io::ErrorKind::InvalidInput, "PATH_INVALID")); }
-        Ok(value)
+    fn invalid_input() -> io::Error {
+        io::Error::new(io::ErrorKind::InvalidInput, "WINDOWS_FILE_PATH_INVALID")
     }
-    fn name_wide(value: &std::ffi::OsStr) -> Result<Vec<u16>, SafeWriteError> {
-        let value = wide(value)?;
-        if value.is_empty() || value.len() > 255 || value.contains(&b'\\' as u16) || value.contains(&b'/' as u16) {
-            return Err(err(io::ErrorKind::InvalidInput, "PATH_INVALID"));
+
+    fn reject_reparse_ancestors(path: &Path) -> io::Result<()> {
+        if !path.is_absolute() || path.to_string_lossy().starts_with(r"\\") {
+            return Err(denied());
         }
-        Ok(value)
-    }
-    fn nt_path(path: &Path) -> Result<Vec<u16>, SafeWriteError> {
-        let path = path.canonicalize().map_err(|_| err(io::ErrorKind::NotFound, "WORKSPACE_ROOT_INVALID"))?;
-        let mut value = wide(path.as_os_str())?;
-        if value.starts_with(&[b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16]) {
-            value.drain(..4);
-        } else if value.starts_with(&[b'\\' as u16, b'\\' as u16]) {
-            value.drain(..2);
-            value.splice(..0, [b'U' as u16, b'N' as u16, b'C' as u16, b'\\' as u16]);
-        }
-        let mut result = vec![b'\\' as u16, b'?' as u16, b'?' as u16, b'\\' as u16];
-        result.extend(value);
-        Ok(result)
-    }
-    fn unicode(value: &mut [u16]) -> UNICODE_STRING {
-        UNICODE_STRING { Length: (value.len() * 2) as u16, MaximumLength: (value.len() * 2) as u16, Buffer: value.as_mut_ptr() }
-    }
-    fn object_attributes(name: &mut UNICODE_STRING, root: HANDLE) -> OBJECT_ATTRIBUTES {
-        OBJECT_ATTRIBUTES {
-            Length: size_of::<OBJECT_ATTRIBUTES>() as u32,
-            RootDirectory: root,
-            ObjectName: name,
-            Attributes: OBJ_CASE_INSENSITIVE,
-            SecurityDescriptor: null_mut(),
-            SecurityQualityOfService: null_mut(),
-        }
-    }
-    fn nt_open(
-        root: HANDLE,
-        name: &mut [u16],
-        access: FILE_ACCESS_FLAGS,
-        attributes: u32,
-        share: u32,
-        disposition: u32,
-        options: u32,
-    ) -> Result<Handle, SafeWriteError> {
-        unsafe {
-            let mut name = unicode(name);
-            let mut object = object_attributes(&mut name, root);
-            let mut handle = INVALID_HANDLE_VALUE;
-            let mut status: IO_STATUS_BLOCK = zeroed();
-            let result = NtCreateFile(
-                &mut handle, access, &mut object, &mut status, null_mut(), attributes,
-                share, disposition, options, null_mut(), 0,
-            );
-            if result != STATUS_SUCCESS || handle == INVALID_HANDLE_VALUE {
-                return Err(err(io::ErrorKind::PermissionDenied, "SAFE_PATH_OPEN_FAILED"));
-            }
-            Ok(Handle(handle))
-        }
-    }
-    fn open_root(path: &Path) -> Result<(PathBuf, Handle), SafeWriteError> {
-        let canonical = path.canonicalize().map_err(|_| err(io::ErrorKind::NotFound, "WORKSPACE_ROOT_INVALID"))?;
-        let mut name = nt_path(&canonical)?;
-        let handle = nt_open(
-            null_mut(), &mut name,
-            FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | FILE_READ_DATA | FILE_TRAVERSE | SYNCHRONIZE,
-            0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_OPEN,
-            FILE_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_FOR_BACKUP_INTENT,
-        )?;
-        Ok((canonical, handle))
-    }
-    fn open_child_directory(parent: HANDLE, name: &std::ffi::OsStr, create: bool) -> Result<Handle, SafeWriteError> {
-        let mut name = name_wide(name)?;
-        match nt_open(
-            parent, &mut name,
-            FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | FILE_READ_DATA | FILE_TRAVERSE | SYNCHRONIZE,
-            0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_OPEN,
-            FILE_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_FOR_BACKUP_INTENT | FILE_OPEN_REPARSE_POINT_FLAG,
-        ) {
-            Ok(handle) => {
-                if is_reparse(handle.0)? { return Err(err(io::ErrorKind::PermissionDenied, "SAFE_PATH_ESCAPE")); }
-                Ok(handle)
-            }
-            Err(error) if create => {
-                let created = nt_open(
-                    parent, &mut name,
-                    FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | FILE_READ_DATA | FILE_TRAVERSE | SYNCHRONIZE,
-                    0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_CREATE,
-                    FILE_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_FOR_BACKUP_INTENT,
-                ).map_err(|_| err(io::ErrorKind::PermissionDenied, "SAFE_DIRECTORY_CREATE_FAILED"))?;
-                if is_reparse(created.0)? { return Err(err(io::ErrorKind::PermissionDenied, "SAFE_PATH_ESCAPE")); }
-                let _ = error;
-                Ok(created)
-            }
-            Err(_) => Err(err(io::ErrorKind::NotFound, "FILE_NOT_FOUND")),
-        }
-    }
-    fn open_parent(root: HANDLE, relative: &Path, create: bool) -> Result<(Handle, Vec<u16>), SafeWriteError> {
-        validate_relative(relative)?;
-        let components: Vec<_> = relative.components().filter_map(|part| match part { std::path::Component::Normal(value) => Some(value), _ => None }).collect();
-        let name = name_wide(components.last().ok_or_else(|| err(io::ErrorKind::InvalidInput, "PATH_INVALID"))?)?;
-        let mut current = if components.len() > 1 {
-            open_child_directory(root, components[0], create)?
-        } else {
-            let mut root_name = final_path(root)?;
-            nt_open(
-                null_mut(), &mut root_name,
-                FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | FILE_READ_DATA | FILE_TRAVERSE | SYNCHRONIZE,
-                0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_OPEN,
-                FILE_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_FOR_BACKUP_INTENT,
-            )?
-        };
-        for component in components.iter().skip(1).take(components.len().saturating_sub(2)) {
-            current = open_child_directory(current.0, component, create)?;
-        }
-        Ok((current, name))
-    }
-    fn is_reparse(handle: HANDLE) -> Result<bool, SafeWriteError> {
-        unsafe {
-            let mut info: FILE_ATTRIBUTE_TAG_INFO = zeroed();
-            if GetFileInformationByHandleEx(handle, FileAttributeTagInfo, &mut info as *mut _ as *mut c_void, size_of::<FILE_ATTRIBUTE_TAG_INFO>() as u32) == 0 {
-                return Err(winerr("FILE_STAT_FAILED"));
-            }
-            Ok(info.FileAttributes & 0x400 != 0)
-        }
-    }
-    fn final_path(handle: HANDLE) -> Result<Vec<u16>, SafeWriteError> {
-        unsafe {
-            let mut length = 512usize;
-            loop {
-                let mut buffer = vec![0u16; length];
-                let written = windows_sys::Win32::Storage::FileSystem::GetFinalPathNameByHandleW(handle, buffer.as_mut_ptr(), buffer.len() as u32, 0);
-                if written == 0 { return Err(winerr("FINAL_PATH_FAILED")); }
-                if written as usize >= buffer.len() { length = written as usize + 1; continue; }
-                buffer.truncate(written as usize);
-                return Ok(buffer);
+        let mut current = PathBuf::new();
+        for component in path.components() {
+            current.push(component.as_os_str());
+            match std::fs::symlink_metadata(&current) {
+                Ok(metadata) if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 => {
+                    return Err(denied());
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
             }
         }
+        Ok(())
     }
-    fn read_handle(handle: HANDLE, max_bytes: usize) -> Result<Vec<u8>, SafeWriteError> {
-        use std::os::windows::io::FromRawHandle;
-        use std::io::Read;
-        unsafe {
-            let metadata = fs::File::from_raw_handle(handle).metadata().map_err(|_| err(io::ErrorKind::Other, "FILE_STAT_FAILED"))?;
-            if !metadata.is_file() || metadata.len() > max_bytes as u64 {
-                return Err(err(io::ErrorKind::InvalidData, "FILE_TOO_LARGE"));
+
+    fn system_tool(name: &str) -> io::Result<PathBuf> {
+        use std::os::windows::ffi::OsStringExt;
+        use windows_sys::Win32::System::SystemInformation::GetSystemDirectoryW;
+        let mut buffer = [0u16; 512];
+        let length = unsafe { GetSystemDirectoryW(buffer.as_mut_ptr(), buffer.len() as u32) };
+        if length == 0 || length as usize >= buffer.len() {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(PathBuf::from(std::ffi::OsString::from_wide(&buffer[..length as usize])).join(name))
+    }
+
+    fn current_user_identity() -> io::Result<(String, String)> {
+        let whoami = system_tool("whoami.exe")?;
+        let output = std::process::Command::new(whoami)
+            .args(["/user", "/fo", "csv", "/nh"])
+            .output()?;
+        if !output.status.success() {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "WINDOWS_USER_SID_UNAVAILABLE",
+            ));
+        }
+        let text = String::from_utf8_lossy(&output.stdout);
+        let line = text
+            .lines()
+            .find(|line| line.contains("S-1-"))
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "WINDOWS_USER_SID_UNAVAILABLE",
+                )
+            })?;
+        let fields: Vec<_> = line.trim_start_matches('\u{feff}').split(',').collect();
+        let account = fields
+            .first()
+            .map(|value| value.trim().trim_matches('"'))
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "WINDOWS_USER_ACCOUNT_UNAVAILABLE",
+                )
+            })?;
+        let sid = fields
+            .get(1)
+            .map(|value| value.trim().trim_matches('"'))
+            .filter(|value| {
+                value.starts_with("S-1-")
+                    && value
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || byte == b'-')
+            })
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::PermissionDenied, "WINDOWS_USER_SID_INVALID")
+            })?;
+        Ok((account.to_string(), sid.to_string()))
+    }
+
+    /// Protect a private app-owned directory and every existing descendant.
+    /// The root DACL is owner/SYSTEM-only; children are reset to inherit only
+    /// that DACL. Reparse points, UNC paths and special files fail closed.
+    pub(super) fn ensure_private_directory(path: &Path) -> io::Result<()> {
+        reject_reparse_ancestors(path)?;
+        std::fs::create_dir_all(path)?;
+        reject_reparse_ancestors(path)?;
+        let root = open(path, true)?;
+        let expected = final_path(&root)?;
+        let (account, sid) = current_user_identity()?;
+        let icacls = system_tool("icacls.exe")?;
+        let mut pending = vec![path.to_path_buf()];
+        let mut objects = Vec::<PathBuf>::new();
+        const MAX_OBJECTS: usize = 50_000;
+        const MAX_DEPTH: usize = 64;
+        while let Some(directory) = pending.pop() {
+            let depth = directory
+                .strip_prefix(path)
+                .map(|relative| relative.components().count())
+                .unwrap_or(MAX_DEPTH);
+            if depth > MAX_DEPTH {
+                return Err(denied());
             }
-            let mut file = fs::File::from_raw_handle(handle);
-            let mut bytes = Vec::with_capacity(metadata.len() as usize);
-            file.take(max_bytes as u64 + 1).read_to_end(&mut bytes).map_err(|_| err(io::ErrorKind::Other, "FILE_READ_FAILED"))?;
-            std::mem::forget(file);
-            if bytes.len() > max_bytes { return Err(err(io::ErrorKind::InvalidData, "FILE_TOO_LARGE")); }
-            Ok(bytes)
-        }
-    }
-    fn open_regular(parent: HANDLE, name: &mut [u16], write: bool) -> Result<Handle, SafeWriteError> {
-        let access = FILE_GENERIC_READ | FILE_READ_ATTRIBUTES | SYNCHRONIZE | if write { FILE_WRITE_ATTRIBUTES } else { 0 };
-        let handle = nt_open(
-            parent, name, access, FILE_ATTRIBUTE_NORMAL,
-            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_OPEN,
-            FILE_NON_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT_FLAG | FILE_SYNCHRONOUS_IO_NONALERT,
-        ).map_err(|_| err(io::ErrorKind::NotFound, "FILE_NOT_FOUND"))?;
-        if is_reparse(handle.0)? { return Err(err(io::ErrorKind::PermissionDenied, "SAFE_PATH_ESCAPE")); }
-        Ok(handle)
-    }
-    fn read_beneath(root: &Path, relative: &Path, max_bytes: usize) -> Result<Vec<u8>, SafeWriteError> {
-        let (_, root_handle) = open_root(root)?;
-        let (parent, mut name) = open_parent(root_handle.0, relative, false)?;
-        let handle = open_regular(parent.0, &mut name, false)?;
-        read_handle(handle.0, max_bytes)
-    }
-    fn read_hash(root: &Path, relative: &Path, max_bytes: usize) -> Result<Option<String>, SafeWriteError> {
-        match read_beneath(root, relative, max_bytes) {
-            Ok(bytes) => Ok(Some(crate::capabilities::workspace::cas::hash_bytes(&bytes))),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-            Err(error) => Err(error),
-        }
-    }
-    fn lock_name(relative: &Path) -> Result<Vec<u16>, SafeWriteError> {
-        let name = relative.file_name().ok_or_else(|| err(io::ErrorKind::InvalidInput, "PATH_INVALID"))?;
-        let digest = crate::capabilities::workspace::cas::hash_bytes(name.to_string_lossy().as_bytes());
-        name_wide(std::ffi::OsStr::new(&format!(".{digest}.browseros-cas.lock")))
-    }
-    fn acquire_lock(root: &Path, relative: &Path) -> Result<FileLock, SafeWriteError> {
-        let (_, root_handle) = open_root(root)?;
-        let (parent, _) = open_parent(root_handle.0, relative, false)?;
-        let mut name = lock_name(relative)?;
-        let handle = nt_open(
-            parent.0, &mut name,
-            FILE_GENERIC_READ | FILE_GENERIC_WRITE | SYNCHRONIZE,
-            FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-            FILE_OPEN_IF, FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT,
-        ).map_err(|_| err(io::ErrorKind::PermissionDenied, "CAS_LOCK_FAILED"))?;
-        if is_reparse(handle.0)? { return Err(err(io::ErrorKind::PermissionDenied, "CAS_LOCK_FAILED")); }
-        let start = unsafe { GetTickCount64() };
-        let mut offset: OVERLAPPED = unsafe { zeroed() };
-        loop {
-            let result = unsafe { windows_sys::Win32::Storage::FileSystem::LockFileEx(handle.0, 0x0000_0002 | 0x0000_0001, 0, u32::MAX, u32::MAX, &mut offset) };
-            if result != 0 { return Ok(FileLock { handle, name, parent }); }
-            if unsafe { GetTickCount64() } - start >= MAX_LOCK_WAIT_MS {
-                return Err(err(io::ErrorKind::TimedOut, "CAS_LOCK_TIMEOUT"));
-            }
-            std::thread::sleep(std::time::Duration::from_millis(25));
-        }
-    }
-    impl Drop for FileLock {
-        fn drop(&mut self) {
-            unsafe {
-                let mut offset: OVERLAPPED = zeroed();
-                windows_sys::Win32::Storage::FileSystem::UnlockFileEx(self.handle.0, 0, u32::MAX, u32::MAX, &mut offset);
-                let mut unicode = unicode(&mut self.name);
-                let mut object = object_attributes(&mut unicode, self.parent.0);
-                let mut status: IO_STATUS_BLOCK = zeroed();
-                let mut handle = INVALID_HANDLE_VALUE;
-                if NtCreateFile(&mut handle, DELETE | SYNCHRONIZE, &mut object, &mut status, null_mut(), FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_OPEN, FILE_NON_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT_FLAG | FILE_DELETE_ON_CLOSE | FILE_SYNCHRONOUS_IO_NONALERT, null_mut(), 0) == STATUS_SUCCESS {
-                    CloseHandle(handle);
+            for entry in std::fs::read_dir(&directory)? {
+                let entry = entry?;
+                let child = entry.path();
+                let metadata = std::fs::symlink_metadata(&child)?;
+                if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+                    || !(metadata.is_file() || metadata.is_dir())
+                {
+                    return Err(denied());
+                }
+                if final_path(&open(&child, metadata.is_dir())?)?
+                    .to_lowercase()
+                    .starts_with(&(expected.trim_end_matches('\\').to_lowercase() + "\\"))
+                    == false
+                {
+                    return Err(denied());
+                }
+                objects.push(child.clone());
+                if objects.len() > MAX_OBJECTS {
+                    return Err(denied());
+                }
+                if metadata.is_dir() {
+                    pending.push(child);
                 }
             }
         }
-    }
-    fn preserve_security(source: HANDLE, destination: HANDLE) -> Result<(), SafeWriteError> {
-        unsafe {
-            let mut owner = null_mut();
-            let mut group = null_mut();
-            let mut dacl = null_mut();
-            let mut sacl = null_mut();
-            let mut descriptor = null_mut();
-            let result = GetSecurityInfo(
-                source, SE_FILE_OBJECT,
-                OWNER_SECURITY_INFORMATION | windows_sys::Win32::Security::GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
-                &mut owner, &mut group, &mut dacl, &mut sacl, &mut descriptor,
-            );
-            if result != 0 { return Err(err(io::ErrorKind::PermissionDenied, "CAS_SECURITY_READ_FAILED")); }
-            let set = SetSecurityInfo(
-                destination, SE_FILE_OBJECT,
-                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
-                null_mut(), null_mut(), dacl, null_mut(),
-            );
-            windows_sys::Win32::Foundation::LocalFree(descriptor as _);
-            if set != 0 { return Err(err(io::ErrorKind::PermissionDenied, "CAS_SECURITY_WRITE_FAILED")); }
-            Ok(())
+
+        let owner_sid = format!("*{sid}");
+        let set_root_owner = std::process::Command::new(&icacls)
+            .arg(path)
+            .arg("/setowner")
+            .arg(&owner_sid)
+            .output()?;
+        if !set_root_owner.status.success() {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "WINDOWS_PRIVATE_DIR_OWNER_SET",
+            ));
         }
-    }
-    fn rename_relative(parent: HANDLE, source: HANDLE, target: &[u16]) -> Result<(), SafeWriteError> {
-        unsafe {
-            let bytes = size_of::<FILE_RENAME_INFO>() + target.len() * 2;
-            let mut buffer = vec![0u8; bytes];
-            let info = &mut *(buffer.as_mut_ptr() as *mut FILE_RENAME_INFO);
-            info.Anonymous.Flags = FILE_RENAME_FLAGS;
-            info.RootDirectory = parent;
-            info.FileNameLength = (target.len() * 2) as u32;
-            std::ptr::copy_nonoverlapping(target.as_ptr(), info.FileName.as_mut_ptr(), target.len());
-            if SetFileInformationByHandle(
-                source, FileRenameInfoEx, buffer.as_mut_ptr() as *mut c_void, buffer.len() as u32,
-            ) == 0 {
-                return Err(winerr("CAS_RENAME_FAILED"));
+        let reset_root = std::process::Command::new(&icacls)
+            .arg(path)
+            .arg("/reset")
+            .output()?;
+        if !reset_root.status.success() {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "WINDOWS_PRIVATE_DIR_ACL_RESET",
+            ));
+        }
+        let suffix = ":(OI)(CI)F";
+        let grant_user = format!("*{sid}{suffix}");
+        let grant_system = format!("*S-1-5-18{suffix}");
+        let secure_root = std::process::Command::new(&icacls)
+            .arg(path)
+            .args(["/inheritance:r", "/grant:r"])
+            .arg(&grant_user)
+            .arg(&grant_system)
+            .output()?;
+        if !secure_root.status.success() {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "WINDOWS_PRIVATE_DIR_ACL_SET",
+            ));
+        }
+        for child in &objects {
+            let owner = std::process::Command::new(&icacls)
+                .arg(child)
+                .arg("/setowner")
+                .arg(&owner_sid)
+                .output()?;
+            if !owner.status.success() {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "WINDOWS_PRIVATE_CHILD_OWNER_SET",
+                ));
             }
-            Ok(())
+            let reset = std::process::Command::new(&icacls)
+                .arg(child)
+                .arg("/reset")
+                .output()?;
+            if !reset.status.success() {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "WINDOWS_PRIVATE_CHILD_ACL_RESET",
+                ));
+            }
         }
-    }
-    fn save_beneath(root: &Path, relative: &Path, content: &[u8], expected: &str, max_bytes: usize) -> Result<SafeWriteOutcome, SafeWriteError> {
-        let (_, root_handle) = open_root(root)?;
-        let (parent, mut target_name) = open_parent(root_handle.0, relative, false)?;
-        let before = read_hash(root, relative, max_bytes)?;
-        if before.as_deref() != Some(expected) { return Ok(SafeWriteOutcome { saved: false, current_hash: before }); }
-        let _lock = acquire_lock(root, relative)?;
-        let before = read_hash(root, relative, max_bytes)?;
-        if before.as_deref() != Some(expected) { return Ok(SafeWriteOutcome { saved: false, current_hash: before }); }
-        let target = open_regular(parent.0, &mut target_name, true)?;
-        let original = read_handle(target.0, max_bytes)?;
-        if crate::capabilities::workspace::cas::hash_bytes(&original) != expected {
-            return Ok(SafeWriteOutcome { saved: false, current_hash: Some(crate::capabilities::workspace::cas::hash_bytes(&original)) });
+        let verify = std::process::Command::new(&icacls)
+            .arg(path)
+            .arg("/T")
+            .output()?;
+        if !verify.status.success() {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "WINDOWS_PRIVATE_DIR_ACL_VERIFY",
+            ));
         }
-        let mut temp_name = name_wide(std::ffi::OsStr::new(&format!(".{}.browseros-cas.{}.tmp", relative.file_name().unwrap().to_string_lossy(), uuid::Uuid::new_v4())))?;
-        let temp = nt_open(
-            parent.0, &mut temp_name,
-            FILE_GENERIC_READ | FILE_GENERIC_WRITE | FILE_WRITE_ATTRIBUTES | DELETE | SYNCHRONIZE,
-            FILE_ATTRIBUTE_NORMAL, 0, FILE_CREATE,
-            FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_REPARSE_POINT_FLAG,
-        ).map_err(|_| err(io::ErrorKind::PermissionDenied, "CAS_TEMP_CREATE_FAILED"))?;
-        if is_reparse(temp.0)? { return Err(err(io::ErrorKind::PermissionDenied, "CAS_TEMP_CREATE_FAILED")); }
-        preserve_security(target.0, temp.0)?;
+        let listing = String::from_utf8_lossy(&verify.stdout);
+        let entries: Vec<_> = listing.lines().filter(|line| line.contains(":(")).collect();
+        let object_count = objects.len() + 1;
+        let user_entries = entries
+            .iter()
+            .filter(|line| line.contains(&sid) || line.contains(&account))
+            .count();
+        let system_entries = entries
+            .iter()
+            .filter(|line| {
+                line.contains("S-1-5-18") || line.to_ascii_uppercase().contains("SYSTEM")
+            })
+            .count();
+        if entries.len() != object_count * 2
+            || user_entries != object_count
+            || system_entries != object_count
+            || listing.to_ascii_lowercase().contains("everyone")
+            || listing.to_ascii_lowercase().contains("authenticated users")
+            || listing.contains("S-1-1-0")
+            || listing.contains("S-1-5-32-545")
         {
-            use std::io::Write;
-            use std::os::windows::io::FromRawHandle;
-            let mut file = fs::File::from_raw_handle(temp.0);
-            let result = file.write_all(content).and_then(|_| file.flush());
-            std::mem::forget(file);
-            result.map_err(|_| err(io::ErrorKind::Other, "CAS_TEMP_WRITE_FAILED"))?;
-        }
-        if unsafe { SetEndOfFile(temp.0) } == 0 || unsafe { FlushFileBuffers(temp.0) } == 0 {
-            return Err(winerr("CAS_TEMP_WRITE_FAILED"));
-        }
-        rename_relative(parent.0, temp.0, &target_name)?;
-        unsafe { FlushFileBuffers(parent.0); }
-        Ok(SafeWriteOutcome { saved: true, current_hash: before })
-    }
-    fn create_tree_beneath(root: &Path, relative: &Path) -> Result<(), SafeWriteError> {
-        validate_relative(relative)?;
-        let (_, root_handle) = open_root(root)?;
-        let components: Vec<_> = relative.components().filter_map(|part| match part { std::path::Component::Normal(value) => Some(value), _ => None }).collect();
-        let mut current = root_handle;
-        for component in components {
-            current = open_child_directory(current.0, component, true)?;
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "WINDOWS_PRIVATE_DIR_ACL_NOT_EXCLUSIVE",
+            ));
         }
         Ok(())
     }
-    pub fn atomic_write_beneath(root: &Path, relative: &Path, content: &[u8], max_bytes: usize) -> Result<(), SafeWriteError> {
-        if content.len() > max_bytes { return Err(err(io::ErrorKind::InvalidData, "FILE_TOO_LARGE")); }
-        validate_relative(relative)?;
-        let (_, root_handle) = open_root(root)?;
-        let parent_relative = relative.parent().unwrap_or_else(|| Path::new(""));
-        if !parent_relative.as_os_str().is_empty() { create_tree_beneath(root, parent_relative)?; }
-        let (parent, mut target_name) = open_parent(root_handle.0, relative, true)?;
-        let target = match open_regular(parent.0, &mut target_name, true) {
-            Ok(handle) => Some(handle),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-            Err(error) => return Err(error),
+    fn normalized_path(value: &str) -> String {
+        let value = value.replace('/', "\\");
+        let value = value.strip_prefix("\\\\?\\").unwrap_or(&value);
+        value.trim_end_matches('\\').to_lowercase()
+    }
+
+    fn verify_path_handle(path: &Path, file: &File) -> io::Result<()> {
+        // A final-component OPEN_REPARSE_POINT flag does not prevent an
+        // intermediate junction from being followed. Check every component,
+        // then compare the kernel-resolved handle path with the current
+        // canonical path. The second check detects a parent swapped between
+        // the preflight and CreateFileW.
+        reject_reparse_ancestors(path)?;
+        let actual = final_path(file)?;
+        let canonical = path.canonicalize()?.to_string_lossy().into_owned();
+        if normalized_path(&actual) != normalized_path(&canonical) {
+            return Err(denied());
+        }
+        reject_reparse_ancestors(path)?;
+        Ok(())
+    }
+
+    fn open(path: &Path, directory: bool) -> io::Result<File> {
+        reject_reparse_ancestors(path)?;
+        let mut options = OpenOptions::new();
+        options
+            .read(true)
+            .share_mode(FILE_SHARE_READ_WRITE_DELETE)
+            .custom_flags(
+                FILE_FLAG_OPEN_REPARSE_POINT
+                    | if directory {
+                        FILE_FLAG_BACKUP_SEMANTICS
+                    } else {
+                        0
+                    },
+            );
+        let file = options.open(path)?;
+        let meta = file.metadata()?;
+        if meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(denied());
+        }
+        if directory && !meta.is_dir() || !directory && !meta.is_file() {
+            return Err(denied());
+        }
+        verify_path_handle(path, &file)?;
+        Ok(file)
+    }
+    fn open_destination_directory(path: &Path) -> io::Result<File> {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
+        const FILE_ADD_FILE: u32 = 0x0000_0002;
+        const FILE_ADD_SUBDIRECTORY: u32 = 0x0000_0004;
+        const SYNCHRONIZE: u32 = 0x0010_0000;
+        let mut options = OpenOptions::new();
+        options
+            .access_mode(FILE_READ_ATTRIBUTES | FILE_ADD_FILE | FILE_ADD_SUBDIRECTORY | SYNCHRONIZE)
+        .share_mode(FILE_SHARE_READ_WRITE_DELETE)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS);
+        reject_reparse_ancestors(path)?;
+        let directory = options.open(path)?;
+        let metadata = directory.metadata()?;
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 || !metadata.is_dir() {
+            return Err(denied());
+        }
+        verify_path_handle(path, &directory)?;
+        Ok(directory)
+    }
+
+    fn final_path(file: &File) -> io::Result<String> {
+        let handle = file.as_raw_handle() as _;
+        let n = unsafe { GetFinalPathNameByHandleW(handle, std::ptr::null_mut(), 0, 0) };
+        if n == 0 || n > 32768 {
+            return Err(io::Error::last_os_error());
+        }
+        let mut buf = vec![0u16; n as usize + 1];
+        let used =
+            unsafe { GetFinalPathNameByHandleW(handle, buf.as_mut_ptr(), buf.len() as u32, 0) };
+        if used == 0 || used as usize >= buf.len() {
+            return Err(io::Error::last_os_error());
+        }
+        // Windows paths are case-insensitive. The trailing path separator
+        // enforces a whole-directory boundary rather than a prefix match.
+        Ok(String::from_utf16_lossy(&buf[..used as usize]).to_lowercase())
+    }
+    fn open_authorized_root(path: &Path, roots: &[PathBuf]) -> io::Result<File> {
+        let path_key = normalized_path(&path.canonicalize()?.to_string_lossy());
+        for root in roots {
+            let Ok(root_canonical) = root.canonicalize() else {
+                continue;
+            };
+            let root_key = normalized_path(&root_canonical.to_string_lossy());
+            let prefix = format!("{}\\", root_key.trim_end_matches('\\'));
+            if path_key != root_key && !path_key.starts_with(&prefix) {
+                continue;
+            }
+            // Pin the allowed root before opening the requested child. A
+            // later rename/junction swap cannot redirect the child outside
+            // this already-open directory identity.
+            return open(root, true);
+        }
+        Err(denied())
+    }
+
+    fn authorize_with_root(file: &File, root: &File) -> io::Result<String> {
+        let actual = normalized_path(&final_path(file)?);
+        let root_path = normalized_path(&final_path(root)?);
+        if actual == root_path
+            || actual.starts_with(&format!("{}\\", root_path.trim_end_matches('\\')))
+        {
+            return Ok(actual);
+        }
+        Err(denied())
+    }
+    /// No-overwrite rename by existing source/destination OS handles.
+    /// FILE_RENAME_INFO RootDirectory pins the actual destination directory,
+    /// and ReplaceIfExists=false avoids path-only check-then-rename races.
+    pub(super) fn move_no_replace(
+        src: &Path,
+        dest_dir: &Path,
+        roots: &[PathBuf],
+    ) -> io::Result<()> {
+        use std::ffi::c_void;
+        use std::os::windows::{ffi::OsStrExt, io::AsRawHandle};
+        use windows_sys::Win32::Storage::FileSystem::{FileRenameInfo, SetFileInformationByHandle};
+        const DELETE: u32 = 0x0001_0000;
+        const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
+
+        if !src.is_absolute() || !dest_dir.is_absolute() {
+            return Err(denied());
+        }
+        reject_reparse_ancestors(src)?;
+        reject_reparse_ancestors(dest_dir)?;
+        let filename = src.file_name().ok_or_else(denied)?;
+        let source_parent = src.parent().ok_or_else(denied)?;
+        let source_root = open_authorized_root(source_parent, roots)?;
+        let destination_root = open_authorized_root(dest_dir, roots)?;
+        let text = filename.to_string_lossy();
+        if text.is_empty() || text.contains(':') || text.ends_with('.') || text.ends_with(' ') {
+            // Reject alternate data streams, path aliases and Win32 trailing
+            // dot/space normalization before constructing an OS rename.
+            return Err(denied());
+        }
+
+        let mut source_opts = OpenOptions::new();
+        source_opts
+            .access_mode(DELETE | FILE_READ_ATTRIBUTES)
+            .share_mode(FILE_SHARE_READ_WRITE_DELETE)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS);
+        let source = source_opts.open(src)?;
+        let meta = source.metadata()?;
+        if meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+            || !(meta.is_file() || meta.is_dir())
+        {
+            return Err(denied());
+        }
+        verify_path_handle(src, &source)?;
+        let source_path = authorize_with_root(&source, &source_root)?;
+        // Rename requires FILE_ADD_FILE / FILE_ADD_SUBDIRECTORY rights on
+        // the pinned destination directory handle. A read-only directory
+        // handle passes path checks but fails every real FileRenameInfo call.
+        let destination = open_destination_directory(dest_dir)?;
+        let destination_path = authorize_with_root(&destination, &destination_root)?;
+        if destination_path == source_path
+            || meta.is_dir() && destination_path.starts_with(&(source_path + "\\"))
+        {
+            return Err(denied());
+        }
+
+        #[repr(C)]
+        struct RenameHeader {
+            flags: u32,
+            root_directory: *mut c_void,
+            filename_length: u32,
+            filename: [u16; 1],
+        }
+        let chars: Vec<u16> = filename.encode_wide().collect();
+        if chars.is_empty() || chars.len() > 32000 {
+            return Err(denied());
+        }
+        let offset = std::mem::offset_of!(RenameHeader, filename);
+        let size = offset + (chars.len() + 1) * std::mem::size_of::<u16>();
+        let mut aligned = vec![0u64; (size + 7) / 8];
+        let header = aligned.as_mut_ptr() as *mut RenameHeader;
+        unsafe {
+            (*header).flags = 0; // FileRenameInfo: FALSE = NO REPLACE
+            (*header).root_directory = destination.as_raw_handle() as *mut c_void;
+            (*header).filename_length = (chars.len() * 2) as u32;
+            std::ptr::copy_nonoverlapping(
+                chars.as_ptr(),
+                (aligned.as_mut_ptr() as *mut u8).add(offset) as *mut u16,
+                chars.len(),
+            );
+            if SetFileInformationByHandle(
+                source.as_raw_handle() as _,
+                FileRenameInfo,
+                aligned.as_ptr() as *const c_void,
+                size as u32,
+            ) == 0
+            {
+                return Err(io::Error::last_os_error());
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn read_regular(
+        path: &Path,
+        roots: &[PathBuf],
+        limit: usize,
+    ) -> io::Result<Vec<u8>> {
+        if !path.is_absolute() || limit == 0 || limit > 64 * 1024 * 1024 {
+            return Err(denied());
+        }
+        // Pin the authorized parent directory before opening the file. A
+        // parent path replaced after this point cannot redefine the allowed
+        // root for the file handle.
+        let parent = path.parent().ok_or_else(denied)?;
+        let root = open_authorized_root(parent, roots)?;
+        let file = open(path, false)?;
+        authorize_with_root(&file, &root)?;
+        let length = file.metadata()?.len();
+        if length > limit as u64 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "FILE_READ_SIZE_LIMIT",
+            ));
+        }
+        let mut bytes = Vec::new();
+        file.take(limit as u64 + 1).read_to_end(&mut bytes)?;
+        if bytes.len() > limit {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "FILE_READ_SIZE_LIMIT",
+            ));
+        }
+        Ok(bytes)
+    }
+
+    /// Open a single file name relative to an already-authorized directory
+    /// handle. Unlike CreateFileW(parent.join(name)), NtCreateFile cannot be
+    /// redirected by replacing the parent path after it has been pinned.
+    fn open_object_at(
+        parent: &File,
+        filename: &std::ffi::OsStr,
+        desired_access: u32,
+        share_access: u32,
+        create_disposition: u32,
+        directory: bool,
+    ) -> io::Result<File> {
+        use std::os::windows::{ffi::OsStrExt, io::FromRawHandle};
+        use windows_sys::{
+            Wdk::{
+                Foundation::OBJECT_ATTRIBUTES,
+                Storage::FileSystem::{
+                    FILE_DIRECTORY_FILE, FILE_NON_DIRECTORY_FILE, FILE_OPEN_REPARSE_POINT,
+                    FILE_SYNCHRONOUS_IO_NONALERT, NtCreateFile,
+                },
+            },
+            Win32::{
+                Foundation::UNICODE_STRING, Storage::FileSystem::FILE_ATTRIBUTE_NORMAL,
+                System::IO::IO_STATUS_BLOCK,
+            },
         };
-        let mut temp_name = name_wide(std::ffi::OsStr::new(&format!(".{}.browseros-agent.{}.tmp", relative.file_name().unwrap().to_string_lossy(), uuid::Uuid::new_v4())))?;
-        let temp = nt_open(
-            parent.0, &mut temp_name,
-            FILE_GENERIC_READ | FILE_GENERIC_WRITE | FILE_WRITE_ATTRIBUTES | DELETE | SYNCHRONIZE,
-            FILE_ATTRIBUTE_NORMAL, 0, FILE_CREATE,
-            FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_REPARSE_POINT_FLAG,
-        ).map_err(|_| err(io::ErrorKind::PermissionDenied, "AGENT_WRITE_FAILED"))?;
-        if is_reparse(temp.0)? { return Err(err(io::ErrorKind::PermissionDenied, "AGENT_WRITE_FAILED")); }
-        if let Some(target) = &target { preserve_security(target.0, temp.0)?; }
+        let object_options = FILE_SYNCHRONOUS_IO_NONALERT
+            | FILE_OPEN_REPARSE_POINT
+            | if directory {
+                FILE_DIRECTORY_FILE
+            } else {
+                FILE_NON_DIRECTORY_FILE
+            };
+        const SYNCHRONIZE: u32 = 0x0010_0000;
+        if filename.is_empty()
+            || filename.to_string_lossy().contains(['/', '\\', ':', '\0'])
+            || filename.to_string_lossy().ends_with(['.', ' '])
         {
-            use std::io::Write;
-            use std::os::windows::io::FromRawHandle;
-            let mut file = fs::File::from_raw_handle(temp.0);
-            let result = file.write_all(content).and_then(|_| file.flush());
-            std::mem::forget(file);
-            result.map_err(|_| err(io::ErrorKind::Other, "AGENT_WRITE_FAILED"))?;
+            return Err(denied());
         }
-        if unsafe { SetEndOfFile(temp.0) } == 0 || unsafe { FlushFileBuffers(temp.0) } == 0 {
-            return Err(winerr("AGENT_WRITE_FAILED"));
+        let mut wide: Vec<u16> = filename.encode_wide().collect();
+        let byte_length = wide
+            .len()
+            .checked_mul(2)
+            .filter(|length| *length <= u16::MAX as usize)
+            .ok_or_else(denied)?;
+        let mut object_name = UNICODE_STRING {
+            Length: byte_length as u16,
+            MaximumLength: byte_length as u16,
+            Buffer: wide.as_mut_ptr(),
+        };
+        let mut attributes: OBJECT_ATTRIBUTES = unsafe { std::mem::zeroed() };
+        attributes.Length = std::mem::size_of::<OBJECT_ATTRIBUTES>() as u32;
+        attributes.RootDirectory = parent.as_raw_handle() as _;
+        attributes.ObjectName = &mut object_name;
+        attributes.Attributes = 0x0000_0040; // OBJ_CASE_INSENSITIVE
+        let mut raw = std::ptr::null_mut();
+        let mut status_block = IO_STATUS_BLOCK::default();
+        let status = unsafe {
+            NtCreateFile(
+                &mut raw,
+                desired_access | SYNCHRONIZE,
+                &attributes,
+                &mut status_block,
+                std::ptr::null(),
+                FILE_ATTRIBUTE_NORMAL,
+                share_access,
+                create_disposition,
+                object_options,
+                std::ptr::null(),
+                0,
+            )
+        };
+        if status < 0 || raw.is_null() {
+            let kind = match status as u32 {
+                0xc000_0034 | 0xc000_003a => io::ErrorKind::NotFound,
+                0xc000_0022 | 0xc000_0043 => io::ErrorKind::PermissionDenied,
+                _ => io::ErrorKind::Other,
+            };
+            return Err(io::Error::new(
+                kind,
+                format!("WINDOWS_HANDLE_RELATIVE_OPEN_FAILED_{:08x}", status as u32),
+            ));
         }
-        rename_relative(parent.0, temp.0, &target_name).map_err(|_| err(io::ErrorKind::Other, "AGENT_WRITE_FAILED"))?;
-        unsafe { FlushFileBuffers(parent.0); }
-        Ok(())
+        let file = unsafe { File::from_raw_handle(raw) };
+        let metadata = file.metadata()?;
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+            || directory && !metadata.is_dir()
+            || !directory && !metadata.is_file()
+        {
+            return Err(denied());
+        }
+        authorize_named_child(&file, parent, filename)?;
+        Ok(file)
     }
-    pub fn remove_beneath(root: &Path, relative: &Path) -> Result<(), SafeWriteError> {
-        let (_, root_handle) = open_root(root)?;
-        let (parent, mut name) = open_parent(root_handle.0, relative, false)?;
-        let target = nt_open(
-            parent.0, &mut name, DELETE | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
-            FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-            FILE_OPEN, FILE_NON_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT_FLAG | FILE_SYNCHRONOUS_IO_NONALERT,
-        ).map_err(|_| err(io::ErrorKind::PermissionDenied, "AGENT_RECOVERY_DELETE_FAILED"))?;
-        if is_reparse(target.0)? { return Err(err(io::ErrorKind::PermissionDenied, "SAFE_PATH_ESCAPE")); }
+
+    fn open_child_at(
+        parent: &File,
+        filename: &std::ffi::OsStr,
+        desired_access: u32,
+        share_access: u32,
+        create_disposition: u32,
+    ) -> io::Result<File> {
+        open_object_at(
+            parent,
+            filename,
+            desired_access,
+            share_access,
+            create_disposition,
+            false,
+        )
+    }
+
+    fn open_parent_tree(path: &Path) -> io::Result<File> {
+        use windows_sys::Wdk::Storage::FileSystem::FILE_OPEN_IF;
+        const FILE_ADD_FILE: u32 = 0x0000_0002;
+        const FILE_ADD_SUBDIRECTORY: u32 = 0x0000_0004;
+        const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
+        const FILE_TRAVERSE: u32 = 0x0000_0020;
+        if !path.is_absolute() {
+            return Err(denied());
+        }
+        let mut cursor = path;
+        let mut missing = Vec::new();
+        while !cursor.exists() {
+            missing.push(cursor.file_name().ok_or_else(denied)?.to_os_string());
+            cursor = cursor.parent().ok_or_else(denied)?;
+        }
+        let mut directory = open_destination_directory(cursor)?;
+        for name in missing.iter().rev() {
+            directory = open_object_at(
+                &directory,
+                name,
+                FILE_ADD_FILE | FILE_ADD_SUBDIRECTORY | FILE_READ_ATTRIBUTES | FILE_TRAVERSE,
+                FILE_SHARE_READ_WRITE_DELETE,
+                FILE_OPEN_IF,
+                true,
+            )?;
+        }
+        Ok(directory)
+    }
+
+    fn authorize_named_child(
+        file: &File,
+        parent: &File,
+        filename: &std::ffi::OsStr,
+    ) -> io::Result<()> {
+        let actual = normalized_path(&final_path(file)?);
+        let parent = normalized_path(&final_path(parent)?);
+        let expected = format!(
+            "{}\\{}",
+            parent.trim_end_matches('\\'),
+            filename.to_string_lossy().to_lowercase()
+        );
+        if actual == expected {
+            Ok(())
+        } else {
+            Err(denied())
+        }
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    struct FileIdentity {
+        volume: u32,
+        index: u64,
+        size: u64,
+        modified: (u32, u32),
+    }
+
+    fn identity(file: &File) -> io::Result<FileIdentity> {
+        use windows_sys::Win32::Storage::FileSystem::{
+            BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
+        };
+        let info = unsafe {
+            let mut info = BY_HANDLE_FILE_INFORMATION::default();
+            if GetFileInformationByHandle(file.as_raw_handle() as _, &mut info) == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            info
+        };
+        Ok(FileIdentity {
+            volume: info.dwVolumeSerialNumber,
+            index: ((info.nFileIndexHigh as u64) << 32) | info.nFileIndexLow as u64,
+            size: ((info.nFileSizeHigh as u64) << 32) | info.nFileSizeLow as u64,
+            modified: (
+                info.ftLastWriteTime.dwLowDateTime,
+                info.ftLastWriteTime.dwHighDateTime,
+            ),
+        })
+    }
+
+    fn read_snapshot(file: &mut File, limit: usize) -> Result<(FileIdentity, Vec<u8>), String> {
+        use std::io::{Seek, SeekFrom};
+        file.seek(SeekFrom::Start(0))
+            .map_err(|_| "FILE_READ_FAILED")?;
+        let metadata = file.metadata().map_err(|_| "FILE_READ_FAILED")?;
+        if metadata.len() > limit as u64 {
+            return Err("FILE_SAVE_TOO_LARGE".into());
+        }
+        let mut bytes = Vec::new();
+        file.take(limit as u64 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| "FILE_READ_FAILED")?;
+        if bytes.len() > limit {
+            return Err("FILE_SAVE_TOO_LARGE".into());
+        }
+        let identity = identity(file).map_err(|_| "FILE_IDENTITY_UNAVAILABLE")?;
+        Ok((identity, bytes))
+    }
+
+    fn copy_dacl(source: &File, destination: &File) -> Result<(), String> {
+        use windows_sys::Win32::{
+            Foundation::LocalFree,
+            Security::{
+                ACL,
+                Authorization::{GetSecurityInfo, SE_FILE_OBJECT, SetSecurityInfo},
+                DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR,
+            },
+        };
+        let mut dacl: *mut ACL = std::ptr::null_mut();
+        let mut descriptor: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
+        let get_status = unsafe {
+            GetSecurityInfo(
+                source.as_raw_handle() as _,
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &mut dacl,
+                std::ptr::null_mut(),
+                &mut descriptor,
+            )
+        };
+        if get_status != 0 || descriptor.is_null() {
+            return Err("FILE_ACL_READ_FAILED".into());
+        }
+        let set_status = unsafe {
+            SetSecurityInfo(
+                destination.as_raw_handle() as _,
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                dacl,
+                std::ptr::null_mut(),
+            )
+        };
         unsafe {
-            let info = FILE_DISPOSITION_INFO { Flags: FILE_DISPOSITION_FLAG_DELETE | FILE_DISPOSITION_FLAG_POSIX_SEMANTICS };
-            if SetFileInformationByHandle(
-                target.0, FileDispositionInfoEx, &info as *const _ as *mut c_void, size_of::<FILE_DISPOSITION_INFO>() as u32,
-            ) == 0 {
-                return Err(winerr("AGENT_RECOVERY_DELETE_FAILED"));
-            }
-            FlushFileBuffers(parent.0);
+            LocalFree(descriptor as _);
+        }
+        if set_status != 0 {
+            return Err("FILE_ACL_PRESERVE_FAILED".into());
         }
         Ok(())
     }
-    pub fn read(path: &Path, roots: &[PathBuf], max_bytes: usize) -> Result<Vec<u8>, SafeWriteError> {
-        for root in roots {
-            let canonical = root.canonicalize().map_err(|_| err(io::ErrorKind::NotFound, "WORKSPACE_ROOT_INVALID"))?;
-            let candidate = path.canonicalize().map_err(|e| err(e.kind(), "FILE_NOT_FOUND"))?;
-            if let Ok(relative) = candidate.strip_prefix(&canonical) {
-                return read_beneath(&canonical, relative, max_bytes);
+
+    fn rename_replace_at(source: &File, parent: &File, target: &std::ffi::OsStr) -> io::Result<()> {
+        use std::ffi::c_void;
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Storage::FileSystem::{FileRenameInfo, SetFileInformationByHandle};
+        #[repr(C)]
+        struct RenameHeader {
+            flags: u32,
+            root_directory: *mut c_void,
+            filename_length: u32,
+            filename: [u16; 1],
+        }
+        let chars: Vec<u16> = target.encode_wide().collect();
+        if chars.is_empty() || chars.len() > 32000 {
+            return Err(denied());
+        }
+        let offset = std::mem::offset_of!(RenameHeader, filename);
+        let size = offset + (chars.len() + 1) * std::mem::size_of::<u16>();
+        let mut aligned = vec![0u64; (size + 7) / 8];
+        let header = aligned.as_mut_ptr() as *mut RenameHeader;
+        unsafe {
+            (*header).flags = 1; // FileRenameInfo: TRUE = atomic replace in same directory.
+            (*header).root_directory = parent.as_raw_handle() as *mut c_void;
+            (*header).filename_length = (chars.len() * 2) as u32;
+            std::ptr::copy_nonoverlapping(
+                chars.as_ptr(),
+                (aligned.as_mut_ptr() as *mut u8).add(offset) as *mut u16,
+                chars.len(),
+            );
+            if SetFileInformationByHandle(
+                source.as_raw_handle() as _,
+                FileRenameInfo,
+                aligned.as_ptr() as *const c_void,
+                size as u32,
+            ) == 0
+            {
+                return Err(io::Error::last_os_error());
             }
         }
-        Err(err(io::ErrorKind::PermissionDenied, "PATH_OUTSIDE_WORKSPACE"))
+        Ok(())
     }
-    pub fn save(path: &Path, roots: &[PathBuf], content: &[u8], expected: &str, max_bytes: usize) -> Result<SafeWriteOutcome, SafeWriteError> {
-        for root in roots {
-            let canonical = root.canonicalize().map_err(|_| err(io::ErrorKind::NotFound, "WORKSPACE_ROOT_INVALID"))?;
-            let candidate = path.canonicalize().map_err(|e| err(e.kind(), "FILE_NOT_FOUND"))?;
-            if let Ok(relative) = candidate.strip_prefix(&canonical) {
-                return save_beneath(&canonical, relative, content, expected, max_bytes);
-            }
+
+    fn delete_on_close(file: &File) {
+        use std::ffi::c_void;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_DISPOSITION_INFO, FileDispositionInfo, SetFileInformationByHandle,
+        };
+        let disposition = FILE_DISPOSITION_INFO { DeleteFile: true };
+        unsafe {
+            SetFileInformationByHandle(
+                file.as_raw_handle() as _,
+                FileDispositionInfo,
+                &disposition as *const _ as *const c_void,
+                std::mem::size_of::<FILE_DISPOSITION_INFO>() as u32,
+            );
         }
-        Err(err(io::ErrorKind::PermissionDenied, "PATH_OUTSIDE_WORKSPACE"))
     }
-    pub fn create_tree(path: &Path, roots: &[PathBuf]) -> Result<(), SafeWriteError> {
-        for root in roots {
-            let canonical = root.canonicalize().map_err(|_| err(io::ErrorKind::NotFound, "WORKSPACE_ROOT_INVALID"))?;
-            if let Ok(relative) = path.strip_prefix(&canonical) {
-                return create_tree_beneath(&canonical, relative);
-            }
+
+    fn remove_regular_at(parent: &File, filename: &std::ffi::OsStr) -> io::Result<()> {
+        use std::ffi::c_void;
+        use windows_sys::Wdk::Storage::FileSystem::FILE_OPEN;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_DISPOSITION_INFO, FileDispositionInfo, SetFileInformationByHandle,
+        };
+        const DELETE: u32 = 0x0001_0000;
+        const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
+        let file = open_child_at(
+            parent,
+            filename,
+            DELETE | FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ_WRITE_DELETE,
+            FILE_OPEN,
+        )?;
+        let disposition = FILE_DISPOSITION_INFO { DeleteFile: true };
+        if unsafe {
+            SetFileInformationByHandle(
+                file.as_raw_handle() as _,
+                FileDispositionInfo,
+                &disposition as *const _ as *const c_void,
+                std::mem::size_of::<FILE_DISPOSITION_INFO>() as u32,
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
         }
-        Err(err(io::ErrorKind::PermissionDenied, "PATH_OUTSIDE_WORKSPACE"))
+        Ok(())
     }
-    pub fn atomic_write(path: &Path, content: &[u8], max_bytes: usize) -> Result<(), SafeWriteError> {
-        let parent = path.parent().ok_or_else(|| err(io::ErrorKind::PermissionDenied, "SAFE_PATH_ESCAPE"))?;
-        let relative = path.file_name().ok_or_else(|| err(io::ErrorKind::InvalidInput, "PATH_INVALID"))?;
-        atomic_write_beneath(parent, Path::new(relative), content, max_bytes)
-    }
-    pub fn remove(path: &Path, roots: &[PathBuf]) -> Result<(), SafeWriteError> {
-        for root in roots {
-            let canonical = root.canonicalize().map_err(|_| err(io::ErrorKind::NotFound, "WORKSPACE_ROOT_INVALID"))?;
-            let candidate = path.canonicalize().map_err(|e| err(e.kind(), "FILE_NOT_FOUND"))?;
-            if let Ok(relative) = candidate.strip_prefix(&canonical) {
-                return remove_beneath(&canonical, relative);
-            }
+
+    pub(super) fn remove_regular(canonical: &Path, roots: &[PathBuf]) -> io::Result<()> {
+        if !canonical.is_absolute() {
+            return Err(denied());
         }
-        Err(err(io::ErrorKind::PermissionDenied, "PATH_OUTSIDE_WORKSPACE"))
+        let name = canonical.file_name().ok_or_else(invalid_input)?;
+        let parent_path = canonical.parent().ok_or_else(invalid_input)?;
+        let root = open_authorized_root(parent_path, roots)?;
+        let parent = open_destination_directory(parent_path)?;
+        authorize_with_root(&parent, &root)?;
+        remove_regular_at(&parent, name)
+    }
+
+    /// Compare and replace through a pinned parent directory. Both the lock and
+    /// the unique stage file are created relative to that handle, so a renamed
+    /// parent or replacement junction cannot redirect writes outside the root.
+    fn save_if_unchanged_at(
+        parent: &File,
+        filename: &std::ffi::OsStr,
+        expected: &[u8],
+        content: &[u8],
+        limit: usize,
+    ) -> Result<(), String> {
+        use sha2::Digest;
+        use windows_sys::Wdk::Storage::FileSystem::{FILE_CREATE, FILE_OPEN, FILE_OPEN_IF};
+        const DELETE: u32 = 0x0001_0000;
+        const FILE_READ_DATA: u32 = 0x0000_0001;
+        const FILE_WRITE_DATA: u32 = 0x0000_0002;
+        const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
+        const READ_CONTROL: u32 = 0x0002_0000;
+        const WRITE_DAC: u32 = 0x0004_0000;
+        if expected.len() > limit || content.len() > limit || limit == 0 {
+            return Err("FILE_SAVE_TOO_LARGE".into());
+        }
+        let digest = format!("{:x}", sha2::Sha256::digest(filename.as_encoded_bytes()));
+        let lock_name = std::ffi::OsString::from(format!(".browseros-cas-{digest}.lock"));
+        let lock = open_child_at(
+            parent,
+            &lock_name,
+            FILE_READ_DATA | FILE_WRITE_DATA | FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ_WRITE_DELETE,
+            FILE_OPEN_IF,
+        )
+        .map_err(|_| "FILE_LOCK_UNAVAILABLE")?;
+        lock.lock().map_err(|_| "FILE_LOCK_UNAVAILABLE")?;
+
+        let result = (|| {
+            let mut current = open_child_at(
+                parent,
+                filename,
+                FILE_READ_DATA | FILE_READ_ATTRIBUTES | READ_CONTROL,
+                FILE_SHARE_READ_WRITE_DELETE,
+                FILE_OPEN,
+            )
+            .map_err(|error| {
+                if error.kind() == io::ErrorKind::NotFound {
+                    "FILE_TARGET_MISSING"
+                } else {
+                    "FILE_TARGET_NOT_REGULAR"
+                }
+            })?;
+            let (original_identity, actual) = read_snapshot(&mut current, limit)?;
+            if actual != expected {
+                return Err("FILE_CONFLICT".into());
+            }
+            drop(current);
+
+            let mut stage = None;
+            for _ in 0..8 {
+                let candidate = std::ffi::OsString::from(format!(
+                    ".browseros-cas-{}.tmp",
+                    uuid::Uuid::new_v4()
+                ));
+                match open_child_at(
+                    parent,
+                    &candidate,
+                    DELETE | FILE_WRITE_DATA | FILE_READ_ATTRIBUTES | READ_CONTROL | WRITE_DAC,
+                    0,
+                    FILE_CREATE,
+                ) {
+                    Ok(file) => {
+                        stage = Some(file);
+                        break;
+                    }
+                    Err(_) => continue,
+                }
+            }
+            let mut stage = stage.ok_or("FILE_STAGE_CREATE_FAILED")?;
+            let stage_result = (|| {
+                use std::io::Write;
+                stage
+                    .write_all(content)
+                    .map_err(|_| "FILE_STAGE_WRITE_FAILED")?;
+                stage.sync_all().map_err(|_| "FILE_STAGE_SYNC_FAILED")?;
+
+                let mut latest = open_child_at(
+                    parent,
+                    filename,
+                    FILE_READ_DATA | FILE_READ_ATTRIBUTES | READ_CONTROL,
+                    FILE_SHARE_READ_WRITE_DELETE,
+                    FILE_OPEN,
+                )
+                .map_err(|_| "FILE_CONFLICT")?;
+                let (latest_identity, latest_bytes) = read_snapshot(&mut latest, limit)?;
+                if latest_identity != original_identity || latest_bytes != expected {
+                    return Err("FILE_CONFLICT".into());
+                }
+                copy_dacl(&latest, &stage)?;
+                drop(latest);
+                rename_replace_at(&stage, parent, filename).map_err(|_| "FILE_REPLACE_FAILED")?;
+                // FlushFileBuffers on a directory is not supported by every
+                // Windows filesystem. The stage itself is always flushed; a
+                // directory flush is best-effort rather than a false failure.
+                let _ = parent.sync_all();
+                Ok(())
+            })();
+            if stage_result.is_err() {
+                delete_on_close(&stage);
+            }
+            stage_result
+        })();
+        drop(lock);
+        result
+    }
+
+    pub(super) fn save_if_unchanged(
+        path: &Path,
+        roots: &[PathBuf],
+        expected: &[u8],
+        content: &[u8],
+        limit: usize,
+    ) -> Result<(), String> {
+        if !path.is_absolute() {
+            return Err("FILE_PARENT_NOT_AUTHORIZED".into());
+        }
+        let parent_path = path.parent().ok_or("FILE_PARENT_INVALID")?;
+        let filename = path.file_name().ok_or("FILE_NAME_INVALID")?;
+        let root =
+            open_authorized_root(parent_path, roots).map_err(|_| "FILE_PARENT_NOT_AUTHORIZED")?;
+        let parent =
+            open_destination_directory(parent_path).map_err(|_| "FILE_PARENT_NOT_AUTHORIZED")?;
+        authorize_with_root(&parent, &root).map_err(|_| "FILE_PARENT_NOT_AUTHORIZED")?;
+        save_if_unchanged_at(&parent, filename, expected, content, limit)
+    }
+
+    /// Atomic create/replace for Agent-owned drafts, new files and recovery
+    /// backups. Missing parent components are created relative to the nearest
+    /// verified existing ancestor, never through an unchecked junction path.
+    pub(super) fn atomic_write(path: &Path, bytes: &[u8], limit: usize) -> Result<(), String> {
+        use sha2::Digest;
+        use std::io::Write;
+        use windows_sys::Wdk::Storage::FileSystem::{FILE_CREATE, FILE_OPEN, FILE_OPEN_IF};
+        const DELETE: u32 = 0x0001_0000;
+        const FILE_READ_DATA: u32 = 0x0000_0001;
+        const FILE_WRITE_DATA: u32 = 0x0000_0002;
+        const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
+        const READ_CONTROL: u32 = 0x0002_0000;
+        const WRITE_DAC: u32 = 0x0004_0000;
+        if !path.is_absolute() || bytes.len() > limit || limit == 0 {
+            return Err("AGENT_WRITE_LIMIT".into());
+        }
+        reject_reparse_ancestors(path).map_err(|_| "AGENT_SYMLINK_DENIED")?;
+        let filename = path.file_name().ok_or("AGENT_PATH_DENIED")?;
+        let parent_path = path.parent().ok_or("AGENT_PATH_DENIED")?;
+        let parent = open_parent_tree(parent_path).map_err(|_| "AGENT_WRITE_FAILED")?;
+        let digest = format!("{:x}", sha2::Sha256::digest(filename.as_encoded_bytes()));
+        let lock_name = std::ffi::OsString::from(format!(".browseros-cas-{digest}.lock"));
+        let lock = open_child_at(
+            &parent,
+            &lock_name,
+            FILE_READ_DATA | FILE_WRITE_DATA | FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ_WRITE_DELETE,
+            FILE_OPEN_IF,
+        )
+        .map_err(|_| "AGENT_LOCK_UNAVAILABLE")?;
+        lock.lock().map_err(|_| "AGENT_LOCK_UNAVAILABLE")?;
+        let result = (|| {
+            let mut stage = None;
+            for _ in 0..8 {
+                let candidate = std::ffi::OsString::from(format!(
+                    ".browseros-agent-{}.tmp",
+                    uuid::Uuid::new_v4()
+                ));
+                if let Ok(file) = open_child_at(
+                    &parent,
+                    &candidate,
+                    DELETE | FILE_WRITE_DATA | FILE_READ_ATTRIBUTES | READ_CONTROL | WRITE_DAC,
+                    0,
+                    FILE_CREATE,
+                ) {
+                    stage = Some(file);
+                    break;
+                }
+            }
+            let mut stage = stage.ok_or("AGENT_WRITE_FAILED")?;
+            let write_result = (|| {
+                stage.write_all(bytes).map_err(|_| "AGENT_WRITE_FAILED")?;
+                stage.sync_all().map_err(|_| "AGENT_WRITE_FAILED")?;
+                match open_child_at(
+                    &parent,
+                    filename,
+                    FILE_READ_DATA | FILE_READ_ATTRIBUTES | READ_CONTROL,
+                    FILE_SHARE_READ_WRITE_DELETE,
+                    FILE_OPEN,
+                ) {
+                    Ok(target) => copy_dacl(&target, &stage)?,
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(_) => return Err("AGENT_SYMLINK_DENIED".into()),
+                }
+                rename_replace_at(&stage, &parent, filename).map_err(|_| "AGENT_WRITE_FAILED")?;
+                let _ = parent.sync_all();
+                Ok(())
+            })();
+            if write_result.is_err() {
+                delete_on_close(&stage);
+            }
+            write_result
+        })();
+        drop(lock);
+        result
     }
 
     #[cfg(test)]
     mod tests {
         use super::*;
         #[test]
-        fn windows_cas_writes_under_pinned_parent_and_preserves_dacl() {
-            let root = std::env::temp_dir().join(format!("cas-win-{}", uuid::Uuid::new_v4()));
-            fs::create_dir_all(root.join("nested")).unwrap();
-            let target = root.join("nested/file.txt");
-            fs::write(&target, "old").unwrap();
-            let expected = crate::capabilities::workspace::cas::hash_bytes(b"old");
-            let saved = save(&target, &[root.clone()], b"new", &expected, 1024).unwrap();
-            assert!(saved.saved);
-            assert_eq!(fs::read(&target).unwrap(), b"new");
-            let conflict = save(&target, &[root.clone()], b"bad", &expected, 1024).unwrap();
-            assert!(!conflict.saved);
-            assert_eq!(fs::read(&target).unwrap(), b"new");
-            fs::remove_dir_all(root).unwrap();
+        fn authorized_windows_read_returns_bytes_and_denies_external_files() {
+            let base = std::env::temp_dir()
+                .join(format!("browseros-windows-read-{}", uuid::Uuid::new_v4()));
+            let safe = base.join("safe");
+            let external = base.join("external");
+            std::fs::create_dir_all(&safe).unwrap();
+            std::fs::create_dir_all(&external).unwrap();
+            let file = safe.join("one.txt");
+            let outside = external.join("two.txt");
+            std::fs::write(&file,b"inside").unwrap();
+            std::fs::write(&outside,b"external").unwrap();
+            assert_eq!(read_regular(&file, &[safe.clone()], 128).unwrap(), b"inside");
+            assert!(read_regular(&outside, &[safe.clone()], 128).is_err());
+            assert!(read_regular(&file, &[safe.clone()], 2).is_err());
+            std::fs::remove_dir_all(base).unwrap();
         }
         #[test]
-        fn windows_agent_atomic_write_creates_nested_file() {
-            let root = std::env::temp_dir().join(format!("agent-win-{}", uuid::Uuid::new_v4()));
-            fs::create_dir_all(&root).unwrap();
-            atomic_write(&root.join("new/deep/file.txt"), b"approved", 1024).unwrap();
-            assert_eq!(fs::read(root.join("new/deep/file.txt")).unwrap(), b"approved");
-            fs::remove_dir_all(root).unwrap();
+        fn pinned_handle_move_is_no_replace_and_does_not_touch_external_root() {
+            let base = std::env::temp_dir()
+                .join(format!("browseros-winmove-{}", uuid::Uuid::new_v4()));
+            let allowed = base.join("allowed");
+            let a = allowed.join("a");
+            let b = allowed.join("b");
+            let outside = base.join("outside");
+            std::fs::create_dir_all(&a).unwrap();
+            std::fs::create_dir_all(&b).unwrap();
+            std::fs::create_dir_all(&outside).unwrap();
+            let src = a.join("one.txt");
+            std::fs::write(&src, b"first").unwrap();
+            move_no_replace(&src, &b, &[allowed.clone()]).unwrap();
+            assert!(!src.exists());
+            assert_eq!(std::fs::read(b.join("one.txt")).unwrap(), b"first");
+            std::fs::write(&src, b"second").unwrap();
+            assert!(move_no_replace(&src, &b, &[allowed.clone()]).is_err());
+            assert_eq!(std::fs::read(b.join("one.txt")).unwrap(), b"first");
+            assert!(move_no_replace(&src, &outside, &[allowed.clone()]).is_err());
+            std::fs::remove_dir_all(base).unwrap();
         }
+
         #[test]
-        fn windows_recovery_remove_does_not_follow_junction() {
-            let root = std::env::temp_dir().join(format!("remove-win-{}", uuid::Uuid::new_v4()));
-            let outside = std::env::temp_dir().join(format!("remove-outside-{}", uuid::Uuid::new_v4()));
-            fs::create_dir_all(&root).unwrap();
-            fs::create_dir_all(&outside).unwrap();
-            fs::write(outside.join("keep.txt"), "keep").unwrap();
-            let link = root.join("link");
-            let command = std::process::Command::new("cmd").args(["/C", "mklink", "/J"]).arg(&link).arg(&outside).status().unwrap();
-            if command.success() {
-                assert!(remove(&link.join("keep.txt"), &[root.clone()]).is_err());
-                assert!(outside.join("keep.txt").exists());
-            }
-            let _ = fs::remove_dir_all(root);
-            let _ = fs::remove_dir_all(outside);
+        fn windows_cas_replaces_unchanged_file_and_preserves_external_edit() {
+            let root =
+                std::env::temp_dir().join(format!("browseros-wincas-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&root).unwrap();
+            let target = root.join("entry.txt");
+            std::fs::write(&target, b"before").unwrap();
+            save_if_unchanged(&target, &[root.clone()], b"before", b"saved", 1024).unwrap();
+            assert_eq!(std::fs::read(&target).unwrap(), b"saved");
+            std::fs::write(&target, b"external").unwrap();
+            assert_eq!(
+                save_if_unchanged(&target, &[root.clone()], b"saved", b"stale", 1024),
+                Err("FILE_CONFLICT".into())
+            );
+            assert_eq!(std::fs::read(&target).unwrap(), b"external");
+            assert_eq!(
+                save_if_unchanged(
+                    &root.join("missing.txt"),
+                    &[root.clone()],
+                    b"",
+                    b"new",
+                    1024
+                ),
+                Err("FILE_TARGET_MISSING".into())
+            );
+            assert!(
+                !std::fs::read_dir(&root)
+                    .unwrap()
+                    .flatten()
+                    .any(|entry| { entry.file_name().to_string_lossy().ends_with(".tmp") })
+            );
+            std::fs::remove_dir_all(root).unwrap();
+        }
+
+        #[test]
+        fn windows_cas_pinned_parent_survives_junction_replacement() {
+            let base = std::env::temp_dir()
+                .join(format!("browseros-wincas-pivot-{}", uuid::Uuid::new_v4()));
+            let trusted = base.join("trusted");
+            let parent = trusted.join("workspace");
+            let outside = base.join("outside");
+            std::fs::create_dir_all(&parent).unwrap();
+            std::fs::create_dir_all(&outside).unwrap();
+            let target = parent.join("entry.txt");
+            let external_target = outside.join("entry.txt");
+            std::fs::write(&target, b"before").unwrap();
+            std::fs::write(&external_target, b"outside").unwrap();
+            let roots = [trusted.clone()];
+            let root = open_authorized_root(&parent, &roots).unwrap();
+            let pinned = open_destination_directory(&parent).unwrap();
+            authorize_with_root(&pinned, &root).unwrap();
+            let original = trusted.join("workspace-original");
+            std::fs::rename(&parent, &original).unwrap();
+            let junction = std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(&parent)
+                .arg(&outside)
+                .output()
+                .unwrap();
+            assert!(
+                junction.status.success(),
+                "test junction creation must work"
+            );
+
+            save_if_unchanged_at(
+                &pinned,
+                std::ffi::OsStr::new("entry.txt"),
+                b"before",
+                b"saved",
+                1024,
+            )
+                .unwrap();
+            assert_eq!(std::fs::read(original.join("entry.txt")).unwrap(), b"saved");
+            assert_eq!(std::fs::read(&external_target).unwrap(), b"outside");
+            std::fs::remove_dir(&parent).unwrap();
+            std::fs::remove_dir_all(base).unwrap();
+        }
+
+        #[test]
+        fn windows_agent_atomic_write_creates_nested_files_without_touching_junction_target() {
+            let base = std::env::temp_dir()
+                .join(format!("browseros-winagent-write-{}", uuid::Uuid::new_v4()));
+            let root = base.join("workspace");
+            let outside = base.join("outside");
+            std::fs::create_dir_all(&root).unwrap();
+            std::fs::create_dir_all(&outside).unwrap();
+            let nested = root.join("drafts").join("entry.txt");
+            atomic_write(&nested, b"approved", 1024).unwrap();
+            assert_eq!(std::fs::read(&nested).unwrap(), b"approved");
+            atomic_write(&nested, b"replacement", 1024).unwrap();
+            assert_eq!(std::fs::read(&nested).unwrap(), b"replacement");
+
+            let moved = root.join("drafts-original");
+            std::fs::rename(root.join("drafts"), &moved).unwrap();
+            let junction = std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(root.join("drafts"))
+                .arg(&outside)
+                .output()
+                .unwrap();
+            assert!(junction.status.success());
+            assert!(atomic_write(&nested, b"must-not-escape", 1024).is_err());
+            assert!(!outside.join("entry.txt").exists());
+            std::fs::remove_dir(root.join("drafts")).unwrap();
+            std::fs::remove_dir_all(base).unwrap();
         }
     }
 }
 
-pub fn read_regular(path: &Path, roots: &[PathBuf], max_bytes: usize) -> Result<Vec<u8>, SafeWriteError> {
-    #[cfg(unix)]
+pub fn move_no_replace(src: &Path, dest_dir: &Path, roots: &[PathBuf]) -> std::io::Result<()> {
+    #[cfg(target_os = "linux")]
     {
-        let canonical_path = path.canonicalize().map_err(|e| SafeWriteError::new(e.kind(), "PATH_NOT_FOUND"))?;
-        for root in roots {
-            let root = root.canonicalize().map_err(|_| SafeWriteError::new(io::ErrorKind::NotFound, "WORKSPACE_ROOT_INVALID"))?;
-            if let Ok(relative) = canonical_path.strip_prefix(&root) { return read_at(&root, relative, max_bytes); }
-        }
-        Err(SafeWriteError::new(io::ErrorKind::PermissionDenied, "PATH_OUTSIDE_WORKSPACE"))
+        linux::move_no_replace(src, dest_dir, roots)
     }
     #[cfg(target_os = "windows")]
-    { windows::read(path, roots, max_bytes) }
-    #[cfg(not(any(unix, target_os = "windows")))]
     {
-        let _ = (path, roots, max_bytes);
-        Err(SafeWriteError::new(io::ErrorKind::Unsupported, "SAFE_FILESYSTEM_PLATFORM_UNSUPPORTED"))
+        windows::move_no_replace(src, dest_dir, roots)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        let _ = (src, dest_dir, roots);
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "secure move requires a supported platform",
+        ))
     }
 }
 
-pub fn save_if_unchanged(path: &Path, roots: &[PathBuf], content: &[u8], expected: &str, max_bytes: usize) -> Result<SafeWriteOutcome, SafeWriteError> {
-    if content.len() > max_bytes { return Err(SafeWriteError::new(io::ErrorKind::InvalidData, "FILE_TOO_LARGE")); }
-    #[cfg(unix)]
-    {
-        let canonical_path = path.canonicalize().map_err(|e| SafeWriteError::new(e.kind(), "PATH_NOT_FOUND"))?;
-        for root in roots {
-            let root = root.canonicalize().map_err(|_| SafeWriteError::new(io::ErrorKind::NotFound, "WORKSPACE_ROOT_INVALID"))?;
-            if let Ok(relative) = canonical_path.strip_prefix(&root) { return save_at(&root, relative, content, expected, max_bytes); }
-        }
-        Err(SafeWriteError::new(io::ErrorKind::PermissionDenied, "PATH_OUTSIDE_WORKSPACE"))
-    }
+/// Secure a private app-owned directory on Windows. Other platforms keep
+/// their existing directory ownership/mode policy.
+pub fn ensure_private_directory(path: &Path) -> std::io::Result<()> {
     #[cfg(target_os = "windows")]
-    { windows::save(path, roots, content, expected, max_bytes) }
-    #[cfg(not(any(unix, target_os = "windows")))]
     {
-        let _ = (path, roots, content, expected);
-        Err(SafeWriteError::new(io::ErrorKind::Unsupported, "SAFE_FILESYSTEM_PLATFORM_UNSUPPORTED"))
+        windows::ensure_private_directory(path)
     }
-}
-
-pub fn create_directory_tree(path: &Path, roots: &[PathBuf]) -> Result<(), SafeWriteError> {
-    #[cfg(target_os = "windows")]
-    { return windows::create_tree(path, roots); }
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = (path, roots);
-        Err(SafeWriteError::new(io::ErrorKind::Unsupported, "SAFE_FILESYSTEM_PLATFORM_UNSUPPORTED"))
+        std::fs::create_dir_all(path)
     }
 }
 
-pub fn atomic_write(path: &Path, content: &[u8], max_bytes: usize) -> Result<(), SafeWriteError> {
-    #[cfg(target_os = "windows")]
-    { return windows::atomic_write(path, content, max_bytes); }
-    #[cfg(not(target_os = "windows"))]
+pub fn read_regular(canonical: &Path, roots: &[PathBuf], limit: usize) -> std::io::Result<Vec<u8>> {
+    #[cfg(target_os = "linux")]
     {
-        let _ = (path, content, max_bytes);
-        Err(SafeWriteError::new(io::ErrorKind::Unsupported, "SAFE_FILESYSTEM_PLATFORM_UNSUPPORTED"))
+        linux::read_regular(canonical, roots, limit)
+    }
+    #[cfg(target_os = "windows")]
+    {
+        windows::read_regular(canonical, roots, limit)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        let _ = (canonical, roots, limit);
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "safe read requires a supported platform",
+        ))
     }
 }
 
-pub fn remove_regular(path: &Path, roots: &[PathBuf]) -> Result<(), SafeWriteError> {
-    #[cfg(target_os = "windows")]
-    { return windows::remove(path, roots); }
-    #[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "windows")]
+pub fn atomic_write(path: &Path, bytes: &[u8], limit: usize) -> Result<(), String> {
+    windows::atomic_write(path, bytes, limit)
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn remove_regular(canonical: &Path, roots: &[PathBuf]) -> std::io::Result<()> {
+    windows::remove_regular(canonical, roots)
+}
+
+pub fn save_if_unchanged(
+    canonical: &Path,
+    roots: &[PathBuf],
+    expected: &[u8],
+    content: &[u8],
+    limit: usize,
+) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
     {
-        let _ = (path, roots);
-        Err(SafeWriteError::new(io::ErrorKind::Unsupported, "SAFE_FILESYSTEM_PLATFORM_UNSUPPORTED"))
+        linux::save_if_unchanged(canonical, roots, expected, content, limit)
+    }
+    #[cfg(target_os = "windows")]
+    {
+        windows::save_if_unchanged(canonical, roots, expected, content, limit)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        let _ = (canonical, roots, expected, content, limit);
+        Err("FILE_DESCRIPTOR_CAS_UNSUPPORTED".into())
     }
 }
