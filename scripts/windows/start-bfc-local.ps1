@@ -208,7 +208,8 @@ Assert-NoReparsePath $configPath
 & $icacls $configPath '/setowner' "*$($currentSid.Value)" | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Cannot set BFC data-directory config owner.' }
 $configAcl = Get-Acl -LiteralPath $configPath
-if ($configAcl.Owner -ne $currentSid.Value) {
+$configOwnerSid = $configAcl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+if ($configOwnerSid -ne $currentSid.Value) {
   throw 'BFC data-directory config is not owned by the current user.'
 }
 $configRules = @($configAcl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
