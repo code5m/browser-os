@@ -547,7 +547,9 @@ mod tests {
         let origin = format!("http://{}", listener.local_addr().unwrap());
         let service_id = uuid::Uuid::new_v4().to_string();
         let requests = Arc::new(Mutex::new(Vec::<String>::new()));
+        let request_headers = Arc::new(Mutex::new(Vec::<String>::new()));
         let seen = Arc::clone(&requests);
+        let seen_headers = Arc::clone(&request_headers);
         let expected_service = service_id.clone();
         let server = thread::spawn(move || {
             for _ in 0..3 {
@@ -556,12 +558,15 @@ mod tests {
                 let mut request_line = String::new();
                 reader.read_line(&mut request_line).unwrap();
                 let mut header = String::new();
+                let mut captured_headers = String::new();
                 loop {
                     header.clear();
                     if reader.read_line(&mut header).unwrap() == 0 || header == "\r\n" {
                         break;
                     }
+                    captured_headers.push_str(&header);
                 }
+                seen_headers.lock().unwrap().push(captured_headers);
                 let path = request_line.split_whitespace().nth(1).unwrap_or("");
                 seen.lock().unwrap().push(request_line.trim().to_string());
                 let body = match path {
@@ -622,6 +627,9 @@ mod tests {
         assert_eq!(observed.len(), 3);
         assert!(observed.iter().all(|request| request.starts_with("GET ")));
         assert!(observed.iter().any(|request| request.starts_with("GET /api/identity ")));
+        assert!(request_headers.lock().unwrap().iter().all(|headers|
+            !headers.lines().any(|line| line.to_ascii_lowercase().starts_with("x-browseros-service-token:"))
+        ), "service token must not be disclosed before identity proof");
         assert!(!observed.iter().any(|request| request.starts_with("POST /api/readback/import ")),
             "snapshot payload must never be sent to a port occupant that cannot prove service identity");
     }
