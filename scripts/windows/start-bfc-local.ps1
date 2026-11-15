@@ -15,11 +15,12 @@ $icacls = Join-Path ([Environment]::SystemDirectory) 'icacls.exe'
 if (-not (Test-Path -LiteralPath $icacls -PathType Leaf)) {
   throw 'Windows icacls.exe is unavailable.'
 }
-$nodeCommand = Get-Command node -CommandType Application -ErrorAction SilentlyContinue
-if (-not $nodeCommand) {
+$nodeCommand = Get-Command node -CommandType Application -ErrorAction SilentlyContinue |
+  Select-Object -First 1
+if ($null -eq $nodeCommand) {
   throw 'Node.js 20+ required. Install Node before starting the local BFC service.'
 }
-$nodeExe = [IO.Path]::GetFullPath($nodeCommand.Source)
+$nodeExe = [IO.Path]::GetFullPath([string]$nodeCommand.Source)
 
 function Assert-NoReparsePath([string]$Path) {
   $full = [IO.Path]::GetFullPath($Path)
@@ -159,7 +160,7 @@ while ($pending.Count -gt 0) {
       throw 'BFC data tree object limit exceeded.'
     }
     if (($attributes -band [IO.FileAttributes]::Directory) -ne 0) {
-      $pending.Push($child)
+      $servicePending.Push($child)
     }
   }
 }

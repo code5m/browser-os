@@ -12,7 +12,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 #[cfg(not(target_os = "linux"))]
 use tauri::webview::PageLoadEvent;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tauri::{
     webview::NewWindowResponse, AppHandle, Emitter, Manager, State, Webview, WebviewBuilder,
     WebviewUrl, Window, Wry,
@@ -131,7 +131,7 @@ fn current_windows_user_sid() -> Result<String> {
 }
 
 #[cfg(target_os = "windows")]
-fn profile_tree_object_count(directory: &Path) -> Result<usize> {
+fn reject_profile_reparse_tree(directory: &Path) -> Result<usize> {
     const MAX_OBJECTS: usize = 200_000;
     const MAX_DEPTH: usize = 128;
     let mut pending = vec![(directory.to_path_buf(), 0usize)];
@@ -167,8 +167,7 @@ fn profile_tree_object_count(directory: &Path) -> Result<usize> {
 fn secure_windows_browser_profile(profile: &Path) -> Result<()> {
     let icacls = windows_system_binary("icacls.exe")?;
     let sid = current_windows_user_sid()?;
-    reject_profile_reparse_tree(profile)?;
-    let object_count = profile_tree_object_count(profile)?;
+    let object_count = reject_profile_reparse_tree(profile)?;
 
     // Normalize object ownership before resetting ACLs. A copied legacy
     // profile may otherwise remain owned by another account that can rewrite
@@ -208,7 +207,6 @@ fn secure_windows_browser_profile(profile: &Path) -> Result<()> {
 
     // Verify every object, not only the profile root. A legacy child file
     // with an explicit broad ACE must not survive a correct root DACL.
-    reject_profile_reparse_tree(profile)?;
     let verify = std::process::Command::new(&icacls)
         .arg(profile)
         .args(["/T", "/C"])
@@ -232,7 +230,7 @@ fn secure_windows_browser_profile(profile: &Path) -> Result<()> {
     {
         return Err(BrowserTabError::Platform("WebView2 profile ACL tree is not owner-exclusive".into()));
     }
-    if profile_tree_object_count(profile)? != object_count {
+    if reject_profile_reparse_tree(profile)? != object_count {
         return Err(BrowserTabError::Platform("WebView2 profile changed during ACL verification".into()));
     }
     Ok(())
