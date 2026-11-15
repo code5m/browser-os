@@ -589,9 +589,11 @@ pub fn spawn_terminal(
     cmd.env("TERM_PROGRAM", "mvp-browser-os");
     cmd.env("CLICOLOR_FORCE", "1");
 
-    let mut child = pair
-        .slave
-        .spawn_command(cmd)
+    #[cfg(windows)]
+    let mut child = pair.slave.spawn_command_suspended(cmd)
+        .map_err(|e| format!("无法启动 suspended ConPTY shell: {e}"))?;
+    #[cfg(not(windows))]
+    let mut child = pair.slave.spawn_command(cmd)
         .map_err(|e| format!("无法启动 shell: {e}"))?;
     drop(pair.slave);
 
