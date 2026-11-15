@@ -28,6 +28,20 @@ fn read(path: &Path, allowed: &Path) -> Result<String, String> {
     let text = String::from_utf8(data).map_err(|_| "CONTEXT_NOT_TEXT")?;
     Ok(safe_text(&text))
 }
+fn no_reparse_path(path: &Path) -> bool {
+    if !path.is_absolute() { return false; }
+    let mut current = PathBuf::new();
+    for component in path.components() {
+        current.push(component.as_os_str());
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 => return false,
+            Ok(_) => {}
+            _ => return false,
+        }
+    }
+    true
+}
+
 fn roots(workspace: &Path) -> Vec<PathBuf> {
     let mut roots = vec![
         workspace.join(".agents/skills"),
@@ -40,6 +54,7 @@ fn roots(workspace: &Path) -> Vec<PathBuf> {
         }
     }
     roots.into_iter()
+        .filter(|path| no_reparse_path(path))
         .filter_map(|path| path.canonicalize().ok())
         .filter(|path| path.is_dir())
         .collect()
@@ -87,6 +102,7 @@ fn skill_files(root: &Path) -> Vec<PathBuf> {
     files
 }
 pub fn execute(root: &Path, _storage: &Path, request: Value) -> Result<Value, String> {
+    if !no_reparse_path(root) { return Err("CONTEXT_ROOT_INVALID".into()); }
     let root = root.canonicalize().map_err(|_| "CONTEXT_ROOT_INVALID")?;
     if !root.is_dir() { return Err("CONTEXT_ROOT_INVALID".into()); }
     match request["action"].as_str().unwrap_or("") {
@@ -106,7 +122,9 @@ pub fn execute(root: &Path, _storage: &Path, request: Value) -> Result<Value, St
         }
         "skill_read" => {
             let raw = request["path"].as_str().ok_or("SKILL_PATH_REQUIRED")?;
-            let path = PathBuf::from(raw).canonicalize()
+            let raw_path = PathBuf::from(raw);
+            if !no_reparse_path(&raw_path) { return Err("SKILL_OUTSIDE_ALLOWED_ROOTS".into()); }
+            let path = raw_path.canonicalize()
                 .map_err(|_| "SKILL_NOT_FOUND")?;
             if !skill_files(&root).contains(&path) {
                 return Err("SKILL_OUTSIDE_ALLOWED_ROOTS".into());
@@ -120,7 +138,9 @@ pub fn execute(root: &Path, _storage: &Path, request: Value) -> Result<Value, St
             let query = request["query"].as_str()
                 .filter(|query| (2..=200).contains(&query.len()))
                 .ok_or("KNOWLEDGE_QUERY_REQUIRED")?.to_lowercase();
-            let base = root.join("docs").canonicalize()
+            let docs_path = root.join("docs");
+            if !no_reparse_path(&docs_path) { return Err("KNOWLEDGE_ROOT_UNSAFE".into()); }
+            let base = docs_path.canonicalize()
                 .map_err(|_| "KNOWLEDGE_ROOT_MISSING")?;
             if !base.starts_with(&root) {
                 return Err("KNOWLEDGE_ROOT_UNSAFE".into());
