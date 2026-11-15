@@ -602,7 +602,7 @@ pub fn spawn_terminal(
     #[cfg(windows)]
     let job = {
         let pid = child.process_id().ok_or("WINDOWS_TERMINAL_PID_MISSING")?;
-        match crate::windows_process::JobObject::attach_pid(pid) {
+        match crate::windows_process::JobObject::attach_suspended_pid(pid) {
             Ok(job) => Some(Arc::new(job)),
             Err(error) => {
                 let _ = child.kill();
