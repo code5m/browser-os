@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use chrono::Utc;
@@ -381,12 +382,10 @@ pub fn script_body_path(app: &AppHandle, file_name: &str) -> Result<PathBuf, Str
 
 /// 正文原子写（tmp + rename；失败清理临时文件，不留残留）
 fn atomic_write_body(target: &Path, body: &str) -> Result<(), String> {
-    let ext = target
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("sh")
-        .to_string();
-    let tmp = target.with_extension(format!("{ext}.tmp"));
+    let tmp = target.with_file_name(format!(
+        ".browseros-script-{}.tmp",
+        uuid::Uuid::new_v4()
+    ));
     if let Err(e) = fs::write(&tmp, body) {
         let _ = fs::remove_file(&tmp);
         return Err(format!("写脚本临时文件失败: {e}"));
