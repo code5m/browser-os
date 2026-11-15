@@ -638,7 +638,30 @@ mod windows {
         }
         Ok(())
     }
+    fn normalized_path(value: &str) -> String {
+        let value = value.replace('/', "\\");
+        let value = value.strip_prefix("\\\\?\\").unwrap_or(&value);
+        value.trim_end_matches('\\').to_lowercase()
+    }
+
+    fn verify_path_handle(path: &Path, file: &File) -> io::Result<()> {
+        // A final-component OPEN_REPARSE_POINT flag does not prevent an
+        // intermediate junction from being followed. Check every component,
+        // then compare the kernel-resolved handle path with the current
+        // canonical path. The second check detects a parent swapped between
+        // the preflight and CreateFileW.
+        reject_reparse_ancestors(path)?;
+        let actual = final_path(file)?;
+        let canonical = path.canonicalize()?.to_string_lossy().into_owned();
+        if normalized_path(&actual) != normalized_path(&canonical) {
+            return Err(denied());
+        }
+        reject_reparse_ancestors(path)?;
+        Ok(())
+    }
+
     fn open(path: &Path, directory: bool) -> io::Result<File> {
+        reject_reparse_ancestors(path)?;
         let mut options = OpenOptions::new();
         options.read(true)
             .share_mode(FILE_SHARE_READ_WRITE_DELETE)
@@ -652,6 +675,7 @@ mod windows {
         if directory && !meta.is_dir() || !directory && !meta.is_file() {
             return Err(denied());
         }
+        verify_path_handle(path, &file)?;
         Ok(file)
     }
     fn open_destination_directory(path: &Path) -> io::Result<File> {
@@ -666,6 +690,7 @@ mod windows {
         )
         .share_mode(FILE_SHARE_READ_WRITE_DELETE)
         .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS);
+        reject_reparse_ancestors(path)?;
         let directory = options.open(path)?;
         let metadata = directory.metadata()?;
         if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
@@ -673,6 +698,7 @@ mod windows {
         {
             return Err(denied());
         }
+        verify_path_handle(path, &directory)?;
         Ok(directory)
     }
 
@@ -720,6 +746,8 @@ mod windows {
         if !src.is_absolute() || !dest_dir.is_absolute() {
             return Err(denied());
         }
+        reject_reparse_ancestors(src)?;
+        reject_reparse_ancestors(dest_dir)?;
         let filename = src.file_name().ok_or_else(denied)?;
         let text = filename.to_string_lossy();
         if text.is_empty() || text.contains(':') || text.ends_with('.') || text.ends_with(' ') {
@@ -738,6 +766,7 @@ mod windows {
             || !(meta.is_file() || meta.is_dir()) {
             return Err(denied());
         }
+        verify_path_handle(src, &source)?;
         let source_path = authorize(&source, roots)?;
         // Rename requires FILE_ADD_FILE / FILE_ADD_SUBDIRECTORY rights on
         // the pinned destination directory handle. A read-only directory
