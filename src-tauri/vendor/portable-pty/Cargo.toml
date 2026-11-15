@@ -37,4 +37,3 @@ winapi = { version = "0.3", features = [
     "synchapi",
 ]}
 winreg = "0.10"
-
