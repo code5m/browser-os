@@ -690,7 +690,7 @@ mod tests {
         use super::super::runtime::{BfcImportPage, BfcItem};
 
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let address = listener.local_addr().unwrap();
         let service_id = uuid::Uuid::new_v4().to_string();
         let requests = Arc::new(Mutex::new(Vec::<String>::new()));
         let request_headers = Arc::new(Mutex::new(Vec::<String>::new()));
@@ -698,9 +698,11 @@ mod tests {
         let seen_headers = Arc::clone(&request_headers);
         let expected_service = service_id.clone();
         let server = thread::spawn(move || {
+            // One accepted socket for every request. A reconnect to a new
+            // process after the challenge would make this test fail.
+            let (mut stream, _) = listener.accept().expect("fake service accepts one connection");
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
             for _ in 0..3 {
-                let (mut stream, _) = listener.accept().expect("fake service accepts request");
-                let mut reader = BufReader::new(stream.try_clone().unwrap());
                 let mut request_line = String::new();
                 reader.read_line(&mut request_line).unwrap();
                 let mut header = String::new();
@@ -732,9 +734,10 @@ mod tests {
                 }.to_string();
                 write!(
                     stream,
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n{}",
                     body.len(), body
                 ).unwrap();
+                stream.flush().unwrap();
             }
         });
 
@@ -762,8 +765,8 @@ mod tests {
                 },
             )].into(),
         };
-        let client = client().unwrap();
-        let result = import_to_local_bfc_with_identity(&client, &payload, &identity, &origin).await;
+        let connection = BfcHttpConnection::connect(address).await.unwrap();
+        let result = import_to_local_bfc_with_identity(connection, &payload, &identity).await;
         assert!(matches!(
             result,
             Err(ImportFailure::NotSent("BFC_LOCAL_SERVICE_UNTRUSTED"))
