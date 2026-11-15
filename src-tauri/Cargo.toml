@@ -67,6 +67,9 @@ libc = "0.2"
 rusqlite = { version = "0.41.0", features = ["bundled", "hooks"] }
 mysql = "28.0.2"
 postgres = "0.19.14"
+# Keep the BFC identity handshake and snapshot import on one TCP connection;
+# a reconnect to a replacement loopback listener must never receive the payload.
+tokio = { version = "1", features = ["net", "io-util", "time", "rt"] }
 
 # Only Linux uses FreeDesktop icon/theme XDG lookup. xdg::BaseDirectories
 # is not exported on Windows; do not compile this Linux dependency there.
