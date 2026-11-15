@@ -385,6 +385,7 @@ impl GridProcessManager {
             // main.rs 已 set_var，子进程经环境继承获得）；额外注入子进程索引
             // （crashlog 角色区分）与 UDS socket 路径。
             .env("GRID_CHILD_INDEX", index.to_string())
+            .env("GRID_PARENT_PID", std::process::id().to_string())
             .env("GRID_SOCK_PATH", Self::socket_path(index))
             // Windows Job Object owns the entire WebView2 process subtree.
             // 子进程 stdio 继承主进程（日志汇入同一 stderr，便于 crashlog 镜像）。
