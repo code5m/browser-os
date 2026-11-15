@@ -15,14 +15,17 @@ const codingOwner = src('src-tauri/src/capabilities/agent/execution_owner.rs');
 const aiBackend = src('src-tauri/src/framework/ai.rs');
 const collector = src('scripts/collect-browseros-hang.sh');
 
-// GTK URI is a top-level document property. The general on_navigation
-// callback is invoked for iframe srcdoc/about:blank as well.
-assert.match(plugin, /connect_uri_notify\(move \|wv\|/);
+// Linux keeps the proven WebKit main-frame URI observer. Windows uses
+// Tauri's page-load lifecycle; the navigation permission callback is not a
+// completion event and must never be used to fabricate NavigationFinished.
+assert.match(plugin, /#\[cfg\(target_os = "linux"\)\][\s\S]{0,1800}connect_uri_notify\(move \|wv\|/);
 assert.match(plugin, /wv\.uri\(\)/);
 assert.match(plugin, /let last_uri = std::cell::RefCell::new\(String::new\(\)\)/);
-assert.match(plugin, /#\[cfg\(not\(target_os = "linux"\)\)\]/);
-assert.match(plugin, /#\[cfg\(target_os = "linux"\)\]\s*let _ = next_url;/);
-assert.match(plugin, /BrowserTabEvent::NavigationFinished/);
+assert.match(plugin, /#\[cfg\(not\(target_os = "linux"\)\)\][\s\S]{0,900}on_page_load\(move \|_webview, payload\|/);
+assert.match(plugin, /PageLoadEvent::Started\s*=>\s*BrowserTabEvent::NavigationStarted/);
+assert.match(plugin, /PageLoadEvent::Finished\s*=>\s*BrowserTabEvent::NavigationFinished/);
+assert.match(plugin, /\.on_navigation\(\|_\| true\)/);
+assert.doesNotMatch(plugin, /on_navigation\(move \|url, navigate\| \{ callback\(navigate\); \}\)/);
 
 // Frontend must not apply late events for a closed tab, and omnibox must
 // release stale focus-time display state on blur.
