@@ -629,7 +629,9 @@ mod tests {
     #[test]
     fn local_bfc_endpoint_is_fixed_to_loopback() {
         assert_eq!(BFC_ORIGIN, "http://127.0.0.1:4198");
-        assert!(BFC_IMPORT_URL.starts_with(BFC_ORIGIN));
-        assert!(!BFC_IMPORT_URL.contains("bilibili.com"));
+        assert_eq!(BFC_IMPORT_PATH, "/api/readback/import");
+        assert!(!BFC_IMPORT_PATH.contains("bilibili.com"));
+        assert_eq!(BFC_BROWSEROS_SESSION_PATH, "/api/browseros/session");
+        assert_eq!(BFC_IDENTITY_PATH, "/api/identity");
     }
 }
