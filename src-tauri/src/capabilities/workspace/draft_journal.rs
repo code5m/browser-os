@@ -55,7 +55,10 @@ fn private_dir(app: &AppHandle) -> Result<PathBuf, String> {
         fs::set_permissions(&dir, fs::Permissions::from_mode(0o700))
             .map_err(|_| "DRAFT_DIR_PERMISSIONS_FAILED")?;
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    crate::capabilities::workspace::safe_paths::ensure_private_directory(&dir)
+        .map_err(|_| "DRAFT_DIR_PERMISSIONS_FAILED")?;
+    #[cfg(all(not(unix), not(windows)))]
     fs::create_dir_all(&dir).map_err(|_| "DRAFT_DIR_UNAVAILABLE")?;
     Ok(dir)
 }
@@ -71,10 +74,25 @@ fn raw_key(create: bool, dir: &Path) -> Result<Option<[u8; 32]>, String> {
         use std::os::unix::fs::OpenOptionsExt;
         b.mode(0o600).custom_flags(libc::O_NOFOLLOW);
     }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+        b.custom_flags(0x0020_0000); // FILE_FLAG_OPEN_REPARSE_POINT
+        let _ = MetadataExt::file_attributes;
+    }
     // A stable process-shared lock prevents concurrent first-run key rotation.
     let guard = b
         .open(dir.join(".keyinit.lock"))
         .map_err(|_| "DRAFT_KEY_LOCK_FAILED")?;
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        if !guard.metadata().map_err(|_| "DRAFT_KEY_LOCK_FAILED")?.is_file()
+            || guard.metadata().map_err(|_| "DRAFT_KEY_LOCK_FAILED")?.file_attributes() & 0x0000_0400 != 0
+        {
+            return Err("DRAFT_KEY_LOCK_FAILED".into());
+        }
+    }
     guard.lock().map_err(|_| "DRAFT_KEY_LOCK_FAILED")?;
     let value = match KeyringStore::get_token_result(KEY_ID) {
         Ok(value) => value,
@@ -158,6 +176,11 @@ fn write_journal(
             use std::os::unix::fs::OpenOptionsExt;
             opts.mode(0o600).custom_flags(libc::O_NOFOLLOW);
         }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            opts.custom_flags(0x0020_0000); // FILE_FLAG_OPEN_REPARSE_POINT
+        }
         let mut file = opts.open(&tmp).map_err(|_| "DRAFT_WRITE_FAILED")?;
         file.write_all(&encrypted)
             .map_err(|_| "DRAFT_WRITE_FAILED")?;
@@ -200,7 +223,9 @@ fn read_journals(dir: &Path, target: &Path, key: &[u8; 32]) -> Result<Vec<DraftS
         if !meta.is_file() || meta.file_type().is_symlink() || meta.len() > MAX_JOURNAL {
             return Err("DRAFT_JOURNAL_INVALID".into());
         }
-        let bytes = fs::read(entry.path()).map_err(|_| "DRAFT_READ_FAILED")?;
+        let bytes = crate::capabilities::workspace::safe_paths::read_regular(
+            &entry.path(), &[dir.to_path_buf()], MAX_JOURNAL as usize,
+        ).map_err(|_| "DRAFT_READ_FAILED")?;
         let text = decrypt(key, &bytes)?;
         let snap: DraftSnapshot =
             serde_json::from_slice(&text).map_err(|_| "DRAFT_JOURNAL_INVALID")?;
