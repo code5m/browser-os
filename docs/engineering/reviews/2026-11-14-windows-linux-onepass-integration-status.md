@@ -19,7 +19,7 @@
 | Agent 与 MCP | Windows 限定工作区只读 Agent 文件查看；skills list/read、knowledge_search 实现，敏感行隐去、跨目录拒绝 | Windows Agent 写文件/MCP 子进程/LSP 沙箱尚未安全实现，仍拒绝危险命令 |
 | AI 与 OS | Credential Manager keyring、Windows 系统目录 curl.exe、可选 Python profile 导入；默认浏览器 ProgId 查看和经用户确认打开 Windows Settings | 真实 AI Provider/凭据生命周期及 OS 功能验收待结果 |
 | WebView2 Profile | 独立 persistent user-data folder；首次创建浏览器子 WebView 前重置 profile 树 ACL，禁用继承并仅授权当前用户 SID + SYSTEM，校验 ACL 后缓存本进程结果 | ACL 真实 Win11 GUI、WebView2 多进程锁文件及升级后 Profile 恢复仍需实机验收 |
-| BFC 本地服务 | Windows loopback health/capabilities、每用户身份令牌、nonce-HMAC 证明、认证 session/import、PowerShell foreground launcher with recursive owner/SYSTEM-only data ACL and reparse-point denial；外部 bfc-workbench pin cb113c219a90df06db6ceeec10d1a9be46ad3694 | 真实 B 站授权会话及打包后置；端口占用负例确保未经证明不发送 token 或快照正文 |
+| BFC 本地服务 | Windows loopback health/capabilities、每用户身份令牌、nonce-HMAC 证明、认证 session/import、PowerShell foreground launcher with no-follow owner/SYSTEM-only data ACL, per-object verification, and protected data-directory pointer；外部 bfc-workbench pin 8946d52682bc1f2c132d1de47e8624405eec7e8f | 真实 B 站授权会话及打包后置；端口占用负例确保未经证明不发送 token 或快照正文 |
 
 ## 证据（按提交 SHA，不跨版本传递）
 
