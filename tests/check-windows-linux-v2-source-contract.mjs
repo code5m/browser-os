@@ -14,6 +14,7 @@ const process = read('../src-tauri/src/windows_process.rs');
 const winGrid = read('../src-tauri/src/grid_process_windows.rs');
 const scriptRunner = read('../src-tauri/src/capabilities/script/script_runner.rs');
 const terminal = read('../src-tauri/src/capabilities/terminal/terminal.rs');
+const bfc = read('../src-tauri/src/capabilities/bfc/commands.rs');
 const windowsPipe = read('../src-tauri/src/windows_pipe.rs');
 const gridIpc = read('../src-tauri/src/grid_ipc.rs');
 
@@ -32,6 +33,10 @@ assert.match(winGrid, /CREATE_SUSPENDED/);
 assert.match(scriptRunner, /creation_flags\(crate::windows_process::CREATE_SUSPENDED\)/);
 assert.match(scriptRunner, /attach_suspended_pid/);
 assert.match(process, /suspended_spawn_assigns_job_before_immediate_grandchild_can_run/);
+assert.match(bfc, /health\.get\("ok"\)\.and_then\(Value::as_bool\) != Some\(true\)/);
+assert.match(bfc, /verify_local_bfc_service/);
+assert.match(bfc, /browseros-service-token/);
+assert.match(bfc, /fake_loopback_port_occupant_cannot_receive_snapshot_before_identity_proof/);
 assert.match(terminal, /WINDOWS_TERMINAL_JOB_FAILED/);
 assert.match(cas, /FILE_SAVE_PLATFORM_UNSUPPORTED/);
 assert.doesNotMatch(cas, /save_if_unchanged_path\s*\(/);
