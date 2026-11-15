@@ -84,6 +84,7 @@ Set-OwnerSystemDirectoryAcl $ServiceDirectory
 $servicePending = [System.Collections.Generic.Stack[string]]::new()
 $serviceChildren = [System.Collections.Generic.List[string]]::new()
 $servicePending.Push($ServiceDirectory)
+$maxServiceObjects = 50000
 while ($servicePending.Count -gt 0) {
   $directory = $servicePending.Pop()
   foreach ($child in [IO.Directory]::EnumerateFileSystemEntries($directory)) {
@@ -92,6 +93,9 @@ while ($servicePending.Count -gt 0) {
       throw "BFC service source contains a reparse point: $child"
     }
     $serviceChildren.Add($child)
+    if ($serviceChildren.Count -gt $maxServiceObjects) {
+      throw 'BFC service source object limit exceeded.'
+    }
     if (($attributes -band [IO.FileAttributes]::Directory) -ne 0) {
       $servicePending.Push($child)
     }
@@ -142,6 +146,7 @@ Set-OwnerSystemDirectoryAcl $DataDirectory
 $pending = [System.Collections.Generic.Stack[string]]::new()
 $children = [System.Collections.Generic.List[string]]::new()
 $pending.Push($DataDirectory)
+$maxDataObjects = 50000
 while ($pending.Count -gt 0) {
   $directory = $pending.Pop()
   foreach ($child in [IO.Directory]::EnumerateFileSystemEntries($directory)) {
@@ -150,6 +155,9 @@ while ($pending.Count -gt 0) {
       throw "BFC data tree contains a reparse point: $child"
     }
     $children.Add($child)
+    if ($children.Count -gt $maxDataObjects) {
+      throw 'BFC data tree object limit exceeded.'
+    }
     if (($attributes -band [IO.FileAttributes]::Directory) -ne 0) {
       $pending.Push($child)
     }
