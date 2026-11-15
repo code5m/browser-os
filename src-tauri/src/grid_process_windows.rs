@@ -366,7 +366,8 @@ impl GridProcessManager {
     fn spawn_with_state(&self, index: u32, saved: Option<SavedChildState>) -> Result<(), String> {
         self.ensure_listener(index)?;
         let exe = std::env::current_exe().map_err(|e| format!("获取当前可执行文件失败: {e}"))?;
-        let mut child = Command::new(exe)
+        let mut command = Command::new(exe);
+        command
             .arg("--grid-child")
             .arg(index.to_string())
             // 继承父进程环境（WEBKIT_DISABLE_DMABUF_RENDERER / GDK_BACKEND 等在
@@ -378,11 +379,16 @@ impl GridProcessManager {
             // 子进程 stdio 继承主进程（日志汇入同一 stderr，便于 crashlog 镜像）。
             .stdin(Stdio::null())
             .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .spawn()
+            .stderr(Stdio::inherit());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(crate::windows_process::CREATE_SUSPENDED);
+        }
+        let mut child = command.spawn()
             .map_err(|e| format!("spawn 宫格子进程 grid-{index} 失败: {e}"))?;
         let pid = child.id();
-        let job = match JobObject::attach_pid(pid) {
+        let job = match JobObject::attach_suspended_pid(pid) {
             Ok(job) => job,
             Err(error) => {
                 let _ = child.kill();

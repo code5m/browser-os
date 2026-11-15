@@ -477,6 +477,8 @@ fn spawn_in_new_group(cmd: &mut Command) -> std::io::Result<Child> {
 /// immediately after spawn; no WSL, Bash, or pseudo-Unix process group.
 #[cfg(windows)]
 fn spawn_in_new_group(cmd: &mut Command) -> std::io::Result<Child> {
+    use std::os::windows::process::CommandExt;
+    cmd.creation_flags(crate::windows_process::CREATE_SUSPENDED);
     cmd.spawn()
 }
 
@@ -836,7 +838,7 @@ fn start_argv_run(
     };
 
     #[cfg(windows)]
-    let job = match crate::windows_process::JobObject::attach_pid(child.id()) {
+    let job = match crate::windows_process::JobObject::attach_suspended_pid(child.id()) {
         Ok(job) => job,
         Err(error) => {
             let _ = child.kill();
