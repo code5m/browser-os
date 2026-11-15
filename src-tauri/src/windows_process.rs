@@ -3,7 +3,7 @@
 //! This is process lifecycle containment, NOT a security sandbox or AppContainer.
 #![cfg(windows)]
 use std::ptr;
-use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
+use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, HANDLE, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
     SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
@@ -106,41 +106,41 @@ impl JobObject {
             }
             let mut entry: THREADENTRY32 = std::mem::zeroed();
             entry.dwSize = std::mem::size_of::<THREADENTRY32>() as u32;
-            let mut found = false;
-            let mut resume_error = None;
+            let mut primary_tid = 0u32;
+            let mut thread_count = 0usize;
             let mut more = Thread32First(snapshot, &mut entry) != 0;
             while more {
                 if entry.th32OwnerProcessID == pid {
-                    found = true;
-                    let thread = OpenThread(THREAD_SUSPEND_RESUME, 0, entry.th32ThreadID);
-                    if thread.is_null() {
-                        resume_error = Some(format!("WINDOWS_PRIMARY_THREAD_OPEN: {}",
-                            std::io::Error::last_os_error()));
-                    } else {
-                        let previous = ResumeThread(thread);
-                        CloseHandle(thread);
-                        if previous == u32::MAX {
-                            resume_error = Some(format!("WINDOWS_PRIMARY_THREAD_RESUME: {}",
-                                std::io::Error::last_os_error()));
-                        } else if previous != 1 {
-                            // 1 is the exact CREATE_SUSPENDED count. 0 means
-                            // user code was already running; >1 means another
-                            // actor changed suspension state. Both fail closed.
-                            resume_error = Some(format!("WINDOWS_PRIMARY_THREAD_SUSPEND_COUNT:{previous}"));
-                        }
-                    }
-                    break;
+                    thread_count += 1;
+                    primary_tid = entry.th32ThreadID;
                 }
                 more = Thread32Next(snapshot, &mut entry) != 0;
             }
             CloseHandle(snapshot);
-            CloseHandle(process);
-            if !found {
-                return Err("WINDOWS_PRIMARY_THREAD_NOT_FOUND".into());
-            }
-            if let Some(error) = resume_error {
+            if thread_count != 1 {
+                CloseHandle(process);
                 let _ = owner.terminate();
-                return Err(error);
+                return Err(format!("WINDOWS_SUSPENDED_PROCESS_THREAD_COUNT:{thread_count}"));
+            }
+            let thread = OpenThread(THREAD_SUSPEND_RESUME, 0, primary_tid);
+            if thread.is_null() {
+                let error = std::io::Error::last_os_error();
+                CloseHandle(process);
+                let _ = owner.terminate();
+                return Err(format!("WINDOWS_PRIMARY_THREAD_OPEN: {error}"));
+            }
+            let previous = ResumeThread(thread);
+            CloseHandle(thread);
+            CloseHandle(process);
+            if previous != 1 {
+                // 1 is the exact CREATE_SUSPENDED count. 0 means user code
+                // was already running; >1 means another actor changed state.
+                let _ = owner.terminate();
+                return Err(if previous == u32::MAX {
+                    format!("WINDOWS_PRIMARY_THREAD_RESUME: {}", std::io::Error::last_os_error())
+                } else {
+                    format!("WINDOWS_PRIMARY_THREAD_SUSPEND_COUNT:{previous}")
+                });
             }
         }
         Ok(owner)
@@ -168,7 +168,11 @@ mod tests {
     fn wait_pid_exit(pid: u32, timeout: Duration) -> bool {
         unsafe {
             let process = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
-            if process.is_null() { return true; }
+            if process.is_null() {
+                // ERROR_INVALID_PARAMETER means the PID no longer exists.
+                // Access denied and other failures are not treated as success.
+                return GetLastError() == 87;
+            }
             let result = windows_sys::Win32::System::Threading::WaitForSingleObject(
                 process, timeout.as_millis().min(u32::MAX as u128) as u32,
             );
@@ -204,6 +208,37 @@ mod tests {
         let _ = child.wait();
         assert!(wait_pid_exit(grandchild_pid, Duration::from_secs(8)),
             "grandchild PID {grandchild_pid} escaped the Job Object");
+        let _ = std::fs::remove_file(marker);
+    }
+
+    #[test]
+    fn dropping_job_after_parent_crash_kills_grandchild() {
+        let marker = std::env::temp_dir()
+            .join(format!("browseros-crash-grandchild-{}.pid", uuid::Uuid::new_v4()));
+        let marker_text = marker.to_string_lossy().replace('\'', "''");
+        let script = format!(
+            "$p=Start-Process -FilePath $env:ComSpec -ArgumentList @('/c','ping -n 60 127.0.0.1 > NUL') -PassThru; Set-Content -LiteralPath '{marker_text}' -Value $p.Id; Start-Sleep -Seconds 60"
+        );
+        let mut command = Command::new("powershell.exe");
+        command.args(["-NoProfile", "-NonInteractive", "-Command", &script]);
+        command.creation_flags(CREATE_SUSPENDED);
+        let mut child = command.spawn().expect("create suspended PowerShell");
+        let job = JobObject::attach_suspended_pid(child.id()).expect("assign Job then resume");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let grandchild_pid = loop {
+            if let Ok(text) = std::fs::read_to_string(&marker) {
+                if let Ok(pid) = text.trim().parse::<u32>() { break pid; }
+            }
+            assert!(Instant::now() < deadline, "PowerShell did not create grandchild");
+            thread::sleep(Duration::from_millis(25));
+        };
+        // Simulate the parent process crashing: terminate only the direct
+        // child, then drop the Job handle as the supervisor cleanup path does.
+        let _ = child.kill();
+        let _ = child.wait();
+        drop(job);
+        assert!(wait_pid_exit(grandchild_pid, Duration::from_secs(8)),
+            "grandchild PID {grandchild_pid} survived parent crash cleanup");
         let _ = std::fs::remove_file(marker);
     }
 
