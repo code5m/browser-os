@@ -51,8 +51,9 @@ impl JobObject {
         }
     }
 
-    /// Legacy adoption for processes whose creator cannot provide a suspended
-    /// creation contract. Do not use for Grid, scripts or other untrusted work.
+    /// Legacy race-prone adoption is test-only. Production spawn paths must
+    /// create suspended and call attach_suspended_pid before user code runs.
+    #[cfg(test)]
     pub fn attach_pid(pid: u32) -> Result<Self, String> {
         let owner = Self::create()?;
         if pid == 0 { return Err("WINDOWS_JOB_INVALID_PID".into()); }
