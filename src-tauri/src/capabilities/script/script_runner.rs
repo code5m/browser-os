@@ -479,22 +479,29 @@ fn spawn_in_new_group(cmd: &mut Command) -> std::io::Result<Child> {
 #[cfg(windows)]
 fn resolve_windows_interpreter(program: &str, cwd: &Path) -> Result<PathBuf, RunError> {
     let requested = Path::new(program);
-    if requested.components().count() > 1 || requested.is_absolute() {
-        let resolved = requested.canonicalize()
-            .map_err(|_| RunError::UnsupportedPlatform)?;
-        if !resolved.is_file() || resolved.starts_with(cwd) {
-            return Err(RunError::UnsupportedPlatform);
-        }
-        return Ok(resolved);
+    // Only a bare allow-listed executable name is accepted. Absolute paths,
+    // relative paths with separators and drive-relative paths are never
+    // treated as an alternate trust source.
+    if requested.is_absolute()
+        || requested.components().count() != 1
+        || requested.file_name().and_then(|name| name.to_str()) != Some(program)
+    {
+        return Err(RunError::UnsupportedPlatform);
     }
+    let cwd = cwd.canonicalize().map_err(|_| RunError::UnsupportedPlatform)?;
+    let cwd_key = cwd.to_string_lossy().replace('/', "\\").trim_end_matches('\\').to_lowercase();
+    let cwd_prefix = format!("{cwd_key}\\");
     let path = std::env::var_os("PATH").ok_or(RunError::UnsupportedPlatform)?;
     for directory in std::env::split_paths(&path) {
         if !directory.is_absolute() { continue; }
         let candidate = directory.join(program);
         let Ok(resolved) = candidate.canonicalize() else { continue };
-        if resolved.is_file() && !resolved.starts_with(cwd) {
-            return Ok(resolved);
+        if !resolved.is_file() { continue; }
+        let resolved_key = resolved.to_string_lossy().replace('/', "\\").to_lowercase();
+        if resolved_key == cwd_key || resolved_key.starts_with(&cwd_prefix) {
+            continue;
         }
+        return Ok(resolved);
     }
     Err(RunError::UnsupportedPlatform)
 }
