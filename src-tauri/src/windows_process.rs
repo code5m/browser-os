@@ -207,6 +207,45 @@ mod tests {
     }
 
     #[test]
+    fn conpty_terminal_uses_suspended_spawn_and_job_assignment_before_shell_runs() {
+        use portable_pty::{native_pty_system, CommandBuilder, PtySize, PtySystem};
+        use std::{thread, time::{Duration, Instant}};
+
+        let dir = std::env::temp_dir().join(format!("browseros-conpty-job-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let marker = dir.join("grandchild.pid");
+        let marker_text = marker.to_string_lossy().replace('\'', "''");
+        let script = format!(
+            "$p=Start-Process -FilePath $env:ComSpec -ArgumentList @('/c','ping -n 60 127.0.0.1 > NUL') -PassThru; Set-Content -LiteralPath '{marker_text}' -Value $p.Id; Start-Sleep -Seconds 60"
+        );
+        let pty = native_pty_system();
+        let pair = pty.openpty(PtySize { rows: 24, cols: 80, pixel_width: 0, pixel_height: 0 })
+            .expect("open ConPTY");
+        let mut command = CommandBuilder::new("powershell.exe");
+        command.args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", &script]);
+        let mut child = pair.slave.spawn_command_suspended(command)
+            .expect("ConPTY process must be created suspended");
+        let pid = child.process_id().expect("ConPTY child PID");
+        assert!(!marker.exists(), "PowerShell must not execute before Job assignment");
+        let job = JobObject::attach_suspended_pid(pid).expect("assign Job then resume");
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let grandchild_pid = loop {
+            if let Ok(text) = std::fs::read_to_string(&marker) {
+                if let Ok(pid) = text.trim().parse::<u32>() { break pid; }
+            }
+            assert!(Instant::now() < deadline, "ConPTY PowerShell did not create its grandchild");
+            thread::sleep(Duration::from_millis(25));
+        };
+        job.terminate().expect("terminate ConPTY process tree");
+        let _ = child.wait();
+        assert!(wait_pid_exit(grandchild_pid, Duration::from_secs(8)),
+            "ConPTY grandchild PID {grandchild_pid} escaped the Job Object");
+        drop(pair);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn a_running_process_can_be_adopted_but_is_not_used_for_spawn_paths() {
         let mut child = Command::new("cmd.exe").args(["/C", "ping -n 60 127.0.0.1 > NUL"]).spawn().unwrap();
         let job = JobObject::attach_pid(child.id()).expect("legacy adoption");
