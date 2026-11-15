@@ -256,10 +256,10 @@ impl BfcHttpConnection {
                 if header_bytes > 64 * 1024 {
                     return Err("BFC_LOCAL_SERVICE_UNTRUSTED");
                 }
-                if line == b"\\r\\n" { break; }
+                if line == b"\r\n" { break; }
                 let text = std::str::from_utf8(&line)
                     .map_err(|_| "BFC_LOCAL_SERVICE_UNTRUSTED")?;
-                let (name, value) = text.trim_end_matches(['\\r', '\\n']).split_once(':')
+                let (name, value) = text.trim_end_matches(['\r', '\n']).split_once(':')
                     .ok_or("BFC_LOCAL_SERVICE_UNTRUSTED")?;
                 match name.trim().to_ascii_lowercase().as_str() {
                     "content-length" => {
