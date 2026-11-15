@@ -222,7 +222,7 @@ mod tests {
         let pair = pty.openpty(PtySize { rows: 24, cols: 80, pixel_width: 0, pixel_height: 0 })
             .expect("open ConPTY");
         let mut command = CommandBuilder::new("powershell.exe");
-        command.args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", &script]);
+        command.args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script.as_str()]);
         let mut child = pair.slave.spawn_command_suspended(command)
             .expect("ConPTY process must be created suspended");
         let pid = child.process_id().expect("ConPTY child PID");
