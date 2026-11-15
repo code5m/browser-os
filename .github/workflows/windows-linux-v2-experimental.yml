@@ -116,7 +116,10 @@ jobs:
           $serviceDir = (Resolve-Path bfc-workbench).Path
           $dataDir = Join-Path $env:RUNNER_TEMP 'browseros-bfc-launcher'
           $arguments = "-NoProfile -File `"$launcher`" -ServiceDirectory `"$serviceDir`" -DataDirectory `"$dataDir`""
-          $process = Start-Process pwsh -ArgumentList $arguments -PassThru -NoNewWindow
+          $stdout = Join-Path $env:RUNNER_TEMP 'bfc-launcher.stdout.log'
+          $stderr = Join-Path $env:RUNNER_TEMP 'bfc-launcher.stderr.log'
+          $process = Start-Process pwsh -ArgumentList $arguments -PassThru -NoNewWindow `
+            -RedirectStandardOutput $stdout -RedirectStandardError $stderr
           try {
             $ready = $false
             for ($i = 0; $i -lt 30; $i++) {
@@ -140,6 +143,12 @@ jobs:
               throw 'BFC launcher data DACL is not exclusive to current user and SYSTEM'
             }
             Write-Host 'BFC_WINDOWS_LAUNCHER_ACL=PASS (no real user login)'
+          } catch {
+            $process.Refresh()
+            if ($process.HasExited) { Write-Host "BFC launcher exit code: $($process.ExitCode)" }
+            if (Test-Path -LiteralPath $stdout) { Get-Content -LiteralPath $stdout | Write-Host }
+            if (Test-Path -LiteralPath $stderr) { Get-Content -LiteralPath $stderr | Write-Host }
+            throw
           } finally {
             & taskkill.exe /PID $process.Id /T /F 2>$null | Out-Null
           }
