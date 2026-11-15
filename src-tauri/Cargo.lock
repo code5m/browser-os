@@ -5058,6 +5058,7 @@ dependencies = [
 name = "tauri-plugin-browser-tabs"
 version = "0.1.0"
 dependencies = [
+ "windows-sys 0.60.2",
  "gtk",
  "javascriptcore-rs",
  "log",

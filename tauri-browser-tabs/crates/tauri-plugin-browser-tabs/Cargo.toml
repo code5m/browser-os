@@ -22,6 +22,9 @@ thiserror.workspace = true
 log.workspace = true
 parking_lot.workspace = true
 
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "=0.60.2", features = ["Win32_System_SystemInformation"] }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = { version = "0.18", features = ["v3_24"] }
 webkit2gtk = { version = "2.0", features = ["v2_22"] }

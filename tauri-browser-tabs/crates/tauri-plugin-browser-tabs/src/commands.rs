@@ -79,9 +79,17 @@ static BROWSER_PROFILE_ACL: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
 
 #[cfg(target_os = "windows")]
 fn windows_system_binary(name: &str) -> Result<PathBuf> {
-    let root = std::env::var_os("SystemRoot")
-        .ok_or_else(|| BrowserTabError::Platform("Windows system directory unavailable".into()))?;
-    let path = PathBuf::from(root).join("System32").join(name);
+    use std::os::windows::ffi::OsStringExt;
+    use windows_sys::Win32::System::SystemInformation::GetSystemDirectoryW;
+    // Do not trust a caller-inherited SystemRoot/WINDIR variable when selecting
+    // ACL tooling. Resolve the actual OS System32 directory via Win32.
+    let mut buffer = [0u16; 512];
+    let length = unsafe { GetSystemDirectoryW(buffer.as_mut_ptr(), buffer.len() as u32) };
+    if length == 0 || length as usize >= buffer.len() {
+        return Err(BrowserTabError::Platform("Windows system directory unavailable".into()));
+    }
+    let root = std::ffi::OsString::from_wide(&buffer[..length as usize]);
+    let path = PathBuf::from(root).join(name);
     if !path.is_file() {
         return Err(BrowserTabError::Platform(format!("Windows system tool unavailable: {name}")));
     }
