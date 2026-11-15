@@ -128,7 +128,9 @@ New-Item -ItemType Directory -Path $configDirectory -Force | Out-Null
 Assert-NoReparsePath $configDirectory
 Set-OwnerSystemDirectoryAcl $configDirectory
 $configPath = Join-Path $configDirectory 'data-directory.json'
-$tempConfig = Join-Path $configDirectory ("data-directory.{0}.tmp" -f $PID)
+Assert-NoReparsePath $configPath
+$tempConfig = Join-Path $configDirectory ("data-directory.{0}.tmp" -f [Guid]::NewGuid().ToString('N'))
+Assert-NoReparsePath $tempConfig
 $configJson = @{ dataDirectory = $DataDirectory } | ConvertTo-Json -Compress
 [IO.File]::WriteAllText($tempConfig, $configJson, [Text.UTF8Encoding]::new($false))
 Move-Item -LiteralPath $tempConfig -Destination $configPath -Force
