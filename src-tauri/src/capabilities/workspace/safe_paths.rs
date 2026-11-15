@@ -717,15 +717,28 @@ mod windows {
         // enforces a whole-directory boundary rather than a prefix match.
         Ok(String::from_utf16_lossy(&buf[..used as usize]).to_lowercase())
     }
-    fn authorize(file: &File, roots: &[PathBuf]) -> io::Result<String> {
-        let actual = final_path(file)?;
+    fn open_authorized_root(path: &Path, roots: &[PathBuf]) -> io::Result<File> {
+        let path_key = normalized_path(&path.canonicalize()?.to_string_lossy());
         for root in roots {
-            let Ok(root_handle) = open(root, true) else { continue };
-            let Ok(mut root_path) = final_path(&root_handle) else { continue };
-            if !root_path.ends_with('\\') { root_path.push('\\'); }
-            if actual.starts_with(&root_path) {
-                return Ok(actual);
+            let Ok(root_canonical) = root.canonicalize() else { continue };
+            let root_key = normalized_path(&root_canonical.to_string_lossy());
+            let prefix = format!("{}\\", root_key.trim_end_matches('\\'));
+            if path_key != root_key && !path_key.starts_with(&prefix) {
+                continue;
             }
+            // Pin the allowed root before opening the requested child. A
+            // later rename/junction swap cannot redirect the child outside
+            // this already-open directory identity.
+            return open(root, true);
+        }
+        Err(denied())
+    }
+
+    fn authorize_with_root(file: &File, root: &File) -> io::Result<String> {
+        let actual = normalized_path(&final_path(file)?);
+        let root_path = normalized_path(&final_path(root)?);
+        if actual == root_path || actual.starts_with(&format!("{}\\", root_path.trim_end_matches('\\'))) {
+            return Ok(actual);
         }
         Err(denied())
     }
@@ -749,6 +762,9 @@ mod windows {
         reject_reparse_ancestors(src)?;
         reject_reparse_ancestors(dest_dir)?;
         let filename = src.file_name().ok_or_else(denied)?;
+        let source_parent = src.parent().ok_or_else(denied)?;
+        let source_root = open_authorized_root(source_parent, roots)?;
+        let destination_root = open_authorized_root(dest_dir, roots)?;
         let text = filename.to_string_lossy();
         if text.is_empty() || text.contains(':') || text.ends_with('.') || text.ends_with(' ') {
             // Reject alternate data streams, path aliases and Win32 trailing
@@ -767,12 +783,12 @@ mod windows {
             return Err(denied());
         }
         verify_path_handle(src, &source)?;
-        let source_path = authorize(&source, roots)?;
+        let source_path = authorize_with_root(&source, &source_root)?;
         // Rename requires FILE_ADD_FILE / FILE_ADD_SUBDIRECTORY rights on
         // the pinned destination directory handle. A read-only directory
         // handle passes path checks but fails every real FileRenameInfo call.
         let destination = open_destination_directory(dest_dir)?;
-        let destination_path = authorize(&destination, roots)?;
+        let destination_path = authorize_with_root(&destination, &destination_root)?;
         if destination_path == source_path
             || meta.is_dir() && destination_path.starts_with(&(source_path + "\\")) {
             return Err(denied());
@@ -816,10 +832,13 @@ mod windows {
         if !path.is_absolute() || limit == 0 || limit > 64 * 1024 * 1024 {
             return Err(denied());
         }
-        // A final-file reparse point is denied even when it points inside the
-        // allowed root; intermediate junctions are checked by final handle.
+        // Pin the authorized parent directory before opening the file. A
+        // parent path replaced after this point cannot redefine the allowed
+        // root for the file handle.
+        let parent = path.parent().ok_or_else(denied)?;
+        let root = open_authorized_root(parent, roots)?;
         let file = open(path, false)?;
-        authorize(&file, roots)?;
+        authorize_with_root(&file, &root)?;
         let length = file.metadata()?.len();
         if length > limit as u64 {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "FILE_READ_SIZE_LIMIT"));
