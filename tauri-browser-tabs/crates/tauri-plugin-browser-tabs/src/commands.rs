@@ -6,6 +6,8 @@ use parking_lot::RwLock;
 #[cfg(not(target_os = "linux"))]
 use std::sync::Mutex;
 #[cfg(target_os = "windows")]
+use std::os::windows::fs::MetadataExt;
+#[cfg(target_os = "windows")]
 use std::sync::OnceLock;
 use std::collections::HashMap;
 #[cfg(target_os = "linux")]
@@ -111,9 +113,29 @@ fn current_windows_user() -> Result<(String, String)> {
 }
 
 #[cfg(target_os = "windows")]
+fn reject_profile_reparse_tree(directory: &Path) -> Result<()> {
+    for entry in std::fs::read_dir(directory)
+        .map_err(|_| BrowserTabError::Platform("cannot inspect WebView2 profile tree".into()))?
+    {
+        let entry = entry.map_err(|_| BrowserTabError::Platform("cannot inspect WebView2 profile entry".into()))?;
+        let path = entry.path();
+        let metadata = std::fs::symlink_metadata(&path)
+            .map_err(|_| BrowserTabError::Platform("cannot inspect WebView2 profile metadata".into()))?;
+        if metadata.file_attributes() & 0x0000_0400 != 0 {
+            return Err(BrowserTabError::Platform("WebView2 profile contains a reparse point".into()));
+        }
+        if metadata.is_dir() {
+            reject_profile_reparse_tree(&path)?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
 fn secure_windows_browser_profile(profile: &Path) -> Result<()> {
     let icacls = windows_system_binary("icacls.exe")?;
     let (account, sid) = current_windows_user()?;
+    reject_profile_reparse_tree(profile)?;
 
     // Reset all existing descendants to inherited ACLs before protecting the
     // profile root. This runs once per app process, before the first WebView2
