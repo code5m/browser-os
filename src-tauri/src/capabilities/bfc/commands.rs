@@ -35,27 +35,67 @@ struct BfcServiceIdentity {
     token: String,
 }
 
-fn bfc_data_dir() -> PathBuf {
+#[cfg(windows)]
+fn configured_windows_bfc_data_dir() -> Result<Option<PathBuf>, &'static str> {
+    use std::io::ErrorKind;
+    let Some(local_app_data) = std::env::var_os("LOCALAPPDATA").filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    let config_dir = PathBuf::from(local_app_data)
+        .join("BrowserOS")
+        .join("bfc-config");
+    let config_path = config_dir.join("data-directory.json");
+    match std::fs::symlink_metadata(&config_path) {
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err("BFC_LOCAL_CONFIG_UNAVAILABLE"),
+        Ok(_) => {}
+    }
+    // The pointer is itself read through the Windows handle-anchored safe
+    // filesystem path. A reparse point, path escape or oversized file fails
+    // closed rather than silently falling back to another account directory.
+    let bytes = crate::capabilities::workspace::safe_paths::read_regular(
+        &config_path, &[config_dir], 4096,
+    ).map_err(|_| "BFC_LOCAL_CONFIG_UNTRUSTED")?;
+    let value: Value = serde_json::from_slice(&bytes)
+        .map_err(|_| "BFC_LOCAL_CONFIG_INVALID")?;
+    let raw = value.get("dataDirectory").and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or("BFC_LOCAL_CONFIG_INVALID")?;
+    let path = PathBuf::from(raw);
+    if !path.is_absolute()
+        || raw.starts_with(r"\\")
+        || raw.starts_with(r"\\?\\")
+        || raw.starts_with(r"\\.\\")
+    {
+        return Err("BFC_LOCAL_CONFIG_INVALID");
+    }
+    Ok(Some(path))
+}
+
+fn bfc_data_dir() -> Result<PathBuf, &'static str> {
     if let Some(path) = std::env::var_os("BILIBILI_FAVORITES_DATA_DIR")
         .or_else(|| std::env::var_os("BROWSEROS_BFC_DATA_DIR"))
         .filter(|path| !path.is_empty())
     {
-        return PathBuf::from(path);
+        return Ok(PathBuf::from(path));
     }
     #[cfg(windows)]
     {
+        if let Some(path) = configured_windows_bfc_data_dir()? {
+            return Ok(path);
+        }
         let base = std::env::var_os("LOCALAPPDATA")
             .or_else(|| std::env::var_os("USERPROFILE"))
             .map(PathBuf::from)
             .unwrap_or_else(std::env::temp_dir);
-        return base.join("BrowserOS").join("Bilibili-Favorites-Review");
+        return Ok(base.join("BrowserOS").join("Bilibili-Favorites-Review"));
     }
     #[cfg(not(windows))]
     {
         let home = std::env::var_os("HOME")
             .map(PathBuf::from)
             .unwrap_or_else(std::env::temp_dir);
-        home.join("Documents").join("Bilibili-Favorites-Review")
+        Ok(home.join("Documents").join("Bilibili-Favorites-Review"))
     }
 }
 
@@ -71,7 +111,7 @@ fn decode_hex(value: &str) -> Option<Vec<u8>> {
 }
 
 fn load_bfc_service_identity() -> Result<BfcServiceIdentity, &'static str> {
-    let directory = bfc_data_dir();
+    let directory = bfc_data_dir()?;
     let path = directory.join(BFC_IDENTITY_FILE);
     let bytes = crate::capabilities::workspace::safe_paths::read_regular(
         &path, &[directory], 4096,
