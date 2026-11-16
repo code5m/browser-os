@@ -28,8 +28,7 @@ use windows_sys::Win32::Security::Isolation::{
 };
 use windows_sys::Win32::Security::{
     FreeSid, GetTokenInformation, PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES,
-    SECURITY_CAPABILITIES,
-    TOKEN_QUERY, TOKEN_USER, TokenUser,
+    SECURITY_CAPABILITIES, TOKEN_QUERY, TOKEN_USER, TokenUser,
 };
 use windows_sys::Win32::System::Com::CoTaskMemFree;
 use windows_sys::Win32::System::Pipes::CreatePipe;
@@ -39,8 +38,8 @@ use windows_sys::Win32::System::Threading::{
     EXTENDED_STARTUPINFO_PRESENT, InitializeProcThreadAttributeList,
     PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES,
     GetCurrentProcess, GetExitCodeProcess, OpenProcessToken, PROCESS_INFORMATION,
-    STARTF_USESTDHANDLES,
-    STARTUPINFOEXW, TerminateProcess, UpdateProcThreadAttribute, WaitForSingleObject,
+    STARTF_USESTDHANDLES, STARTUPINFOEXW, TerminateProcess, UpdateProcThreadAttribute,
+    WaitForSingleObject,
 };
 
 const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
@@ -167,23 +166,14 @@ impl SandboxProfile {
         let mut sid = ptr::null_mut();
         let result = unsafe {
             CreateAppContainerProfile(
-                name_wide.as_ptr(),
-                display.as_ptr(),
-                description.as_ptr(),
-                ptr::null(),
-                0,
-                &mut sid,
+                name_wide.as_ptr(), display.as_ptr(), description.as_ptr(),
+                ptr::null(), 0, &mut sid,
             )
         };
         if result < 0 || sid.is_null() {
             return Err(format!("SANDBOX_PROFILE_CREATE:{result:x}"));
         }
-        let profile = Self {
-            name,
-            sid,
-            sid_string: String::new(),
-            folder: PathBuf::new(),
-        };
+        let profile = Self { name, sid, sid_string: String::new(), folder: PathBuf::new() };
         profile.finish_create()
     }
 
@@ -194,9 +184,7 @@ impl SandboxProfile {
         }
         let mut length = 0usize;
         unsafe {
-            while *sid_text.add(length) != 0 {
-                length += 1;
-            }
+            while *sid_text.add(length) != 0 { length += 1; }
             self.sid_string = String::from_utf16(std::slice::from_raw_parts(sid_text, length))
                 .map_err(|_| "SANDBOX_SID_TEXT")?;
             LocalFree(sid_text as _);
@@ -209,12 +197,10 @@ impl SandboxProfile {
         }
         let mut length = 0usize;
         unsafe {
-            while *folder.add(length) != 0 {
-                length += 1;
-            }
-            self.folder = PathBuf::from(std::ffi::OsString::from_wide(std::slice::from_raw_parts(
-                folder, length,
-            )));
+            while *folder.add(length) != 0 { length += 1; }
+            self.folder = PathBuf::from(std::ffi::OsString::from_wide(
+                std::slice::from_raw_parts(folder, length),
+            ));
             CoTaskMemFree(folder as _);
         }
         std::fs::create_dir_all(&self.folder).map_err(|_| "SANDBOX_PRIVATE_FOLDER")?;
@@ -236,13 +222,12 @@ impl SandboxProfile {
             .args(["/inheritance:r", "/grant:r"])
             .arg(format!("*{user}:(OI)(CI)F"))
             .arg("*S-1-5-18:(OI)(CI)F")
+            .arg("*S-1-15-2-1:(OI)(CI)M")
             .arg(format!("*{}:(OI)(CI)M", self.sid_string))
             .arg("/T")
             .output()
             .map_err(|_| "SANDBOX_STATE_ACL")?;
-        if !output.status.success() {
-            return Err("SANDBOX_STATE_ACL".into());
-        }
+        if !output.status.success() { return Err("SANDBOX_STATE_ACL".into()); }
         Ok(())
     }
     pub fn snapshot_dir(&self) -> Result<PathBuf, String> {
@@ -250,9 +235,7 @@ impl SandboxProfile {
         std::fs::create_dir(&snapshot).map_err(|_| "SANDBOX_SNAPSHOT_CREATE")?;
         Ok(snapshot)
     }
-    pub fn sid_string(&self) -> &str {
-        &self.sid_string
-    }
+    pub fn sid_string(&self) -> &str { &self.sid_string }
 
     fn stage_runtime(&self, runtime: &Path) -> Result<PathBuf, String> {
         let canonical = runtime.canonicalize().map_err(|_| "SANDBOX_RUNTIME_MISSING")?;
@@ -262,34 +245,27 @@ impl SandboxProfile {
         let system_root = system32.parent().ok_or("SANDBOX_SYSTEM_DIRECTORY_UNAVAILABLE")?;
         let canonical_system_root = system_root.canonicalize()
             .map_err(|_| "SANDBOX_SYSTEM_DIRECTORY_UNAVAILABLE")?;
-        if canonical.starts_with(&canonical_system_root) {
-            return Ok(canonical);
-        }
+        if canonical.starts_with(&canonical_system_root) { return Ok(canonical); }
         const MAX_RUNTIME_FILE: u64 = 256 * 1024 * 1024;
         const MAX_TOTAL_RUNTIME: u64 = 384 * 1024 * 1024;
         const MAX_SIBLING_DLLS: usize = 32;
 
         fn copy_component(from: &Path, to: &Path, budget: &mut u64) -> Result<(), String> {
             no_reparse_path(from)?;
-            let mut source = OpenOptions::new()
-                .read(true).custom_flags(0x0020_0000)
+            let mut source = OpenOptions::new().read(true).custom_flags(0x0020_0000)
                 .open(from).map_err(|_| "SANDBOX_RUNTIME_READ_DENIED")?;
             let metadata = source.metadata().map_err(|_| "SANDBOX_RUNTIME_READ_DENIED")?;
             if !metadata.is_file()
                 || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
                 || metadata.len() > MAX_RUNTIME_FILE
-            {
-                return Err("SANDBOX_RUNTIME_UNSAFE".into());
-            }
+            { return Err("SANDBOX_RUNTIME_UNSAFE".into()); }
             *budget = budget.checked_add(metadata.len()).filter(|n| *n <= MAX_TOTAL_RUNTIME)
                 .ok_or("SANDBOX_RUNTIME_SIZE_LIMIT")?;
             let mut output = OpenOptions::new().write(true).create_new(true)
                 .open(to).map_err(|_| "SANDBOX_RUNTIME_STAGE_FAILED")?;
             let written = std::io::copy(&mut source, &mut output)
                 .map_err(|_| "SANDBOX_RUNTIME_STAGE_FAILED")?;
-            if written != metadata.len() {
-                return Err("SANDBOX_RUNTIME_CHANGED_DURING_COPY".into());
-            }
+            if written != metadata.len() { return Err("SANDBOX_RUNTIME_CHANGED_DURING_COPY".into()); }
             output.sync_all().map_err(|_| "SANDBOX_RUNTIME_STAGE_FAILED")?;
             no_reparse_path(from)?;
             Ok(())
@@ -310,9 +286,7 @@ impl SandboxProfile {
                 .is_some_and(|v| v.eq_ignore_ascii_case("dll"))
             {
                 dll_count += 1;
-                if dll_count > MAX_SIBLING_DLLS {
-                    return Err("SANDBOX_RUNTIME_DLL_LIMIT".into());
-                }
+                if dll_count > MAX_SIBLING_DLLS { return Err("SANDBOX_RUNTIME_DLL_LIMIT".into()); }
                 copy_component(&path, &directory.join(entry.file_name()), &mut total)?;
             }
         }
@@ -333,18 +307,13 @@ impl SandboxProfile {
             .arg("/T")
             .output()
             .map_err(|_| "SANDBOX_SNAPSHOT_ACL")?;
-        if !output.status.success() {
-            return Err("SANDBOX_SNAPSHOT_ACL".into());
-        }
+        if !output.status.success() { return Err("SANDBOX_SNAPSHOT_ACL".into()); }
         Ok(())
     }
 
     pub fn spawn(
-        self,
-        runtime: &Path,
-        args: &[String],
-        environment: &[(String, String)],
-        current_directory: &Path,
+        self, runtime: &Path, args: &[String],
+        environment: &[(String, String)], current_directory: &Path,
     ) -> Result<SandboxChild, String> {
         no_reparse_path(runtime)?;
         no_reparse_path(current_directory)?;
@@ -352,9 +321,7 @@ impl SandboxProfile {
         if !canonical.is_file()
             || runtime.extension().and_then(|value| value.to_str()).unwrap_or("")
                 .to_ascii_lowercase() != "exe"
-        {
-            return Err("SANDBOX_RUNTIME_NOT_EXECUTABLE".into());
-        }
+        { return Err("SANDBOX_RUNTIME_NOT_EXECUTABLE".into()); }
         let staged = self.stage_runtime(runtime)?;
         spawn_inner(self, &staged, args, environment, current_directory)
     }
@@ -363,17 +330,10 @@ impl SandboxProfile {
 impl Drop for SandboxProfile {
     fn drop(&mut self) {
         unsafe {
-            if !self.sid.is_null() {
-                FreeSid(self.sid);
-                self.sid = ptr::null_mut();
-            }
-            if let Ok(name) = wide_text(&self.name) {
-                let _ = DeleteAppContainerProfile(name.as_ptr());
-            }
+            if !self.sid.is_null() { FreeSid(self.sid); self.sid = ptr::null_mut(); }
+            if let Ok(name) = wide_text(&self.name) { let _ = DeleteAppContainerProfile(name.as_ptr()); }
         }
-        if !self.folder.as_os_str().is_empty() {
-            let _ = std::fs::remove_dir_all(&self.folder);
-        }
+        if !self.folder.as_os_str().is_empty() { let _ = std::fs::remove_dir_all(&self.folder); }
     }
 }
 
@@ -393,50 +353,37 @@ impl SandboxProcess {
     }
     pub fn try_wait(&self) -> Result<bool, String> {
         match unsafe { WaitForSingleObject(self.handle, 0) } {
-            WAIT_OBJECT_0 => Ok(true),
-            WAIT_TIMEOUT => Ok(false),
+            WAIT_OBJECT_0 => Ok(true), WAIT_TIMEOUT => Ok(false),
             _ => Err(win32_error("SANDBOX_WAIT")),
         }
     }
-    pub fn terminate(&self) -> Result<(), String> {
-        self._job.terminate()
-    }
-    pub fn profile(&self) -> &SandboxProfile {
-        &self.profile
-    }
+    pub fn terminate(&self) -> Result<(), String> { self._job.terminate() }
+    pub fn profile(&self) -> &SandboxProfile { &self.profile }
 }
 impl Drop for SandboxProcess {
     fn drop(&mut self) {
         let _ = self._job.terminate();
-        unsafe {
-            let _ = WaitForSingleObject(self.handle, 2000);
-            CloseHandle(self.handle);
-        }
+        unsafe { let _ = WaitForSingleObject(self.handle, 2000); CloseHandle(self.handle); }
     }
 }
 
 pub struct SandboxChild {
     pub stdin: File,
     pub stdout: File,
+    pub stderr: File,
     pub process: SandboxProcess,
 }
 
 fn appcontainer_pipe_security(user: &str, sid: &str) -> Result<PSECURITY_DESCRIPTOR, String> {
-    let sddl = format!("D:(A;;GA;;;SY)(A;;GA;;;{user})(A;;GA;;;{sid})");
+    let sddl = format!("D:(A;;GA;;;SY)(A;;GA;;;{user})(A;;GA;;;AC)(A;;GA;;;{sid})");
     let text = wide_text(&sddl)?;
     let mut descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
     let mut size = 0u32;
     if unsafe {
         ConvertStringSecurityDescriptorToSecurityDescriptorW(
-            text.as_ptr(),
-            1,
-            &mut descriptor,
-            &mut size,
+            text.as_ptr(), 1, &mut descriptor, &mut size,
         )
-    } == 0
-    {
-        return Err(win32_error("SANDBOX_PIPE_ACL"));
-    }
+    } == 0 { return Err(win32_error("SANDBOX_PIPE_ACL")); }
     Ok(descriptor)
 }
 
@@ -456,20 +403,14 @@ fn pipe(security: PSECURITY_DESCRIPTOR) -> Result<(File, File), String> {
 fn inheritable(handle: RawHandle, enabled: bool) -> Result<(), String> {
     if unsafe {
         SetHandleInformation(
-            handle as HANDLE,
-            HANDLE_FLAG_INHERIT,
+            handle as HANDLE, HANDLE_FLAG_INHERIT,
             if enabled { HANDLE_FLAG_INHERIT } else { 0 },
         )
-    } == 0
-    {
-        return Err(win32_error("SANDBOX_HANDLE_INHERIT"));
-    }
+    } == 0 { return Err(win32_error("SANDBOX_HANDLE_INHERIT")); }
     Ok(())
 }
 fn quote_argument(value: &str) -> Result<Vec<u16>, String> {
-    if value.contains('\0') {
-        return Err("SANDBOX_ARGUMENT_NUL".into());
-    }
+    if value.contains('\0') { return Err("SANDBOX_ARGUMENT_NUL".into()); }
     let mut output = String::from("\"");
     let mut slashes = 0usize;
     for character in value.chars() {
@@ -477,13 +418,11 @@ fn quote_argument(value: &str) -> Result<Vec<u16>, String> {
             '\\' => slashes += 1,
             '"' => {
                 output.extend(std::iter::repeat('\\').take(slashes * 2 + 1));
-                output.push('"');
-                slashes = 0;
+                output.push('"'); slashes = 0;
             }
             _ => {
                 output.extend(std::iter::repeat('\\').take(slashes));
-                slashes = 0;
-                output.push(character);
+                slashes = 0; output.push(character);
             }
         }
     }
@@ -515,13 +454,9 @@ fn environment_block(configured: &[(String, String)], state: &Path) -> Result<Ve
             || !key.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
             || value.contains('\0') || key.starts_with('=')
             || RESERVED.iter().any(|reserved| key.eq_ignore_ascii_case(reserved))
-        {
-            return Err("SANDBOX_ENV_INVALID".into());
-        }
+        { return Err("SANDBOX_ENV_INVALID".into()); }
         let key = key.to_ascii_uppercase();
-        if values.insert(key, value.clone()).is_some() {
-            return Err("SANDBOX_ENV_DUPLICATE".into());
-        }
+        if values.insert(key, value.clone()).is_some() { return Err("SANDBOX_ENV_DUPLICATE".into()); }
     }
     let local_app_data = std::env::var("LOCALAPPDATA")
         .map_err(|_| "SANDBOX_LOCAL_APP_DATA_UNAVAILABLE")?;
@@ -545,9 +480,7 @@ fn environment_block(configured: &[(String, String)], state: &Path) -> Result<Ve
 }
 
 pub(super) fn send_bounded<T>(
-    sender: &SyncSender<T>,
-    mut value: T,
-    budget: Duration,
+    sender: &SyncSender<T>, mut value: T, budget: Duration,
 ) -> Result<(), ()> {
     let until = Instant::now() + budget;
     loop {
@@ -565,32 +498,25 @@ pub(super) fn send_bounded<T>(
 }
 
 fn spawn_inner(
-    profile: SandboxProfile,
-    runtime: &Path,
-    args: &[String],
-    environment: &[(String, String)],
-    current_directory: &Path,
+    profile: SandboxProfile, runtime: &Path, args: &[String],
+    environment: &[(String, String)], current_directory: &Path,
 ) -> Result<SandboxChild, String> {
     let user_sid = current_user_sid()?;
     let pipe_security = appcontainer_pipe_security(&user_sid, &profile.sid_string)?;
     let (child_input, parent_input) = pipe(pipe_security)?;
     let (parent_output, child_output) = pipe(pipe_security)?;
+    let (parent_error, child_error) = pipe(pipe_security)?;
     unsafe { LocalFree(pipe_security) };
     inheritable(parent_output.as_raw_handle(), false)?;
+    inheritable(parent_error.as_raw_handle(), false)?;
     inheritable(parent_input.as_raw_handle(), false)?;
     inheritable(child_input.as_raw_handle(), true)?;
     inheritable(child_output.as_raw_handle(), true)?;
-    let null = OpenOptions::new().write(true).open("NUL")
-        .map_err(|_| "SANDBOX_NULL_STDERR")?;
-    inheritable(null.as_raw_handle(), true)?;
+    inheritable(child_error.as_raw_handle(), true)?;
 
     let mut size = 0usize;
-    unsafe {
-        let _ = InitializeProcThreadAttributeList(ptr::null_mut(), 2, 0, &mut size);
-    }
-    if size == 0 {
-        return Err("SANDBOX_ATTRIBUTE_SIZE".into());
-    }
+    unsafe { let _ = InitializeProcThreadAttributeList(ptr::null_mut(), 2, 0, &mut size); }
+    if size == 0 { return Err("SANDBOX_ATTRIBUTE_SIZE".into()); }
     let mut attribute_storage = vec![0u8; size];
     let attribute_list = attribute_storage.as_mut_ptr() as *mut _;
     if unsafe { InitializeProcThreadAttributeList(attribute_list, 2, 0, &mut size) } == 0 {
@@ -598,39 +524,32 @@ fn spawn_inner(
     }
     let cleanup_attributes = |list| unsafe { DeleteProcThreadAttributeList(list) };
     let mut capabilities = SECURITY_CAPABILITIES {
-        AppContainerSid: profile.sid,
-        Capabilities: ptr::null_mut(),
-        CapabilityCount: 0,
-        Reserved: 0,
+        AppContainerSid: profile.sid, Capabilities: ptr::null_mut(),
+        CapabilityCount: 0, Reserved: 0,
     };
     let inherited = [
         child_input.as_raw_handle() as HANDLE,
         child_output.as_raw_handle() as HANDLE,
-        null.as_raw_handle() as HANDLE,
+        child_error.as_raw_handle() as HANDLE,
     ];
     let security_ok = unsafe {
         UpdateProcThreadAttribute(
-            attribute_list,
-            0,
+            attribute_list, 0,
             PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES as usize,
             &mut capabilities as *mut _ as *const _,
             std::mem::size_of::<SECURITY_CAPABILITIES>(),
-            ptr::null_mut(),
-            ptr::null(),
+            ptr::null_mut(), ptr::null(),
         )
     };
-    let handles_ok = security_ok != 0
-        && unsafe {
-            UpdateProcThreadAttribute(
-                attribute_list,
-                0,
-                PROC_THREAD_ATTRIBUTE_HANDLE_LIST as usize,
-                inherited.as_ptr() as *const _,
-                std::mem::size_of_val(&inherited),
-                ptr::null_mut(),
-                ptr::null(),
-            ) != 0
-        };
+    let handles_ok = security_ok != 0 && unsafe {
+        UpdateProcThreadAttribute(
+            attribute_list, 0,
+            PROC_THREAD_ATTRIBUTE_HANDLE_LIST as usize,
+            inherited.as_ptr() as *const _,
+            std::mem::size_of_val(&inherited),
+            ptr::null_mut(), ptr::null(),
+        ) != 0
+    };
     if !handles_ok {
         cleanup_attributes(attribute_list);
         return Err(win32_error("SANDBOX_ATTRIBUTE_UPDATE"));
@@ -639,13 +558,10 @@ fn spawn_inner(
     let runtime_text = runtime.to_str().ok_or("SANDBOX_RUNTIME_NOT_UNICODE")?;
     let mut command = quote_argument(runtime_text)?;
     for argument in args {
-        command.pop();
-        command.push(' ' as u16);
+        command.pop(); command.push(' ' as u16);
         command.extend(quote_argument(argument)?);
     }
-    if command.last() != Some(&0) {
-        command.push(0);
-    }
+    if command.last() != Some(&0) { command.push(0); }
     let application = wide(runtime.as_os_str())?;
     let directory = wide(current_directory.as_os_str())?;
     let environment = environment_block(environment, current_directory)?;
@@ -654,33 +570,22 @@ fn spawn_inner(
     startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
     startup.StartupInfo.hStdInput = child_input.as_raw_handle() as HANDLE;
     startup.StartupInfo.hStdOutput = child_output.as_raw_handle() as HANDLE;
-    startup.StartupInfo.hStdError = null.as_raw_handle() as HANDLE;
+    startup.StartupInfo.hStdError = child_error.as_raw_handle() as HANDLE;
     startup.lpAttributeList = attribute_list;
     let mut information: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
     let created = unsafe {
         CreateProcessW(
-            application.as_ptr(),
-            command.as_mut_ptr(),
-            ptr::null(),
-            ptr::null(),
-            1,
-            CREATE_SUSPENDED
-                | CREATE_NEW_PROCESS_GROUP
-                | CREATE_UNICODE_ENVIRONMENT
-                | EXTENDED_STARTUPINFO_PRESENT,
+            application.as_ptr(), command.as_mut_ptr(),
+            ptr::null(), ptr::null(), 1,
+            CREATE_SUSPENDED | CREATE_NEW_PROCESS_GROUP |
+                CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT,
             environment.as_ptr() as *const _,
-            directory.as_ptr(),
-            &startup.StartupInfo,
-            &mut information,
+            directory.as_ptr(), &startup.StartupInfo, &mut information,
         )
     };
     cleanup_attributes(attribute_list);
-    drop(child_input);
-    drop(child_output);
-    drop(null);
-    if created == 0 {
-        return Err(win32_error("SANDBOX_CREATE_PROCESS"));
-    }
+    drop(child_input); drop(child_output); drop(child_error);
+    if created == 0 { return Err(win32_error("SANDBOX_CREATE_PROCESS")); }
     let job = match JobObject::attach_suspended_pid(information.dwProcessId) {
         Ok(job) => job,
         Err(error) => {
@@ -695,13 +600,8 @@ fn spawn_inner(
     };
     unsafe { CloseHandle(information.hThread) };
     Ok(SandboxChild {
-        stdin: parent_input,
-        stdout: parent_output,
-        process: SandboxProcess {
-            handle: information.hProcess,
-            profile,
-            _job: job,
-        },
+        stdin: parent_input, stdout: parent_output, stderr: parent_error,
+        process: SandboxProcess { handle: information.hProcess, profile, _job: job },
     })
 }
 
@@ -728,17 +628,17 @@ mod tests {
         let environment = vec![(
             "BROWSEROS_TEST_HOST_FILE".into(), host_file.to_string_lossy().into_owned(),
         )];
-        let mut child = profile
-            .spawn(&runtime, &arguments, &environment, &state)
+        let mut child = profile.spawn(&runtime, &arguments, &environment, &state)
             .expect("spawn AppContainer");
         drop(child.stdin);
         let mut output = Vec::new();
         child.stdout.read_to_end(&mut output).unwrap();
+        let mut error_output = Vec::new();
+        child.stderr.read_to_end(&mut error_output).unwrap();
         let text = String::from_utf8_lossy(&output);
-        assert!(
-            text.contains("NETWORK_DENIED"),
-            "exit={:?} text={text}", child.process.exit_code()
-        );
+        let stderr = String::from_utf8_lossy(&error_output);
+        assert!(text.contains("NETWORK_DENIED"),
+            "exit={:?} stdout={text} stderr={stderr}", child.process.exit_code());
         assert!(text.contains("HOST_READ_DENIED"), "{text}");
         let _ = std::fs::remove_file(host_file);
     }
@@ -748,20 +648,18 @@ mod tests {
         let profile = SandboxProfile::create().unwrap();
         let state = profile.state_dir().unwrap();
         let cmd = system_binary("cmd.exe").unwrap();
-        let mut child = profile
-            .spawn(
-                &cmd,
-                &["/D".into(), "/S".into(), "/C".into(), "echo sandbox-ok".into()],
-                &[], &state,
-            )
-            .unwrap();
+        let mut child = profile.spawn(
+            &cmd,
+            &["/D".into(), "/S".into(), "/C".into(), "echo sandbox-ok".into()],
+            &[], &state,
+        ).unwrap();
         drop(child.stdin);
         let mut output = String::new();
         child.stdout.read_to_string(&mut output).unwrap();
-        assert!(
-            output.contains("sandbox-ok"),
-            "exit={:?} output={output:?}", child.process.exit_code()
-        );
+        let mut error_output = String::new();
+        child.stderr.read_to_string(&mut error_output).unwrap();
+        assert!(output.contains("sandbox-ok"),
+            "exit={:?} stdout={output:?} stderr={error_output:?}", child.process.exit_code());
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while !child.process.try_wait().unwrap() {
             assert!(std::time::Instant::now() < deadline);
