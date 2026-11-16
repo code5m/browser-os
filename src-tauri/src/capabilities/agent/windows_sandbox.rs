@@ -90,8 +90,6 @@ fn system_binary(name: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 fn current_user_sid() -> Result<String, String> {
-    // Query the current security token instead of parsing whoami.exe output:
-    // CLI encodings, account names and CSV formats vary with Windows locale.
     struct Token(HANDLE);
     impl Drop for Token {
         fn drop(&mut self) { unsafe { CloseHandle(self.0); } }
@@ -110,7 +108,6 @@ fn current_user_sid() -> Result<String, String> {
     if required < std::mem::size_of::<TOKEN_USER>() as u32 || required > 65536 {
         return Err("SANDBOX_USER_SID_INVALID".into());
     }
-    // TOKEN_USER contains pointers; usize words provide proper alignment.
     let words = (required as usize).div_ceil(std::mem::size_of::<usize>());
     let mut buffer = vec![0usize; words];
     if unsafe {
@@ -141,9 +138,6 @@ fn current_user_sid() -> Result<String, String> {
     };
     unsafe { LocalFree(sid_text as _); }
     let value = value?;
-    // The "S" in a Windows SID is not a digit. Validate the numeric
-    // components after the mandatory "S-1-" prefix rather than rejecting
-    // every valid token SID (which prevented LSP snapshot ACL setup).
     let valid = value.strip_prefix("S-1-").is_some_and(|suffix| {
         !suffix.is_empty()
             && suffix.split('-').all(|component| {
@@ -190,10 +184,7 @@ impl SandboxProfile {
             sid_string: String::new(),
             folder: PathBuf::new(),
         };
-        match profile.finish_create() {
-            Ok(profile) => Ok(profile),
-            Err(error) => Err(error),
-        }
+        profile.finish_create()
     }
 
     fn finish_create(mut self) -> Result<Self, String> {
@@ -233,7 +224,26 @@ impl SandboxProfile {
     pub fn state_dir(&self) -> Result<PathBuf, String> {
         let state = self.folder.join("state");
         std::fs::create_dir(&state).map_err(|_| "SANDBOX_STATE_CREATE")?;
+        self.grant_private_directory(&state)?;
         Ok(state)
+    }
+    fn grant_private_directory(&self, directory: &Path) -> Result<(), String> {
+        no_reparse_path(directory)?;
+        let icacls = system_binary("icacls.exe")?;
+        let user = current_user_sid()?;
+        let output = std::process::Command::new(icacls)
+            .arg(directory)
+            .args(["/inheritance:r", "/grant:r"])
+            .arg(format!("*{user}:(OI)(CI)F"))
+            .arg("*S-1-5-18:(OI)(CI)F")
+            .arg(format!("*{}:(OI)(CI)M", self.sid_string))
+            .arg("/T")
+            .output()
+            .map_err(|_| "SANDBOX_STATE_ACL")?;
+        if !output.status.success() {
+            return Err("SANDBOX_STATE_ACL".into());
+        }
+        Ok(())
     }
     pub fn snapshot_dir(&self) -> Result<PathBuf, String> {
         let snapshot = self.folder.join("snapshot");
@@ -244,10 +254,6 @@ impl SandboxProfile {
         &self.sid_string
     }
 
-    /// Never change the ACL of a host-installed executable. Third-party
-    /// executables (including bundled private DLL dependencies) are copied
-    /// into this short-lived AppContainer profile and made read/execute-only.
-    /// Windows-owned system executables keep their OS-managed ACL unchanged.
     fn stage_runtime(&self, runtime: &Path) -> Result<PathBuf, String> {
         let canonical = runtime.canonicalize().map_err(|_| "SANDBOX_RUNTIME_MISSING")?;
         no_reparse_path(&canonical)?;
@@ -257,7 +263,7 @@ impl SandboxProfile {
         let canonical_system_root = system_root.canonicalize()
             .map_err(|_| "SANDBOX_SYSTEM_DIRECTORY_UNAVAILABLE")?;
         if canonical.starts_with(&canonical_system_root) {
-            return Ok(canonical); // Never touch OS-owned executable ACLs.
+            return Ok(canonical);
         }
         const MAX_RUNTIME_FILE: u64 = 256 * 1024 * 1024;
         const MAX_TOTAL_RUNTIME: u64 = 384 * 1024 * 1024;
@@ -266,7 +272,7 @@ impl SandboxProfile {
         fn copy_component(from: &Path, to: &Path, budget: &mut u64) -> Result<(), String> {
             no_reparse_path(from)?;
             let mut source = OpenOptions::new()
-                .read(true).custom_flags(0x0020_0000) // FILE_FLAG_OPEN_REPARSE_POINT
+                .read(true).custom_flags(0x0020_0000)
                 .open(from).map_err(|_| "SANDBOX_RUNTIME_READ_DENIED")?;
             let metadata = source.metadata().map_err(|_| "SANDBOX_RUNTIME_READ_DENIED")?;
             if !metadata.is_file()
@@ -310,14 +316,10 @@ impl SandboxProfile {
                 copy_component(&path, &directory.join(entry.file_name()), &mut total)?;
             }
         }
-        // Reuse the proven private snapshot DACL contract: current user and
-        // SYSTEM full control; this AppContainer SID RX only, never write.
         self.protect_snapshot(&directory)?;
         Ok(staged)
     }
 
-    /// Remove inherited write access from the copied source tree. The host
-    /// user retains full control for cleanup; the AppContainer receives RX.
     pub fn protect_snapshot(&self, snapshot: &Path) -> Result<(), String> {
         no_reparse_path(snapshot)?;
         let icacls = system_binary("icacls.exe")?;
@@ -346,16 +348,10 @@ impl SandboxProfile {
     ) -> Result<SandboxChild, String> {
         no_reparse_path(runtime)?;
         no_reparse_path(current_directory)?;
-        let canonical = runtime
-            .canonicalize()
-            .map_err(|_| "SANDBOX_RUNTIME_MISSING")?;
+        let canonical = runtime.canonicalize().map_err(|_| "SANDBOX_RUNTIME_MISSING")?;
         if !canonical.is_file()
-            || runtime
-                .extension()
-                .and_then(|value| value.to_str())
-                .unwrap_or("")
-                .to_ascii_lowercase()
-                != "exe"
+            || runtime.extension().and_then(|value| value.to_str()).unwrap_or("")
+                .to_ascii_lowercase() != "exe"
         {
             return Err("SANDBOX_RUNTIME_NOT_EXECUTABLE".into());
         }
@@ -426,9 +422,6 @@ pub struct SandboxChild {
 }
 
 fn appcontainer_pipe_security(user: &str, sid: &str) -> Result<PSECURITY_DESCRIPTOR, String> {
-    // AppContainer writes are checked against the pipe object DACL. The
-    // default pipe DACL belongs to the host user, so the sandbox SID must be
-    // granted explicit access or the child inherits a handle it cannot use.
     let sddl = format!("D:(A;;GA;;;SY)(A;;GA;;;{user})(A;;GA;;;{sid})");
     let text = wide_text(&sddl)?;
     let mut descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
@@ -499,8 +492,6 @@ fn quote_argument(value: &str) -> Result<Vec<u16>, String> {
     wide_text(&output)
 }
 fn environment_block(configured: &[(String, String)], state: &Path) -> Result<Vec<u16>, String> {
-    // Windows variable names are case insensitive. Build the entire block
-    // using one canonical key form and deny overwrites of loader/OS paths.
     let system32 = system_binary("cmd.exe")?
         .parent().ok_or("SANDBOX_SYSTEM_DIRECTORY_UNAVAILABLE")?.to_path_buf();
     let windows_dir = system32.parent().ok_or("SANDBOX_SYSTEM_DIRECTORY_UNAVAILABLE")?;
@@ -532,8 +523,6 @@ fn environment_block(configured: &[(String, String)], state: &Path) -> Result<Ve
             return Err("SANDBOX_ENV_DUPLICATE".into());
         }
     }
-    // The real user LOCALAPPDATA is required by Windows AppContainer profile
-    // resolution; filesystem access to it still depends on the lowbox token.
     let local_app_data = std::env::var("LOCALAPPDATA")
         .map_err(|_| "SANDBOX_LOCAL_APP_DATA_UNAVAILABLE")?;
     if !Path::new(&local_app_data).is_absolute() || local_app_data.contains('\0') {
@@ -555,8 +544,6 @@ fn environment_block(configured: &[(String, String)], state: &Path) -> Result<Ve
     Ok(block)
 }
 
-/// Shared bounded response delivery for MCP and LSP stdout readers. A full
-/// queue must never silently discard a response or block forever.
 pub(super) fn send_bounded<T>(
     sender: &SyncSender<T>,
     mut value: T,
@@ -584,9 +571,6 @@ fn spawn_inner(
     environment: &[(String, String)],
     current_directory: &Path,
 ) -> Result<SandboxChild, String> {
-    // CreatePipe returns (READ, WRITE), not (WRITE, READ). The parent
-    // writes to child stdin and reads from child stdout. Swapping these
-    // ends caused ERROR_ACCESS_DENIED on stdout and MCP_WRITE_FAILED.
     let user_sid = current_user_sid()?;
     let pipe_security = appcontainer_pipe_security(&user_sid, &profile.sid_string)?;
     let (child_input, parent_input) = pipe(pipe_security)?;
@@ -596,9 +580,7 @@ fn spawn_inner(
     inheritable(parent_input.as_raw_handle(), false)?;
     inheritable(child_input.as_raw_handle(), true)?;
     inheritable(child_output.as_raw_handle(), true)?;
-    let null = OpenOptions::new()
-        .write(true)
-        .open("NUL")
+    let null = OpenOptions::new().write(true).open("NUL")
         .map_err(|_| "SANDBOX_NULL_STDERR")?;
     inheritable(null.as_raw_handle(), true)?;
 
@@ -711,10 +693,6 @@ fn spawn_inner(
             return Err(error);
         }
     };
-    // attach_suspended_pid has already verified thread ownership and
-    // resumed exactly once AFTER AssignProcessToJobObject succeeded. A
-    // second ResumeThread here would observe suspension count 0 and hide
-    // lifecycle errors. Only release the original creator thread handle.
     unsafe { CloseHandle(information.hThread) };
     Ok(SandboxChild {
         stdin: parent_input,
@@ -738,22 +716,17 @@ mod tests {
         let runtime = system_binary("WindowsPowerShell\\v1.0\\powershell.exe")
             .expect("Windows PowerShell fixture");
         let host_file = std::env::temp_dir().join(format!(
-            "browseros-sandbox-host-{}.txt",
-            uuid::Uuid::new_v4()
+            "browseros-sandbox-host-{}.txt", uuid::Uuid::new_v4()
         ));
         std::fs::write(&host_file, "host-secret-marker").unwrap();
         let profile = SandboxProfile::create().expect("create AppContainer profile");
         let state = profile.state_dir().expect("state");
         let script = "$ErrorActionPreference='Stop'; try { $c=New-Object Net.Sockets.TcpClient; $c.Connect('127.0.0.1',9); 'NETWORK_ALLOWED' } catch { 'NETWORK_DENIED' }; try { Get-Content -LiteralPath $env:BROWSEROS_TEST_HOST_FILE -ErrorAction Stop | Out-Null; 'HOST_READ_ALLOWED' } catch { 'HOST_READ_DENIED' }";
         let arguments = vec![
-            "-NoProfile".into(),
-            "-NonInteractive".into(),
-            "-Command".into(),
-            script.into(),
+            "-NoProfile".into(), "-NonInteractive".into(), "-Command".into(), script.into(),
         ];
         let environment = vec![(
-            "BROWSEROS_TEST_HOST_FILE".into(),
-            host_file.to_string_lossy().into_owned(),
+            "BROWSEROS_TEST_HOST_FILE".into(), host_file.to_string_lossy().into_owned(),
         )];
         let mut child = profile
             .spawn(&runtime, &arguments, &environment, &state)
@@ -764,8 +737,7 @@ mod tests {
         let text = String::from_utf8_lossy(&output);
         assert!(
             text.contains("NETWORK_DENIED"),
-            "exit={:?} text={text}",
-            child.process.exit_code()
+            "exit={:?} text={text}", child.process.exit_code()
         );
         assert!(text.contains("HOST_READ_DENIED"), "{text}");
         let _ = std::fs::remove_file(host_file);
@@ -779,14 +751,8 @@ mod tests {
         let mut child = profile
             .spawn(
                 &cmd,
-                &[
-                    "/D".into(),
-                    "/S".into(),
-                    "/C".into(),
-                    "echo sandbox-ok".into(),
-                ],
-                &[],
-                &state,
+                &["/D".into(), "/S".into(), "/C".into(), "echo sandbox-ok".into()],
+                &[], &state,
             )
             .unwrap();
         drop(child.stdin);
@@ -794,8 +760,7 @@ mod tests {
         child.stdout.read_to_string(&mut output).unwrap();
         assert!(
             output.contains("sandbox-ok"),
-            "exit={:?} output={output:?}",
-            child.process.exit_code()
+            "exit={:?} output={output:?}", child.process.exit_code()
         );
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while !child.process.try_wait().unwrap() {
