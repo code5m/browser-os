@@ -70,3 +70,7 @@
 - 静态合同补充上述防回归断言，但本轮没有实际运行。
 
 **验收状态：SOURCE_FIXES_COMMITTED / NATIVE_UNVERIFIED。** 下一次用户同意集中 Windows 验证时，必须先完成原生编译，再逐项运行 cmd、AppContainer network/host file、MCP tools/call/backpressure、rust-analyzer LSP，最后才讨论 NSIS 与 Win11 WebView2/B 站登录态。若有原生失败，需要依赖同一 SHA 的完整错误/日志证据修正；不得用本文件推断 PASS。
+
+## 2026-11-17 原生验证触发（6a4762ed）
+
+静态合同已在本地对 `6a4762ed` 通过：`check-windows-linux-v2-source-contract.mjs`、`check-bfc-native-contract.mjs`、`check-browser-navigation-and-hang-diagnostics.mjs` 与 `git diff --check HEAD^ HEAD` 均为 PASS。该提交本身带 `[skip ci]`，因此以本仅文档提交触发完整 Windows/Linux 原生 workflow；验收结论只以该新 SHA 的 run 为准，任何静态结果不替代原生 PASS。
