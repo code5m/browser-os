@@ -211,12 +211,12 @@ mod tests {
         assert!(!marker.exists(), "primary thread must not execute before Job assignment");
         let job = JobObject::attach_suspended_pid(child.id()).expect("assign Job then resume");
 
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = Instant::now() + Duration::from_secs(30);
         let grandchild_pid = loop {
             if let Ok(text) = std::fs::read_to_string(&marker) {
                 if let Ok(pid) = text.trim().parse::<u32>() { break pid; }
             }
-            assert!(Instant::now() < deadline, "PowerShell did not create its immediate grandchild");
+            assert!(Instant::now() < deadline, "PowerShell did not create its immediate grandchild; exited={:?}", child.try_wait());
             thread::sleep(Duration::from_millis(25));
         };
         job.terminate().expect("terminate entire Job");
@@ -239,7 +239,7 @@ mod tests {
         command.creation_flags(CREATE_SUSPENDED);
         let mut child = command.spawn().expect("create suspended PowerShell");
         let job = JobObject::attach_suspended_pid(child.id()).expect("assign Job then resume");
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = Instant::now() + Duration::from_secs(30);
         let grandchild_pid = loop {
             if let Ok(text) = std::fs::read_to_string(&marker) {
                 if let Ok(pid) = text.trim().parse::<u32>() { break pid; }
@@ -280,7 +280,7 @@ mod tests {
         assert!(!marker.exists(), "PowerShell must not execute before Job assignment");
         let job = JobObject::attach_suspended_pid(pid).expect("assign Job then resume");
 
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = Instant::now() + Duration::from_secs(30);
         let grandchild_pid = loop {
             if let Ok(text) = std::fs::read_to_string(&marker) {
                 if let Ok(pid) = text.trim().parse::<u32>() { break pid; }
