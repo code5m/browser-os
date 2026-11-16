@@ -32,6 +32,16 @@ unsafe impl Send for JobObject {}
 unsafe impl Sync for JobObject {}
 
 impl JobObject {
+    /// The Job must exist before the ConPTY child is created. The native
+    /// CREATE_PROCESS attribute assigns it atomically before user code runs.
+    pub fn create_for_spawn() -> Result<Self, String> {
+        Self::create()
+    }
+
+    pub fn as_raw_handle(&self) -> std::os::windows::io::RawHandle {
+        self.0 as _
+    }
+
     fn create() -> Result<Self, String> {
         unsafe {
             let job = CreateJobObjectW(ptr::null(), ptr::null());
