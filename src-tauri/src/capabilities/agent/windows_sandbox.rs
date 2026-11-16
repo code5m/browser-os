@@ -19,7 +19,10 @@ use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
 use windows_sys::Win32::Security::Isolation::{
     CreateAppContainerProfile, DeleteAppContainerProfile, GetAppContainerFolderPath,
 };
-use windows_sys::Win32::Security::{FreeSid, PSID, SECURITY_ATTRIBUTES, SECURITY_CAPABILITIES};
+use windows_sys::Win32::Security::{
+    FreeSid, GetTokenInformation, PSID, SECURITY_ATTRIBUTES, SECURITY_CAPABILITIES,
+    TOKEN_QUERY, TOKEN_USER, TokenUser,
+};
 use windows_sys::Win32::System::Com::CoTaskMemFree;
 use windows_sys::Win32::System::Pipes::CreatePipe;
 use windows_sys::Win32::System::SystemInformation::GetSystemDirectoryW;
@@ -27,8 +30,8 @@ use windows_sys::Win32::System::Threading::{
     CREATE_UNICODE_ENVIRONMENT, CreateProcessW, DeleteProcThreadAttributeList,
     EXTENDED_STARTUPINFO_PRESENT, InitializeProcThreadAttributeList,
     PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES,
-    PROCESS_INFORMATION, STARTF_USESTDHANDLES, STARTUPINFOEXW, TerminateProcess,
-    UpdateProcThreadAttribute, WaitForSingleObject,
+    GetCurrentProcess, OpenProcessToken, PROCESS_INFORMATION, STARTF_USESTDHANDLES,
+    STARTUPINFOEXW, TerminateProcess, UpdateProcThreadAttribute, WaitForSingleObject,
 };
 
 const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
@@ -78,25 +81,61 @@ fn system_binary(name: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 fn current_user_sid() -> Result<String, String> {
-    let output = std::process::Command::new(system_binary("whoami.exe")?)
-        .args(["/user", "/fo", "csv", "/nh"])
-        .output()
-        .map_err(|_| "SANDBOX_USER_SID_UNAVAILABLE")?;
-    if !output.status.success() {
+    // Query the current security token instead of parsing whoami.exe output:
+    // CLI encodings, account names and CSV formats vary with Windows locale.
+    struct Token(HANDLE);
+    impl Drop for Token {
+        fn drop(&mut self) { unsafe { CloseHandle(self.0); } }
+    }
+    let mut token = ptr::null_mut();
+    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0
+        || token.is_null()
+    {
         return Err("SANDBOX_USER_SID_UNAVAILABLE".into());
     }
-    let text = String::from_utf8_lossy(&output.stdout);
-    text.lines()
-        .filter_map(|line| line.trim_start_matches('\u{feff}').split(',').nth(1))
-        .map(|value| value.trim().trim_matches('"'))
-        .find(|value| {
-            value.starts_with("S-1-")
-                && value
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit() || byte == b'-')
-        })
-        .map(str::to_owned)
-        .ok_or_else(|| "SANDBOX_USER_SID_INVALID".into())
+    let token = Token(token);
+    let mut required = 0u32;
+    unsafe {
+        GetTokenInformation(token.0, TokenUser, ptr::null_mut(), 0, &mut required);
+    }
+    if required < std::mem::size_of::<TOKEN_USER>() as u32 || required > 65536 {
+        return Err("SANDBOX_USER_SID_INVALID".into());
+    }
+    // TOKEN_USER contains pointers; usize words provide proper alignment.
+    let words = (required as usize).div_ceil(std::mem::size_of::<usize>());
+    let mut buffer = vec![0usize; words];
+    if unsafe {
+        GetTokenInformation(
+            token.0, TokenUser, buffer.as_mut_ptr().cast(), required, &mut required,
+        )
+    } == 0
+    {
+        return Err("SANDBOX_USER_SID_UNAVAILABLE".into());
+    }
+    let sid = unsafe { (*buffer.as_ptr().cast::<TOKEN_USER>()).User.Sid };
+    if sid.is_null() {
+        return Err("SANDBOX_USER_SID_INVALID".into());
+    }
+    let mut sid_text = ptr::null_mut();
+    if unsafe { ConvertSidToStringSidW(sid, &mut sid_text) } == 0 || sid_text.is_null() {
+        return Err("SANDBOX_USER_SID_UNAVAILABLE".into());
+    }
+    let mut len = 0usize;
+    unsafe {
+        while len < 256 && *sid_text.add(len) != 0 { len += 1; }
+    }
+    let value = if len < 256 {
+        unsafe { String::from_utf16(std::slice::from_raw_parts(sid_text, len)) }
+            .map_err(|_| "SANDBOX_USER_SID_INVALID".to_string())
+    } else {
+        Err("SANDBOX_USER_SID_INVALID".into())
+    };
+    unsafe { LocalFree(sid_text as _); }
+    let value = value?;
+    if !value.starts_with("S-1-") || !value.bytes().all(|b| b.is_ascii_digit() || b == b'-') {
+        return Err("SANDBOX_USER_SID_INVALID".into());
+    }
+    Ok(value)
 }
 
 pub struct SandboxProfile {
@@ -385,11 +424,23 @@ fn environment_block(configured: &[(String, String)], state: &Path) -> Result<Ve
             || key.contains('\0')
             || value.contains('\0')
             || key.starts_with("LD_")
+            || key.eq_ignore_ascii_case("LOCALAPPDATA")
         {
             return Err("SANDBOX_ENV_INVALID".into());
         }
         values.insert(key.to_ascii_uppercase(), value.clone());
     }
+    // AppContainer profile resolution in CreateProcessW requires the
+    // *actual user* LOCALAPPDATA. Omitting it causes ERROR_ENVVAR_NOT_FOUND
+    // (203) before sandbox launch, especially in restricted CI environments.
+    // It is a path string, not an authorization: AppContainer ACLs still deny
+    // reading the host user's private files and no network capability exists.
+    let local_app_data = std::env::var("LOCALAPPDATA")
+        .map_err(|_| "SANDBOX_LOCAL_APP_DATA_UNAVAILABLE")?;
+    if !Path::new(&local_app_data).is_absolute() || local_app_data.contains('\0') {
+        return Err("SANDBOX_LOCAL_APP_DATA_INVALID".into());
+    }
+    values.insert("LOCALAPPDATA".into(), local_app_data);
     let state_text = state.to_str().ok_or("SANDBOX_STATE_NOT_UNICODE")?;
     for key in ["HOME", "USERPROFILE", "TEMP", "TMP"] {
         values.insert(key.into(), state_text.into());

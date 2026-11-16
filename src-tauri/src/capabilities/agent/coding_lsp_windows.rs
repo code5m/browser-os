@@ -524,13 +524,16 @@ mod tests {
         fs::create_dir_all(&outside).unwrap();
         fs::write(root.join("src/lib.rs"), "pub fn fixture() {}\n").unwrap();
         fs::write(outside.join("secret.rs"), "fn must_not_copy() {}\n").unwrap();
+        // Use PowerShell's Junction API. cmd.exe /S /C quote stripping
+        // corrupts nested quoted absolute paths on CI Windows runners.
+        let junction_path = root.join("src/link");
+        let link_name = junction_path.to_string_lossy().replace('\'', "''");
+        let target_name = outside.to_string_lossy().replace('\'', "''");
         let command = format!(
-            "mklink /J \"{}\" \"{}\"",
-            root.join("src/link").display(),
-            outside.display(),
+            "New-Item -ItemType Junction -Path '{link_name}' -Target '{target_name}' -ErrorAction Stop | Out-Null"
         );
-        let junction = std::process::Command::new("cmd.exe")
-            .args(["/D", "/S", "/C", &command])
+        let junction = std::process::Command::new("powershell.exe")
+            .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", &command])
             .output()
             .unwrap();
         assert!(
