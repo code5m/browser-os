@@ -265,9 +265,11 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("browseros-conpty-job-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let marker = dir.join("grandchild.pid");
+        let primary = dir.join("primary.txt");
         let marker_text = marker.to_string_lossy().replace('\'', "''");
+        let primary_text = primary.to_string_lossy().replace('\'', "''");
         let script = format!(
-            "$p=Start-Process -FilePath $env:ComSpec -ArgumentList @('/c','ping -n 60 127.0.0.1 > NUL') -PassThru; Set-Content -LiteralPath '{marker_text}' -Value $p.Id; Start-Sleep -Seconds 60"
+            "Set-Content -LiteralPath '{primary_text}' -Value 'started'; $psi=New-Object System.Diagnostics.ProcessStartInfo; $psi.FileName=$env:ComSpec; $psi.Arguments='/c ping -n 60 127.0.0.1 > NUL'; $psi.UseShellExecute=$false; $p=[System.Diagnostics.Process]::Start($psi); Set-Content -LiteralPath '{marker_text}' -Value $p.Id; Start-Sleep -Seconds 60"
         );
         let pty = native_pty_system();
         let pair = pty.openpty(PtySize { rows: 24, cols: 80, pixel_width: 0, pixel_height: 0 })
@@ -285,7 +287,13 @@ mod tests {
             if let Ok(text) = std::fs::read_to_string(&marker) {
                 if let Ok(pid) = text.trim().parse::<u32>() { break pid; }
             }
-            assert!(Instant::now() < deadline, "ConPTY PowerShell did not create its grandchild");
+            assert!(
+                Instant::now() < deadline,
+                "ConPTY PowerShell did not create its grandchild; primary={:?} marker={:?} exited={:?}",
+                std::fs::read_to_string(&primary).ok(),
+                std::fs::read_to_string(&marker).ok(),
+                child.try_wait()
+            );
             thread::sleep(Duration::from_millis(25));
         };
         job.terminate().expect("terminate ConPTY process tree");
