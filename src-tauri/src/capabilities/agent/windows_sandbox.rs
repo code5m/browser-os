@@ -196,7 +196,11 @@ impl SandboxProfile {
             .parent().ok_or("SANDBOX_SYSTEM_DIRECTORY_UNAVAILABLE")?.to_path_buf();
         let system_root = system32.parent().ok_or("SANDBOX_SYSTEM_DIRECTORY_UNAVAILABLE")?;
         let canonical = runtime.canonicalize().map_err(|_| "SANDBOX_RUNTIME_MISSING")?;
-        if canonical.starts_with(system_root) {
+        // Canonicalize both sides; Windows otherwise compares verbatim-disk
+        // (\\?\C:\Windows) with ordinary-disk (C:\Windows) prefixes.
+        let canonical_system_root = system_root.canonicalize()
+            .map_err(|_| "SANDBOX_SYSTEM_DIRECTORY_UNAVAILABLE")?;
+        if canonical.starts_with(&canonical_system_root) {
             // Never change ACLs under C:\\Windows (or its siblings).
             return Ok(());
         }
