@@ -50,3 +50,4 @@
 - WebView2 Profile ACL 首次修复、后续根 ACL 每次检查、每 10 分钟只读全树巡检，避免每个标签页递归重置真实登录缓存中的大量活动文件。
 - Windows workflow 先编译一次测试可执行文件，再复用它运行完整过滤矩阵；手动 `workflow_dispatch` 额外执行 WebView2 插件 ACL 测试，原正式门禁不撤销。
 - 本次代码阶段未执行任何测试、编译或 CI，提交信息含 `[skip ci]`。**结果状态：CODE_PATCHED / NOT VERIFIED；不合并 master、不宣称 R1/V2 PASS。**
+- 为取得最终 SHA 的原生证据，已在不含 `[skip ci]` 的提交上触发完整 Windows/Linux workflow；结果只以该 SHA 对应的 Actions run 为准，run 未完成或失败时仍保持 NOT VERIFIED。
