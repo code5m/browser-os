@@ -62,7 +62,6 @@ jobs:
             $transcript = "browseros-bfc-identity|$nonce|$($identity.serviceId)|$($identity.protocolVersion)"
             $expectedProof = [Convert]::ToHexString($hmac.ComputeHash([Text.Encoding]::UTF8.GetBytes($transcript))).ToLowerInvariant()
             $serviceHeaders = @{
-              # Public nonce challenge: never send the secret before proof.
               'X-BrowserOS-Challenge' = $nonce
             }
             $proof = Invoke-RestMethod 'http://127.0.0.1:4198/api/identity' -Headers $serviceHeaders
@@ -80,8 +79,6 @@ jobs:
             if (-not $session.token -or $session.serviceId -ne $identity.serviceId -or
                 $session.protocolVersion -ne 1) { throw 'Authenticated BFC session invalid' }
             Write-Host 'BFC_WINDOWS_LOOPBACK_IDENTITY=PASS'
-            # No real user data or Bilibili network calls. Verify that a
-            # minimal synthetic readback snapshot reaches disk with receipt.
             $fixture = @{
               source = 'authorized_browser_readback'
               scanId = 'windows_ci_fixture_001'
@@ -203,7 +200,6 @@ jobs:
       - name: Windows Grid, IPC, Job Object and safe-file unit tests
         shell: pwsh
         run: |
-          # Compile once; test filters keep independent timeouts and reporting.
           $buildOutput = @(cargo test --manifest-path src-tauri/Cargo.toml --locked `
             --bin mvp-browser-os --no-run --message-format=json 2>&1)
           if ($LASTEXITCODE -ne 0) {
@@ -249,9 +245,11 @@ jobs:
             $output | Write-Host
             Write-Host "::endgroup::"
             if ($code -ne 0) {
-              $details = @($output -split "`r?`n" | Where-Object {
-                $_ -match 'FAILED|panicked at|error(\[|:)|failures:'
-              } | Select-Object -Last 8)
+              $allLines = @($output -split "`r?`n")
+              $details = @($allLines | Where-Object {
+                $_ -match 'FAILED|panicked at|error(\[|:)|failures:|exit=|output=|thread '
+              } | Select-Object -Last 20)
+              if ($details.Count -eq 0) { $details = @($allLines | Select-Object -Last 20) }
               $details += "Native test failed: $filter"
               $details | ForEach-Object {
                 $message = "$_" -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A'
@@ -260,8 +258,6 @@ jobs:
               throw "Native test failed: $filter"
             }
           }
-          # Run independent checks even if one fails, then fail this job
-          # once with a complete matrix. This does not relax release gates.
           $nativeTests = @(
             'windows_grid_tests'
             'framing_tests'
@@ -310,7 +306,6 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         shell: pwsh
         run: |
-          # Plugin belongs to its own workspace and is not in --bin tests.
           cargo test --manifest-path tauri-browser-tabs/Cargo.toml `
             -p tauri-plugin-browser-tabs --lib `
             windows_profile_acl_contains_only_current_user_and_system -- --test-threads=1
