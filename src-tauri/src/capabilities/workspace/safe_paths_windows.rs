@@ -37,7 +37,7 @@ fn reject_reparse_ancestors(path: &Path) -> io::Result<()> {
     let mut current = PathBuf::new();
     for component in path.components() {
         current.push(component.as_os_str());
-        if !current.has_root() { continue; } // Skip drive-only C: prefix.
+        if matches!(component, Component::Prefix(_)) || !current.has_root() { continue; } // Skip drive-only C: prefix.
         match std::fs::symlink_metadata(&current) {
             Ok(metadata) if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 => {
                 return Err(denied());

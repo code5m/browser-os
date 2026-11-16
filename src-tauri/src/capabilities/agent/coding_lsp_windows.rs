@@ -33,7 +33,7 @@ fn no_reparse(path: &Path) -> Result<(), String> {
     let mut current = PathBuf::new();
     for component in path.components() {
         current.push(component.as_os_str());
-        if !current.has_root() { continue; }
+        if matches!(component, Component::Prefix(_)) || !current.has_root() { continue; }
         let metadata = fs::symlink_metadata(&current).map_err(|_| "LSP_PATH_INSPECTION_FAILED")?;
         if metadata.file_attributes() & REPARSE != 0 {
             return Err("LSP_REPARSE_DENIED".into());

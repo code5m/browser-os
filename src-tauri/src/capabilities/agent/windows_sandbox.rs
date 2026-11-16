@@ -56,7 +56,7 @@ fn no_reparse_path(path: &Path) -> Result<(), String> {
     let mut current = PathBuf::new();
     for component in path.components() {
         current.push(component.as_os_str());
-        if !current.has_root() { continue; }
+        if matches!(component, Component::Prefix(_)) || !current.has_root() { continue; }
         let metadata =
             std::fs::symlink_metadata(&current).map_err(|_| "SANDBOX_PATH_INSPECTION_FAILED")?;
         if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {

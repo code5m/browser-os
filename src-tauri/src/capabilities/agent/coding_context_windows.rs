@@ -58,7 +58,7 @@ fn no_reparse_path(path: &Path) -> bool {
     let mut current = PathBuf::new();
     for component in path.components() {
         current.push(component.as_os_str());
-        if !current.has_root() { continue; }
+        if matches!(component, Component::Prefix(_)) || !current.has_root() { continue; }
         match fs::symlink_metadata(&current) {
             Ok(metadata) if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 => {
                 return false;
