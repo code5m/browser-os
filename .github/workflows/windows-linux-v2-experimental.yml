@@ -203,10 +203,28 @@ jobs:
       - name: Windows Grid, IPC, Job Object and safe-file unit tests
         shell: pwsh
         run: |
-          function Invoke-NativeCargoTest([string]$filter) {
-            $output = cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os $filter -- --test-threads=1 2>&1 | Out-String
-            $code = $LASTEXITCODE
+          function Invoke-NativeCargoTest([string]$filter, [int]$timeoutSeconds = 240) {
+            $slug = ($filter -replace '[^A-Za-z0-9_.-]', '_')
+            $stdout = Join-Path $env:RUNNER_TEMP "$slug.out.log"
+            $stderr = Join-Path $env:RUNNER_TEMP "$slug.err.log"
+            Remove-Item $stdout, $stderr -Force -ErrorAction SilentlyContinue
+            Write-Host "::group::cargo test $filter (timeout ${timeoutSeconds}s) at $(Get-Date -Format o)"
+            $process = Start-Process -FilePath 'cargo' -NoNewWindow -PassThru `
+              -RedirectStandardOutput $stdout -RedirectStandardError $stderr `
+              -ArgumentList @('test', '--manifest-path', 'src-tauri/Cargo.toml', '--locked', '--bin', 'mvp-browser-os', $filter, '--', '--test-threads=1')
+            $finished = $process.WaitForExit($timeoutSeconds * 1000)
+            if (-not $finished) {
+              try { $process.Kill($true) } catch {}
+              Write-Host "::error::Native test timeout after ${timeoutSeconds}s: $filter"
+              Get-Content $stdout, $stderr -ErrorAction SilentlyContinue | Write-Host
+              Write-Host "::endgroup::"
+              throw "Native test timeout: $filter"
+            }
+            $process.WaitForExit()
+            $code = $process.ExitCode
+            $output = ((Get-Content $stdout -ErrorAction SilentlyContinue) + (Get-Content $stderr -ErrorAction SilentlyContinue) | Out-String)
             $output | Write-Host
+            Write-Host "::endgroup::"
             if ($code -ne 0) {
               $details = @($output -split "`r?`n" | Where-Object {
                 $_ -match 'FAILED|panicked at|error(\[|:)|failures:'
@@ -241,7 +259,7 @@ jobs:
           Invoke-NativeCargoTest 'real_appcontainer_stdio_initializes_lists_calls_and_scrubs_secrets'
           Invoke-NativeCargoTest 'stdin_backpressure_obeys_deadline'
           Invoke-NativeCargoTest 'snapshot_rejects_junctions_instead_of_copying_external_sources'
-          Invoke-NativeCargoTest 'real_rust_analyzer_runs_against_private_snapshot'
+          Invoke-NativeCargoTest 'real_rust_analyzer_runs_against_private_snapshot' 600
           Invoke-NativeCargoTest 'fake_loopback_port_occupant_cannot_receive_snapshot_before_identity_proof'
           Invoke-NativeCargoTest 'process_execution_requires_explicit_approval_and_rejects_shell_actions'
           Invoke-NativeCargoTest 'knowledge_search_redacts_sensitive_lines'
