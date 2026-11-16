@@ -1,14 +1,14 @@
 //! Short-lived MCP stdio sessions inside a no-network Windows AppContainer.
 #![cfg(windows)]
 
-use super::windows_sandbox::{SandboxChild, SandboxProcess, SandboxProfile};
+use super::windows_sandbox::{send_bounded, SandboxChild, SandboxProcess, SandboxProfile};
 use serde_json::{Value, json};
 use std::collections::hash_map::DefaultHasher;
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -186,6 +186,7 @@ struct Session {
     writer: mpsc::SyncSender<Vec<u8>>,
     write_result: mpsc::Receiver<Result<(), String>>,
     reader: mpsc::Receiver<Result<Value, String>>,
+    reader_fault: Arc<Mutex<Option<String>>>,
     deadline: Instant,
     secrets: Vec<String>,
 }
@@ -326,28 +327,27 @@ impl Session {
             }
         });
         let (reader_tx, reader) = mpsc::sync_channel(32);
+        let reader_fault = Arc::new(Mutex::new(None));
+        let on_read_failure = Arc::clone(&reader_fault);
         thread::spawn(move || {
             let mut reader = BufReader::new(stdout);
             loop {
                 let mut bytes = Vec::new();
-                match reader
-                    .by_ref()
-                    .take(LIMIT + 1)
-                    .read_until(b'\n', &mut bytes)
+                let (value, fatal) = match reader.by_ref()
+                    .take(LIMIT + 1).read_until(b'\n', &mut bytes)
                 {
                     Ok(0) => break,
-                    Ok(_) if bytes.len() as u64 <= LIMIT => {
-                        let value =
-                            serde_json::from_slice(&bytes).map_err(|_| "MCP_INVALID_FRAME".into());
-                        if reader_tx.try_send(value).is_err() {
-                            break;
-                        }
-                    }
-                    _ => {
-                        let _ = reader_tx.try_send(Err("MCP_FRAME_LIMIT".into()));
-                        break;
-                    }
+                    Ok(_) if bytes.len() as u64 <= LIMIT =>
+                        (serde_json::from_slice(&bytes).map_err(|_| "MCP_INVALID_FRAME".into()), false),
+                    Ok(_) => (Err("MCP_FRAME_LIMIT".into()), true),
+                    Err(_) => (Err("MCP_FRAME_READ".into()), true),
+                };
+                if send_bounded(&reader_tx, value, Duration::from_secs(2)).is_err() {
+                    *on_read_failure.lock().unwrap_or_else(|p| p.into_inner()) =
+                        Some("MCP_OUTPUT_BACKPRESSURE".into());
+                    break;
                 }
+                if fatal { break; }
             }
         });
         Ok(Self {
@@ -355,6 +355,7 @@ impl Session {
             writer,
             write_result,
             reader,
+            reader_fault,
             deadline: Instant::now() + Duration::from_secs(seconds.clamp(1, 60)),
             secrets,
         })
@@ -398,14 +399,26 @@ impl Session {
             Err(mpsc::RecvTimeoutError::Disconnected) => Err("MCP_WRITE_FAILED".into()),
         }
     }
+    fn recv_frame(&self) -> Result<Value, String> {
+        let fault = || self.reader_fault.lock()
+            .unwrap_or_else(|p| p.into_inner()).clone();
+        if let Some(error) = fault() { return Err(error); }
+        let remaining = self.deadline.saturating_duration_since(Instant::now());
+        match self.reader.recv_timeout(remaining) {
+            Ok(value) => {
+                if let Some(error) = fault() { return Err(error); }
+                value
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) =>
+                Err(fault().unwrap_or_else(|| "MCP_TIMEOUT_OR_CLOSED".into())),
+            Err(mpsc::RecvTimeoutError::Disconnected) =>
+                Err(fault().unwrap_or_else(|| "MCP_CLOSED".into())),
+        }
+    }
     fn rpc(&mut self, id: u64, method: &str, params: Value) -> Result<Value, String> {
         self.send(json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}))?;
         loop {
-            let remaining = self.deadline.saturating_duration_since(Instant::now());
-            let value = self
-                .reader
-                .recv_timeout(remaining)
-                .map_err(|_| "MCP_TIMEOUT_OR_CLOSED")??;
+            let value = self.recv_frame()?;
             if value["id"] == json!(id) {
                 if value.get("error").is_some() {
                     return Err("MCP_REMOTE_ERROR".into());

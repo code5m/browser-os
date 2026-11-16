@@ -5,6 +5,11 @@
 
 use crate::windows_process::{CREATE_SUSPENDED, JobObject};
 use std::collections::BTreeMap;
+use std::io::Write;
+use std::os::windows::fs::OpenOptionsExt;
+use std::sync::mpsc::{SyncSender, TrySendError};
+use std::thread;
+use std::time::{Duration, Instant};
 use std::fs::{File, OpenOptions};
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::os::windows::fs::MetadataExt;
@@ -235,34 +240,76 @@ impl SandboxProfile {
         &self.sid_string
     }
 
-    /// Never modify Windows or system-directory ACLs to launch a sandbox.
-    /// Standard Windows runtimes already have OS-managed AppContainer RX.
-    /// Third-party runtime files may receive RX on that file only, without
-    /// broadening ancestor directories or granting write/network access.
-    fn grant_runtime(&self, runtime: &Path) -> Result<(), String> {
+    /// Never change the ACL of a host-installed executable. Third-party
+    /// executables (including bundled private DLL dependencies) are copied
+    /// into this short-lived AppContainer profile and made read/execute-only.
+    /// Windows-owned system executables keep their OS-managed ACL unchanged.
+    fn stage_runtime(&self, runtime: &Path) -> Result<PathBuf, String> {
+        let canonical = runtime.canonicalize().map_err(|_| "SANDBOX_RUNTIME_MISSING")?;
+        no_reparse_path(&canonical)?;
         let system32 = system_binary("cmd.exe")?
             .parent().ok_or("SANDBOX_SYSTEM_DIRECTORY_UNAVAILABLE")?.to_path_buf();
         let system_root = system32.parent().ok_or("SANDBOX_SYSTEM_DIRECTORY_UNAVAILABLE")?;
-        let canonical = runtime.canonicalize().map_err(|_| "SANDBOX_RUNTIME_MISSING")?;
-        // Canonicalize both sides; Windows otherwise compares verbatim-disk
-        // (\\?\C:\Windows) with ordinary-disk (C:\Windows) prefixes.
         let canonical_system_root = system_root.canonicalize()
             .map_err(|_| "SANDBOX_SYSTEM_DIRECTORY_UNAVAILABLE")?;
         if canonical.starts_with(&canonical_system_root) {
-            // Never change ACLs under C:\\Windows (or its siblings).
-            return Ok(());
+            return Ok(canonical); // Never touch OS-owned executable ACLs.
         }
-        let icacls = system_binary("icacls.exe")?;
-        let grant = format!("*{}:(RX)", self.sid_string);
-        let output = std::process::Command::new(&icacls)
-            .arg(&canonical)
-            .args(["/grant:r", grant.as_str()])
-            .output()
-            .map_err(|_| "SANDBOX_RUNTIME_ACL")?;
-        if !output.status.success() {
-            return Err("SANDBOX_RUNTIME_ACL".into());
+        const MAX_RUNTIME_FILE: u64 = 256 * 1024 * 1024;
+        const MAX_TOTAL_RUNTIME: u64 = 384 * 1024 * 1024;
+        const MAX_SIBLING_DLLS: usize = 32;
+
+        fn copy_component(from: &Path, to: &Path, budget: &mut u64) -> Result<(), String> {
+            no_reparse_path(from)?;
+            let mut source = OpenOptions::new()
+                .read(true).custom_flags(0x0020_0000) // FILE_FLAG_OPEN_REPARSE_POINT
+                .open(from).map_err(|_| "SANDBOX_RUNTIME_READ_DENIED")?;
+            let metadata = source.metadata().map_err(|_| "SANDBOX_RUNTIME_READ_DENIED")?;
+            if !metadata.is_file()
+                || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+                || metadata.len() > MAX_RUNTIME_FILE
+            {
+                return Err("SANDBOX_RUNTIME_UNSAFE".into());
+            }
+            *budget = budget.checked_add(metadata.len()).filter(|n| *n <= MAX_TOTAL_RUNTIME)
+                .ok_or("SANDBOX_RUNTIME_SIZE_LIMIT")?;
+            let mut output = OpenOptions::new().write(true).create_new(true)
+                .open(to).map_err(|_| "SANDBOX_RUNTIME_STAGE_FAILED")?;
+            let written = std::io::copy(&mut source, &mut output)
+                .map_err(|_| "SANDBOX_RUNTIME_STAGE_FAILED")?;
+            if written != metadata.len() {
+                return Err("SANDBOX_RUNTIME_CHANGED_DURING_COPY".into());
+            }
+            output.sync_all().map_err(|_| "SANDBOX_RUNTIME_STAGE_FAILED")?;
+            no_reparse_path(from)?;
+            Ok(())
         }
-        Ok(())
+
+        let directory = self.folder.join("runtime");
+        std::fs::create_dir(&directory).map_err(|_| "SANDBOX_RUNTIME_STAGE_FAILED")?;
+        let filename = canonical.file_name().ok_or("SANDBOX_RUNTIME_NOT_EXECUTABLE")?;
+        let staged = directory.join(filename);
+        let mut total = 0u64;
+        copy_component(&canonical, &staged, &mut total)?;
+        let mut dll_count = 0usize;
+        let original_dir = canonical.parent().ok_or("SANDBOX_RUNTIME_NOT_EXECUTABLE")?;
+        for entry in std::fs::read_dir(original_dir).map_err(|_| "SANDBOX_RUNTIME_READ_DENIED")? {
+            let entry = entry.map_err(|_| "SANDBOX_RUNTIME_READ_DENIED")?;
+            let path = entry.path();
+            if path.extension().and_then(|v| v.to_str())
+                .is_some_and(|v| v.eq_ignore_ascii_case("dll"))
+            {
+                dll_count += 1;
+                if dll_count > MAX_SIBLING_DLLS {
+                    return Err("SANDBOX_RUNTIME_DLL_LIMIT".into());
+                }
+                copy_component(&path, &directory.join(entry.file_name()), &mut total)?;
+            }
+        }
+        // Reuse the proven private snapshot DACL contract: current user and
+        // SYSTEM full control; this AppContainer SID RX only, never write.
+        self.protect_snapshot(&directory)?;
+        Ok(staged)
     }
 
     /// Remove inherited write access from the copied source tree. The host
@@ -277,7 +324,7 @@ impl SandboxProfile {
             .arg(format!("*{user}:(OI)(CI)F"))
             .arg("*S-1-5-18:(OI)(CI)F")
             .arg(format!("*{}:(OI)(CI)RX", self.sid_string))
-            .args(["/T", "/C"])
+            .arg("/T")
             .output()
             .map_err(|_| "SANDBOX_SNAPSHOT_ACL")?;
         if !output.status.success() {
@@ -308,8 +355,8 @@ impl SandboxProfile {
         {
             return Err("SANDBOX_RUNTIME_NOT_EXECUTABLE".into());
         }
-        self.grant_runtime(runtime)?;
-        spawn_inner(self, runtime, args, environment, current_directory)
+        let staged = self.stage_runtime(runtime)?;
+        spawn_inner(self, &staged, args, environment, current_directory)
     }
 }
 
@@ -419,31 +466,41 @@ fn quote_argument(value: &str) -> Result<Vec<u16>, String> {
     wide_text(&output)
 }
 fn environment_block(configured: &[(String, String)], state: &Path) -> Result<Vec<u16>, String> {
+    // Windows variable names are case insensitive. Build the entire block
+    // using one canonical key form and deny overwrites of loader/OS paths.
+    let system32 = system_binary("cmd.exe")?
+        .parent().ok_or("SANDBOX_SYSTEM_DIRECTORY_UNAVAILABLE")?.to_path_buf();
+    let windows_dir = system32.parent().ok_or("SANDBOX_SYSTEM_DIRECTORY_UNAVAILABLE")?;
+    let system_drive = windows_dir.components().next()
+        .ok_or("SANDBOX_SYSTEM_DIRECTORY_UNAVAILABLE")?.as_os_str()
+        .to_string_lossy().to_string();
     let mut values = BTreeMap::<String, String>::new();
-    for key in ["SystemRoot", "SystemDrive", "WINDIR", "ComSpec"] {
-        if let Ok(value) = std::env::var(key) {
-            values.insert(key.to_string(), value);
-        }
-    }
-    values.insert("PATH".into(), r"C:\Windows\System32".into());
+    values.insert("SYSTEMROOT".into(), windows_dir.to_string_lossy().into_owned());
+    values.insert("WINDIR".into(), windows_dir.to_string_lossy().into_owned());
+    values.insert("SYSTEMDRIVE".into(), system_drive);
+    values.insert("COMSPEC".into(), system_binary("cmd.exe")?.to_string_lossy().into_owned());
+    values.insert("PATH".into(), system32.to_string_lossy().into_owned());
     values.insert("RUST_BACKTRACE".into(), "0".into());
+    const RESERVED: &[&str] = &[
+        "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "PATH",
+        "LOCALAPPDATA", "USERPROFILE", "HOME", "TEMP", "TMP", "APPDATA",
+        "PATHEXT", "RUST_BACKTRACE",
+    ];
     for (key, value) in configured {
-        if key.is_empty()
-            || key.contains('=')
-            || key.contains('\0')
-            || value.contains('\0')
-            || key.starts_with("LD_")
-            || key.eq_ignore_ascii_case("LOCALAPPDATA")
+        if key.is_empty() || key.len() > 128 || value.len() > 16384
+            || !key.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+            || value.contains('\0') || key.starts_with('=')
+            || RESERVED.iter().any(|reserved| key.eq_ignore_ascii_case(reserved))
         {
             return Err("SANDBOX_ENV_INVALID".into());
         }
-        values.insert(key.to_ascii_uppercase(), value.clone());
+        let key = key.to_ascii_uppercase();
+        if values.insert(key, value.clone()).is_some() {
+            return Err("SANDBOX_ENV_DUPLICATE".into());
+        }
     }
-    // AppContainer profile resolution in CreateProcessW requires the
-    // *actual user* LOCALAPPDATA. Omitting it causes ERROR_ENVVAR_NOT_FOUND
-    // (203) before sandbox launch, especially in restricted CI environments.
-    // It is a path string, not an authorization: AppContainer ACLs still deny
-    // reading the host user's private files and no network capability exists.
+    // The real user LOCALAPPDATA is required by Windows AppContainer profile
+    // resolution; filesystem access to it still depends on the lowbox token.
     let local_app_data = std::env::var("LOCALAPPDATA")
         .map_err(|_| "SANDBOX_LOCAL_APP_DATA_UNAVAILABLE")?;
     if !Path::new(&local_app_data).is_absolute() || local_app_data.contains('\0') {
@@ -463,6 +520,28 @@ fn environment_block(configured: &[(String, String)], state: &Path) -> Result<Ve
     }
     block.push(0);
     Ok(block)
+}
+
+/// Shared bounded response delivery for MCP and LSP stdout readers. A full
+/// queue must never silently discard a response or block forever.
+pub(super) fn send_bounded<T>(
+    sender: &SyncSender<T>,
+    mut value: T,
+    budget: Duration,
+) -> Result<(), ()> {
+    let until = Instant::now() + budget;
+    loop {
+        match sender.try_send(value) {
+            Ok(()) => return Ok(()),
+            Err(TrySendError::Disconnected(_)) => return Err(()),
+            Err(TrySendError::Full(pending)) => {
+                value = pending;
+                let remaining = until.saturating_duration_since(Instant::now());
+                if remaining.is_zero() { return Err(()); }
+                thread::sleep(remaining.min(Duration::from_millis(5)));
+            }
+        }
+    }
 }
 
 fn spawn_inner(

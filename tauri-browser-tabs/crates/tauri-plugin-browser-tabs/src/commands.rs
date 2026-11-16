@@ -13,6 +13,10 @@ use std::path::{Path, PathBuf};
 #[cfg(not(target_os = "linux"))]
 use tauri::webview::PageLoadEvent;
 use std::sync::{Arc, Mutex};
+#[cfg(target_os = "windows")]
+use std::sync::OnceLock;
+#[cfg(target_os = "windows")]
+use std::time::{Duration, Instant};
 use tauri::{
     webview::NewWindowResponse, AppHandle, Emitter, Manager, State, Webview, WebviewBuilder,
     WebviewUrl, Window, Wry,
@@ -209,21 +213,36 @@ fn secure_windows_browser_profile(profile: &Path) -> Result<()> {
         return Err(BrowserTabError::Platform("BROWSER_PROFILE_ACL: cannot secure WebView2 profile ACL".into()));
     }
 
-    // Verify every object, not only the profile root. A legacy child file
-    // with an explicit broad ACE must not survive a correct root DACL.
-    let verify = std::process::Command::new(&icacls)
-        .arg(profile)
-        .args(["/T", "/C"])
-        .output()
-        .map_err(|_| BrowserTabError::Platform("cannot verify WebView2 profile ACL".into()))?;
+    let verified_count = audit_windows_profile_acl(profile, true)?;
+    if verified_count != object_count {
+        return Err(BrowserTabError::Platform("WebView2 profile changed during ACL reset".into()));
+    }
+    Ok(())
+}
+
+/// Read-only profile DACL verification. It does not reset ACLs on live
+/// WebView2 cache files. The fast path checks just the root on every tab;
+/// a full tree audit runs periodically without mutating active files.
+#[cfg(target_os = "windows")]
+fn audit_windows_profile_acl(profile: &Path, deep: bool) -> Result<usize> {
+    reject_windows_reparse_path(profile)?;
+    let object_count = if deep { reject_profile_reparse_tree(profile)? } else { 1 };
+    let icacls = windows_system_binary("icacls.exe")?;
+    let sid = current_windows_user_sid()?;
+    let mut command = std::process::Command::new(icacls);
+    command.arg(profile);
+    if deep { command.arg("/T"); }
+    let verify = command.output()
+        .map_err(|_| BrowserTabError::Platform("cannot inspect WebView2 profile ACL".into()))?;
     if !verify.status.success() {
         return Err(BrowserTabError::Platform("cannot verify WebView2 profile ACL".into()));
     }
     let listing = String::from_utf8_lossy(&verify.stdout);
     let entries: Vec<_> = listing.lines().filter(|line| line.contains(":(")).collect();
     let user_entries = entries.iter().filter(|line| line.contains(&sid)).count();
-    let system_entries = entries.iter().filter(|line| line.contains("S-1-5-18")
-        || line.to_ascii_uppercase().contains("SYSTEM")).count();
+    let system_entries = entries.iter().filter(|line|
+        line.contains("S-1-5-18") || line.to_ascii_uppercase().contains("SYSTEM")
+    ).count();
     if entries.len() != object_count * 2
         || user_entries != object_count
         || system_entries != object_count
@@ -232,13 +251,16 @@ fn secure_windows_browser_profile(profile: &Path) -> Result<()> {
         || listing.contains("S-1-1-0")
         || listing.contains("S-1-5-32-545")
     {
-        return Err(BrowserTabError::Platform("WebView2 profile ACL tree is not owner-exclusive".into()));
+        return Err(BrowserTabError::Platform("WebView2 profile ACL is not owner-exclusive".into()));
     }
-    if reject_profile_reparse_tree(profile)? != object_count {
-        return Err(BrowserTabError::Platform("WebView2 profile changed during ACL verification".into()));
+    if deep && reject_profile_reparse_tree(profile)? != object_count {
+        return Err(BrowserTabError::Platform("WebView2 profile changed during ACL audit".into()));
     }
-    Ok(())
+    Ok(object_count)
 }
+
+#[cfg(target_os = "windows")]
+static PROFILE_AUDIT: OnceLock<Mutex<Option<(PathBuf, Instant)>>> = OnceLock::new();
 
 #[cfg(target_os = "windows")]
 fn ensure_private_browser_profile(app: &AppHandle<Wry>) -> Result<PathBuf> {
@@ -267,9 +289,29 @@ fn ensure_private_browser_profile(app: &AppHandle<Wry>) -> Result<PathBuf> {
     if canonical_profile != profile {
         return Err(BrowserTabError::Platform("browser profile path invalid".into()));
     }
-    // ACLs are verified on every child-WebView creation, not cached forever:
-    // an ACL change or a newly inserted reparse point must fail closed.
-    secure_windows_browser_profile(&canonical_profile)?;
+    let audit = PROFILE_AUDIT.get_or_init(|| Mutex::new(None));
+    let mut state = audit.lock().unwrap_or_else(|poison| poison.into_inner());
+    match state.as_ref() {
+        None => {
+            // Only the initial profile opening normalizes all legacy ACLs.
+            secure_windows_browser_profile(&canonical_profile)?;
+            *state = Some((canonical_profile.clone(), Instant::now()));
+        }
+        Some((existing, _)) if existing != &canonical_profile => {
+            return Err(BrowserTabError::Platform("WebView2 profile identity changed".into()));
+        }
+        Some((_, verified_at)) if verified_at.elapsed() >= Duration::from_secs(600) => {
+            // Periodic full verification is read-only: never chmod or reset
+            // an active WebView2 cache tree while browser tabs are running.
+            audit_windows_profile_acl(&canonical_profile, true)?;
+            *state = Some((canonical_profile.clone(), Instant::now()));
+        }
+        Some(_) => {
+            // Cheap root ACL verification and ancestor reparse guard on every
+            // tab creation; no O(profile-size) recursive ACL rewrite.
+            audit_windows_profile_acl(&canonical_profile, false)?;
+        }
+    }
     Ok(canonical_profile)
 }
 

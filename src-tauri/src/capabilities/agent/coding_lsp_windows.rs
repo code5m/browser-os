@@ -1,7 +1,7 @@
 //! Windows Rust LSP in a no-network AppContainer with a read-only private snapshot.
 #![cfg(windows)]
 
-use super::windows_sandbox::{SandboxChild, SandboxProcess, SandboxProfile};
+use super::windows_sandbox::{send_bounded, SandboxChild, SandboxProcess, SandboxProfile};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::fs;
@@ -19,10 +19,26 @@ const MAX_TOTAL_BYTES: usize = 16 * 1024 * 1024;
 const MAX_FILE_BYTES: usize = 1024 * 1024;
 const REPARSE: u32 = 0x0000_0400;
 
-static SESSIONS: OnceLock<Mutex<HashMap<String, Arc<Mutex<Session>>>>> = OnceLock::new();
-fn sessions() -> &'static Mutex<HashMap<String, Arc<Mutex<Session>>>> {
-    SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
+#[derive(Default)]
+struct SessionCache {
+    ready: HashMap<String, Arc<Mutex<Session>>>,
+    starting: usize,
+    epoch: u64,
 }
+static SESSIONS: OnceLock<Mutex<SessionCache>> = OnceLock::new();
+fn sessions() -> &'static Mutex<SessionCache> {
+    SESSIONS.get_or_init(|| Mutex::new(SessionCache::default()))
+}
+/// Reserve capacity without holding the global cache mutex through the slow
+/// rust-analyzer process spawn and initialize handshake.
+struct StartReservation { epoch: u64 }
+impl Drop for StartReservation {
+    fn drop(&mut self) {
+        let mut cache = sessions().lock().unwrap_or_else(|p| p.into_inner());
+        cache.starting = cache.starting.saturating_sub(1);
+    }
+}
+
 fn no_reparse(path: &Path) -> Result<(), String> {
     use std::path::{Component, Prefix};
     if !path.is_absolute() || !matches!(
@@ -237,6 +253,7 @@ struct Session {
     writer: mpsc::SyncSender<Vec<u8>>,
     write_result: mpsc::Receiver<Result<(), String>>,
     reader: mpsc::Receiver<Result<Value, String>>,
+    reader_fault: Arc<Mutex<Option<String>>>,
     deadline: Instant,
     next_id: u64,
     root: PathBuf,
@@ -291,14 +308,19 @@ impl Session {
             }
         });
         let (reader_tx, reader) = mpsc::sync_channel(32);
+        let reader_fault = Arc::new(Mutex::new(None));
+        let on_read_failure = Arc::clone(&reader_fault);
         thread::spawn(move || {
             let mut reader = BufReader::new(stdout);
             loop {
                 let value = frame(&mut reader);
                 let failed = value.is_err();
-                if reader_tx.try_send(value).is_err() || failed {
+                if send_bounded(&reader_tx, value, Duration::from_secs(2)).is_err() {
+                    *on_read_failure.lock().unwrap_or_else(|p| p.into_inner()) =
+                        Some("LSP_OUTPUT_BACKPRESSURE".into());
                     break;
                 }
+                if failed { break; }
             }
         });
         let mut session = Self {
@@ -306,6 +328,7 @@ impl Session {
             writer,
             write_result,
             reader,
+            reader_fault,
             deadline: Instant::now() + Duration::from_secs(seconds.clamp(5, 120)),
             next_id: 1,
             root,
@@ -321,6 +344,26 @@ impl Session {
         session.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}))?;
         Ok(session)
     }
+    fn reset_deadline(&mut self, seconds: u64) {
+        self.deadline = Instant::now() + Duration::from_secs(seconds.clamp(5, 120));
+        self.last_used = Instant::now();
+    }
+    fn recv_frame(&self, timeout_error: &'static str) -> Result<Value, String> {
+        let fault = || self.reader_fault.lock()
+            .unwrap_or_else(|p| p.into_inner()).clone();
+        if let Some(error) = fault() { return Err(error); }
+        let remaining = self.deadline.saturating_duration_since(Instant::now());
+        match self.reader.recv_timeout(remaining) {
+            Ok(value) => {
+                if let Some(error) = fault() { return Err(error); }
+                value
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) =>
+                Err(fault().unwrap_or_else(|| timeout_error.to_string())),
+            Err(mpsc::RecvTimeoutError::Disconnected) =>
+                Err(fault().unwrap_or_else(|| "LSP_CLOSED".into())),
+        }
+    }
     fn send(&mut self, value: Value) -> Result<(), String> {
         let body = serde_json::to_vec(&value).map_err(|_| "LSP_ENCODE_FAILED")?;
         if body.len() > MAX_FRAME {
@@ -328,23 +371,34 @@ impl Session {
         }
         let mut bytes = format!("Content-Length: {}\r\n\r\n", body.len()).into_bytes();
         bytes.extend(body);
-        let remaining = self.deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            return Err("LSP_WRITE_TIMEOUT".into());
+        let mut pending = bytes;
+        loop {
+            if let Some(error) = self.reader_fault.lock().unwrap_or_else(|p| p.into_inner()).clone() {
+                return Err(error);
+            }
+            match self.writer.try_send(pending) {
+                Ok(()) => break,
+                Err(mpsc::TrySendError::Disconnected(_)) => return Err("LSP_WRITE_FAILED".into()),
+                Err(mpsc::TrySendError::Full(value)) => {
+                    pending = value;
+                    let remaining = self.deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() { return Err("LSP_WRITE_TIMEOUT".into()); }
+                    thread::sleep(remaining.min(Duration::from_millis(5)));
+                }
+            }
         }
-        self.writer.send(bytes).map_err(|_| "LSP_WRITE_FAILED")?;
-        self.write_result
-            .recv_timeout(remaining)
-            .map_err(|_| "LSP_WRITE_TIMEOUT")?
+        let remaining = self.deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() { return Err("LSP_WRITE_TIMEOUT".into()); }
+        match self.write_result.recv_timeout(remaining) {
+            Ok(result) => result,
+            Err(mpsc::RecvTimeoutError::Timeout) => Err("LSP_WRITE_TIMEOUT".into()),
+            Err(mpsc::RecvTimeoutError::Disconnected) => Err("LSP_WRITE_FAILED".into()),
+        }
     }
     fn rpc(&mut self, id: u64, method: &str, params: Value) -> Result<Value, String> {
         self.send(json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}))?;
         loop {
-            let remaining = self.deadline.saturating_duration_since(Instant::now());
-            let value = self
-                .reader
-                .recv_timeout(remaining)
-                .map_err(|_| "LSP_TIMEOUT_OR_CLOSED")??;
+            let value = self.recv_frame("LSP_TIMEOUT_OR_CLOSED")?;
             if value["id"] == json!(id) && value.get("method").is_none() {
                 if value.get("error").is_some() {
                     return Err("LSP_REMOTE_ERROR".into());
@@ -379,11 +433,7 @@ impl Session {
         let uri = uri_for(&snapshot_document)?;
         self.send(json!({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":uri,"languageId":"rust","version":1,"text":text}}}))?;
         loop {
-            let remaining = self.deadline.saturating_duration_since(Instant::now());
-            let mut value = self
-                .reader
-                .recv_timeout(remaining)
-                .map_err(|_| "LSP_DIAGNOSTICS_TIMEOUT")??;
+            let mut value = self.recv_frame("LSP_DIAGNOSTICS_TIMEOUT")?;
             if value["method"] == "textDocument/publishDiagnostics" && value["params"]["uri"] == uri
             {
                 let mut diagnostics = value["params"]["diagnostics"].take();
@@ -415,7 +465,7 @@ fn get_session(id: &str) -> Result<Arc<Mutex<Session>>, String> {
     sessions()
         .lock()
         .map_err(|_| "LSP_SESSION_CACHE")?
-        .get(id)
+        .ready.get(id)
         .cloned()
         .ok_or_else(|| "LSP_SESSION_NOT_FOUND".into())
 }
@@ -425,7 +475,7 @@ fn retire_expired() {
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
         let expired = cache
-            .iter()
+            .ready.iter()
             .filter_map(|(id, session)| {
                 session
                     .try_lock()
@@ -436,7 +486,7 @@ fn retire_expired() {
             .collect::<Vec<_>>();
         expired
             .iter()
-            .filter_map(|id| cache.remove(id))
+            .filter_map(|id| cache.ready.remove(id))
             .collect::<Vec<_>>()
     };
     drop(expired);
@@ -455,13 +505,24 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
             if request["profile"].as_str().unwrap_or("") != "rust_analyzer" {
                 return Err("LSP_PROFILE_UNSUPPORTED".into());
             }
-            let mut cache = sessions().lock().map_err(|_| "LSP_SESSION_CACHE")?;
-            if cache.len() >= MAX_SESSIONS {
-                return Err("LSP_SESSION_LIMIT".into());
-            }
+            let reservation = {
+                let mut cache = sessions().lock().map_err(|_| "LSP_SESSION_CACHE")?;
+                if cache.ready.len() + cache.starting >= MAX_SESSIONS {
+                    return Err("LSP_SESSION_LIMIT".into());
+                }
+                cache.starting += 1;
+                StartReservation { epoch: cache.epoch }
+            };
             let session = Session::start(root, request["timeout_seconds"].as_u64().unwrap_or(30))?;
             let id = format!("lsp-{}", uuid::Uuid::new_v4().simple());
-            cache.insert(id.clone(), Arc::new(Mutex::new(session)));
+            {
+                let mut cache = sessions().lock().map_err(|_| "LSP_SESSION_CACHE")?;
+                if cache.epoch != reservation.epoch {
+                    return Err("LSP_SESSION_CLOSED_DURING_START".into());
+                }
+                cache.ready.insert(id.clone(), Arc::new(Mutex::new(session)));
+            }
+            drop(reservation);
             Ok(
                 json!({"session_id":id,"profile":"rust_analyzer","sandbox":"appcontainer-no-network-readonly-snapshot"}),
             )
@@ -475,7 +536,8 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
                 .filter(|method| allowed_method(method))
                 .ok_or("LSP_METHOD_DISABLED")?;
             let session = get_session(id)?;
-            let mut session = session.lock().map_err(|_| "LSP_SESSION_BUSY")?;
+            let mut session = session.try_lock().map_err(|_| "LSP_SESSION_BUSY")?;
+            session.reset_deadline(request["timeout_seconds"].as_u64().unwrap_or(30));
             let mut params = request.get("params").cloned().unwrap_or(json!({}));
             let root = session.root.clone();
             let snapshot = session.snapshot.clone();
@@ -491,20 +553,27 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
                 .ok_or("LSP_SESSION_REQUIRED")?;
             let path = request["path"].as_str().ok_or("LSP_DOCUMENT_REQUIRED")?;
             let session = get_session(id)?;
-            let mut session = session.lock().map_err(|_| "LSP_SESSION_BUSY")?;
+            let mut session = session.try_lock().map_err(|_| "LSP_SESSION_BUSY")?;
+            session.reset_deadline(request["timeout_seconds"].as_u64().unwrap_or(30));
             let diagnostics = session.diagnostics(path)?;
             session.last_used = Instant::now();
             Ok(json!({"diagnostics":diagnostics}))
         }
         "lsp_close" => {
-            let mut cache = sessions().lock().map_err(|_| "LSP_SESSION_CACHE")?;
-            if let Some(id) = request["session_id"].as_str() {
-                Ok(json!({"closed_sessions":cache.remove(id).map(|_|1).unwrap_or(0)}))
-            } else {
-                let count = cache.len();
-                cache.clear();
-                Ok(json!({"closed_sessions":count}))
-            }
+            // Drop child processes after releasing the global cache mutex;
+            // terminating a Job Object must not freeze other LSP operations.
+            let removed = {
+                let mut cache = sessions().lock().map_err(|_| "LSP_SESSION_CACHE")?;
+                if let Some(id) = request["session_id"].as_str() {
+                    cache.ready.remove(id).into_iter().collect::<Vec<_>>()
+                } else {
+                    cache.epoch = cache.epoch.wrapping_add(1);
+                    std::mem::take(&mut cache.ready).into_values().collect::<Vec<_>>()
+                }
+            };
+            let count = removed.len();
+            drop(removed);
+            Ok(json!({"closed_sessions":count}))
         }
         _ => Err("LSP_ACTION_UNKNOWN".into()),
     }

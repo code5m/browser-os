@@ -203,15 +203,38 @@ jobs:
       - name: Windows Grid, IPC, Job Object and safe-file unit tests
         shell: pwsh
         run: |
+          # Compile once; test filters keep independent timeouts and reporting.
+          $buildOutput = @(cargo test --manifest-path src-tauri/Cargo.toml --locked `
+            --bin mvp-browser-os --no-run --message-format=json 2>&1)
+          if ($LASTEXITCODE -ne 0) {
+            $buildOutput | Select-Object -Last 45 | Write-Host
+            throw 'Windows native test harness compilation failed'
+          }
+          $artifacts = @($buildOutput | ForEach-Object {
+            try { $_ | ConvertFrom-Json -ErrorAction Stop } catch { $null }
+          } | Where-Object {
+            $_.reason -eq 'compiler-artifact' -and
+            $_.target.name -eq 'mvp-browser-os' -and
+            ($_.target.kind -contains 'bin') -and
+            $_.profile.test -eq $true -and $_.executable
+          })
+          if ($artifacts.Count -ne 1) {
+            throw "Expected one Windows native test binary, found $($artifacts.Count)"
+          }
+          $nativeTestExe = [string]$artifacts[0].executable
+          if (-not (Test-Path -LiteralPath $nativeTestExe -PathType Leaf)) {
+            throw 'Compiled Windows native test executable was not found'
+          }
+          Write-Host "WINDOWS_NATIVE_TEST_BINARY_READY=$nativeTestExe"
           function Invoke-NativeCargoTest([string]$filter, [int]$timeoutSeconds = 240) {
             $slug = ($filter -replace '[^A-Za-z0-9_.-]', '_')
             $stdout = Join-Path $env:RUNNER_TEMP "$slug.out.log"
             $stderr = Join-Path $env:RUNNER_TEMP "$slug.err.log"
             Remove-Item $stdout, $stderr -Force -ErrorAction SilentlyContinue
-            Write-Host "::group::cargo test $filter (timeout ${timeoutSeconds}s) at $(Get-Date -Format o)"
-            $process = Start-Process -FilePath 'cargo' -NoNewWindow -PassThru `
+            Write-Host "::group::native test $filter (timeout ${timeoutSeconds}s) at $(Get-Date -Format o)"
+            $process = Start-Process -FilePath $nativeTestExe -NoNewWindow -PassThru `
               -RedirectStandardOutput $stdout -RedirectStandardError $stderr `
-              -ArgumentList @('test', '--manifest-path', 'src-tauri/Cargo.toml', '--locked', '--bin', 'mvp-browser-os', $filter, '--', '--test-threads=1')
+              -ArgumentList @($filter, '--test-threads=1')
             $finished = $process.WaitForExit($timeoutSeconds * 1000)
             if (-not $finished) {
               try { $process.Kill($true) } catch {}
@@ -283,6 +306,14 @@ jobs:
             $failed | ForEach-Object { Write-Host "::error::Windows native check failed: $_" }
             throw "Windows native matrix failed $($failed.Count)/$($nativeTests.Count) checks"
           }
+      - name: Windows WebView2 profile ACL regression
+        if: github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        run: |
+          # Plugin belongs to its own workspace and is not in --bin tests.
+          cargo test --manifest-path tauri-browser-tabs/Cargo.toml `
+            -p tauri-plugin-browser-tabs --lib `
+            windows_profile_acl_contains_only_current_user_and_system -- --test-threads=1
       - name: Build release NSIS after successful Windows compilation
         if: github.event_name == 'workflow_dispatch'
         shell: pwsh
