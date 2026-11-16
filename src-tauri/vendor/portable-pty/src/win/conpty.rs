@@ -109,6 +109,13 @@ impl MasterPty for ConPtyMasterPty {
 }
 
 impl SlavePty for ConPtySlavePty {
+    fn spawn_command_in_job(&self, cmd: CommandBuilder, job: std::os::windows::io::RawHandle)
+        -> anyhow::Result<Box<dyn Child + Send + Sync>> {
+        let inner = self.inner.lock().unwrap();
+        let child = inner.con.spawn_command_in_job(cmd, job as _)?;
+        Ok(Box::new(child))
+    }
+
     fn spawn_command(&self, cmd: CommandBuilder) -> anyhow::Result<Box<dyn Child + Send + Sync>> {
         let inner = self.inner.lock().unwrap();
         let child = inner.con.spawn_command(cmd)?;

@@ -164,6 +164,15 @@ pub trait SlavePty {
     /// Spawns the command specified by the provided CommandBuilder
     fn spawn_command(&self, cmd: CommandBuilder) -> Result<Box<dyn Child + Send + Sync>, Error>;
 
+    /// On Windows, creates a ConPTY process already assigned to the Job
+    /// Object. Other Windows PTY backends must explicitly implement this
+    /// contract or fail closed; the caller retains ownership of the Job.
+    #[cfg(windows)]
+    fn spawn_command_in_job(&self, _cmd: CommandBuilder, _job: std::os::windows::io::RawHandle)
+        -> Result<Box<dyn Child + Send + Sync>, Error> {
+        Err(anyhow::anyhow!("atomic ConPTY Job-list spawn unsupported"))
+    }
+
     /// Spawns a process with its primary thread suspended. Windows callers can
     /// assign a Job Object before calling ResumeThread through their native
     /// process supervisor. Platforms without this primitive fail closed.

@@ -85,9 +85,10 @@ impl PsuedoCon {
                 size,
                 input.as_raw_handle() as _,
                 output.as_raw_handle() as _,
-                PSUEDOCONSOLE_INHERIT_CURSOR
-                    | PSEUDOCONSOLE_RESIZE_QUIRK
-                    | PSEUDOCONSOLE_WIN32_INPUT_MODE,
+                // Cursor inheritance requires an asynchronous request/reply
+                // handshake; without it some ConPTY launches can hang.
+                // Plain terminal input/output does not require any flags.
+                0,
                 &mut con,
             )
         };
@@ -112,16 +113,23 @@ impl PsuedoCon {
     }
 
     pub fn spawn_command(&self, cmd: CommandBuilder) -> anyhow::Result<WinChild> {
-        self.spawn_command_with_flags(cmd, 0)
+        self.spawn_command_with_options(cmd, 0, None)
+    }
+
+    /// Attach this ConPTY child atomically to a pre-created Job during
+    /// CreateProcessW. No post-spawn adoption, suspension, or ResumeThread.
+    pub fn spawn_command_in_job(&self, cmd: CommandBuilder, job: HANDLE) -> anyhow::Result<WinChild> {
+        ensure!(!job.is_null(), "ConPTY requires a valid Job Object");
+        self.spawn_command_with_options(cmd, 0, Some(job))
     }
 
     /// CreateProcessW returns before the child can execute user code. The
     /// caller must assign the process to its Job Object before resuming it.
     pub fn spawn_command_suspended(&self, cmd: CommandBuilder) -> anyhow::Result<WinChild> {
-        self.spawn_command_with_flags(cmd, CREATE_SUSPENDED)
+        self.spawn_command_with_options(cmd, CREATE_SUSPENDED, None)
     }
 
-    fn spawn_command_with_flags(&self, cmd: CommandBuilder, extra_flags: u32) -> anyhow::Result<WinChild> {
+    fn spawn_command_with_options(&self, cmd: CommandBuilder, extra_flags: u32, job: Option<HANDLE>) -> anyhow::Result<WinChild> {
         let mut si: STARTUPINFOEXW = unsafe { mem::zeroed() };
         si.StartupInfo.cb = mem::size_of::<STARTUPINFOEXW>() as u32;
         // Explicitly set the stdio handles as invalid handles otherwise
@@ -135,8 +143,14 @@ impl PsuedoCon {
         si.StartupInfo.hStdOutput = INVALID_HANDLE_VALUE;
         si.StartupInfo.hStdError = INVALID_HANDLE_VALUE;
 
-        let mut attrs = ProcThreadAttributeList::with_capacity(1)?;
+        let mut attrs = ProcThreadAttributeList::with_capacity(if job.is_some() { 2 } else { 1 })?;
         attrs.set_pty(self.con)?;
+        // PROC_THREAD_ATTRIBUTE_JOB_LIST requires an array of HANDLEs.
+        // Keep its storage alive until CreateProcessW returns.
+        let mut job_handles = [job.unwrap_or(ptr::null_mut())];
+        if job.is_some() {
+            attrs.set_job_list(&mut job_handles)?;
+        }
         si.lpAttributeList = attrs.as_mut_ptr();
 
         let mut pi: PROCESS_INFORMATION = unsafe { mem::zeroed() };

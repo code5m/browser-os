@@ -237,32 +237,52 @@ jobs:
               throw "Native test failed: $filter"
             }
           }
-          Invoke-NativeCargoTest 'windows_grid_tests'
-          Invoke-NativeCargoTest 'framing_tests'
-          Invoke-NativeCargoTest 'authorized_windows_read'
-          Invoke-NativeCargoTest 'pinned_handle_move'
-          Invoke-NativeCargoTest 'windows_cas'
-          Invoke-NativeCargoTest 'capabilities::workspace::cas::tests'
-          Invoke-NativeCargoTest 'local_owner_pipe_roundtrip'
-          Invoke-NativeCargoTest 'suspended_spawn_assigns_job_before_immediate_grandchild_can_run'
-          Invoke-NativeCargoTest 'dropping_job_after_parent_crash_kills_grandchild'
-          Invoke-NativeCargoTest 'windows_script_cancel_reaps_immediate_node_grandchild'
-          Invoke-NativeCargoTest 'windows_script_timeout_reaps_immediate_node_grandchild'
-          Invoke-NativeCargoTest 'windows_script_parent_crash_drops_job_and_reaps_grandchild'
-          Invoke-NativeCargoTest 'conpty_terminal_uses_suspended_spawn'
-          Invoke-NativeCargoTest 'job_tree_is_terminated'
-          Invoke-NativeCargoTest 'windows_script_whitelist_rejects_shell_execution'
-          Invoke-NativeCargoTest 'windows_node_script_executes_in_job'
-          Invoke-NativeCargoTest 'windows_coding_can_read_an_authorized_regular_file'
-          Invoke-NativeCargoTest 'windows_agent_'
-          Invoke-NativeCargoTest 'capabilities::agent::windows_sandbox::tests'
-          Invoke-NativeCargoTest 'real_appcontainer_stdio_initializes_lists_calls_and_scrubs_secrets'
-          Invoke-NativeCargoTest 'stdin_backpressure_obeys_deadline'
-          Invoke-NativeCargoTest 'snapshot_rejects_junctions_instead_of_copying_external_sources'
-          Invoke-NativeCargoTest 'real_rust_analyzer_runs_against_private_snapshot' 600
-          Invoke-NativeCargoTest 'fake_loopback_port_occupant_cannot_receive_snapshot_before_identity_proof'
-          Invoke-NativeCargoTest 'process_execution_requires_explicit_approval_and_rejects_shell_actions'
-          Invoke-NativeCargoTest 'knowledge_search_redacts_sensitive_lines'
+          # Run independent checks even if one fails, then fail this job
+          # once with a complete matrix. This does not relax release gates.
+          $nativeTests = @(
+            'windows_grid_tests'
+            'framing_tests'
+            'authorized_windows_read'
+            'pinned_handle_move'
+            'windows_cas'
+            'capabilities::workspace::cas::tests'
+            'local_owner_pipe_roundtrip'
+            'suspended_spawn_assigns_job_before_immediate_grandchild_can_run'
+            'dropping_job_after_parent_crash_kills_grandchild'
+            'windows_script_cancel_reaps_immediate_node_grandchild'
+            'windows_script_timeout_reaps_immediate_node_grandchild'
+            'windows_script_parent_crash_drops_job_and_reaps_grandchild'
+            'conpty_terminal_uses_atomic_job_list_and_reaps_immediate_grandchild'
+            'conpty_child_exit_code_259_is_terminal_and_kill_is_idempotent'
+            'job_tree_is_terminated'
+            'windows_script_whitelist_rejects_shell_execution'
+            'windows_node_script_executes_in_job'
+            'windows_coding_can_read_an_authorized_regular_file'
+            'windows_agent_'
+            'capabilities::agent::windows_sandbox::tests'
+            'real_appcontainer_stdio_initializes_lists_calls_and_scrubs_secrets'
+            'stdin_backpressure_obeys_deadline'
+            'snapshot_rejects_junctions_instead_of_copying_external_sources'
+            'real_rust_analyzer_runs_against_private_snapshot'
+            'fake_loopback_port_occupant_cannot_receive_snapshot_before_identity_proof'
+            'process_execution_requires_explicit_approval_and_rejects_shell_actions'
+            'knowledge_search_redacts_sensitive_lines'
+          )
+          $failed = [System.Collections.Generic.List[string]]::new()
+          foreach ($filter in $nativeTests) {
+            $seconds = if ($filter -eq 'real_rust_analyzer_runs_against_private_snapshot') { 600 } else { 240 }
+            try {
+              Invoke-NativeCargoTest -filter $filter -timeoutSeconds $seconds
+            } catch {
+              $failed.Add($filter)
+              Write-Host "::warning::Continuing native matrix after failed check: $filter"
+            }
+          }
+          Write-Host "WINDOWS_NATIVE_MATRIX=$($nativeTests.Count - $failed.Count)/$($nativeTests.Count) PASS"
+          if ($failed.Count -gt 0) {
+            $failed | ForEach-Object { Write-Host "::error::Windows native check failed: $_" }
+            throw "Windows native matrix failed $($failed.Count)/$($nativeTests.Count) checks"
+          }
       - name: Build release NSIS after successful Windows compilation
         if: github.event_name == 'workflow_dispatch'
         shell: pwsh

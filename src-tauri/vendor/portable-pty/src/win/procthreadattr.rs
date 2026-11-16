@@ -6,6 +6,9 @@ use winapi::shared::minwindef::DWORD;
 use winapi::um::processthreadsapi::*;
 
 const PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE: usize = 0x00020016;
+// ProcThreadAttributeValue(ProcThreadAttributeJobList, FALSE, TRUE, FALSE).
+// Windows 10+ assigns the child to these Jobs inside CreateProcessW.
+const PROC_THREAD_ATTRIBUTE_JOB_LIST: usize = 0x0002000D;
 
 pub struct ProcThreadAttributeList {
     data: Vec<u8>,
@@ -42,6 +45,26 @@ impl ProcThreadAttributeList {
 
     pub fn as_mut_ptr(&mut self) -> LPPROC_THREAD_ATTRIBUTE_LIST {
         self.data.as_mut_slice().as_mut_ptr() as *mut _
+    }
+
+    pub fn set_job_list(&mut self, jobs: &mut [winapi::um::winnt::HANDLE]) -> Result<(), Error> {
+        ensure!(!jobs.is_empty(), "empty process Job attribute list");
+        ensure!(jobs.iter().all(|job| !job.is_null()), "invalid process Job handle");
+        // UpdateProcThreadAttribute retains the caller's buffer until
+        // DeleteProcThreadAttributeList; its storage outlives CreateProcessW.
+        let res = unsafe {
+            UpdateProcThreadAttribute(
+                self.as_mut_ptr(),
+                0,
+                PROC_THREAD_ATTRIBUTE_JOB_LIST,
+                jobs.as_mut_ptr() as *mut _,
+                mem::size_of_val(jobs),
+                ptr::null_mut(),
+                ptr::null_mut(),
+            )
+        };
+        ensure!(res != 0, "UpdateProcThreadAttribute(job_list) failed: {}", IoError::last_os_error());
+        Ok(())
     }
 
     pub fn set_pty(&mut self, con: HPCON) -> Result<(), Error> {

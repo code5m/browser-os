@@ -589,28 +589,21 @@ pub fn spawn_terminal(
     cmd.env("TERM_PROGRAM", "mvp-browser-os");
     cmd.env("CLICOLOR_FORCE", "1");
 
+    // Create the kill-on-close Job first. ConPTY child joins it atomically
+    // during CreateProcessW via PROC_THREAD_ATTRIBUTE_JOB_LIST. Never fall
+    // back to an unowned or post-spawn adopted process.
     #[cfg(windows)]
-    let mut child = pair.slave.spawn_command_suspended(cmd)
-        .map_err(|e| format!("无法启动 suspended ConPTY shell: {e}"))?;
+    let job = Arc::new(crate::windows_process::JobObject::create_for_spawn()
+        .map_err(|e| format!("WINDOWS_TERMINAL_JOB_FAILED: {e}"))?);
+    #[cfg(windows)]
+    let mut child = pair.slave.spawn_command_in_job(cmd, job.as_raw_handle())
+        .map_err(|e| format!("WINDOWS_TERMINAL_JOB_FAILED: {e}"))?;
     #[cfg(not(windows))]
     let mut child = pair.slave.spawn_command(cmd)
         .map_err(|e| format!("无法启动 shell: {e}"))?;
     drop(pair.slave);
-
-    // A ConPTY child must belong to a kill-on-close Job Object. Returning an
-    // unsafe direct-child-only fallback would orphan PowerShell descendants.
     #[cfg(windows)]
-    let job = {
-        let pid = child.process_id().ok_or("WINDOWS_TERMINAL_PID_MISSING")?;
-        match crate::windows_process::JobObject::attach_suspended_pid(pid) {
-            Ok(job) => Some(Arc::new(job)),
-            Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(format!("WINDOWS_TERMINAL_JOB_FAILED: {error}"));
-            }
-        }
-    };
+    let job = Some(job);
 
     let master = pair.master;
     let mut writer = match master.take_writer() {

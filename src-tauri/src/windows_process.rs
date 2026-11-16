@@ -258,11 +258,14 @@ mod tests {
     }
 
     #[test]
-    fn conpty_terminal_uses_suspended_spawn_and_job_assignment_before_shell_runs() {
+    fn conpty_terminal_uses_atomic_job_list_and_reaps_immediate_grandchild() {
         use portable_pty::{native_pty_system, CommandBuilder, PtySize, PtySystem};
+        use std::io::{Read, Write};
+        use std::sync::{Arc, Mutex};
         use std::{thread, time::{Duration, Instant}};
 
-        let dir = std::env::temp_dir().join(format!("browseros-conpty-job-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir()
+            .join(format!("browseros-conpty-job-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let marker = dir.join("grandchild.pid");
         let primary = dir.join("primary.txt");
@@ -271,37 +274,79 @@ mod tests {
         let script = format!(
             "Set-Content -LiteralPath '{primary_text}' -Value 'started'; $psi=New-Object System.Diagnostics.ProcessStartInfo; $psi.FileName=$env:ComSpec; $psi.Arguments='/c ping -n 60 127.0.0.1 > NUL'; $psi.UseShellExecute=$false; $p=[System.Diagnostics.Process]::Start($psi); Set-Content -LiteralPath '{marker_text}' -Value $p.Id; Start-Sleep -Seconds 60"
         );
-        let pty = native_pty_system();
-        let pair = pty.openpty(PtySize { rows: 24, cols: 80, pixel_width: 0, pixel_height: 0 })
-            .expect("open ConPTY");
+        let pair = native_pty_system().openpty(
+            PtySize { rows: 24, cols: 80, pixel_width: 0, pixel_height: 0 }
+        ).expect("open ConPTY");
+        // ConPTY is a bidirectional pipe. Start draining output before
+        // CreateProcessW so startup control traffic never blocks the child.
+        let mut reader = pair.master.try_clone_reader().expect("clone ConPTY output");
+        let captured = Arc::new(Mutex::new(Vec::<u8>::new()));
+        let capture = Arc::clone(&captured);
+        let _pump = thread::spawn(move || {
+            let mut buf = [0u8; 4096];
+            while let Ok(n) = reader.read(&mut buf) {
+                if n == 0 { break; }
+                let mut output = capture.lock().unwrap();
+                output.extend_from_slice(&buf[..n]);
+                if output.len() > 8192 {
+                    let excess = output.len() - 8192;
+                    output.drain(..excess);
+                }
+            }
+        });
+        let job = JobObject::create_for_spawn().expect("create kill-on-close Job");
         let mut command = CommandBuilder::new("powershell.exe");
         command.args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script.as_str()]);
-        let mut child = pair.slave.spawn_command_suspended(command)
-            .expect("ConPTY process must be created suspended");
+        let mut child = pair.slave.spawn_command_in_job(command, job.as_raw_handle())
+            .expect("CreateProcessW must assign Job atomically with ConPTY");
         let pid = child.process_id().expect("ConPTY child PID");
-        assert!(!marker.exists(), "PowerShell must not execute before Job assignment");
-        let job = JobObject::attach_suspended_pid(pid).expect("assign Job then resume");
+        assert_ne!(pid, 0);
+        let mut writer = pair.master.take_writer().expect("open ConPTY input");
+        writer.write_all(b"\r\n").expect("write initial console input");
+        writer.flush().expect("flush initial console input");
 
         let deadline = Instant::now() + Duration::from_secs(30);
         let grandchild_pid = loop {
             if let Ok(text) = std::fs::read_to_string(&marker) {
                 if let Ok(pid) = text.trim().parse::<u32>() { break pid; }
             }
-            assert!(
-                Instant::now() < deadline,
-                "ConPTY PowerShell did not create its grandchild; primary={:?} marker={:?} exited={:?}",
-                std::fs::read_to_string(&primary).ok(),
-                std::fs::read_to_string(&marker).ok(),
-                child.try_wait()
-            );
+            if Instant::now() >= deadline {
+                let output = String::from_utf8_lossy(&captured.lock().unwrap()).into_owned();
+                panic!(
+                    "ConPTY did not create grandchild; primary={:?} marker={:?} status={:?} output={output:?}",
+                    std::fs::read_to_string(&primary).ok(),
+                    std::fs::read_to_string(&marker).ok(),
+                    child.try_wait()
+                );
+            }
             thread::sleep(Duration::from_millis(25));
         };
-        job.terminate().expect("terminate ConPTY process tree");
-        let _ = child.wait();
+        assert_eq!(std::fs::read_to_string(&primary).unwrap().trim(), "started");
+        job.terminate().expect("terminate ConPTY Job and all descendants");
+        child.wait().expect("wait ConPTY shell");
         assert!(wait_pid_exit(grandchild_pid, Duration::from_secs(8)),
             "ConPTY grandchild PID {grandchild_pid} escaped the Job Object");
+        drop(writer);
         drop(pair);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn conpty_child_exit_code_259_is_terminal_and_kill_is_idempotent() {
+        use portable_pty::{native_pty_system, CommandBuilder, PtySize, PtySystem};
+        let pair = native_pty_system().openpty(
+            PtySize { rows: 24, cols: 80, pixel_width: 0, pixel_height: 0 }
+        ).expect("open ConPTY");
+        let job = JobObject::create_for_spawn().expect("create Job");
+        let mut command = CommandBuilder::new("cmd.exe");
+        command.args(["/C", "exit /B 259"]);
+        let mut child = pair.slave.spawn_command_in_job(command, job.as_raw_handle())
+            .expect("spawn exit-code fixture in ConPTY Job");
+        let status = child.wait().expect("wait for signaled process");
+        assert_eq!(status.exit_code(), 259, "exit code 259 is not STILL_ACTIVE");
+        assert_eq!(child.try_wait().unwrap().unwrap().exit_code(), 259);
+        child.kill().expect("terminating an already-exited child is idempotent");
+        drop(pair);
     }
 
     #[test]
