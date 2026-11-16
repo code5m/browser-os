@@ -22,12 +22,22 @@ fn invalid_input() -> io::Error {
 }
 
 fn reject_reparse_ancestors(path: &Path) -> io::Result<()> {
-    if !path.is_absolute() || path.to_string_lossy().starts_with(r"\\") {
+    use std::path::{Component, Prefix};
+    // Rust canonicalize() on Windows returns a verbatim local disk path
+    // (\\?\C:\...), which is safe to inspect. Only UNC/device prefixes
+    // are rejected; never treat a verbatim DISK path as an unsafe UNC share.
+    let local_disk = matches!(
+        path.components().next(),
+        Some(Component::Prefix(prefix))
+            if matches!(prefix.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_))
+    );
+    if !path.is_absolute() || !local_disk {
         return Err(denied());
     }
     let mut current = PathBuf::new();
     for component in path.components() {
         current.push(component.as_os_str());
+        if !current.has_root() { continue; } // Skip drive-only C: prefix.
         match std::fs::symlink_metadata(&current) {
             Ok(metadata) if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 => {
                 return Err(denied());

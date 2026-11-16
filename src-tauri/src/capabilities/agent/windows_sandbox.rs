@@ -47,12 +47,16 @@ fn wide_text(value: &str) -> Result<Vec<u16>, String> {
     wide(std::ffi::OsStr::new(value))
 }
 fn no_reparse_path(path: &Path) -> Result<(), String> {
-    if !path.is_absolute() {
-        return Err("SANDBOX_RUNTIME_NOT_ABSOLUTE".into());
-    }
+    use std::path::{Component, Prefix};
+    if !path.is_absolute() || !matches!(
+        path.components().next(),
+        Some(Component::Prefix(prefix))
+            if matches!(prefix.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_))
+    ) { return Err("SANDBOX_RUNTIME_NOT_ABSOLUTE".into()); }
     let mut current = PathBuf::new();
     for component in path.components() {
         current.push(component.as_os_str());
+        if !current.has_root() { continue; }
         let metadata =
             std::fs::symlink_metadata(&current).map_err(|_| "SANDBOX_PATH_INSPECTION_FAILED")?;
         if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
@@ -183,23 +187,28 @@ impl SandboxProfile {
         &self.sid_string
     }
 
-    /// Grant read/execute only on the exact approved runtime and traversal on
-    /// its ancestors. No recursive ACE is added to runtime parent directories.
+    /// Never modify Windows or system-directory ACLs to launch a sandbox.
+    /// Standard Windows runtimes already have OS-managed AppContainer RX.
+    /// Third-party runtime files may receive RX on that file only, without
+    /// broadening ancestor directories or granting write/network access.
     fn grant_runtime(&self, runtime: &Path) -> Result<(), String> {
+        let system32 = system_binary("cmd.exe")?
+            .parent().ok_or("SANDBOX_SYSTEM_DIRECTORY_UNAVAILABLE")?.to_path_buf();
+        let system_root = system32.parent().ok_or("SANDBOX_SYSTEM_DIRECTORY_UNAVAILABLE")?;
+        let canonical = runtime.canonicalize().map_err(|_| "SANDBOX_RUNTIME_MISSING")?;
+        if canonical.starts_with(system_root) {
+            // Never change ACLs under C:\\Windows (or its siblings).
+            return Ok(());
+        }
         let icacls = system_binary("icacls.exe")?;
-        for path in runtime.ancestors() {
-            let grant = format!("*{}:(RX)", self.sid_string);
-            let output = std::process::Command::new(&icacls)
-                .arg(path)
-                .args(["/grant:r", grant.as_str()])
-                .output()
-                .map_err(|_| "SANDBOX_RUNTIME_ACL")?;
-            if !output.status.success() {
-                return Err("SANDBOX_RUNTIME_ACL".into());
-            }
-            if path.parent().is_none() {
-                break;
-            }
+        let grant = format!("*{}:(RX)", self.sid_string);
+        let output = std::process::Command::new(&icacls)
+            .arg(&canonical)
+            .args(["/grant:r", grant.as_str()])
+            .output()
+            .map_err(|_| "SANDBOX_RUNTIME_ACL")?;
+        if !output.status.success() {
+            return Err("SANDBOX_RUNTIME_ACL".into());
         }
         Ok(())
     }

@@ -24,12 +24,16 @@ fn sessions() -> &'static Mutex<HashMap<String, Arc<Mutex<Session>>>> {
     SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 fn no_reparse(path: &Path) -> Result<(), String> {
-    if !path.is_absolute() {
-        return Err("LSP_ROOT_INVALID".into());
-    }
+    use std::path::{Component, Prefix};
+    if !path.is_absolute() || !matches!(
+        path.components().next(),
+        Some(Component::Prefix(prefix))
+            if matches!(prefix.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_))
+    ) { return Err("LSP_ROOT_INVALID".into()); }
     let mut current = PathBuf::new();
     for component in path.components() {
         current.push(component.as_os_str());
+        if !current.has_root() { continue; }
         let metadata = fs::symlink_metadata(&current).map_err(|_| "LSP_PATH_INSPECTION_FAILED")?;
         if metadata.file_attributes() & REPARSE != 0 {
             return Err("LSP_REPARSE_DENIED".into());
@@ -520,13 +524,21 @@ mod tests {
         fs::create_dir_all(&outside).unwrap();
         fs::write(root.join("src/lib.rs"), "pub fn fixture() {}\n").unwrap();
         fs::write(outside.join("secret.rs"), "fn must_not_copy() {}\n").unwrap();
-        let junction = std::process::Command::new("cmd")
-            .args(["/C", "mklink", "/J"])
-            .arg(root.join("src/link"))
-            .arg(&outside)
+        let command = format!(
+            "mklink /J \"{}\" \"{}\"",
+            root.join("src/link").display(),
+            outside.display(),
+        );
+        let junction = std::process::Command::new("cmd.exe")
+            .args(["/D", "/S", "/C", &command])
             .output()
             .unwrap();
-        assert!(junction.status.success());
+        assert!(
+            junction.status.success(),
+            "junction fixture creation failed: stdout={:?} stderr={:?}",
+            String::from_utf8_lossy(&junction.stdout),
+            String::from_utf8_lossy(&junction.stderr),
+        );
         let profile = SandboxProfile::create().unwrap();
         assert_eq!(
             snapshot(&root, &profile).unwrap_err(),
