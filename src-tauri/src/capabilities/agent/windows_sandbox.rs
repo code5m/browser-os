@@ -20,12 +20,15 @@ use windows_sys::Win32::Foundation::{
     CloseHandle, HANDLE, HANDLE_FLAG_INHERIT, LocalFree, SetHandleInformation, WAIT_OBJECT_0,
     WAIT_TIMEOUT,
 };
-use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
+use windows_sys::Win32::Security::Authorization::{
+    ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
+};
 use windows_sys::Win32::Security::Isolation::{
     CreateAppContainerProfile, DeleteAppContainerProfile, GetAppContainerFolderPath,
 };
 use windows_sys::Win32::Security::{
-    FreeSid, GetTokenInformation, PSID, SECURITY_ATTRIBUTES, SECURITY_CAPABILITIES,
+    FreeSid, GetTokenInformation, PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES,
+    SECURITY_CAPABILITIES,
     TOKEN_QUERY, TOKEN_USER, TokenUser,
 };
 use windows_sys::Win32::System::Com::CoTaskMemFree;
@@ -35,7 +38,8 @@ use windows_sys::Win32::System::Threading::{
     CREATE_UNICODE_ENVIRONMENT, CreateProcessW, DeleteProcThreadAttributeList,
     EXTENDED_STARTUPINFO_PRESENT, InitializeProcThreadAttributeList,
     PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES,
-    GetCurrentProcess, OpenProcessToken, PROCESS_INFORMATION, STARTF_USESTDHANDLES,
+    GetCurrentProcess, GetExitCodeProcess, OpenProcessToken, PROCESS_INFORMATION,
+    STARTF_USESTDHANDLES,
     STARTUPINFOEXW, TerminateProcess, UpdateProcThreadAttribute, WaitForSingleObject,
 };
 
@@ -384,6 +388,13 @@ pub struct SandboxProcess {
 }
 unsafe impl Send for SandboxProcess {}
 impl SandboxProcess {
+    pub fn exit_code(&self) -> Result<Option<u32>, String> {
+        let mut code = 0u32;
+        if unsafe { GetExitCodeProcess(self.handle, &mut code) } == 0 {
+            return Err(win32_error("SANDBOX_EXIT_CODE"));
+        }
+        Ok(if code == 259 { None } else { Some(code) })
+    }
     pub fn try_wait(&self) -> Result<bool, String> {
         match unsafe { WaitForSingleObject(self.handle, 0) } {
             WAIT_OBJECT_0 => Ok(true),
@@ -414,12 +425,34 @@ pub struct SandboxChild {
     pub process: SandboxProcess,
 }
 
-fn pipe() -> Result<(File, File), String> {
+fn appcontainer_pipe_security(user: &str, sid: &str) -> Result<PSECURITY_DESCRIPTOR, String> {
+    // AppContainer writes are checked against the pipe object DACL. The
+    // default pipe DACL belongs to the host user, so the sandbox SID must be
+    // granted explicit access or the child inherits a handle it cannot use.
+    let sddl = format!("D:(A;;GA;;;SY)(A;;GA;;;{user})(A;;GA;;;{sid})");
+    let text = wide_text(&sddl)?;
+    let mut descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
+    let mut size = 0u32;
+    if unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            text.as_ptr(),
+            1,
+            &mut descriptor,
+            &mut size,
+        )
+    } == 0
+    {
+        return Err(win32_error("SANDBOX_PIPE_ACL"));
+    }
+    Ok(descriptor)
+}
+
+fn pipe(security: PSECURITY_DESCRIPTOR) -> Result<(File, File), String> {
     let mut read = ptr::null_mut();
     let mut write = ptr::null_mut();
     let attributes = SECURITY_ATTRIBUTES {
         nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
-        lpSecurityDescriptor: ptr::null_mut(),
+        lpSecurityDescriptor: security,
         bInheritHandle: 1,
     };
     if unsafe { CreatePipe(&mut read, &mut write, &attributes, 0) } == 0 {
@@ -554,8 +587,11 @@ fn spawn_inner(
     // CreatePipe returns (READ, WRITE), not (WRITE, READ). The parent
     // writes to child stdin and reads from child stdout. Swapping these
     // ends caused ERROR_ACCESS_DENIED on stdout and MCP_WRITE_FAILED.
-    let (child_input, parent_input) = pipe()?;
-    let (parent_output, child_output) = pipe()?;
+    let user_sid = current_user_sid()?;
+    let pipe_security = appcontainer_pipe_security(&user_sid, &profile.sid_string)?;
+    let (child_input, parent_input) = pipe(pipe_security)?;
+    let (parent_output, child_output) = pipe(pipe_security)?;
+    unsafe { LocalFree(pipe_security) };
     inheritable(parent_output.as_raw_handle(), false)?;
     inheritable(parent_input.as_raw_handle(), false)?;
     inheritable(child_input.as_raw_handle(), true)?;
@@ -726,7 +762,11 @@ mod tests {
         let mut output = Vec::new();
         child.stdout.read_to_end(&mut output).unwrap();
         let text = String::from_utf8_lossy(&output);
-        assert!(text.contains("NETWORK_DENIED"), "{text}");
+        assert!(
+            text.contains("NETWORK_DENIED"),
+            "exit={:?} text={text}",
+            child.process.exit_code()
+        );
         assert!(text.contains("HOST_READ_DENIED"), "{text}");
         let _ = std::fs::remove_file(host_file);
     }
@@ -752,7 +792,11 @@ mod tests {
         drop(child.stdin);
         let mut output = String::new();
         child.stdout.read_to_string(&mut output).unwrap();
-        assert!(output.contains("sandbox-ok"), "{output}");
+        assert!(
+            output.contains("sandbox-ok"),
+            "exit={:?} output={output:?}",
+            child.process.exit_code()
+        );
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while !child.process.try_wait().unwrap() {
             assert!(std::time::Instant::now() < deadline);
