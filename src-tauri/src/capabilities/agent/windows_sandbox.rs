@@ -132,7 +132,16 @@ fn current_user_sid() -> Result<String, String> {
     };
     unsafe { LocalFree(sid_text as _); }
     let value = value?;
-    if !value.starts_with("S-1-") || !value.bytes().all(|b| b.is_ascii_digit() || b == b'-') {
+    // The "S" in a Windows SID is not a digit. Validate the numeric
+    // components after the mandatory "S-1-" prefix rather than rejecting
+    // every valid token SID (which prevented LSP snapshot ACL setup).
+    let valid = value.strip_prefix("S-1-").is_some_and(|suffix| {
+        !suffix.is_empty()
+            && suffix.split('-').all(|component| {
+                !component.is_empty() && component.bytes().all(|byte| byte.is_ascii_digit())
+            })
+    });
+    if !valid {
         return Err("SANDBOX_USER_SID_INVALID".into());
     }
     Ok(value)
@@ -463,8 +472,11 @@ fn spawn_inner(
     environment: &[(String, String)],
     current_directory: &Path,
 ) -> Result<SandboxChild, String> {
-    let (child_input, parent_output) = pipe()?;
-    let (parent_input, child_output) = pipe()?;
+    // CreatePipe returns (READ, WRITE), not (WRITE, READ). The parent
+    // writes to child stdin and reads from child stdout. Swapping these
+    // ends caused ERROR_ACCESS_DENIED on stdout and MCP_WRITE_FAILED.
+    let (child_input, parent_input) = pipe()?;
+    let (parent_output, child_output) = pipe()?;
     inheritable(parent_output.as_raw_handle(), false)?;
     inheritable(parent_input.as_raw_handle(), false)?;
     inheritable(child_input.as_raw_handle(), true)?;

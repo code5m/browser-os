@@ -124,8 +124,12 @@ fn current_windows_user_sid() -> Result<String> {
         .ok_or_else(|| BrowserTabError::Platform("Windows user SID unavailable".into()))?;
     let fields: Vec<_> = line.trim_start_matches('\u{feff}').split(',').collect();
     let sid = fields.get(1).map(|value| value.trim().trim_matches('"'))
-        .filter(|value| value.starts_with("S-1-")
-            && value.bytes().all(|byte| byte.is_ascii_digit() || byte == b'-'))
+        .filter(|value| value.strip_prefix("S-1-").is_some_and(|suffix| {
+            !suffix.is_empty()
+                && suffix.split('-').all(|part| {
+                    !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit())
+                })
+        }))
         .ok_or_else(|| BrowserTabError::Platform("Windows user SID invalid".into()))?;
     Ok(sid.to_string())
 }

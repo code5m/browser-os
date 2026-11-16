@@ -369,10 +369,33 @@ impl Session {
         if remaining.is_zero() {
             return Err("MCP_WRITE_TIMEOUT".into());
         }
-        self.writer.send(bytes).map_err(|_| "MCP_WRITE_FAILED")?;
+        // A bounded sync channel can itself block indefinitely on send().
+        // Observe the same end-to-end deadline when the writer is busy.
+        let mut queued = bytes;
+        loop {
+            match self.writer.try_send(queued) {
+                Ok(()) => break,
+                Err(mpsc::TrySendError::Disconnected(_)) => {
+                    return Err("MCP_WRITE_FAILED".into());
+                }
+                Err(mpsc::TrySendError::Full(message)) => {
+                    queued = message;
+                    let remaining = self.deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        return Err("MCP_WRITE_TIMEOUT".into());
+                    }
+                    thread::sleep(remaining.min(Duration::from_millis(5)));
+                }
+            }
+        }
+        let remaining = self.deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err("MCP_WRITE_TIMEOUT".into());
+        }
         match self.write_result.recv_timeout(remaining) {
             Ok(result) => result,
-            Err(_) => Err("MCP_WRITE_TIMEOUT".into()),
+            Err(mpsc::RecvTimeoutError::Timeout) => Err("MCP_WRITE_TIMEOUT".into()),
+            Err(mpsc::RecvTimeoutError::Disconnected) => Err("MCP_WRITE_FAILED".into()),
         }
     }
     fn rpc(&mut self, id: u64, method: &str, params: Value) -> Result<Value, String> {
@@ -490,7 +513,7 @@ mod tests {
     fn shell_commands_are_rejected_before_profile_creation() {
         let root = root();
         let error = execute(&root, &root, json!({"action":"mcp_tools","approved":true,"server":{"command":"C:\\Windows\\System32\\cmd.exe","args":[]}})).unwrap_err();
-        assert_eq!(error, "MCP_START_FAILED");
+        assert_eq!(error, "MCP_SHELL_COMMAND_REJECTED");
         // Direct invocation of Session exposes the specific contract without
         // turning the public error into a sandbox implementation disclosure.
         let error = match Session::start(
@@ -512,8 +535,18 @@ mod tests {
             .as_array_mut()
             .unwrap()
             .push(json!("blocked"));
+        // The fixture deliberately never consumes stdin. Bypass the
+        // initialize RPC here: waiting for its response tests read timeout,
+        // not the large-frame stdin backpressure contract.
+        let mut session = Session::start(&root, &server, 1)
+            .expect("start blocked MCP fixture inside AppContainer");
         let start = Instant::now();
-        let error = execute(&root, &root, json!({"action":"mcp_call","approved":true,"server":server,"tool":"echo","arguments":{"text":"a".repeat(100_000)},"timeout_seconds":1})).unwrap_err();
+        let error = session.send(json!({
+            "jsonrpc":"2.0",
+            "id":2,
+            "method":"tools/call",
+            "params":{"name":"echo","arguments":{"text":"a".repeat(100_000)}}
+        })).unwrap_err();
         assert_eq!(error, "MCP_WRITE_TIMEOUT");
         assert!(start.elapsed() < Duration::from_secs(4));
     }
