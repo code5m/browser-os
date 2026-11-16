@@ -237,7 +237,11 @@ impl Session {
         for value in raw_args {
             let value = value.as_str().ok_or("MCP_ARGS_INVALID")?;
             let path = PathBuf::from(value);
-            if path.is_absolute() && path.is_file() {
+            if path.is_absolute() {
+                // Never pass through an absolute host path, even when the
+                // file is absent during validation. Only pinned readback
+                // copies under our per-profile state directory are allowed.
+                if !path.is_file() { return Err("MCP_PAYLOAD_NOT_FOUND".into()); }
                 let canonical = path.canonicalize().map_err(|_| "MCP_PAYLOAD_NOT_FOUND")?;
                 if !canonical.starts_with(root) {
                     return Err("MCP_PAYLOAD_OUTSIDE_WORKSPACE".into());
@@ -304,13 +308,14 @@ impl Session {
                 environment.push((name.clone(), value.to_owned()));
             }
         }
-        let SandboxChild {
-            stdin,
-            stdout,
-            process,
-        } = profile
-            .spawn(&executable, &args, &environment, &state)
-            .map_err(|_| "MCP_START_FAILED")?;
+        let child = profile.spawn(&executable, &args, &environment, &state)
+            .map_err(|error| {
+                #[cfg(test)]
+                eprintln!("MCP_SANDBOX_SPAWN_DETAIL={error}");
+                let _ = error;
+                "MCP_START_FAILED".to_string()
+            })?;
+        let SandboxChild { stdin, stdout, process } = child;
         let (writer, write_rx) = mpsc::sync_channel::<Vec<u8>>(4);
         let (write_tx, write_result) = mpsc::channel();
         thread::spawn(move || {
@@ -450,7 +455,18 @@ pub fn execute(root: &Path, storage: &Path, request: Value) -> Result<Value, Str
         &config,
         request["timeout_seconds"].as_u64().unwrap_or(20),
     )?;
-    session.rpc(1, "initialize", json!({"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"BrowserOS","version":"0.1.0"}}))?;
+    let initialized = session.rpc(1, "initialize", json!({"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"BrowserOS","version":"0.1.0"}}));
+    #[cfg(test)]
+    if let Err(ref error) = initialized {
+        // Test-only diagnostics; never leak keyring or config-supplied secrets.
+        let mut stderr = session.process.profile().stderr_for_test();
+        for secret in session.secrets.iter().filter(|value| !value.is_empty()) {
+            stderr = stderr.replace(secret, "[redacted]");
+        }
+        eprintln!("MCP_INITIALIZE_DIAG={error}; exit={:?}; stderr={stderr:?}",
+            session.process.exit_code());
+    }
+    initialized?;
     session.send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}))?;
     let mut result = if action == "mcp_tools" {
         session.rpc(2, "tools/list", json!({}))?

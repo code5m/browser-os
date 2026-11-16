@@ -195,7 +195,6 @@ impl SandboxProfile {
             .args(["/inheritance:r", "/grant:r"])
             .arg(format!("*{user}:(OI)(CI)F"))
             .arg("*S-1-5-18:(OI)(CI)F")
-            .arg("*S-1-15-2-1:(OI)(CI)M")
             .arg(format!("*{}:(OI)(CI)M", self.sid_string))
             .arg("/T")
             .output()
@@ -209,6 +208,18 @@ impl SandboxProfile {
         Ok(snapshot)
     }
     pub fn sid_string(&self) -> &str { &self.sid_string }
+
+    #[cfg(test)]
+    pub fn stderr_for_test(&self) -> String {
+        let path = self.folder.join("state/sandbox-stderr.log");
+        let bytes = std::fs::read(path).unwrap_or_default();
+        let tail = if bytes.len() > 16 * 1024 {
+            &bytes[bytes.len() - 16 * 1024..]
+        } else {
+            &bytes[..]
+        };
+        String::from_utf8_lossy(tail).into_owned()
+    }
 
     fn stage_runtime(&self, runtime: &Path) -> Result<PathBuf, String> {
         let canonical = runtime.canonicalize().map_err(|_| "SANDBOX_RUNTIME_MISSING")?;
@@ -313,11 +324,19 @@ pub struct SandboxProcess {
 unsafe impl Send for SandboxProcess {}
 impl SandboxProcess {
     pub fn exit_code(&self) -> Result<Option<u32>, String> {
-        let mut code = 0u32;
-        if unsafe { GetExitCodeProcess(self.handle, &mut code) } == 0 {
-            return Err(win32_error("SANDBOX_EXIT_CODE"));
+        // Exit code 259 is a valid terminal exit code; only the kernel
+        // process signaled state can establish process completion.
+        match unsafe { WaitForSingleObject(self.handle, 0) } {
+            WAIT_TIMEOUT => Ok(None),
+            WAIT_OBJECT_0 => {
+                let mut code = 0u32;
+                if unsafe { GetExitCodeProcess(self.handle, &mut code) } == 0 {
+                    return Err(win32_error("SANDBOX_EXIT_CODE"));
+                }
+                Ok(Some(code))
+            }
+            _ => Err(win32_error("SANDBOX_WAIT")),
         }
-        Ok(if code == 259 { None } else { Some(code) })
     }
     pub fn try_wait(&self) -> Result<bool, String> {
         match unsafe { WaitForSingleObject(self.handle, 0) } {
@@ -342,7 +361,9 @@ pub struct SandboxChild {
 }
 
 fn appcontainer_pipe_security(user: &str, sid: &str) -> Result<PSECURITY_DESCRIPTOR, String> {
-    let sddl = format!("D:(A;;GA;;;SY)(A;;GA;;;{user})(A;;GA;;;AC)(A;;GA;;;{sid})");
+    // AC means ALL APPLICATION PACKAGES. Never grant the entire lowbox
+    // population access to a private stdio pipe: only this AppContainer SID.
+    let sddl = format!("D:(A;;GA;;;SY)(A;;GA;;;{user})(A;;GA;;;{sid})");
     let text = wide_text(&sddl)?;
     let mut descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
     let mut size = 0u32;
@@ -350,6 +371,12 @@ fn appcontainer_pipe_security(user: &str, sid: &str) -> Result<PSECURITY_DESCRIP
         ConvertStringSecurityDescriptorToSecurityDescriptorW(text.as_ptr(), 1, &mut descriptor, &mut size)
     } == 0 { return Err(win32_error("SANDBOX_PIPE_ACL")); }
     Ok(descriptor)
+}
+struct OwnedSecurityDescriptor(PSECURITY_DESCRIPTOR);
+impl Drop for OwnedSecurityDescriptor {
+    fn drop(&mut self) {
+        if !self.0.is_null() { unsafe { LocalFree(self.0); } }
+    }
 }
 fn pipe(security: PSECURITY_DESCRIPTOR) -> Result<(File, File), String> {
     let mut read = ptr::null_mut();
@@ -424,7 +451,12 @@ fn environment_block(configured: &[(String, String)], state: &Path) -> Result<Ve
     }
     values.insert("LOCALAPPDATA".into(), local_app_data);
     let state_text = state.to_str().ok_or("SANDBOX_STATE_NOT_UNICODE")?;
-    for key in ["HOME", "USERPROFILE", "TEMP", "TMP"] { values.insert(key.into(), state_text.into()); }
+    // Private roaming and temp paths keep Node/rust-analyzer from probing
+    // the host user's real profile. LOCALAPPDATA remains OS-real as required
+    // for lowbox process initialization.
+    for key in ["HOME", "USERPROFILE", "APPDATA", "TEMP", "TMP"] {
+        values.insert(key.into(), state_text.into());
+    }
     let mut block = Vec::<u16>::new();
     for (key, value) in values {
         block.extend(key.encode_utf16());
@@ -457,23 +489,34 @@ fn spawn_inner(
     environment: &[(String, String)], current_directory: &Path,
 ) -> Result<SandboxChild, String> {
     let user_sid = current_user_sid()?;
-    let pipe_security = appcontainer_pipe_security(&user_sid, &profile.sid_string)?;
-    let (child_input, parent_input) = pipe(pipe_security)?;
-    let (parent_output, child_output) = pipe(pipe_security)?;
-    unsafe { LocalFree(pipe_security) };
+    let pipe_security = OwnedSecurityDescriptor(
+        appcontainer_pipe_security(&user_sid, &profile.sid_string)?
+    );
+    let (child_input, parent_input) = pipe(pipe_security.0)?;
+    let (parent_output, child_output) = pipe(pipe_security.0)?;
+    drop(pipe_security);
     inheritable(parent_output.as_raw_handle(), false)?;
     inheritable(parent_input.as_raw_handle(), false)?;
     inheritable(child_input.as_raw_handle(), true)?;
     inheritable(child_output.as_raw_handle(), true)?;
-    let stderr_path = current_directory.join("sandbox-stderr.log");
-    let error_file = OpenOptions::new().create(true).append(true).open(&stderr_path)
+    // Native tests retain child stderr to diagnose runtime/ACL failures.
+    // In production, untrusted MCP/LSP tools must not be able to append
+    // unlimited stderr to disk or persist credentials in a diagnostic file.
+    #[cfg(test)]
+    let error_file = OpenOptions::new().create(true).truncate(true).write(true)
+        .open(current_directory.join("sandbox-stderr.log"))
         .map_err(|_| "SANDBOX_STDERR_LOG")?;
+    #[cfg(not(test))]
+    let error_file = OpenOptions::new().write(true).open("NUL")
+        .map_err(|_| "SANDBOX_STDERR_SINK")?;
     inheritable(error_file.as_raw_handle(), true)?;
 
     let mut size = 0usize;
     unsafe { let _ = InitializeProcThreadAttributeList(ptr::null_mut(), 2, 0, &mut size); }
     if size == 0 { return Err("SANDBOX_ATTRIBUTE_SIZE".into()); }
-    let mut attribute_storage = vec![0u8; size];
+    // PROC_THREAD_ATTRIBUTE_LIST requires native pointer alignment.
+    let words = size.div_ceil(std::mem::size_of::<usize>());
+    let mut attribute_storage = vec![0usize; words];
     let attribute_list = attribute_storage.as_mut_ptr() as *mut _;
     if unsafe { InitializeProcThreadAttributeList(attribute_list, 2, 0, &mut size) } == 0 {
         return Err(win32_error("SANDBOX_ATTRIBUTE_INIT"));
@@ -501,8 +544,9 @@ fn spawn_inner(
             ptr::null_mut(), ptr::null()) != 0
     };
     if !handles_ok {
+        let error = win32_error("SANDBOX_ATTRIBUTE_UPDATE");
         cleanup_attributes(attribute_list);
-        return Err(win32_error("SANDBOX_ATTRIBUTE_UPDATE"));
+        return Err(error);
     }
 
     let runtime_text = runtime.to_str().ok_or("SANDBOX_RUNTIME_NOT_UNICODE")?;
@@ -530,9 +574,16 @@ fn spawn_inner(
             environment.as_ptr() as *const _, directory.as_ptr(),
             &startup.StartupInfo, &mut information)
     };
+    // Capture GetLastError before cleaning up attribute lists or handles:
+    // those Win32 calls may overwrite the real CreateProcess failure code.
+    let create_error = if created == 0 {
+        Some(win32_error("SANDBOX_CREATE_PROCESS"))
+    } else {
+        None
+    };
     cleanup_attributes(attribute_list);
     drop(child_input); drop(child_output); drop(error_file);
-    if created == 0 { return Err(win32_error("SANDBOX_CREATE_PROCESS")); }
+    if let Some(error) = create_error { return Err(error); }
     let job = match JobObject::attach_suspended_pid(information.dwProcessId) {
         Ok(job) => job,
         Err(error) => {
@@ -558,51 +609,120 @@ mod tests {
     use std::io::Read;
     use std::time::Duration;
 
+    // The read has a deadline so a broken sandbox child cannot block the
+    // entire Windows native matrix until the outer CI timeout.
+    fn run_isolated(
+        executable: &Path, args: &[String], env: &[(String, String)],
+    ) -> Result<(String, String, u32), String> {
+        let profile = SandboxProfile::create()?;
+        let state = profile.state_dir()?;
+        let SandboxChild { stdin, mut stdout, process } =
+            profile.spawn(executable, args, env, &state)?;
+        drop(stdin);
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        std::thread::spawn(move || {
+            let mut output = Vec::new();
+            let result = stdout.read_to_end(&mut output)
+                .map(|_| output)
+                .map_err(|_| "SANDBOX_FIXTURE_READ".to_string());
+            let _ = sender.send(result);
+        });
+        let bytes = match receiver.recv_timeout(Duration::from_secs(8)) {
+            Ok(result) => result?,
+            Err(_) => {
+                let _ = process.terminate();
+                return Err("SANDBOX_FIXTURE_STDOUT_TIMEOUT".into());
+            }
+        };
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !process.try_wait()? {
+            if Instant::now() >= deadline {
+                let _ = process.terminate();
+                return Err("SANDBOX_FIXTURE_EXIT_TIMEOUT".into());
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let exit = process.exit_code()?.ok_or("SANDBOX_FIXTURE_EXIT_UNAVAILABLE")?;
+        let stderr = std::fs::read(state.join("sandbox-stderr.log")).unwrap_or_default();
+        Ok((
+            String::from_utf8_lossy(&bytes).into_owned(),
+            String::from_utf8_lossy(&stderr).into_owned(),
+            exit,
+        ))
+    }
+
     #[test]
     fn appcontainer_runs_without_host_workspace_or_loopback_access() {
-        let runtime = system_binary("WindowsPowerShell\\v1.0\\powershell.exe")
-            .expect("Windows PowerShell fixture");
-        let host_file = std::env::temp_dir().join(format!(
-            "browseros-sandbox-host-{}.txt", uuid::Uuid::new_v4()));
+        // A closed port is not a network test: unrestricted callers fail too.
+        // Use a live localhost listener and first prove host connectivity.
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0))
+            .expect("host loopback fixture");
+        let endpoint = listener.local_addr().unwrap();
+        let host_probe = std::net::TcpStream::connect_timeout(
+            &endpoint, Duration::from_secs(2),
+        ).expect("host loopback positive control");
+        let (accepted, _) = listener.accept().expect("host accepted baseline");
+        drop(host_probe);
+        drop(accepted);
+        listener.set_nonblocking(true).unwrap();
+        let curl = system_binary("curl.exe").expect("Windows System32 curl fixture");
+        let args = vec![
+            "-sS".into(), "--connect-timeout".into(), "2".into(),
+            "--max-time".into(), "3".into(), "--noproxy".into(),
+            "*".into(), format!("http://127.0.0.1:{}/probe", endpoint.port()),
+        ];
+        let (stdout, stderr, exit) =
+            run_isolated(&curl, &args, &[]).expect("run curl in no-network AppContainer");
+        assert_ne!(exit, 0, "sandbox connected to localhost: {stdout} {stderr}");
+        // The executable must have initialized and reported a curl error.
+        // A DLL loader failure must not masquerade as network isolation.
+        assert!(stderr.contains("curl:"), "curl did not initialize: {stderr}");
+        match listener.accept() {
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+            _ => panic!("sandbox reached a listening localhost endpoint"),
+        }
+
+        // Validate the SAME command string outside AppContainer first. The
+        // lowbox process must not read the host-owned, explicitly locked file.
+        // cmd avoids requiring PowerShell CLR/module initialization.
+        let host_file = std::env::temp_dir()
+            .join(format!("browseros-sandbox-host-{}.txt", uuid::Uuid::new_v4()));
         std::fs::write(&host_file, "host-secret-marker").unwrap();
-        let profile = SandboxProfile::create().expect("create AppContainer profile");
-        let state = profile.state_dir().expect("state");
-        let script = "$ErrorActionPreference='Stop'; try { $c=New-Object Net.Sockets.TcpClient; $c.Connect('127.0.0.1',9); 'NETWORK_ALLOWED' } catch { 'NETWORK_DENIED' }; try { Get-Content -LiteralPath $env:BROWSEROS_TEST_HOST_FILE -ErrorAction Stop | Out-Null; 'HOST_READ_ALLOWED' } catch { 'HOST_READ_DENIED' }";
-        let arguments = vec!["-NoProfile".into(), "-NonInteractive".into(),
-            "-Command".into(), script.into()];
-        let environment = vec![("BROWSEROS_TEST_HOST_FILE".into(),
-            host_file.to_string_lossy().into_owned())];
-        let mut child = profile.spawn(&runtime, &arguments, &environment, &state)
-            .expect("spawn AppContainer");
-        drop(child.stdin);
-        let mut output = Vec::new();
-        child.stdout.read_to_end(&mut output).unwrap();
-        let text = String::from_utf8_lossy(&output);
-        let stderr = std::fs::read_to_string(state.join("sandbox-stderr.log")).unwrap_or_default();
-        assert!(text.contains("NETWORK_DENIED"),
-            "exit={:?} stdout={text} stderr={stderr}", child.process.exit_code());
-        assert!(text.contains("HOST_READ_DENIED"), "{text}");
-        let _ = std::fs::remove_file(host_file);
+        let user = current_user_sid().expect("host user SID");
+        let icacls = system_binary("icacls.exe").unwrap();
+        let acl = std::process::Command::new(icacls)
+            .arg(&host_file).args(["/inheritance:r", "/grant:r"])
+            .arg(format!("*{user}:F")).arg("*S-1-5-18:F")
+            .output().unwrap();
+        assert!(acl.status.success(), "host ACL setup failed: {}",
+            String::from_utf8_lossy(&acl.stderr));
+        let cmd = system_binary("cmd.exe").unwrap();
+        let read_command = format!("echo HOST_READ_ATTEMPTED & type \"{}\"", host_file.display());
+        let baseline = std::process::Command::new(&cmd)
+            .args(["/D", "/C", &read_command]).output().unwrap();
+        assert!(baseline.status.success()
+            && String::from_utf8_lossy(&baseline.stdout).contains("host-secret-marker"),
+            "host-file positive control invalid: {}",
+            String::from_utf8_lossy(&baseline.stderr));
+        let (stdout, stderr, exit) = run_isolated(
+            &cmd, &["/D".into(), "/C".into(), read_command], &[],
+        ).expect("sandbox host-file probe");
+        assert!(stdout.contains("HOST_READ_ATTEMPTED"),
+            "cmd did not execute probe: stdout={stdout:?} stderr={stderr:?}");
+        assert!(!stdout.contains("host-secret-marker") && exit != 0,
+            "AppContainer read host-only file: stdout={stdout:?} stderr={stderr:?}");
+        std::fs::remove_file(host_file).unwrap();
     }
 
     #[test]
     fn quoted_arguments_survive_process_creation() {
-        let profile = SandboxProfile::create().unwrap();
-        let state = profile.state_dir().unwrap();
+        // The extra /S strips quotes and had mangled echo on CI.
         let cmd = system_binary("cmd.exe").unwrap();
-        let mut child = profile.spawn(&cmd,
-            &["/D".into(), "/S".into(), "/C".into(), "echo sandbox-ok".into()],
-            &[], &state).unwrap();
-        drop(child.stdin);
-        let mut output = String::new();
-        child.stdout.read_to_string(&mut output).unwrap();
-        let stderr = std::fs::read_to_string(state.join("sandbox-stderr.log")).unwrap_or_default();
-        assert!(output.contains("sandbox-ok"),
-            "exit={:?} stdout={output:?} stderr={stderr:?}", child.process.exit_code());
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        while !child.process.try_wait().unwrap() {
-            assert!(std::time::Instant::now() < deadline);
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        let (stdout, stderr, exit) = run_isolated(
+            &cmd, &["/D".into(), "/C".into(), "echo sandbox-ok".into()], &[],
+        ).expect("run cmd inside AppContainer");
+        assert_eq!(exit, 0, "cmd exited with {exit}: {stderr}");
+        assert!(stdout.contains("sandbox-ok"),
+            "cmd quoting failed: stdout={stdout:?} stderr={stderr:?}");
     }
 }

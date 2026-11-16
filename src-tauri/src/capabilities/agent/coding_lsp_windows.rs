@@ -57,23 +57,63 @@ fn no_reparse(path: &Path) -> Result<(), String> {
     }
     Ok(())
 }
+/// The executable in ~/.cargo/bin is normally a rustup proxy, not the
+/// language server itself. Copying that proxy to an AppContainer makes it
+/// look for toolchain executables in a deliberately private USERPROFILE and
+/// fail before it can answer initialize. Resolve the INSTALLED toolchain
+/// binary by reading rustup metadata; never execute rustup outside sandbox.
+fn rustup_analyzer_binary(home: &Path) -> Result<PathBuf, String> {
+    let rustup_home = std::env::var_os("RUSTUP_HOME")
+        .map(PathBuf::from).unwrap_or_else(|| home.join(".rustup"));
+    let settings = fs::read_to_string(rustup_home.join("settings.toml")).unwrap_or_default();
+    let default = settings.lines().find_map(|line| {
+        let (key, value) = line.split_once('=')?;
+        (key.trim() == "default_toolchain")
+            .then(|| value.trim().trim_matches('"').to_string())
+    });
+    let mut toolchain = std::env::var("RUSTUP_TOOLCHAIN").ok().or(default)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "stable-x86_64-pc-windows-msvc".into());
+    if toolchain == "stable" || toolchain == "nightly" || toolchain == "beta" {
+        toolchain.push_str("-x86_64-pc-windows-msvc");
+    }
+    if toolchain.len() > 110
+        || !toolchain.bytes().all(|byte| byte.is_ascii_alphanumeric()
+            || byte == b'-' || byte == b'_' || byte == b'.')
+    {
+        return Err("LSP_RUSTUP_TOOLCHAIN_INVALID".into());
+    }
+    let candidate = rustup_home.join("toolchains")
+        .join(&toolchain).join("bin").join("rust-analyzer.exe");
+    if !candidate.is_file() { return Err("LSP_RUST_ANALYZER_TOOLCHAIN_MISSING".into()); }
+    no_reparse(&candidate)?;
+    candidate.canonicalize().map_err(|_| "LSP_RUST_ANALYZER_TOOLCHAIN_MISSING".into())
+}
 fn runtime() -> Result<PathBuf, String> {
+    let home = std::env::var_os("USERPROFILE").map(PathBuf::from);
     if let Some(paths) = std::env::var_os("PATH") {
         for directory in std::env::split_paths(&paths).filter(|path| path.is_absolute()) {
             let candidate = directory.join("rust-analyzer.exe");
-            if candidate.is_file() {
-                return Ok(candidate);
+            if !candidate.is_file() { continue; }
+            let is_cargo_proxy = directory.file_name()
+                .is_some_and(|value| value.to_string_lossy().eq_ignore_ascii_case("bin"))
+                && directory.parent().and_then(Path::file_name)
+                    .is_some_and(|value| value.to_string_lossy().eq_ignore_ascii_case(".cargo"));
+            if is_cargo_proxy {
+                let home = home.as_ref().ok_or("LSP_USERPROFILE_UNAVAILABLE")?;
+                return rustup_analyzer_binary(home);
             }
+            no_reparse(&candidate)?;
+            return candidate.canonicalize().map_err(|_| "LSP_RUST_ANALYZER_NOT_FOUND".into());
         }
     }
-    if let Some(home) = std::env::var_os("USERPROFILE") {
-        let candidate = PathBuf::from(home).join(".cargo/bin/rust-analyzer.exe");
-        if candidate.is_file() {
-            return Ok(candidate);
-        }
+    if let Some(home) = home {
+        let proxy = home.join(".cargo/bin/rust-analyzer.exe");
+        if proxy.is_file() { return rustup_analyzer_binary(&home); }
     }
     Err("LSP_RUST_ANALYZER_NOT_FOUND".into())
 }
+
 fn source_file(path: &Path) -> bool {
     matches!(
         path.extension()
@@ -285,13 +325,14 @@ impl Session {
             ),
             ("CARGO_NET_OFFLINE".into(), "true".into()),
         ];
-        let SandboxChild {
-            stdin,
-            stdout,
-            process,
-        } = profile
-            .spawn(&server, &["--no-proc-macro".into()], &environment, &state)
-            .map_err(|_| "LSP_SANDBOX_START_FAILED")?;
+        let child = profile.spawn(&server, &["--no-proc-macro".into()], &environment, &state)
+            .map_err(|error| {
+                #[cfg(test)]
+                eprintln!("LSP_SANDBOX_SPAWN_DETAIL={error}");
+                let _ = error;
+                "LSP_SANDBOX_START_FAILED".to_string()
+            })?;
+        let SandboxChild { stdin, stdout, process } = child;
         let (writer, write_rx) = mpsc::sync_channel::<Vec<u8>>(4);
         let (write_tx, write_result) = mpsc::channel();
         thread::spawn(move || {
@@ -336,11 +377,17 @@ impl Session {
             last_used: Instant::now(),
         };
         let root_uri = uri_for(&session.snapshot)?;
-        session.rpc_next("initialize", json!({
+        let init = session.rpc_next("initialize", json!({
             "processId":null,"rootUri":root_uri,
             "capabilities":{"textDocument":{"synchronization":{},"publishDiagnostics":{},"definition":{},"references":{},"hover":{},"completion":{},"documentSymbol":{}}},
             "initializationOptions":{"cargo":{"buildScripts":{"enable":false}},"procMacro":{"enable":false},"checkOnSave":{"enable":false}}
-        }))?;
+        }));
+        #[cfg(test)]
+        if let Err(ref error) = init {
+            eprintln!("LSP_INITIALIZE_DIAG={error}; exit={:?}; stderr={:?}",
+                session.process.exit_code(), session.process.profile().stderr_for_test());
+        }
+        init?;
         session.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}))?;
         Ok(session)
     }
