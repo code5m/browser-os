@@ -27,7 +27,7 @@ use windows_sys::Win32::System::Threading::{
     CREATE_UNICODE_ENVIRONMENT, CreateProcessW, DeleteProcThreadAttributeList,
     EXTENDED_STARTUPINFO_PRESENT, InitializeProcThreadAttributeList,
     PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES,
-    PROCESS_INFORMATION, ResumeThread, STARTF_USESTDHANDLES, STARTUPINFOEXW, TerminateProcess,
+    PROCESS_INFORMATION, STARTF_USESTDHANDLES, STARTUPINFOEXW, TerminateProcess,
     UpdateProcThreadAttribute, WaitForSingleObject,
 };
 
@@ -533,20 +533,11 @@ fn spawn_inner(
             return Err(error);
         }
     };
-    // The process must remain suspended until its Job Object is attached.
-    // Resume only after that security boundary is durable; otherwise every
-    // stdio MCP/LSP session would wait forever with a live but suspended PID.
-    let resumed = unsafe { ResumeThread(information.hThread) };
+    // attach_suspended_pid has already verified thread ownership and
+    // resumed exactly once AFTER AssignProcessToJobObject succeeded. A
+    // second ResumeThread here would observe suspension count 0 and hide
+    // lifecycle errors. Only release the original creator thread handle.
     unsafe { CloseHandle(information.hThread) };
-    if resumed == u32::MAX {
-        let error = win32_error("SANDBOX_RESUME_PROCESS");
-        unsafe {
-            TerminateProcess(information.hProcess, 1);
-            WaitForSingleObject(information.hProcess, 2000);
-            CloseHandle(information.hProcess);
-        }
-        return Err(error);
-    }
     Ok(SandboxChild {
         stdin: parent_input,
         stdout: parent_output,
