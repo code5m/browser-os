@@ -744,46 +744,56 @@ fn copy_dacl(source: &File, destination: &File) -> Result<(), String> {
     Ok(())
 }
 
-fn rename_replace_at(source: &File, _parent: &File, target: &std::ffi::OsStr) -> io::Result<()> {
+fn rename_replace_at(source: &File, parent: &File, target: &std::ffi::OsStr) -> io::Result<()> {
     use std::ffi::c_void;
-    use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Storage::FileSystem::{FileRenameInfo, SetFileInformationByHandle};
-    #[repr(C)]
-    struct RenameHeader {
-        flags: u32,
-        root_directory: *mut c_void,
-        filename_length: u32,
-        filename: [u16; 1],
-    }
+    use std::os::windows::{ffi::OsStrExt, io::AsRawHandle};
+    use windows_sys::Wdk::Storage::FileSystem::{
+        FileRenameInformation, NtSetInformationFile, FILE_RENAME_INFORMATION,
+        FILE_RENAME_INFORMATION_0,
+    };
+    use windows_sys::Win32::Foundation::RtlNtStatusToDosError;
+    use windows_sys::Win32::System::IO::IO_STATUS_BLOCK;
     let chars: Vec<u16> = target.encode_wide().collect();
     if chars.is_empty() || chars.len() > 32000 {
         return Err(denied());
     }
-    let offset = std::mem::offset_of!(RenameHeader, filename);
-    let size = offset + (chars.len() + 1) * std::mem::size_of::<u16>();
-    let mut aligned = vec![0u64; (size + 7) / 8];
-    let header = aligned.as_mut_ptr() as *mut RenameHeader;
+    // SetFileInformationByHandle(FileRenameInfo) with a NULL RootDirectory
+    // expects a full path; with a bare name Win32 returns ERROR_INVALID_PARAMETER.
+    // The native form resolves the bare name against the pinned parent handle,
+    // so the existing file is atomically replaced even if its path was swapped.
+    let offset = std::mem::offset_of!(FILE_RENAME_INFORMATION, FileName);
+    let size = (offset + chars.len() * std::mem::size_of::<u16>())
+        .max(std::mem::size_of::<FILE_RENAME_INFORMATION>());
+    let mut buffer = vec![0u64; (size + 7) / 8];
+    let info = buffer.as_mut_ptr() as *mut FILE_RENAME_INFORMATION;
     unsafe {
-        (*header).flags = 1; // FileRenameInfo: TRUE = atomic replace in same directory.
-                             // The staging file is already opened inside the pinned parent.
-                             // For a same-directory rename Windows requires the simple target
-                             // name with a NULL RootDirectory; a non-null root is reserved for
-                             // moving the entry to a different directory.
-        (*header).root_directory = std::ptr::null_mut();
-        (*header).filename_length = (chars.len() * 2) as u32;
+        (*info).Anonymous = FILE_RENAME_INFORMATION_0 {
+            ReplaceIfExists: true,
+        };
+        (*info).RootDirectory = parent.as_raw_handle() as _;
+        (*info).FileNameLength = (chars.len() * 2) as u32;
         std::ptr::copy_nonoverlapping(
             chars.as_ptr(),
-            (aligned.as_mut_ptr() as *mut u8).add(offset) as *mut u16,
+            (buffer.as_mut_ptr() as *mut u8).add(offset) as *mut u16,
             chars.len(),
         );
-        if SetFileInformationByHandle(
+        let mut status_block = IO_STATUS_BLOCK::default();
+        let status = NtSetInformationFile(
             source.as_raw_handle() as _,
-            FileRenameInfo,
-            aligned.as_ptr() as *const c_void,
+            &mut status_block,
+            buffer.as_ptr() as *const c_void,
             size as u32,
-        ) == 0
-        {
-            return Err(io::Error::last_os_error());
+            FileRenameInformation,
+        );
+        if status < 0 {
+            let dos = RtlNtStatusToDosError(status) as i32;
+            return Err(io::Error::new(
+                io::Error::from_raw_os_error(dos).kind(),
+                format!(
+                    "WINDOWS_REPLACE_FAILED_NTSTATUS_{:08x}_WIN32_{}",
+                    status as u32, dos
+                ),
+            ));
         }
     }
     Ok(())
