@@ -271,10 +271,15 @@ fn snapshot(root: &Path, profile: &SandboxProfile) -> Result<PathBuf, String> {
 /// The grant is additive, so the owner and SYSTEM entries stay untouched.
 fn grant_snapshot_read(root: &Path, sid: &str) -> Result<(), String> {
     let icacls = system_icacls()?;
+    // An AppContainer lowbox token carries the package SID *and* the
+    // restricted SID `ALL APPLICATION PACKAGES` (S-1-15-2-1), and the access
+    // check requires the DACL to satisfy both SID sets. A snapshot granting
+    // only the package SID therefore still fails with "Access is denied
+    // (os error 5)" when cargo opens the manifest; the ACL dump proved the
+    // file carried exactly one package-SID ACE and nothing else.
+    const ALL_APP_PACKAGES: &str = "S-1-15-2-1";
     // The `AC` container and the package profile directory are ancestors of
-    // the snapshot, so the recursive walk below can never reach them. Without
-    // a traverse right there, an open inside the snapshot fails with
-    // "Access is denied (os error 5)" before the file's own ACE is consulted.
+    // the snapshot, so the recursive walk below can never reach them.
     let mut ancestors = Vec::new();
     if let Some(container) = root.parent() {
         ancestors.push(container.to_path_buf());
@@ -284,19 +289,19 @@ fn grant_snapshot_read(root: &Path, sid: &str) -> Result<(), String> {
     }
     for directory in ancestors {
         grant_entry(&icacls, &directory, &format!("*{sid}:RX"))?;
+        grant_entry(&icacls, &directory, &format!("*{ALL_APP_PACKAGES}:RX"))?;
     }
     let mut pending = vec![root.to_path_buf()];
     while let Some(directory) = pending.pop() {
         for entry in fs::read_dir(&directory).map_err(|_| "LSP_SNAPSHOT_ACL")? {
             let path = entry.map_err(|_| "LSP_SNAPSHOT_ACL")?.path();
-            let rights = if path.is_dir() {
-                format!("*{sid}:(OI)(CI)RX")
-            } else {
-                format!("*{sid}:RX")
-            };
-            grant_entry(&icacls, &path, &rights)?;
             if path.is_dir() {
+                grant_entry(&icacls, &path, &format!("*{sid}:(OI)(CI)RX"))?;
+                grant_entry(&icacls, &path, &format!("*{ALL_APP_PACKAGES}:(OI)(CI)RX"))?;
                 pending.push(path);
+            } else {
+                grant_entry(&icacls, &path, &format!("*{sid}:RX"))?;
+                grant_entry(&icacls, &path, &format!("*{ALL_APP_PACKAGES}:RX"))?;
             }
         }
     }
@@ -1178,6 +1183,69 @@ mod tests {
         }
     }
 
+    /// Run `whoami /groups` inside the same AppContainer that later runs cargo.
+    /// The access check for an AppContainer file needs the token's own SID set
+    /// (package SID plus its restricted SIDs) to be satisfied by the DACL, so
+    /// the ACL alone cannot explain a persistent denial.
+    fn sandbox_token_probe() {
+        let profile = match SandboxProfile::create() {
+            Ok(profile) => profile,
+            Err(error) => {
+                eprintln!("::error::LSP_TOKEN_PROBE PROFILE:{error}");
+                return;
+            }
+        };
+        let state = match profile.state_dir() {
+            Ok(state) => state,
+            Err(error) => {
+                eprintln!("::error::LSP_TOKEN_PROBE STATE:{error}");
+                return;
+            }
+        };
+        let system_root = std::env::var_os("SystemRoot").unwrap_or_default();
+        let whoami = PathBuf::from(system_root)
+            .join("System32")
+            .join("whoami.exe");
+        let child = match profile.spawn(
+            &whoami,
+            &[
+                "/groups".to_string(),
+                "/fo".to_string(),
+                "csv".to_string(),
+                "/nh".to_string(),
+            ],
+            &[],
+            &state,
+        ) {
+            Ok(child) => child,
+            Err(error) => {
+                eprintln!("::error::LSP_TOKEN_PROBE SPAWN:{error}");
+                return;
+            }
+        };
+        let SandboxChild {
+            stdin,
+            mut stdout,
+            process,
+        } = child;
+        drop(stdin);
+        let mut out = Vec::new();
+        let _ = stdout.read_to_end(&mut out);
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while !process.try_wait().unwrap_or(true) {
+            if Instant::now() >= deadline {
+                let _ = process.terminate();
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let text = String::from_utf8_lossy(&out)
+            .replace('\n', " | ")
+            .replace('"', " ");
+        let head: String = text.chars().take(1200).collect();
+        eprintln!("::error::LSP_TOKEN_PROBE exit={:?} groups={head}", process.exit_code());
+    }
+
     /// Run one reviewed toolchain image inside the AppContainer and report
     /// its real exit status and captured stderr. Rust Analyzer collapses a
     /// sandboxed `cargo` failure into "command failed", so this probe names
@@ -1300,7 +1368,6 @@ mod tests {
         let succeeded = exit.as_ref().ok().and_then(|code| code.as_ref()) == Some(&0);
         if !succeeded {
             if let Some(manifest) = manifest.as_ref() {
-                let mut acl = String::new();
                 let mut targets = vec![manifest.clone()];
                 if let Some(parent) = manifest.parent() {
                     targets.push(parent.to_path_buf());
@@ -1308,15 +1375,24 @@ mod tests {
                         targets.push(package.to_path_buf());
                     }
                 }
+                // Keep the head of each listing: icacls prints the path line and
+                // every ACE before the summary, so a tail-only dump hides the
+                // entries that actually decide the access check.
                 for target in targets {
+                    let mut text = String::new();
                     if let Ok(probe) = std::process::Command::new("icacls.exe")
                         .arg(&target)
                         .output()
                     {
-                        acl.push_str(&String::from_utf8_lossy(&probe.stdout));
+                        text.push_str(&String::from_utf8_lossy(&probe.stdout));
                     }
+                    let head: String = text
+                        .chars()
+                        .take(700)
+                        .collect::<String>()
+                        .replace('\n', " | ");
+                    eprintln!("::error::LSP_CARGO_PROBE_{label}_ACL {} :: {head}", target.display());
                 }
-                eprintln!("::error::LSP_CARGO_PROBE_{label}_ACL {}", tail(&acl));
             }
         }
         eprintln!(
@@ -1388,6 +1464,7 @@ mod tests {
         // Analyzer: a probe error is a real capability failure, not a
         // diagnostics-timing artefact.
         {
+            sandbox_token_probe();
             toolchain_probe(
                 "LOCATE",
                 "cargo",
