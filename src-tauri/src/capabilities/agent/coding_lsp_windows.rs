@@ -1,15 +1,15 @@
 //! Windows Rust LSP in a no-network AppContainer with a read-only private snapshot.
 #![cfg(windows)]
 
-use super::windows_sandbox::{send_bounded, SandboxChild, SandboxProcess, SandboxProfile};
-use serde_json::{json, Value};
+use super::windows_sandbox::{SandboxChild, SandboxProcess, SandboxProfile, send_bounded};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::windows::fs::MetadataExt;
 use std::path::{Path, PathBuf};
-use std::sync::{mpsc, Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -1048,7 +1048,7 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
                         true
                     }
                     Err(_) if request["session_id"].as_str().is_some() => {
-                        return Err("LSP_SESSION_BUSY".into())
+                        return Err("LSP_SESSION_BUSY".into());
                     }
                     Err(_) => {
                         busy_candidates += 1;
@@ -1117,13 +1117,33 @@ mod tests {
     /// its real exit status and captured stderr. Rust Analyzer collapses a
     /// sandboxed `cargo` failure into "command failed", so this probe names
     /// the underlying AppContainer path or ACL cause on the public run page.
-    fn toolchain_probe(label: &str, binary: &str, args: &[String], manifest: &Path) {
+    fn toolchain_probe(
+        label: &str,
+        binary: &str,
+        args: &[String],
+        source_root: &Path,
+        with_manifest: bool,
+    ) {
         let profile = match SandboxProfile::create() {
             Ok(profile) => profile,
             Err(error) => {
                 eprintln!("::error::LSP_CARGO_PROBE_{label} PROFILE:{error}");
                 return;
             }
+        };
+        // The snapshot has to live in the same AppContainer profile as the
+        // cargo.exe that reads it, otherwise the probe only proves that a
+        // foreign profile cannot see another profile's private snapshot.
+        let manifest = if with_manifest {
+            match snapshot(source_root, &profile) {
+                Ok(snapshot_root) => Some(snapshot_root.join("Cargo.toml")),
+                Err(error) => {
+                    eprintln!("::error::LSP_CARGO_PROBE_{label} SNAPSHOT:{error}");
+                    return;
+                }
+            }
+        } else {
+            None
         };
         let state = match profile.state_dir() {
             Ok(state) => state,
@@ -1169,11 +1189,15 @@ mod tests {
         let environment = vec![
             ("CARGO".to_string(), cargo.to_string_lossy().into_owned()),
             ("RUSTC".to_string(), rustc.to_string_lossy().into_owned()),
-            ("CARGO_HOME".to_string(), home.to_string_lossy().into_owned()),
+            (
+                "CARGO_HOME".to_string(),
+                home.to_string_lossy().into_owned(),
+            ),
             ("CARGO_NET_OFFLINE".to_string(), "true".to_string()),
         ];
         let mut full_args = args.to_vec();
-        if !manifest.as_os_str().is_empty() {
+        if let Some(manifest) = manifest.as_ref() {
+            full_args.push("--manifest-path".to_string());
             full_args.push(manifest.to_string_lossy().into_owned());
         }
         let image_text = image.display().to_string();
@@ -1277,30 +1301,20 @@ mod tests {
         // Analyzer: a probe error is a real capability failure, not a
         // diagnostics-timing artefact.
         {
-            let probe_profile = SandboxProfile::create().unwrap();
-            let probe_snapshot = snapshot(&root, &probe_profile).unwrap();
-            let manifest = probe_snapshot.join("Cargo.toml");
             toolchain_probe(
                 "LOCATE",
                 "cargo",
-                &[
-                    "locate-project".to_string(),
-                    "--workspace".to_string(),
-                    "--manifest-path".to_string(),
-                ],
-                &manifest,
+                &["locate-project".to_string(), "--workspace".to_string()],
+                &root,
+                true,
             );
-            toolchain_probe(
-                "VERSION",
-                "cargo",
-                &["--version".to_string()],
-                Path::new(""),
-            );
+            toolchain_probe("VERSION", "cargo", &["--version".to_string()], &root, false);
             toolchain_probe(
                 "RUSTC_VERSION",
                 "rustc",
                 &["--version".to_string()],
-                Path::new(""),
+                &root,
+                false,
             );
         }
         let started = acceptance(
