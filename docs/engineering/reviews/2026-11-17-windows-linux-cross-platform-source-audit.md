@@ -89,3 +89,10 @@
 6. **工程防回归**：扩展 Windows/Linux 源码合同和纯模块回归用例。新增代码尚未编译或执行；不能将这些断言和文档标为 PASS。
 
 **现阶段：SOURCE_PATCHED / NATIVE_UNVERIFIED；不合并 master，不触发 CI。** 旧版 run #201 的 MCP/LSP AppContainer Win32 5 和 Windows NSIS、Win11 GUI/BFC 真实授权会话仍无新 SHA 证据；`[skip ci]` 仅避免本批提交重复触发流水线，不取消正式门禁。
+
+
+## 第五轮：文件新建与目录浏览安全收口（源码未验证）
+
+基线 afbeb7a1。修复 write_file 只能覆盖不能新建的 API 行为差异：存在文件继续使用内容 CAS；不存在且无其他读取错误时使用授权父目录的原子无覆盖创建。新增目录浏览句柄化：Linux 使用已授权 dirfd + fstatat(AT_SYMLINK_NOFOLLOW)，Windows 使用已授权 NT 目录句柄 + 相对子句柄取元数据，并在目录身份被替换时拒绝输出。保留前端 DirEntry 合同并限制枚举最多 50000 项。
+
+新增静态合同与原生回归用例代码，未执行编译、测试、Actions、NSIS 或实机验收。状态 SOURCE_PATCHED / NATIVE_UNVERIFIED；不应将历史 run #201 结果延伸到最新提交。本轮提交采用 [skip ci]；仓库多个 workflow 监听 feature push，不能未经 Actions 核查就断言零被动运行。

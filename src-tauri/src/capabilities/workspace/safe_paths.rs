@@ -208,6 +208,33 @@ mod linux {
         Ok(names)
     }
 
+    /// Directory entry names and sizes must be read relative to a pinned
+    /// authorized dirfd. AT_SYMLINK_NOFOLLOW prevents external size leaks.
+    pub(super) fn list_directory(
+        path: &Path, roots: &[PathBuf],
+    ) -> io::Result<Vec<(std::ffi::OsString, bool, u64)>> {
+        let directory = open_allowed_dir(path, roots)?;
+        let mut entries = Vec::new();
+        for filename in directory_names(&directory)? {
+            let child = name(&filename)?;
+            let mut stat: libc::stat = unsafe { std::mem::zeroed() };
+            if unsafe {
+                libc::fstatat(
+                    directory.as_raw_fd(), child.as_ptr(), &mut stat,
+                    libc::AT_SYMLINK_NOFOLLOW,
+                )
+            } != 0 {
+                continue;
+            }
+            let kind = stat.st_mode & libc::S_IFMT;
+            let size = if kind == libc::S_IFREG && stat.st_size > 0 {
+                stat.st_size as u64
+            } else { 0 };
+            entries.push((filename, kind == libc::S_IFDIR, size));
+        }
+        Ok(entries)
+    }
+
     fn remove_directory_contents(dir: &File, depth: usize, remaining: &mut usize) -> io::Result<()> {
         if depth > 64 { return Err(bad_path()); }
         for child_name in directory_names(dir)? {
@@ -775,6 +802,23 @@ pub fn ensure_private_directory(path: &Path) -> std::io::Result<()> {
     }
 }
 
+/// Read directory entries from an authorized OS directory handle.
+pub fn list_directory(
+    path: &Path, roots: &[PathBuf],
+) -> std::io::Result<Vec<(std::ffi::OsString, bool, u64)>> {
+    #[cfg(target_os = "linux")]
+    { linux::list_directory(path, roots) }
+    #[cfg(target_os = "windows")]
+    { windows::list_directory(path, roots) }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        let _ = (path, roots);
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported, "secure directory listing unsupported"
+        ))
+    }
+}
+
 pub fn read_regular(canonical: &Path, roots: &[PathBuf], limit: usize) -> std::io::Result<Vec<u8>> {
     #[cfg(target_os = "linux")]
     {
@@ -858,6 +902,25 @@ pub fn save_if_unchanged(
 #[cfg(all(test, any(target_os = "linux", target_os = "windows")))]
 mod cross_platform_file_manager_tests {
     use super::*;
+
+    #[test]
+    fn native_directory_listing_denies_external_paths() {
+        let base = std::env::temp_dir().join(format!(
+            "browseros-native-list-{}", uuid::Uuid::new_v4()
+        ));
+        let allowed_dir = base.join("allowed");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(&allowed_dir).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(allowed_dir.join("hello.txt"), b"1234").unwrap();
+        let roots = [allowed_dir.canonicalize().unwrap()];
+        let entries = list_directory(&roots[0], &roots).unwrap();
+        assert!(entries.iter().any(|(name, is_dir, size)|
+            name == std::ffi::OsStr::new("hello.txt") && !is_dir && *size == 4
+        ));
+        assert!(list_directory(&outside, &roots).is_err());
+        std::fs::remove_dir_all(base).unwrap();
+    }
 
     #[test]
     fn native_create_rename_delete_use_pinned_parents_and_no_overwrite() {

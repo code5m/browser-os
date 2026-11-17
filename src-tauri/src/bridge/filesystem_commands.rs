@@ -129,22 +129,17 @@ fn list_dir_blocking(path: String, roots: Vec<std::path::PathBuf>) -> Result<Vec
     if !dir.is_dir() {
         return Err("不是目录".into());
     }
-    let mut entries = vec![];
-    for e in std::fs::read_dir(&dir).map_err(|e| e.to_string())? {
-        // 单个条目失败时跳过（continue），不中断整个列表 —— 修复根目录/系统目录下
-        // 因符号链接失效、无权限条目导致 metadata() 失败而丢失大量条目的问题。
-        let Ok(e) = e else { continue };
-        // 用 file_type 判断目录（不跟随符号链接、不会因目标无权限失败）；
-        // metadata 取不到则 size 记 0，仍保留条目。
-        let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
-        let size = e.metadata().map(|m| m.len()).unwrap_or(0);
-        entries.push(DirEntry {
-            name: e.file_name().to_string_lossy().to_string(),
-            path: e.path().to_string_lossy().to_string(),
+    // Keep enumeration and metadata anchored to an authorized OS handle.
+    let mut entries = crate::capabilities::workspace::safe_paths::list_directory(&dir, &roots)
+        .map_err(|e| format!("LIST_DIR_DENIED: {e}"))?
+        .into_iter()
+        .map(|(name, is_dir, size)| DirEntry {
+            path: dir.join(&name).to_string_lossy().into_owned(),
+            name: name.to_string_lossy().into_owned(),
             is_dir,
             size,
-        });
-    }
+        })
+        .collect::<Vec<_>>();
     // 目录在前、按名字排序
     entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
         (true, false) => std::cmp::Ordering::Less,
@@ -216,7 +211,39 @@ pub fn read_image_data_url(
     ))
 }
 
-/// 写入文本文件（创建或覆盖）。M0-3.c：路径必须落在允许根目录内。
+/// Create or overwrite under an authorized parent; never fall back to
+/// path-based writes. Existing files retain compare-and-swap semantics.
+fn write_file_authorized(
+    path: &str, roots: &[std::path::PathBuf], content: &[u8],
+) -> Result<(), String> {
+    use crate::security_policy as sp;
+    use crate::capabilities::workspace::safe_paths as native;
+    let requested = std::path::Path::new(path);
+    if !requested.is_absolute() || requested.components().any(|part|
+        matches!(part, std::path::Component::ParentDir)
+    ) {
+        return Err("FILE_PATH_INVALID".into());
+    }
+    let name = requested.file_name().and_then(|name| name.to_str())
+        .ok_or("FILE_NAME_INVALID")?;
+    sp::check_path_component(name).map_err(|e| e.to_string())?;
+    let parent = requested.parent().ok_or("FILE_PARENT_INVALID")?;
+    let authorized_parent =
+        sp::check_path_within_roots(&parent.to_string_lossy(), roots)
+            .map_err(|e| e.to_string())?;
+    let target = authorized_parent.join(name);
+    match native::read_regular(&target, roots, sp::MAX_HTML_BYTES) {
+        Ok(before) => native::save_if_unchanged(
+            &target, roots, &before, content, sp::MAX_HTML_BYTES,
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound =>
+            native::create_new_file(&target, roots, content)
+                .map_err(|_| "FILE_CREATE_DENIED".to_string()),
+        Err(_) => Err("FILE_READ_DENIED".into()),
+    }
+}
+
+/// 写入文本文件（创建或覆盖）。仅可操作已授权目录内的普通文件。
 #[tauri::command]
 pub fn write_file(
     app: AppHandle, webview: tauri::Webview, path: String, content: String,
@@ -226,17 +253,7 @@ pub fn write_file(
     sp::check_text_field("content", &content, sp::MAX_HTML_BYTES)
         .map_err(|e| e.to_string())?;
     let roots = workspace::allowed_roots(&app);
-    let canonical = sp::check_path_within_roots(&path, &roots)
-        .map_err(|e| e.to_string())?;
-    // The prior version called fs::write after a path-only check, leaving a
-    // reparse/junction/symlink swap window. Both platforms now use pinned
-    // directories, content-checked replacement and no unsafe fallback.
-    let before = crate::capabilities::workspace::safe_paths::read_regular(
-        &canonical, &roots, sp::MAX_HTML_BYTES,
-    ).map_err(|_| "FILE_READ_DENIED".to_string())?;
-    crate::capabilities::workspace::safe_paths::save_if_unchanged(
-        &canonical, &roots, &before, content.as_bytes(), sp::MAX_HTML_BYTES,
-    )
+    write_file_authorized(&path, &roots, content.as_bytes())
 }
 
 /// 打开成果所在的本地目录（用系统文件管理器定位到该 JSON 文件）
@@ -414,3 +431,28 @@ pub fn rename_path(
 // 本组命令不再走本地 TabManagerState（add_child），而是经 GridProcessManager
 // 转发 UDS 命令到对应子进程。页签 tab-N 不受影响（仍主进程本地）。
 // 前端契约不变：create_grid/grid_open/grid_position/grid_set_zoom/close_grid/grid_close_one。
+
+
+#[cfg(all(test, any(target_os = "linux", target_os = "windows")))]
+mod file_write_contract_tests {
+    use super::*;
+
+    #[test]
+    fn write_file_creates_then_cas_replaces_without_external_mutation() {
+        let base = std::env::temp_dir().join(format!(
+            "browseros-file-write-{}", uuid::Uuid::new_v4()
+        ));
+        let root = base.join("workspace");
+        std::fs::create_dir_all(&root).unwrap();
+        let allowed = [root.canonicalize().unwrap()];
+        let path = allowed[0].join("new.txt");
+        write_file_authorized(&path.to_string_lossy(), &allowed, b"new").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"new");
+        write_file_authorized(&path.to_string_lossy(), &allowed, b"updated").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"updated");
+        let outside = base.join("outside.txt");
+        assert!(write_file_authorized(&outside.to_string_lossy(), &allowed, b"denied").is_err());
+        assert!(!outside.exists());
+        std::fs::remove_dir_all(base).unwrap();
+    }
+}

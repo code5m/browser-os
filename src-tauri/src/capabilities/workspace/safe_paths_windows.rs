@@ -1028,6 +1028,58 @@ fn names_of_pinned_directory(dir: &File) -> io::Result<Vec<(std::ffi::OsString, 
     Ok(entries)
 }
 
+/// Read-only NT-handle directory listing. Only a path belonging to the
+/// pinned handle may be enumerated; child metadata uses NtCreateFile relative
+/// to that handle, never a second mutable host path.
+pub(super) fn list_directory(
+    path: &Path, roots: &[PathBuf],
+) -> io::Result<Vec<(std::ffi::OsString, bool, u64)>> {
+    use windows_sys::Wdk::Storage::FileSystem::FILE_OPEN;
+    const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
+    if !path.is_absolute() { return Err(denied()); }
+    let root = open_authorized_root(path, roots)?;
+    let directory = open(path, true)?;
+    authorize_with_root(&directory, &root)?;
+    let named = PathBuf::from(final_path(&directory)?);
+    let pinned = identity(&directory)?;
+    let check_pinned = || -> io::Result<()> {
+        let currently_named = open(&named, true)?;
+        let current = identity(&currently_named)?;
+        if pinned.volume != current.volume || pinned.index != current.index {
+            return Err(denied());
+        }
+        Ok(())
+    };
+    check_pinned()?;
+    let mut entries = Vec::new();
+    for entry in std::fs::read_dir(&named)? {
+        let Ok(entry) = entry else { continue; };
+        if entries.len() >= 50_000 { return Err(denied()); }
+        let filename = entry.file_name();
+        let Ok(kind) = entry.file_type() else { continue; };
+        if kind.is_symlink() || (!kind.is_dir() && !kind.is_file()) {
+            entries.push((filename, false, 0));
+            continue;
+        }
+        let Ok(child) = open_object_at(
+            &directory, &filename, FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ_WRITE_DELETE, FILE_OPEN, kind.is_dir(),
+        ) else { continue; };
+        let Ok(metadata) = child.metadata() else { continue; };
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            entries.push((filename, false, 0));
+            continue;
+        }
+        authorize_with_root(&child, &root)?;
+        entries.push((
+            filename, metadata.is_dir(),
+            if metadata.is_file() { metadata.len() } else { 0 },
+        ));
+    }
+    check_pinned()?;
+    Ok(entries)
+}
+
 fn remove_directory_contents(
     directory: &File, authorized_root: &File, depth: usize, remaining: &mut usize,
 ) -> io::Result<()> {
