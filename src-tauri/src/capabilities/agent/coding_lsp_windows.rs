@@ -266,15 +266,23 @@ fn snapshot(root: &Path, profile: &SandboxProfile) -> Result<PathBuf, String> {
 /// reliably materialise as an explicit read right on files that already
 /// existed when the ACL was applied, so a sandboxed `cargo` reading the
 /// manifest failed with `Access is denied (os error 5)`. Pin `RX` directly
-/// onto every file and directory; the grant is additive, so the owner and
-/// SYSTEM entries stay untouched.
+/// onto every file, and grant traverse on the ancestors outside the snapshot.
+/// The grant is additive, so the owner and SYSTEM entries stay untouched.
 fn grant_snapshot_read(root: &Path, sid: &str) -> Result<(), String> {
-    let system_root = std::env::var_os("SystemRoot").ok_or("LSP_SNAPSHOT_ACL")?;
-    let icacls = PathBuf::from(system_root)
-        .join("System32")
-        .join("icacls.exe");
-    if !icacls.is_file() {
-        return Err("LSP_SNAPSHOT_ACL".into());
+    let icacls = system_icacls()?;
+    // The `AC` container and the package profile directory are ancestors of
+    // the snapshot, so the recursive walk below can never reach them. Without
+    // a traverse right there, an open inside the snapshot fails with
+    // "Access is denied (os error 5)" before the file's own ACE is consulted.
+    let mut ancestors = Vec::new();
+    if let Some(container) = root.parent() {
+        ancestors.push(container.to_path_buf());
+        if let Some(package) = container.parent() {
+            ancestors.push(package.to_path_buf());
+        }
+    }
+    for directory in ancestors {
+        grant_entry(&icacls, &directory, &format!("*{sid}:RX"))?;
     }
     let mut pending = vec![root.to_path_buf()];
     while let Some(directory) = pending.pop() {
@@ -285,19 +293,33 @@ fn grant_snapshot_read(root: &Path, sid: &str) -> Result<(), String> {
             } else {
                 format!("*{sid}:RX")
             };
-            let output = std::process::Command::new(&icacls)
-                .arg(&path)
-                .arg("/grant")
-                .arg(rights)
-                .output()
-                .map_err(|_| "LSP_SNAPSHOT_ACL")?;
-            if !output.status.success() {
-                return Err("LSP_SNAPSHOT_ACL".into());
-            }
+            grant_entry(&icacls, &path, &rights)?;
             if path.is_dir() {
                 pending.push(path);
             }
         }
+    }
+    Ok(())
+}
+fn system_icacls() -> Result<PathBuf, String> {
+    let system_root = std::env::var_os("SystemRoot").ok_or("LSP_SNAPSHOT_ACL")?;
+    let icacls = PathBuf::from(system_root)
+        .join("System32")
+        .join("icacls.exe");
+    if !icacls.is_file() {
+        return Err("LSP_SNAPSHOT_ACL".into());
+    }
+    Ok(icacls)
+}
+fn grant_entry(icacls: &Path, path: &Path, rights: &str) -> Result<(), String> {
+    let output = std::process::Command::new(icacls)
+        .arg(path)
+        .arg("/grant")
+        .arg(rights)
+        .output()
+        .map_err(|_| "LSP_SNAPSHOT_ACL")?;
+    if !output.status.success() {
+        return Err("LSP_SNAPSHOT_ACL".into());
     }
     Ok(())
 }
@@ -1274,6 +1296,28 @@ mod tests {
             String::from_utf8_lossy(&bytes[start..]).replace('\n', " | ")
         };
         let out = String::from_utf8_lossy(&output).into_owned();
+        let succeeded = exit.as_ref().ok().and_then(|code| code.as_ref()) == Some(&0);
+        if !succeeded {
+            if let Some(manifest) = manifest.as_ref() {
+                let mut acl = String::new();
+                let mut targets = vec![manifest.clone()];
+                if let Some(parent) = manifest.parent() {
+                    targets.push(parent.to_path_buf());
+                    if let Some(package) = parent.parent() {
+                        targets.push(package.to_path_buf());
+                    }
+                }
+                for target in targets {
+                    if let Ok(probe) = std::process::Command::new("icacls.exe")
+                        .arg(&target)
+                        .output()
+                    {
+                        acl.push_str(&String::from_utf8_lossy(&probe.stdout));
+                    }
+                }
+                eprintln!("::error::LSP_CARGO_PROBE_{label}_ACL {}", tail(&acl));
+            }
+        }
         eprintln!(
             "::error::LSP_CARGO_PROBE_{label} exit={exit:?} image={image_text} stdout={} stderr={}",
             tail(&out),
