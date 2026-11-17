@@ -674,6 +674,24 @@ impl Session {
         response_uri_to_workspace(&mut diagnostics, &self.root, &self.snapshot);
         Ok(diagnostics)
     }
+
+    /// Test builds append the sandboxed analyzer's exit code and captured
+    /// stderr, so a native acceptance failure names its real cause instead of
+    /// only a panic location. Production errors stay opaque.
+    fn describe_error(&self, error: String) -> String {
+        #[cfg(test)]
+        {
+            format!(
+                "{error} exit={:?} stderr={:?}",
+                self.process.exit_code(),
+                self.process.profile().stderr_for_test()
+            )
+        }
+        #[cfg(not(test))]
+        {
+            error
+        }
+    }
 }
 fn allowed_method(method: &str) -> bool {
     [
@@ -986,7 +1004,10 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
                 return Err("LSP_SESSION_NOT_FOUND".into());
             }
             session.reset_deadline(request["timeout_seconds"].as_u64().unwrap_or(30));
-            let diagnostics = session.diagnostics(path)?;
+            let diagnostics = match session.diagnostics(path) {
+                Ok(value) => value,
+                Err(error) => return Err(session.describe_error(error)),
+            };
             session.last_used = Instant::now();
             Ok(json!({"diagnostics":diagnostics}))
         }
@@ -1070,6 +1091,19 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
 mod tests {
     use super::*;
 
+    /// Emit the native failure as a one-line workflow command so the public
+    /// Actions page names the failing capability and its reason, instead of
+    /// showing only the panic location.
+    fn acceptance<T>(label: &str, result: Result<T, String>) -> T {
+        match result {
+            Ok(value) => value,
+            Err(error) => {
+                eprintln!("::error::LSP_ACCEPTANCE_{label} {error}");
+                panic!("LSP_ACCEPTANCE_{label}: {error}");
+            }
+        }
+    }
+
     #[test]
     fn snapshot_rejects_junctions_instead_of_copying_external_sources() {
         let base =
@@ -1128,29 +1162,39 @@ mod tests {
         )
         .unwrap();
         fs::write(root.join("src/lib.rs"), "pub fn fixture() -> i32 { 42 }\n").unwrap();
-        let started = execute(
-            &root,
-            json!({"action":"lsp_start","approved":true,"profile":"rust_analyzer","timeout_seconds":120}),
-        )
-        .unwrap();
+        let started = acceptance(
+            "START",
+            execute(
+                &root,
+                json!({"action":"lsp_start","approved":true,"profile":"rust_analyzer","timeout_seconds":120}),
+            ),
+        );
         let id = started["session_id"].as_str().unwrap();
-        let diagnostics = execute(
-            &root,
-            json!({"action":"lsp_diagnostics","approved":true,"session_id":id,"path":"src/lib.rs"}),
-        )
-        .unwrap();
+        let diagnostics = acceptance(
+            "DIAGNOSTICS",
+            execute(
+                &root,
+                json!({"action":"lsp_diagnostics","approved":true,"session_id":id,"path":"src/lib.rs","timeout_seconds":120}),
+            ),
+        );
         assert!(diagnostics["diagnostics"].is_array());
         let uri = uri_for(&root.join("src/lib.rs")).unwrap();
-        let symbols = execute(&root, json!({"action":"lsp_request","approved":true,"session_id":id,"method":"textDocument/documentSymbol","params":{"textDocument":{"uri":uri}}})).unwrap();
+        let symbols = acceptance(
+            "SYMBOLS",
+            execute(
+                &root,
+                json!({"action":"lsp_request","approved":true,"session_id":id,"method":"textDocument/documentSymbol","params":{"textDocument":{"uri":uri}},"timeout_seconds":120}),
+            ),
+        );
         assert!(
             symbols["result"].to_string().contains("fixture"),
             "{symbols}"
         );
-        assert_eq!(
-            execute(&root, json!({"action":"lsp_close","session_id":id})).unwrap()
-                ["closed_sessions"],
-            1
+        let closed = acceptance(
+            "CLOSE",
+            execute(&root, json!({"action":"lsp_close","session_id":id})),
         );
+        assert_eq!(closed["closed_sessions"], 1);
         fs::remove_dir_all(root).unwrap();
     }
 
