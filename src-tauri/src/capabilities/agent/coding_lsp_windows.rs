@@ -440,24 +440,33 @@ impl Session {
     ) -> Result<Self, String> {
         let server = runtime()?;
         let state = profile.state_dir()?;
-        let disabled_cargo = state.join("disabled-cargo.exe");
-        let disabled_rustc = state.join("disabled-rustc.exe");
+        // Rust Analyzer loads the workspace through `cargo locate-project`,
+        // `cargo metadata` and `rustc --version`. Those are non-building
+        // probes, so the reviewed toolchain images are staged into the private
+        // runtime instead of being replaced by nonexistent placeholder paths.
+        // Build scripts, proc macros and check-on-save stay disabled below.
+        let toolchain_bin = server
+            .parent()
+            .ok_or("LSP_TOOLCHAIN_BIN_UNAVAILABLE")?
+            .to_path_buf();
+        let cargo = profile.stage_runtime_peer(&toolchain_bin.join("cargo.exe"))?;
+        let rustc = profile.stage_runtime_peer(&toolchain_bin.join("rustc.exe"))?;
+        let cargo_home = state.join("cargo-home");
+        fs::create_dir(&cargo_home).map_err(|_| "LSP_CARGO_HOME_UNAVAILABLE")?;
         let environment = vec![
+            ("CARGO".into(), cargo.to_string_lossy().into_owned()),
+            ("RUSTC".into(), rustc.to_string_lossy().into_owned()),
             (
-                "CARGO".into(),
-                disabled_cargo.to_string_lossy().into_owned(),
-            ),
-            (
-                "RUSTC".into(),
-                disabled_rustc.to_string_lossy().into_owned(),
+                "CARGO_HOME".into(),
+                cargo_home.to_string_lossy().into_owned(),
             ),
             ("CARGO_NET_OFFLINE".into(), "true".into()),
         ];
         // Current rust-analyzer rejects the retired --no-proc-macro flag
         // ("unexpected flag"). Do not pass it: staging copies only the
-        // analyzer image, so proc-macro-srv is absent, and CARGO/RUSTC point
-        // at nonexistent private paths, which keeps build-script and
-        // proc-macro execution unavailable without a removed CLI option.
+        // toolchain images, so proc-macro-srv is absent, and build scripts,
+        // proc macros and check-on-save stay disabled through initialization
+        // options, which keeps compilation from running inside the sandbox.
         let child = profile
             .spawn(&server, &[], &environment, &state)
             .map_err(|error| {
