@@ -74,3 +74,23 @@
 ## 2026-11-17 原生验证触发（6a4762ed）
 
 静态合同已在本地对 `6a4762ed` 通过：`check-windows-linux-v2-source-contract.mjs`、`check-bfc-native-contract.mjs`、`check-browser-navigation-and-hang-diagnostics.mjs` 与 `git diff --check HEAD^ HEAD` 均为 PASS。该提交本身带 `[skip ci]`，因此以本仅文档提交触发完整 Windows/Linux 原生 workflow；验收结论只以该新 SHA 的 run 为准，任何静态结果不替代原生 PASS。
+
+
+## 2026-11-17 run #201 源码集中修复（未执行新 CI）
+
+基线 run：https://github.com/code5m/browser-os/actions/runs/43981446235 ，HEAD d273d4c5。该 Windows run 的 native matrix 仍是 23/27 过滤项通过：
+
+- 原生 cmd 测试因命令行整体字符串被 CRT argv 二次加引号而失败，导致 echo sandbox-ok 被当作带有多余引号的命令名。
+- 宿主 std::process::Command.args([... /C, command]) 使用相同错误方式传递 /C 整段命令，导致正向对照失败；live-listener curl 测试已越过断言。
+- MCP fixture、背压测试和 rust-analyzer LSP 均在 CreateProcessW 返回 Win32 5。不能只修 cmd 就宣称 MCP/LSP 已通过。
+
+本轮按用户要求只修改源码、不执行 CI/编译/单元测试/NSIS、不合并 master。安全变更：
+
+1. 新增 process_command_line()：仅对真正的 Windows 系统目录 cmd.exe，将 /C 或 /K 后的命令作为原始尾部，不使用 CRT 的二次引号转义；只允许明确的前置开关，拒绝 NUL、换行和超长命令。其他程序仍采用常规 argv 引号规则。MCP 生产入口继续禁止运行 shell。
+2. 宿主读文件正向对照使用 Windows CommandExt.raw_arg，使用包含空格的文件路径验证命令行合同；新增 raw-tail 构造的原生单测。
+3. 按微软 AppContainer GetAppContainerFolderPath 合同，LOCALAPPDATA 指向当前 AppContainer 自己的目录，不再使用真实用户的 LOCALAPPDATA；HOME、USERPROFILE、APPDATA、TEMP 和 TMP 均指向私有 state。
+4. 非系统 Node / rust-analyzer runtime 暂存至已授权当前 AppContainer SID 的 state/runtime 下；runtime 子树继续独立限制为 package SID RX；拒绝工作目录落在 profile 外的进程创建。
+5. MCP/LSP 在原生测试期间让失败断言直接带真实 SANDBOX_CREATE_PROCESS 错误码；生产环境仍保留不含路径/秘密的统一错误；stage 仅复制原始 exe 和有界的同目录 DLL，不开放网络和宿主文件写权限。
+6. 更新 source-contract 防回归规则，检查 cmd raw tail、AppContainer-local LOCALAPPDATA 和 runtime 目录等。
+
+**状态：SOURCE_PATCHED_NOT_NATIVE_VERIFIED**。下一轮只有用户同意 Windows 原生统一验收后，才核对同一 HEAD 的 cmd /C、网络监听器隔离、宿主文件拒绝、MCP real stdio / blocked stdin、rust-analyzer LSP，再考虑 NSIS/实机 WebView2 GUI。特别是 Win32 error 5 是否彻底消失仍取决于真实 Windows 原生执行；如果未消失，只能继续按真实错误审查权限，不能放宽沙箱。

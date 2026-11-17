@@ -253,7 +253,13 @@ impl SandboxProfile {
             no_reparse_path(from)?;
             Ok(())
         }
-        let directory = self.folder.join("runtime");
+        // The AppContainer-specific state tree already has a package-SID
+        // traverse ACE. Keep the private runtime under it rather than
+        // creating a sibling with different inherited access rights.
+        let state = self.folder.join("state");
+        no_reparse_path(&state)?;
+        if !state.is_dir() { return Err("SANDBOX_STATE_UNAVAILABLE".into()); }
+        let directory = state.join("runtime");
         std::fs::create_dir(&directory).map_err(|_| "SANDBOX_RUNTIME_STAGE_FAILED")?;
         let filename = canonical.file_name().ok_or("SANDBOX_RUNTIME_NOT_EXECUTABLE")?;
         let staged = directory.join(filename);
@@ -296,6 +302,13 @@ impl SandboxProfile {
     ) -> Result<SandboxChild, String> {
         no_reparse_path(runtime)?;
         no_reparse_path(current_directory)?;
+        let profile_root = self.folder.canonicalize()
+            .map_err(|_| "SANDBOX_PRIVATE_FOLDER")?;
+        let actual_workdir = current_directory.canonicalize()
+            .map_err(|_| "SANDBOX_WORKDIR_UNAVAILABLE")?;
+        if !actual_workdir.starts_with(&profile_root) || actual_workdir == profile_root {
+            return Err("SANDBOX_WORKDIR_OUTSIDE_PRIVATE_PROFILE".into());
+        }
         let canonical = runtime.canonicalize().map_err(|_| "SANDBOX_RUNTIME_MISSING")?;
         if !canonical.is_file()
             || runtime.extension().and_then(|value| value.to_str()).unwrap_or("")
@@ -419,7 +432,63 @@ fn quote_argument(value: &str) -> Result<Vec<u16>, String> {
     output.push('"');
     wide_text(&output)
 }
-fn environment_block(configured: &[(String, String)], state: &Path) -> Result<Vec<u16>, String> {
+/// Windows command lines are not arrays. cmd.exe /C and /K parse the
+/// remainder as a single command string, unlike normal CRT argv programs.
+/// Only trusted system cmd.exe receives the special tail, and production MCP
+/// denies shell executables before reaching SandboxProfile::spawn.
+fn process_command_line(runtime: &Path, args: &[String]) -> Result<Vec<u16>, String> {
+    let runtime_text = runtime.to_str().ok_or("SANDBOX_RUNTIME_NOT_UNICODE")?;
+    let mut command = quote_argument(runtime_text)?;
+    command.pop(); // remove the UTF-16 NUL from quote_argument
+    let system_cmd = system_binary("cmd.exe")?.canonicalize()
+        .map_err(|_| "SANDBOX_SYSTEM_DIRECTORY_UNAVAILABLE")?;
+    let is_cmd = runtime.to_string_lossy()
+        .eq_ignore_ascii_case(&system_cmd.to_string_lossy());
+    let cmd_at = if is_cmd {
+        args.iter().position(|v| v.eq_ignore_ascii_case("/C")
+            || v.eq_ignore_ascii_case("/K"))
+    } else {
+        None
+    };
+    if let Some(index) = cmd_at {
+        if index + 1 >= args.len() || args[..index].iter().any(|item| {
+            !["/D", "/Q", "/E:OFF", "/E:ON", "/V:OFF", "/V:ON"]
+                .iter().any(|allowed| item.eq_ignore_ascii_case(allowed))
+        }) {
+            return Err("SANDBOX_CMD_OPTIONS_INVALID".into());
+        }
+        for option in &args[..=index] {
+            command.push(' ' as u16);
+            command.extend(option.encode_utf16());
+        }
+        let tail = args[index+1..].join(" ");
+        if tail.trim().is_empty() || tail.len() > 8191
+            || tail.contains(['\0', '\r', '\n'])
+        {
+            return Err("SANDBOX_CMD_TAIL_INVALID".into());
+        }
+        command.push(' ' as u16);
+        // No enclosing quotes or CRT escaping: cmd owns /C tail parsing.
+        command.extend(tail.encode_utf16());
+    } else {
+        for argument in args {
+            let quoted = quote_argument(argument)?;
+            command.push(' ' as u16);
+            command.extend(quoted.into_iter().take_while(|u| *u != 0));
+        }
+    }
+    command.push(0);
+    if command.len() > 32767 {
+        return Err("SANDBOX_COMMAND_LINE_TOO_LONG".into());
+    }
+    Ok(command)
+}
+
+fn environment_block(
+    configured: &[(String, String)],
+    state: &Path,
+    appcontainer_local_data: &Path,
+) -> Result<Vec<u16>, String> {
     let system32 = system_binary("cmd.exe")?
         .parent().ok_or("SANDBOX_SYSTEM_DIRECTORY_UNAVAILABLE")?.to_path_buf();
     let windows_dir = system32.parent().ok_or("SANDBOX_SYSTEM_DIRECTORY_UNAVAILABLE")?;
@@ -444,16 +513,17 @@ fn environment_block(configured: &[(String, String)], state: &Path) -> Result<Ve
         let key = key.to_ascii_uppercase();
         if values.insert(key, value.clone()).is_some() { return Err("SANDBOX_ENV_DUPLICATE".into()); }
     }
-    let local_app_data = std::env::var("LOCALAPPDATA")
-        .map_err(|_| "SANDBOX_LOCAL_APP_DATA_UNAVAILABLE")?;
-    if !Path::new(&local_app_data).is_absolute() || local_app_data.contains('\0') {
+    // GetAppContainerFolderPath, not the host-user's LOCALAPPDATA, is the
+    // documented AppContainer local data root.
+    no_reparse_path(appcontainer_local_data)?;
+    let local_app_data = appcontainer_local_data.to_str()
+        .ok_or("SANDBOX_LOCAL_APP_DATA_INVALID")?;
+    if !appcontainer_local_data.is_absolute() || !appcontainer_local_data.is_dir() {
         return Err("SANDBOX_LOCAL_APP_DATA_INVALID".into());
     }
-    values.insert("LOCALAPPDATA".into(), local_app_data);
+    values.insert("LOCALAPPDATA".into(), local_app_data.to_owned());
     let state_text = state.to_str().ok_or("SANDBOX_STATE_NOT_UNICODE")?;
-    // Private roaming and temp paths keep Node/rust-analyzer from probing
-    // the host user's real profile. LOCALAPPDATA remains OS-real as required
-    // for lowbox process initialization.
+    // Private roaming/temp paths keep Node/rust-analyzer away from host data.
     for key in ["HOME", "USERPROFILE", "APPDATA", "TEMP", "TMP"] {
         values.insert(key.into(), state_text.into());
     }
@@ -549,16 +619,10 @@ fn spawn_inner(
         return Err(error);
     }
 
-    let runtime_text = runtime.to_str().ok_or("SANDBOX_RUNTIME_NOT_UNICODE")?;
-    let mut command = quote_argument(runtime_text)?;
-    for argument in args {
-        command.pop(); command.push(' ' as u16);
-        command.extend(quote_argument(argument)?);
-    }
-    if command.last() != Some(&0) { command.push(0); }
+    let mut command = process_command_line(runtime, args)?;
     let application = wide(runtime.as_os_str())?;
     let directory = wide(current_directory.as_os_str())?;
-    let environment = environment_block(environment, current_directory)?;
+    let environment = environment_block(environment, current_directory, &profile.folder)?;
     let mut startup: STARTUPINFOEXW = unsafe { std::mem::zeroed() };
     startup.StartupInfo.cb = std::mem::size_of::<STARTUPINFOEXW>() as u32;
     startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
@@ -607,6 +671,7 @@ fn spawn_inner(
 mod tests {
     use super::*;
     use std::io::Read;
+    use std::os::windows::process::CommandExt;
     use std::time::Duration;
 
     // The read has a deadline so a broken sandbox child cannot block the
@@ -685,8 +750,9 @@ mod tests {
         // Validate the SAME command string outside AppContainer first. The
         // lowbox process must not read the host-owned, explicitly locked file.
         // cmd avoids requiring PowerShell CLR/module initialization.
+        // Deliberately include whitespace to cover Windows path quoting.
         let host_file = std::env::temp_dir()
-            .join(format!("browseros-sandbox-host-{}.txt", uuid::Uuid::new_v4()));
+            .join(format!("browseros sandbox host {}.txt", uuid::Uuid::new_v4()));
         std::fs::write(&host_file, "host-secret-marker").unwrap();
         let user = current_user_sid().expect("host user SID");
         let icacls = system_binary("icacls.exe").unwrap();
@@ -697,9 +763,12 @@ mod tests {
         assert!(acl.status.success(), "host ACL setup failed: {}",
             String::from_utf8_lossy(&acl.stderr));
         let cmd = system_binary("cmd.exe").unwrap();
-        let read_command = format!("echo HOST_READ_ATTEMPTED & type \"{}\"", host_file.display());
+        let read_command = format!("type \"{}\"", host_file.display());
+        // std::process::Command::arg() quotes the whole /C string using CRT
+        // rules; cmd.exe then strips an unmatched outer quote. raw_arg()
+        // appends the actual /C command tail, without that extra wrapper.
         let baseline = std::process::Command::new(&cmd)
-            .args(["/D", "/C", &read_command]).output().unwrap();
+            .args(["/D", "/C"]).raw_arg(&read_command).output().unwrap();
         assert!(baseline.status.success()
             && String::from_utf8_lossy(&baseline.stdout).contains("host-secret-marker"),
             "host-file positive control invalid: {}",
@@ -707,11 +776,27 @@ mod tests {
         let (stdout, stderr, exit) = run_isolated(
             &cmd, &["/D".into(), "/C".into(), read_command], &[],
         ).expect("sandbox host-file probe");
-        assert!(stdout.contains("HOST_READ_ATTEMPTED"),
-            "cmd did not execute probe: stdout={stdout:?} stderr={stderr:?}");
         assert!(!stdout.contains("host-secret-marker") && exit != 0,
             "AppContainer read host-only file: stdout={stdout:?} stderr={stderr:?}");
+        assert!(!stderr.to_ascii_lowercase().contains("not recognized"),
+            "cmd did not execute the host-file probe: stderr={stderr:?}");
         std::fs::remove_file(host_file).unwrap();
+    }
+
+    #[test]
+    fn cmd_command_line_preserves_raw_tail_and_quoted_file_path() {
+        let cmd = system_binary("cmd.exe").unwrap().canonicalize().unwrap();
+        let args = vec!["/D".into(), "/C".into(), "echo sandbox-ok".into()];
+        let command = process_command_line(&cmd, &args).unwrap();
+        let decoded = String::from_utf16_lossy(&command[..command.len() - 1]);
+        assert!(decoded.ends_with(" /D /C echo sandbox-ok"), "{decoded}");
+        assert!(!decoded.ends_with("\"echo sandbox-ok\""), "{decoded}");
+        let args = vec![
+            "/D".into(), "/C".into(), "type \"C:\\Test Folder\\test.txt\"".into()
+        ];
+        let command = process_command_line(&cmd, &args).unwrap();
+        let decoded = String::from_utf16_lossy(&command[..command.len() - 1]);
+        assert!(decoded.ends_with(" /D /C type \"C:\\Test Folder\\test.txt\""), "{decoded}");
     }
 
     #[test]

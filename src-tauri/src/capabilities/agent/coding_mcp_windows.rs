@@ -310,10 +310,13 @@ impl Session {
         }
         let child = profile.spawn(&executable, &args, &environment, &state)
             .map_err(|error| {
+                // Native test panics include the concrete Win32 operation and
+                // code; production retains an opaque error with no file paths,
+                // credential contents, or process-internal diagnostics.
                 #[cfg(test)]
-                eprintln!("MCP_SANDBOX_SPAWN_DETAIL={error}");
-                let _ = error;
-                "MCP_START_FAILED".to_string()
+                { return format!("MCP_START_FAILED:{error}"); }
+                #[cfg(not(test))]
+                { let _ = error; "MCP_START_FAILED".to_string() }
             })?;
         let SandboxChild { stdin, stdout, process } = child;
         let (writer, write_rx) = mpsc::sync_channel::<Vec<u8>>(4);

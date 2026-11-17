@@ -328,9 +328,9 @@ impl Session {
         let child = profile.spawn(&server, &["--no-proc-macro".into()], &environment, &state)
             .map_err(|error| {
                 #[cfg(test)]
-                eprintln!("LSP_SANDBOX_SPAWN_DETAIL={error}");
-                let _ = error;
-                "LSP_SANDBOX_START_FAILED".to_string()
+                { return format!("LSP_SANDBOX_START_FAILED:{error}"); }
+                #[cfg(not(test))]
+                { let _ = error; "LSP_SANDBOX_START_FAILED".to_string() }
             })?;
         let SandboxChild { stdin, stdout, process } = child;
         let (writer, write_rx) = mpsc::sync_channel::<Vec<u8>>(4);
