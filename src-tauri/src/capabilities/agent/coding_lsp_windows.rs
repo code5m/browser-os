@@ -1113,6 +1113,102 @@ mod tests {
         }
     }
 
+    /// Run one reviewed toolchain image inside the AppContainer and report
+    /// its real exit status and captured stderr. Rust Analyzer collapses a
+    /// sandboxed `cargo` failure into "command failed", so this probe names
+    /// the underlying AppContainer path or ACL cause on the public run page.
+    fn toolchain_probe(label: &str, binary: &str, args: &[String], manifest: &Path) {
+        let profile = match SandboxProfile::create() {
+            Ok(profile) => profile,
+            Err(error) => {
+                eprintln!("::error::LSP_CARGO_PROBE_{label} PROFILE:{error}");
+                return;
+            }
+        };
+        let state = match profile.state_dir() {
+            Ok(state) => state,
+            Err(error) => {
+                eprintln!("::error::LSP_CARGO_PROBE_{label} STATE:{error}");
+                return;
+            }
+        };
+        let server = match runtime() {
+            Ok(server) => server,
+            Err(error) => {
+                eprintln!("::error::LSP_CARGO_PROBE_{label} RUNTIME:{error}");
+                return;
+            }
+        };
+        let bin = server.parent().unwrap().to_path_buf();
+        let cargo = match profile.stage_runtime_peer(&bin.join("cargo.exe")) {
+            Ok(path) => path,
+            Err(error) => {
+                eprintln!("::error::LSP_CARGO_PROBE_{label} STAGE_CARGO:{error}");
+                return;
+            }
+        };
+        let rustc = match profile.stage_runtime_peer(&bin.join("rustc.exe")) {
+            Ok(path) => path,
+            Err(error) => {
+                eprintln!("::error::LSP_CARGO_PROBE_{label} STAGE_RUSTC:{error}");
+                return;
+            }
+        };
+        let home = state.join("cargo-home");
+        if let Err(error) = fs::create_dir(&home) {
+            eprintln!("::error::LSP_CARGO_PROBE_{label} CARGO_HOME:{error}");
+            return;
+        }
+        let image = if binary == "cargo" { &cargo } else { &rustc };
+        let environment = vec![
+            ("CARGO".to_string(), cargo.to_string_lossy().into_owned()),
+            ("RUSTC".to_string(), rustc.to_string_lossy().into_owned()),
+            ("CARGO_HOME".to_string(), home.to_string_lossy().into_owned()),
+            ("CARGO_NET_OFFLINE".to_string(), "true".to_string()),
+        ];
+        let mut full_args = args.to_vec();
+        if !manifest.as_os_str().is_empty() {
+            full_args.push(manifest.to_string_lossy().into_owned());
+        }
+        let child = match profile.spawn(image, &full_args, &environment, &state) {
+            Ok(child) => child,
+            Err(error) => {
+                eprintln!("::error::LSP_CARGO_PROBE_{label} SPAWN({}) {error}", image.display());
+                return;
+            }
+        };
+        let SandboxChild {
+            stdin,
+            mut stdout,
+            process,
+        } = child;
+        drop(stdin);
+        let mut output = Vec::new();
+        let _ = stdout.read_to_end(&mut output);
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while process.try_wait().unwrap_or(true) == false {
+            if Instant::now() >= deadline {
+                let _ = process.terminate();
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let exit = process.exit_code();
+        let stderr = profile.stderr_for_test();
+        let tail = |text: &str| {
+            let bytes = text.as_bytes();
+            let start = bytes.len().saturating_sub(900);
+            String::from_utf8_lossy(&bytes[start..]).replace('\n', " | ")
+        };
+        let out = String::from_utf8_lossy(&output).into_owned();
+        eprintln!(
+            "::error::LSP_CARGO_PROBE_{label} exit={exit:?} image={} stdout={} stderr={}",
+            image.display(),
+            tail(&out),
+            tail(&stderr)
+        );
+    }
+
     #[test]
     fn snapshot_rejects_junctions_instead_of_copying_external_sources() {
         let base =
@@ -1171,6 +1267,26 @@ mod tests {
         )
         .unwrap();
         fs::write(root.join("src/lib.rs"), "pub fn fixture() -> i32 { 42 }\n").unwrap();
+        // Name the sandboxed toolchain failure before asserting on Rust
+        // Analyzer: a probe error is a real capability failure, not a
+        // diagnostics-timing artefact.
+        {
+            let probe_profile = SandboxProfile::create().unwrap();
+            let probe_snapshot = snapshot(&root, &probe_profile).unwrap();
+            let manifest = probe_snapshot.join("Cargo.toml");
+            toolchain_probe(
+                "LOCATE",
+                "cargo",
+                &[
+                    "locate-project".to_string(),
+                    "--workspace".to_string(),
+                    "--manifest-path".to_string(),
+                ],
+                &manifest,
+            );
+            toolchain_probe("VERSION", "cargo", &["--version".to_string()], &PathBuf::new());
+            toolchain_probe("RUSTC_VERSION", "rustc", &["--version".to_string()], &PathBuf::new());
+        }
         let started = acceptance(
             "START",
             execute(
