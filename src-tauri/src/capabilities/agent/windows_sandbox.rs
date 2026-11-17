@@ -461,6 +461,50 @@ impl SandboxProfile {
         Ok(())
     }
 
+    /// Copy a read-only source tree into the private profile and give every
+    /// file the ACL shape the staged runtime images already prove works
+    /// inside the lowbox. Rust Analyzer resolves the standard library from
+    /// the sysroot, which lives outside the profile, so its `rust-src` checkout
+    /// has to be materialised here before the analyzer starts.
+    pub fn stage_readonly_tree(&self, source: &Path, destination: &Path) -> Result<PathBuf, String> {
+        no_reparse_path(source)?;
+        std::fs::create_dir_all(destination).map_err(|_| "SANDBOX_STAGE_TREE_FAILED")?;
+        // Seed the destination with inheritable grants *before* copying, so
+        // every copied file and directory receives the ACEs by inheritance.
+        // Per-file `icacls` with `(OI)(CI)` flags is silently refused on
+        // files, and running `icacls` once per file over a source checkout
+        // costs minutes.
+        let icacls = system_binary("icacls.exe")?;
+        let user = current_user_sid()?;
+        let output = std::process::Command::new(&icacls)
+            .arg(destination)
+            .args(["/inheritance:r", "/grant:r"])
+            .arg(format!("*{user}:(OI)(CI)F"))
+            .arg("*S-1-5-18:(OI)(CI)F")
+            .arg(format!("*{}:(OI)(CI)RX", self.sid_string))
+            .output()
+            .map_err(|_| "SANDBOX_STAGE_TREE_ACL")?;
+        if !output.status.success() {
+            return Err("SANDBOX_STAGE_TREE_ACL".into());
+        }
+        let mut pending = vec![(source.to_path_buf(), destination.to_path_buf())];
+        while let Some((from, to)) = pending.pop() {
+            for entry in std::fs::read_dir(&from).map_err(|_| "SANDBOX_STAGE_TREE_FAILED")? {
+                let entry = entry.map_err(|_| "SANDBOX_STAGE_TREE_FAILED")?;
+                let path = entry.path();
+                no_reparse_path(&path)?;
+                let target = to.join(entry.file_name());
+                if path.is_dir() {
+                    std::fs::create_dir_all(&target).map_err(|_| "SANDBOX_STAGE_TREE_FAILED")?;
+                    pending.push((path, target));
+                } else if path.is_file() {
+                    std::fs::copy(&path, &target).map_err(|_| "SANDBOX_STAGE_TREE_FAILED")?;
+                }
+            }
+        }
+        Ok(destination.to_path_buf())
+    }
+
     /// Apply the same per-file ACL shape that staged runtime images already
     /// prove works inside the lowbox (owner full control, SYSTEM full control,
     /// package read/execute) to a read-only snapshot tree. Snapshot entries

@@ -528,6 +528,28 @@ impl Session {
         let rustc = profile.stage_runtime_peer(&toolchain_bin.join("rustc.exe"))?;
         let cargo_home = state.join("cargo-home");
         fs::create_dir(&cargo_home).map_err(|_| "LSP_CARGO_HOME_UNAVAILABLE")?;
+        // Rust Analyzer derives its sysroot from the staged `rustc` image, which
+        // resolves to the profile root (`...\AC`), and then looks for the standard
+        // library sources at `<sysroot>/lib/rustlib/src/rust/library`. Staging the
+        // reviewed `rust-src` checkout at exactly that offset lets the analyzer
+        // load the standard library without any extra initialization option.
+        let sysroot_library = state.parent().map(|prefix| {
+            prefix
+                .join("lib")
+                .join("rustlib")
+                .join("src")
+                .join("rust")
+        });
+        if let (Some(destination), Some(source)) = (
+            sysroot_library,
+            toolchain_bin
+                .parent()
+                .map(|root| root.join("lib").join("rustlib").join("src").join("rust"))
+                .filter(|root| root.is_dir()),
+        ) {
+            // Best effort: a missing checkout only degrades std-library analysis.
+            let _ = profile.stage_readonly_tree(&source, &destination);
+        };
         let environment = vec![
             ("CARGO".into(), cargo.to_string_lossy().into_owned()),
             ("RUSTC".into(), rustc.to_string_lossy().into_owned()),
@@ -599,7 +621,7 @@ impl Session {
             write_result,
             reader,
             reader_fault,
-            deadline: Instant::now() + Duration::from_secs(seconds.clamp(5, 120)),
+            deadline: Instant::now() + Duration::from_secs(seconds.clamp(5, 600)),
             next_id: 1,
             root,
             snapshot,
@@ -625,7 +647,7 @@ impl Session {
         Ok(session)
     }
     fn reset_deadline(&mut self, seconds: u64) {
-        self.deadline = Instant::now() + Duration::from_secs(seconds.clamp(5, 120));
+        self.deadline = Instant::now() + Duration::from_secs(seconds.clamp(5, 600));
         self.last_used = Instant::now();
     }
     fn recv_frame(&self, timeout_error: &'static str) -> Result<Value, String> {
@@ -1490,7 +1512,7 @@ mod tests {
             "START",
             execute(
                 &root,
-                json!({"action":"lsp_start","approved":true,"profile":"rust_analyzer","timeout_seconds":120}),
+                json!({"action":"lsp_start","approved":true,"profile":"rust_analyzer","timeout_seconds":300}),
             ),
         );
         let id = started["session_id"].as_str().unwrap();
@@ -1498,7 +1520,7 @@ mod tests {
             "DIAGNOSTICS",
             execute(
                 &root,
-                json!({"action":"lsp_diagnostics","approved":true,"session_id":id,"path":"src/lib.rs","timeout_seconds":120}),
+                json!({"action":"lsp_diagnostics","approved":true,"session_id":id,"path":"src/lib.rs","timeout_seconds":300}),
             ),
         );
         assert!(diagnostics["diagnostics"].is_array());
@@ -1507,7 +1529,7 @@ mod tests {
             "SYMBOLS",
             execute(
                 &root,
-                json!({"action":"lsp_request","approved":true,"session_id":id,"method":"textDocument/documentSymbol","params":{"textDocument":{"uri":uri}},"timeout_seconds":120}),
+                json!({"action":"lsp_request","approved":true,"session_id":id,"method":"textDocument/documentSymbol","params":{"textDocument":{"uri":uri}},"timeout_seconds":300}),
             ),
         );
         assert!(
