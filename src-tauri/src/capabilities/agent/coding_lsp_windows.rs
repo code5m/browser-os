@@ -108,15 +108,22 @@ fn no_reparse(path: &Path) -> Result<(), String> {
     }
     Ok(())
 }
-/// The executable in ~/.cargo/bin is normally a rustup proxy, not the
-/// language server itself. Copying that proxy to an AppContainer makes it
-/// look for toolchain executables in a deliberately private USERPROFILE and
-/// fail before it can answer initialize. Resolve the INSTALLED toolchain
-/// binary by reading rustup metadata; never execute rustup outside sandbox.
-fn rustup_analyzer_binary(home: &Path) -> Result<PathBuf, String> {
-    let rustup_home = std::env::var_os("RUSTUP_HOME")
+/// A rustup shim is the small `cargo`/`rustc`/`rust-analyzer` proxy that lives
+/// wherever CARGO_HOME points. Copying that shim into an AppContainer makes
+/// every toolchain call answer "no default is configured", because the shim
+/// resolves its toolchain through a deliberately private USERPROFILE. Resolve
+/// the INSTALLED toolchain images from rustup metadata; never run rustup.
+fn rustup_home() -> Option<PathBuf> {
+    std::env::var_os("RUSTUP_HOME")
         .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".rustup"));
+        .or_else(|| {
+            std::env::var_os("USERPROFILE")
+                .map(PathBuf::from)
+                .map(|home| home.join(".rustup"))
+        })
+        .filter(|path| path.join("settings.toml").is_file())
+}
+fn rustup_analyzer_binary(rustup_home: &Path) -> Result<PathBuf, String> {
     let settings = fs::read_to_string(rustup_home.join("settings.toml")).unwrap_or_default();
     let default = settings.lines().find_map(|line| {
         let (key, value) = line.split_once('=')?;
@@ -151,34 +158,28 @@ fn rustup_analyzer_binary(home: &Path) -> Result<PathBuf, String> {
         .map_err(|_| "LSP_RUST_ANALYZER_TOOLCHAIN_MISSING".into())
 }
 fn runtime() -> Result<PathBuf, String> {
-    let home = std::env::var_os("USERPROFILE").map(PathBuf::from);
+    // Prefer the installed toolchain image. Staging a rustup shim, or staging
+    // the shim's cargo/rustc peers, cannot work inside the sandbox.
+    if let Some(home) = rustup_home() {
+        if let Ok(analyzer) = rustup_analyzer_binary(&home) {
+            return Ok(analyzer);
+        }
+    }
     if let Some(paths) = std::env::var_os("PATH") {
         for directory in std::env::split_paths(&paths).filter(|path| path.is_absolute()) {
             let candidate = directory.join("rust-analyzer.exe");
             if !candidate.is_file() {
                 continue;
             }
-            let is_cargo_proxy = directory
-                .file_name()
-                .is_some_and(|value| value.to_string_lossy().eq_ignore_ascii_case("bin"))
-                && directory
-                    .parent()
-                    .and_then(Path::file_name)
-                    .is_some_and(|value| value.to_string_lossy().eq_ignore_ascii_case(".cargo"));
-            if is_cargo_proxy {
-                let home = home.as_ref().ok_or("LSP_USERPROFILE_UNAVAILABLE")?;
-                return rustup_analyzer_binary(home);
+            // A shim directory also ships rustup.exe; a real toolchain bin
+            // directory does not.
+            if directory.join("rustup.exe").is_file() {
+                continue;
             }
             no_reparse(&candidate)?;
             return candidate
                 .canonicalize()
                 .map_err(|_| "LSP_RUST_ANALYZER_NOT_FOUND".into());
-        }
-    }
-    if let Some(home) = home {
-        let proxy = home.join(".cargo/bin/rust-analyzer.exe");
-        if proxy.is_file() {
-            return rustup_analyzer_binary(&home);
         }
     }
     Err("LSP_RUST_ANALYZER_NOT_FOUND".into())
