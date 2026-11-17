@@ -238,7 +238,7 @@ fn uri_for(path: &Path) -> Result<String, String> {
 }
 fn request_uri_to_snapshot(value: &mut Value, root: &Path, snapshot: &Path) -> Result<(), String> {
     match value {
-        Value::String(text) if text.starts_with("file://") => {
+        Value::String(text) if text.get(..7).is_some_and(|part| part.eq_ignore_ascii_case("file://")) => {
             let uri = url::Url::parse(text).map_err(|_| "LSP_URI_INVALID")?;
             let path = uri.to_file_path().map_err(|_| "LSP_URI_INVALID")?;
             no_reparse(&path)?;
@@ -264,26 +264,21 @@ fn request_uri_to_snapshot(value: &mut Value, root: &Path, snapshot: &Path) -> R
 }
 fn response_uri_to_workspace(value: &mut Value, root: &Path, snapshot: &Path) {
     match value {
-        Value::String(text) if text.starts_with("file://") => {
-            if let Ok(uri) = url::Url::parse(text) {
-                if let Ok(path) = uri.to_file_path() {
-                    if let Ok(relative) = path.strip_prefix(snapshot) {
-                        if let Ok(mapped) = uri_for(&root.join(relative)) {
-                            *text = mapped;
-                        }
-                    }
-                }
-            }
+        Value::String(text) if text.get(..7).is_some_and(|part| part.eq_ignore_ascii_case("file://")) => {
+            let mapped = url::Url::parse(text).ok()
+                .and_then(|uri| uri.to_file_path().ok())
+                .and_then(|path| path.strip_prefix(snapshot).ok().map(Path::to_path_buf))
+                .filter(|relative| relative.components().all(|part|
+                    matches!(part, std::path::Component::Normal(_))
+                ))
+                .and_then(|relative| uri_for(&root.join(relative)).ok());
+            *text = mapped.unwrap_or_else(|| "[outside reviewed snapshot]".into());
         }
         Value::Array(items) => {
-            for item in items {
-                response_uri_to_workspace(item, root, snapshot);
-            }
+            for item in items { response_uri_to_workspace(item, root, snapshot); }
         }
         Value::Object(items) => {
-            for item in items.values_mut() {
-                response_uri_to_workspace(item, root, snapshot);
-            }
+            for item in items.values_mut() { response_uri_to_workspace(item, root, snapshot); }
         }
         _ => {}
     }
@@ -601,11 +596,14 @@ fn remap_reviewed_uris(
     value: &mut Value, snapshot: &Path, workspace: &Path, single_public_uri: Option<&str>,
 ) {
     match value {
-        Value::String(text) if text.starts_with("file://") => {
+        Value::String(text) if text.get(..7).is_some_and(|part| part.eq_ignore_ascii_case("file://")) => {
             let mapped = url::Url::parse(text).ok()
                 .and_then(|uri| uri.to_file_path().ok())
                 .and_then(|path| path.strip_prefix(snapshot).ok().map(Path::to_path_buf))
                 .and_then(|relative| {
+                    if !relative.components().all(|part|
+                        matches!(part, std::path::Component::Normal(_))
+                    ) { return None; }
                     if let Some(public) = single_public_uri {
                         (relative == Path::new("document.rs")).then(|| public.to_owned())
                     } else {
@@ -638,10 +636,11 @@ fn one_shot_document_request(root: &Path, request: &Value) -> Result<Value, Stri
     let content = request["content"].as_str().ok_or("LSP_DOCUMENT_REQUIRED")?;
     super::coding::validate_lsp_document(root, path, content)?;
     if content.len() > MAX_FILE_BYTES { return Err("LSP_DOCUMENT_LIMIT".into()); }
-    let line = request["line"].as_u64().filter(|n| *n < 100_000)
-        .ok_or("LSP_POSITION_INVALID")?;
-    let character = request["character"].as_u64().filter(|n| *n <= 262_144)
-        .ok_or("LSP_POSITION_INVALID")?;
+    let symbol_only = method == "textDocument/documentSymbol";
+    let line = request["line"].as_u64().or_else(|| symbol_only.then_some(0))
+        .filter(|n| *n < 100_000).ok_or("LSP_POSITION_INVALID")?;
+    let character = request["character"].as_u64().or_else(|| symbol_only.then_some(0))
+        .filter(|n| *n <= 262_144).ok_or("LSP_POSITION_INVALID")?;
     let text_line = content.split('\n').nth(line as usize).ok_or("LSP_POSITION_INVALID")?;
     if character as usize > text_line.encode_utf16().count() {
         return Err("LSP_POSITION_INVALID".into());
@@ -728,23 +727,14 @@ fn get_session(root: &Path, id: &str) -> Result<Arc<Mutex<Session>>, String> {
 }
 fn retire_expired() {
     let expired = {
-        let mut cache = sessions()
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        let expired = cache
-            .ready.iter()
-            .filter_map(|(id, session)| {
-                session
-                    .try_lock()
-                    .ok()
-                    .filter(|session| session.last_used.elapsed() > Duration::from_secs(120))
-                    .map(|_| id.clone())
-            })
-            .collect::<Vec<_>>();
-        expired
-            .iter()
-            .filter_map(|id| cache.ready.remove(id))
-            .collect::<Vec<_>>()
+        let mut cache = sessions().lock().unwrap_or_else(|poison| poison.into_inner());
+        let ids = cache.ready.iter().filter_map(|(id, entry)| {
+            let Ok(mut session) = entry.try_lock() else { return None; };
+            if session.last_used.elapsed() <= Duration::from_secs(120) { return None; }
+            session.closed = true;
+            Some(id.clone())
+        }).collect::<Vec<_>>();
+        ids.iter().filter_map(|id| cache.ready.remove(id)).collect::<Vec<_>>()
     };
     drop(expired);
 }
@@ -857,6 +847,7 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
                     .collect()
             };
             let mut owned = Vec::new();
+            let mut busy_candidates = 0usize;
             for (id, entry) in candidates {
                 let matches_workspace = match entry.try_lock() {
                     Ok(mut session) if session.root == root => {
@@ -867,6 +858,7 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
                     }
                     Err(_) if request["session_id"].as_str().is_some() =>
                         return Err("LSP_SESSION_BUSY".into()),
+                    Err(_) => { busy_candidates += 1; false }
                     _ => false,
                 };
                 // The MutexGuard temporary is gone before Arc ownership
@@ -888,7 +880,11 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
             };
             let count = removed.len();
             drop(removed);
-            Ok(json!({"closed_sessions":count}))
+            Ok(json!({
+                "closed_sessions":count,
+                "skipped_busy_candidates":busy_candidates,
+                "close_complete":busy_candidates == 0
+            }))
         }
         _ => Err("LSP_ACTION_UNKNOWN".into()),
     }
@@ -1023,6 +1019,23 @@ mod tests {
         remap_reviewed_uris(&mut value, &snapshot, &root, Some(&public));
         assert_eq!(value["target"], public);
         assert_eq!(value["external"], "[outside reviewed snapshot]");
+    }
+
+    #[test]
+    fn persistent_response_uris_mask_unreviewed_locations() {
+        let snapshot = PathBuf::from(r"C:\isolated\snapshot");
+        let root = PathBuf::from(r"C:\approved\workspace");
+        let original_uri = uri_for(&snapshot.join("src/main.rs")).unwrap();
+        let public_uri = uri_for(&root.join("src/main.rs")).unwrap();
+        let mut reply = json!({
+            "approved": original_uri,
+            "outside": "file:///C:/private/token.txt",
+            "upper": "FILE:///C:/outside/secret.rs"
+        });
+        response_uri_to_workspace(&mut reply, &root, &snapshot);
+        assert_eq!(reply["approved"], public_uri);
+        assert_eq!(reply["outside"], "[outside reviewed snapshot]");
+        assert_eq!(reply["upper"], "[outside reviewed snapshot]");
     }
 
     #[test]

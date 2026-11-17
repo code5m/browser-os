@@ -241,6 +241,7 @@ struct CachedSession {
     graph_fingerprint: String,
     documents: HashMap<String, CachedDocument>,
     last_used: Instant,
+    closed: bool,
 }
 
 fn session_cache() -> &'static Mutex<HashMap<String, Arc<Mutex<CachedSession>>>> {
@@ -633,46 +634,41 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
     let available = profiles();
     if request["action"] == "lsp_close" {
         let root = root.canonicalize().map_err(|_| "LSP_ROOT_INVALID")?;
-        // Never wait on an in-flight JSON-RPC session while holding the
-        // registry mutex: one slow workspace must not block every workspace.
+        // Do not block closing workspace A behind a busy JSON-RPC for B.
+        // Busy sessions cannot be attributed to roots without their mutexes.
         let candidates: Vec<(String, Arc<Mutex<CachedSession>>)> = {
             let cache = session_cache().lock().unwrap_or_else(|e| e.into_inner());
-            cache
-                .iter()
-                .map(|(key, entry)| (key.clone(), entry.clone()))
-                .collect()
+            cache.iter().map(|(key, value)| (key.clone(), value.clone())).collect()
         };
-        let keys: Vec<(String, Arc<Mutex<CachedSession>>)> = candidates
-            .iter()
-            .filter(|(_, entry)| {
-                entry
-                    .lock()
-                    .ok()
-                    .is_some_and(|session| session.workspace_root == root)
-            })
-            .cloned()
-            .collect();
+        let mut owned = Vec::new();
+        let mut busy_candidates = 0usize;
+        for (key, entry) in candidates {
+            let mine = match entry.try_lock() {
+                Ok(mut session) if session.workspace_root == root => {
+                    session.closed = true;
+                    true
+                }
+                Err(_) => { busy_candidates += 1; false }
+                _ => false,
+            };
+            if mine { owned.push((key, entry)); }
+        }
         let retired = {
             let mut cache = session_cache().lock().unwrap_or_else(|e| e.into_inner());
-            keys.iter()
-                .filter_map(|(key, entry)| {
-                    if cache
-                        .get(key)
-                        .is_some_and(|current| Arc::ptr_eq(current, entry))
-                    {
-                        cache.remove(key)
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<_>>()
+            owned.iter().filter_map(|(key, entry)| {
+                if cache.get(key).is_some_and(|old| Arc::ptr_eq(old, entry)) {
+                    cache.remove(key)
+                } else { None }
+            }).collect::<Vec<_>>()
         };
         let count = retired.len();
-        // All heavy process/scratch cleanup happens outside the registry lock.
-        drop(keys);
-        drop(candidates);
+        drop(owned);
         drop(retired);
-        return Ok(json!({"closed_sessions":count}));
+        return Ok(json!({
+            "closed_sessions":count,
+            "skipped_busy_candidates":busy_candidates,
+            "close_complete":busy_candidates == 0
+        }));
     }
     if request["action"] == "lsp_status" {
         return Ok(
@@ -703,14 +699,13 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
     let path = request["path"].as_str().ok_or("LSP_DOCUMENT_REQUIRED")?;
     let content = request["content"].as_str().ok_or("LSP_DOCUMENT_REQUIRED")?;
     super::coding::validate_lsp_document(&root, path, content)?;
+    let symbol_only = method == "textDocument/documentSymbol";
     let line = request["line"]
-        .as_u64()
-        .filter(|n| *n < 100000)
-        .ok_or("LSP_POSITION_INVALID")?;
+        .as_u64().or_else(|| symbol_only.then_some(0))
+        .filter(|n| *n < 100000).ok_or("LSP_POSITION_INVALID")?;
     let character = request["character"]
-        .as_u64()
-        .filter(|n| *n <= 262144)
-        .ok_or("LSP_POSITION_INVALID")?;
+        .as_u64().or_else(|| symbol_only.then_some(0))
+        .filter(|n| *n <= 262144).ok_or("LSP_POSITION_INVALID")?;
     let text_line = content
         .split('\n')
         .nth(line as usize)
@@ -777,7 +772,8 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
     let mut session_reused = false;
     let cached = if let Some(existing) = existing {
         let mut guard = existing.lock().map_err(|_| "LSP_SESSION_UNAVAILABLE")?;
-        if guard.graph_fingerprint == graph
+        if !guard.closed
+            && guard.graph_fingerprint == graph
             && guard.last_used.elapsed() < SESSION_IDLE_TTL
             && guard.session.is_alive()
         {
@@ -873,11 +869,13 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
             graph_fingerprint: graph.clone(),
             documents,
             last_used: Instant::now(),
+            closed: false,
         };
         insert_cached_session(key.clone(), managed)?
     };
 
     let mut managed = cached.lock().map_err(|_| "LSP_SESSION_UNAVAILABLE")?;
+    if managed.closed { return Err("LSP_SESSION_CLOSED".into()); }
     if managed.graph_fingerprint != graph || !managed.session.is_alive() {
         drop(managed);
         remove_cached_session(&key, &cached);
@@ -888,13 +886,13 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
         remove_cached_session(&key, &cached);
         return Err(error);
     }
-    let result = match managed.session.rpc_next(
-        method,
-        json!({
-            "textDocument":{"uri":document_uri},
-            "position":{"line":line,"character":character}
-        }),
-    ) {
+    let parameters = if symbol_only {
+        json!({"textDocument":{"uri":document_uri}})
+    } else {
+        json!({"textDocument":{"uri":document_uri},
+            "position":{"line":line,"character":character}})
+    };
+    let result = match managed.session.rpc_next(method, parameters) {
         Ok(result) => result,
         Err(error) => {
             // A timed-out or broken JSON-RPC stream is not reusable. Drop the

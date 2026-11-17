@@ -96,3 +96,26 @@
 基线 afbeb7a1。修复 write_file 只能覆盖不能新建的 API 行为差异：存在文件继续使用内容 CAS；不存在且无其他读取错误时使用授权父目录的原子无覆盖创建。新增目录浏览句柄化：Linux 使用已授权 dirfd + fstatat(AT_SYMLINK_NOFOLLOW)，Windows 使用已授权 NT 目录句柄 + 相对子句柄取元数据，并在目录身份被替换时拒绝输出。保留前端 DirEntry 合同并限制枚举最多 50000 项。
 
 新增静态合同与原生回归用例代码，未执行编译、测试、Actions、NSIS 或实机验收。状态 SOURCE_PATCHED / NATIVE_UNVERIFIED；不应将历史 run #201 结果延伸到最新提交。本轮提交采用 [skip ci]；仓库多个 workflow 监听 feature push，不能未经 Actions 核查就断言零被动运行。
+
+## 第六轮：集中收敛（同分支，源码修复，不运行 CI）
+
+基线为 7d6730264afd21e33253c2f08f82cbaee0f3779d，仍使用 feature/browseros-windows-linux-v2-onepass-20261114；不新建分支、不合并 master。
+
+### 本轮已经调整的源码
+
+1. **Linux/Windows LSP 单次诊断**：diagnostics 允许省略行列号，兼容旧的 documentSymbol result；标准 documentSymbol 请求不再传多余 position 字段。completion/hover/definition 继续严格校验 UTF-16 光标坐标。
+2. **Windows LSP 结果边界**：持久会话只将快照内部的文件 URI 回映到已授权工作区；外部/私有文件 URI 遮蔽，不区分 file scheme 大小写；单次请求也拒绝异常相对路径段。
+3. **LSP 关闭与回收**：Linux 关闭不再等待全局会话中的繁忙 RPC，Linux/Windows 同步标记已关闭的会话并禁止旧 Arc 继续使用；批量关闭明确返回 skipped_busy_candidates 与 close_complete，不能把未关闭对象报告为已全部关闭。Windows 过期回收同样标记 closed。
+4. **Linux 删除对象身份复核**：在 unlinkat 前用目录句柄下的 fstatat(AT_SYMLINK_NOFOLLOW) 复核 inode/dev，拒绝名称在预检后被明显替换；注意这不是无竞态原子删除，最后一次校验与 unlinkat 之间仍存在非事务性窗口。
+5. **回归合同**：增加 Windows 文件 URI 脱敏单元测试代码、Linux inode 替换回归用例和静态源码断言；根据明确约束本轮均未执行。
+
+### 唯一剩余验收清单（最后统一在同一个 HEAD 执行）
+
+| 优先级 | 验收项目 | 必须提供的真实证据 |
+|---|---|---|
+| P0 | Win11 AppContainer CreateProcessW error 5；Node/MCP/rust-analyzer LSP 原生启动与沙箱隔离 | 同 SHA 的 Windows 原生运行日志、实际进程与失败码 |
+| P0 | MCP stdio 背压/超时；Windows/Linux LSP 单次、持久、多工作区并发及关闭 | 原生用例实际输出，严禁继承旧 run #201 |
+| P0 | Windows/Linux 文件创建/CAS、目录枚举、符号链接/Junction、递归删除与攻击性并发交换 | 同 SHA 安全回归的真实执行结果；失败不能报 PASS |
+| P1 | Windows NSIS、WebView2 GUI 冷启动和会话持久化、真实 BFC 登录态、UWP/MSIX 启动器 | Windows 安装版人工+自动验收证据 |
+
+本轮状态：SOURCE_PATCHED_ONLY / NATIVE_UNVERIFIED。没有调用 CI、Cargo、Node 测试、workflow_dispatch 或执行 Windows/Linux 原生验收，旧 run #201 不得作为新提交的 PASS。提交包含 [skip ci]，仍需要通过该 HEAD 的实际 Actions 列表确认有无被动运行。

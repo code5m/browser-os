@@ -235,6 +235,22 @@ mod linux {
         Ok(entries)
     }
 
+    // Recheck the pinned inode before name-based unlinkat; this narrows a
+    // concurrent rename race, but it cannot make unlinkat itself atomic.
+    fn entry_still_matches(parent: &File, basename: &OsStr, pinned: &File) -> io::Result<()> {
+        use std::os::unix::fs::MetadataExt;
+        let name = name(basename)?;
+        let mut stat: libc::stat = unsafe { std::mem::zeroed() };
+        if unsafe {
+            libc::fstatat(parent.as_raw_fd(), name.as_ptr(), &mut stat, libc::AT_SYMLINK_NOFOLLOW)
+        } != 0 { return Err(io::Error::last_os_error()); }
+        let opened = pinned.metadata()?;
+        if stat.st_dev != opened.dev() || stat.st_ino != opened.ino() {
+            return Err(bad_path());
+        }
+        Ok(())
+    }
+
     fn remove_directory_contents(dir: &File, depth: usize, remaining: &mut usize) -> io::Result<()> {
         if depth > 64 { return Err(bad_path()); }
         for child_name in directory_names(dir)? {
@@ -252,6 +268,7 @@ mod linux {
                 libc::S_IFDIR => {
                     let nested = open_child_dir(dir, &child_name)?;
                     remove_directory_contents(&nested, depth + 1, remaining)?;
+                    entry_still_matches(dir, &child_name, &nested)?;
                     drop(nested);
                     if unsafe { libc::unlinkat(dir.as_raw_fd(), child.as_ptr(), libc::AT_REMOVEDIR) } != 0 {
                         return Err(io::Error::last_os_error());
@@ -259,6 +276,7 @@ mod linux {
                 }
                 libc::S_IFREG => {
                     let regular = open_regular_at(dir, &child_name)?;
+                    entry_still_matches(dir, &child_name, &regular)?;
                     drop(regular);
                     if unsafe { libc::unlinkat(dir.as_raw_fd(), child.as_ptr(), 0) } != 0 {
                         return Err(io::Error::last_os_error());
@@ -280,6 +298,7 @@ mod linux {
         let directory = open_child_dir(&parent, basename)?;
         let mut remaining = 50_000usize;
         remove_directory_contents(&directory, 0, &mut remaining)?;
+        entry_still_matches(&parent, basename, &directory)?;
         drop(directory);
         let child = name(basename)?;
         if unsafe { libc::unlinkat(parent.as_raw_fd(), child.as_ptr(), libc::AT_REMOVEDIR) } != 0 {
@@ -297,6 +316,7 @@ mod linux {
         // opened by dirfd and refuses symlinks at every ancestor.
         let file = open_regular_at(&parent, filename)?;
         if !file.metadata()?.is_file() { return Err(bad_path()); }
+        entry_still_matches(&parent, filename, &file)?;
         let filename = name(filename)?;
         if unsafe { libc::unlinkat(parent.as_raw_fd(), filename.as_ptr(), 0) } != 0 {
             return Err(io::Error::last_os_error());
@@ -670,6 +690,24 @@ mod linux {
             );
             assert_eq!(std::fs::read(&outside_target).unwrap(), b"outside");
             assert!(open_allowed_dir(&parent, &roots).is_err());
+            std::fs::remove_dir_all(base).unwrap();
+        }
+
+        #[test]
+        fn pinned_file_identity_recheck_detects_replaced_name() {
+            let base = fixture();
+            let trusted = base.join("trusted");
+            std::fs::create_dir_all(&trusted).unwrap();
+            let roots = [trusted.canonicalize().unwrap()];
+            let original = trusted.join("original.txt");
+            let moved = trusted.join("moved.txt");
+            std::fs::write(&original, b"first").unwrap();
+            let parent = open_allowed_dir(&trusted, &roots).unwrap();
+            let pinned = open_regular_at(&parent, OsStr::new("original.txt")).unwrap();
+            std::fs::rename(&original, &moved).unwrap();
+            std::fs::write(&original, b"second").unwrap();
+            assert!(entry_still_matches(&parent, OsStr::new("original.txt"), &pinned).is_err());
+            drop(pinned);
             std::fs::remove_dir_all(base).unwrap();
         }
 
