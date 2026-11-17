@@ -2,14 +2,14 @@
 #![cfg(windows)]
 
 use super::windows_sandbox::{send_bounded, SandboxChild, SandboxProcess, SandboxProfile};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::windows::fs::MetadataExt;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock, mpsc};
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -39,7 +39,9 @@ impl SessionCache {
     }
 
     fn start_is_active(&self, token: &uuid::Uuid, root: &Path) -> bool {
-        self.starting.get(token).is_some_and(|reserved| reserved == root)
+        self.starting
+            .get(token)
+            .is_some_and(|reserved| reserved == root)
     }
 
     fn cancel_pending_for(&mut self, root: &Path) {
@@ -52,7 +54,9 @@ fn sessions() -> &'static Mutex<SessionCache> {
 }
 /// Reserve capacity without holding the global cache mutex through the slow
 /// rust-analyzer process spawn and initialize handshake.
-struct StartReservation { token: uuid::Uuid }
+struct StartReservation {
+    token: uuid::Uuid,
+}
 impl Drop for StartReservation {
     fn drop(&mut self) {
         let mut cache = sessions().lock().unwrap_or_else(|p| p.into_inner());
@@ -82,15 +86,21 @@ impl Drop for OneShotPermit {
 
 fn no_reparse(path: &Path) -> Result<(), String> {
     use std::path::{Component, Prefix};
-    if !path.is_absolute() || !matches!(
-        path.components().next(),
-        Some(Component::Prefix(prefix))
-            if matches!(prefix.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_))
-    ) { return Err("LSP_ROOT_INVALID".into()); }
+    if !path.is_absolute()
+        || !matches!(
+            path.components().next(),
+            Some(Component::Prefix(prefix))
+                if matches!(prefix.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_))
+        )
+    {
+        return Err("LSP_ROOT_INVALID".into());
+    }
     let mut current = PathBuf::new();
     for component in path.components() {
         current.push(component.as_os_str());
-        if matches!(component, Component::Prefix(_)) || !current.has_root() { continue; }
+        if matches!(component, Component::Prefix(_)) || !current.has_root() {
+            continue;
+        }
         let metadata = fs::symlink_metadata(&current).map_err(|_| "LSP_PATH_INSPECTION_FAILED")?;
         if metadata.file_attributes() & REPARSE != 0 {
             return Err("LSP_REPARSE_DENIED".into());
@@ -105,52 +115,71 @@ fn no_reparse(path: &Path) -> Result<(), String> {
 /// binary by reading rustup metadata; never execute rustup outside sandbox.
 fn rustup_analyzer_binary(home: &Path) -> Result<PathBuf, String> {
     let rustup_home = std::env::var_os("RUSTUP_HOME")
-        .map(PathBuf::from).unwrap_or_else(|| home.join(".rustup"));
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".rustup"));
     let settings = fs::read_to_string(rustup_home.join("settings.toml")).unwrap_or_default();
     let default = settings.lines().find_map(|line| {
         let (key, value) = line.split_once('=')?;
-        (key.trim() == "default_toolchain")
-            .then(|| value.trim().trim_matches('"').to_string())
+        (key.trim() == "default_toolchain").then(|| value.trim().trim_matches('"').to_string())
     });
-    let mut toolchain = std::env::var("RUSTUP_TOOLCHAIN").ok().or(default)
+    let mut toolchain = std::env::var("RUSTUP_TOOLCHAIN")
+        .ok()
+        .or(default)
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "stable-x86_64-pc-windows-msvc".into());
     if toolchain == "stable" || toolchain == "nightly" || toolchain == "beta" {
         toolchain.push_str("-x86_64-pc-windows-msvc");
     }
     if toolchain.len() > 110
-        || !toolchain.bytes().all(|byte| byte.is_ascii_alphanumeric()
-            || byte == b'-' || byte == b'_' || byte == b'.')
+        || !toolchain.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_' || byte == b'.'
+        })
     {
         return Err("LSP_RUSTUP_TOOLCHAIN_INVALID".into());
     }
-    let candidate = rustup_home.join("toolchains")
-        .join(&toolchain).join("bin").join("rust-analyzer.exe");
-    if !candidate.is_file() { return Err("LSP_RUST_ANALYZER_TOOLCHAIN_MISSING".into()); }
+    let candidate = rustup_home
+        .join("toolchains")
+        .join(&toolchain)
+        .join("bin")
+        .join("rust-analyzer.exe");
+    if !candidate.is_file() {
+        return Err("LSP_RUST_ANALYZER_TOOLCHAIN_MISSING".into());
+    }
     no_reparse(&candidate)?;
-    candidate.canonicalize().map_err(|_| "LSP_RUST_ANALYZER_TOOLCHAIN_MISSING".into())
+    candidate
+        .canonicalize()
+        .map_err(|_| "LSP_RUST_ANALYZER_TOOLCHAIN_MISSING".into())
 }
 fn runtime() -> Result<PathBuf, String> {
     let home = std::env::var_os("USERPROFILE").map(PathBuf::from);
     if let Some(paths) = std::env::var_os("PATH") {
         for directory in std::env::split_paths(&paths).filter(|path| path.is_absolute()) {
             let candidate = directory.join("rust-analyzer.exe");
-            if !candidate.is_file() { continue; }
-            let is_cargo_proxy = directory.file_name()
+            if !candidate.is_file() {
+                continue;
+            }
+            let is_cargo_proxy = directory
+                .file_name()
                 .is_some_and(|value| value.to_string_lossy().eq_ignore_ascii_case("bin"))
-                && directory.parent().and_then(Path::file_name)
+                && directory
+                    .parent()
+                    .and_then(Path::file_name)
                     .is_some_and(|value| value.to_string_lossy().eq_ignore_ascii_case(".cargo"));
             if is_cargo_proxy {
                 let home = home.as_ref().ok_or("LSP_USERPROFILE_UNAVAILABLE")?;
                 return rustup_analyzer_binary(home);
             }
             no_reparse(&candidate)?;
-            return candidate.canonicalize().map_err(|_| "LSP_RUST_ANALYZER_NOT_FOUND".into());
+            return candidate
+                .canonicalize()
+                .map_err(|_| "LSP_RUST_ANALYZER_NOT_FOUND".into());
         }
     }
     if let Some(home) = home {
         let proxy = home.join(".cargo/bin/rust-analyzer.exe");
-        if proxy.is_file() { return rustup_analyzer_binary(&home); }
+        if proxy.is_file() {
+            return rustup_analyzer_binary(&home);
+        }
     }
     Err("LSP_RUST_ANALYZER_NOT_FOUND".into())
 }
@@ -238,7 +267,11 @@ fn uri_for(path: &Path) -> Result<String, String> {
 }
 fn request_uri_to_snapshot(value: &mut Value, root: &Path, snapshot: &Path) -> Result<(), String> {
     match value {
-        Value::String(text) if text.get(..7).is_some_and(|part| part.eq_ignore_ascii_case("file://")) => {
+        Value::String(text)
+            if text
+                .get(..7)
+                .is_some_and(|part| part.eq_ignore_ascii_case("file://")) =>
+        {
             let uri = url::Url::parse(text).map_err(|_| "LSP_URI_INVALID")?;
             let path = uri.to_file_path().map_err(|_| "LSP_URI_INVALID")?;
             no_reparse(&path)?;
@@ -264,21 +297,32 @@ fn request_uri_to_snapshot(value: &mut Value, root: &Path, snapshot: &Path) -> R
 }
 fn response_uri_to_workspace(value: &mut Value, root: &Path, snapshot: &Path) {
     match value {
-        Value::String(text) if text.get(..7).is_some_and(|part| part.eq_ignore_ascii_case("file://")) => {
-            let mapped = url::Url::parse(text).ok()
+        Value::String(text)
+            if text
+                .get(..7)
+                .is_some_and(|part| part.eq_ignore_ascii_case("file://")) =>
+        {
+            let mapped = url::Url::parse(text)
+                .ok()
                 .and_then(|uri| uri.to_file_path().ok())
                 .and_then(|path| path.strip_prefix(snapshot).ok().map(Path::to_path_buf))
-                .filter(|relative| relative.components().all(|part|
-                    matches!(part, std::path::Component::Normal(_))
-                ))
+                .filter(|relative| {
+                    relative
+                        .components()
+                        .all(|part| matches!(part, std::path::Component::Normal(_)))
+                })
                 .and_then(|relative| uri_for(&root.join(relative)).ok());
             *text = mapped.unwrap_or_else(|| "[outside reviewed snapshot]".into());
         }
         Value::Array(items) => {
-            for item in items { response_uri_to_workspace(item, root, snapshot); }
+            for item in items {
+                response_uri_to_workspace(item, root, snapshot);
+            }
         }
         Value::Object(items) => {
-            for item in items.values_mut() { response_uri_to_workspace(item, root, snapshot); }
+            for item in items.values_mut() {
+                response_uri_to_workspace(item, root, snapshot);
+            }
         }
         _ => {}
     }
@@ -351,7 +395,9 @@ impl Session {
     }
 
     fn start_documents(
-        root: &Path, documents: &[(String, String)], seconds: u64,
+        root: &Path,
+        documents: &[(String, String)],
+        seconds: u64,
     ) -> Result<Self, String> {
         let root = root.canonicalize().map_err(|_| "LSP_ROOT_INVALID")?;
         if documents.is_empty() || documents.len() > 128 {
@@ -362,13 +408,21 @@ impl Session {
         let mut total = 0usize;
         for (relative, content) in documents {
             let path = Path::new(relative);
-            if path.is_absolute() || !path.components().all(|part|
-                matches!(part, std::path::Component::Normal(_))
-            ) || !relative.ends_with(".rs") || content.len() > MAX_FILE_BYTES {
+            if path.is_absolute()
+                || !path
+                    .components()
+                    .all(|part| matches!(part, std::path::Component::Normal(_)))
+                || !relative.ends_with(".rs")
+                || content.len() > MAX_FILE_BYTES
+            {
                 return Err("LSP_DOCUMENT_DENIED".into());
             }
-            total = total.checked_add(content.len()).ok_or("LSP_DOCUMENT_LIMIT")?;
-            if total > 4 * 1024 * 1024 { return Err("LSP_DOCUMENT_LIMIT".into()); }
+            total = total
+                .checked_add(content.len())
+                .ok_or("LSP_DOCUMENT_LIMIT")?;
+            if total > 4 * 1024 * 1024 {
+                return Err("LSP_DOCUMENT_LIMIT".into());
+            }
             let target = snapshot.join(path);
             fs::create_dir_all(target.parent().ok_or("LSP_DOCUMENT_DENIED")?)
                 .map_err(|_| "LSP_SNAPSHOT_WRITE_FAILED")?;
@@ -379,7 +433,10 @@ impl Session {
     }
 
     fn start_with_snapshot(
-        root: PathBuf, profile: SandboxProfile, snapshot: PathBuf, seconds: u64,
+        root: PathBuf,
+        profile: SandboxProfile,
+        snapshot: PathBuf,
+        seconds: u64,
     ) -> Result<Self, String> {
         let server = runtime()?;
         let state = profile.state_dir()?;
@@ -396,14 +453,29 @@ impl Session {
             ),
             ("CARGO_NET_OFFLINE".into(), "true".into()),
         ];
-        let child = profile.spawn(&server, &["--no-proc-macro".into()], &environment, &state)
+        // Current rust-analyzer rejects the retired --no-proc-macro flag
+        // ("unexpected flag"). Do not pass it: staging copies only the
+        // analyzer image, so proc-macro-srv is absent, and CARGO/RUSTC point
+        // at nonexistent private paths, which keeps build-script and
+        // proc-macro execution unavailable without a removed CLI option.
+        let child = profile
+            .spawn(&server, &[], &environment, &state)
             .map_err(|error| {
                 #[cfg(test)]
-                { return format!("LSP_SANDBOX_START_FAILED:{error}"); }
+                {
+                    return format!("LSP_SANDBOX_START_FAILED:{error}");
+                }
                 #[cfg(not(test))]
-                { let _ = error; "LSP_SANDBOX_START_FAILED".to_string() }
+                {
+                    let _ = error;
+                    "LSP_SANDBOX_START_FAILED".to_string()
+                }
             })?;
-        let SandboxChild { stdin, stdout, process } = child;
+        let SandboxChild {
+            stdin,
+            stdout,
+            process,
+        } = child;
         let (writer, write_rx) = mpsc::sync_channel::<Vec<u8>>(4);
         let (write_tx, write_result) = mpsc::channel();
         thread::spawn(move || {
@@ -432,7 +504,9 @@ impl Session {
                         Some("LSP_OUTPUT_BACKPRESSURE".into());
                     break;
                 }
-                if failed { break; }
+                if failed {
+                    break;
+                }
             }
         });
         let mut session = Self {
@@ -456,8 +530,11 @@ impl Session {
         }));
         #[cfg(test)]
         if let Err(ref error) = init {
-            eprintln!("LSP_INITIALIZE_DIAG={error}; exit={:?}; stderr={:?}",
-                session.process.exit_code(), session.process.profile().stderr_for_test());
+            eprintln!(
+                "LSP_INITIALIZE_DIAG={error}; exit={:?}; stderr={:?}",
+                session.process.exit_code(),
+                session.process.profile().stderr_for_test()
+            );
         }
         init?;
         session.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}))?;
@@ -468,19 +545,29 @@ impl Session {
         self.last_used = Instant::now();
     }
     fn recv_frame(&self, timeout_error: &'static str) -> Result<Value, String> {
-        let fault = || self.reader_fault.lock()
-            .unwrap_or_else(|p| p.into_inner()).clone();
-        if let Some(error) = fault() { return Err(error); }
+        let fault = || {
+            self.reader_fault
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .clone()
+        };
+        if let Some(error) = fault() {
+            return Err(error);
+        }
         let remaining = self.deadline.saturating_duration_since(Instant::now());
         match self.reader.recv_timeout(remaining) {
             Ok(value) => {
-                if let Some(error) = fault() { return Err(error); }
+                if let Some(error) = fault() {
+                    return Err(error);
+                }
                 value
             }
-            Err(mpsc::RecvTimeoutError::Timeout) =>
-                Err(fault().unwrap_or_else(|| timeout_error.to_string())),
-            Err(mpsc::RecvTimeoutError::Disconnected) =>
-                Err(fault().unwrap_or_else(|| "LSP_CLOSED".into())),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                Err(fault().unwrap_or_else(|| timeout_error.to_string()))
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                Err(fault().unwrap_or_else(|| "LSP_CLOSED".into()))
+            }
         }
     }
     fn send(&mut self, value: Value) -> Result<(), String> {
@@ -492,7 +579,12 @@ impl Session {
         bytes.extend(body);
         let mut pending = bytes;
         loop {
-            if let Some(error) = self.reader_fault.lock().unwrap_or_else(|p| p.into_inner()).clone() {
+            if let Some(error) = self
+                .reader_fault
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .clone()
+            {
                 return Err(error);
             }
             match self.writer.try_send(pending) {
@@ -501,13 +593,17 @@ impl Session {
                 Err(mpsc::TrySendError::Full(value)) => {
                     pending = value;
                     let remaining = self.deadline.saturating_duration_since(Instant::now());
-                    if remaining.is_zero() { return Err("LSP_WRITE_TIMEOUT".into()); }
+                    if remaining.is_zero() {
+                        return Err("LSP_WRITE_TIMEOUT".into());
+                    }
                     thread::sleep(remaining.min(Duration::from_millis(5)));
                 }
             }
         }
         let remaining = self.deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() { return Err("LSP_WRITE_TIMEOUT".into()); }
+        if remaining.is_zero() {
+            return Err("LSP_WRITE_TIMEOUT".into());
+        }
         match self.write_result.recv_timeout(remaining) {
             Ok(result) => result,
             Err(mpsc::RecvTimeoutError::Timeout) => Err("LSP_WRITE_TIMEOUT".into()),
@@ -536,16 +632,19 @@ impl Session {
     }
     fn open_document(&mut self, relative: &Path, text: &str) -> Result<String, String> {
         let uri = uri_for(&self.snapshot.join(relative))?;
-        self.send(json!({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{
-            "textDocument":{"uri":uri,"languageId":"rust","version":1,"text":text}
-        }}))?;
+        self.send(
+            json!({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{
+                "textDocument":{"uri":uri,"languageId":"rust","version":1,"text":text}
+            }}),
+        )?;
         Ok(uri)
     }
 
     fn await_diagnostics(&mut self, uri: &str) -> Result<Value, String> {
         loop {
             let mut value = self.recv_frame("LSP_DIAGNOSTICS_TIMEOUT")?;
-            if value["method"] == "textDocument/publishDiagnostics" && value["params"]["uri"] == uri {
+            if value["method"] == "textDocument/publishDiagnostics" && value["params"]["uri"] == uri
+            {
                 return Ok(value["params"]["diagnostics"].take());
             }
             if value.get("method").is_some() && value.get("id").is_some() {
@@ -564,8 +663,11 @@ impl Session {
         let host = self.root.join(&document);
         no_reparse(&host)?;
         let bytes = crate::capabilities::workspace::safe_paths::read_regular(
-            &host, &[self.root.clone()], MAX_FILE_BYTES,
-        ).map_err(|_| "LSP_DOCUMENT_READ_DENIED")?;
+            &host,
+            &[self.root.clone()],
+            MAX_FILE_BYTES,
+        )
+        .map_err(|_| "LSP_DOCUMENT_READ_DENIED")?;
         let text = String::from_utf8(bytes).map_err(|_| "LSP_DOCUMENT_NOT_TEXT")?;
         let uri = self.open_document(&document, &text)?;
         let mut diagnostics = self.await_diagnostics(&uri)?;
@@ -593,17 +695,28 @@ fn allowed_method(method: &str) -> bool {
 /// contract by creating only the reviewed document(s) in a short-lived
 /// AppContainer snapshot. No entire-workspace copy without module approval.
 fn remap_reviewed_uris(
-    value: &mut Value, snapshot: &Path, workspace: &Path, single_public_uri: Option<&str>,
+    value: &mut Value,
+    snapshot: &Path,
+    workspace: &Path,
+    single_public_uri: Option<&str>,
 ) {
     match value {
-        Value::String(text) if text.get(..7).is_some_and(|part| part.eq_ignore_ascii_case("file://")) => {
-            let mapped = url::Url::parse(text).ok()
+        Value::String(text)
+            if text
+                .get(..7)
+                .is_some_and(|part| part.eq_ignore_ascii_case("file://")) =>
+        {
+            let mapped = url::Url::parse(text)
+                .ok()
                 .and_then(|uri| uri.to_file_path().ok())
                 .and_then(|path| path.strip_prefix(snapshot).ok().map(Path::to_path_buf))
                 .and_then(|relative| {
-                    if !relative.components().all(|part|
-                        matches!(part, std::path::Component::Normal(_))
-                    ) { return None; }
+                    if !relative
+                        .components()
+                        .all(|part| matches!(part, std::path::Component::Normal(_)))
+                    {
+                        return None;
+                    }
                     if let Some(public) = single_public_uri {
                         (relative == Path::new("document.rs")).then(|| public.to_owned())
                     } else {
@@ -613,7 +726,9 @@ fn remap_reviewed_uris(
             *text = mapped.unwrap_or_else(|| "[outside reviewed snapshot]".into());
         }
         Value::Array(values) => {
-            for item in values { remap_reviewed_uris(item, snapshot, workspace, single_public_uri); }
+            for item in values {
+                remap_reviewed_uris(item, snapshot, workspace, single_public_uri);
+            }
         }
         Value::Object(values) => {
             for item in values.values_mut() {
@@ -635,21 +750,35 @@ fn one_shot_document_request(root: &Path, request: &Value) -> Result<Value, Stri
     let path = request["path"].as_str().ok_or("LSP_DOCUMENT_REQUIRED")?;
     let content = request["content"].as_str().ok_or("LSP_DOCUMENT_REQUIRED")?;
     super::coding::validate_lsp_document(root, path, content)?;
-    if content.len() > MAX_FILE_BYTES { return Err("LSP_DOCUMENT_LIMIT".into()); }
+    if content.len() > MAX_FILE_BYTES {
+        return Err("LSP_DOCUMENT_LIMIT".into());
+    }
     let symbol_only = method == "textDocument/documentSymbol";
-    let line = request["line"].as_u64().or_else(|| symbol_only.then_some(0))
-        .filter(|n| *n < 100_000).ok_or("LSP_POSITION_INVALID")?;
-    let character = request["character"].as_u64().or_else(|| symbol_only.then_some(0))
-        .filter(|n| *n <= 262_144).ok_or("LSP_POSITION_INVALID")?;
-    let text_line = content.split('\n').nth(line as usize).ok_or("LSP_POSITION_INVALID")?;
+    let line = request["line"]
+        .as_u64()
+        .or_else(|| symbol_only.then_some(0))
+        .filter(|n| *n < 100_000)
+        .ok_or("LSP_POSITION_INVALID")?;
+    let character = request["character"]
+        .as_u64()
+        .or_else(|| symbol_only.then_some(0))
+        .filter(|n| *n <= 262_144)
+        .ok_or("LSP_POSITION_INVALID")?;
+    let text_line = content
+        .split('\n')
+        .nth(line as usize)
+        .ok_or("LSP_POSITION_INVALID")?;
     if character as usize > text_line.encode_utf16().count() {
         return Err("LSP_POSITION_INVALID".into());
     }
     if let Some(selected) = request["server_path"].as_str() {
         let real = runtime()?;
-        let requested = Path::new(selected).canonicalize()
+        let requested = Path::new(selected)
+            .canonicalize()
             .map_err(|_| "LSP_SERVER_UNAVAILABLE")?;
-        if requested != real { return Err("LSP_SERVER_NOT_TRUSTED_PROFILE".into()); }
+        if requested != real {
+            return Err("LSP_SERVER_NOT_TRUSTED_PROFILE".into());
+        }
     }
     let _permit = OneShotPermit::acquire()?;
     let timeout = request["timeout_seconds"].as_u64().unwrap_or(30);
@@ -659,7 +788,9 @@ fn one_shot_document_request(root: &Path, request: &Value) -> Result<Value, Stri
                 return Err("LSP_MODULE_APPROVAL_REQUIRED".into());
             }
             super::coding::validate_lsp_document(root, module, "")?;
-            let directory = Path::new(module).parent().ok_or("LSP_MODULE_ROOT_INVALID")?;
+            let directory = Path::new(module)
+                .parent()
+                .ok_or("LSP_MODULE_ROOT_INVALID")?;
             if !Path::new(path).starts_with(directory) {
                 return Err("LSP_DOCUMENT_OUTSIDE_MODULE_ROOT".into());
             }
@@ -674,8 +805,12 @@ fn one_shot_document_request(root: &Path, request: &Value) -> Result<Value, Stri
             }
             (docs, path.to_owned(), "isolated_rust_module_sources", false)
         } else {
-            (vec![("document.rs".into(), content.to_owned())],
-             "document.rs".into(), "isolated_current_rust_document", true)
+            (
+                vec![("document.rs".into(), content.to_owned())],
+                "document.rs".into(),
+                "isolated_current_rust_document",
+                true,
+            )
         };
     let mut session = Session::start_documents(root, &documents, timeout)?;
     let private_uri = session.open_document(Path::new(&relative), content)?;
@@ -710,7 +845,8 @@ fn get_session(root: &Path, id: &str) -> Result<Arc<Mutex<Session>>, String> {
     let entry = sessions()
         .lock()
         .map_err(|_| "LSP_SESSION_CACHE")?
-        .ready.get(id)
+        .ready
+        .get(id)
         .cloned()
         .ok_or_else(|| "LSP_SESSION_NOT_FOUND".to_string())?;
     // A session ID is not authorization: root must match the workspace
@@ -727,14 +863,26 @@ fn get_session(root: &Path, id: &str) -> Result<Arc<Mutex<Session>>, String> {
 }
 fn retire_expired() {
     let expired = {
-        let mut cache = sessions().lock().unwrap_or_else(|poison| poison.into_inner());
-        let ids = cache.ready.iter().filter_map(|(id, entry)| {
-            let Ok(mut session) = entry.try_lock() else { return None; };
-            if session.last_used.elapsed() <= Duration::from_secs(120) { return None; }
-            session.closed = true;
-            Some(id.clone())
-        }).collect::<Vec<_>>();
-        ids.iter().filter_map(|id| cache.ready.remove(id)).collect::<Vec<_>>()
+        let mut cache = sessions()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let ids = cache
+            .ready
+            .iter()
+            .filter_map(|(id, entry)| {
+                let Ok(mut session) = entry.try_lock() else {
+                    return None;
+                };
+                if session.last_used.elapsed() <= Duration::from_secs(120) {
+                    return None;
+                }
+                session.closed = true;
+                Some(id.clone())
+            })
+            .collect::<Vec<_>>();
+        ids.iter()
+            .filter_map(|id| cache.ready.remove(id))
+            .collect::<Vec<_>>()
     };
     drop(expired);
 }
@@ -749,7 +897,9 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
     } else {
         let root = root.canonicalize().map_err(|_| "LSP_ROOT_INVALID")?;
         no_reparse(&root)?;
-        if !root.is_dir() { return Err("LSP_ROOT_INVALID".into()); }
+        if !root.is_dir() {
+            return Err("LSP_ROOT_INVALID".into());
+        }
         root
     };
     if matches!(action, "lsp_start" | "lsp_request" | "lsp_diagnostics")
@@ -762,8 +912,7 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
             // Status must be a non-mutating capability query. Previously it
             // created/deleted a Windows AppContainer OS profile on EVERY call.
             // Report prerequisites separately from native launch verification.
-            let sandbox_available =
-                super::windows_sandbox::sandbox_prerequisites_available();
+            let sandbox_available = super::windows_sandbox::sandbox_prerequisites_available();
             Ok(json!({
                 "profiles":[{"id":"rust_analyzer","language":"rust","available":runtime().is_ok(),"command":"rust-analyzer.exe"}],
                 "sandbox_available":sandbox_available,
@@ -791,7 +940,9 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
                     drop(cache);
                     return Err("LSP_SESSION_CLOSED_DURING_START".into());
                 }
-                cache.ready.insert(id.clone(), Arc::new(Mutex::new(session)));
+                cache
+                    .ready
+                    .insert(id.clone(), Arc::new(Mutex::new(session)));
             }
             drop(reservation);
             Ok(
@@ -811,7 +962,9 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
                 .ok_or("LSP_METHOD_DISABLED")?;
             let session = get_session(&root, id)?;
             let mut session = session.try_lock().map_err(|_| "LSP_SESSION_BUSY")?;
-            if session.closed { return Err("LSP_SESSION_NOT_FOUND".into()); }
+            if session.closed {
+                return Err("LSP_SESSION_NOT_FOUND".into());
+            }
             session.reset_deadline(request["timeout_seconds"].as_u64().unwrap_or(30));
             let mut params = request.get("params").cloned().unwrap_or(json!({}));
             let root = session.root.clone();
@@ -829,7 +982,9 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
             let path = request["path"].as_str().ok_or("LSP_DOCUMENT_REQUIRED")?;
             let session = get_session(&root, id)?;
             let mut session = session.try_lock().map_err(|_| "LSP_SESSION_BUSY")?;
-            if session.closed { return Err("LSP_SESSION_NOT_FOUND".into()); }
+            if session.closed {
+                return Err("LSP_SESSION_NOT_FOUND".into());
+            }
             session.reset_deadline(request["timeout_seconds"].as_u64().unwrap_or(30));
             let diagnostics = session.diagnostics(path)?;
             session.last_used = Instant::now();
@@ -841,8 +996,14 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
             // or terminating a Job Object.
             let candidates: Vec<_> = {
                 let cache = sessions().lock().map_err(|_| "LSP_SESSION_CACHE")?;
-                cache.ready.iter()
-                    .filter(|(id, _)| request["session_id"].as_str().is_none_or(|wanted| id.as_str() == wanted))
+                cache
+                    .ready
+                    .iter()
+                    .filter(|(id, _)| {
+                        request["session_id"]
+                            .as_str()
+                            .is_none_or(|wanted| id.as_str() == wanted)
+                    })
                     .map(|(id, entry)| (id.clone(), Arc::clone(entry)))
                     .collect()
             };
@@ -856,14 +1017,20 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
                         session.closed = true;
                         true
                     }
-                    Err(_) if request["session_id"].as_str().is_some() =>
-                        return Err("LSP_SESSION_BUSY".into()),
-                    Err(_) => { busy_candidates += 1; false }
+                    Err(_) if request["session_id"].as_str().is_some() => {
+                        return Err("LSP_SESSION_BUSY".into())
+                    }
+                    Err(_) => {
+                        busy_candidates += 1;
+                        false
+                    }
                     _ => false,
                 };
                 // The MutexGuard temporary is gone before Arc ownership
                 // moves into the collection of sessions to terminate.
-                if matches_workspace { owned.push((id, entry)); }
+                if matches_workspace {
+                    owned.push((id, entry));
+                }
             }
             let removed: Vec<_> = {
                 let mut cache = sessions().lock().map_err(|_| "LSP_SESSION_CACHE")?;
@@ -872,11 +1039,20 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
                     // global epoch accidentally cancelled unrelated workspaces.
                     cache.cancel_pending_for(&root);
                 }
-                owned.iter().filter_map(|(id, entry)| {
-                    if cache.ready.get(id).is_some_and(|existing| Arc::ptr_eq(existing, entry)) {
-                        cache.ready.remove(id)
-                    } else { None }
-                }).collect()
+                owned
+                    .iter()
+                    .filter_map(|(id, entry)| {
+                        if cache
+                            .ready
+                            .get(id)
+                            .is_some_and(|existing| Arc::ptr_eq(existing, entry))
+                        {
+                            cache.ready.remove(id)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
             };
             let count = removed.len();
             drop(removed);
@@ -913,7 +1089,13 @@ mod tests {
             "New-Item -ItemType Junction -Path '{link_name}' -Target '{target_name}' -ErrorAction Stop | Out-Null"
         );
         let junction = std::process::Command::new("powershell.exe")
-            .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", &command])
+            .args([
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                &command,
+            ])
             .output()
             .unwrap();
         assert!(
@@ -965,7 +1147,8 @@ mod tests {
             "{symbols}"
         );
         assert_eq!(
-            execute(&root, json!({"action":"lsp_close","session_id":id})).unwrap()["closed_sessions"],
+            execute(&root, json!({"action":"lsp_close","session_id":id})).unwrap()
+                ["closed_sessions"],
             1
         );
         fs::remove_dir_all(root).unwrap();
@@ -988,9 +1171,8 @@ mod tests {
 
     #[test]
     fn linux_document_contract_requires_scope_approval_before_windows_spawn() {
-        let base = std::env::temp_dir().join(format!(
-            "browseros-lsp-document-{}", uuid::Uuid::new_v4()
-        ));
+        let base =
+            std::env::temp_dir().join(format!("browseros-lsp-document-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(base.join("src")).unwrap();
         fs::write(base.join("src/lib.rs"), "fn fixture() {}").unwrap();
         let request = json!({
@@ -1040,11 +1222,18 @@ mod tests {
 
     #[test]
     fn workspace_sessions_require_explicit_approval() {
-        let temp = std::env::temp_dir().join(format!("browseros-lsp-approval-{}", uuid::Uuid::new_v4()));
+        let temp =
+            std::env::temp_dir().join(format!("browseros-lsp-approval-{}", uuid::Uuid::new_v4()));
         fs::create_dir(&temp).unwrap();
-        let denied = execute(&temp, json!({"action":"lsp_start","profile":"rust_analyzer"}));
+        let denied = execute(
+            &temp,
+            json!({"action":"lsp_start","profile":"rust_analyzer"}),
+        );
         assert_eq!(denied.unwrap_err(), "LSP_APPROVAL_REQUIRED");
-        let denied = execute(&temp, json!({"action":"lsp_request","session_id":"foreign","method":"textDocument/hover"}));
+        let denied = execute(
+            &temp,
+            json!({"action":"lsp_request","session_id":"foreign","method":"textDocument/hover"}),
+        );
         assert_eq!(denied.unwrap_err(), "LSP_APPROVAL_REQUIRED");
         fs::remove_dir(temp).unwrap();
     }
