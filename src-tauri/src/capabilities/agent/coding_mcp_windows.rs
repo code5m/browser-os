@@ -2,7 +2,7 @@
 #![cfg(windows)]
 
 use super::windows_sandbox::{send_bounded, SandboxChild, SandboxProcess, SandboxProfile};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::hash_map::DefaultHasher;
 use std::fs;
 use std::hash::{Hash, Hasher};
@@ -68,8 +68,7 @@ fn scrub(value: &mut Value, secrets: &[String]) {
 fn read_config(path: &Path) -> Result<String, String> {
     // Config sources come from a fixed set of workspace/owner paths. Never
     // follow a junction/symlink to a different file before authorizing it.
-    super::windows_sandbox::no_reparse_path(path)
-        .map_err(|_| "MCP_CONFIG_REPARSE_DENIED")?;
+    super::windows_sandbox::no_reparse_path(path).map_err(|_| "MCP_CONFIG_REPARSE_DENIED")?;
     let canonical = path.canonicalize().map_err(|_| "MCP_CONFIG_NOT_FOUND")?;
     let parent = canonical.parent().ok_or("MCP_CONFIG_DENIED")?;
     let allowed = parent.canonicalize().map_err(|_| "MCP_CONFIG_DENIED")?;
@@ -245,7 +244,9 @@ impl Session {
                 // Never pass through an absolute host path, even when the
                 // file is absent during validation. Only pinned readback
                 // copies under our per-profile state directory are allowed.
-                if !path.is_file() { return Err("MCP_PAYLOAD_NOT_FOUND".into()); }
+                if !path.is_file() {
+                    return Err("MCP_PAYLOAD_NOT_FOUND".into());
+                }
                 let canonical = path.canonicalize().map_err(|_| "MCP_PAYLOAD_NOT_FOUND")?;
                 if !canonical.starts_with(root) {
                     return Err("MCP_PAYLOAD_OUTSIDE_WORKSPACE".into());
@@ -269,6 +270,15 @@ impl Session {
             } else {
                 args.push(value.to_owned());
             }
+        }
+        // Node resolves the main module through realpathSync, which lstat()s
+        // every ancestor starting at the drive root. An AppContainer token
+        // cannot read C:\ itself, so an otherwise readable private payload
+        // aborts with EPERM before the server executes. Payload scripts are
+        // already pinned copies inside this profile, so skipping Node's
+        // main-module realpath does not widen file access.
+        if stem == "node" {
+            args.insert(0, "--preserve-symlinks-main".into());
         }
         let mut environment = Vec::<(String, String)>::new();
         let mut secrets = Vec::<String>::new();
@@ -312,17 +322,27 @@ impl Session {
                 environment.push((name.clone(), value.to_owned()));
             }
         }
-        let child = profile.spawn(&executable, &args, &environment, &state)
+        let child = profile
+            .spawn(&executable, &args, &environment, &state)
             .map_err(|error| {
                 // Native test panics include the concrete Win32 operation and
                 // code; production retains an opaque error with no file paths,
                 // credential contents, or process-internal diagnostics.
                 #[cfg(test)]
-                { return format!("MCP_START_FAILED:{error}"); }
+                {
+                    return format!("MCP_START_FAILED:{error}");
+                }
                 #[cfg(not(test))]
-                { let _ = error; "MCP_START_FAILED".to_string() }
+                {
+                    let _ = error;
+                    "MCP_START_FAILED".to_string()
+                }
             })?;
-        let SandboxChild { stdin, stdout, process } = child;
+        let SandboxChild {
+            stdin,
+            stdout,
+            process,
+        } = child;
         let (writer, write_rx) = mpsc::sync_channel::<Vec<u8>>(4);
         let (write_tx, write_result) = mpsc::channel();
         thread::spawn(move || {
@@ -345,12 +365,16 @@ impl Session {
             let mut reader = BufReader::new(stdout);
             loop {
                 let mut bytes = Vec::new();
-                let (value, fatal) = match reader.by_ref()
-                    .take(LIMIT + 1).read_until(b'\n', &mut bytes)
+                let (value, fatal) = match reader
+                    .by_ref()
+                    .take(LIMIT + 1)
+                    .read_until(b'\n', &mut bytes)
                 {
                     Ok(0) => break,
-                    Ok(_) if bytes.len() as u64 <= LIMIT =>
-                        (serde_json::from_slice(&bytes).map_err(|_| "MCP_INVALID_FRAME".into()), false),
+                    Ok(_) if bytes.len() as u64 <= LIMIT => (
+                        serde_json::from_slice(&bytes).map_err(|_| "MCP_INVALID_FRAME".into()),
+                        false,
+                    ),
                     Ok(_) => (Err("MCP_FRAME_LIMIT".into()), true),
                     Err(_) => (Err("MCP_FRAME_READ".into()), true),
                 };
@@ -359,7 +383,9 @@ impl Session {
                         Some("MCP_OUTPUT_BACKPRESSURE".into());
                     break;
                 }
-                if fatal { break; }
+                if fatal {
+                    break;
+                }
             }
         });
         Ok(Self {
@@ -412,19 +438,29 @@ impl Session {
         }
     }
     fn recv_frame(&self) -> Result<Value, String> {
-        let fault = || self.reader_fault.lock()
-            .unwrap_or_else(|p| p.into_inner()).clone();
-        if let Some(error) = fault() { return Err(error); }
+        let fault = || {
+            self.reader_fault
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .clone()
+        };
+        if let Some(error) = fault() {
+            return Err(error);
+        }
         let remaining = self.deadline.saturating_duration_since(Instant::now());
         match self.reader.recv_timeout(remaining) {
             Ok(value) => {
-                if let Some(error) = fault() { return Err(error); }
+                if let Some(error) = fault() {
+                    return Err(error);
+                }
                 value
             }
-            Err(mpsc::RecvTimeoutError::Timeout) =>
-                Err(fault().unwrap_or_else(|| "MCP_TIMEOUT_OR_CLOSED".into())),
-            Err(mpsc::RecvTimeoutError::Disconnected) =>
-                Err(fault().unwrap_or_else(|| "MCP_CLOSED".into())),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                Err(fault().unwrap_or_else(|| "MCP_TIMEOUT_OR_CLOSED".into()))
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                Err(fault().unwrap_or_else(|| "MCP_CLOSED".into()))
+            }
         }
     }
     fn rpc(&mut self, id: u64, method: &str, params: Value) -> Result<Value, String> {
@@ -470,8 +506,10 @@ pub fn execute(root: &Path, storage: &Path, request: Value) -> Result<Value, Str
         for secret in session.secrets.iter().filter(|value| !value.is_empty()) {
             stderr = stderr.replace(secret, "[redacted]");
         }
-        eprintln!("MCP_INITIALIZE_DIAG={error}; exit={:?}; stderr={stderr:?}",
-            session.process.exit_code());
+        eprintln!(
+            "MCP_INITIALIZE_DIAG={error}; exit={:?}; stderr={stderr:?}",
+            session.process.exit_code()
+        );
     }
     initialized?;
     session.send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}))?;
@@ -577,12 +615,14 @@ mod tests {
         let mut session = Session::start(&root, &server, 1)
             .expect("start blocked MCP fixture inside AppContainer");
         let start = Instant::now();
-        let error = session.send(json!({
-            "jsonrpc":"2.0",
-            "id":2,
-            "method":"tools/call",
-            "params":{"name":"echo","arguments":{"text":"a".repeat(100_000)}}
-        })).unwrap_err();
+        let error = session
+            .send(json!({
+                "jsonrpc":"2.0",
+                "id":2,
+                "method":"tools/call",
+                "params":{"name":"echo","arguments":{"text":"a".repeat(100_000)}}
+            }))
+            .unwrap_err();
         assert_eq!(error, "MCP_WRITE_TIMEOUT");
         assert!(start.elapsed() < Duration::from_secs(4));
     }
