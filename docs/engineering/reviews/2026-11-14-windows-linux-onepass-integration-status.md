@@ -94,3 +94,33 @@
 6. 更新 source-contract 防回归规则，检查 cmd raw tail、AppContainer-local LOCALAPPDATA 和 runtime 目录等。
 
 **状态：SOURCE_PATCHED_NOT_NATIVE_VERIFIED**。下一轮只有用户同意 Windows 原生统一验收后，才核对同一 HEAD 的 cmd /C、网络监听器隔离、宿主文件拒绝、MCP real stdio / blocked stdin、rust-analyzer LSP，再考虑 NSIS/实机 WebView2 GUI。特别是 Win32 error 5 是否彻底消失仍取决于真实 Windows 原生执行；如果未消失，只能继续按真实错误审查权限，不能放宽沙箱。
+
+
+## 2026-11-17 跨平台安全边界集中审查（代码修订、未运行 CI）
+
+本节针对 2026-11-17 当前 feature 分支源码，基准提交 `42a4fea5af000ecc23eed8d7e6eae6ad76a0dca7`。前序 run #201 https://github.com/code5m/browser-os/actions/runs/43981446235 对应旧提交 `d273d4c5`，不得作为新 HEAD 的通过证据。
+
+本轮**只读 GitHub 源码审查 + GitHub 源码修改，不执行 Cargo、Node、CI、workflow_dispatch 或 Windows 实机验收**。具体修订：
+
+1. `windows_sandbox.rs`：AppContainer Profile 根目录仅给当前包 SID 增加 RX/遍历权限；非系统 Node/rust-analyzer 运行时不再暂存在可写的 `state/runtime` 中，而改为与 `state` 并列的独立只读 `profile/runtime`，避免低权限进程借父目录删除/替换可执行文件；只允许经过核验的 System32 `cmd.exe`、`curl.exe` 免暂存，拒绝把任意 `C:\Windows` 下的可写程序视为可信运行时。保留原有 AppContainer 只读快照、私有 state、Job Object、无网络 capability 和负例。
+2. `coding_lsp_windows.rs`：与 Linux 的 LSP 审批合同对齐，`lsp_start`、`lsp_request`、`lsp_diagnostics` 明确要求 `approved=true`；持久化 session 由已授权的 canonical workspace root 绑定，禁止另一个 root 仅凭 session ID 请求、读取结果或关闭会话。没有选择工作区时，`lsp_status` 仍允许只读查询。Windows 持久化会话协议和 Linux 临时文档协议仍不是逐字段等价。
+3. `security_policy.rs`：Windows 的 `C:\path\cmd.exe`、大小写混用 `.ExE`、`.com` 现在会按真实 basename 检查；`.cmd/.bat/.ps1/.vbs/.wsf` 以及 wscript/cscript/mshta/rundll32 等 Windows 脚本宿主一律拒绝；按 Windows 路径分隔符解析绝对可执行程序，防止 Linux-only 路径字符串判断使黑名单绕过。规范化前与 canonicalize 后共用相同安全判定。Linux 的斜杠路径与可执行文件规则保持不变。
+4. `tests/check-windows-linux-v2-source-contract.mjs`：为新 Profile/Runtime 边界、LSP 审批及 workspace scope、Windows 启动器路径校验增加静态防回归断言；**断言未运行，不代表 PASS**。
+
+### 静态跨平台功能覆盖矩阵
+
+| 能力 | Linux | Windows | 结论 |
+| --- | --- | --- | --- |
+| Tauri 主界面/嵌入页面 | WebKitGTK 路径 | WebView2 路径 | 后端实现存在；Windows GUI/安装版未实测 |
+| Grid 进程/IPC | Unix Domain Socket + POSIX 进程组 | owner-only Named Pipe + Job Object | 原生覆盖历史上通过；当前 SHA 待验 |
+| Terminal | PTY + POSIX 进程组 | ConPTY + STARTUPINFOEX Job List | 基础能力各自实现；真实 GUI 交互待验 |
+| 编辑器 CAS / Agent 文件事务 | openat/rename | pinned parent NT file handle / NtSetInformationFile | 两者有对应实现；当前提交待原生回归 |
+| Script Runner | Linux 解释器、setsid | Node/Python 受限启动、挂起 Job | **支持面非完全一致**，不允许把 POSIX 任意 shell 在 Windows 自动启用 |
+| Agent 只读 context | skills/knowledge/MCP | skills/knowledge/MCP AppContainer | 实现存在；凭据、原生 MCP 隔离仍待验 |
+| LSP | 单次隔离文档请求 | rust-analyzer AppContainer 持久 session | **协议不同、尚未实现 1:1 跨平台适配**，Windows 审批和 workspace 隔离加强 |
+| 系统应用列表 | freedesktop .desktop | 当前仍依赖 .desktop 扫描，Windows 返回空 | **Windows 原生应用发现尚未实现，不得标为跨平台完成** |
+| BFC | 本地快照与用户授权链路 | 同协议 loopback + SID/token/CSRF | loopback 历史 PASS；真实 Windows B 站登录态待验 |
+| 安装与系统集成 | Linux 启动器与桌面联动 | Windows NSIS/默认浏览器/WebView2 | Windows NSIS、GUI 仍缺证据 |
+| macOS | 不属于当前 Windows/Linux V2 目标 | 不适用 | 项目存在仅 Linux/Windows 的 cfg，不能声明支持 macOS |
+
+**结果裁定：本轮源码审查与补丁提交 ≠ Native PASS ≠ Windows/Linux 完全功能等价。** 仅已发现的明确安全缺陷按最小变更修复；仍未实现的 Windows app discover、Linux/Windows LSP 统一 API 及 macOS 完整移植列为公开缺口。用户明确不允许本阶段跑 CI，不应通过新增空测试或退化为不安全 fallback 虚构完成。

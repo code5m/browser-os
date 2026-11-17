@@ -508,13 +508,21 @@ fn allowed_method(method: &str) -> bool {
     ]
     .contains(&method)
 }
-fn get_session(id: &str) -> Result<Arc<Mutex<Session>>, String> {
-    sessions()
+fn get_session(root: &Path, id: &str) -> Result<Arc<Mutex<Session>>, String> {
+    let entry = sessions()
         .lock()
         .map_err(|_| "LSP_SESSION_CACHE")?
         .ready.get(id)
         .cloned()
-        .ok_or_else(|| "LSP_SESSION_NOT_FOUND".into())
+        .ok_or_else(|| "LSP_SESSION_NOT_FOUND".to_string())?;
+    // A session ID is not authorization: root must match the workspace
+    // currently approved by the caller. Fail closed if the session is busy.
+    let owner = entry.try_lock().map_err(|_| "LSP_SESSION_BUSY")?;
+    if owner.root != root {
+        return Err("LSP_SESSION_WORKSPACE_MISMATCH".into());
+    }
+    drop(owner);
+    Ok(entry)
 }
 fn retire_expired() {
     let expired = {
@@ -541,7 +549,23 @@ fn retire_expired() {
 
 pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
     retire_expired();
-    match request["action"].as_str().unwrap_or("") {
+    let action = request["action"].as_str().unwrap_or("");
+    // Capability discovery is a global read-only operation; no workspace
+    // has to be selected yet. Other operations require a real pinned root.
+    let root = if action == "lsp_status" {
+        PathBuf::new()
+    } else {
+        let root = root.canonicalize().map_err(|_| "LSP_ROOT_INVALID")?;
+        no_reparse(&root)?;
+        if !root.is_dir() { return Err("LSP_ROOT_INVALID".into()); }
+        root
+    };
+    if matches!(action, "lsp_start" | "lsp_request" | "lsp_diagnostics")
+        && request["approved"] != true
+    {
+        return Err("LSP_APPROVAL_REQUIRED".into());
+    }
+    match action {
         "lsp_status" => {
             let sandbox_available = SandboxProfile::create().is_ok();
             Ok(
@@ -560,7 +584,7 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
                 cache.starting += 1;
                 StartReservation { epoch: cache.epoch }
             };
-            let session = Session::start(root, request["timeout_seconds"].as_u64().unwrap_or(30))?;
+            let session = Session::start(&root, request["timeout_seconds"].as_u64().unwrap_or(30))?;
             let id = format!("lsp-{}", uuid::Uuid::new_v4().simple());
             {
                 let mut cache = sessions().lock().map_err(|_| "LSP_SESSION_CACHE")?;
@@ -582,7 +606,7 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
                 .as_str()
                 .filter(|method| allowed_method(method))
                 .ok_or("LSP_METHOD_DISABLED")?;
-            let session = get_session(id)?;
+            let session = get_session(&root, id)?;
             let mut session = session.try_lock().map_err(|_| "LSP_SESSION_BUSY")?;
             session.reset_deadline(request["timeout_seconds"].as_u64().unwrap_or(30));
             let mut params = request.get("params").cloned().unwrap_or(json!({}));
@@ -599,7 +623,7 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
                 .as_str()
                 .ok_or("LSP_SESSION_REQUIRED")?;
             let path = request["path"].as_str().ok_or("LSP_DOCUMENT_REQUIRED")?;
-            let session = get_session(id)?;
+            let session = get_session(&root, id)?;
             let mut session = session.try_lock().map_err(|_| "LSP_SESSION_BUSY")?;
             session.reset_deadline(request["timeout_seconds"].as_u64().unwrap_or(30));
             let diagnostics = session.diagnostics(path)?;
@@ -607,16 +631,37 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
             Ok(json!({"diagnostics":diagnostics}))
         }
         "lsp_close" => {
-            // Drop child processes after releasing the global cache mutex;
-            // terminating a Job Object must not freeze other LSP operations.
-            let removed = {
-                let mut cache = sessions().lock().map_err(|_| "LSP_SESSION_CACHE")?;
-                if let Some(id) = request["session_id"].as_str() {
-                    cache.ready.remove(id).into_iter().collect::<Vec<_>>()
-                } else {
-                    cache.epoch = cache.epoch.wrapping_add(1);
-                    std::mem::take(&mut cache.ready).into_values().collect::<Vec<_>>()
+            // A caller may close only its own workspace's sessions. Do not
+            // hold the global cache mutex while acquiring per-session locks
+            // or terminating a Job Object.
+            let candidates: Vec<_> = {
+                let cache = sessions().lock().map_err(|_| "LSP_SESSION_CACHE")?;
+                cache.ready.iter()
+                    .filter(|(id, _)| request["session_id"].as_str().is_none_or(|wanted| id.as_str() == wanted))
+                    .map(|(id, entry)| (id.clone(), Arc::clone(entry)))
+                    .collect()
+            };
+            let owned: Vec<_> = candidates.into_iter().filter_map(|(id, entry)| {
+                match entry.try_lock() {
+                    Ok(session) if session.root == root => {
+                        drop(session);
+                        Some((id, entry))
+                    }
+                    _ => None,
                 }
+            }).collect();
+            let removed: Vec<_> = {
+                let mut cache = sessions().lock().map_err(|_| "LSP_SESSION_CACHE")?;
+                if request["session_id"].as_str().is_none() {
+                    // Invalidates in-flight starts, so a late startup cannot
+                    // resurrect a session after its caller requested close.
+                    cache.epoch = cache.epoch.wrapping_add(1);
+                }
+                owned.iter().filter_map(|(id, entry)| {
+                    if cache.ready.get(id).is_some_and(|existing| Arc::ptr_eq(existing, entry)) {
+                        cache.ready.remove(id)
+                    } else { None }
+                }).collect()
             };
             let count = removed.len();
             drop(removed);
@@ -684,18 +729,18 @@ mod tests {
         fs::write(root.join("src/lib.rs"), "pub fn fixture() -> i32 { 42 }\n").unwrap();
         let started = execute(
             &root,
-            json!({"action":"lsp_start","profile":"rust_analyzer","timeout_seconds":120}),
+            json!({"action":"lsp_start","approved":true,"profile":"rust_analyzer","timeout_seconds":120}),
         )
         .unwrap();
         let id = started["session_id"].as_str().unwrap();
         let diagnostics = execute(
             &root,
-            json!({"action":"lsp_diagnostics","session_id":id,"path":"src/lib.rs"}),
+            json!({"action":"lsp_diagnostics","approved":true,"session_id":id,"path":"src/lib.rs"}),
         )
         .unwrap();
         assert!(diagnostics["diagnostics"].is_array());
         let uri = uri_for(&root.join("src/lib.rs")).unwrap();
-        let symbols = execute(&root, json!({"action":"lsp_request","session_id":id,"method":"textDocument/documentSymbol","params":{"textDocument":{"uri":uri}}})).unwrap();
+        let symbols = execute(&root, json!({"action":"lsp_request","approved":true,"session_id":id,"method":"textDocument/documentSymbol","params":{"textDocument":{"uri":uri}}})).unwrap();
         assert!(
             symbols["result"].to_string().contains("fixture"),
             "{symbols}"
@@ -705,6 +750,17 @@ mod tests {
             1
         );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn workspace_sessions_require_explicit_approval() {
+        let temp = std::env::temp_dir().join(format!("browseros-lsp-approval-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&temp).unwrap();
+        let denied = execute(&temp, json!({"action":"lsp_start","profile":"rust_analyzer"}));
+        assert_eq!(denied.unwrap_err(), "LSP_APPROVAL_REQUIRED");
+        let denied = execute(&temp, json!({"action":"lsp_request","session_id":"foreign","method":"textDocument/hover"}));
+        assert_eq!(denied.unwrap_err(), "LSP_APPROVAL_REQUIRED");
+        fs::remove_dir(temp).unwrap();
     }
 
     #[test]

@@ -177,7 +177,27 @@ impl SandboxProfile {
             CoTaskMemFree(folder as _);
         }
         std::fs::create_dir_all(&self.folder).map_err(|_| "SANDBOX_PRIVATE_FOLDER")?;
+        // The AppContainer package must be able to traverse its profile root
+        // before it can execute a staged runtime. Do not rewrite OS-managed
+        // root ACLs or grant access to ALL APPLICATION PACKAGES.
+        self.grant_profile_root_traverse()?;
         Ok(self)
+    }
+
+    /// Grant only this lowbox SID read/traverse on its Windows-managed
+    /// profile root. State is independently writable; runtime and snapshot
+    /// are separately read/execute-only. Do not replace the OS root DACL.
+    fn grant_profile_root_traverse(&self) -> Result<(), String> {
+        no_reparse_path(&self.folder)?;
+        let icacls = system_binary("icacls.exe")?;
+        let result = std::process::Command::new(icacls)
+            .arg(&self.folder).arg("/grant:r")
+            .arg(format!("*{}:(RX)", self.sid_string))
+            .output().map_err(|_| "SANDBOX_PROFILE_TRAVERSE_ACL")?;
+        if !result.status.success() {
+            return Err("SANDBOX_PROFILE_TRAVERSE_ACL".into());
+        }
+        Ok(())
     }
 
     pub fn state_dir(&self) -> Result<PathBuf, String> {
@@ -226,10 +246,18 @@ impl SandboxProfile {
         no_reparse_path(&canonical)?;
         let system32 = system_binary("cmd.exe")?
             .parent().ok_or("SANDBOX_SYSTEM_DIRECTORY_UNAVAILABLE")?.to_path_buf();
-        let system_root = system32.parent().ok_or("SANDBOX_SYSTEM_DIRECTORY_UNAVAILABLE")?;
-        let canonical_system_root = system_root.canonicalize()
+        // Only explicitly reviewed System32 tools bypass private staging.
+        // A user-writable C:\Windows subdirectory must never be treated as
+        // trusted merely because it is under the Windows installation root.
+        let system32_dir = system32.canonicalize()
             .map_err(|_| "SANDBOX_SYSTEM_DIRECTORY_UNAVAILABLE")?;
-        if canonical.starts_with(&canonical_system_root) { return Ok(canonical); }
+        let name = canonical.file_name().and_then(|name| name.to_str())
+            .unwrap_or("").to_ascii_lowercase();
+        if canonical.starts_with(&system32_dir)
+            && ["cmd.exe", "curl.exe"].contains(&name.as_str())
+        {
+            return Ok(canonical);
+        }
         const MAX_RUNTIME_FILE: u64 = 256 * 1024 * 1024;
         const MAX_TOTAL_RUNTIME: u64 = 384 * 1024 * 1024;
         const MAX_SIBLING_DLLS: usize = 32;
@@ -253,14 +281,14 @@ impl SandboxProfile {
             no_reparse_path(from)?;
             Ok(())
         }
-        // The AppContainer-specific state tree already has a package-SID
-        // traverse ACE. Keep the private runtime under it rather than
-        // creating a sibling with different inherited access rights.
-        let state = self.folder.join("state");
-        no_reparse_path(&state)?;
-        if !state.is_dir() { return Err("SANDBOX_STATE_UNAVAILABLE".into()); }
-        let directory = state.join("runtime");
+        // Never place executable bytes under the writable state directory:
+        // a lowbox child with state MODIFY rights could otherwise replace its
+        // own runtime via DELETE_CHILD/rename despite a file-level RX ACL.
+        // The profile root grants traverse only; runtime is a sibling of
+        // writable state and is separately protected with read/execute ACLs.
+        let directory = self.folder.join("runtime");
         std::fs::create_dir(&directory).map_err(|_| "SANDBOX_RUNTIME_STAGE_FAILED")?;
+        no_reparse_path(&directory)?;
         let filename = canonical.file_name().ok_or("SANDBOX_RUNTIME_NOT_EXECUTABLE")?;
         let staged = directory.join(filename);
         let mut total = 0u64;
@@ -277,6 +305,9 @@ impl SandboxProfile {
             }
         }
         self.protect_snapshot(&directory)?;
+        // Pin the original executable name to a newly staged read-only file.
+        // Access to the private runtime tree must not depend on writable state.
+        no_reparse_path(&staged)?;
         Ok(staged)
     }
 
