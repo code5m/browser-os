@@ -505,6 +505,7 @@ export const bridge = {
   bfcReadbackFinish: (ticket: string) =>
     invoke<BfcImportResult>("bfc_readback_finish", { ticket }),
   bfcServiceStatus: () => invoke<BfcServiceStatus>("bfc_service_status"),
+  bfcWorkbenchBackupExport: () => invoke<Record<string, unknown>>("bfc_workbench_backup_export"),
   snippetRemove: (id: string, intent: string) => invoke("snippet_remove", { id, intent }),
 
   // M2-6.c 命令片段执行：复用脚本执行态事件和运行历史。

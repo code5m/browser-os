@@ -19,6 +19,7 @@ const mainCommands = [
   'bfc_readback_cancel',
   'bfc_readback_finish',
   'bfc_service_status',
+  'bfc_workbench_backup_export',
 ];
 for (const name of mainCommands) {
   assert.ok(main.includes(`capabilities::bfc::commands::${name}`), `main handler missing ${name}`);
@@ -40,6 +41,11 @@ assert.match(commands, /\.no_proxy\(\)/);
 assert.match(commands, /redirect\(reqwest::redirect::Policy::none\(\)\)/);
 assert.match(commands, /returned_scan != Some\(payload\.scan_id\.as_str\(\)\)/);
 assert.match(commands, /MAX_REMOTE_READBACK_BYTES/);
+assert.match(commands, /BFC_WORKBENCH_BACKUP_URL/);
+assert.match(commands, /MAX_WORKBENCH_BACKUP_BYTES/);
+assert.match(commands, /parse_workbench_backup/);
+assert.match(panel, /导出给同频/);
+assert.match(panel, /不会上传到 GitHub 或社交服务/);
 assert.match(runtime, /session\.tab_id != tab_id/);
 assert.match(runtime, /url\.host_str\(\)/);
 assert.match(runtime, /BFC_BILIBILI_HTTP_412/);

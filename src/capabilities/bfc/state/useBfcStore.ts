@@ -365,6 +365,15 @@ export const useBfcStore = defineStore("bfc", () => {
     }
   }
 
+  async function exportWorkbenchBackup(): Promise<Record<string, unknown>> {
+    const backup = await bridge.bfcWorkbenchBackupExport();
+    if (!backup || backup.type !== "workbench_backup" ||
+        !backup.state || typeof backup.state !== "object") {
+      throw new Error("BFC_WORKBENCH_BACKUP_INVALID");
+    }
+    return backup;
+  }
+
   async function finishReadback(): Promise<void> {
     if (busy.value || !ticket.value) return;
     const partial = readbackStatus.value?.state !== "ready";
@@ -451,6 +460,7 @@ export const useBfcStore = defineStore("bfc", () => {
     openManualImport,
     startReadback,
     finishReadback,
+    exportWorkbenchBackup,
     cancelReadback,
   };
 });
