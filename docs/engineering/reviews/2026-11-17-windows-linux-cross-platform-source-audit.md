@@ -59,3 +59,20 @@
 - 既有 `native_58_gui_review` 和 `workbench_smoke` 的真实执行逻辑依赖 Linux XDG、`xdg-settings` 与 `/tmp`；在 Windows 上明确返回 Linux-only 错误，不再让其被误认为跨平台 Windows GUI 验收。Linux 默认诊断输出仍使用系统 `temp_dir`。
 - Windows V2 原生测试/NSIS 安装/真实 WebView2 GUI 具有独立验收入口，但本轮**未执行**；Windows AppContainer MCP/LSP 在上轮实际跑出的 `CreateProcessW Win32 5` 尚未获得最终通过证据。
 - 当前源代码已具备 Windows 资源监控、应用列表、CAS/文件管理、Git 冲突写回及数据库配置落盘入口；在同一 HEAD 上完成 CI 和实机 GUI 之前，所有这些新增修改只能标记为 **source implemented / unverified**。
+
+## 第三轮：跨模块架构与稳定性收口（源码修改；无 CI）
+
+本轮以远端基线 `b6027665113ba0a84572a03219a435fa9dc6efb1` 为准，在已有的 cmd.exe 原始命令尾、AppContainer 私有运行时、Windows 资源采集、文件 CAS 与应用发现修复之上收口，避免重写已有逻辑。
+
+1. **LSP 启动容量与工作区作用域**：`SessionCache` 将全局 `epoch`/整数 `starting` 替换为按 UUID 启动令牌绑定的规范工作区根路径；`lsp_close` 无 session_id 时仅撤销当前工作区尚未完成的启动，其他工作区可以正常完成。预留令牌的 Drop 仍确保错误路径释放名额；在取消分支返回前显式释放 cache mutex，避免析构重入同一互斥锁。
+2. **LSP 关闭与已有 Arc 竞态**：注册会话增加 `closed` 终止标志，关闭时在子会话锁保护下标记，再从缓存移除；即使并发请求此前已取得 Arc，也不得在已关闭会话上执行。指定 session_id 正忙时明确返回 `LSP_SESSION_BUSY`，不再冒充“关闭零项成功”。
+3. **Agent 公共 API 路由一致性**：`dispatch_coding_request` 纳入 `lsp_start` 与 `lsp_diagnostics`，与 Windows native LSP 支持能力对应。Linux 不支持的 Windows 持久化会话动作仍返回显式不支持，不进行不安全模拟；Linux 原有 `lsp_request` 语义不变。
+4. **MCP 配置路径**：对固定来源配置调用 Windows 的整链路 Reparse Point 防护，再读受限普通文件；禁止 `.opencode`、`mcp.json` 的符号链接/Junction 重定向后被当成合法配置。原有明确审批、keyring 引用、stdio AppContainer 与结果脱敏不变。
+5. **AppContainer 生命周期与可维护性**：`lsp_status` 改为非创建式系统前提检查，不再每次只读状态查询就创建/删除 OS Profile；新增 `sandbox_verified:false`，明确尚未通过实际原生启动。System32 免暂存名单必须是 `System32` 直属目录的 `cmd.exe`/`curl.exe`，不能利用 `starts_with` 将子目录的同名可执行文件绕过私有暂存。
+6. **防回归合同**：增加 LSP 工作区关闭代际、已关闭会话访问、公共入口路由、MCP 重解析点和无副作用状态查询的源码断言；增加工作区 A 的关闭不能取消 B 启动的单元测试代码，均未执行。
+
+架构边界：Windows/Linux 共用授权和上层路由语义，平台隔离使用各自成熟原语（Unix FD/Namespace 与 Windows NT Handle/AppContainer）。共享边界集中在`public_api` 和明确的 session owner，不将 Unix-only shell/文件写入 fallback 偷渡到 Windows。
+
+**状态：SOURCE_PATCHED_NOT_NATIVE_VERIFIED。** 按用户指令本轮没有调用编译、Cargo 测试、Node 测试、GitHub Actions 或 workflow_dispatch；不修改 master。此前 run #201 的 Windows native 失败，及当前 Windows MCP/LSP、安装包和 WebView2 GUI 未验，仍为 PENDING/FAIL；不可宣称平台已完全支持。
+
+仍需进一步处理/验证的范围：Windows MCP/LSP AppContainer 实际 Win32 启动、真实依赖 DLL 及 stdio；递归目录删除的原子安全、UWP/MSIX 覆盖；Linux/Windows LSP 请求字段级统一、Windows NSIS 和 GUI、BFC 真实登录态。上述均不因源码收口自动变为 PASS。

@@ -55,7 +55,15 @@ fn wide(value: &std::ffi::OsStr) -> Result<Vec<u16>, String> {
     Ok(value.encode_wide().chain(Some(0)).collect())
 }
 fn wide_text(value: &str) -> Result<Vec<u16>, String> { wide(std::ffi::OsStr::new(value)) }
-fn no_reparse_path(path: &Path) -> Result<(), String> {
+/// Side-effect-free capability preflight used by the LSP status API.
+/// This only checks prerequisites; it is NOT proof that a sandbox can launch.
+pub(super) fn sandbox_prerequisites_available() -> bool {
+    system_binary("cmd.exe").is_ok()
+        && system_binary("icacls.exe").is_ok()
+        && current_user_sid().is_ok()
+}
+
+pub(super) fn no_reparse_path(path: &Path) -> Result<(), String> {
     use std::path::{Component, Prefix};
     if !path.is_absolute() || !matches!(
         path.components().next(),
@@ -253,7 +261,7 @@ impl SandboxProfile {
             .map_err(|_| "SANDBOX_SYSTEM_DIRECTORY_UNAVAILABLE")?;
         let name = canonical.file_name().and_then(|name| name.to_str())
             .unwrap_or("").to_ascii_lowercase();
-        if canonical.starts_with(&system32_dir)
+        if canonical.parent() == Some(system32_dir.as_path())
             && ["cmd.exe", "curl.exe"].contains(&name.as_str())
         {
             return Ok(canonical);

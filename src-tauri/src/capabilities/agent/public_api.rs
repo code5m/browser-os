@@ -81,7 +81,7 @@ pub(crate) fn dispatch_coding_request(
         return Err("AGENT_ROOT_INVALID".into());
     }
     let action = request["action"].as_str().unwrap_or("");
-    if ["lsp_status", "lsp_request", "lsp_close"].contains(&action) {
+    if ["lsp_status", "lsp_start", "lsp_request", "lsp_diagnostics", "lsp_close"].contains(&action) {
         return super::coding_lsp::execute(root, request);
     }
     if [

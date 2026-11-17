@@ -32,6 +32,7 @@ const fileCommands = read('../src-tauri/src/bridge/filesystem_commands.rs');
 const windowsSandbox = read('../src-tauri/src/capabilities/agent/windows_sandbox.rs');
 const windowsMcp = read('../src-tauri/src/capabilities/agent/coding_mcp_windows.rs');
 const windowsLsp = read('../src-tauri/src/capabilities/agent/coding_lsp_windows.rs');
+const codingPublicApi = read('../src-tauri/src/capabilities/agent/public_api.rs');
 
 assert.match(cargo, /keyring = \{ version = "3", features = \["sync-secret-service", "windows-native"\] \}/);
 assert.match(lock, /name = "keyring"[\s\S]*?"windows-sys 0\.60\.2"/);
@@ -94,6 +95,14 @@ assert.match(windowsLsp, /LSP_METHOD_DISABLED/);
 assert.match(windowsLsp, /real_rust_analyzer_runs_against_private_snapshot/);
 assert.match(windowsLsp, /LSP_APPROVAL_REQUIRED/);
 assert.match(windowsLsp, /LSP_SESSION_WORKSPACE_MISMATCH/);
+assert.match(windowsLsp, /fn cancel_pending_for/);
+assert.match(windowsLsp, /closing_one_workspace_does_not_cancel_another_workspace_start/);
+assert.match(windowsLsp, /if session\.closed/);
+assert.doesNotMatch(windowsLsp, /cache\.epoch/);
+assert.match(windowsSandbox, /sandbox_prerequisites_available/);
+assert.match(windowsSandbox, /canonical\.parent\(\) == Some\(system32_dir\.as_path\(\)\)/);
+assert.match(windowsMcp, /MCP_CONFIG_REPARSE_DENIED/);
+assert.match(codingPublicApi, /"lsp_start", "lsp_request", "lsp_diagnostics", "lsp_close"/);
 assert.match(windowsLsp, /fn get_session\(root: &Path, id: &str\)/);
 // Guard against recurring Windows AppContainer launch and isolation defects.
 assert.match(windowsSandbox, /TcpListener::bind/);

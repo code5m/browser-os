@@ -66,6 +66,10 @@ fn scrub(value: &mut Value, secrets: &[String]) {
     }
 }
 fn read_config(path: &Path) -> Result<String, String> {
+    // Config sources come from a fixed set of workspace/owner paths. Never
+    // follow a junction/symlink to a different file before authorizing it.
+    super::windows_sandbox::no_reparse_path(path)
+        .map_err(|_| "MCP_CONFIG_REPARSE_DENIED")?;
     let canonical = path.canonicalize().map_err(|_| "MCP_CONFIG_NOT_FOUND")?;
     let parent = canonical.parent().ok_or("MCP_CONFIG_DENIED")?;
     let allowed = parent.canonicalize().map_err(|_| "MCP_CONFIG_DENIED")?;

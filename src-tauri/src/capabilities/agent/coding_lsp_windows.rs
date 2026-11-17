@@ -22,8 +22,27 @@ const REPARSE: u32 = 0x0000_0400;
 #[derive(Default)]
 struct SessionCache {
     ready: HashMap<String, Arc<Mutex<Session>>>,
-    starting: usize,
-    epoch: u64,
+    /// Each in-flight start belongs to exactly one workspace. A close for
+    /// workspace A must not invalidate an unrelated startup in workspace B.
+    starting: HashMap<uuid::Uuid, PathBuf>,
+}
+impl SessionCache {
+    fn reserve_start(&mut self, root: &Path) -> Result<uuid::Uuid, String> {
+        if self.ready.len() + self.starting.len() >= MAX_SESSIONS {
+            return Err("LSP_SESSION_LIMIT".into());
+        }
+        let token = uuid::Uuid::new_v4();
+        self.starting.insert(token, root.to_path_buf());
+        Ok(token)
+    }
+
+    fn start_is_active(&self, token: &uuid::Uuid, root: &Path) -> bool {
+        self.starting.get(token).is_some_and(|reserved| reserved == root)
+    }
+
+    fn cancel_pending_for(&mut self, root: &Path) {
+        self.starting.retain(|_, reserved| reserved != root);
+    }
 }
 static SESSIONS: OnceLock<Mutex<SessionCache>> = OnceLock::new();
 fn sessions() -> &'static Mutex<SessionCache> {
@@ -31,11 +50,11 @@ fn sessions() -> &'static Mutex<SessionCache> {
 }
 /// Reserve capacity without holding the global cache mutex through the slow
 /// rust-analyzer process spawn and initialize handshake.
-struct StartReservation { epoch: u64 }
+struct StartReservation { token: uuid::Uuid }
 impl Drop for StartReservation {
     fn drop(&mut self) {
         let mut cache = sessions().lock().unwrap_or_else(|p| p.into_inner());
-        cache.starting = cache.starting.saturating_sub(1);
+        cache.starting.remove(&self.token);
     }
 }
 
@@ -299,6 +318,7 @@ struct Session {
     root: PathBuf,
     snapshot: PathBuf,
     last_used: Instant,
+    closed: bool,
 }
 impl Drop for Session {
     fn drop(&mut self) {
@@ -375,6 +395,7 @@ impl Session {
             root,
             snapshot,
             last_used: Instant::now(),
+            closed: false,
         };
         let root_uri = uri_for(&session.snapshot)?;
         let init = session.rpc_next("initialize", json!({
@@ -521,6 +542,9 @@ fn get_session(root: &Path, id: &str) -> Result<Arc<Mutex<Session>>, String> {
     if owner.root != root {
         return Err("LSP_SESSION_WORKSPACE_MISMATCH".into());
     }
+    if owner.closed {
+        return Err("LSP_SESSION_NOT_FOUND".into());
+    }
     drop(owner);
     Ok(entry)
 }
@@ -567,10 +591,18 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
     }
     match action {
         "lsp_status" => {
-            let sandbox_available = SandboxProfile::create().is_ok();
-            Ok(
-                json!({"profiles":[{"id":"rust_analyzer","language":"rust","available":runtime().is_ok(),"command":"rust-analyzer.exe"}],"sandbox_available":sandbox_available,"platform":"windows","isolation":"appcontainer-no-network-readonly-snapshot"}),
-            )
+            // Status must be a non-mutating capability query. Previously it
+            // created/deleted a Windows AppContainer OS profile on EVERY call.
+            // Report prerequisites separately from native launch verification.
+            let sandbox_available =
+                super::windows_sandbox::sandbox_prerequisites_available();
+            Ok(json!({
+                "profiles":[{"id":"rust_analyzer","language":"rust","available":runtime().is_ok(),"command":"rust-analyzer.exe"}],
+                "sandbox_available":sandbox_available,
+                "sandbox_verified":false,
+                "platform":"windows",
+                "isolation":"appcontainer-no-network-readonly-snapshot"
+            }))
         }
         "lsp_start" => {
             if request["profile"].as_str().unwrap_or("") != "rust_analyzer" {
@@ -578,17 +610,17 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
             }
             let reservation = {
                 let mut cache = sessions().lock().map_err(|_| "LSP_SESSION_CACHE")?;
-                if cache.ready.len() + cache.starting >= MAX_SESSIONS {
-                    return Err("LSP_SESSION_LIMIT".into());
-                }
-                cache.starting += 1;
-                StartReservation { epoch: cache.epoch }
+                let token = cache.reserve_start(&root)?;
+                StartReservation { token }
             };
             let session = Session::start(&root, request["timeout_seconds"].as_u64().unwrap_or(30))?;
             let id = format!("lsp-{}", uuid::Uuid::new_v4().simple());
             {
                 let mut cache = sessions().lock().map_err(|_| "LSP_SESSION_CACHE")?;
-                if cache.epoch != reservation.epoch {
+                if !cache.start_is_active(&reservation.token, &root) {
+                    // Reservation::drop re-locks the cache. Release this
+                    // guard before returning on a cancelled startup.
+                    drop(cache);
                     return Err("LSP_SESSION_CLOSED_DURING_START".into());
                 }
                 cache.ready.insert(id.clone(), Arc::new(Mutex::new(session)));
@@ -608,6 +640,7 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
                 .ok_or("LSP_METHOD_DISABLED")?;
             let session = get_session(&root, id)?;
             let mut session = session.try_lock().map_err(|_| "LSP_SESSION_BUSY")?;
+            if session.closed { return Err("LSP_SESSION_NOT_FOUND".into()); }
             session.reset_deadline(request["timeout_seconds"].as_u64().unwrap_or(30));
             let mut params = request.get("params").cloned().unwrap_or(json!({}));
             let root = session.root.clone();
@@ -625,6 +658,7 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
             let path = request["path"].as_str().ok_or("LSP_DOCUMENT_REQUIRED")?;
             let session = get_session(&root, id)?;
             let mut session = session.try_lock().map_err(|_| "LSP_SESSION_BUSY")?;
+            if session.closed { return Err("LSP_SESSION_NOT_FOUND".into()); }
             session.reset_deadline(request["timeout_seconds"].as_u64().unwrap_or(30));
             let diagnostics = session.diagnostics(path)?;
             session.last_used = Instant::now();
@@ -641,21 +675,29 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
                     .map(|(id, entry)| (id.clone(), Arc::clone(entry)))
                     .collect()
             };
-            let owned: Vec<_> = candidates.into_iter().filter_map(|(id, entry)| {
-                match entry.try_lock() {
-                    Ok(session) if session.root == root => {
-                        drop(session);
-                        Some((id, entry))
+            let mut owned = Vec::new();
+            for (id, entry) in candidates {
+                let matches_workspace = match entry.try_lock() {
+                    Ok(mut session) if session.root == root => {
+                        // Mark as closed while holding its mutex. Requests
+                        // that previously cloned this Arc must fail closed.
+                        session.closed = true;
+                        true
                     }
-                    _ => None,
-                }
-            }).collect();
+                    Err(_) if request["session_id"].as_str().is_some() =>
+                        return Err("LSP_SESSION_BUSY".into()),
+                    _ => false,
+                };
+                // The MutexGuard temporary is gone before Arc ownership
+                // moves into the collection of sessions to terminate.
+                if matches_workspace { owned.push((id, entry)); }
+            }
             let removed: Vec<_> = {
                 let mut cache = sessions().lock().map_err(|_| "LSP_SESSION_CACHE")?;
                 if request["session_id"].as_str().is_none() {
-                    // Invalidates in-flight starts, so a late startup cannot
-                    // resurrect a session after its caller requested close.
-                    cache.epoch = cache.epoch.wrapping_add(1);
+                    // Only invalidate starts from this workspace. The previous
+                    // global epoch accidentally cancelled unrelated workspaces.
+                    cache.cancel_pending_for(&root);
                 }
                 owned.iter().filter_map(|(id, entry)| {
                     if cache.ready.get(id).is_some_and(|existing| Arc::ptr_eq(existing, entry)) {
@@ -750,6 +792,21 @@ mod tests {
             1
         );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn closing_one_workspace_does_not_cancel_another_workspace_start() {
+        let first = PathBuf::from(r"C:\isolated\workspace-a");
+        let second = PathBuf::from(r"C:\isolated\workspace-b");
+        let mut cache = SessionCache::default();
+        let first_start = cache.reserve_start(&first).unwrap();
+        let second_start = cache.reserve_start(&second).unwrap();
+        cache.cancel_pending_for(&first);
+        assert!(!cache.start_is_active(&first_start, &first));
+        assert!(cache.start_is_active(&second_start, &second));
+        assert_eq!(cache.starting.len(), 1);
+        cache.starting.remove(&second_start);
+        assert!(cache.starting.is_empty());
     }
 
     #[test]
