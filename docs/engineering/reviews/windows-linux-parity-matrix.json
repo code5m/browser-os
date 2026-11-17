@@ -7,7 +7,7 @@
   "reference_head": "d273d4c5a770c4ee77c1428cb685c2459ef2d070",
   "current_source_patch": "not_native_verified",
   "scope": "Windows+Linux parity only; macOS unsupported",
-  "note": "Status reflects code evidence and historical native runs, NOT current HEAD validation.",
+  "note": "All new source patches pending compile/native/NSIS/GUI verification; run #201 on older SHA remains a failure.",
   "capabilities": [
     {
       "capability": "core_gui",
@@ -43,19 +43,19 @@
     },
     {
       "capability": "file_manager",
-      "linux": "source_patched_unverified",
-      "windows": "source_patched_unverified",
+      "linux": "source_patched_dirfd_recursive_delete_unverified",
+      "windows": "source_patched_handle_pinned_recursive_delete_native_unverified",
       "macos": "unsupported",
       "severity": "P1",
-      "notes": "Atomic pinned-parent create/rename/delete regular files, recursive mkdir; recursive directory delete still needs hardened root binding"
+      "notes": "Recursive deletion implemented via Linux dirfd/openat/unlinkat and Windows pinned directory/NT handle disposition; reject reparse/symlink/special entries and cap depth/entries; not native verified"
     },
     {
       "capability": "system_apps",
       "linux": "implemented_xdg",
-      "windows": "source_patched_start_menu_exe_only",
+      "windows": "source_patched_start_menu_exe_and_packaged_aumid_unverified",
       "macos": "unsupported",
       "severity": "P2",
-      "notes": "Windows StartMenu .lnk direct EXE targets; packaged UWP/MSIX app IDs not supported"
+      "notes": "Windows Start Menu .lnk and bounded Get-StartApps UWP/MSIX AUMID discovery; packaged app launch rechecks registration, requires native user gesture and trusted explorer; not all protocol shortcuts supported"
     },
     {
       "capability": "launch_policy",
@@ -76,10 +76,10 @@
     {
       "capability": "agent_mcp_lsp",
       "linux": "implemented_history_ci_pass",
-      "windows": "blocked_native_win32_access_denied_last_run",
+      "windows": "source_patched_lsp_document_contract_appcontainer_native_unverified",
       "macos": "unsupported",
       "severity": "P1",
-      "notes": "Run #201 Windows AppContainer MCP and LSP fail at CreateProcessW error 5; newest code patches unverified"
+      "notes": "Windows persistent LSP plus Linux-style single approved document request with private snapshot; previous run #201 AppContainer MCP/LSP CreateProcessW error 5 is NOT cleared without new Windows native evidence"
     },
     {
       "capability": "script_runner",
@@ -111,7 +111,7 @@
       "windows": "source_patched_native_unverified",
       "macos": "not_assessed",
       "severity": "P2",
-      "notes": "Git conflict resolver now uses Linux/Windows pinned CAS; DB profile and Agent config use cross-platform atomic replacement; native Windows acceptance pending"
+      "notes": "Git conflict resolver now uses Linux/Windows pinned CAS; DB profile and Agent config use cross-platform atomic replacement; native Windows acceptance pending; measurement report M0 writes now reuse unique-stage atomic_write"
     },
     {
       "capability": "installer_nsys",

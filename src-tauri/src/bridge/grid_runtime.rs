@@ -702,7 +702,6 @@ pub fn list_apps() -> Vec<AppEntry> {
 #[cfg(target_os = "windows")]
 fn list_windows_apps_blocking() -> Vec<AppEntry> {
     use std::os::windows::ffi::OsStringExt;
-    use std::os::windows::process::CommandExt;
     use windows_sys::Win32::System::SystemInformation::GetSystemDirectoryW;
 
     fn add_target(
@@ -743,13 +742,9 @@ fn list_windows_apps_blocking() -> Vec<AppEntry> {
     let system_dir = std::path::PathBuf::from(
         std::ffi::OsString::from_wide(&system[..len as usize]),
     );
-    let powershell = system_dir.join(r"WindowsPowerShell\v1.0\powershell.exe");
-    if powershell.is_file() {
-        // No user-supplied script and no shell interpolation. Resolve only
-        // local .lnk shortcut targets from Windows-known Start Menu folders.
-        // Never trust shortcut arguments; the launcher uses the validated EXE
-        // without command-line side effects. Bounded result count.
-        const SCRIPT: &str = r#"
+    // A stuck COM shortcut reader must not block the workbench forever:
+    // share the 8s/192KiB bounded PowerShell runner with AUMID discovery.
+    const SCRIPT: &str = r#"
 $ErrorActionPreference='SilentlyContinue'
 [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
 $shell=New-Object -ComObject WScript.Shell
@@ -769,26 +764,32 @@ foreach($kind in @('StartMenu','CommonStartMenu')){
 }
 ConvertTo-Json -InputObject @($apps) -Depth 3 -Compress
 "#;
-        // The script is constant and only emits JSON. Never use a profile,
-        // SearchPath, arbitrary user command or decoded shell string.
-        if let Ok(output) = std::process::Command::new(powershell)
-            .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", SCRIPT])
-            .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
-            .output()
-        {
-            if output.status.success() && output.stdout.len() <= 256 * 1024 {
-                if let Ok(items) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
-                    if let Some(values) = items.as_array() {
-                        for item in values.iter().take(256) {
-                            if let (Some(name), Some(exe)) =
-                                (item["name"].as_str(), item["exec"].as_str())
-                            {
-                                add_target(&mut apps, &mut seen, name, exe);
-                            }
-                        }
+    if let Some(bytes) = crate::windows_apps::run_bounded_builtin_script(SCRIPT) {
+        let bytes = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(&bytes);
+        if let Ok(items) = serde_json::from_slice::<serde_json::Value>(bytes) {
+            if let Some(values) = items.as_array() {
+                for item in values.iter().take(256) {
+                    if let (Some(name), Some(exe)) =
+                        (item["name"].as_str(), item["exec"].as_str())
+                    {
+                        add_target(&mut apps, &mut seen, name, exe);
                     }
                 }
             }
+        }
+    }
+    // MSIX/UWP applications are addressed by an AppUserModelID instead of a
+    // launchable EXE. The "appsfolder:" marker is never parsed as a shell
+    // command: the native launcher revalidates the installed AUMID before
+    // opening its trusted shell namespace target.
+    for (name, id) in crate::windows_apps::installed_packaged_apps() {
+        if apps.len() >= 512 { break; }
+        let key = format!("appsfolder:{}", id.to_ascii_lowercase());
+        if seen.insert(key) {
+            apps.push(AppEntry {
+                name, exec: format!("appsfolder:{id}"),
+                icon: "🪟".into(), icon_path: None,
+            });
         }
     }
     // System applications are legitimate Windows launch targets even on

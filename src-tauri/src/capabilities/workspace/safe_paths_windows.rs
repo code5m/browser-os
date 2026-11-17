@@ -61,6 +61,28 @@ fn system_tool(name: &str) -> io::Result<PathBuf> {
     Ok(PathBuf::from(std::ffi::OsString::from_wide(&buffer[..length as usize])).join(name))
 }
 
+#[cfg(test)]
+mod windows_identity_contract_tests {
+    use super::valid_windows_sid;
+
+    #[test]
+    fn sid_validation_preserves_literal_s_prefix_and_rejects_malformed_segments() {
+        assert!(valid_windows_sid("S-1-5-21-100-200-300-1001"));
+        assert!(!valid_windows_sid("1-5-21-100"));
+        assert!(!valid_windows_sid("S-1--21"));
+        assert!(!valid_windows_sid("S-1-5-21-abc"));
+        assert!(!valid_windows_sid("S-1-"));
+    }
+}
+
+fn valid_windows_sid(value: &str) -> bool {
+    value.strip_prefix("S-1-").is_some_and(|suffix| {
+        !suffix.is_empty() && suffix.split('-').all(|part| {
+            !part.is_empty() && part.bytes().all(|ch| ch.is_ascii_digit())
+        })
+    })
+}
+
 fn current_user_identity() -> io::Result<(String, String)> {
     let whoami = system_tool("whoami.exe")?;
     let output = std::process::Command::new(whoami)
@@ -82,29 +104,25 @@ fn current_user_identity() -> io::Result<(String, String)> {
                 "WINDOWS_USER_SID_UNAVAILABLE",
             )
         })?;
-    let fields: Vec<_> = line.trim_start_matches('\u{feff}').split(',').collect();
-    let account = fields
-        .first()
-        .map(|value| value.trim().trim_matches('"'))
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "WINDOWS_USER_ACCOUNT_UNAVAILABLE",
-            )
-        })?;
-    let sid = fields
-        .get(1)
-        .map(|value| value.trim().trim_matches('"'))
-        .filter(|value| {
-            value.starts_with("S-1-")
-                && value
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit() || byte == b'-')
-        })
-        .ok_or_else(|| {
-            io::Error::new(io::ErrorKind::PermissionDenied, "WINDOWS_USER_SID_INVALID")
-        })?;
+    // The Windows account display name may contain quoted commas. Parse
+    // from the final CSV separator, never tokenize the account field as SID.
+    let (account_raw, sid_raw) = line.trim_start_matches('\u{feff}')
+        .rsplit_once(',')
+        .ok_or_else(|| io::Error::new(
+            io::ErrorKind::PermissionDenied, "WINDOWS_USER_SID_UNAVAILABLE"
+        ))?;
+    let account = account_raw.trim().trim_matches('"');
+    if account.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied, "WINDOWS_USER_ACCOUNT_UNAVAILABLE"
+        ));
+    }
+    let sid = sid_raw.trim().trim_matches('"');
+    if !valid_windows_sid(sid) {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied, "WINDOWS_USER_SID_INVALID"
+        ));
+    }
     Ok((account.to_string(), sid.to_string()))
 }
 
@@ -955,6 +973,120 @@ fn remove_regular_at(parent: &File, filename: &std::ffi::OsStr) -> io::Result<()
     {
         return Err(io::Error::last_os_error());
     }
+    Ok(())
+}
+
+/// Delete a directory by its open kernel handle. A directory path is used
+/// only to ENUMERATE candidate names; all child opens and mutations are
+/// resolved against the already-authorized parent handle via NtCreateFile.
+fn mark_object_deleted(object: &File) -> io::Result<()> {
+    use std::ffi::c_void;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FileDispositionInfo, SetFileInformationByHandle, FILE_DISPOSITION_INFO,
+    };
+    let disposition = FILE_DISPOSITION_INFO { DeleteFile: true };
+    if unsafe {
+        SetFileInformationByHandle(
+            object.as_raw_handle() as _,
+            FileDispositionInfo,
+            &disposition as *const _ as *const c_void,
+            std::mem::size_of::<FILE_DISPOSITION_INFO>() as u32,
+        )
+    } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+/// A moved or replaced path can change the directory visible by name. Use
+/// handle identity to verify that the read_dir path is still the pinned
+/// directory; never trust an enumerated entry path for mutation.
+fn names_of_pinned_directory(dir: &File) -> io::Result<Vec<(std::ffi::OsString, bool)>> {
+    let named = PathBuf::from(final_path(dir)?);
+    let path_handle = open_destination_directory(&named)?;
+    let a = identity(dir)?;
+    let b = identity(&path_handle)?;
+    if a.volume != b.volume || a.index != b.index {
+        return Err(denied());
+    }
+    let mut entries = Vec::new();
+    for entry in std::fs::read_dir(&named)? {
+        let entry = entry?;
+        let kind = entry.file_type()?;
+        if !kind.is_dir() && !kind.is_file() { return Err(denied()); }
+        if entries.len() >= 50_000 { return Err(denied()); }
+        entries.push((entry.file_name(), kind.is_dir()));
+    }
+    // A rename while enumerating cannot redirect any of the eventual NT
+    // child opens. Still fail closed when the name no longer represents the
+    // pinned directory.
+    let after = open_destination_directory(&named)?;
+    let current = identity(&after)?;
+    if a.volume != current.volume || a.index != current.index {
+        return Err(denied());
+    }
+    Ok(entries)
+}
+
+fn remove_directory_contents(
+    directory: &File, authorized_root: &File, depth: usize, remaining: &mut usize,
+) -> io::Result<()> {
+    use windows_sys::Wdk::Storage::FileSystem::FILE_OPEN;
+    const DELETE: u32 = 0x0001_0000;
+    const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
+    const FILE_LIST_DIRECTORY: u32 = 0x0000_0001;
+    const FILE_TRAVERSE: u32 = 0x0000_0020;
+    if depth > 64 { return Err(denied()); }
+    authorize_with_root(directory, authorized_root)?;
+    for (name, is_dir) in names_of_pinned_directory(directory)? {
+        if *remaining == 0 { return Err(denied()); }
+        *remaining -= 1;
+        if is_dir {
+            let nested = open_object_at(
+                directory, &name,
+                DELETE | FILE_READ_ATTRIBUTES | FILE_LIST_DIRECTORY | FILE_TRAVERSE,
+                FILE_SHARE_READ_WRITE_DELETE, FILE_OPEN, true,
+            )?;
+            authorize_with_root(&nested, authorized_root)?;
+            remove_directory_contents(&nested, authorized_root, depth + 1, remaining)?;
+            mark_object_deleted(&nested)?;
+            drop(nested);
+        } else {
+            let child = open_child_at(
+                directory, &name,
+                DELETE | FILE_READ_ATTRIBUTES,
+                FILE_SHARE_READ_WRITE_DELETE, FILE_OPEN,
+            )?;
+            authorize_with_root(&child, authorized_root)?;
+            mark_object_deleted(&child)?;
+            drop(child);
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn remove_tree(path: &Path, roots: &[PathBuf]) -> io::Result<()> {
+    use windows_sys::Wdk::Storage::FileSystem::FILE_OPEN;
+    const DELETE: u32 = 0x0001_0000;
+    const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
+    const FILE_LIST_DIRECTORY: u32 = 0x0000_0001;
+    const FILE_TRAVERSE: u32 = 0x0000_0020;
+    if !path.is_absolute() { return Err(denied()); }
+    reject_reparse_ancestors(path)?;
+    let parent_path = path.parent().ok_or_else(denied)?;
+    let target_name = path.file_name().ok_or_else(denied)?;
+    let root = open_authorized_root(parent_path, roots)?;
+    let parent = open_destination_directory(parent_path)?;
+    authorize_with_root(&parent, &root)?;
+    let target = open_object_at(
+        &parent, target_name,
+        DELETE | FILE_READ_ATTRIBUTES | FILE_LIST_DIRECTORY | FILE_TRAVERSE,
+        FILE_SHARE_READ_WRITE_DELETE, FILE_OPEN, true,
+    )?;
+    authorize_with_root(&target, &root)?;
+    let mut remaining = 50_000usize;
+    remove_directory_contents(&target, &root, 0, &mut remaining)?;
+    mark_object_deleted(&target)?;
     Ok(())
 }
 

@@ -12,6 +12,8 @@ mod grid_ipc;
 #[cfg(target_os = "windows")]
 mod windows_process;
 #[cfg(target_os = "windows")]
+mod windows_apps;
+#[cfg(target_os = "windows")]
 mod windows_pipe;
 #[cfg(target_os = "linux")]
 type GridStream = std::os::unix::net::UnixStream;

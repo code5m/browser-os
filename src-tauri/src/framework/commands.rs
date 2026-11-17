@@ -29,7 +29,7 @@ pub fn audit_log(app: AppHandle) -> Vec<AuditEntry> {
 }
 
 #[tauri::command]
-pub fn launch_app(
+pub async fn launch_app(
     app: AppHandle,
     webview: tauri::Webview,
     exec: String,
@@ -38,6 +38,20 @@ pub fn launch_app(
     let cmd = exec.trim();
     if cmd.is_empty() {
         return Err("没有可执行命令".into());
+    }
+    #[cfg(target_os = "windows")]
+    if let Some(id) = cmd.strip_prefix("appsfolder:") {
+        // Enumeration and launch are slow shell operations. Never block a
+        // Tauri invoke handler while querying UWP/MSIX registration.
+        let id = id.to_owned();
+        tauri::async_runtime::spawn_blocking({
+            let id = id.clone();
+            move || crate::windows_apps::launch_packaged_app(&id)
+        })
+        .await
+        .map_err(|_| "WINDOWS_PACKAGED_APP_WORKER_FAILED".to_string())??;
+        log_audit(&app, "launch_packaged_app", id);
+        return Ok(());
     }
     // M0-3.d：不再用 `sh -c` 执行任意字符串。改为解析成 (程序, 参数) 直接 spawn：
     // 元字符一律拒绝、shell 解释器禁为启动目标、程序必须能解析到可执行文件。

@@ -3,6 +3,7 @@
 
 use super::windows_sandbox::{send_bounded, SandboxChild, SandboxProcess, SandboxProfile};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -25,10 +26,11 @@ struct SessionCache {
     /// Each in-flight start belongs to exactly one workspace. A close for
     /// workspace A must not invalidate an unrelated startup in workspace B.
     starting: HashMap<uuid::Uuid, PathBuf>,
+    one_shot: usize,
 }
 impl SessionCache {
     fn reserve_start(&mut self, root: &Path) -> Result<uuid::Uuid, String> {
-        if self.ready.len() + self.starting.len() >= MAX_SESSIONS {
+        if self.ready.len() + self.starting.len() + self.one_shot >= MAX_SESSIONS {
             return Err("LSP_SESSION_LIMIT".into());
         }
         let token = uuid::Uuid::new_v4();
@@ -55,6 +57,26 @@ impl Drop for StartReservation {
     fn drop(&mut self) {
         let mut cache = sessions().lock().unwrap_or_else(|p| p.into_inner());
         cache.starting.remove(&self.token);
+    }
+}
+
+/// A one-shot legacy request uses the same global process budget as
+/// persistent Windows sessions, preventing unbounded concurrent analyzers.
+struct OneShotPermit;
+impl OneShotPermit {
+    fn acquire() -> Result<Self, String> {
+        let mut cache = sessions().lock().map_err(|_| "LSP_SESSION_CACHE")?;
+        if cache.ready.len() + cache.starting.len() + cache.one_shot >= MAX_SESSIONS {
+            return Err("LSP_SESSION_LIMIT".into());
+        }
+        cache.one_shot += 1;
+        Ok(Self)
+    }
+}
+impl Drop for OneShotPermit {
+    fn drop(&mut self) {
+        let mut cache = sessions().lock().unwrap_or_else(|e| e.into_inner());
+        cache.one_shot = cache.one_shot.saturating_sub(1);
     }
 }
 
@@ -327,10 +349,44 @@ impl Drop for Session {
 }
 impl Session {
     fn start(root: &Path, seconds: u64) -> Result<Self, String> {
-        let server = runtime()?;
         let root = root.canonicalize().map_err(|_| "LSP_ROOT_INVALID")?;
         let profile = SandboxProfile::create()?;
         let snapshot = snapshot(&root, &profile)?;
+        Self::start_with_snapshot(root, profile, snapshot, seconds)
+    }
+
+    fn start_documents(
+        root: &Path, documents: &[(String, String)], seconds: u64,
+    ) -> Result<Self, String> {
+        let root = root.canonicalize().map_err(|_| "LSP_ROOT_INVALID")?;
+        if documents.is_empty() || documents.len() > 128 {
+            return Err("LSP_DOCUMENT_LIMIT".into());
+        }
+        let profile = SandboxProfile::create()?;
+        let snapshot = profile.snapshot_dir()?;
+        let mut total = 0usize;
+        for (relative, content) in documents {
+            let path = Path::new(relative);
+            if path.is_absolute() || !path.components().all(|part|
+                matches!(part, std::path::Component::Normal(_))
+            ) || !relative.ends_with(".rs") || content.len() > MAX_FILE_BYTES {
+                return Err("LSP_DOCUMENT_DENIED".into());
+            }
+            total = total.checked_add(content.len()).ok_or("LSP_DOCUMENT_LIMIT")?;
+            if total > 4 * 1024 * 1024 { return Err("LSP_DOCUMENT_LIMIT".into()); }
+            let target = snapshot.join(path);
+            fs::create_dir_all(target.parent().ok_or("LSP_DOCUMENT_DENIED")?)
+                .map_err(|_| "LSP_SNAPSHOT_WRITE_FAILED")?;
+            fs::write(&target, content).map_err(|_| "LSP_SNAPSHOT_WRITE_FAILED")?;
+        }
+        profile.protect_snapshot(&snapshot)?;
+        Self::start_with_snapshot(root, profile, snapshot, seconds)
+    }
+
+    fn start_with_snapshot(
+        root: PathBuf, profile: SandboxProfile, snapshot: PathBuf, seconds: u64,
+    ) -> Result<Self, String> {
+        let server = runtime()?;
         let state = profile.state_dir()?;
         let disabled_cargo = state.join("disabled-cargo.exe");
         let disabled_rustc = state.join("disabled-rustc.exe");
@@ -483,6 +539,28 @@ impl Session {
         self.next_id = self.next_id.saturating_add(1);
         self.rpc(id, method, params)
     }
+    fn open_document(&mut self, relative: &Path, text: &str) -> Result<String, String> {
+        let uri = uri_for(&self.snapshot.join(relative))?;
+        self.send(json!({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{
+            "textDocument":{"uri":uri,"languageId":"rust","version":1,"text":text}
+        }}))?;
+        Ok(uri)
+    }
+
+    fn await_diagnostics(&mut self, uri: &str) -> Result<Value, String> {
+        loop {
+            let mut value = self.recv_frame("LSP_DIAGNOSTICS_TIMEOUT")?;
+            if value["method"] == "textDocument/publishDiagnostics" && value["params"]["uri"] == uri {
+                return Ok(value["params"]["diagnostics"].take());
+            }
+            if value.get("method").is_some() && value.get("id").is_some() {
+                self.send(json!({"jsonrpc":"2.0","id":value["id"],"error":{
+                    "code":-32601,"message":"Client operations are disabled"
+                }}))?;
+            }
+        }
+    }
+
     fn diagnostics(&mut self, path: &str) -> Result<Value, String> {
         let document = PathBuf::from(path);
         if document.is_absolute() || path.contains("..") {
@@ -491,27 +569,13 @@ impl Session {
         let host = self.root.join(&document);
         no_reparse(&host)?;
         let bytes = crate::capabilities::workspace::safe_paths::read_regular(
-            &host,
-            &[self.root.clone()],
-            MAX_FILE_BYTES,
-        )
-        .map_err(|_| "LSP_DOCUMENT_READ_DENIED")?;
+            &host, &[self.root.clone()], MAX_FILE_BYTES,
+        ).map_err(|_| "LSP_DOCUMENT_READ_DENIED")?;
         let text = String::from_utf8(bytes).map_err(|_| "LSP_DOCUMENT_NOT_TEXT")?;
-        let snapshot_document = self.snapshot.join(&document);
-        let uri = uri_for(&snapshot_document)?;
-        self.send(json!({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":uri,"languageId":"rust","version":1,"text":text}}}))?;
-        loop {
-            let mut value = self.recv_frame("LSP_DIAGNOSTICS_TIMEOUT")?;
-            if value["method"] == "textDocument/publishDiagnostics" && value["params"]["uri"] == uri
-            {
-                let mut diagnostics = value["params"]["diagnostics"].take();
-                response_uri_to_workspace(&mut diagnostics, &self.root, &self.snapshot);
-                return Ok(diagnostics);
-            }
-            if value.get("method").is_some() && value.get("id").is_some() {
-                self.send(json!({"jsonrpc":"2.0","id":value["id"],"error":{"code":-32601,"message":"Client operations are disabled"}}))?;
-            }
-        }
+        let uri = self.open_document(&document, &text)?;
+        let mut diagnostics = self.await_diagnostics(&uri)?;
+        response_uri_to_workspace(&mut diagnostics, &self.root, &self.snapshot);
+        Ok(diagnostics)
     }
 }
 fn allowed_method(method: &str) -> bool {
@@ -529,6 +593,120 @@ fn allowed_method(method: &str) -> bool {
     ]
     .contains(&method)
 }
+/// The Linux API sends a single approved Rust document per call. Keep
+/// Windows persistent session support, but accept this document request
+/// contract by creating only the reviewed document(s) in a short-lived
+/// AppContainer snapshot. No entire-workspace copy without module approval.
+fn remap_reviewed_uris(
+    value: &mut Value, snapshot: &Path, workspace: &Path, single_public_uri: Option<&str>,
+) {
+    match value {
+        Value::String(text) if text.starts_with("file://") => {
+            let mapped = url::Url::parse(text).ok()
+                .and_then(|uri| uri.to_file_path().ok())
+                .and_then(|path| path.strip_prefix(snapshot).ok().map(Path::to_path_buf))
+                .and_then(|relative| {
+                    if let Some(public) = single_public_uri {
+                        (relative == Path::new("document.rs")).then(|| public.to_owned())
+                    } else {
+                        uri_for(&workspace.join(relative)).ok()
+                    }
+                });
+            *text = mapped.unwrap_or_else(|| "[outside reviewed snapshot]".into());
+        }
+        Value::Array(values) => {
+            for item in values { remap_reviewed_uris(item, snapshot, workspace, single_public_uri); }
+        }
+        Value::Object(values) => {
+            for item in values.values_mut() {
+                remap_reviewed_uris(item, snapshot, workspace, single_public_uri);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn one_shot_document_request(root: &Path, request: &Value) -> Result<Value, String> {
+    let method = match request["method"].as_str() {
+        Some("completion") => "textDocument/completion",
+        Some("definition") => "textDocument/definition",
+        Some("hover") => "textDocument/hover",
+        Some("diagnostics") => "textDocument/documentSymbol",
+        _ => return Err("LSP_METHOD_DENIED".into()),
+    };
+    let path = request["path"].as_str().ok_or("LSP_DOCUMENT_REQUIRED")?;
+    let content = request["content"].as_str().ok_or("LSP_DOCUMENT_REQUIRED")?;
+    super::coding::validate_lsp_document(root, path, content)?;
+    if content.len() > MAX_FILE_BYTES { return Err("LSP_DOCUMENT_LIMIT".into()); }
+    let line = request["line"].as_u64().filter(|n| *n < 100_000)
+        .ok_or("LSP_POSITION_INVALID")?;
+    let character = request["character"].as_u64().filter(|n| *n <= 262_144)
+        .ok_or("LSP_POSITION_INVALID")?;
+    let text_line = content.split('\n').nth(line as usize).ok_or("LSP_POSITION_INVALID")?;
+    if character as usize > text_line.encode_utf16().count() {
+        return Err("LSP_POSITION_INVALID".into());
+    }
+    if let Some(selected) = request["server_path"].as_str() {
+        let real = runtime()?;
+        let requested = Path::new(selected).canonicalize()
+            .map_err(|_| "LSP_SERVER_UNAVAILABLE")?;
+        if requested != real { return Err("LSP_SERVER_NOT_TRUSTED_PROFILE".into()); }
+    }
+    let _permit = OneShotPermit::acquire()?;
+    let timeout = request["timeout_seconds"].as_u64().unwrap_or(30);
+    let (documents, relative, scope, isolated_document) =
+        if let Some(module) = request["module_root"].as_str() {
+            if request["approved_module_sources"] != true {
+                return Err("LSP_MODULE_APPROVAL_REQUIRED".into());
+            }
+            super::coding::validate_lsp_document(root, module, "")?;
+            let directory = Path::new(module).parent().ok_or("LSP_MODULE_ROOT_INVALID")?;
+            if !Path::new(path).starts_with(directory) {
+                return Err("LSP_DOCUMENT_OUTSIDE_MODULE_ROOT".into());
+            }
+            let mut docs = super::coding::lsp_module_sources(root, module)?;
+            if let Some(file) = docs.iter_mut().find(|file| file.0 == path) {
+                file.1 = content.to_owned();
+            } else {
+                docs.push((path.to_owned(), content.to_owned()));
+            }
+            if !docs.iter().any(|file| file.0 == module) {
+                return Err("LSP_MODULE_ROOT_MISSING".into());
+            }
+            (docs, path.to_owned(), "isolated_rust_module_sources", false)
+        } else {
+            (vec![("document.rs".into(), content.to_owned())],
+             "document.rs".into(), "isolated_current_rust_document", true)
+        };
+    let mut session = Session::start_documents(root, &documents, timeout)?;
+    let private_uri = session.open_document(Path::new(&relative), content)?;
+    let public_uri = uri_for(&root.join(path))?;
+    let mut diagnostics = if request["method"] == "diagnostics" {
+        session.await_diagnostics(&private_uri)?
+    } else {
+        Value::Null
+    };
+    let params = if method == "textDocument/documentSymbol" {
+        json!({"textDocument":{"uri":private_uri}})
+    } else {
+        json!({"textDocument":{"uri":private_uri},
+            "position":{"line":line,"character":character}})
+    };
+    let mut result = session.rpc_next(method, params)?;
+    let public = isolated_document.then_some(public_uri.as_str());
+    remap_reviewed_uris(&mut result, &session.snapshot, root, public);
+    remap_reviewed_uris(&mut diagnostics, &session.snapshot, root, public);
+    Ok(json!({
+        "result":result,
+        "diagnostics":diagnostics,
+        "document_uri":public_uri,
+        "document_hash":format!("{:x}", Sha256::digest(content.as_bytes())),
+        "scope":scope,
+        "compilation_verified":false,
+        "sandbox":"appcontainer-no-network-readonly-snapshot"
+    }))
+}
+
 fn get_session(root: &Path, id: &str) -> Result<Arc<Mutex<Session>>, String> {
     let entry = sessions()
         .lock()
@@ -631,6 +809,9 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
             )
         }
         "lsp_request" => {
+            if request["session_id"].is_null() {
+                return one_shot_document_request(&root, &request);
+            }
             let id = request["session_id"]
                 .as_str()
                 .ok_or("LSP_SESSION_REQUIRED")?;
@@ -807,6 +988,41 @@ mod tests {
         assert_eq!(cache.starting.len(), 1);
         cache.starting.remove(&second_start);
         assert!(cache.starting.is_empty());
+    }
+
+    #[test]
+    fn linux_document_contract_requires_scope_approval_before_windows_spawn() {
+        let base = std::env::temp_dir().join(format!(
+            "browseros-lsp-document-{}", uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(base.join("src")).unwrap();
+        fs::write(base.join("src/lib.rs"), "fn fixture() {}").unwrap();
+        let request = json!({
+            "action":"lsp_request", "approved":true,
+            "method":"diagnostics", "path":"src/lib.rs",
+            "content":"fn fixture() {}", "line":0, "character":0,
+            "module_root":"src/lib.rs"
+        });
+        assert_eq!(
+            execute(&base, request).unwrap_err(),
+            "LSP_MODULE_APPROVAL_REQUIRED"
+        );
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn single_document_uri_rewrite_does_not_expose_other_file_urls() {
+        let snapshot = PathBuf::from(r"C:\isolated\snapshot");
+        let root = PathBuf::from(r"C:\approved\workspace");
+        let private = uri_for(&snapshot.join("document.rs")).unwrap();
+        let public = uri_for(&root.join("src/lib.rs")).unwrap();
+        let mut value = json!({
+            "target": private,
+            "external":"file:///C:/unapproved/secrets.rs"
+        });
+        remap_reviewed_uris(&mut value, &snapshot, &root, Some(&public));
+        assert_eq!(value["target"], public);
+        assert_eq!(value["external"], "[outside reviewed snapshot]");
     }
 
     #[test]

@@ -76,3 +76,16 @@
 **状态：SOURCE_PATCHED_NOT_NATIVE_VERIFIED。** 按用户指令本轮没有调用编译、Cargo 测试、Node 测试、GitHub Actions 或 workflow_dispatch；不修改 master。此前 run #201 的 Windows native 失败，及当前 Windows MCP/LSP、安装包和 WebView2 GUI 未验，仍为 PENDING/FAIL；不可宣称平台已完全支持。
 
 仍需进一步处理/验证的范围：Windows MCP/LSP AppContainer 实际 Win32 启动、真实依赖 DLL 及 stdio；递归目录删除的原子安全、UWP/MSIX 覆盖；Linux/Windows LSP 请求字段级统一、Windows NSIS 和 GUI、BFC 真实登录态。上述均不因源码收口自动变为 PASS。
+
+## 第四轮：目录句柄安全、文档 LSP、UWP/MSIX 与稳定性代码收口（未跑 CI）
+
+基准分支 HEAD：`72ad4df5d2ccc4a6868a658720338c4abd11f7a0`。用户明确要求不运行 CI、Cargo 编译/测试、NSIS、Windows 实机验收，不合并 master。
+
+1. **SID 有效性与用户身份**：修复 `safe_paths_windows.rs` 中另一处遗漏的 `S-1-` 校验（旧逻辑拒绝字母 S），并修正含逗号 Windows 用户名的 CSV 解析。补充合法 SID/非法 SID 测试代码。
+2. **安全递归目录删除**：`bridge/filesystem_commands.rs` 不再对已校验路径调用 `std::fs::remove_dir_all`。新增 `safe_paths::remove_tree`，Linux 采用已授权目录 FD + `fdopendir/readdir/openat/unlinkat(AT_REMOVEDIR)`，Windows 采用已授权 NT 目录句柄 + `NtCreateFile(FILE_OPEN_REPARSE_POINT)` + `SetFileInformationByHandle(FileDispositionInfo)`。列出文件名不等于授权；所有操作均由父目录句柄定位。不跟随 symlink/Junction 或特殊文件，深度与对象数上限 64/50,000。追加正常删除、拒绝删授权根、拒绝目录链接并保留外部文件的测试代码。并发改名仍以原句柄的对象身份为准；原子回滚整个树不在本轮合同内。
+3. **Windows UWP/MSIX**：新增 `windows_apps.rs`，仅执行固定的无用户脚本 PowerShell `Get-StartApps` 读入已注册 AppUserModelID，限制输出 192 KiB、8 秒和最多 256 个结果；已注册且符合严格 AUMID 字符集才给 UI 展示 `appsfolder:` 标记。`launch_app` 先校验主窗口来源，再在异步工作线程复核系统登记表，使用受信任的系统 Explorer 打开 `shell:AppsFolder\\<AppID>`；普通 EXE 仍只走现有 `check_launch_target`，从不把 AppID 当 shell 命令执行。该实现不覆盖全部协议快捷方式/损坏的系统登记条目。
+4. **LSP 平台 API 收敛**：Windows 保留现有工作区绑定持久 session；当 `lsp_request` 未带 `session_id` 时增加 Linux 风格的、明确审批的一次性文档请求。默认只暂存一个经验证的 `document.rs`；只有 `approved_module_sources=true` 时才允许扫描并暂存限定的模块源文件。与持久 session 共用最多两个分析器进程的容量预留；虚拟文档 didOpen / diagnostics 和 completion、definition、hover、documentSymbol 复用已有 AppContainer LSP IPC，结果只回映获授权文档 URI，其他文件 URI 隐去。返回 `document_hash`、`document_uri`、`scope` 和 `compilation_verified:false`。仍需 Windows 原生验证 rust-analyzer 的单文件附着与诊断时序。
+5. **测量报告原子落盘**：M0 `m0_atomic_write` 改用现有 `session::atomic_write` 的唯一临时文件 + Windows replace + fsync；解决固定 `.tmp` 并发竞争与 Windows 目标已存在时 `fs::rename` 失败。
+6. **工程防回归**：扩展 Windows/Linux 源码合同和纯模块回归用例。新增代码尚未编译或执行；不能将这些断言和文档标为 PASS。
+
+**现阶段：SOURCE_PATCHED / NATIVE_UNVERIFIED；不合并 master，不触发 CI。** 旧版 run #201 的 MCP/LSP AppContainer Win32 5 和 Windows NSIS、Win11 GUI/BFC 真实授权会话仍无新 SHA 证据；`[skip ci]` 仅避免本批提交重复触发流水线，不取消正式门禁。

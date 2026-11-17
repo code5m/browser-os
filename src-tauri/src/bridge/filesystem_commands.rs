@@ -364,18 +364,17 @@ pub fn delete_path(
     if !p.exists() {
         return Err("路径不存在".into());
     }
-    // 递归删除最危险：必须在允许根目录内，且不允许删根目录本身。
-    let canonical = sp::check_delete_target(&path, &crate::workspace::allowed_roots(&app))
+    // Both recursive directory deletion and single-file deletion must use
+    // authorized parent handles. A path-only recursive remover can be raced
+    // by a junction/symlink replacement after the root preflight check.
+    let roots = crate::workspace::allowed_roots(&app);
+    let canonical = sp::check_delete_target(&path, &roots)
         .map_err(|e| e.to_string())?;
     if canonical.is_dir() {
-        // Rust's recursive remover does not follow child symlinks/junctions.
-        // Root authorization still needs the original directory to remain
-        // at the path selected by the user during this operation.
-        std::fs::remove_dir_all(&canonical).map_err(|e| e.to_string())?;
+        crate::capabilities::workspace::safe_paths::remove_tree(&canonical, &roots)
+            .map_err(|e| format!("安全删除目录失败: {e}"))?;
     } else {
-        // The previous std::fs::remove_file could race a symlink/junction
-        // swap. Only remove a regular file relative to an authorized handle.
-        crate::capabilities::workspace::safe_paths::remove_regular(&canonical, &crate::workspace::allowed_roots(&app))
+        crate::capabilities::workspace::safe_paths::remove_regular(&canonical, &roots)
             .map_err(|e| format!("安全删除失败: {e}"))?;
     }
     Ok(())

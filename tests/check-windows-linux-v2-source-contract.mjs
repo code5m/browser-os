@@ -32,6 +32,8 @@ const fileCommands = read('../src-tauri/src/bridge/filesystem_commands.rs');
 const windowsSandbox = read('../src-tauri/src/capabilities/agent/windows_sandbox.rs');
 const windowsMcp = read('../src-tauri/src/capabilities/agent/coding_mcp_windows.rs');
 const windowsLsp = read('../src-tauri/src/capabilities/agent/coding_lsp_windows.rs');
+const windowsApps = read('../src-tauri/src/windows_apps.rs');
+const systemCommands = read('../src-tauri/src/bridge/system_commands.rs');
 const codingPublicApi = read('../src-tauri/src/capabilities/agent/public_api.rs');
 
 assert.match(cargo, /keyring = \{ version = "3", features = \["sync-secret-service", "windows-native"\] \}/);
@@ -96,12 +98,33 @@ assert.match(windowsLsp, /real_rust_analyzer_runs_against_private_snapshot/);
 assert.match(windowsLsp, /LSP_APPROVAL_REQUIRED/);
 assert.match(windowsLsp, /LSP_SESSION_WORKSPACE_MISMATCH/);
 assert.match(windowsLsp, /fn cancel_pending_for/);
+// One-shot Linux-compatible LSP document requests remain isolated from
+// Windows' persistent session protocol and require explicit module approval.
+assert.match(windowsLsp, /fn one_shot_document_request/);
+assert.match(windowsLsp, /fn start_documents/);
+assert.match(windowsLsp, /LSP_MODULE_APPROVAL_REQUIRED/);
+assert.match(windowsLsp, /struct OneShotPermit/);
+assert.match(windowsLsp, /single_document_uri_rewrite_does_not_expose_other_file_urls/);
 assert.match(windowsLsp, /closing_one_workspace_does_not_cancel_another_workspace_start/);
 assert.match(windowsLsp, /if session\.closed/);
 assert.doesNotMatch(windowsLsp, /cache\.epoch/);
 assert.match(windowsSandbox, /sandbox_prerequisites_available/);
 assert.match(windowsSandbox, /canonical\.parent\(\) == Some\(system32_dir\.as_path\(\)\)/);
 assert.match(windowsMcp, /MCP_CONFIG_REPARSE_DENIED/);
+assert.match(safePathsWindows, /fn valid_windows_sid/);
+assert.match(safePathsWindows, /sid_validation_preserves_literal_s_prefix/);
+assert.match(safePathsWindows, /fn remove_tree/);
+assert.match(safePathsWindows, /mark_object_deleted/);
+assert.match(safePaths, /libc::fdopendir/);
+assert.match(safePaths, /pub fn remove_tree/);
+assert.match(fileCommands, /safe_paths::remove_tree/);
+assert.doesNotMatch(fileCommands, /std::fs::remove_dir_all\(&canonical\)/);
+assert.match(windowsApps, /Get-StartApps/);
+assert.match(windowsApps, /fn valid_packaged_id/);
+assert.match(windowsApps, /launch_packaged_app/);
+assert.match(gridRuntime, /installed_packaged_apps/);
+assert.match(nativeService, /strip_prefix\("appsfolder:"\)/);
+assert.match(systemCommands, /crate::session::atomic_write/);
 assert.match(codingPublicApi, /"lsp_start", "lsp_request", "lsp_diagnostics", "lsp_close"/);
 assert.match(windowsLsp, /fn get_session\(root: &Path, id: &str\)/);
 // Guard against recurring Windows AppContainer launch and isolation defects.

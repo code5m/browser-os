@@ -167,6 +167,100 @@ mod linux {
         rename_bound(&source_dir, filename, &target_dir, new_name)
     }
 
+    /// Recursively remove only objects reached through pinned, authorized
+    /// directory descriptors. Unlike remove_dir_all(path), every descent and
+    /// unlink is relative to the directory FD and refuses symlinks/specials.
+    fn directory_names(dir: &File) -> io::Result<Vec<std::ffi::OsString>> {
+        use std::os::unix::ffi::OsStringExt;
+        let dot = CString::new(".").expect("static dot");
+        let fd = unsafe {
+            libc::openat(
+                dir.as_raw_fd(), dot.as_ptr(),
+                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
+            )
+        };
+        if fd < 0 { return Err(io::Error::last_os_error()); }
+        let raw = unsafe { libc::fdopendir(fd) };
+        if raw.is_null() {
+            let error = io::Error::last_os_error();
+            unsafe { libc::close(fd); }
+            return Err(error);
+        }
+        struct Directory(*mut libc::DIR);
+        impl Drop for Directory {
+            fn drop(&mut self) { unsafe { libc::closedir(self.0); } }
+        }
+        let directory = Directory(raw);
+        let mut names = Vec::new();
+        loop {
+            unsafe { *libc::__errno_location() = 0; }
+            let entry = unsafe { libc::readdir(directory.0) };
+            if entry.is_null() {
+                let errno = unsafe { *libc::__errno_location() };
+                if errno != 0 { return Err(io::Error::from_raw_os_error(errno)); }
+                break;
+            }
+            let name = unsafe { std::ffi::CStr::from_ptr((*entry).d_name.as_ptr()) }.to_bytes();
+            if name == b"." || name == b".." { continue; }
+            if names.len() >= 50_000 { return Err(bad_path()); }
+            names.push(std::ffi::OsString::from_vec(name.to_vec()));
+        }
+        Ok(names)
+    }
+
+    fn remove_directory_contents(dir: &File, depth: usize, remaining: &mut usize) -> io::Result<()> {
+        if depth > 64 { return Err(bad_path()); }
+        for child_name in directory_names(dir)? {
+            if *remaining == 0 { return Err(bad_path()); }
+            *remaining -= 1;
+            let child = name(&child_name)?;
+            // fstatat with NOFOLLOW is a hint for the expected object kind;
+            // the subsequent openat pins the object and rejects a swap to
+            // a symlink. All mutations remain relative to the pinned dir FD.
+            let mut stat: libc::stat = unsafe { std::mem::zeroed() };
+            if unsafe { libc::fstatat(dir.as_raw_fd(), child.as_ptr(), &mut stat, libc::AT_SYMLINK_NOFOLLOW) } != 0 {
+                return Err(io::Error::last_os_error());
+            }
+            match stat.st_mode & libc::S_IFMT {
+                libc::S_IFDIR => {
+                    let nested = open_child_dir(dir, &child_name)?;
+                    remove_directory_contents(&nested, depth + 1, remaining)?;
+                    drop(nested);
+                    if unsafe { libc::unlinkat(dir.as_raw_fd(), child.as_ptr(), libc::AT_REMOVEDIR) } != 0 {
+                        return Err(io::Error::last_os_error());
+                    }
+                }
+                libc::S_IFREG => {
+                    let regular = open_regular_at(dir, &child_name)?;
+                    drop(regular);
+                    if unsafe { libc::unlinkat(dir.as_raw_fd(), child.as_ptr(), 0) } != 0 {
+                        return Err(io::Error::last_os_error());
+                    }
+                }
+                // Do not follow or silently delete symlink/junction-like
+                // entries, FIFOs, sockets, devices or other special files.
+                _ => return Err(bad_path()),
+            }
+        }
+        sync_directory(dir)
+    }
+
+    pub(super) fn remove_tree(path: &Path, roots: &[PathBuf]) -> io::Result<()> {
+        if !path.is_absolute() { return Err(bad_path()); }
+        let parent_path = path.parent().ok_or_else(bad_path)?;
+        let basename = path.file_name().ok_or_else(bad_path)?;
+        let parent = open_allowed_dir(parent_path, roots)?;
+        let directory = open_child_dir(&parent, basename)?;
+        let mut remaining = 50_000usize;
+        remove_directory_contents(&directory, 0, &mut remaining)?;
+        drop(directory);
+        let child = name(basename)?;
+        if unsafe { libc::unlinkat(parent.as_raw_fd(), child.as_ptr(), libc::AT_REMOVEDIR) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        sync_directory(&parent)
+    }
+
     pub(super) fn remove_regular(path: &Path, roots: &[PathBuf]) -> io::Result<()> {
         if !path.is_absolute() { return Err(bad_path()); }
         let parent_path = path.parent().ok_or_else(bad_path)?;
@@ -721,6 +815,23 @@ pub fn remove_regular(canonical: &Path, roots: &[PathBuf]) -> std::io::Result<()
     }
 }
 
+/// Remove a directory tree using pinned directory handles. No symlinks,
+/// reparse points, UNC roots or special files may be traversed; both native
+/// implementations cap depth and entry count to limit adversarial recursion.
+pub fn remove_tree(path: &Path, roots: &[PathBuf]) -> std::io::Result<()> {
+    #[cfg(target_os = "linux")]
+    { linux::remove_tree(path, roots) }
+    #[cfg(target_os = "windows")]
+    { windows::remove_tree(path, roots) }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        let _ = (path, roots);
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported, "secure recursive delete unsupported"
+        ))
+    }
+}
+
 pub fn save_if_unchanged(
     canonical: &Path,
     roots: &[PathBuf],
@@ -780,5 +891,38 @@ mod cross_platform_file_manager_tests {
         remove_regular(&renamed, &roots).unwrap();
         assert!(!renamed.exists());
         std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn recursive_delete_stays_beneath_authorized_root_and_refuses_links() {
+        let outer = std::env::temp_dir().join(format!(
+            "browseros-safe-tree-{}", uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&outer).unwrap();
+        let root = outer.join("workspace");
+        let outside = outer.join("outside");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("must-survive.txt"), b"host-owned").unwrap();
+        let roots = [root.canonicalize().unwrap()];
+        let tree = roots[0].join("tree");
+        create_directory_all(&tree.join("a").join("b"), &roots).unwrap();
+        create_new_file(&tree.join("a").join("b").join("delete.txt"), &roots, b"remove").unwrap();
+        remove_tree(&tree, &roots).unwrap();
+        assert!(!tree.exists());
+        assert!(outside.join("must-survive.txt").is_file());
+        assert!(remove_tree(&roots[0], &roots).is_err());
+
+        let guarded = roots[0].join("guarded");
+        create_directory_all(&guarded, &roots).unwrap();
+        #[cfg(target_os = "linux")]
+        let linked = std::os::unix::fs::symlink(&outside, guarded.join("escape")).is_ok();
+        #[cfg(target_os = "windows")]
+        let linked = std::os::windows::fs::symlink_dir(&outside, guarded.join("escape")).is_ok();
+        if linked {
+            assert!(remove_tree(&guarded, &roots).is_err());
+            assert!(outside.join("must-survive.txt").is_file());
+        }
+        std::fs::remove_dir_all(&outer).unwrap();
     }
 }

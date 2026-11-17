@@ -10,12 +10,13 @@ pub(crate) fn m0_config_of(app: &AppHandle) -> M0Config {
     app.state::<AppState>().m0_config.lock().unwrap().clone()
 }
 
-/// 原子写文件：先写临时文件再 rename，避免采集脚本读到半截内容。
+/// Measurement output uses the same cross-platform, unique-stage,
+/// sync-and-replace contract as session persistence. A fixed ".tmp" plus
+/// std::fs::rename cannot reliably replace an existing Windows report,
+/// and parallel measurements could trample each other's temporary file.
 fn m0_atomic_write(path: &str, content: &str) -> Result<(), String> {
-    let tmp = format!("{path}.tmp");
-    std::fs::write(&tmp, content).map_err(|e| format!("write {tmp}: {e}"))?;
-    std::fs::rename(&tmp, path).map_err(|e| format!("rename -> {path}: {e}"))?;
-    Ok(())
+    crate::session::atomic_write(std::path::Path::new(path), content)
+        .map_err(|_| "M0_MEASUREMENT_ATOMIC_WRITE_FAILED".to_string())
 }
 
 // ---------------------------------------------------------------------------

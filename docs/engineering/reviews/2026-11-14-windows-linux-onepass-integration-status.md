@@ -129,3 +129,15 @@
 ### 同分支并行修复核对（最终以新 HEAD 为准）
 
 本节此前基于 `42a4fea` 的 Windows 应用列表和启动器判断，在同步提交 `859eef3` 后已被更新：Windows Start Menu EXE 快捷方式枚举、资源监控、文件与配置安全落盘、Windows 启动器黑名单已加入源码，参见 `docs/engineering/reviews/2026-11-17-windows-linux-cross-platform-source-audit.md` 及 `windows-linux-parity-matrix.json`。因此本轮保留并行改动、不再覆盖新版本 `security_policy.rs`。已经提交的 AppContainer 私有 runtime 与 Windows LSP 会话隔离属于额外修复。所有这些能力目前均为 **SOURCE_PATCHED / NATIVE_UNVERIFIED**；不得沿用 #201 的失败/通过项为本 HEAD 的验证结论。
+
+## 2026-11-17 Windows/Linux V2 剩余功能源码集中收口（不跑 CI）
+
+基线 HEAD `72ad4df5d2ccc4a6868a658720338c4abd11f7a0`；保留此前稳定的 CAS、Job Object、ConPTY、BFC 实现，集中修补以下仍有安全/功能缺口的路径：
+
+- `safe_paths_windows` 修复 whoami SID 错误拒绝 `S-1-` 的边界与 CSV 用户名含逗号解析。删除目录不再采用原路径 `remove_dir_all`，Linux / Windows 共同使用 `safe_paths::remove_tree` 的授权目录句柄操作，拒绝符号链接、Junction、特殊文件与授权根，限制递归深度/对象数；操作失败不保证已删项的事务回滚。
+- Windows Start Menu 直链 EXE 之外，新增读 OS Start Apps AUMID 的 UWP/MSIX 入口；系统枚举固定脚本最多 8 秒、192 KiB/256 项，显式点击启动时再向系统核对身份，Explorer AppsFolder 调用不改变普通启动白名单。未知系统协议/损坏登记均明确拒绝。
+- Windows LSP 除持久 session 外增加 Linux 风格一次性 Rust 文档 `lsp_request`（显式 approved、私有快照、最小文件范围、限额），可选经批准模块源。持久会话仍按工作区作用域管理；单次调用和长会话共用并发预算。该兼容入口与 Linux 并非 Rust Analyzer 行为层面的 100% 等价，须待原生确认。
+- M0 测量文件复用跨平台唯一临时文件 + sync + replace 的落盘逻辑，避免 Windows 已存在目标与固定临时路径造成写失败。
+- 新增源码防回归与单元测试用例，但未运行、未编译；任何 PASS 只能以将来新提交 SHA 的真实原生证据为准。
+
+**验收状态：SOURCE_PATCHED / CI_NOT_RUN / NATIVE_NOT_VERIFIED。** 用户要求本阶段保持同一 feature 分支、`[skip ci]`、不合 master。旧 run #201 的 Node MCP / rust-analyzer AppContainer `CreateProcessW Win32 5` 仍是旧提交的真实失败，不推断新提交通过；NSIS、真实 Win11 GUI、WebView2 会话、BFC 登录态也均待正式验收。
