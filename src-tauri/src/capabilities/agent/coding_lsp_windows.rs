@@ -1139,7 +1139,13 @@ mod tests {
                 return;
             }
         };
-        let bin = server.parent().unwrap().to_path_buf();
+        let bin = match server.parent() {
+            Some(parent) => parent.to_path_buf(),
+            None => {
+                eprintln!("::error::LSP_CARGO_PROBE_{label} TOOLCHAIN_BIN");
+                return;
+            }
+        };
         let cargo = match profile.stage_runtime_peer(&bin.join("cargo.exe")) {
             Ok(path) => path,
             Err(error) => {
@@ -1159,7 +1165,7 @@ mod tests {
             eprintln!("::error::LSP_CARGO_PROBE_{label} CARGO_HOME:{error}");
             return;
         }
-        let image = if binary == "cargo" { &cargo } else { &rustc };
+        let image: &Path = if binary == "cargo" { &cargo } else { &rustc };
         let environment = vec![
             ("CARGO".to_string(), cargo.to_string_lossy().into_owned()),
             ("RUSTC".to_string(), rustc.to_string_lossy().into_owned()),
@@ -1170,10 +1176,11 @@ mod tests {
         if !manifest.as_os_str().is_empty() {
             full_args.push(manifest.to_string_lossy().into_owned());
         }
+        let image_text = image.display().to_string();
         let child = match profile.spawn(image, &full_args, &environment, &state) {
             Ok(child) => child,
             Err(error) => {
-                eprintln!("::error::LSP_CARGO_PROBE_{label} SPAWN({}) {error}", image.display());
+                eprintln!("::error::LSP_CARGO_PROBE_{label} SPAWN({image_text}) {error}");
                 return;
             }
         };
@@ -1186,7 +1193,7 @@ mod tests {
         let mut output = Vec::new();
         let _ = stdout.read_to_end(&mut output);
         let deadline = Instant::now() + Duration::from_secs(30);
-        while process.try_wait().unwrap_or(true) == false {
+        while !process.try_wait().unwrap_or(true) {
             if Instant::now() >= deadline {
                 let _ = process.terminate();
                 break;
@@ -1194,16 +1201,15 @@ mod tests {
             std::thread::sleep(Duration::from_millis(20));
         }
         let exit = process.exit_code();
-        let stderr = profile.stderr_for_test();
-        let tail = |text: &str| {
+        let stderr = process.profile().stderr_for_test();
+        let tail = |text: &str| -> String {
             let bytes = text.as_bytes();
             let start = bytes.len().saturating_sub(900);
             String::from_utf8_lossy(&bytes[start..]).replace('\n', " | ")
         };
         let out = String::from_utf8_lossy(&output).into_owned();
         eprintln!(
-            "::error::LSP_CARGO_PROBE_{label} exit={exit:?} image={} stdout={} stderr={}",
-            image.display(),
+            "::error::LSP_CARGO_PROBE_{label} exit={exit:?} image={image_text} stdout={} stderr={}",
             tail(&out),
             tail(&stderr)
         );
@@ -1284,8 +1290,18 @@ mod tests {
                 ],
                 &manifest,
             );
-            toolchain_probe("VERSION", "cargo", &["--version".to_string()], &PathBuf::new());
-            toolchain_probe("RUSTC_VERSION", "rustc", &["--version".to_string()], &PathBuf::new());
+            toolchain_probe(
+                "VERSION",
+                "cargo",
+                &["--version".to_string()],
+                Path::new(""),
+            );
+            toolchain_probe(
+                "RUSTC_VERSION",
+                "rustc",
+                &["--version".to_string()],
+                Path::new(""),
+            );
         }
         let started = acceptance(
             "START",
