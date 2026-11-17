@@ -1,8 +1,48 @@
 <script setup lang="ts">
-import { computed, onMounted } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useBfcStore } from "../state/useBfcStore";
 
 const bfc = useBfcStore();
+const exportBusy = ref(false);
+const exportMessage = ref("");
+
+async function exportForTongpin() {
+  if (exportBusy.value) return;
+  if (!window.confirm("将从本机 BFC 工作台导出一份私人备份到下载目录，供同频 APP 导入。备份可能包含收藏、专题和私人笔记；文件只保存在你的设备，不会上传到 GitHub 或社交服务。继续吗？")) return;
+  exportBusy.value = true;
+  exportMessage.value = "";
+  try {
+    const backup = await bfc.exportWorkbenchBackup();
+    const exportData = {
+      ...backup,
+      exportSource: "browseros-bfc-workbench",
+      exportedAt: new Date().toISOString(),
+      completeSnapshot: bfc.serviceStatus?.complete_snapshot ?? null,
+    };
+    const content = JSON.stringify(exportData, null, 2);
+    const blob = new Blob([content], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "browseros-bfc-backup-" + new Date().toISOString().slice(0, 10) + ".json";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1500);
+    const state = backup.state as Record<string, unknown>;
+    const library = state.library && typeof state.library === "object"
+      ? state.library as Record<string, unknown> : {};
+    const topics = Array.isArray(library.topics) ? library.topics.length : 0;
+    exportMessage.value = "已生成本机私人备份（" + (content.length / 1024 / 1024).toFixed(2) +
+      " MB，" + topics + " 个专题）。" +
+      (bfc.serviceStatus?.complete_snapshot === false ? "注意：BFC 当前未声明完整快照能力，导入后请核对收藏总数。" : "") +
+      "请在同频 APP 选择此 JSON 文件导入。";
+  } catch (error) {
+    exportMessage.value = "导出失败：" + String(error instanceof Error ? error.message : error);
+  } finally {
+    exportBusy.value = false;
+  }
+}
 
 const phaseLabel = computed(() => ({
   idle: "尚未读取",
@@ -54,7 +94,13 @@ onMounted(() => {
           <span class="bfc-copy"><strong>安全补采 · 离线导入</strong><small>实时读取受限时，使用你自行保存的 HTML / JSON</small></span>
           <span aria-hidden="true">↗</span>
         </button>
+        <button type="button" class="bfc-card" :disabled="exportBusy || !bfc.serviceStatus?.online" @click="exportForTongpin">
+          <span class="bfc-icon" aria-hidden="true">⇩</span>
+          <span class="bfc-copy"><strong>{{exportBusy ? "正在导出…" : "导出给同频"}}</strong><small>从本机 BFC 工作台读取备份，生成本地 JSON 文件</small></span>
+          <span aria-hidden="true">↓</span>
+        </button>
       </div>
+      <p v-if="exportMessage" class="bfc-muted" role="status" aria-live="polite">{{exportMessage}}</p>
 
       <section class="bfc-section" aria-labelledby="bfc-service-title">
         <div class="bfc-section-head">
@@ -194,7 +240,7 @@ onMounted(() => {
 .bfc-primary:hover{filter:brightness(.96)}
 .bfc-secondary:hover{border-color:var(--bfc-accent,#315ea8);color:var(--bfc-accent,#315ea8)}
 .bfc-danger{border-color:#d9a1a5;color:#9a3138;background:#fff8f8}
-.bfc-panel button:disabled{opacity:.55;cursor:not-allowed}
+.bfc-panel button:disabled{opacity:.55;cursor:not-allowed}.bfc-card:disabled{opacity:.55;cursor:not-allowed}
 .bfc-panel button:focus-visible,.bfc-panel summary:focus-visible{outline:2px solid var(--bfc-accent,#315ea8);outline-offset:2px}
 .bfc-result{margin-top:14px;padding:13px 14px;border:1px solid var(--chrome-border,#d9e0e8);border-radius:9px;background:var(--chrome-address,#f5f7fa)}
 .bfc-result.danger{border-color:#d9a1a5;background:#fff8f8}

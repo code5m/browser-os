@@ -18,7 +18,9 @@ const BFC_SESSION_URL: &str = "http://127.0.0.1:4198/api/session";
 const BFC_HEALTH_URL: &str = "http://127.0.0.1:4198/api/health";
 const BFC_CAPABILITIES_URL: &str = "http://127.0.0.1:4198/api/capabilities";
 const BFC_IMPORT_URL: &str = "http://127.0.0.1:4198/api/readback/import";
+const BFC_WORKBENCH_BACKUP_URL: &str = "http://127.0.0.1:4198/api/workbench/backup";
 const MAX_REMOTE_READBACK_BYTES: usize = 4_500_000;
+const MAX_WORKBENCH_BACKUP_BYTES: usize = 20_000_000;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct BfcServiceStatus {
@@ -208,6 +210,73 @@ pub async fn bfc_service_status(
     })
 }
 
+/// Export the user's existing local BFC workbench backup for a second local app.
+/// This reads only the loopback BFC service; no Bilibili request, account cookie,
+/// cloud upload, or write operation is performed.
+#[tauri::command]
+pub async fn bfc_workbench_backup_export(
+    app: AppHandle,
+    webview: Webview,
+) -> Result<Value, String> {
+    main_only(&app, &webview, "bfc_workbench_backup_export")?;
+    let client = client()?;
+    let origin = HeaderValue::from_static(BFC_ORIGIN);
+    let session_response = client
+        .get(BFC_SESSION_URL)
+        .header(ORIGIN, origin.clone())
+        .send()
+        .await
+        .map_err(|_| "BFC_LOCAL_SERVICE_UNAVAILABLE")?;
+    if !session_response.status().is_success() {
+        return Err("BFC_LOCAL_SESSION_UNAVAILABLE".into());
+    }
+    let session: Value = session_response
+        .json()
+        .await
+        .map_err(|_| "BFC_LOCAL_SESSION_INVALID")?;
+    let csrf = session
+        .get("token")
+        .and_then(Value::as_str)
+        .filter(|value| value.len() >= 24 && value.len() <= 256)
+        .ok_or("BFC_LOCAL_SESSION_INVALID")?;
+    let csrf = HeaderValue::from_str(csrf).map_err(|_| "BFC_LOCAL_SESSION_INVALID")?;
+    let response = client
+        .get(BFC_WORKBENCH_BACKUP_URL)
+        .header(ORIGIN, origin)
+        .header(HeaderName::from_static("x-local-csrf"), csrf)
+        .send()
+        .await
+        .map_err(|_| "BFC_WORKBENCH_BACKUP_UNAVAILABLE")?;
+    if !response.status().is_success() {
+        return Err("BFC_WORKBENCH_BACKUP_UNAVAILABLE".into());
+    }
+    if response
+        .content_length()
+        .is_some_and(|size| size > MAX_WORKBENCH_BACKUP_BYTES as u64)
+    {
+        return Err("BFC_WORKBENCH_BACKUP_TOO_LARGE".into());
+    }
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|_| "BFC_WORKBENCH_BACKUP_READ_FAILED")?;
+    parse_workbench_backup(bytes.as_ref()).map_err(str::to_string)
+}
+
+fn parse_workbench_backup(bytes: &[u8]) -> Result<Value, &'static str> {
+    if bytes.len() > MAX_WORKBENCH_BACKUP_BYTES {
+        return Err("BFC_WORKBENCH_BACKUP_TOO_LARGE");
+    }
+    let backup: Value =
+        serde_json::from_slice(bytes).map_err(|_| "BFC_WORKBENCH_BACKUP_INVALID")?;
+    if backup.get("type").and_then(Value::as_str) != Some("workbench_backup")
+        || !backup.get("state").is_some_and(Value::is_object)
+    {
+        return Err("BFC_WORKBENCH_BACKUP_INVALID");
+    }
+    Ok(backup)
+}
+
 #[tauri::command]
 pub async fn bfc_readback_finish(
     app: AppHandle,
@@ -381,6 +450,31 @@ mod tests {
             Err("BFC_TAB_NOT_ACTIVE".into())
         );
         assert!(validate_bfc_tab_binding("tab-9", Some("tab-9"), true).is_ok());
+    }
+
+    #[test]
+    fn workbench_backup_export_accepts_only_a_bounded_private_backup() {
+        let backup = serde_json::json!({
+            "type":"workbench_backup",
+            "version":1,
+            "state":{"videos":{"BV1234567890":{"title":"Private"}}}
+        });
+        let encoded = serde_json::to_vec(&backup).unwrap();
+        let decoded = parse_workbench_backup(&encoded).unwrap();
+        assert_eq!(decoded["type"], "workbench_backup");
+        assert_eq!(decoded["state"]["videos"]["BV1234567890"]["title"], "Private");
+        assert_eq!(
+            parse_workbench_backup(br#"{"type":"other","state":{}}"#),
+            Err("BFC_WORKBENCH_BACKUP_INVALID")
+        );
+        assert_eq!(
+            parse_workbench_backup(br#"{"type":"workbench_backup"}"#),
+            Err("BFC_WORKBENCH_BACKUP_INVALID")
+        );
+        assert_eq!(
+            parse_workbench_backup(&vec![b' '; MAX_WORKBENCH_BACKUP_BYTES + 1]),
+            Err("BFC_WORKBENCH_BACKUP_TOO_LARGE")
+        );
     }
 
     #[test]

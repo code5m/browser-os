@@ -1671,6 +1671,7 @@ fn main() {
             capabilities::bfc::commands::bfc_readback_cancel,
             capabilities::bfc::commands::bfc_readback_finish,
             capabilities::bfc::commands::bfc_service_status,
+            capabilities::bfc::commands::bfc_workbench_backup_export,
             capabilities::git::studio::git_studio_cancel,
             capabilities::git::studio::git_studio_confirm,
             capabilities::git::studio::git_studio_preview,
