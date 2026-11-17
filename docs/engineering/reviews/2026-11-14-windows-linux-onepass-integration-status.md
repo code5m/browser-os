@@ -118,9 +118,14 @@
 | Script Runner | Linux 解释器、setsid | Node/Python 受限启动、挂起 Job | **支持面非完全一致**，不允许把 POSIX 任意 shell 在 Windows 自动启用 |
 | Agent 只读 context | skills/knowledge/MCP | skills/knowledge/MCP AppContainer | 实现存在；凭据、原生 MCP 隔离仍待验 |
 | LSP | 单次隔离文档请求 | rust-analyzer AppContainer 持久 session | **协议不同、尚未实现 1:1 跨平台适配**，Windows 审批和 workspace 隔离加强 |
-| 系统应用列表 | freedesktop .desktop | 当前仍依赖 .desktop 扫描，Windows 返回空 | **Windows 原生应用发现尚未实现，不得标为跨平台完成** |
+| 系统应用列表 | freedesktop .desktop | Windows Start Menu .lnk 目标枚举及有限原生 EXE 回退已提交 | **已实现源码但未原生验证**；UWP/MSIX/所有快捷方式覆盖率仍不完整 |
 | BFC | 本地快照与用户授权链路 | 同协议 loopback + SID/token/CSRF | loopback 历史 PASS；真实 Windows B 站登录态待验 |
 | 安装与系统集成 | Linux 启动器与桌面联动 | Windows NSIS/默认浏览器/WebView2 | Windows NSIS、GUI 仍缺证据 |
 | macOS | 不属于当前 Windows/Linux V2 目标 | 不适用 | 项目存在仅 Linux/Windows 的 cfg，不能声明支持 macOS |
 
-**结果裁定：本轮源码审查与补丁提交 ≠ Native PASS ≠ Windows/Linux 完全功能等价。** 仅已发现的明确安全缺陷按最小变更修复；仍未实现的 Windows app discover、Linux/Windows LSP 统一 API 及 macOS 完整移植列为公开缺口。用户明确不允许本阶段跑 CI，不应通过新增空测试或退化为不安全 fallback 虚构完成。
+**结果裁定：本轮源码审查与补丁提交 ≠ Native PASS ≠ Windows/Linux 完全功能等价。** 仅已发现的明确安全缺陷按最小变更修复；尚未覆盖的 Windows UWP/MSIX app discover、Linux/Windows LSP 统一 API 及 macOS 完整移植列为公开缺口。用户明确不允许本阶段跑 CI，不应通过新增空测试或退化为不安全 fallback 虚构完成。
+
+
+### 同分支并行修复核对（最终以新 HEAD 为准）
+
+本节此前基于 `42a4fea` 的 Windows 应用列表和启动器判断，在同步提交 `859eef3` 后已被更新：Windows Start Menu EXE 快捷方式枚举、资源监控、文件与配置安全落盘、Windows 启动器黑名单已加入源码，参见 `docs/engineering/reviews/2026-11-17-windows-linux-cross-platform-source-audit.md` 及 `windows-linux-parity-matrix.json`。因此本轮保留并行改动、不再覆盖新版本 `security_policy.rs`。已经提交的 AppContainer 私有 runtime 与 Windows LSP 会话隔离属于额外修复。所有这些能力目前均为 **SOURCE_PATCHED / NATIVE_UNVERIFIED**；不得沿用 #201 的失败/通过项为本 HEAD 的验证结论。
