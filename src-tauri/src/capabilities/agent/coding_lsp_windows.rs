@@ -260,6 +260,10 @@ fn snapshot(root: &Path, profile: &SandboxProfile) -> Result<PathBuf, String> {
     )?;
     profile.protect_snapshot(&destination)?;
     grant_snapshot_read(&destination, profile.sid_string())?;
+    // The staged runtime images load inside the lowbox with owner+SYSTEM
+    // full control and a package `RX` entry. Snapshot files carrying only the
+    // package entry are still rejected, so give them that same shape.
+    profile.protect_snapshot_files(&destination)?;
     Ok(destination)
 }
 /// `protect_snapshot` stores the lowbox grant as an inheritable
@@ -499,6 +503,7 @@ impl Session {
         }
         profile.protect_snapshot(&snapshot)?;
         grant_snapshot_read(&snapshot, profile.sid_string())?;
+        profile.protect_snapshot_files(&snapshot)?;
         Self::start_with_snapshot(root, profile, snapshot, seconds)
     }
 

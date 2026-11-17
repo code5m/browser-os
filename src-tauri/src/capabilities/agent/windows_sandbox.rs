@@ -461,6 +461,40 @@ impl SandboxProfile {
         Ok(())
     }
 
+    /// Apply the same per-file ACL shape that staged runtime images already
+    /// prove works inside the lowbox (owner full control, SYSTEM full control,
+    /// package read/execute) to a read-only snapshot tree. Snapshot entries
+    /// that only carry the package SID are still rejected by `cargo` with
+    /// "Access is denied (os error 5)" while the identically-shaped staged
+    /// images load fine, so the snapshot must mirror the staged layout.
+    pub fn protect_snapshot_files(&self, root: &Path) -> Result<(), String> {
+        no_reparse_path(root)?;
+        let icacls = system_binary("icacls.exe")?;
+        // `cargo metadata` resolves the workspace by writing `Cargo.lock` next
+        // to the manifest, so the directory itself must accept a create
+        // inside the lowbox while every existing file stays read-only.
+        let mut pending = vec![root.to_path_buf()];
+        while let Some(directory) = pending.pop() {
+            let output = std::process::Command::new(&icacls)
+                .arg(&directory)
+                .arg("/grant")
+                .arg(format!("*{}:(OI)(CI)M", self.sid_string))
+                .output()
+                .map_err(|_| "SANDBOX_SNAPSHOT_ACL")?;
+            if !output.status.success() {
+                return Err("SANDBOX_SNAPSHOT_ACL".into());
+            }
+            self.protect_staged_files(&directory)?;
+            for entry in std::fs::read_dir(&directory).map_err(|_| "SANDBOX_SNAPSHOT_ACL")? {
+                let path = entry.map_err(|_| "SANDBOX_SNAPSHOT_ACL")?.path();
+                if path.is_dir() {
+                    pending.push(path);
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn protect_snapshot(&self, snapshot: &Path) -> Result<(), String> {
         no_reparse_path(snapshot)?;
         let icacls = system_binary("icacls.exe")?;
