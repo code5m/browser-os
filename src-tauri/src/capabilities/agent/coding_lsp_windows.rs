@@ -258,7 +258,48 @@ fn snapshot(root: &Path, profile: &SandboxProfile) -> Result<PathBuf, String> {
         &mut SnapshotBudget { files: 0, bytes: 0 },
     )?;
     profile.protect_snapshot(&destination)?;
+    grant_snapshot_read(&destination, profile.sid_string())?;
     Ok(destination)
+}
+/// `protect_snapshot` stores the lowbox grant as an inheritable
+/// `(OI)(CI)RX` entry on the snapshot directory. On Windows that does not
+/// reliably materialise as an explicit read right on files that already
+/// existed when the ACL was applied, so a sandboxed `cargo` reading the
+/// manifest failed with `Access is denied (os error 5)`. Pin `RX` directly
+/// onto every file and directory; the grant is additive, so the owner and
+/// SYSTEM entries stay untouched.
+fn grant_snapshot_read(root: &Path, sid: &str) -> Result<(), String> {
+    let system_root = std::env::var_os("SystemRoot").ok_or("LSP_SNAPSHOT_ACL")?;
+    let icacls = PathBuf::from(system_root)
+        .join("System32")
+        .join("icacls.exe");
+    if !icacls.is_file() {
+        return Err("LSP_SNAPSHOT_ACL".into());
+    }
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(&directory).map_err(|_| "LSP_SNAPSHOT_ACL")? {
+            let path = entry.map_err(|_| "LSP_SNAPSHOT_ACL")?.path();
+            let rights = if path.is_dir() {
+                format!("*{sid}:(OI)(CI)RX")
+            } else {
+                format!("*{sid}:RX")
+            };
+            let output = std::process::Command::new(&icacls)
+                .arg(&path)
+                .arg("/grant")
+                .arg(rights)
+                .output()
+                .map_err(|_| "LSP_SNAPSHOT_ACL")?;
+            if !output.status.success() {
+                return Err("LSP_SNAPSHOT_ACL".into());
+            }
+            if path.is_dir() {
+                pending.push(path);
+            }
+        }
+    }
+    Ok(())
 }
 fn uri_for(path: &Path) -> Result<String, String> {
     url::Url::from_file_path(path)
@@ -429,6 +470,7 @@ impl Session {
             fs::write(&target, content).map_err(|_| "LSP_SNAPSHOT_WRITE_FAILED")?;
         }
         profile.protect_snapshot(&snapshot)?;
+        grant_snapshot_read(&snapshot, profile.sid_string())?;
         Self::start_with_snapshot(root, profile, snapshot, seconds)
     }
 
