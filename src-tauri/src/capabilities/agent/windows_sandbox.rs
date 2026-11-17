@@ -360,11 +360,21 @@ impl SandboxProfile {
                 .checked_add(metadata.len())
                 .filter(|n| *n <= MAX_TOTAL_RUNTIME)
                 .ok_or("SANDBOX_RUNTIME_SIZE_LIMIT")?;
-            let mut output = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(to)
-                .map_err(|_| "SANDBOX_RUNTIME_STAGE_FAILED")?;
+            let mut output = match OpenOptions::new().write(true).create_new(true).open(to) {
+                Ok(file) => file,
+                // Shared toolchain DLLs are staged once for the first peer and
+                // reused by later peers in the same private runtime. Only an
+                // identical, already-staged regular file is accepted.
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let existing =
+                        std::fs::metadata(to).map_err(|_| "SANDBOX_RUNTIME_STAGE_FAILED")?;
+                    if !existing.is_file() || existing.len() != metadata.len() {
+                        return Err("SANDBOX_RUNTIME_STAGE_CONFLICT".into());
+                    }
+                    return Ok(());
+                }
+                Err(_) => return Err("SANDBOX_RUNTIME_STAGE_FAILED".into()),
+            };
             let written = std::io::copy(&mut source, &mut output)
                 .map_err(|_| "SANDBOX_RUNTIME_STAGE_FAILED")?;
             if written != metadata.len() {
@@ -382,7 +392,14 @@ impl SandboxProfile {
         // The profile root grants traverse only; runtime is a sibling of
         // writable state and is separately protected with read/execute ACLs.
         let directory = self.folder.join("runtime");
-        std::fs::create_dir(&directory).map_err(|_| "SANDBOX_RUNTIME_STAGE_FAILED")?;
+        match std::fs::create_dir(&directory) {
+            Ok(()) => {}
+            // A language toolchain is staged as several executables that share
+            // one private runtime. Repeat staging must reuse that directory
+            // instead of failing, and file-level ACLs are re-applied below.
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(_) => return Err("SANDBOX_RUNTIME_STAGE_FAILED".into()),
+        }
         no_reparse_path(&directory)?;
         let filename = canonical
             .file_name()
@@ -461,6 +478,29 @@ impl SandboxProfile {
             return Err("SANDBOX_SNAPSHOT_ACL".into());
         }
         Ok(())
+    }
+
+    /// Stage an additional executable from the same reviewed toolchain into
+    /// the private runtime before the main process is spawned. Rust Analyzer
+    /// invokes `cargo locate-project`, `cargo metadata` and `rustc --version`
+    /// as non-building probes, so those images must exist inside the lowbox
+    /// instead of being replaced by nonexistent placeholder paths.
+    pub fn stage_runtime_peer(&self, peer: &Path) -> Result<PathBuf, String> {
+        no_reparse_path(peer)?;
+        let canonical = peer
+            .canonicalize()
+            .map_err(|_| "SANDBOX_TOOLCHAIN_PEER_MISSING")?;
+        if !canonical.is_file()
+            || canonical
+                .extension()
+                .and_then(|value| value.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase()
+                != "exe"
+        {
+            return Err("SANDBOX_TOOLCHAIN_PEER_MISSING".into());
+        }
+        self.stage_runtime(&canonical)
     }
 
     pub fn spawn(
