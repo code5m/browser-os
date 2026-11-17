@@ -29,7 +29,12 @@ pub fn audit_log(app: AppHandle) -> Vec<AuditEntry> {
 }
 
 #[tauri::command]
-pub fn launch_app(app: AppHandle, exec: String) -> Result<(), String> {
+pub fn launch_app(
+    app: AppHandle,
+    webview: tauri::Webview,
+    exec: String,
+) -> Result<(), String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "launch_app")?;
     let cmd = exec.trim();
     if cmd.is_empty() {
         return Err("没有可执行命令".into());

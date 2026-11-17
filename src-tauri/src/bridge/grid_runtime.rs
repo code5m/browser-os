@@ -517,6 +517,7 @@ pub struct AppEntry {
     pub icon_path: Option<String>,
 }
 
+#[cfg(target_os = "linux")]
 fn parse_desktop_file(path: &std::path::Path) -> Option<AppEntry> {
     let content = std::fs::read_to_string(path).ok()?;
     let mut in_entry = false;
@@ -640,6 +641,7 @@ fn find_icon_recursive(
 #[cfg(not(target_os = "linux"))]
 fn resolve_icon(_icon: &str) -> Option<String> { None }
 
+#[cfg(target_os = "linux")]
 #[tauri::command]
 pub fn list_apps() -> Vec<AppEntry> {
     let mut apps = vec![];
@@ -673,6 +675,127 @@ pub fn list_apps() -> Vec<AppEntry> {
     }
     apps.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     apps
+}
+
+/// List user-visible Windows Start Menu applications, rather than scanning
+/// Linux .desktop paths on Windows. Shell links are inspected, never executed,
+/// and every discovered .exe is revalidated by the same native launch policy
+/// used when the user explicitly clicks an application in the UI.
+#[cfg(target_os = "windows")]
+fn list_windows_apps_blocking() -> Vec<AppEntry> {
+    use std::os::windows::ffi::OsStringExt;
+    use std::os::windows::process::CommandExt;
+    use windows_sys::Win32::System::SystemInformation::GetSystemDirectoryW;
+
+    fn add_target(
+        apps: &mut Vec<AppEntry>,
+        seen: &mut std::collections::HashSet<String>,
+        name: &str,
+        executable: &str,
+    ) {
+        if apps.len() >= 256 || name.is_empty() || name.len() > 128
+            || name.contains(['\r', '\n'])
+        { return; }
+        let path = std::path::Path::new(executable);
+        if !path.is_absolute() || executable.starts_with(r"\\")
+            || !path.extension().is_some_and(|ext| ext.to_string_lossy().eq_ignore_ascii_case("exe"))
+        { return; }
+        let proposed = format!("\"{}\"", executable);
+        let Ok((real, arguments)) = crate::security_policy::check_launch_target(&proposed) else {
+            return;
+        };
+        if !arguments.is_empty() { return; }
+        if seen.insert(real.to_lowercase()) {
+            apps.push(AppEntry {
+                name: name.to_owned(),
+                exec: format!("\"{}\"", real),
+                icon: "🪟".into(),
+                icon_path: None, // EXE bytes are not image files.
+            });
+        }
+    }
+
+    let mut apps = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut system = [0u16; 512];
+    let len = unsafe { GetSystemDirectoryW(system.as_mut_ptr(), system.len() as u32) };
+    if len == 0 || len as usize >= system.len() {
+        return apps;
+    }
+    let system_dir = std::path::PathBuf::from(
+        std::ffi::OsString::from_wide(&system[..len as usize]),
+    );
+    let powershell = system_dir.join(r"WindowsPowerShell\v1.0\powershell.exe");
+    if powershell.is_file() {
+        // No user-supplied script and no shell interpolation. Resolve only
+        // local .lnk shortcut targets from Windows-known Start Menu folders.
+        // Never trust shortcut arguments; the launcher uses the validated EXE
+        // without command-line side effects. Bounded result count.
+        const SCRIPT: &str = r#"
+$ErrorActionPreference='SilentlyContinue'
+[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
+$shell=New-Object -ComObject WScript.Shell
+$apps=New-Object 'System.Collections.Generic.List[object]'
+foreach($kind in @('StartMenu','CommonStartMenu')){
+  $root=[Environment]::GetFolderPath($kind)
+  if([string]::IsNullOrWhiteSpace($root)){continue}
+  foreach($link in (Get-ChildItem -LiteralPath (Join-Path $root 'Programs') -Filter '*.lnk' -File -Recurse -ErrorAction SilentlyContinue)){
+    if($apps.Count -ge 256){break}
+    try{
+      $target=$shell.CreateShortcut($link.FullName).TargetPath
+      if($target -and $target.EndsWith('.exe',[StringComparison]::OrdinalIgnoreCase)){
+        $apps.Add([pscustomobject]@{name=$link.BaseName;exec=$target})
+      }
+    }catch{}
+  }
+}
+ConvertTo-Json -InputObject @($apps) -Depth 3 -Compress
+"#;
+        // The script is constant and only emits JSON. Never use a profile,
+        // SearchPath, arbitrary user command or decoded shell string.
+        if let Ok(output) = std::process::Command::new(powershell)
+            .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", SCRIPT])
+            .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+            .output()
+        {
+            if output.status.success() && output.stdout.len() <= 256 * 1024 {
+                if let Ok(items) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
+                    if let Some(values) = items.as_array() {
+                        for item in values.iter().take(256) {
+                            if let (Some(name), Some(exe)) =
+                                (item["name"].as_str(), item["exec"].as_str())
+                            {
+                                add_target(&mut apps, &mut seen, name, exe);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // System applications are legitimate Windows launch targets even on
+    // machines where Start Menu link enumeration is disabled by policy.
+    for (name, exe) in [
+        ("Notepad", "notepad.exe"),
+        ("Paint", "mspaint.exe"),
+    ] {
+        let candidate = system_dir.join(exe);
+        if candidate.is_file() {
+            add_target(
+                &mut apps, &mut seen, name, &candidate.to_string_lossy()
+            );
+        }
+    }
+    apps.sort_by(|a,b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    apps
+}
+
+#[cfg(target_os = "windows")]
+#[tauri::command]
+pub async fn list_apps() -> Vec<AppEntry> {
+    tauri::async_runtime::spawn_blocking(list_windows_apps_blocking)
+        .await
+        .unwrap_or_default()
 }
 
 // ====== 浏览器页签命令（供前端页签栏调用） ======

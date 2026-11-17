@@ -217,6 +217,9 @@ pub fn parse_command_line(line: &str) -> Result<(String, Vec<String>), PolicyErr
             c => current.push(c),
         }
     }
+    if in_quotes {
+        return Err(PolicyError::BlockedLaunchProgram("unbalanced command quotes".into()));
+    }
     if !current.is_empty() {
         parts.push(current);
     }
@@ -243,19 +246,38 @@ fn is_desktop_field_code(arg: &str) -> bool {
 /// 归一化程序名：小写并去掉版本号后缀（`python3.12` → `python`、`ksh93` → `ksh`），
 /// 使黑名单对带版本号的 shell/解释器同样成立。
 fn normalize_program_name(name: &str) -> String {
-    name.to_ascii_lowercase()
+    let lower = name.to_ascii_lowercase();
+    // Windows executable suffixes are part of the filename but not of the
+    // interpreter's identity. cmd.exe and powershell.exe must be blocked just
+    // as strictly as cmd / powershell on Linux.
+    let without_exe = lower.strip_suffix(".exe").unwrap_or(&lower);
+    without_exe
         .trim_end_matches(|c: char| c.is_ascii_digit() || c == '.')
         .to_string()
 }
 
 /// 取程序路径最后一段并归一化（`/usr/bin/env` → `env`、`Python3.11` → `python`）。
 fn launch_basename(program: &str) -> String {
-    normalize_program_name(program.rsplit('/').next().unwrap_or_default())
+    normalize_program_name(program.rsplit(['/', '\\']).next().unwrap_or_default())
 }
 
 /// shell 实现名与执行包装器（第二者放行即等于重新开放 `sh -c`）。
 fn is_blocked_launch_name(name: &str) -> bool {
-    BLOCKED_LAUNCH_PROGRAMS.contains(&name) || BLOCKED_LAUNCH_WRAPPERS.contains(&name)
+    if BLOCKED_LAUNCH_PROGRAMS.contains(&name)
+        || BLOCKED_LAUNCH_WRAPPERS.contains(&name)
+    { return true; }
+    #[cfg(windows)]
+    {
+        // Windows built-in LOLBins can execute commands/scripts through
+        // ordinary non-shell command-line arguments. They are not appropriate
+        // app-launcher targets even when their .exe is signed by Microsoft.
+        const WINDOWS_EXEC_WRAPPERS: &[&str] = &[
+            "rundll32", "regsvr32", "mshta", "wscript", "cscript",
+            "wsl", "wmic", "schtasks", "msiexec", "explorer",
+        ];
+        if WINDOWS_EXEC_WRAPPERS.contains(&name) { return true; }
+    }
+    false
 }
 
 /// 解释器 + 内联代码开关 → 与 `sh -c` 等价，必须拒绝。
@@ -269,20 +291,49 @@ fn interpreter_exec_attempt(name: &str, args: &[String]) -> bool {
 
 /// 解析到**真实**可执行文件（跟随符号链接），供「软链接指向 shell/解释器」的复查使用。
 fn resolve_program_file(program: &str) -> Option<PathBuf> {
-    let candidate = if program.contains('/') {
-        PathBuf::from(program)
+    let requested = std::path::Path::new(program);
+    let candidate = if requested.is_absolute() {
+        requested.to_path_buf()
+    } else if program.contains(['/', '\\']) {
+        // Do not let untrusted relative Windows executable paths be resolved
+        // against the application's mutable current working directory.
+        return None;
     } else {
         let paths = std::env::var_os("PATH")?;
-        std::env::split_paths(&paths)
-            .map(|dir| dir.join(program))
-            .find(|p| p.is_file())?
+        #[cfg(windows)]
+        let names = if program.to_ascii_lowercase().ends_with(".exe") {
+            vec![program.to_string()]
+        } else {
+            vec![format!("{program}.exe")]
+        };
+        #[cfg(not(windows))]
+        let names = vec![program.to_string()];
+        let mut found = None;
+        for directory in std::env::split_paths(&paths).filter(|dir| dir.is_absolute()) {
+            for name in &names {
+                let candidate = directory.join(name);
+                if candidate.is_file() {
+                    found = Some(candidate);
+                    break;
+                }
+            }
+            if found.is_some() { break; }
+        }
+        found?
     };
     let canonical = std::fs::canonicalize(&candidate).ok()?;
-    if canonical.is_file() {
-        Some(canonical)
-    } else {
-        None
+    if !canonical.is_file() { return None; }
+    #[cfg(windows)]
+    {
+        if !canonical.extension().is_some_and(|ext| ext.to_string_lossy().eq_ignore_ascii_case("exe")) {
+            return None; // No .cmd/.bat/.com, which Windows may run via cmd.
+        }
+        use std::os::windows::fs::MetadataExt;
+        if std::fs::symlink_metadata(&canonical).ok()?.file_attributes() & 0x400 != 0 {
+            return None; // Reparse-point executable changes must fail closed.
+        }
     }
+    Some(canonical)
 }
 
 /// 启动目标的最后一道闸：
@@ -301,10 +352,6 @@ pub fn check_launch_target(line: &str) -> Result<(String, Vec<String>), PolicyEr
         return Err(PolicyError::BlockedLaunchProgram(program));
     }
 
-    if !program_resolves(&program) {
-        return Err(PolicyError::LaunchProgramNotFound(program.clone()));
-    }
-
     let resolved = resolve_program_file(&program)
         .ok_or_else(|| PolicyError::LaunchProgramNotFound(program.clone()))?;
     let real_name = launch_basename(resolved.to_string_lossy().as_ref());
@@ -312,17 +359,9 @@ pub fn check_launch_target(line: &str) -> Result<(String, Vec<String>), PolicyEr
         return Err(PolicyError::BlockedLaunchProgram(program));
     }
 
-    Ok((program, args))
-}
-
-/// 程序是否可解析为可执行文件：绝对路径直接判定，否则沿 PATH 查找。
-fn program_resolves(program: &str) -> bool {
-    if program.contains('/') {
-        return std::path::Path::new(program).is_file();
-    }
-    std::env::var_os("PATH")
-        .map(|paths| std::env::split_paths(&paths).any(|dir| dir.join(program).is_file()))
-        .unwrap_or(false)
+    // Invoke exactly the path that passed validation, instead of searching
+    // the PATH again at the later Command::spawn call.
+    Ok((resolved.to_string_lossy().into_owned(), args))
 }
 
 /// 校验 webview label 是否登记在册。
@@ -1673,6 +1712,52 @@ mod security_policy_tests {
     }
 
     // ---------- M0-3.d：启动目标解析 ----------
+
+    #[test]
+    fn windows_exe_suffix_and_backslash_shells_are_blocked() {
+        for name in [
+            r"C:\Windows\System32\cmd.exe",
+            r"C:\Windows\System32\powershell.exe",
+            r"C:\Windows\System32\pwsh.exe",
+            "cmd.exe", "powershell.exe", "bash.exe",
+        ] {
+            assert!(matches!(
+                check_launch_target(name),
+                Err(PolicyError::BlockedLaunchProgram(_))
+            ), "{name} was not blocked");
+        }
+    }
+
+    #[test]
+    fn malformed_command_quote_is_rejected() {
+        assert!(parse_command_line("\"unterminated.exe --flag").is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_lolbins_and_script_hosts_are_rejected() {
+        for name in ["rundll32.exe", "regsvr32.exe", "mshta.exe", "wscript.exe",
+            "cscript.exe", "wsl.exe", "schtasks.exe", "explorer.exe"] {
+            assert!(matches!(
+                check_launch_target(name),
+                Err(PolicyError::BlockedLaunchProgram(_))
+            ), "{name} must not be used as an executable wrapper");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_paths_and_exec_extensions_follow_native_rules() {
+        let exe = std::env::var("WINDIR").map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| std::path::PathBuf::from(r"C:\Windows"))
+            .join("System32").join("notepad.exe");
+        let line = format!("\"{}\" --new-window", exe.display());
+        let (resolved, args) = check_launch_target(&line).unwrap();
+        assert!(resolved.to_ascii_lowercase().ends_with("notepad.exe"));
+        assert_eq!(args, vec!["--new-window"]);
+        assert!(check_launch_target(r".\notepad.exe").is_err());
+        assert!(check_launch_target(r"C:\Windows\System32\cmd.exe").is_err());
+    }
 
     #[test]
     fn command_line_is_split_into_program_and_args() {

@@ -146,11 +146,108 @@ mod linux {
         dest_dir: &Path,
         roots: &[PathBuf],
     ) -> io::Result<()> {
+        let filename = src.file_name().ok_or_else(bad_path)?;
+        rename_no_replace(src, dest_dir, filename, roots)
+    }
+    pub(super) fn rename_no_replace(
+        src: &Path,
+        dest_dir: &Path,
+        new_name: &OsStr,
+        roots: &[PathBuf],
+    ) -> io::Result<()> {
+        if Path::new(new_name).components().count() != 1
+            || new_name == OsStr::new(".") || new_name == OsStr::new("..")
+        {
+            return Err(bad_path());
+        }
         let parent = src.parent().ok_or_else(bad_path)?;
         let filename = src.file_name().ok_or_else(bad_path)?;
         let source_dir = open_allowed_dir(parent, roots)?;
         let target_dir = open_allowed_dir(dest_dir, roots)?;
-        rename_bound(&source_dir, filename, &target_dir, filename)
+        rename_bound(&source_dir, filename, &target_dir, new_name)
+    }
+
+    pub(super) fn remove_regular(path: &Path, roots: &[PathBuf]) -> io::Result<()> {
+        if !path.is_absolute() { return Err(bad_path()); }
+        let parent_path = path.parent().ok_or_else(bad_path)?;
+        let filename = path.file_name().ok_or_else(bad_path)?;
+        let parent = open_allowed_dir(parent_path, roots)?;
+        // Never unlink a directory, special file or symlink. The parent is
+        // opened by dirfd and refuses symlinks at every ancestor.
+        let file = open_regular_at(&parent, filename)?;
+        if !file.metadata()?.is_file() { return Err(bad_path()); }
+        let filename = name(filename)?;
+        if unsafe { libc::unlinkat(parent.as_raw_fd(), filename.as_ptr(), 0) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        sync_directory(&parent)
+    }
+
+    pub(super) fn create_new_file(
+        path: &Path, roots: &[PathBuf], content: &[u8],
+    ) -> io::Result<()> {
+        if !path.is_absolute() { return Err(bad_path()); }
+        let parent_path = path.parent().ok_or_else(bad_path)?;
+        let filename = path.file_name().ok_or_else(bad_path)?;
+        let parent = open_allowed_dir(parent_path, roots)?;
+        let temp = std::ffi::OsString::from(format!(
+            ".browseros-create-{}.tmp", uuid::Uuid::new_v4()
+        ));
+        let result = (|| {
+            let mut staged = create_temp_at(&parent, &temp)?;
+            staged.write_all(content)?;
+            staged.sync_all()?;
+            drop(staged);
+            rename_bound(&parent, &temp, &parent, filename)?;
+            sync_directory(&parent)
+        })();
+        if result.is_err() { unlink_at(&parent, &temp); }
+        result
+    }
+
+    pub(super) fn create_new_directory(path: &Path, roots: &[PathBuf]) -> io::Result<()> {
+        if !path.is_absolute() { return Err(bad_path()); }
+        let parent_path = path.parent().ok_or_else(bad_path)?;
+        let filename = path.file_name().ok_or_else(bad_path)?;
+        let parent = open_allowed_dir(parent_path, roots)?;
+        let segment = name(filename)?;
+        if filename == OsStr::new(".") || filename == OsStr::new("..") {
+            return Err(bad_path());
+        }
+        if unsafe { libc::mkdirat(parent.as_raw_fd(), segment.as_ptr(), 0o700) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        sync_directory(&parent)
+    }
+
+    /// mkdir -p inside a verified allowed root, with one pinned directory
+    /// descriptor per ancestor. The final directory itself must be new.
+    pub(super) fn create_directory_all(path: &Path, roots: &[PathBuf]) -> io::Result<()> {
+        if !path.is_absolute() { return Err(bad_path()); }
+        let mut cursor = path.parent().ok_or_else(bad_path)?;
+        let mut missing = Vec::<std::ffi::OsString>::new();
+        while !cursor.exists() {
+            missing.push(cursor.file_name().ok_or_else(bad_path)?.to_os_string());
+            cursor = cursor.parent().ok_or_else(bad_path)?;
+        }
+        let mut parent = open_allowed_dir(cursor, roots)?;
+        for name_part in missing.iter().rev() {
+            if name_part == OsStr::new(".") || name_part == OsStr::new("..") {
+                return Err(bad_path());
+            }
+            let part = name(name_part)?;
+            if unsafe { libc::mkdirat(parent.as_raw_fd(), part.as_ptr(), 0o700) } != 0 {
+                let error = io::Error::last_os_error();
+                if error.kind() != io::ErrorKind::AlreadyExists { return Err(error); }
+            }
+            parent = open_child_dir(&parent, name_part)?;
+        }
+        let target = path.file_name().ok_or_else(bad_path)?;
+        let target_name = name(target)?;
+        if unsafe { libc::mkdirat(parent.as_raw_fd(), target_name.as_ptr(), 0o700) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        sync_directory(&parent)
     }
 
     fn open_lock_at(parent: &File, lock_name: &OsStr) -> io::Result<File> {
@@ -502,6 +599,75 @@ pub fn move_no_replace(src: &Path, dest_dir: &Path, roots: &[PathBuf]) -> std::i
     }
 }
 
+/// Rename without overwriting another file. Both source and destination
+/// directories are pinned by the OS before renameat2 / NtSetInformationFile.
+pub fn rename_no_replace(
+    src: &Path,
+    dest_dir: &Path,
+    new_name: &std::ffi::OsStr,
+    roots: &[PathBuf],
+) -> std::io::Result<()> {
+    #[cfg(target_os = "linux")]
+    { linux::rename_no_replace(src, dest_dir, new_name, roots) }
+    #[cfg(target_os = "windows")]
+    { windows::rename_no_replace(src, dest_dir, new_name, roots) }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        let _ = (src, dest_dir, new_name, roots);
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported, "secure rename requires Linux/Windows"
+        ))
+    }
+}
+
+/// Create a new regular file atomically without overwriting an existing
+/// entry. The destination parent must already exist and be an authorized root
+/// descendant; callers must create missing directories as separate actions.
+pub fn create_new_file(
+    path: &Path, roots: &[PathBuf], bytes: &[u8],
+) -> std::io::Result<()> {
+    #[cfg(target_os = "linux")]
+    { linux::create_new_file(path, roots, bytes) }
+    #[cfg(target_os = "windows")]
+    { windows::create_new_file(path, roots, bytes) }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        let _ = (path, roots, bytes);
+        Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "secure create unsupported"))
+    }
+}
+
+/// Create one directory with a pinned authorized parent; never follow a
+/// replaceable path during mkdirat / NtCreateFile.
+pub fn create_new_directory(path: &Path, roots: &[PathBuf]) -> std::io::Result<()> {
+    #[cfg(target_os = "linux")]
+    { linux::create_new_directory(path, roots) }
+    #[cfg(target_os = "windows")]
+    { windows::create_new_directory(path, roots) }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        let _ = (path, roots);
+        Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "secure mkdir unsupported"))
+    }
+}
+
+/// Create missing subdirectories one component at a time using anchored
+/// directory handles, then atomically create the requested final directory.
+pub fn create_directory_all(path: &Path, roots: &[PathBuf]) -> std::io::Result<()> {
+    #[cfg(target_os = "linux")]
+    { linux::create_directory_all(path, roots) }
+    #[cfg(target_os = "windows")]
+    { windows::create_directory_all(path, roots) }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        let _ = (path, roots);
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "secure recursive mkdir requires Linux/Windows"
+        ))
+    }
+}
+
 /// Secure a private app-owned directory on Windows. Other platforms keep
 /// their existing directory ownership/mode policy.
 pub fn ensure_private_directory(path: &Path) -> std::io::Result<()> {
@@ -539,9 +705,20 @@ pub fn atomic_write(path: &Path, bytes: &[u8], limit: usize) -> Result<(), Strin
     windows::atomic_write(path, bytes, limit)
 }
 
-#[cfg(target_os = "windows")]
-pub(crate) fn remove_regular(canonical: &Path, roots: &[PathBuf]) -> std::io::Result<()> {
-    windows::remove_regular(canonical, roots)
+/// Remove a regular file without following a symlink or reparse-point
+/// target. Both platforms pin the authorized destination parent.
+pub fn remove_regular(canonical: &Path, roots: &[PathBuf]) -> std::io::Result<()> {
+    #[cfg(target_os = "linux")]
+    { linux::remove_regular(canonical, roots) }
+    #[cfg(target_os = "windows")]
+    { windows::remove_regular(canonical, roots) }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        let _ = (canonical, roots);
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported, "secure delete unsupported"
+        ))
+    }
 }
 
 pub fn save_if_unchanged(
@@ -563,5 +740,45 @@ pub fn save_if_unchanged(
     {
         let _ = (canonical, roots, expected, content, limit);
         Err("FILE_DESCRIPTOR_CAS_UNSUPPORTED".into())
+    }
+}
+
+
+#[cfg(all(test, any(target_os = "linux", target_os = "windows")))]
+mod cross_platform_file_manager_tests {
+    use super::*;
+
+    #[test]
+    fn native_create_rename_delete_use_pinned_parents_and_no_overwrite() {
+        let base = std::env::temp_dir().join(format!(
+            "browseros-native-fs-{}", uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&base).unwrap();
+        let roots = [base.canonicalize().unwrap()];
+        let directory = roots[0].join("nested").join("child");
+        create_directory_all(&directory, &roots).unwrap();
+        assert!(directory.is_dir());
+        assert!(create_directory_all(&directory, &roots).is_err());
+
+        let original = directory.join("one.txt");
+        create_new_file(&original, &roots, b"original").unwrap();
+        assert!(create_new_file(&original, &roots, b"overwritten").is_err());
+        assert_eq!(std::fs::read(&original).unwrap(), b"original");
+
+        let occupied = directory.join("occupied.txt");
+        create_new_file(&occupied, &roots, b"occupied").unwrap();
+        assert!(rename_no_replace(
+            &original, &directory, std::ffi::OsStr::new("occupied.txt"), &roots,
+        ).is_err());
+        assert_eq!(std::fs::read(&occupied).unwrap(), b"occupied");
+
+        rename_no_replace(
+            &original, &directory, std::ffi::OsStr::new("renamed.txt"), &roots
+        ).unwrap();
+        assert!(!original.exists());
+        let renamed = directory.join("renamed.txt");
+        remove_regular(&renamed, &roots).unwrap();
+        assert!(!renamed.exists());
+        std::fs::remove_dir_all(&base).unwrap();
     }
 }

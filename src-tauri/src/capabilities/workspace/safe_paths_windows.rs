@@ -376,6 +376,12 @@ fn authorize_with_root(file: &File, root: &File) -> io::Result<String> {
 /// FILE_RENAME_INFO RootDirectory pins the actual destination directory,
 /// and ReplaceIfExists=false avoids path-only check-then-rename races.
 pub(super) fn move_no_replace(src: &Path, dest_dir: &Path, roots: &[PathBuf]) -> io::Result<()> {
+    let filename = src.file_name().ok_or_else(denied)?;
+    rename_no_replace(src, dest_dir, filename, roots)
+}
+pub(super) fn rename_no_replace(
+    src: &Path, dest_dir: &Path, new_name: &std::ffi::OsStr, roots: &[PathBuf],
+) -> io::Result<()> {
     use std::ffi::c_void;
     use std::os::windows::{ffi::OsStrExt, io::AsRawHandle};
     use windows_sys::Wdk::Storage::FileSystem::{
@@ -393,7 +399,7 @@ pub(super) fn move_no_replace(src: &Path, dest_dir: &Path, roots: &[PathBuf]) ->
     }
     reject_reparse_ancestors(src)?;
     reject_reparse_ancestors(dest_dir)?;
-    let filename = src.file_name().ok_or_else(denied)?;
+    let filename = new_name;
     let source_parent = src.parent().ok_or_else(denied)?;
     let source_root = open_authorized_root(source_parent, roots)?;
     let destination_root = open_authorized_root(dest_dir, roots)?;
@@ -472,6 +478,103 @@ pub(super) fn move_no_replace(src: &Path, dest_dir: &Path, roots: &[PathBuf]) ->
             ));
         }
     }
+    Ok(())
+}
+
+/// New-file creation uses NtCreateFile(FILE_CREATE) under a pinned parent,
+/// then renames the fully flushed stage without replacing existing entries.
+/// Never fall back to a raw path-based std::fs::write after authorization.
+pub(super) fn create_new_file(
+    path: &Path, roots: &[PathBuf], content: &[u8],
+) -> io::Result<()> {
+    use std::io::Write;
+    use windows_sys::Wdk::Storage::FileSystem::FILE_CREATE;
+    const DELETE: u32 = 0x0001_0000;
+    const FILE_WRITE_DATA: u32 = 0x0000_0002;
+    const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
+    if !path.is_absolute() { return Err(denied()); }
+    let parent_path = path.parent().ok_or_else(denied)?;
+    let filename = path.file_name().ok_or_else(denied)?;
+    let root = open_authorized_root(parent_path, roots)?;
+    let parent = open_destination_directory(parent_path)?;
+    authorize_with_root(&parent, &root)?;
+    let temp = std::ffi::OsString::from(format!(
+        ".browseros-create-{}.tmp", uuid::Uuid::new_v4()
+    ));
+    let result = (|| {
+        let mut stage = open_child_at(
+            &parent, &temp,
+            DELETE | FILE_WRITE_DATA | FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ_WRITE_DELETE,
+            FILE_CREATE,
+        )?;
+        stage.write_all(content)?;
+        stage.sync_all()?;
+        drop(stage);
+        rename_no_replace(&parent_path.join(&temp), parent_path, filename, roots)
+    })();
+    if result.is_err() { let _ = remove_regular_at(&parent, &temp); }
+    result
+}
+
+/// Single-component create only: never call create_dir_all on user-supplied
+/// paths, which could follow a swapped Windows junction.
+pub(super) fn create_new_directory(path: &Path, roots: &[PathBuf]) -> io::Result<()> {
+    use windows_sys::Wdk::Storage::FileSystem::FILE_CREATE;
+    const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
+    const FILE_LIST_DIRECTORY: u32 = 0x0000_0001;
+    if !path.is_absolute() { return Err(denied()); }
+    let parent_path = path.parent().ok_or_else(denied)?;
+    let filename = path.file_name().ok_or_else(denied)?;
+    let root = open_authorized_root(parent_path, roots)?;
+    let parent = open_destination_directory(parent_path)?;
+    authorize_with_root(&parent, &root)?;
+    let _created = open_object_at(
+        &parent, filename,
+        FILE_READ_ATTRIBUTES | FILE_LIST_DIRECTORY,
+        FILE_SHARE_READ_WRITE_DELETE,
+        FILE_CREATE, true,
+    )?;
+    Ok(())
+}
+
+/// Recursively create missing directories using the nearest pinned,
+/// already-authorized ancestor. Never call create_dir_all on a user-provided
+/// path after a prior, replaceable canonicalize check.
+pub(super) fn create_directory_all(path: &Path, roots: &[PathBuf]) -> io::Result<()> {
+    use windows_sys::Wdk::Storage::FileSystem::{FILE_CREATE, FILE_OPEN_IF};
+    const FILE_ADD_FILE: u32 = 0x0000_0002;
+    const FILE_ADD_SUBDIRECTORY: u32 = 0x0000_0004;
+    const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
+    const FILE_LIST_DIRECTORY: u32 = 0x0000_0001;
+    const FILE_TRAVERSE: u32 = 0x0000_0020;
+    if !path.is_absolute() { return Err(denied()); }
+    let mut ancestor = path.parent().ok_or_else(denied)?;
+    let mut missing = Vec::<std::ffi::OsString>::new();
+    while !ancestor.exists() {
+        missing.push(ancestor.file_name().ok_or_else(denied)?.to_os_string());
+        ancestor = ancestor.parent().ok_or_else(denied)?;
+    }
+    let root = open_authorized_root(ancestor, roots)?;
+    let mut parent = open_destination_directory(ancestor)?;
+    authorize_with_root(&parent, &root)?;
+    for name in missing.iter().rev() {
+        parent = open_object_at(
+            &parent, name,
+            FILE_READ_ATTRIBUTES | FILE_LIST_DIRECTORY
+                | FILE_ADD_FILE | FILE_ADD_SUBDIRECTORY | FILE_TRAVERSE,
+            FILE_SHARE_READ_WRITE_DELETE,
+            FILE_OPEN_IF, true,
+        )?;
+        authorize_with_root(&parent, &root)?;
+    }
+    let filename = path.file_name().ok_or_else(denied)?;
+    let _created = open_object_at(
+        &parent, filename,
+        FILE_READ_ATTRIBUTES | FILE_LIST_DIRECTORY,
+        FILE_SHARE_READ_WRITE_DELETE,
+        FILE_CREATE, true,
+    )?;
     Ok(())
 }
 

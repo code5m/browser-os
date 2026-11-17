@@ -1,0 +1,125 @@
+{
+  "schema_version": 1,
+  "repo": "code5m/browser-os",
+  "branch": "feature/browseros-windows-linux-v2-onepass-20261114",
+  "as_of": "2026-11-17",
+  "reference_native_run": "https://github.com/code5m/browser-os/actions/runs/43981446235",
+  "reference_head": "d273d4c5a770c4ee77c1428cb685c2459ef2d070",
+  "current_source_patch": "not_native_verified",
+  "scope": "Windows+Linux parity only; macOS unsupported",
+  "note": "Status reflects code evidence and historical native runs, NOT current HEAD validation.",
+  "capabilities": [
+    {
+      "capability": "core_gui",
+      "linux": "implemented_history_ci_pass",
+      "windows": "implemented_native_gui_unverified",
+      "macos": "unsupported",
+      "severity": "P1",
+      "notes": "WebKitGTK vs WebView2; installed build and login-state need Win11 evidence"
+    },
+    {
+      "capability": "grid_process_ipc",
+      "linux": "implemented_history_ci_pass",
+      "windows": "implemented_native_tests_history_pass_gui_unverified",
+      "macos": "unsupported",
+      "severity": "P1",
+      "notes": "Linux UDS / Windows owner-PID checked NamedPipe and Job Object"
+    },
+    {
+      "capability": "terminal",
+      "linux": "implemented_history_ci_pass",
+      "windows": "implemented_conpty_native_history_pass",
+      "macos": "unsupported",
+      "severity": "P2",
+      "notes": "Windows ConPTY startup, resize, terminate; GUI interaction not verified"
+    },
+    {
+      "capability": "workspace_cas",
+      "linux": "implemented_history_ci_pass",
+      "windows": "implemented_native_history_pass",
+      "macos": "unsupported",
+      "severity": "P2",
+      "notes": "Pinned directory content CAS; current patch untested"
+    },
+    {
+      "capability": "file_manager",
+      "linux": "source_patched_unverified",
+      "windows": "source_patched_unverified",
+      "macos": "unsupported",
+      "severity": "P1",
+      "notes": "Atomic pinned-parent create/rename/delete regular files, recursive mkdir; recursive directory delete still needs hardened root binding"
+    },
+    {
+      "capability": "system_apps",
+      "linux": "implemented_xdg",
+      "windows": "source_patched_start_menu_exe_only",
+      "macos": "unsupported",
+      "severity": "P2",
+      "notes": "Windows StartMenu .lnk direct EXE targets; packaged UWP/MSIX app IDs not supported"
+    },
+    {
+      "capability": "launch_policy",
+      "linux": "source_patched_unverified",
+      "windows": "source_patched_unverified",
+      "macos": "unsupported",
+      "severity": "P1",
+      "notes": "Native path separators, Windows .exe / shell wrappers, canonical executable, main-webview restriction"
+    },
+    {
+      "capability": "agent_files",
+      "linux": "implemented_history_ci_pass",
+      "windows": "implemented_native_history_pass",
+      "macos": "unsupported",
+      "severity": "P2",
+      "notes": "Handle-validated file operations; current HEAD needs native regression"
+    },
+    {
+      "capability": "agent_mcp_lsp",
+      "linux": "implemented_history_ci_pass",
+      "windows": "blocked_native_win32_access_denied_last_run",
+      "macos": "unsupported",
+      "severity": "P1",
+      "notes": "Run #201 Windows AppContainer MCP and LSP fail at CreateProcessW error 5; newest code patches unverified"
+    },
+    {
+      "capability": "script_runner",
+      "linux": "implemented_posix_node_python_bash",
+      "windows": "implemented_node_python_only_unverified",
+      "macos": "unsupported",
+      "severity": "P2",
+      "notes": "Windows shell/bash intentionally unavailable; no insecure emulation"
+    },
+    {
+      "capability": "bfc_loopback",
+      "linux": "implemented",
+      "windows": "synthetic_ci_pass",
+      "macos": "unsupported",
+      "severity": "P1",
+      "notes": "Windows BFC synthetic identity and import pass; real Bilibili login/browser binding not validated"
+    },
+    {
+      "capability": "default_browser",
+      "linux": "xdg_settings",
+      "windows": "user_settings_handoff",
+      "macos": "unsupported",
+      "severity": "P2",
+      "notes": "Windows opens Settings/default apps after explicit intent, cannot silently set UserChoice"
+    },
+    {
+      "capability": "git_database_tools",
+      "linux": "implemented",
+      "windows": "source_present_native_gui_unverified",
+      "macos": "not_assessed",
+      "severity": "P2",
+      "notes": "Portable libraries but Windows end-to-end tests not established"
+    },
+    {
+      "capability": "installer_nsys",
+      "linux": "not_applicable",
+      "windows": "manual_workflow_dispatch_pending",
+      "macos": "not_applicable",
+      "severity": "P1",
+      "notes": "NSIS and installed WebView2 GUI not accepted"
+    }
+  ]
+}
