@@ -37,12 +37,7 @@ fn check_main(app: &AppHandle, webview: &Webview, scope: &str) -> Result<(), Str
 }
 
 fn config_path(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(app
-        .path()
-        .app_data_dir()
-        .map_err(|_| "AGENT_EXPERIMENT_PATH")?
-        .join("mvp-browser-os")
-        .join(CONFIG_FILE))
+    Ok(crate::workspace::data_dir(app).join(CONFIG_FILE))
 }
 
 fn load(path: &Path) -> Result<ExperimentConfig, String> {
@@ -95,7 +90,12 @@ fn persist(path: &Path, config: &ExperimentConfig) -> Result<(), String> {
             .map_err(|_| "AGENT_EXPERIMENT_WRITE_FAILED")?;
         file.sync_all()
             .map_err(|_| "AGENT_EXPERIMENT_FSYNC_FAILED")?;
-        fs::rename(&temp, path).map_err(|_| "AGENT_EXPERIMENT_RENAME_FAILED")?;
+        crate::session::atomic_replace_file(&temp, path)
+            .map_err(|_| "AGENT_EXPERIMENT_RENAME_FAILED")?;
+        // Windows directory handles cannot be opened by File::open without
+        // FILE_FLAG_BACKUP_SEMANTICS. MoveFileExW uses WRITE_THROUGH;
+        // explicit fsync of the directory is only required on Unix.
+        #[cfg(unix)]
         fs::File::open(parent)
             .and_then(|dir| dir.sync_all())
             .map_err(|_| "AGENT_EXPERIMENT_FSYNC_FAILED")?;

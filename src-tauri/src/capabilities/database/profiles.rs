@@ -12,12 +12,9 @@ const MAX_BYTES: u64 = 256 * 1024;
 const MAX_COUNT: usize = 64;
 
 pub fn path_for(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|_| "DB_PROFILE_LOCATION_FAILED")?
-        .join("mvp-browser-os");
-    Ok(dir.join("database-profiles.json"))
+    // The shared workspace data_dir enforces the Windows owner/SYSTEM ACL
+    // before any profile metadata is read or replaced.
+    Ok(crate::workspace::data_dir(app).join("database-profiles.json"))
 }
 fn assert_regular_or_missing(path: &Path) -> Result<(), String> {
     match fs::symlink_metadata(path) {
@@ -77,7 +74,8 @@ pub fn write_file(path: &Path, configs: &[DbConnectionConfig]) -> Result<(), Str
         let mut f = opts.open(&temp).map_err(|_| "DB_PROFILE_TMP_FAILED")?;
         f.write_all(&bytes).map_err(|_| "DB_PROFILE_WRITE_FAILED")?;
         f.sync_all().map_err(|_| "DB_PROFILE_SYNC_FAILED")?;
-        fs::rename(&temp, path).map_err(|_| "DB_PROFILE_RENAME_FAILED")?;
+        crate::session::atomic_replace_file(&temp, path)
+            .map_err(|_| "DB_PROFILE_RENAME_FAILED")?;
         Ok::<(), String>(())
     })();
     if result.is_err() {
@@ -94,6 +92,10 @@ mod tests {
             std::env::temp_dir().join(format!("browseros-db-profile-{}", uuid::Uuid::new_v4()));
         let file = root.join("database-profiles.json");
         write_file(&file, &[]).unwrap();
+        assert!(read_file(&file).unwrap().is_empty());
+        // Windows std::fs::rename cannot overwrite an existing destination;
+        // the second save must still replace atomically.
+        write_file(&file, &[]).expect("repeat profile write must replace");
         assert!(read_file(&file).unwrap().is_empty());
         #[cfg(unix)]
         {

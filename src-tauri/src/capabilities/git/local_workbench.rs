@@ -648,13 +648,13 @@ fn perform(
             {
                 return Err("GIT_LOCAL_SYMLINK_DENIED".into());
             }
-            let temp =
-                path.with_file_name(format!(".browseros-resolve-{}.tmp", uuid::Uuid::new_v4()));
-            std::fs::write(&temp, contents).map_err(|_| "GIT_LOCAL_RESOLVE_WRITE_FAILED")?;
-            if std::fs::rename(&temp, &path).is_err() {
-                let _ = std::fs::remove_file(&temp);
-                return Err("GIT_LOCAL_RESOLVE_RENAME_FAILED".into());
-            }
+            let roots = [Path::new(&ctx.root).to_path_buf()];
+            let before = crate::capabilities::workspace::safe_paths::read_regular(
+                &path, &roots, MAX_TEXT,
+            ).map_err(|_| "GIT_LOCAL_FILE_READ_FAILED")?;
+            crate::capabilities::workspace::safe_paths::save_if_unchanged(
+                &path, &roots, &before, contents.as_bytes(), MAX_TEXT,
+            ).map_err(|_| "GIT_LOCAL_RESOLVE_RENAME_FAILED")?;
             let mut index = repo.index().map_err(|_| "GIT_LOCAL_INDEX_FAILED")?;
             index
                 .add_path(rel)

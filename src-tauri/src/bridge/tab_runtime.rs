@@ -193,7 +193,9 @@ pub struct ResourceStats {
     pub grid_budget: usize,
 }
 
-/// 读取 /proc 全量进程表：pid -> (ppid, comm, rss_kb)。
+/// Linux: /proc process inventory. Windows: Toolhelp + process working
+/// set. Both produce (ppid, name, resident_kb) for identical UI grouping.
+#[cfg(target_os = "linux")]
 fn read_proc_table() -> HashMap<u32, (u32, String, u64)> {
     let mut procs = HashMap::new();
     let Ok(rd) = std::fs::read_dir("/proc") else {
@@ -227,6 +229,61 @@ fn read_proc_table() -> HashMap<u32, (u32, String, u64)> {
         procs.insert(pid, (ppid, comm, rss_kb));
     }
     procs
+}
+
+#[cfg(target_os = "windows")]
+fn read_proc_table() -> HashMap<u32, (u32, String, u64)> {
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW,
+        PROCESSENTRY32W, TH32CS_SNAPPROCESS,
+    };
+    use windows_sys::Win32::System::ProcessStatus::{
+        GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
+    };
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_READ,
+    };
+
+    let mut procs = HashMap::new();
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+    if snapshot == INVALID_HANDLE_VALUE { return procs; }
+    let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
+    entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+    let mut has_entry = unsafe { Process32FirstW(snapshot, &mut entry) } != 0;
+    while has_entry {
+        let pid = entry.th32ProcessID;
+        let parent = entry.th32ParentProcessID;
+        let len = entry.szExeFile.iter().position(|value| *value == 0)
+            .unwrap_or(entry.szExeFile.len());
+        let name = String::from_utf16_lossy(&entry.szExeFile[..len]);
+        let mut rss_kb = 0u64;
+        let handle = unsafe {
+            OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, 0, pid)
+        };
+        if !handle.is_null() {
+            let mut mem: PROCESS_MEMORY_COUNTERS = unsafe { std::mem::zeroed() };
+            mem.cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
+            if unsafe {
+                GetProcessMemoryInfo(
+                    handle, &mut mem,
+                    std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32,
+                )
+            } != 0 {
+                rss_kb = mem.WorkingSetSize as u64 / 1024;
+            }
+            unsafe { CloseHandle(handle) };
+        }
+        if pid != 0 { procs.insert(pid, (parent, name, rss_kb)); }
+        has_entry = unsafe { Process32NextW(snapshot, &mut entry) } != 0;
+    }
+    unsafe { CloseHandle(snapshot) };
+    procs
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+fn read_proc_table() -> HashMap<u32, (u32, String, u64)> {
+    HashMap::new()
 }
 
 /// 由叶到根汇总所有子树的 RSS：一次建立父子关系，每个 PID 至多出队一次。
@@ -359,15 +416,7 @@ pub fn resource_stats_blocking(app: AppHandle) -> ResourceStats {
         .len();
     let grid_indices: Vec<u32> = grid_pids.iter().map(|(index, _)| *index).collect();
     ResourceStats {
-        mem_total_mb: std::fs::read_to_string("/proc/meminfo")
-            .ok()
-            .and_then(|s| {
-                s.lines()
-                    .find_map(|l| l.strip_prefix("MemTotal:"))
-                    .and_then(|r| r.trim().trim_end_matches("kB").trim().parse::<u64>().ok())
-            })
-            .unwrap_or(0)
-            / 1024,
+        mem_total_mb: mem_total_mb().unwrap_or(0),
         mem_available_mb: avail,
         app_total_mb: app_total_kb as f64 / 1024.0,
         main: ProcStat {

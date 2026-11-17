@@ -108,10 +108,10 @@
     {
       "capability": "git_database_tools",
       "linux": "implemented",
-      "windows": "source_present_native_gui_unverified",
+      "windows": "source_patched_native_unverified",
       "macos": "not_assessed",
       "severity": "P2",
-      "notes": "Portable libraries but Windows end-to-end tests not established"
+      "notes": "Git conflict resolver now uses Linux/Windows pinned CAS; DB profile and Agent config use cross-platform atomic replacement; native Windows acceptance pending"
     },
     {
       "capability": "installer_nsys",
@@ -120,6 +120,22 @@
       "macos": "not_applicable",
       "severity": "P1",
       "notes": "NSIS and installed WebView2 GUI not accepted"
+    },
+    {
+      "capability": "resource_monitor",
+      "linux": "implemented_procfs",
+      "windows": "source_patched_toolhelp_workingset_globalmemorystatusex",
+      "macos": "unsupported",
+      "severity": "P1",
+      "notes": "Windows previously displayed 0 for /proc process RSS and MemTotal; now uses Toolhelp+GetProcessMemoryInfo"
+    },
+    {
+      "capability": "image_storage",
+      "linux": "source_patched_native_pinned_create",
+      "windows": "source_patched_native_pinned_create",
+      "macos": "unsupported",
+      "severity": "P2",
+      "notes": "Image writes use safe anchored mkdir/create-only stage instead of write-before-validate and std::fs::rename"
     }
   ]
 }

@@ -45,3 +45,17 @@
 在同一 SHA 上先跑一次 Windows 原生测试（包括 AppContainer 原生隔离、Node MCP stdio/背压、rust-analyzer LSP、CAS/新文件/rename、ConPTY、Grid）；Linux 原生和静态合同；再独立执行 NSIS 安装及 Win11 WebView2、真实会话、文件管理与 App Launcher 人工验收。验证前不修改 master 或降低正式门禁。
 
 机器可读对照：[`windows-linux-parity-matrix.json`](./windows-linux-parity-matrix.json)。
+
+## 第二轮：全仓库 114 个 Rust 后端文件扫描发现的附加缺口
+
+- **Windows 资源面板不是真正的平台实现**：原 `read_proc_table()` 和 `mem_total_mb` 直接读取 Linux `/proc`，Windows 下返回空进程表/总内存 0。现已将 Linux /proc 与 Windows Toolhelp32Snapshot + GetProcessMemoryInfo 分离，Windows 物理内存总量取 GlobalMemoryStatusEx，主进程和 Grid 子树继续共用相同的汇总算法。
+- **Windows 已存在配置文件更新失败**：数据库连接元数据 `database-profiles.json`、Agent 实验配置原使用 `fs::rename(temp, target)`，Windows 不能以此可靠覆盖旧目标；现统一到跨平台 `session::atomic_replace_file`，并取消 Windows 上错误的普通目录 `File::open(...).sync_all()`。官方配置路径走 Windows 私有 app-data ACL。
+- **Git 冲突解决跨平台不一致**：Studio/Local Workbench 原通过 `std::fs::rename` 覆盖 Git 已跟踪文件；Windows 容易报错，且存在文件重定向风险。现复用授权根目录下的句柄安全读取与内容 CAS；保存冲突失败不覆盖先前内容。
+- **图片存储**：原图片路径先 `create_dir_all` 再验证并 `fs::rename`，现先确认 workspace 根授权，再使用 pinned-parent 递归建目录及无覆盖原子新建文件，避免同 ID 图片被静默覆盖。
+- **未在本轮消除的历史风险**：Git 其他分支操作与用户工作区写入、业务工作区 JSON、目录递归删除、Windows AppContainer Win32 5、Win11 安装版 GUI、macOS 原生进程/文件适配均需分别验证或继续实现。**新增实现均为源码补丁，本轮未编译/测试/CI。**
+
+## 测试工具平台边界
+
+- 既有 `native_58_gui_review` 和 `workbench_smoke` 的真实执行逻辑依赖 Linux XDG、`xdg-settings` 与 `/tmp`；在 Windows 上明确返回 Linux-only 错误，不再让其被误认为跨平台 Windows GUI 验收。Linux 默认诊断输出仍使用系统 `temp_dir`。
+- Windows V2 原生测试/NSIS 安装/真实 WebView2 GUI 具有独立验收入口，但本轮**未执行**；Windows AppContainer MCP/LSP 在上轮实际跑出的 `CreateProcessW Win32 5` 尚未获得最终通过证据。
+- 当前源代码已具备 Windows 资源监控、应用列表、CAS/文件管理、Git 冲突写回及数据库配置落盘入口；在同一 HEAD 上完成 CI 和实机 GUI 之前，所有这些新增修改只能标记为 **source implemented / unverified**。

@@ -2,6 +2,10 @@
 use tauri::{Listener, Manager};
 
 pub fn start(app: tauri::AppHandle) -> Result<(), String> {
+    // The XDG smoke runner requires a fake Linux home. Windows has separate
+    // native and GUI acceptance; no tests should pass by reusing /tmp stubs.
+    #[cfg(not(target_os = "linux"))]
+    return Err("WORKBENCH_NATIVE_SMOKE_LINUX_ONLY".into());
     let data = std::env::var("XDG_DATA_HOME").unwrap_or_default();
     if !data.starts_with("/tmp/workbench-native-") {
         return Err("Smoke requires isolated XDG_DATA_HOME".into());

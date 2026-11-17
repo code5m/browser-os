@@ -434,30 +434,33 @@ pub fn write_image_file(
     let root = workspace.join("images");
     let target = workspace.join(&rel);
     let parent = target.parent().ok_or(ImageError::PathEscape)?;
-    fs::create_dir_all(parent).map_err(|e| ImageError::Io(format!("创建图片目录失败: {e}")))?;
-
-    let root_canon =
-        fs::canonicalize(&root).map_err(|e| ImageError::Io(format!("图片根目录不可用: {e}")))?;
-    let parent_canon =
-        fs::canonicalize(parent).map_err(|e| ImageError::Io(format!("图片目录不可用: {e}")))?;
+    let workspace_root = workspace.canonicalize()
+        .map_err(|_| ImageError::PathEscape)?;
+    let allowed = [workspace_root.clone()];
+    for directory in [&root, parent] {
+        if directory.exists() {
+            crate::security_policy::check_path_within_roots(
+                &directory.to_string_lossy(), &allowed,
+            ).map_err(|_| ImageError::PathEscape)?;
+        } else {
+            // mkdirat/NtCreateFile against an authorized pinned parent: no
+            // write-before-validate and no junction/symlink parent escape.
+            crate::capabilities::workspace::safe_paths::create_directory_all(
+                directory, &allowed,
+            ).map_err(|e| ImageError::Io(format!("创建图片目录失败: {e}")))?;
+        }
+    }
+    let root_canon = root.canonicalize().map_err(|_| ImageError::PathEscape)?;
+    let parent_canon = parent.canonicalize().map_err(|_| ImageError::PathEscape)?;
     if !parent_canon.starts_with(&root_canon) {
         return Err(ImageError::PathEscape);
     }
-
-    let tmp = target.with_extension(format!("{ext}.tmp"));
-    if let Err(e) = fs::write(&tmp, bytes) {
-        return Err(ImageError::Io(format!("写临时文件失败: {e}")));
-    }
-    if let Err(e) = fs::rename(&tmp, &target) {
-        let _ = fs::remove_file(&tmp);
-        return Err(ImageError::Io(format!("图片落盘失败: {e}")));
-    }
-    if let Ok(final_canon) = fs::canonicalize(&target) {
-        if !final_canon.starts_with(&root_canon) {
-            let _ = fs::remove_file(&target);
-            return Err(ImageError::PathEscape);
-        }
-    }
+    // Unique image IDs are create-only. A pinned, no-overwrite atomic
+    // stage/rename is shared by Linux and Windows; a duplicate ID cannot
+    // silently overwrite an earlier image.
+    crate::capabilities::workspace::safe_paths::create_new_file(
+        &target, &allowed, bytes,
+    ).map_err(|e| ImageError::Io(format!("图片落盘失败: {e}")))?;
     Ok(rel)
 }
 

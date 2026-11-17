@@ -1349,19 +1349,17 @@ fn execute(
         "stash_drop" => ("git", vec!["stash".into(), "drop".into(), target.into()]),
         "resolve" => {
             let path = check_file(root, &selected[0], false)?;
-            let temp =
-                path.with_file_name(format!(".browseros-resolution-{}", uuid::Uuid::new_v4()));
-            let permissions = path
-                .metadata()
-                .map_err(|_| "GIT_STUDIO_FILE_READ")?
-                .permissions();
-            fs::write(&temp, input.content.as_deref().unwrap_or(""))
-                .map_err(|_| "GIT_STUDIO_RESOLUTION_WRITE")?;
-            fs::set_permissions(&temp, permissions).map_err(|_| "GIT_STUDIO_RESOLUTION_WRITE")?;
-            if fs::rename(&temp, &path).is_err() {
-                let _ = fs::remove_file(&temp);
-                return Err("GIT_STUDIO_RESOLUTION_WRITE".into());
-            }
+            // Windows std::fs::rename does not replace an existing file.
+            // The GUI's conflict resolver must also reject symlink/junction
+            // redirects on BOTH platforms, not write before authorization.
+            let roots = [root.to_path_buf()];
+            let before = crate::capabilities::workspace::safe_paths::read_regular(
+                &path, &roots, TEXT_CAP,
+            ).map_err(|_| "GIT_STUDIO_FILE_READ")?;
+            crate::capabilities::workspace::safe_paths::save_if_unchanged(
+                &path, &roots, &before,
+                input.content.as_deref().unwrap_or("").as_bytes(), TEXT_CAP,
+            ).map_err(|_| "GIT_STUDIO_RESOLUTION_WRITE")?;
             ("git", vec!["add".into(), "--".into()])
         }
         "worktree_add" => (

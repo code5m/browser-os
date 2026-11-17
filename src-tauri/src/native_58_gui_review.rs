@@ -9,11 +9,16 @@ use std::{fs, path::PathBuf, thread, time::Duration};
 use tauri::{Listener, Manager};
 
 pub fn start(app: tauri::AppHandle) -> Result<(), String> {
+    // This legacy GUI harness intentionally mutates XDG HOME and uses an
+    // xdg-settings stub. Windows must use the independent V2/NSIS harness;
+    // running this Linux-only opt-in path must never impersonate acceptance.
+    #[cfg(not(target_os = "linux"))]
+    return Err("NATIVE_58_GUI_REVIEW_LINUX_ONLY".into());
     let base_url = std::env::var("NATIVE_58_REVIEW_BASE_URL")
         .map_err(|_| "NATIVE_58_REVIEW_BASE_URL_REQUIRED")?;
     let report_path = std::env::var("NATIVE_58_REVIEW_REPORT")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/tmp/browseros-native-58-review.json"));
+        .unwrap_or_else(|_| std::env::temp_dir().join("browseros-native-58-review.json"));
     let url = url::Url::parse(&base_url).map_err(|_| "NATIVE_58_REVIEW_INVALID_URL")?;
     if url.scheme() != "http"
         || url.host_str() != Some("127.0.0.1")

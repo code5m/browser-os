@@ -18,26 +18,44 @@ const MIN_GRID: usize = 2;
 const CORE_MEMORY_RESERVE_MB: u64 = 1800;
 
 #[cfg(target_os = "linux")]
+fn linux_meminfo_mb(key: &str) -> Option<u64> {
+    let text = std::fs::read_to_string("/proc/meminfo").ok()?;
+    text.lines().find_map(|line| {
+        line.strip_prefix(key)
+            .and_then(|v| v.trim().trim_end_matches("kB").trim().parse::<u64>().ok())
+            .map(|kb| kb / 1024)
+    })
+}
+
+#[cfg(target_os = "linux")]
 pub(crate) fn mem_available_mb() -> Option<u64> {
-    let s = std::fs::read_to_string("/proc/meminfo").ok()?;
-    for line in s.lines() {
-        if let Some(rest) = line.strip_prefix("MemAvailable:") {
-            let kb: u64 = rest.trim().trim_end_matches("kB").trim().parse().ok()?;
-            return Some(kb / 1024);
-        }
-    }
-    None
+    linux_meminfo_mb("MemAvailable:")
+}
+#[cfg(target_os = "linux")]
+pub(crate) fn mem_total_mb() -> Option<u64> {
+    linux_meminfo_mb("MemTotal:")
 }
 
 #[cfg(target_os = "windows")]
-pub(crate) fn mem_available_mb() -> Option<u64> {
+fn windows_meminfo_mb() -> Option<(u64, u64)> {
     use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
     let mut memory: MEMORYSTATUSEX = unsafe { std::mem::zeroed() };
     memory.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
     if unsafe { GlobalMemoryStatusEx(&mut memory) } == 0 {
         return None;
     }
-    Some(memory.ullAvailPhys / (1024 * 1024))
+    Some((
+        memory.ullTotalPhys / (1024 * 1024),
+        memory.ullAvailPhys / (1024 * 1024),
+    ))
+}
+#[cfg(target_os = "windows")]
+pub(crate) fn mem_available_mb() -> Option<u64> {
+    windows_meminfo_mb().map(|(_, available)| available)
+}
+#[cfg(target_os = "windows")]
+pub(crate) fn mem_total_mb() -> Option<u64> {
+    windows_meminfo_mb().map(|(total, _)| total)
 }
 
 /// Reuse existing Grid children without charging their already-allocated RSS
