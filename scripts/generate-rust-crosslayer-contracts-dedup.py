@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
+import sys
 
 HERE = pathlib.Path(__file__).resolve().parent
 SPEC = importlib.util.spec_from_file_location(
@@ -24,6 +25,7 @@ SPEC = importlib.util.spec_from_file_location(
 )
 base = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
+sys.modules[SPEC.name] = base  # dataclasses resolve types via sys.modules
 SPEC.loader.exec_module(base)  # base only calls main() under __main__
 
 _original_build_model = base.build_model
