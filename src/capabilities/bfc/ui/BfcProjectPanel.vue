@@ -13,7 +13,13 @@ async function exportForTongpin() {
   exportMessage.value = "";
   try {
     const backup = await bfc.exportWorkbenchBackup();
-    const content = JSON.stringify(backup, null, 2);
+    const exportData = {
+      ...backup,
+      exportSource: "browseros-bfc-workbench",
+      exportedAt: new Date().toISOString(),
+      completeSnapshot: bfc.serviceStatus?.complete_snapshot ?? null,
+    };
+    const content = JSON.stringify(exportData, null, 2);
     const blob = new Blob([content], { type: "application/json;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -28,7 +34,9 @@ async function exportForTongpin() {
       ? state.library as Record<string, unknown> : {};
     const topics = Array.isArray(library.topics) ? library.topics.length : 0;
     exportMessage.value = "已生成本机私人备份（" + (content.length / 1024 / 1024).toFixed(2) +
-      " MB，" + topics + " 个专题）。请在同频 APP 选择此 JSON 文件导入。";
+      " MB，" + topics + " 个专题）。" +
+      (bfc.serviceStatus?.complete_snapshot === false ? "注意：BFC 当前未声明完整快照能力，导入后请核对收藏总数。" : "") +
+      "请在同频 APP 选择此 JSON 文件导入。";
   } catch (error) {
     exportMessage.value = "导出失败：" + String(error instanceof Error ? error.message : error);
   } finally {
