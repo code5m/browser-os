@@ -240,7 +240,7 @@ pub async fn bfc_workbench_backup_export(
         .filter(|value| value.len() >= 24 && value.len() <= 256)
         .ok_or("BFC_LOCAL_SESSION_INVALID")?;
     let csrf = HeaderValue::from_str(csrf).map_err(|_| "BFC_LOCAL_SESSION_INVALID")?;
-    let mut response = client
+    let response = client
         .get(BFC_WORKBENCH_BACKUP_URL)
         .header(ORIGIN, origin)
         .header(HeaderName::from_static("x-local-csrf"), csrf)
@@ -256,18 +256,11 @@ pub async fn bfc_workbench_backup_export(
     {
         return Err("BFC_WORKBENCH_BACKUP_TOO_LARGE".into());
     }
-    let mut bytes = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
+    let bytes = response
+        .bytes()
         .await
-        .map_err(|_| "BFC_WORKBENCH_BACKUP_READ_FAILED")?
-    {
-        if bytes.len().saturating_add(chunk.len()) > MAX_WORKBENCH_BACKUP_BYTES {
-            return Err("BFC_WORKBENCH_BACKUP_TOO_LARGE".into());
-        }
-        bytes.extend_from_slice(&chunk);
-    }
-    parse_workbench_backup(&bytes).map_err(str::to_string)
+        .map_err(|_| "BFC_WORKBENCH_BACKUP_READ_FAILED")?;
+    parse_workbench_backup(bytes.as_ref()).map_err(str::to_string)
 }
 
 fn parse_workbench_backup(bytes: &[u8]) -> Result<Value, &'static str> {
