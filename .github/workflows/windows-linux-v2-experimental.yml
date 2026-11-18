@@ -271,6 +271,9 @@ jobs:
             'windows_script_cancel_reaps_immediate_node_grandchild'
             'windows_script_timeout_reaps_immediate_node_grandchild'
             'windows_script_parent_crash_drops_job_and_reaps_grandchild'
+            # Cover the entire windows_process module, not just selected
+            # process/ConPTY fixtures that happened to pass on one runner.
+            'windows_process::'
             'conpty_terminal_uses_atomic_job_list_and_reaps_immediate_grandchild'
             'conpty_rejects_invalid_terminal_dimensions'
             'conpty_child_exit_code_259_is_terminal_and_kill_is_idempotent'
@@ -299,6 +302,30 @@ jobs:
               Write-Host "::warning::Continuing native matrix after failed check: $filter"
             }
           }
+          # Run all Windows native tests on a proper runner to classify the
+          # 21 failures previously reported from a headless developer host.
+          # Preserve the failure list and stderr instead of silently skipping.
+          $fullOut = Join-Path $env:RUNNER_TEMP "full-windows-native.out.log"
+          $fullErr = Join-Path $env:RUNNER_TEMP "full-windows-native.err.log"
+          Remove-Item $fullOut, $fullErr -Force -ErrorAction SilentlyContinue
+          Write-Host "::group::full Windows native test suite"
+          $full = Start-Process -FilePath $nativeTestExe -NoNewWindow -PassThru -RedirectStandardOutput $fullOut -RedirectStandardError $fullErr -ArgumentList '--test-threads=1'
+          $fullFinished = $full.WaitForExit(900000)
+          if (-not $fullFinished) {
+            try { $full.Kill($true) } catch {}
+            $failed.Add('full_windows_native_suite_timeout')
+            Write-Host "::error::Windows full native suite exceeded 900 seconds"
+          } else {
+            $full.WaitForExit()
+            if ($full.ExitCode -ne 0) {
+              $failed.Add('full_windows_native_suite')
+              Write-Host "::error::Windows full native suite exit=$($full.ExitCode)"
+            } else {
+              Write-Host "WINDOWS_NATIVE_FULL_SUITE=PASS"
+            }
+          }
+          Get-Content $fullOut, $fullErr -ErrorAction SilentlyContinue | Select-Object -Last 160 | Write-Host
+          Write-Host "::endgroup::"
           Write-Host "WINDOWS_NATIVE_MATRIX=$($nativeTests.Count - $failed.Count)/$($nativeTests.Count) PASS"
           if ($failed.Count -gt 0) {
             $failed | ForEach-Object { Write-Host "::error::Windows native check failed: $_" }
