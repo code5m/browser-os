@@ -749,7 +749,25 @@ impl Session {
     fn await_diagnostics(&mut self, uri: &str) -> Result<Value, String> {
         loop {
             let mut value = self.recv_frame("LSP_DIAGNOSTICS_TIMEOUT")?;
-            if value["method"] == "textDocument/publishDiagnostics" && value["params"]["uri"] == uri
+            // Record which notifications the analyzer actually emits: a
+            // silent timeout cannot distinguish "still loading the workspace"
+            // from "published under a different document URI".
+            #[cfg(test)]
+            {
+                let method = value["method"].as_str().unwrap_or("-");
+                let detail = value["params"]["uri"]
+                    .as_str()
+                    .or(value["params"]["type"].as_str())
+                    .unwrap_or("-");
+                eprintln!("::error::LSP_RA_EVENT {method} {detail}");
+            }
+            // rust-analyzer normalises the drive letter to lower case
+            // (`file:///c:/…`) while the client builds `file:///C:/…`, so an
+            // exact string compare would never see its own document.
+            if value["method"] == "textDocument/publishDiagnostics"
+                && value["params"]["uri"]
+                    .as_str()
+                    .is_some_and(|published| published.eq_ignore_ascii_case(uri))
             {
                 return Ok(value["params"]["diagnostics"].take());
             }
