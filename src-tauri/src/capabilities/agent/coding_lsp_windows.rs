@@ -280,6 +280,66 @@ fn write_reviewed_rust_project(snapshot: &Path) -> Result<PathBuf, String> {
     Ok(project_path)
 }
 
+/// Validate the reviewed project graph before giving it to rust-analyzer.
+/// Pass it inline at initialize time rather than asking a lowbox file watcher
+/// to re-open a generated manifest by path. This removes one mutable watch
+/// target and makes it impossible to silently fall back to Cargo discovery
+/// when rust-project.json itself cannot be opened.
+fn reviewed_project_for_initialize(snapshot: &Path) -> Result<Value, String> {
+    let manifest = snapshot.join("rust-project.json");
+    no_reparse(&manifest)?;
+    let metadata = fs::symlink_metadata(&manifest)
+        .map_err(|_| "LSP_PROJECT_MISSING")?;
+    if !metadata.is_file()
+        || metadata.file_attributes() & REPARSE != 0
+        || metadata.len() > MAX_FRAME as u64
+    {
+        return Err("LSP_PROJECT_INVALID".into());
+    }
+    let bytes = crate::capabilities::workspace::safe_paths::read_regular(
+        &manifest, &[snapshot.to_path_buf()], MAX_FRAME,
+    ).map_err(|_| "LSP_PROJECT_READ_DENIED")?;
+    let graph: Value = serde_json::from_slice(&bytes)
+        .map_err(|_| "LSP_PROJECT_INVALID")?;
+    // The generated graph is a data description, never an instruction to
+    // run arbitrary build commands. Discard any unexpected top-level keys
+    // (including runnables, sysroot paths and external build actions).
+    if graph.as_object().is_none_or(|fields|
+        fields.len() != 1 || !fields.contains_key("crates")
+    ) {
+        return Err("LSP_PROJECT_INVALID".into());
+    }
+    let crates = graph["crates"].as_array().ok_or("LSP_PROJECT_INVALID")?;
+    if crates.is_empty() || crates.len() > 32 {
+        return Err("LSP_PROJECT_ROOT_LIMIT".into());
+    }
+    let reviewed_root = snapshot.canonicalize()
+        .map_err(|_| "LSP_SNAPSHOT_PATH_INVALID")?;
+    for krate in crates {
+        let fields = krate.as_object().ok_or("LSP_PROJECT_INVALID")?;
+        if fields.keys().any(|name| ![
+            "display_name", "root_module", "edition", "deps", "cfg",
+            "env", "is_proc_macro", "is_workspace_member",
+        ].contains(&name.as_str()))
+            || krate["deps"].as_array().is_none_or(|deps| !deps.is_empty())
+            || krate["env"].as_object().is_none_or(|env| !env.is_empty())
+            || krate["cfg"].as_array().is_none_or(|cfg| !cfg.is_empty())
+            || krate["is_proc_macro"] != false
+            || krate["is_workspace_member"] != true
+        {
+            return Err("LSP_PROJECT_INVALID".into());
+        }
+        let path = krate["root_module"].as_str().ok_or("LSP_PROJECT_INVALID")?;
+        let source = Path::new(path);
+        no_reparse(source)?;
+        let real = source.canonicalize().map_err(|_| "LSP_PROJECT_SOURCE_MISSING")?;
+        if !real.starts_with(&reviewed_root) || !real.is_file() {
+            return Err("LSP_PROJECT_SOURCE_OUTSIDE_SNAPSHOT".into());
+        }
+    }
+    Ok(graph)
+}
+
 struct SnapshotBudget {
     files: usize,
     bytes: usize,
@@ -597,11 +657,7 @@ impl Session {
         // A reviewed rust-project.json is created before locking snapshot ACLs.
         // This intentionally provides IDE/syntax semantics without Cargo
         // dependency resolution, build scripts or compilation claims.
-        let project_path = snapshot.join("rust-project.json");
-        if !project_path.is_file() {
-            return Err("LSP_PROJECT_MISSING".into());
-        }
-        let project_file = project_path.to_str().ok_or("LSP_PROJECT_PATH_INVALID")?;
+        let reviewed_graph = reviewed_project_for_initialize(&snapshot)?;
         let environment: Vec<(String, String)> = Vec::new();
         // Do not reintroduce the retired --no-proc-macro CLI flag: use LSP
         // initialization options to disable proc macros and check-on-save.
@@ -671,10 +727,15 @@ impl Session {
         };
         let root_uri = uri_for(&session.snapshot)?;
         let init = session.rpc_next("initialize", json!({
-            "processId":null,"rootUri":root_uri,
+            "processId":null,
+            "rootUri":root_uri.clone(),
+            "workspaceFolders":[{"uri":root_uri,"name":"reviewed-snapshot"}],
             "capabilities":{"textDocument":{"synchronization":{},"publishDiagnostics":{},"definition":{},"references":{},"hover":{},"completion":{},"documentSymbol":{}}},
             "initializationOptions":{
-                "linkedProjects":[project_file],
+                // rust-analyzer accepts inline rust-project.json graphs.
+                // A file-path entry triggered file-watcher errors on the
+                // isolated Windows profile even when the host file existed.
+                "linkedProjects":[reviewed_graph],
                 "cargo":{"sysroot":null,"autoreload":false,"buildScripts":{"enable":false}},
                 "procMacro":{"enable":false},
                 "checkOnSave":{"enable":false},
@@ -858,6 +919,14 @@ impl Session {
     fn describe_error(&self, error: String) -> String {
         #[cfg(test)]
         {
+            let project = self.snapshot.join("rust-project.json");
+            let source = self.snapshot.join("src/lib.rs");
+            eprintln!(
+                "LSP_SNAPSHOT_HOST_STATE root_dir={} project_file={} source_file={}",
+                self.snapshot.is_dir(), project.is_file(), source.is_file()
+            );
+            eprintln!("LSP_SNAPSHOT_ROOT_ACES={}", tests::snapshot_acl_for_test(&self.snapshot));
+            eprintln!("LSP_SNAPSHOT_PROJECT_ACES={}", tests::snapshot_acl_for_test(&project));
             format!(
                 "{error} exit={:?} stderr={:?}",
                 self.process.exit_code(),
@@ -1560,12 +1629,21 @@ mod tests {
         Ok((exit, String::from_utf8_lossy(&bytes).into_owned()))
     }
 
-    fn read_private_file_in_profile(
-        profile: SandboxProfile, file: &Path,
-    ) -> Result<(u32, String), String> {
-        run_private_command_in_profile(
-            profile, format!("type \"{}\"", file.display())
-        )
+    /// Only emit ACEs for the private snapshot's package SID in test logs;
+    /// the public path/user profile is deliberately omitted from output.
+    pub(super) fn snapshot_acl_for_test(path: &Path) -> String {
+        let Ok(icacls) = system_icacls() else {
+            return "icacls-unavailable".into();
+        };
+        match std::process::Command::new(icacls).arg(path).output() {
+            Ok(out) => String::from_utf8_lossy(&out.stdout).lines()
+                .skip(1)
+                .filter(|line| line.contains("S-1-15-2") || line.contains("(RX)"))
+                .take(12)
+                .map(str::trim)
+                .collect::<Vec<_>>().join(" | "),
+            Err(_) => "icacls-execution-failed".into()
+        }
     }
 
     #[test]
@@ -1595,10 +1673,21 @@ mod tests {
             "other package should read only its own copy: {other_text}");
         assert_ne!(other_exit, 0,
             "unrelated package unexpectedly read owner source: {other_text}");
+        let own_project = copy.join("rust-project.json");
+        let own_command = format!(
+            "type \"{}\" & type \"{}\"",
+            copied_file.display(), own_project.display()
+        );
         let (owner_exit, owner_text) =
-            read_private_file_in_profile(owner, &copied_file).expect("owner profile launched");
-        assert_eq!(owner_exit, 0, "owner AppContainer cannot read its source");
+            run_private_command_in_profile(owner, own_command)
+                .expect("owner profile launched to read source and project graph");
+        assert_eq!(owner_exit, 0,
+            "own lowbox could not read source/manifest: {owner_text}\n\
+             project ACL={}",
+            snapshot_acl_for_test(&own_project));
         assert!(owner_text.contains("private_snapshot_marker"));
+        assert!(owner_text.contains("root_module"),
+            "own lowbox could not open reviewed project graph");
 
         // Verify the authorized AppContainer does not retain directory
         // Modify rights from the old cargo-metadata snapshot contract.
@@ -1610,12 +1699,64 @@ mod tests {
         let (write_exit, _) = run_private_command_in_profile(writer, write)
             .expect("spawn lowbox denied-write fixture");
         assert_ne!(write_exit, 0, "AppContainer unexpectedly modified a source file");
-        assert_eq!(fs::read(source_file).unwrap(), before,
+        assert_eq!(fs::read(&source_file).unwrap(), before,
             "host-owned snapshot bytes changed under sandbox token");
+        // Directory create and overwrite are independent Windows ACL rights.
+        // A read-only source directory must not permit creating new files.
+        let create = read_only_copy.join("src/unreviewed-created.rs");
+        // The writer profile was consumed by the first probe. Use a separate
+        // profile and its own private source copy for the create-negative check.
+        let second_writer = SandboxProfile::create().expect("create-negative profile");
+        let second_copy = snapshot(&root, &second_writer)
+            .expect("read-only create-negative copy");
+        let second_create = second_copy.join("src/unreviewed-created.rs");
+        let (create_exit, _) = run_private_command_in_profile(
+            second_writer, format!("echo injected > \"{}\"", second_create.display())
+        ).expect("spawn lowbox create-negative fixture");
+        assert_ne!(create_exit, 0, "AppContainer created a new source file");
+        assert!(!second_create.exists(), "unauthorized snapshot file was created");
+        assert!(!create.exists(), "unreviewed source file exists in the first copy");
         assert!(fs::read_to_string(root.join("src/lib.rs")).unwrap()
             .contains("private_snapshot_marker"),
             "the real host workspace was modified by sandbox operation");
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn project_initialize_graph_is_inline_and_refuses_external_roots() {
+        let root = std::env::temp_dir().join(format!(
+            "browseros-lsp-inline-{}", uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/lib.rs"), "pub fn local_symbol() {}\n").unwrap();
+        let manifest = write_reviewed_rust_project(&root).unwrap();
+        let accepted = reviewed_project_for_initialize(&root).unwrap();
+        assert_eq!(accepted["crates"].as_array().unwrap().len(), 1);
+        assert!(accepted["crates"][0]["root_module"].as_str().unwrap()
+            .ends_with("src\\lib.rs"));
+        // The host may have altered the generated manifest after snapshot
+        // creation; it must not inject a new unreviewed file in the LSP graph.
+        let outside = root.parent().unwrap().join(format!(
+            "browseros-lsp-unreviewed-{}.rs", uuid::Uuid::new_v4()
+        ));
+        fs::write(&outside, "pub fn secret() {}\n").unwrap();
+        let mut runnable = accepted.clone();
+        runnable["runnables"] = json!([{
+            "program":"cmd.exe", "args":["/c","echo insecure"], "kind":"flycheck"
+        }]);
+        fs::write(&manifest, serde_json::to_vec(&runnable).unwrap()).unwrap();
+        assert_eq!(reviewed_project_for_initialize(&root).unwrap_err(),
+            "LSP_PROJECT_INVALID");
+        let mut hostile = accepted;
+        hostile["crates"][0]["root_module"] =
+            json!(outside.to_str().unwrap());
+        fs::write(&manifest, serde_json::to_vec(&hostile).unwrap()).unwrap();
+        assert_eq!(
+            reviewed_project_for_initialize(&root).unwrap_err(),
+            "LSP_PROJECT_SOURCE_OUTSIDE_SNAPSHOT"
+        );
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_file(outside).unwrap();
     }
 
     #[test]

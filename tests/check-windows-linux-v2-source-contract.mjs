@@ -258,7 +258,14 @@ assert.match(v2Workflow, /Get-FileHash -LiteralPath .* -Algorithm SHA256/);
 // instead of requiring rust-analyzer to spawn Cargo/rustc through forbidden
 // lowbox NUL device access. This is IDE analysis, not compiled diagnostics.
 assert.match(windowsLsp, /fn write_reviewed_rust_project/);
-assert.match(windowsLsp, /"linkedProjects":\[project_file\]/);
+assert.match(windowsLsp, /fn reviewed_project_for_initialize/);
+assert.match(windowsLsp, /project_initialize_graph_is_inline_and_refuses_external_roots/);
+assert.match(windowsLsp, /LSP_PROJECT_SOURCE_OUTSIDE_SNAPSHOT/);
+assert.match(windowsLsp, /LSP_SNAPSHOT_HOST_STATE/);
+assert.match(windowsLsp, /LSP_SNAPSHOT_ROOT_ACES/);
+assert.match(windowsLsp, /own lowbox could not read source\/manifest/);
+
+assert.match(windowsLsp, /"linkedProjects":\[reviewed_graph\]/);
 assert.match(windowsLsp, /"sysroot":null/);
 assert.match(windowsLsp, /reviewed_rust_project_requires_local_sources_and_excludes_cargo_spawns/);
 assert.match(windowsLsp, /private_snapshot_requires_own_package_sid_and_rejects_other_profiles/);
@@ -287,7 +294,7 @@ const nativeLspStart = windowsLsp.slice(
   windowsLsp.indexOf('fn start_with_snapshot('),
   windowsLsp.indexOf('fn reset_deadline(')
 );
-assert.match(nativeLspStart, /"linkedProjects":\[project_file\]/);
+assert.match(nativeLspStart, /"linkedProjects":\[reviewed_graph\]/);
 assert.doesNotMatch(nativeLspStart, /stage_runtime_peer\(/);
 assert.match(windowsLsp, /"HOVER",/);
 assert.match(windowsLsp, /"DEFINITION",/);
