@@ -272,7 +272,7 @@ assert.match(windowsLsp, /"linkedProjects":\[reviewed_graph\]/);
 assert.match(windowsLsp, /"sysroot":null/);
 assert.match(windowsLsp, /reviewed_rust_project_requires_local_sources_and_excludes_cargo_spawns/);
 assert.match(windowsLsp, /private_snapshot_requires_own_package_sid_and_rejects_other_profiles/);
-assert.match(windowsLsp, /standalone lowbox source file read failed/);
+assert.match(windowsLsp, /own lowbox source file read failed/);
 assert.match(windowsLsp, /snapshot_acl_for_test/);
 
 const sandboxedLspStart = windowsLsp.slice(
