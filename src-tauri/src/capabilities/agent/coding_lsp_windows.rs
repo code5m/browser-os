@@ -1658,6 +1658,31 @@ mod tests {
         fs::write(root.join("Cargo.toml"),
             "[package]\nname='private_snapshot'\nversion='0.1.0'\nedition='2024'\n").unwrap();
         fs::write(root.join("src/lib.rs"), "pub fn private_snapshot_marker() {}\n").unwrap();
+        // Separate native smoke controls distinguish shell parsing, private
+        // writable state, and read-only snapshot ACL. A failed "type" command
+        // alone is not evidence that the snapshot bytes were never created.
+        let command_profile = SandboxProfile::create().expect("cmd smoke profile");
+        let (shell_exit, shell_out, shell_error) =
+            run_private_command_in_profile(
+                command_profile, "echo __BOS_LOWBOX_SHELL_OK__".into()
+            ).expect("cmd smoke launched inside AppContainer");
+        assert_eq!(shell_exit, 0,
+            "SANDBOX_SHELL_CONTROL_FAILED stderr={shell_error}");
+        assert!(shell_out.contains("__BOS_LOWBOX_SHELL_OK__"),
+            "SANDBOX_SHELL_CONTROL_MISSING_OUTPUT");
+        let state_profile = SandboxProfile::create().expect("state read profile");
+        let state = state_profile.state_dir().expect("writable lowbox state");
+        let state_file = state.join("state-read-control.txt");
+        fs::write(&state_file, b"__BOS_LOWBOX_STATE_READ_OK__")
+            .expect("write sandbox state fixture");
+        let (state_exit, state_out, state_error) =
+            run_private_command_in_profile(state_profile,
+                format!("type \"{}\"", state_file.display()))
+                .expect("state read control launched");
+        assert_eq!(state_exit, 0,
+            "SANDBOX_STATE_READ_FAILED stderr={state_error}");
+        assert!(state_out.contains("__BOS_LOWBOX_STATE_READ_OK__"),
+            "SANDBOX_STATE_READ_MISSING_OUTPUT");
         let owner = SandboxProfile::create().expect("owner AppContainer profile");
         let copy = snapshot(&root, &owner).expect("private source copy ACL");
         let copied_file = copy.join("src/lib.rs");
@@ -1671,7 +1696,8 @@ mod tests {
                 baseline, format!("type \"{}\"", baseline_file.display())
             ).expect("standalone lowbox source read launched");
         assert_eq!(baseline_exit, 0,
-            "own lowbox source file read failed: stdout={baseline_out} stderr={baseline_error}; dir ACL={}, file ACL={}",
+            "own lowbox source file read failed: stdout={baseline_out} stderr={baseline_error}; verbatim={} dir ACL={}, file ACL={}",
+            baseline_file.to_string_lossy().starts_with(r"\\?\"),
             snapshot_acl_for_test(&baseline_copy),
             snapshot_acl_for_test(&baseline_file));
         assert!(baseline_out.contains("private_snapshot_marker"),

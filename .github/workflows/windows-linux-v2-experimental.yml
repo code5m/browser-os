@@ -184,6 +184,7 @@ jobs:
           if ($config.bundle.targets[0] -ne 'nsis' -or $config.bundle.windows.nsis.installMode -ne 'currentUser') { throw 'NSIS config invalid' }
           node tests/check-windows-linux-v2-source-contract.mjs
       - name: 'Windows native compile (experimental: do not hide failure)'
+        id: windows_native_compile
         shell: pwsh
         run: |
           $output = cargo check --manifest-path src-tauri/Cargo.toml --locked --message-format short 2>&1 | Out-String
@@ -332,18 +333,22 @@ jobs:
             throw "Windows native matrix failed $($failed.Count)/$($nativeTests.Count) checks"
           }
       - name: Windows WebView2 profile ACL regression
-        if: github.event_name == 'workflow_dispatch'
+        if: ${{ always() && !cancelled() && steps.windows_native_compile.outcome == 'success' }}
         shell: pwsh
         run: |
           cargo test --manifest-path tauri-browser-tabs/Cargo.toml `
             -p tauri-plugin-browser-tabs --lib `
             windows_profile_acl_contains_only_current_user_and_system -- --test-threads=1
-      - name: Build release NSIS after successful Windows compilation
-        if: github.event_name == 'workflow_dispatch'
+      # Produce a diagnostic installation artifact on the feature branch even
+      # if the full native suite fails; do not publish it as a release.
+      - name: Build experimental NSIS (UNVERIFIED if native tests are red)
+        id: nsis_build
+        if: ${{ always() && !cancelled() && steps.windows_native_compile.outcome == 'success' }}
         shell: pwsh
         run: npx tauri build --bundles nsis --ci
       - name: Generate and verify NSIS SHA256SUMS
-        if: github.event_name == 'workflow_dispatch' && success()
+        id: nsis_hashes
+        if: ${{ always() && !cancelled() && steps.nsis_build.outcome == 'success' }}
         shell: pwsh
         run: |
           $bundle = 'src-tauri/target/release/bundle/nsis'
@@ -365,11 +370,11 @@ jobs:
               throw "NSIS_HASH_VERIFICATION_FAILED: $($installer.Name)"
             }
           }
-      - name: Upload NSIS installer and hashes
-        if: github.event_name == 'workflow_dispatch' && success()
+      - name: Upload NSIS experimental installer and hashes
+        if: ${{ always() && !cancelled() && steps.nsis_hashes.outcome == 'success' }}
         uses: actions/upload-artifact@v4
         with:
-          name: browseros-windows-nsis-${{ github.sha }}
+          name: browseros-windows-nsis-UNVERIFIED-${{ github.sha }}
           path: src-tauri/target/release/bundle/nsis/*
           if-no-files-found: error
           retention-days: 7

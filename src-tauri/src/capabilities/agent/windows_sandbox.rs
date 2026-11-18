@@ -269,7 +269,10 @@ impl SandboxProfile {
 
     pub fn state_dir(&self) -> Result<PathBuf, String> {
         let state = self.folder.join("state");
-        std::fs::create_dir(&state).map_err(|_| "SANDBOX_STATE_CREATE")?;
+        // Repeated state access within a single profile must not fail merely
+        // because the same private directory was initialized previously.
+        // grant_private_directory rechecks reparse safety on each use.
+        std::fs::create_dir_all(&state).map_err(|_| "SANDBOX_STATE_CREATE")?;
         self.grant_private_directory(&state)?;
         Ok(state)
     }
