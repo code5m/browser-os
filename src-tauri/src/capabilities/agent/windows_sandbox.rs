@@ -286,12 +286,17 @@ impl SandboxProfile {
             .arg(format!("*{user}:(OI)(CI)F"))
             .arg("*S-1-5-18:(OI)(CI)F")
             .arg(format!("*{}:(OI)(CI)M", self.sid_string))
-            .arg("/T")
             .output()
             .map_err(|_| "SANDBOX_STATE_ACL")?;
         if !output.status.success() {
             return Err("SANDBOX_STATE_ACL".into());
         }
+        // `icacls /T` combined with inheritance flags is not equivalent: it
+        // strips the inherited package ACE from existing children and never
+        // applies an (OI)/(CI) spec to files, so a re-used state directory
+        // left its files unreadable by the lowbox. Existing descendants get
+        // the package ACE explicitly instead.
+        self.grant_existing_tree(directory, "M")?;
         Ok(())
     }
     pub fn snapshot_dir(&self) -> Result<PathBuf, String> {
@@ -460,14 +465,18 @@ impl SandboxProfile {
         // image file itself: icacls recursion and inherited ACE flags differ
         // between files and directories. Pin read/execute directly onto every
         // staged file so CreateProcessW can map the image in the lowbox.
-        self.protect_staged_files(&directory)?;
+        self.protect_existing_files(&directory, "RX")?;
         // Pin the original executable name to a newly staged read-only file.
         // Access to the private runtime tree must not depend on writable state.
         no_reparse_path(&staged)?;
         Ok(staged)
     }
 
-    fn protect_staged_files(&self, directory: &Path) -> Result<(), String> {
+    /// Grant an explicit ACE to every file already present in a directory.
+    /// Inheritance covers files created later; this covers the files that
+    /// existed before the directory DACL was replaced, because a stale
+    /// inherited ACE is removed with the parent rewrite.
+    fn protect_existing_files(&self, directory: &Path, package_perm: &str) -> Result<(), String> {
         let icacls = system_binary("icacls.exe")?;
         let user = current_user_sid()?;
         let entries = std::fs::read_dir(directory).map_err(|_| "SANDBOX_RUNTIME_STAGE_FAILED")?;
@@ -482,11 +491,27 @@ impl SandboxProfile {
                 .args(["/inheritance:r", "/grant:r"])
                 .arg(format!("*{user}:F"))
                 .arg("*S-1-5-18:F")
-                .arg(format!("*{}:RX", self.sid_string))
+                .arg(format!("*{}:{package_perm}", self.sid_string))
                 .output()
                 .map_err(|_| "SANDBOX_RUNTIME_FILE_ACL")?;
             if !output.status.success() {
                 return Err("SANDBOX_RUNTIME_FILE_ACL".into());
+            }
+        }
+        Ok(())
+    }
+
+    /// Apply the package ACE to every existing file below `root`.
+    fn grant_existing_tree(&self, root: &Path, package_perm: &str) -> Result<(), String> {
+        let mut pending = vec![root.to_path_buf()];
+        while let Some(directory) = pending.pop() {
+            no_reparse_path(&directory)?;
+            self.protect_existing_files(&directory, package_perm)?;
+            for entry in std::fs::read_dir(&directory).map_err(|_| "SANDBOX_STATE_ACL")? {
+                let path = entry.map_err(|_| "SANDBOX_STATE_ACL")?.path();
+                if path.is_dir() {
+                    pending.push(path);
+                }
             }
         }
         Ok(())
@@ -558,7 +583,7 @@ impl SandboxProfile {
             if !output.status.success() {
                 return Err("SANDBOX_SNAPSHOT_ACL".into());
             }
-            self.protect_staged_files(&directory)?;
+            self.protect_existing_files(&directory, "RX")?;
             for entry in std::fs::read_dir(&directory).map_err(|_| "SANDBOX_SNAPSHOT_ACL")? {
                 let path = entry.map_err(|_| "SANDBOX_SNAPSHOT_ACL")?.path();
                 if path.is_dir() {
@@ -579,12 +604,15 @@ impl SandboxProfile {
             .arg(format!("*{user}:(OI)(CI)F"))
             .arg("*S-1-5-18:(OI)(CI)F")
             .arg(format!("*{}:(OI)(CI)RX", self.sid_string))
-            .arg("/T")
             .output()
             .map_err(|_| "SANDBOX_SNAPSHOT_ACL")?;
         if !output.status.success() {
             return Err("SANDBOX_SNAPSHOT_ACL".into());
         }
+        // `/T` would strip the package ACE that existing files inherited from
+        // the pre-existing snapshot directory and never re-add it, because
+        // (OI)/(CI) specs do not apply to files. Grant the tree explicitly.
+        self.protect_snapshot_files(snapshot)?;
         Ok(())
     }
 

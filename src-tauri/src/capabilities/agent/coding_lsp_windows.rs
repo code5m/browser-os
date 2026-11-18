@@ -1633,6 +1633,13 @@ mod tests {
             process.profile().stderr_for_test()))
     }
 
+    /// `cmd.exe` cannot resolve a verbatim `\\?\` path, so lowbox shell
+    /// probes must use the plain form of the same private file.
+    fn plain_path_for_shell(path: &Path) -> String {
+        let text = path.to_string_lossy().into_owned();
+        text.strip_prefix(r"\\?\").map(str::to_owned).unwrap_or(text)
+    }
+
     /// Only emit ACEs for the private snapshot's package SID in test logs;
     /// the public path/user profile is deliberately omitted from output.
     pub(super) fn snapshot_acl_for_test(path: &Path) -> String {
@@ -1677,10 +1684,11 @@ mod tests {
             .expect("write sandbox state fixture");
         let (state_exit, state_out, state_error) =
             run_private_command_in_profile(state_profile,
-                format!("type \"{}\"", state_file.display()))
+                format!("type \"{}\"", plain_path_for_shell(&state_file)))
                 .expect("state read control launched");
         assert_eq!(state_exit, 0,
-            "SANDBOX_STATE_READ_FAILED stderr={state_error}");
+            "SANDBOX_STATE_READ_FAILED stderr={state_error} dirACL={} fileACL={}",
+            snapshot_acl_for_test(&state), snapshot_acl_for_test(&state_file));
         assert!(state_out.contains("__BOS_LOWBOX_STATE_READ_OK__"),
             "SANDBOX_STATE_READ_MISSING_OUTPUT");
         let owner = SandboxProfile::create().expect("owner AppContainer profile");
@@ -1693,7 +1701,7 @@ mod tests {
         let baseline_file = baseline_copy.join("src/lib.rs");
         let (baseline_exit, baseline_out, baseline_error) =
             run_private_command_in_profile(
-                baseline, format!("type \"{}\"", baseline_file.display())
+                baseline, format!("type \"{}\"", plain_path_for_shell(&baseline_file))
             ).expect("standalone lowbox source read launched");
         assert_eq!(baseline_exit, 0,
             "own lowbox source file read failed: stdout={baseline_out} stderr={baseline_error}; verbatim={} dir ACL={}, file ACL={}",
