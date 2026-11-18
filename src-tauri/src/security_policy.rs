@@ -401,37 +401,71 @@ pub fn check_webview_label(label: &str) -> Result<(), PolicyError> {
 /// case-insensitive, and an allowed root may itself live behind a junction.
 /// Comparing components with a case-insensitive match after canonicalizing
 /// both sides is the only form that agrees with the filesystem.
+/// Normalize a Windows verbatim prefix for component-wise comparisons.
+/// Never perform lossy UTF-16 replacement when deciding authorization.
 fn strip_verbatim(path: &std::path::Path) -> PathBuf {
-    let text = path.to_string_lossy();
-    match text.strip_prefix(r"\\?\") {
-        Some(rest) if !rest.starts_with("UNC") => PathBuf::from(rest),
-        _ => path.to_path_buf(),
+    #[cfg(windows)]
+    {
+        let Some(text) = path.as_os_str().to_str() else {
+            return path.to_path_buf();
+        };
+        // Windows UNC canonicalization produces \\?\UNC\server\share.
+        if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+            return PathBuf::from(format!(r"\\{rest}"));
+        }
+        if let Some(rest) = text.strip_prefix(r"\\?\") {
+            return PathBuf::from(rest);
+        }
     }
+    path.to_path_buf()
 }
 
-pub(crate) fn canonical_root(root: &std::path::Path) -> PathBuf {
-    strip_verbatim(&std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()))
+/// An unreadable or missing allowed root must never become a lexical grant.
+/// Each valid root may independently grant access; invalid roots grant none.
+pub(crate) fn canonical_root(root: &std::path::Path) -> std::io::Result<PathBuf> {
+    std::fs::canonicalize(root).map(|resolved| strip_verbatim(&resolved))
+}
+
+fn same_component(a: &std::ffi::OsStr, b: &std::ffi::OsStr) -> bool {
+    #[cfg(windows)]
+    {
+        // Accept ordinary case differences in Windows paths; non-Unicode
+        // components are only accepted if their exact OS representation agrees.
+        a == b || a.to_str().zip(b.to_str())
+            .is_some_and(|(left, right)| left.eq_ignore_ascii_case(right))
+    }
+    #[cfg(not(windows))]
+    {
+        // Linux is normally case-sensitive. Comparing lossy UTF-8 renderings
+        // also merges distinct undecodable file names: use OsStr identity.
+        a == b
+    }
 }
 
 pub(crate) fn within_root(path: &std::path::Path, root: &std::path::Path) -> bool {
     let path = strip_verbatim(path);
     let root = strip_verbatim(root);
+    if !path.is_absolute() || !root.is_absolute() {
+        return false;
+    }
+    if path.components().any(|component|
+        matches!(component, std::path::Component::ParentDir)
+    ) || root.components().any(|component|
+        matches!(component, std::path::Component::ParentDir)
+    ) {
+        return false;
+    }
     let mut remaining = path.components();
     for expected in root.components() {
         match remaining.next() {
-            Some(actual)
-                if actual
-                    .as_os_str()
-                    .to_string_lossy()
-                    .eq_ignore_ascii_case(&expected.as_os_str().to_string_lossy()) => {}
+            Some(actual) if same_component(actual.as_os_str(), expected.as_os_str()) => {}
             _ => return false,
         }
     }
     true
 }
 
-/// 判定两条路径是否指向同一个位置（含 `\\?\` 前缀、大小写与 junction 的
-/// 差异）。删除守卫必须用它，`PathBuf == PathBuf` 在 Windows 上永远不成立。
+/// Equality of canonical paths (not a replacement for handle identity).
 pub(crate) fn same_path(a: &std::path::Path, b: &std::path::Path) -> bool {
     within_root(a, b) && within_root(b, a)
 }
@@ -455,7 +489,7 @@ pub fn check_path_within_roots(path: &str, roots: &[PathBuf]) -> Result<PathBuf,
                 let resolved = target
                     .canonicalize()
                     .unwrap_or_else(|_| ancestor.to_path_buf());
-                if !roots.iter().any(|root| within_root(&resolved, &canonical_root(root))) {
+                if !roots.iter().any(|root| canonical_root(root).is_ok_and(|trusted| within_root(&resolved, &trusted))) {
                     return Err(PolicyError::SymlinkEscape {
                         path: path.to_string(),
                         target: resolved.display().to_string(),
@@ -465,7 +499,9 @@ pub fn check_path_within_roots(path: &str, roots: &[PathBuf]) -> Result<PathBuf,
         }
     }
 
-    let in_roots = roots.iter().any(|root| within_root(&canonical, &canonical_root(root)));
+    let in_roots = roots.iter().any(|root|
+        canonical_root(root).is_ok_and(|trusted| within_root(&canonical, &trusted))
+    );
     if in_roots {
         Ok(canonical)
     } else {
@@ -478,7 +514,9 @@ pub fn check_path_within_roots(path: &str, roots: &[PathBuf]) -> Result<PathBuf,
 
 /// 判断规范化后的路径是否落在允许根目录内（供调用方在已有 canonical 路径时复用）。
 pub fn is_within_roots(canonical: &std::path::Path, roots: &[PathBuf]) -> bool {
-    roots.iter().any(|root| within_root(canonical, &canonical_root(root)))
+    roots.iter().any(|root|
+        canonical_root(root).is_ok_and(|trusted| within_root(canonical, &trusted))
+    )
 }
 
 /// 校验单个路径分量（文件名/新名称）：拒绝 `.`/`..`、分隔符与 NUL。
@@ -505,7 +543,8 @@ pub fn check_delete_target(path: &str, roots: &[PathBuf]) -> Result<PathBuf, Pol
     let canonical = check_path_within_roots(path, roots)?;
     if roots
         .iter()
-        .any(|root| same_path(&canonical, &canonical_root(root)))
+        .any(|root| canonical_root(root)
+            .is_ok_and(|trusted| same_path(&canonical, &trusted)))
     {
         return Err(PolicyError::RefuseToDeleteRoot {
             path: canonical.display().to_string(),
@@ -1458,6 +1497,53 @@ mod security_policy_tests {
             .expect("允许根目录内的路径应放行");
         assert!(within_root(&resolved, &root));
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_differently_cased_sibling_never_inherits_workspace_access() {
+        let root = temp_root("case-sensitive-root");
+        let sibling_name = root.file_name().unwrap().to_string_lossy().to_ascii_uppercase();
+        let sibling = root.with_file_name(sibling_name);
+        assert_ne!(root, sibling);
+        fs::create_dir_all(&sibling).unwrap();
+        let secret = sibling.join("private.txt");
+        fs::write(&secret, b"outside").unwrap();
+        let allowed = vec![root.clone()];
+        let resolved = secret.canonicalize().unwrap();
+        assert!(!within_root(&resolved, &root));
+        assert!(!is_within_roots(&resolved, &allowed));
+        assert!(matches!(
+            check_path_within_roots(secret.to_str().unwrap(), &allowed),
+            Err(PolicyError::PathOutsideAllowedRoots { .. })
+        ));
+        assert!(check_delete_target(secret.to_str().unwrap(), &allowed).is_err());
+        fs::remove_dir_all(&sibling).unwrap();
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn unresolved_root_grants_nothing_even_if_lexical_path_matches() {
+        let base = temp_root("missing-allowed-root");
+        let missing = base.join("missing");
+        let file = base.join("a.txt");
+        fs::write(&file, "x").unwrap();
+        assert!(canonical_root(&missing).is_err());
+        assert!(!is_within_roots(&file, &[missing.clone()]));
+        assert!(check_path_within_roots(
+            file.to_str().unwrap(), &[missing]
+        ).is_err());
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn non_utf8_linux_names_do_not_merge_in_root_matching() {
+        use std::os::unix::ffi::OsStringExt;
+        let root = PathBuf::from("/tmp");
+        let left = root.join(std::ffi::OsString::from_vec(vec![0x61, 0xff]));
+        let right = root.join(std::ffi::OsString::from_vec(vec![0x61, 0xfe]));
+        assert!(!same_path(&left, &right));
     }
 
     #[test]

@@ -6,7 +6,7 @@
 use crate::windows_process::{JobObject, CREATE_SUSPENDED};
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::os::windows::fs::MetadataExt;
 use std::os::windows::fs::OpenOptionsExt;
@@ -332,9 +332,12 @@ impl SandboxProfile {
             .and_then(|name| name.to_str())
             .unwrap_or("")
             .to_ascii_lowercase();
-        if canonical.parent() == Some(system32_dir.as_path())
-            && ["cmd.exe", "curl.exe"].contains(&name.as_str())
-        {
+        // Token inspection uses the genuine System32 whoami.exe.
+        // Production System32 bypass policy stays restricted to cmd/curl.
+        let trusted = ["cmd.exe", "curl.exe"].contains(&name.as_str());
+        #[cfg(test)]
+        let trusted = trusted || name == "whoami.exe";
+        if canonical.parent() == Some(system32_dir.as_path()) && trusted {
             return Ok(canonical);
         }
         const MAX_RUNTIME_FILE: u64 = 256 * 1024 * 1024;
@@ -366,10 +369,35 @@ impl SandboxProfile {
                 // reused by later peers in the same private runtime. Only an
                 // identical, already-staged regular file is accepted.
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                    let existing =
-                        std::fs::metadata(to).map_err(|_| "SANDBOX_RUNTIME_STAGE_FAILED")?;
-                    if !existing.is_file() || existing.len() != metadata.len() {
+                    // Identical length is not proof of identical content.
+                    // Toolchain peers may ship same-sized, incompatible DLLs.
+                    no_reparse_path(to)?;
+                    let mut existing = OpenOptions::new()
+                        .read(true)
+                        .custom_flags(0x0020_0000)
+                        .open(to)
+                        .map_err(|_| "SANDBOX_RUNTIME_STAGE_CONFLICT")?;
+                    let current = existing.metadata()
+                        .map_err(|_| "SANDBOX_RUNTIME_STAGE_CONFLICT")?;
+                    if !current.is_file()
+                        || current.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+                        || current.len() != metadata.len()
+                    {
                         return Err("SANDBOX_RUNTIME_STAGE_CONFLICT".into());
+                    }
+                    let mut expected = [0u8; 64 * 1024];
+                    let mut actual = [0u8; 64 * 1024];
+                    let mut remaining = metadata.len();
+                    while remaining > 0 {
+                        let count = remaining.min(expected.len() as u64) as usize;
+                        source.read_exact(&mut expected[..count])
+                            .map_err(|_| "SANDBOX_RUNTIME_CHANGED_DURING_COPY")?;
+                        existing.read_exact(&mut actual[..count])
+                            .map_err(|_| "SANDBOX_RUNTIME_STAGE_CONFLICT")?;
+                        if expected[..count] != actual[..count] {
+                            return Err("SANDBOX_RUNTIME_STAGE_CONFLICT".into());
+                        }
+                        remaining -= count as u64;
                     }
                     return Ok(());
                 }

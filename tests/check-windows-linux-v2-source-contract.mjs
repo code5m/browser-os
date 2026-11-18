@@ -232,4 +232,26 @@ assert.doesNotMatch(imageStore, /fs::rename\(&tmp, &target\)/);
 assert.match(read('../src-tauri/src/native_58_gui_review.rs'), /NATIVE_58_GUI_REVIEW_LINUX_ONLY/);
 assert.match(read('../src-tauri/src/workbench_smoke.rs'), /WORKBENCH_NATIVE_SMOKE_LINUX_ONLY/);
 
+// Native path policy is platform-specific and unresolved roots never grant
+// access. A Linux case-variant sibling must never inherit an allowed root.
+assert.match(launchPolicy, /fn same_component/);
+assert.match(launchPolicy, /#\[cfg\(not\(windows\)\)\]/);
+assert.match(launchPolicy, /std::fs::canonicalize\(root\)\.map/);
+assert.match(launchPolicy, /linux_differently_cased_sibling_never_inherits_workspace_access/);
+assert.match(launchPolicy, /non_utf8_linux_names_do_not_merge_in_root_matching/);
+assert.match(gitStudio, /fn read_worktree_file/);
+assert.match(gitStudio, /case_variant_symlink_never_exposes_other_git_workspace/);
+assert.doesNotMatch(gitStudio, /fs::read_to_string\(file\)/);
+assert.doesNotMatch(gitStudio, /hash\.update\(fs::read\(path\)/);
+// Only the caller's AppContainer package SID may be added to a private LSP
+// snapshot. Never add S-1-15-2-1 to source files or parent directories.
+assert.doesNotMatch(windowsLsp, /const ALL_APP_PACKAGES/);
+assert.match(windowsLsp, /appcontainer-no-network-private-source-copy/);
+assert.match(windowsLsp, /LSP_CHILD_NULL_DEVICE_DENIED/);
+assert.match(windowsSandbox, /same-sized, incompatible DLLs/);
+assert.match(windowsSandbox, /existing\.read_exact\(&mut actual/);
+const v2Workflow = read('../.github/workflows/windows-linux-v2-experimental.yml');
+assert.match(v2Workflow, /Generate and verify NSIS SHA256SUMS/);
+assert.match(v2Workflow, /Get-FileHash -LiteralPath .* -Algorithm SHA256/);
+
 console.log('WINDOWS_LINUX_V2_SOURCE_CONTRACT=PASS (static-only, Windows GUI pending)');

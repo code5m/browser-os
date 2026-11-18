@@ -313,6 +313,29 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         shell: pwsh
         run: npx tauri build --bundles nsis --ci
+      - name: Generate and verify NSIS SHA256SUMS
+        if: github.event_name == 'workflow_dispatch' && success()
+        shell: pwsh
+        run: |
+          $bundle = 'src-tauri/target/release/bundle/nsis'
+          $installers = @(Get-ChildItem -LiteralPath $bundle -Filter '*.exe' -File)
+          if ($installers.Count -eq 0) { throw 'NSIS_INSTALLER_MISSING' }
+          $manifest = Join-Path $bundle 'SHA256SUMS.txt'
+          $lines = foreach ($installer in $installers) {
+            $digest = (Get-FileHash -LiteralPath $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$digest *$($installer.Name)"
+          }
+          [System.IO.File]::WriteAllLines(
+            (Join-Path (Get-Location).Path $manifest),
+            [string[]]$lines,
+            [System.Text.Encoding]::ASCII
+          )
+          foreach ($installer in $installers) {
+            $actual = (Get-FileHash -LiteralPath $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            if (-not ($lines -contains "$actual *$($installer.Name)")) {
+              throw "NSIS_HASH_VERIFICATION_FAILED: $($installer.Name)"
+            }
+          }
       - name: Upload NSIS installer and hashes
         if: github.event_name == 'workflow_dispatch' && success()
         uses: actions/upload-artifact@v4

@@ -1,4 +1,6 @@
-//! Windows Rust LSP in a no-network AppContainer with a read-only private snapshot.
+//! Windows Rust LSP in a no-network AppContainer with a private source copy.
+//! Cargo may create lock files inside this copy; it is not a read-only tree.
+//! The host workspace is not mounted or writable by the analyzer.
 #![cfg(windows)]
 
 use super::windows_sandbox::{SandboxChild, SandboxProcess, SandboxProfile, send_bounded};
@@ -266,24 +268,15 @@ fn snapshot(root: &Path, profile: &SandboxProfile) -> Result<PathBuf, String> {
     profile.protect_snapshot_files(&destination)?;
     Ok(destination)
 }
-/// `protect_snapshot` stores the lowbox grant as an inheritable
-/// `(OI)(CI)RX` entry on the snapshot directory. On Windows that does not
-/// reliably materialise as an explicit read right on files that already
-/// existed when the ACL was applied, so a sandboxed `cargo` reading the
-/// manifest failed with `Access is denied (os error 5)`. Pin `RX` directly
-/// onto every file, and grant traverse on the ancestors outside the snapshot.
-/// The grant is additive, so the owner and SYSTEM entries stay untouched.
+/// The isolated copy is accessible only to this AppContainer's package SID
+/// and the creating user/SYSTEM, never to ALL APPLICATION PACKAGES.
+/// Granting S-1-15-2-1 on both package ancestors and source files would make
+/// the private code readable to unrelated AppContainers in the same user
+/// session. The AppContainer package SID must be sufficient by itself; if
+/// Windows denies a required access, fail closed and report it instead of
+/// broadening the DACL to a machine-wide lowbox group.
 fn grant_snapshot_read(root: &Path, sid: &str) -> Result<(), String> {
     let icacls = system_icacls()?;
-    // An AppContainer lowbox token carries the package SID *and* the
-    // restricted SID `ALL APPLICATION PACKAGES` (S-1-15-2-1), and the access
-    // check requires the DACL to satisfy both SID sets. A snapshot granting
-    // only the package SID therefore still fails with "Access is denied
-    // (os error 5)" when cargo opens the manifest; the ACL dump proved the
-    // file carried exactly one package-SID ACE and nothing else.
-    const ALL_APP_PACKAGES: &str = "S-1-15-2-1";
-    // The `AC` container and the package profile directory are ancestors of
-    // the snapshot, so the recursive walk below can never reach them.
     let mut ancestors = Vec::new();
     if let Some(container) = root.parent() {
         ancestors.push(container.to_path_buf());
@@ -293,19 +286,16 @@ fn grant_snapshot_read(root: &Path, sid: &str) -> Result<(), String> {
     }
     for directory in ancestors {
         grant_entry(&icacls, &directory, &format!("*{sid}:RX"))?;
-        grant_entry(&icacls, &directory, &format!("*{ALL_APP_PACKAGES}:RX"))?;
     }
     let mut pending = vec![root.to_path_buf()];
     while let Some(directory) = pending.pop() {
+        grant_entry(&icacls, &directory, &format!("*{sid}:(OI)(CI)RX"))?;
         for entry in fs::read_dir(&directory).map_err(|_| "LSP_SNAPSHOT_ACL")? {
             let path = entry.map_err(|_| "LSP_SNAPSHOT_ACL")?.path();
             if path.is_dir() {
-                grant_entry(&icacls, &path, &format!("*{sid}:(OI)(CI)RX"))?;
-                grant_entry(&icacls, &path, &format!("*{ALL_APP_PACKAGES}:(OI)(CI)RX"))?;
                 pending.push(path);
             } else {
                 grant_entry(&icacls, &path, &format!("*{sid}:RX"))?;
-                grant_entry(&icacls, &path, &format!("*{ALL_APP_PACKAGES}:RX"))?;
             }
         }
     }
@@ -651,28 +641,34 @@ impl Session {
         self.last_used = Instant::now();
     }
     fn recv_frame(&self, timeout_error: &'static str) -> Result<Value, String> {
-        let fault = || {
-            self.reader_fault
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .clone()
-        };
-        if let Some(error) = fault() {
-            return Err(error);
-        }
-        let remaining = self.deadline.saturating_duration_since(Instant::now());
-        match self.reader.recv_timeout(remaining) {
-            Ok(value) => {
-                if let Some(error) = fault() {
-                    return Err(error);
+        let fault = || self.reader_fault
+            .lock().unwrap_or_else(|p| p.into_inner()).clone();
+        loop {
+            if let Some(error) = fault() { return Err(error); }
+            let remaining = self.deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(fault().unwrap_or_else(|| timeout_error.to_string()));
+            }
+            // A rust-analyzer child failing to open the Windows NUL device
+            // cannot be repaired by waiting longer for a notification.
+            // Test builds keep a capped stderr tail; production never exposes
+            // raw sandbox stderr or private file paths.
+            let wait = remaining.min(Duration::from_millis(500));
+            match self.reader.recv_timeout(wait) {
+                Ok(value) => {
+                    if let Some(error) = fault() { return Err(error); }
+                    return value;
                 }
-                value
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                Err(fault().unwrap_or_else(|| timeout_error.to_string()))
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                Err(fault().unwrap_or_else(|| "LSP_CLOSED".into()))
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    #[cfg(test)]
+                    if blocked_null_device_child(
+                        &self.process.profile().stderr_for_test()
+                    ) {
+                        return Err("LSP_CHILD_NULL_DEVICE_DENIED".into());
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) =>
+                    return Err(fault().unwrap_or_else(|| "LSP_CLOSED".into())),
             }
         }
     }
@@ -979,7 +975,7 @@ fn one_shot_document_request(root: &Path, request: &Value) -> Result<Value, Stri
         "document_hash":format!("{:x}", Sha256::digest(content.as_bytes())),
         "scope":scope,
         "compilation_verified":false,
-        "sandbox":"appcontainer-no-network-readonly-snapshot"
+        "sandbox":"appcontainer-no-network-private-source-copy"
     }))
 }
 
@@ -1060,7 +1056,7 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
                 "sandbox_available":sandbox_available,
                 "sandbox_verified":false,
                 "platform":"windows",
-                "isolation":"appcontainer-no-network-readonly-snapshot"
+                "isolation":"appcontainer-no-network-private-source-copy"
             }))
         }
         "lsp_start" => {
@@ -1088,7 +1084,7 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
             }
             drop(reservation);
             Ok(
-                json!({"session_id":id,"profile":"rust_analyzer","sandbox":"appcontainer-no-network-readonly-snapshot"}),
+                json!({"session_id":id,"profile":"rust_analyzer","sandbox":"appcontainer-no-network-private-source-copy"}),
             )
         }
         "lsp_request" => {
@@ -1211,9 +1207,26 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
     }
 }
 
+/// Rust std::process::Stdio::null on Windows opens \.\NUL for Cargo
+/// child stdin. This can fail in a lowbox even if directly spawned Cargo
+/// works. Do not change the global NUL device DACL or escape the AppContainer.
+#[cfg(test)]
+fn blocked_null_device_child(stderr: &str) -> bool {
+    stderr.contains("failed to open NUL device for child")
+        && (stderr.contains("Access is denied") || stderr.contains("os error 5"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn restricted_null_device_child_is_reported_without_raw_stderr() {
+        assert!(blocked_null_device_child(
+            "failed to open NUL device for child stdin: Access is denied. (os error 5)"
+        ));
+        assert!(!blocked_null_device_child("cargo metadata: dependency not found"));
+    }
 
     /// Emit the native failure as a one-line workflow command so the public
     /// Actions page names the failing capability and its reason, instead of
