@@ -261,6 +261,15 @@ fn launch_basename(program: &str) -> String {
     normalize_program_name(program.rsplit(['/', '\\']).next().unwrap_or_default())
 }
 
+/// 只去掉 `.exe`、不做版本号折叠的基名。`normalize_program_name` 会把尾部数字
+/// 当版本号剥掉（`python3.11` → `python`），这对 `rundll32` / `regsvr32` 这类
+/// 名字里本就带数字的 LOLBin 会把它们裁成 `rundll` / `regsvr`，从而绕过黑名单。
+fn launch_basename_raw(program: &str) -> String {
+    let file = program.rsplit(['/', '\\']).next().unwrap_or_default();
+    let lower = file.to_ascii_lowercase();
+    lower.strip_suffix(".exe").unwrap_or(&lower).to_string()
+}
+
 /// shell 实现名与执行包装器（第二者放行即等于重新开放 `sh -c`）。
 fn is_blocked_launch_name(name: &str) -> bool {
     if BLOCKED_LAUNCH_PROGRAMS.contains(&name)
@@ -348,14 +357,24 @@ pub fn check_launch_target(line: &str) -> Result<(String, Vec<String>), PolicyEr
     let (program, args) = parse_command_line(line)?;
 
     let name = launch_basename(&program);
-    if is_blocked_launch_name(&name) || interpreter_exec_attempt(&name, &args) {
+    let raw_name = launch_basename_raw(&program);
+    if is_blocked_launch_name(&name)
+        || is_blocked_launch_name(&raw_name)
+        || interpreter_exec_attempt(&name, &args)
+        || interpreter_exec_attempt(&raw_name, &args)
+    {
         return Err(PolicyError::BlockedLaunchProgram(program));
     }
 
     let resolved = resolve_program_file(&program)
         .ok_or_else(|| PolicyError::LaunchProgramNotFound(program.clone()))?;
     let real_name = launch_basename(resolved.to_string_lossy().as_ref());
-    if is_blocked_launch_name(&real_name) || interpreter_exec_attempt(&real_name, &args) {
+    let real_raw = launch_basename_raw(resolved.to_string_lossy().as_ref());
+    if is_blocked_launch_name(&real_name)
+        || is_blocked_launch_name(&real_raw)
+        || interpreter_exec_attempt(&real_name, &args)
+        || interpreter_exec_attempt(&real_raw, &args)
+    {
         return Err(PolicyError::BlockedLaunchProgram(program));
     }
 
@@ -377,6 +396,46 @@ pub fn check_webview_label(label: &str) -> Result<(), PolicyError> {
 ///
 /// 判断顺序刻意先 `canonicalize` 再比较前缀，这样 `a/b/../../../etc` 与
 /// 「指向外部的软链接」都会被同一套规则拦下。
+/// Windows keeps two spellings of the same path: the caller's form and the
+/// `\\?\`-prefixed verbatim form `canonicalize` returns. It is also
+/// case-insensitive, and an allowed root may itself live behind a junction.
+/// Comparing components with a case-insensitive match after canonicalizing
+/// both sides is the only form that agrees with the filesystem.
+fn strip_verbatim(path: &std::path::Path) -> PathBuf {
+    let text = path.to_string_lossy();
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) if !rest.starts_with("UNC") => PathBuf::from(rest),
+        _ => path.to_path_buf(),
+    }
+}
+
+pub(crate) fn canonical_root(root: &std::path::Path) -> PathBuf {
+    strip_verbatim(&std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()))
+}
+
+pub(crate) fn within_root(path: &std::path::Path, root: &std::path::Path) -> bool {
+    let path = strip_verbatim(path);
+    let root = strip_verbatim(root);
+    let mut remaining = path.components();
+    for expected in root.components() {
+        match remaining.next() {
+            Some(actual)
+                if actual
+                    .as_os_str()
+                    .to_string_lossy()
+                    .eq_ignore_ascii_case(&expected.as_os_str().to_string_lossy()) => {}
+            _ => return false,
+        }
+    }
+    true
+}
+
+/// 判定两条路径是否指向同一个位置（含 `\\?\` 前缀、大小写与 junction 的
+/// 差异）。删除守卫必须用它，`PathBuf == PathBuf` 在 Windows 上永远不成立。
+pub(crate) fn same_path(a: &std::path::Path, b: &std::path::Path) -> bool {
+    within_root(a, b) && within_root(b, a)
+}
+
 pub fn check_path_within_roots(path: &str, roots: &[PathBuf]) -> Result<PathBuf, PolicyError> {
     if roots.is_empty() {
         // 没有配置允许根目录 = 策略未就绪，默认拒绝而不是放行。
@@ -396,7 +455,7 @@ pub fn check_path_within_roots(path: &str, roots: &[PathBuf]) -> Result<PathBuf,
                 let resolved = target
                     .canonicalize()
                     .unwrap_or_else(|_| ancestor.to_path_buf());
-                if !roots.iter().any(|root| resolved.starts_with(root)) {
+                if !roots.iter().any(|root| within_root(&resolved, &canonical_root(root))) {
                     return Err(PolicyError::SymlinkEscape {
                         path: path.to_string(),
                         target: resolved.display().to_string(),
@@ -406,7 +465,7 @@ pub fn check_path_within_roots(path: &str, roots: &[PathBuf]) -> Result<PathBuf,
         }
     }
 
-    let in_roots = roots.iter().any(|root| canonical.starts_with(root));
+    let in_roots = roots.iter().any(|root| within_root(&canonical, &canonical_root(root)));
     if in_roots {
         Ok(canonical)
     } else {
@@ -419,7 +478,7 @@ pub fn check_path_within_roots(path: &str, roots: &[PathBuf]) -> Result<PathBuf,
 
 /// 判断规范化后的路径是否落在允许根目录内（供调用方在已有 canonical 路径时复用）。
 pub fn is_within_roots(canonical: &std::path::Path, roots: &[PathBuf]) -> bool {
-    roots.iter().any(|root| canonical.starts_with(root))
+    roots.iter().any(|root| within_root(canonical, &canonical_root(root)))
 }
 
 /// 校验单个路径分量（文件名/新名称）：拒绝 `.`/`..`、分隔符与 NUL。
@@ -444,7 +503,10 @@ pub fn check_path_component(name: &str) -> Result<(), PolicyError> {
 /// 避免一次 `delete_path` 把整个工作区或主目录递归删空。
 pub fn check_delete_target(path: &str, roots: &[PathBuf]) -> Result<PathBuf, PolicyError> {
     let canonical = check_path_within_roots(path, roots)?;
-    if roots.iter().any(|root| canonical == *root) {
+    if roots
+        .iter()
+        .any(|root| same_path(&canonical, &canonical_root(root)))
+    {
         return Err(PolicyError::RefuseToDeleteRoot {
             path: canonical.display().to_string(),
         });
@@ -1394,7 +1456,7 @@ mod security_policy_tests {
         let roots = vec![root.clone()];
         let resolved = check_path_within_roots(file.to_str().unwrap(), &roots)
             .expect("允许根目录内的路径应放行");
-        assert!(resolved.starts_with(&root));
+        assert!(within_root(&resolved, &root));
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -1890,8 +1952,9 @@ mod security_policy_tests {
 
     #[test]
     fn resolvable_program_is_accepted() {
-        // 用 /proc 下的确定可执行文件验证「绝对路径 + 存在性」分支。
-        let path = "/proc/self/exe";
+        // 用当前进程自身的可执行路径验证「绝对路径 + 存在性」分支，跨平台可用。
+        let exe = std::env::current_exe().expect("current_exe");
+        let path = exe.to_str().expect("utf8");
         assert!(std::path::Path::new(path).is_file());
         let (p, a) = parse_command_line(path).expect("解析");
         assert_eq!(p, path);

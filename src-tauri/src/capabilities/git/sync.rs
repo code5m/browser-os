@@ -1400,8 +1400,11 @@ mod git_write_tests {
         let a_content = fs::read_to_string(dir.join("a.txt")).expect("read a");
         let b_content = fs::read_to_string(dir.join("b.txt")).expect("read b");
         let _ = fs::remove_dir_all(&dir);
-        assert_eq!(a_content, "a\n", "a.txt 应恢复为索引内容");
-        assert_eq!(b_content, "b2\n", "b.txt 不应被顺带丢弃");
+        // Windows 上 autocrlf 会把 index 的 LF 还原成 CRLF，断言比较内容而非
+        // 平台换行形态。
+        let lf = |s: &str| s.replace("\r\n", "\n");
+        assert_eq!(lf(&a_content), "a\n", "a.txt 应恢复为索引内容");
+        assert_eq!(lf(&b_content), "b2\n", "b.txt 不应被顺带丢弃");
     }
 
     // T-gw-b-5：commit message 空/控制字符/超长拒绝；拒绝时 HEAD 不动
@@ -1755,7 +1758,9 @@ mod git_write_tests {
         commit_all(&repo, "init");
         fs::remove_file(dir.join("a.txt")).expect("delete");
         write_discard(&repo, &["a.txt".to_string()]).expect("discard");
-        let content = fs::read_to_string(dir.join("a.txt")).ok();
+        let content = fs::read_to_string(dir.join("a.txt"))
+            .ok()
+            .map(|s| s.replace("\r\n", "\n"));
         let _ = fs::remove_dir_all(&dir);
         assert_eq!(content.as_deref(), Some("a\n"), "已删除的跟踪文件应被恢复");
     }

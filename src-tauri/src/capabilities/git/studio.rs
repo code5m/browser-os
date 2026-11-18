@@ -126,11 +126,15 @@ fn check_file(root: &Path, relative: &str, allow_missing: bool) -> Result<PathBu
     while !parent.exists() {
         parent = parent.parent().ok_or("GIT_STUDIO_PATH_INVALID")?;
     }
-    if !parent
+    // Windows 下 `canonicalize` 返回 `\\?\` 前缀、且盘符大小写与调用方不同，
+    // 直接和原始 root 比前缀会把合法路径判成越界，这里统一走共享的归一化比较。
+    let canonical_parent = parent
         .canonicalize()
-        .map_err(|_| "GIT_STUDIO_PATH_INVALID")?
-        .starts_with(root)
-    {
+        .map_err(|_| "GIT_STUDIO_PATH_INVALID")?;
+    if !crate::security_policy::within_root(
+        &canonical_parent,
+        &crate::security_policy::canonical_root(root),
+    ) {
         return Err("GIT_STUDIO_PATH_ESCAPE".into());
     }
     match path.symlink_metadata() {
@@ -1204,7 +1208,12 @@ fn validate(root: &Path, input: &StudioInput) -> Result<Option<String>, String> 
             let path = check_file(root, target, false)?
                 .canonicalize()
                 .map_err(|_| "GIT_STUDIO_WORKTREE_MISSING")?;
-            if path == root || !path.starts_with(root) {
+            if crate::security_policy::same_path(&path, root)
+                || !crate::security_policy::within_root(
+                    &path,
+                    &crate::security_policy::canonical_root(root),
+                )
+            {
                 return Err("GIT_STUDIO_WORKTREE_REMOVE_DENIED".into());
             }
             is_clean(&path)?;
