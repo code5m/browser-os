@@ -282,6 +282,7 @@ jobs:
             'real_appcontainer_stdio_initializes_lists_calls_and_scrubs_secrets'
             'stdin_backpressure_obeys_deadline'
             'snapshot_rejects_junctions_instead_of_copying_external_sources'
+            'private_snapshot_requires_own_package_sid_and_rejects_other_profiles'
             'real_rust_analyzer_runs_against_private_snapshot'
             'fake_loopback_port_occupant_cannot_receive_snapshot_before_identity_proof'
             'process_execution_requires_explicit_approval_and_rejects_shell_actions'

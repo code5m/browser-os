@@ -58,8 +58,19 @@ fn scrub(value: &mut Value, secrets: &[String]) {
             }
         }
         Value::Object(items) => {
-            for item in items.values_mut() {
-                scrub(item, secrets);
+            // JSON keys are untrusted MCP output too. A server can embed
+            // credentials in a property name, bypassing value-only masking.
+            let previous = std::mem::take(items);
+            for (index, (name, mut item)) in previous.into_iter().enumerate() {
+                scrub(&mut item, secrets);
+                let sensitive_name = sensitive(&name) || secrets.iter()
+                    .any(|secret| !secret.is_empty() && name.contains(secret));
+                let safe_name = if sensitive_name {
+                    format!("[redacted-key-{index}]")
+                } else {
+                    name
+                };
+                items.insert(safe_name, item);
             }
         }
         _ => {}
@@ -202,26 +213,17 @@ impl Session {
     fn start(root: &Path, config: &Value, seconds: u64) -> Result<Self, String> {
         let command = config["command"].as_str().ok_or("MCP_COMMAND_REQUIRED")?;
         let executable = resolve_executable(command)?;
-        let stem = executable
-            .file_stem()
-            .and_then(|value| value.to_str())
-            .unwrap_or("")
-            .to_ascii_lowercase();
-        if [
-            "sh",
-            "bash",
-            "dash",
-            "zsh",
-            "fish",
-            "cmd",
-            "powershell",
-            "pwsh",
-            "npx",
-        ]
-        .contains(&stem.as_str())
-        {
+        // Reject a known wrapper even if the path does not exist on a
+        // particular Windows SKU; no profile creation or path probing needed.
+        if crate::security_policy::is_blocked_executable_path(&executable) {
             return Err("MCP_SHELL_COMMAND_REJECTED".into());
         }
+        let resolved = executable.canonicalize().map_err(|_| "MCP_EXECUTABLE_NOT_FOUND")?;
+        if crate::security_policy::is_blocked_executable_path(&resolved) {
+            return Err("MCP_SHELL_COMMAND_REJECTED".into());
+        }
+        let stem = resolved.file_stem().and_then(|name| name.to_str())
+            .ok_or("MCP_EXECUTABLE_NOT_FOUND")?.to_ascii_lowercase();
         let raw_args = config["args"].as_array().cloned().unwrap_or_default();
         if raw_args.len() > 64
             || raw_args.iter().any(|value| {
@@ -581,6 +583,31 @@ mod tests {
         .unwrap();
         assert_eq!(secret["result"]["content"][0]["text"], "[redacted]");
         fs::remove_dir_all(storage).unwrap();
+    }
+
+    #[test]
+    fn credential_in_json_key_is_redacted_in_nested_mcp_results() {
+        let mut response = json!({
+            "api_key": "visible?",
+            "nested": {"fixture-opaque-value": "another secret", "text": "fixture-opaque-value"},
+            "ordinary": "visible"
+        });
+        scrub(&mut response, &["fixture-opaque-value".to_string()]);
+        let serialized = response.to_string();
+        assert!(!serialized.contains("api_key"));
+        assert!(!serialized.contains("fixture-opaque-value"));
+        assert_eq!(response["ordinary"], "visible");
+    }
+
+    #[test]
+    fn windows_lolbin_wrappers_are_rejected_without_spawning_sandbox() {
+        let root = root();
+        for program in ["rundll32.exe", "regsvr32.exe", "mshta.exe", "wscript.exe"] {
+            let path = Path::new(r"C:\Windows\System32").join(program);
+            let result = Session::start(&root, &json!({"command":path}), 1);
+            assert!(matches!(result, Err(ref message) if message == "MCP_SHELL_COMMAND_REJECTED"),
+                "{program} must not create an AppContainer process");
+        }
     }
 
     #[test]

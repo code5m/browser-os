@@ -195,6 +195,91 @@ fn source_file(path: &Path) -> bool {
         "rs" | "toml" | "md" | "json"
     ) || path.file_name().and_then(|value| value.to_str()) == Some("Cargo.lock")
 }
+/// Generate a bounded non-Cargo project graph from the *private* copy.
+/// rust-analyzer can analyze a rust-project.json without spawning cargo or
+/// rustc. Its usual child-process launch opens \\.\NUL on Windows, which a
+/// no-capability AppContainer token cannot access on the failing runner.
+/// We deliberately expose syntax/IDE analysis, not compilation verification.
+fn write_reviewed_rust_project(snapshot: &Path) -> Result<PathBuf, String> {
+    let mut pending = vec![(snapshot.to_path_buf(), 0usize)];
+    let mut crate_roots = Vec::<PathBuf>::new();
+    let mut other_sources = Vec::<PathBuf>::new();
+    let mut visited = 0usize;
+    while let Some((directory, depth)) = pending.pop() {
+        if depth > 12 { return Err("LSP_PROJECT_DEPTH_LIMIT".into()); }
+        for entry in fs::read_dir(&directory).map_err(|_| "LSP_PROJECT_READ_DENIED")? {
+            let entry = entry.map_err(|_| "LSP_PROJECT_READ_DENIED")?;
+            visited += 1;
+            if visited > MAX_FILES * 2 { return Err("LSP_PROJECT_FILE_LIMIT".into()); }
+            let path = entry.path();
+            let meta = fs::symlink_metadata(&path).map_err(|_| "LSP_PROJECT_READ_DENIED")?;
+            if meta.file_attributes() & REPARSE != 0 {
+                return Err("LSP_PROJECT_REPARSE_DENIED".into());
+            }
+            if meta.is_dir() {
+                pending.push((path, depth + 1));
+            } else if meta.is_file() && path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+                match path.file_name().and_then(|name| name.to_str()) {
+                    Some("lib.rs" | "main.rs" | "document.rs") => crate_roots.push(path),
+                    _ => other_sources.push(path),
+                }
+            }
+        }
+    }
+    if crate_roots.is_empty() {
+        crate_roots = other_sources;
+    }
+    if crate_roots.is_empty() || crate_roots.len() > 32 {
+        return Err("LSP_PROJECT_ROOT_LIMIT".into());
+    }
+    crate_roots.sort();
+    crate_roots.dedup();
+    let edition = fs::read_to_string(snapshot.join("Cargo.toml")).ok()
+        .and_then(|source| {
+            let mut package = false;
+            for line in source.lines() {
+                let line = line.split('#').next().unwrap_or("").trim();
+                if line.starts_with('[') {
+                    package = line == "[package]";
+                } else if package {
+                    if let Some((key, value)) = line.split_once('=') {
+                        if key.trim() == "edition" {
+                            let version = value.trim().trim_matches(&['"', '\''][..]);
+                            return match version {
+                                "2015" => Some("2015"),
+                                "2018" => Some("2018"),
+                                "2021" => Some("2021"),
+                                "2024" => Some("2024"),
+                                _ => None,
+                            };
+                        }
+                    }
+                }
+            }
+            None
+        }).unwrap_or("2021");
+    let mut crates = Vec::with_capacity(crate_roots.len());
+    for (index, root_module) in crate_roots.iter().enumerate() {
+        let absolute = root_module.to_str().ok_or("LSP_PROJECT_PATH_INVALID")?;
+        crates.push(json!({
+            "display_name":format!("reviewed_crate_{index}"),
+            "root_module":absolute,
+            "edition":edition,
+            "deps":[],
+            "cfg":[],
+            "env":{},
+            "is_proc_macro":false,
+            "is_workspace_member":true
+        }));
+    }
+    let document = serde_json::to_vec(&json!({"crates":crates}))
+        .map_err(|_| "LSP_PROJECT_ENCODING_FAILED")?;
+    if document.len() > MAX_FRAME { return Err("LSP_PROJECT_FILE_LIMIT".into()); }
+    let project_path = snapshot.join("rust-project.json");
+    fs::write(&project_path, document).map_err(|_| "LSP_PROJECT_WRITE_FAILED")?;
+    Ok(project_path)
+}
+
 struct SnapshotBudget {
     files: usize,
     bytes: usize,
@@ -260,6 +345,7 @@ fn snapshot(root: &Path, profile: &SandboxProfile) -> Result<PathBuf, String> {
         0,
         &mut SnapshotBudget { files: 0, bytes: 0 },
     )?;
+    write_reviewed_rust_project(&destination)?;
     profile.protect_snapshot(&destination)?;
     grant_snapshot_read(&destination, profile.sid_string())?;
     // The staged runtime images load inside the lowbox with owner+SYSTEM
@@ -491,6 +577,7 @@ impl Session {
                 .map_err(|_| "LSP_SNAPSHOT_WRITE_FAILED")?;
             fs::write(&target, content).map_err(|_| "LSP_SNAPSHOT_WRITE_FAILED")?;
         }
+        write_reviewed_rust_project(&snapshot)?;
         profile.protect_snapshot(&snapshot)?;
         grant_snapshot_read(&snapshot, profile.sid_string())?;
         profile.protect_snapshot_files(&snapshot)?;
@@ -505,55 +592,19 @@ impl Session {
     ) -> Result<Self, String> {
         let server = runtime()?;
         let state = profile.state_dir()?;
-        // Rust Analyzer loads the workspace through `cargo locate-project`,
-        // `cargo metadata` and `rustc --version`. Those are non-building
-        // probes, so the reviewed toolchain images are staged into the private
-        // runtime instead of being replaced by nonexistent placeholder paths.
-        // Build scripts, proc macros and check-on-save stay disabled below.
-        let toolchain_bin = server
-            .parent()
-            .ok_or("LSP_TOOLCHAIN_BIN_UNAVAILABLE")?
-            .to_path_buf();
-        let cargo = profile.stage_runtime_peer(&toolchain_bin.join("cargo.exe"))?;
-        let rustc = profile.stage_runtime_peer(&toolchain_bin.join("rustc.exe"))?;
-        let cargo_home = state.join("cargo-home");
-        fs::create_dir(&cargo_home).map_err(|_| "LSP_CARGO_HOME_UNAVAILABLE")?;
-        // Rust Analyzer derives its sysroot from the staged `rustc` image, which
-        // resolves to the profile root (`...\AC`), and then looks for the standard
-        // library sources at `<sysroot>/lib/rustlib/src/rust/library`. Staging the
-        // reviewed `rust-src` checkout at exactly that offset lets the analyzer
-        // load the standard library without any extra initialization option.
-        let sysroot_library = state.parent().map(|prefix| {
-            prefix
-                .join("lib")
-                .join("rustlib")
-                .join("src")
-                .join("rust")
-        });
-        if let (Some(destination), Some(source)) = (
-            sysroot_library,
-            toolchain_bin
-                .parent()
-                .map(|root| root.join("lib").join("rustlib").join("src").join("rust"))
-                .filter(|root| root.is_dir()),
-        ) {
-            // Best effort: a missing checkout only degrades std-library analysis.
-            let _ = profile.stage_readonly_tree(&source, &destination);
-        };
-        let environment = vec![
-            ("CARGO".into(), cargo.to_string_lossy().into_owned()),
-            ("RUSTC".into(), rustc.to_string_lossy().into_owned()),
-            (
-                "CARGO_HOME".into(),
-                cargo_home.to_string_lossy().into_owned(),
-            ),
-            ("CARGO_NET_OFFLINE".into(), "true".into()),
-        ];
-        // Current rust-analyzer rejects the retired --no-proc-macro flag
-        // ("unexpected flag"). Do not pass it: staging copies only the
-        // toolchain images, so proc-macro-srv is absent, and build scripts,
-        // proc macros and check-on-save stay disabled through initialization
-        // options, which keeps compilation from running inside the sandbox.
+        // The no-network AppContainer must not launch Cargo/rustc children
+        // through Rust std's Stdio::null (\\.\NUL is denied by the lowbox).
+        // A reviewed rust-project.json is created before locking snapshot ACLs.
+        // This intentionally provides IDE/syntax semantics without Cargo
+        // dependency resolution, build scripts or compilation claims.
+        let project_path = snapshot.join("rust-project.json");
+        if !project_path.is_file() {
+            return Err("LSP_PROJECT_MISSING".into());
+        }
+        let project_file = project_path.to_str().ok_or("LSP_PROJECT_PATH_INVALID")?;
+        let environment: Vec<(String, String)> = Vec::new();
+        // Do not reintroduce the retired --no-proc-macro CLI flag: use LSP
+        // initialization options to disable proc macros and check-on-save.
         let child = profile
             .spawn(&server, &[], &environment, &state)
             .map_err(|error| {
@@ -622,7 +673,13 @@ impl Session {
         let init = session.rpc_next("initialize", json!({
             "processId":null,"rootUri":root_uri,
             "capabilities":{"textDocument":{"synchronization":{},"publishDiagnostics":{},"definition":{},"references":{},"hover":{},"completion":{},"documentSymbol":{}}},
-            "initializationOptions":{"cargo":{"buildScripts":{"enable":false}},"procMacro":{"enable":false},"checkOnSave":{"enable":false}}
+            "initializationOptions":{
+                "linkedProjects":[project_file],
+                "cargo":{"sysroot":null,"autoreload":false,"buildScripts":{"enable":false}},
+                "procMacro":{"enable":false},
+                "checkOnSave":{"enable":false},
+                "check":{"enable":false}
+            }
         }));
         #[cfg(test)]
         if let Err(ref error) = init {
@@ -975,6 +1032,7 @@ fn one_shot_document_request(root: &Path, request: &Value) -> Result<Value, Stri
         "document_hash":format!("{:x}", Sha256::digest(content.as_bytes())),
         "scope":scope,
         "compilation_verified":false,
+        "analysis_mode":"rust-project-no-cargo",
         "sandbox":"appcontainer-no-network-private-source-copy"
     }))
 }
@@ -1056,6 +1114,7 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
                 "sandbox_available":sandbox_available,
                 "sandbox_verified":false,
                 "platform":"windows",
+                "analysis_mode":"rust-project-no-cargo",
                 "isolation":"appcontainer-no-network-private-source-copy"
             }))
         }
@@ -1084,7 +1143,10 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
             }
             drop(reservation);
             Ok(
-                json!({"session_id":id,"profile":"rust_analyzer","sandbox":"appcontainer-no-network-private-source-copy"}),
+                json!({"session_id":id,"profile":"rust_analyzer",
+                    "analysis_mode":"rust-project-no-cargo",
+                    "compilation_verified":false,
+                    "sandbox":"appcontainer-no-network-private-source-copy"}),
             )
         }
         "lsp_request" => {
@@ -1458,6 +1520,99 @@ mod tests {
             tail(&out),
             tail(&stderr)
         );
+    }
+
+    fn read_private_file_in_profile(
+        profile: SandboxProfile, file: &Path,
+    ) -> Result<(u32, String), String> {
+        let state = profile.state_dir()?;
+        let windows = std::env::var_os("SystemRoot")
+            .ok_or("LSP_TEST_SYSTEMROOT_UNAVAILABLE")?;
+        let cmd = PathBuf::from(windows).join("System32").join("cmd.exe");
+        let tail = format!("type \"{}\"", file.display());
+        let SandboxChild { stdin, mut stdout, process } =
+            profile.spawn(&cmd, &["/D".into(), "/C".into(), tail], &[], &state)?;
+        drop(stdin);
+        let (tx, rx) = mpsc::sync_channel(1);
+        thread::spawn(move || {
+            let mut bytes = Vec::new();
+            let output = stdout.read_to_end(&mut bytes)
+                .map(|_| bytes)
+                .map_err(|_| "LSP_PROFILE_READ_FAILED".to_string());
+            let _ = tx.send(output);
+        });
+        let bytes = match rx.recv_timeout(Duration::from_secs(10)) {
+            Ok(Ok(data)) => data,
+            _ => {
+                let _ = process.terminate();
+                return Err("LSP_PROFILE_READ_TIMEOUT".into());
+            }
+        };
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !process.try_wait()? {
+            if Instant::now() >= deadline {
+                let _ = process.terminate();
+                return Err("LSP_PROFILE_EXIT_TIMEOUT".into());
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        let exit = process.exit_code()?.ok_or("LSP_PROFILE_EXIT_UNAVAILABLE")?;
+        Ok((exit, String::from_utf8_lossy(&bytes).into_owned()))
+    }
+
+    #[test]
+    fn private_snapshot_requires_own_package_sid_and_rejects_other_profiles() {
+        let root = std::env::temp_dir().join(format!(
+            "browseros-private-snapshot-{}", uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("Cargo.toml"),
+            "[package]\nname='private_snapshot'\nversion='0.1.0'\nedition='2024'\n").unwrap();
+        fs::write(root.join("src/lib.rs"), "pub fn private_snapshot_marker() {}\n").unwrap();
+        let owner = SandboxProfile::create().expect("owner AppContainer profile");
+        let copy = snapshot(&root, &owner).expect("private source copy ACL");
+        let copied_file = copy.join("src/lib.rs");
+        // Negative control first, while owner profile is still alive.
+        let other = SandboxProfile::create().expect("different AppContainer profile");
+        let (other_exit, other_text) =
+            read_private_file_in_profile(other, &copied_file).expect("other profile launched");
+        assert_ne!(other_exit, 0, "unrelated package read owner source: {other_text}");
+        assert!(!other_text.contains("private_snapshot_marker"));
+        let (owner_exit, owner_text) =
+            read_private_file_in_profile(owner, &copied_file).expect("owner profile launched");
+        assert_eq!(owner_exit, 0, "owner AppContainer cannot read its source");
+        assert!(owner_text.contains("private_snapshot_marker"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn reviewed_rust_project_requires_local_sources_and_excludes_cargo_spawns() {
+        let root = std::env::temp_dir().join(format!(
+            "browseros-linked-project-{}", uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("Cargo.toml"),
+            "[package]\nname='reviewed'\nversion='0.1.0'\nedition='2024'\n").unwrap();
+        fs::write(root.join("src/lib.rs"), "pub fn hello() {}\n").unwrap();
+        let project = write_reviewed_rust_project(&root).unwrap();
+        let parsed: Value = serde_json::from_slice(&fs::read(&project).unwrap()).unwrap();
+        assert_eq!(parsed["crates"][0]["edition"], "2024");
+        assert_eq!(parsed["crates"][0]["deps"], json!([]));
+        assert!(parsed["crates"][0]["root_module"].as_str().unwrap()
+            .ends_with("src\\lib.rs"));
+        assert_eq!(parsed["crates"].as_array().unwrap().len(), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn reviewed_rust_project_rejects_snapshot_without_rust_sources() {
+        let root = std::env::temp_dir().join(format!(
+            "browseros-linked-empty-{}", uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        assert_eq!(write_reviewed_rust_project(&root).unwrap_err(),
+            "LSP_PROJECT_ROOT_LIMIT");
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

@@ -272,9 +272,42 @@ pub(super) fn ensure_private_directory(path: &Path) -> io::Result<()> {
     Ok(())
 }
 fn normalized_path(value: &str) -> String {
-    let value = value.replace('/', "\\");
-    let value = value.strip_prefix("\\\\?\\").unwrap_or(&value);
-    value.trim_end_matches('\\').to_lowercase()
+    // Keep UNC roots absolute: \\?\UNC\server\share is the same location
+    // as \\server\share. Stripping \\?\ blindly produced a relative-looking
+    // "UNC\server" path that could disagree with the opened NT handle.
+    let folded = value.replace('/', "\\").to_ascii_lowercase();
+    let path = if let Some(unc) = folded.strip_prefix(r"\\?\unc\") {
+        format!(r"\\{unc}")
+    } else if let Some(rest) = folded.strip_prefix(r"\\?\") {
+        // Strip the Win32 verbatim prefix only from an actual drive path.
+        if rest.as_bytes().first().is_some_and(u8::is_ascii_alphabetic)
+            && rest.as_bytes().get(1) == Some(&b':')
+            && rest.as_bytes().get(2) == Some(&b'\\')
+        {
+            rest.to_owned()
+        } else {
+            folded
+        }
+    } else {
+        folded
+    };
+    if path.len() == 3 && path.as_bytes().get(1) == Some(&b':') && path.ends_with('\\') {
+        path
+    } else {
+        path.trim_end_matches('\\').to_owned()
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn windows_path_normalizer_preserves_drive_and_unc_root_semantics() {
+    assert_eq!(normalized_path(r"\\?\C:\Workspace\FILE.rs"),
+        normalized_path(r"c:\workspace\file.rs"));
+    assert_eq!(normalized_path(r"\\?\UNC\SERVER\Share\Dir\file.rs"),
+        normalized_path(r"\\server\share\dir\file.rs"));
+    assert_eq!(normalized_path(r"C:\"), r"c:\");
+    assert_eq!(normalized_path(r"\\?\Volume{1234}\dir"),
+        r"\\?\volume{1234}\dir");
 }
 
 fn verify_path_handle(path: &Path, file: &File) -> io::Result<()> {

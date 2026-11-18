@@ -289,6 +289,14 @@ fn is_blocked_launch_name(name: &str) -> bool {
     false
 }
 
+/// Shared executable identity gate for launchers and Windows MCP.
+/// Refuse undecodable paths instead of using lossy security comparisons.
+pub(crate) fn is_blocked_executable_path(path: &std::path::Path) -> bool {
+    let Some(path) = path.to_str() else { return true; };
+    is_blocked_launch_name(&launch_basename(path))
+        || is_blocked_launch_name(&launch_basename_raw(path))
+}
+
 /// 解释器 + 内联代码开关 → 与 `sh -c` 等价，必须拒绝。
 fn interpreter_exec_attempt(name: &str, args: &[String]) -> bool {
     if !BLOCKED_INTERPRETERS.contains(&name) {
@@ -1929,6 +1937,15 @@ mod security_policy_tests {
         let (p, a) = parse_command_line("\"/opt/My App/app\" --x").expect("解析");
         assert_eq!(p, "/opt/My App/app", "引号内空白不得切开");
         assert_eq!(a, vec!["--x"]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn shared_executable_identity_gate_preserves_lolbin_digits() {
+        for blocked in ["rundll32.exe", "regsvr32.exe", "cmd.exe", "powershell.exe"] {
+            assert!(is_blocked_executable_path(std::path::Path::new(blocked)));
+        }
+        assert!(!is_blocked_executable_path(std::path::Path::new("node.exe")));
     }
 
     #[test]

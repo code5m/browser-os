@@ -254,4 +254,31 @@ const v2Workflow = read('../.github/workflows/windows-linux-v2-experimental.yml'
 assert.match(v2Workflow, /Generate and verify NSIS SHA256SUMS/);
 assert.match(v2Workflow, /Get-FileHash -LiteralPath .* -Algorithm SHA256/);
 
+// Non-Cargo LSP project-mode safety: explicitly supply bounded source graphs
+// instead of requiring rust-analyzer to spawn Cargo/rustc through forbidden
+// lowbox NUL device access. This is IDE analysis, not compiled diagnostics.
+assert.match(windowsLsp, /fn write_reviewed_rust_project/);
+assert.match(windowsLsp, /"linkedProjects":\[project_file\]/);
+assert.match(windowsLsp, /"sysroot":null/);
+assert.match(windowsLsp, /reviewed_rust_project_requires_local_sources_and_excludes_cargo_spawns/);
+assert.match(windowsLsp, /private_snapshot_requires_own_package_sid_and_rejects_other_profiles/);
+const sandboxedLspStart = windowsLsp.slice(
+  windowsLsp.indexOf('fn start_with_snapshot('),
+  windowsLsp.indexOf('fn reset_deadline(')
+);
+assert.ok(sandboxedLspStart.length > 0);
+assert.doesNotMatch(sandboxedLspStart, /stage_runtime_peer\(/);
+// Any project source files are copied before package ACLs are locked.
+assert.match(windowsLsp, /write_reviewed_rust_project\(&destination\)\?/);
+assert.match(windowsLsp, /write_reviewed_rust_project\(&snapshot\)\?/);
+// Shared LOLBin guard applies to MCP as well as the native app launcher.
+assert.match(launchPolicy, /pub\(crate\) fn is_blocked_executable_path/);
+assert.match(windowsMcp, /security_policy::is_blocked_executable_path/);
+assert.match(windowsMcp, /windows_lolbin_wrappers_are_rejected_without_spawning_sandbox/);
+// MCP results are untrusted even in JSON object keys, not just values.
+assert.match(windowsMcp, /std::mem::take\(items\)/);
+assert.match(windowsMcp, /credential_in_json_key_is_redacted_in_nested_mcp_results/);
+// Windows canonical UNC and verbatim drive forms retain absolute identity.
+assert.match(safePathsWindows, /windows_path_normalizer_preserves_drive_and_unc_root_semantics/);
+
 console.log('WINDOWS_LINUX_V2_SOURCE_CONTRACT=PASS (static-only, Windows GUI pending)');
