@@ -243,9 +243,12 @@ assert.match(gitStudio, /fn read_worktree_file/);
 assert.match(gitStudio, /case_variant_symlink_never_exposes_other_git_workspace/);
 assert.doesNotMatch(gitStudio, /fs::read_to_string\(file\)/);
 assert.doesNotMatch(gitStudio, /hash\.update\(fs::read\(path\)/);
-// Only the caller's AppContainer package SID may be added to a private LSP
-// snapshot. Never add S-1-15-2-1 to source files or parent directories.
-assert.doesNotMatch(windowsLsp, /const ALL_APP_PACKAGES/);
+// Only a package SID may read private snapshot *files*. The Windows
+// restricted lowbox traverses directories through non-inheritable generic
+// AppContainer ACEs; those grants must never propagate onto source files.
+assert.match(windowsLsp, /grant_entry\(&icacls, &directory, "\*S-1-15-2-1:RX"\)/);
+assert.doesNotMatch(windowsLsp, /S-1-15-2-1:\(OI\)/);
+assert.doesNotMatch(windowsLsp, /grant_entry\(&icacls, &path, "\*S-1-15-2-1:RX"\)/);
 assert.match(windowsLsp, /appcontainer-no-network-private-source-copy/);
 assert.match(windowsLsp, /LSP_CHILD_NULL_DEVICE_DENIED/);
 assert.match(windowsSandbox, /same-sized, incompatible DLLs/);
@@ -269,6 +272,9 @@ assert.match(windowsLsp, /"linkedProjects":\[reviewed_graph\]/);
 assert.match(windowsLsp, /"sysroot":null/);
 assert.match(windowsLsp, /reviewed_rust_project_requires_local_sources_and_excludes_cargo_spawns/);
 assert.match(windowsLsp, /private_snapshot_requires_own_package_sid_and_rejects_other_profiles/);
+assert.match(windowsLsp, /standalone lowbox source file read failed/);
+assert.match(windowsLsp, /snapshot_acl_for_test/);
+
 const sandboxedLspStart = windowsLsp.slice(
   windowsLsp.indexOf('fn start_with_snapshot('),
   windowsLsp.indexOf('fn reset_deadline(')

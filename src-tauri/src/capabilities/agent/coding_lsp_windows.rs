@@ -414,13 +414,11 @@ fn snapshot(root: &Path, profile: &SandboxProfile) -> Result<PathBuf, String> {
     profile.protect_snapshot_files(&destination)?;
     Ok(destination)
 }
-/// The isolated copy is accessible only to this AppContainer's package SID
-/// and the creating user/SYSTEM, never to ALL APPLICATION PACKAGES.
-/// Granting S-1-15-2-1 on both package ancestors and source files would make
-/// the private code readable to unrelated AppContainers in the same user
-/// session. The AppContainer package SID must be sufficient by itself; if
-/// Windows denies a required access, fail closed and report it instead of
-/// broadening the DACL to a machine-wide lowbox group.
+/// Give the private source files only this package SID's read access.
+/// Windows lowbox path traversal also requires access to each ancestor.
+/// The general AppContainer SID can therefore traverse/enumerate private
+/// *directories* without inheritance; NEVER grant it access on source files.
+/// The native cross-package negative test is a mandatory release gate.
 fn grant_snapshot_read(root: &Path, sid: &str) -> Result<(), String> {
     let icacls = system_icacls()?;
     let mut ancestors = Vec::new();
@@ -432,10 +430,15 @@ fn grant_snapshot_read(root: &Path, sid: &str) -> Result<(), String> {
     }
     for directory in ancestors {
         grant_entry(&icacls, &directory, &format!("*{sid}:RX"))?;
+        // No (OI)/(CI): an inherited general SID on files could reveal
+        // private source to a different AppContainer.
+        grant_entry(&icacls, &directory, "*S-1-15-2-1:RX")?;
     }
     let mut pending = vec![root.to_path_buf()];
     while let Some(directory) = pending.pop() {
         grant_entry(&icacls, &directory, &format!("*{sid}:(OI)(CI)RX"))?;
+        // Directory-only traversability; source files remain package-only.
+        grant_entry(&icacls, &directory, "*S-1-15-2-1:RX")?;
         for entry in fs::read_dir(&directory).map_err(|_| "LSP_SNAPSHOT_ACL")? {
             let path = entry.map_err(|_| "LSP_SNAPSHOT_ACL")?.path();
             if path.is_dir() {
@@ -1593,7 +1596,7 @@ mod tests {
 
     fn run_private_command_in_profile(
         profile: SandboxProfile, command: String,
-    ) -> Result<(u32, String), String> {
+    ) -> Result<(u32, String, String), String> {
         let state = profile.state_dir()?;
         let windows = std::env::var_os("SystemRoot")
             .ok_or("LSP_TEST_SYSTEMROOT_UNAVAILABLE")?;
@@ -1626,7 +1629,8 @@ mod tests {
             thread::sleep(Duration::from_millis(20));
         }
         let exit = process.exit_code()?.ok_or("LSP_PROFILE_EXIT_UNAVAILABLE")?;
-        Ok((exit, String::from_utf8_lossy(&bytes).into_owned()))
+        Ok((exit, String::from_utf8_lossy(&bytes).into_owned(),
+            process.profile().stderr_for_test()))
     }
 
     /// Only emit ACEs for the private snapshot's package SID in test logs;
@@ -1637,10 +1641,9 @@ mod tests {
         };
         match std::process::Command::new(icacls).arg(path).output() {
             Ok(out) => String::from_utf8_lossy(&out.stdout).lines()
-                .skip(1)
-                .filter(|line| line.contains("S-1-15-2") || line.contains("(RX)"))
+                .filter_map(|line| line.find("S-1-15-2")
+                    .map(|start| line[start..].trim().to_owned()))
                 .take(12)
-                .map(str::trim)
                 .collect::<Vec<_>>().join(" | "),
             Err(_) => "icacls-execution-failed".into()
         }
@@ -1658,6 +1661,21 @@ mod tests {
         let owner = SandboxProfile::create().expect("owner AppContainer profile");
         let copy = snapshot(&root, &owner).expect("private source copy ACL");
         let copied_file = copy.join("src/lib.rs");
+        // Prove a standalone lowbox file read works before testing shell
+        // command chaining and cross-package denial.
+        let baseline = SandboxProfile::create().expect("standalone read profile");
+        let baseline_copy = snapshot(&root, &baseline).expect("standalone source copy");
+        let baseline_file = baseline_copy.join("src/lib.rs");
+        let (baseline_exit, baseline_out, baseline_error) =
+            run_private_command_in_profile(
+                baseline, format!("type \"{}\"", baseline_file.display())
+            ).expect("standalone lowbox source read launched");
+        assert_eq!(baseline_exit, 0,
+            "own lowbox source file read failed: stdout={baseline_out} stderr={baseline_error}; dir ACL={}, file ACL={}",
+            snapshot_acl_for_test(&baseline_copy),
+            snapshot_acl_for_test(&baseline_file));
+        assert!(baseline_out.contains("private_snapshot_marker"),
+            "own lowbox did not output source text");
         // Negative control first, while owner profile is still alive.
         let other = SandboxProfile::create().expect("different AppContainer profile");
         let other_copy = snapshot(&root, &other).expect("other package own source copy");
@@ -1667,10 +1685,13 @@ mod tests {
         let command = format!(
             "type \"{}\" & type \"{}\"", own_file.display(), copied_file.display()
         );
-        let (other_exit, other_text) = run_private_command_in_profile(other, command)
-            .expect("other package launched and attempted both file reads");
+        let (other_exit, other_text, other_error) =
+            run_private_command_in_profile(other, command)
+                .expect("other package launched and attempted both file reads");
         assert_eq!(other_text.matches("private_snapshot_marker").count(), 1,
-            "other package should read only its own copy: {other_text}");
+            "other package should read only its own copy: stdout={other_text} stderr={other_error}, own dir ACL={}, own file ACL={}",
+            snapshot_acl_for_test(&other_copy),
+            snapshot_acl_for_test(&own_file));
         assert_ne!(other_exit, 0,
             "unrelated package unexpectedly read owner source: {other_text}");
         let own_project = copy.join("rust-project.json");
@@ -1678,12 +1699,11 @@ mod tests {
             "type \"{}\" & type \"{}\"",
             copied_file.display(), own_project.display()
         );
-        let (owner_exit, owner_text) =
+        let (owner_exit, owner_text, owner_error) =
             run_private_command_in_profile(owner, own_command)
                 .expect("owner profile launched to read source and project graph");
         assert_eq!(owner_exit, 0,
-            "own lowbox could not read source/manifest: {owner_text}\n\
-             project ACL={}",
+            "own lowbox could not read source/manifest: stdout={owner_text} stderr={owner_error}, project ACL={}",
             snapshot_acl_for_test(&own_project));
         assert!(owner_text.contains("private_snapshot_marker"));
         assert!(owner_text.contains("root_module"),
@@ -1696,7 +1716,7 @@ mod tests {
         let source_file = read_only_copy.join("src/lib.rs");
         let before = fs::read(&source_file).unwrap();
         let write = format!("echo changed > \"{}\"", source_file.display());
-        let (write_exit, _) = run_private_command_in_profile(writer, write)
+        let (write_exit, _, _) = run_private_command_in_profile(writer, write)
             .expect("spawn lowbox denied-write fixture");
         assert_ne!(write_exit, 0, "AppContainer unexpectedly modified a source file");
         assert_eq!(fs::read(&source_file).unwrap(), before,
@@ -1710,7 +1730,7 @@ mod tests {
         let second_copy = snapshot(&root, &second_writer)
             .expect("read-only create-negative copy");
         let second_create = second_copy.join("src/unreviewed-created.rs");
-        let (create_exit, _) = run_private_command_in_profile(
+        let (create_exit, _, _) = run_private_command_in_profile(
             second_writer, format!("echo injected > \"{}\"", second_create.display())
         ).expect("spawn lowbox create-negative fixture");
         assert_ne!(create_exit, 0, "AppContainer created a new source file");
