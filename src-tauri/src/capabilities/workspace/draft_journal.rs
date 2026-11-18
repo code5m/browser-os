@@ -164,6 +164,10 @@ fn write_journal(
     snapshot: &DraftSnapshot,
     key: &[u8; 32],
 ) -> Result<(), String> {
+    // A journal must be recoverable by the exact identity the read path checks.
+    if !valid_session(&snapshot.session_id) || snapshot.path != path_identity(target) {
+        return Err("DRAFT_JOURNAL_INVALID".into());
+    }
     let final_path = journal_path(dir, target, &snapshot.session_id);
     let plaintext = serde_json::to_vec(snapshot).map_err(|_| "DRAFT_SERIALIZE_FAILED")?;
     if plaintext.len() > MAX_JOURNAL as usize {
@@ -379,6 +383,28 @@ mod tests {
         assert!(!valid_session("0123456789abcdef0123456789abcdef/"));
     }
     #[test]
+    fn journal_rejects_wrong_workspace_identity_before_writing() {
+        let dir = std::env::temp_dir().join(format!(
+            "browseros-journal-wrong-root-{}", uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("target.md");
+        let snapshot = DraftSnapshot {
+            session_id: "0123456789abcdef0123456789abcdef".into(),
+            path: "unrelated/workspace.md".into(),
+            baseline: String::new(),
+            content: "private draft".into(),
+            updated_at_ms: 1,
+        };
+        assert_eq!(
+            write_journal(&dir, &target, &snapshot, &[7u8; 32]).unwrap_err(),
+            "DRAFT_JOURNAL_INVALID"
+        );
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 0);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn independent_sessions_are_not_overwritten() {
         let dir = std::env::temp_dir().join(format!("browseros-drafts-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&dir).unwrap();
@@ -393,7 +419,7 @@ mod tests {
                 &path,
                 &DraftSnapshot {
                     session_id: id.into(),
-                    path: path.to_string_lossy().into(),
+                    path: path_identity(&path),
                     baseline: "base".into(),
                     content: text.into(),
                     updated_at_ms: 1712345678000,

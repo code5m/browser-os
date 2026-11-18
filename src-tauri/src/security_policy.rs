@@ -1503,7 +1503,8 @@ mod security_policy_tests {
         let roots = vec![root.clone()];
         let resolved = check_path_within_roots(file.to_str().unwrap(), &roots)
             .expect("允许根目录内的路径应放行");
-        assert!(within_root(&resolved, &root));
+        let canonical_root = canonical_root(&root).expect("valid allowed root");
+        assert!(within_root(&resolved, &canonical_root));
         let _ = fs::remove_dir_all(&root);
     }
 

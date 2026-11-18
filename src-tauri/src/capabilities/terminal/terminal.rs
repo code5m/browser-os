@@ -908,9 +908,17 @@ mod tests {
                 pixel_height: 0,
             })
             .expect("openpty");
+        #[cfg(unix)]
         let mut cmd = CommandBuilder::new("/bin/sh");
+        #[cfg(windows)]
+        let mut cmd = CommandBuilder::new(
+            std::env::var_os("ComSpec").unwrap_or_else(|| "cmd.exe".into())
+        );
+        #[cfg(unix)]
         cmd.env("TERM", "xterm-256color");
-        let mut child = pair.slave.spawn_command(cmd).expect("spawn sh");
+        #[cfg(windows)]
+        cmd.arg("/D");
+        let mut child = pair.slave.spawn_command(cmd).expect("spawn native shell");
         drop(pair.slave);
         let master = pair.master;
         let mut writer = master.take_writer().expect("writer");
@@ -930,7 +938,10 @@ mod tests {
             Arc::new(TermProbe::default()),
         );
 
-        writer.write_all(b"echo __T_OK__\n").expect("write to pty");
+        #[cfg(unix)]
+        writer.write_all(b"echo __T_OK__\n").expect("write to Unix pty");
+        #[cfg(windows)]
+        writer.write_all(b"echo __T_OK__\r\n").expect("write to ConPTY");
         writer.flush().expect("flush");
 
         let deadline = Instant::now() + Duration::from_secs(5);

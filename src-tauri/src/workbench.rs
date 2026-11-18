@@ -1,6 +1,6 @@
 //! Bounded, explicit local reads and non-overwriting Markdown exports.
 use serde::{Deserialize, Serialize};
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 pub const MAX_NOTE_BYTES: u64 = 512 * 1024;
@@ -20,84 +20,67 @@ pub struct VaultSnapshot {
 }
 
 pub fn read_vault(root: &Path) -> Result<VaultSnapshot, String> {
+    use crate::capabilities::workspace::safe_paths;
+    let requested = root.to_string_lossy().into_owned();
+    let root = root.canonicalize().map_err(|_| "VAULT_NOT_DIRECTORY")?;
     if !root.is_dir() {
         return Err("VAULT_NOT_DIRECTORY".into());
     }
+    let roots = [root.clone()];
     let mut out = VaultSnapshot {
-        root: root.to_string_lossy().into_owned(),
-        notes: vec![],
-        skipped: 0,
-        truncated: false,
+        root: requested, notes: vec![], skipped: 0, truncated: false,
     };
-    let mut pending = vec![root.to_path_buf()];
-    let mut bytes = 0;
-    let mut visited = 0;
+    let mut pending = vec![root.clone()];
+    let mut bytes = 0usize;
+    let mut visited = 0usize;
     while let Some(dir) = pending.pop() {
-        let entries = std::fs::read_dir(dir).map_err(|_| "VAULT_READ_FAILED")?;
-        for entry in entries {
+        // Enumerate and read relative to pinned authorized OS handles, not
+        // read_dir(path) and File::open(path) after an unpinned path check.
+        let entries = safe_paths::list_directory(&dir, &roots)
+            .map_err(|_| "VAULT_READ_FAILED")?;
+        for (name, is_dir, len) in entries {
             visited += 1;
             if visited > 20_000 {
                 out.truncated = true;
                 return Ok(out);
             }
-            let Ok(entry) = entry else {
-                out.skipped += 1;
-                continue;
-            };
-            let name = entry.file_name();
-            if name.to_string_lossy().starts_with('.') || name == "node_modules" {
+            let name_text = name.to_string_lossy();
+            if name_text.starts_with('.') || name_text.eq_ignore_ascii_case("node_modules") {
                 continue;
             }
-            let Ok(kind) = entry.file_type() else {
-                out.skipped += 1;
-                continue;
-            };
-            if kind.is_symlink() {
-                out.skipped += 1;
+            let path = dir.join(&name);
+            if is_dir {
+                pending.push(path);
                 continue;
             }
-            if kind.is_dir() {
-                pending.push(entry.path());
-                continue;
-            }
-            if !kind.is_file() || !name.to_string_lossy().to_lowercase().ends_with(".md") {
+            if !name_text.to_lowercase().ends_with(".md") {
                 continue;
             }
             if out.notes.len() >= 1000 || bytes >= MAX_VAULT_BYTES {
                 out.truncated = true;
                 return Ok(out);
             }
-            let mut text = String::new();
-            // Recheck after directory enumeration; reject symlinks on the final open too.
-            let path = entry
-                .path()
-                .canonicalize()
-                .map_err(|_| "VAULT_READ_FAILED")?;
-            if !path.starts_with(root) {
+            if len > MAX_NOTE_BYTES {
                 out.skipped += 1;
                 continue;
             }
-            let file = std::fs::File::open(&path).map_err(|_| "VAULT_READ_FAILED")?;
-            if file
-                .take(MAX_NOTE_BYTES + 1)
-                .read_to_string(&mut text)
-                .is_err()
-                || text.len() as u64 > MAX_NOTE_BYTES
-            {
-                out.skipped += 1;
-                continue;
-            }
+            let data = match safe_paths::read_regular(&path, &roots, MAX_NOTE_BYTES as usize) {
+                Ok(data) => data,
+                Err(_) => { out.skipped += 1; continue; }
+            };
+            let text = match String::from_utf8(data) {
+                Ok(text) => text,
+                Err(_) => { out.skipped += 1; continue; }
+            };
             if bytes + text.len() > MAX_VAULT_BYTES {
                 out.truncated = true;
                 return Ok(out);
             }
             bytes += text.len();
+            let relative = path.strip_prefix(&root)
+                .map_err(|_| "VAULT_READ_FAILED")?;
             out.notes.push(VaultNote {
-                path: path
-                    .strip_prefix(root)
-                    .unwrap()
-                    .to_string_lossy()
-                    .into_owned(),
+                path: relative.to_string_lossy().into_owned(),
                 text,
             });
         }
@@ -143,16 +126,21 @@ pub fn save_vault_note(
     if !canonical.starts_with(&root) {
         return Err("VAULT_EDIT_PATH_DENIED".into());
     }
-    let actual = std::fs::read_to_string(&canonical).map_err(|_| "VAULT_EDIT_READ_FAILED")?;
-    if actual.len() as u64 > MAX_NOTE_BYTES {
-        return Err("VAULT_EDIT_LIMIT".into());
-    }
-    if actual != expected_text {
+    let roots = [root.clone()];
+    let actual = crate::capabilities::workspace::safe_paths::read_regular(
+        &canonical, &roots, MAX_NOTE_BYTES as usize
+    ).map_err(|_| "VAULT_EDIT_READ_FAILED")?;
+    if actual != expected_text.as_bytes() {
         return Err("VAULT_EDIT_CONFLICT".into());
     }
-    // Reuse existing audited atomic-write primitive; no new secondary storage path.
-    crate::session::atomic_write(&canonical, content)
-        .map_err(|_| "VAULT_EDIT_WRITE_FAILED".to_string())
+    // Preserve the read-check-write guarantee under a pinned parent; the
+    // former atomic_write(path) did not compare against concurrent edits.
+    crate::capabilities::workspace::safe_paths::save_if_unchanged(
+        &canonical, &roots, &actual, content.as_bytes(), MAX_NOTE_BYTES as usize
+    ).map_err(|error| {
+        if error == "FILE_CONFLICT" { "VAULT_EDIT_CONFLICT".into() }
+        else { "VAULT_EDIT_WRITE_FAILED".into() }
+    })
 }
 
 #[derive(Deserialize)]
@@ -228,6 +216,9 @@ pub fn save_archives(
                     file.sync_all()?;
                     // hard_link is atomic and refuses to replace an existing destination.
                     std::fs::hard_link(&temp, &path)?;
+                    // The standard Windows File API cannot open a directory
+                    // using File::open; preserve directory fsync on Unix.
+                    #[cfg(unix)]
                     std::fs::File::open(root)?.sync_all()?;
                     Ok(())
                 })();

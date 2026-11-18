@@ -1588,6 +1588,7 @@ mod tests {
 
     // -- T-db-p7 SQLite 正常路径（真实库） --
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn t_db_p7_sqlite_happy_path_returns_rows() {
         let root = temp_root("happy");
@@ -1622,6 +1623,7 @@ mod tests {
         fs::remove_dir_all(&root).ok();
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn t_db_p7_sqlite_blob_is_not_returned_as_bytes() {
         let root = temp_root("blob");
@@ -1642,6 +1644,7 @@ mod tests {
 
     // -- T-db-p8 行数上限与截断 --
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn t_db_p8_row_limit_truncates_and_marks() {
         let root = temp_root("rowlimit");
@@ -1666,6 +1669,7 @@ mod tests {
         fs::remove_dir_all(&root).ok();
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn t_db_p8_field_truncation_marks_field_truncated() {
         let root = temp_root("fieldtrunc");
@@ -1694,6 +1698,7 @@ mod tests {
 
     // -- T-db-p9 取消 --
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn t_db_p9_cancelled_query_returns_cancelled_and_connection_stays_usable() {
         let root = temp_root("cancel");
@@ -1725,6 +1730,7 @@ mod tests {
 
     // -- T-db-p10 分层超时（注入 deadline，不改生产常量） --
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn t_db_p10_soft_timeout_returns_timeout_without_discard() {
         let root = temp_root("soft");
@@ -1753,6 +1759,7 @@ mod tests {
         fs::remove_dir_all(&root).ok();
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn t_db_p10_hard_timeout_marks_connection_for_discard() {
         let root = temp_root("hard");
@@ -1786,6 +1793,7 @@ mod tests {
 
     // -- T-db-p11 空/超长/多语句在进入驱动前被拒 --
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn t_db_p11_sql_guardrails_reject_before_driver() {
         let root = temp_root("guard");
@@ -1820,6 +1828,7 @@ mod tests {
 
     // -- T-db-p12 MySQL/Postgres 不伪造能力 --
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn t_db_p12_remote_drivers_do_not_forge_support() {
         // 连接失败路径：不可达主机必须返回稳定错误码，且不 panic。
@@ -1847,6 +1856,7 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn t_db_p12_ssl_require_is_explicitly_degraded() {
         let roots: Vec<PathBuf> = Vec::new();
@@ -1951,6 +1961,26 @@ mod tests {
     }
 
     // -- T-db-p13 平台降级与 DbValue 计费 --
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn t_db_p13_all_database_drivers_fail_explicitly_on_unsupported_platforms() {
+        let root = temp_root("driver-gate");
+        let sqlite = sqlite_config("sqlite-1", &root.join("cache.db").to_string_lossy());
+        for config in [
+            sqlite,
+            remote_config(SupportedDb::MySql),
+            remote_config(SupportedDb::Postgres),
+        ] {
+            let result = DbPool::connect(&config, Some("secret"), &[root.clone()]);
+            let error = result.expect_err("non-Linux D29 contract must refuse connection");
+            assert_eq!(error.code, DbErrorCode::NotSupported);
+            assert_eq!(error.code_str(), "DB_NOT_SUPPORTED");
+            assert!(!error.message.contains("secret"));
+        }
+        assert!(!root.join("cache.db").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn t_db_p13_platform_gate_is_explicit() {

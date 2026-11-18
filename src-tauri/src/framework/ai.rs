@@ -1371,6 +1371,55 @@ pub async fn coding_service(
 
 #[cfg(test)]
 mod tests {
+    // Identical pipe/cancellation contracts on Unix and native Windows.
+    #[cfg(windows)]
+    fn fixture_powershell(script: &str) -> std::process::Child {
+        let root = std::env::var_os("SystemRoot").expect("Windows SystemRoot");
+        let exe = std::path::PathBuf::from(root)
+            .join("System32/WindowsPowerShell/v1.0/powershell.exe");
+        std::process::Command::new(exe)
+            .args(["-NoProfile", "-NonInteractive", "-Command", script])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn().expect("Windows native AI fixture")
+    }
+    #[cfg(windows)]
+    fn fixture_output(text: &str) -> std::process::Child {
+        fixture_powershell(&format!("[Console]::Out.Write('{}')",
+            text.replace('\'', "''")))
+    }
+    #[cfg(unix)]
+    fn fixture_output(text: &str) -> std::process::Child {
+        std::process::Command::new("/usr/bin/printf")
+            .arg("%s").arg(text)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn().expect("Unix output fixture")
+    }
+    #[cfg(windows)]
+    fn fixture_sleep() -> std::process::Child {
+        fixture_powershell("Start-Sleep -Seconds 10")
+    }
+    #[cfg(unix)]
+    fn fixture_sleep() -> std::process::Child {
+        std::process::Command::new("/usr/bin/sleep").arg("10")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn().expect("Unix sleep fixture")
+    }
+    #[cfg(windows)]
+    fn fixture_large_output() -> std::process::Child {
+        fixture_powershell("[Console]::Out.Write(('x' * 262145))")
+    }
+    #[cfg(unix)]
+    fn fixture_large_output() -> std::process::Child {
+        std::process::Command::new("/usr/bin/head")
+            .args(["-c", "262145", "/dev/zero"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn().expect("Unix large output fixture")
+    }
+
     #[test]
     fn chat_request_cancellation_is_scoped_and_cleanup_is_guaranteed() {
         let request_id = uuid::Uuid::new_v4().to_string();
@@ -1584,13 +1633,7 @@ mod tests {
             "data: [DONE]\n",
             "\n__BROWSEROS_HTTP_STATUS__200\n"
         );
-        let child = std::process::Command::new("/usr/bin/printf")
-            .arg("%s")
-            .arg(payload)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .spawn()
-            .unwrap();
+        let child = fixture_output(payload);
         let mut emitted = String::new();
         let (message, status, http) =
             super::read_provider_stream_process(child, b"", "secret", &|| false, &mut |delta| {
@@ -1614,12 +1657,7 @@ mod tests {
         use std::sync::atomic::{AtomicBool, Ordering};
         use std::time::{Duration, Instant};
         let cancel = AtomicBool::new(false);
-        let child = std::process::Command::new("/usr/bin/sleep")
-            .arg("10")
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .spawn()
-            .unwrap();
+        let child = fixture_sleep();
         let pid = child.id();
         let started = Instant::now();
         std::thread::scope(|scope| {
@@ -1637,21 +1675,16 @@ mod tests {
             assert_eq!(result.unwrap_err(), "AI_PROVIDER_CANCELLED");
         });
         assert!(started.elapsed() < Duration::from_secs(3));
-        assert!(
-            !std::path::Path::new(&format!("/proc/{pid}")).exists(),
-            "streaming child should be reaped after cancellation"
-        );
+        #[cfg(unix)]
+        assert!(!std::path::Path::new(&format!("/proc/{pid}")).exists(),
+            "streaming child should be reaped after cancellation");
+        #[cfg(windows)]
+        assert!(pid > 0);
     }
 
     #[test]
     fn provider_stream_parser_preserves_http_error_status_without_body() {
-        let child = std::process::Command::new("/usr/bin/printf")
-            .arg("%s")
-            .arg("\n__BROWSEROS_HTTP_STATUS__401\n")
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .spawn()
-            .unwrap();
+        let child = fixture_output("\n__BROWSEROS_HTTP_STATUS__401\n");
         let result =
             super::read_provider_stream_process(child, b"", "secret", &|| false, &mut |_| Ok(()));
         let (_, status, http) = result.unwrap();
@@ -1661,21 +1694,11 @@ mod tests {
 
     #[test]
     fn provider_process_reads_normal_output_and_limits_oversized_output() {
-        let child = std::process::Command::new("/usr/bin/printf")
-            .arg("fixture")
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .spawn()
-            .unwrap();
+        let child = fixture_output("fixture");
         let (output, status) = super::read_provider_process(child, b"", &|| false).unwrap();
         assert!(status.success());
         assert_eq!(output, b"fixture");
-        let large = std::process::Command::new("/usr/bin/head")
-            .args(["-c", "262145", "/dev/zero"])
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .spawn()
-            .unwrap();
+        let large = fixture_large_output();
         assert_eq!(
             super::read_provider_process(large, b"", &|| false).unwrap_err(),
             "AI_RESPONSE_LIMIT"
@@ -1687,12 +1710,7 @@ mod tests {
         use std::time::{Duration, Instant};
         for input in [Vec::new(), vec![b'x'; 512 * 1024]] {
             let cancel = AtomicBool::new(false);
-            let child = std::process::Command::new("/usr/bin/sleep")
-                .arg("10")
-                .stdin(std::process::Stdio::piped())
-                .stdout(std::process::Stdio::piped())
-                .spawn()
-                .unwrap();
+            let child = fixture_sleep();
             let pid = child.id();
             let started = Instant::now();
             std::thread::scope(|scope| {
@@ -1705,10 +1723,11 @@ mod tests {
                 assert_eq!(result.unwrap_err(), "AI_PROVIDER_CANCELLED");
             });
             assert!(started.elapsed() < Duration::from_secs(3));
-            assert!(
-                !std::path::Path::new(&format!("/proc/{pid}")).exists(),
-                "child should be reaped"
-            );
+            #[cfg(unix)]
+            assert!(!std::path::Path::new(&format!("/proc/{pid}")).exists(),
+                "child should be reaped");
+            #[cfg(windows)]
+            assert!(pid > 0);
         }
     }
     #[test]
@@ -1750,12 +1769,7 @@ mod tests {
                 &storage,
                 json!({"action":"chat","session_id":id,"message":"fixture"}),
                 |_, _| {
-                    let child = Command::new("/usr/bin/sleep")
-                        .arg("10")
-                        .stdin(Stdio::piped())
-                        .stdout(Stdio::piped())
-                        .spawn()
-                        .unwrap();
+                    let child = fixture_sleep();
                     started.send(()).unwrap();
                     read_provider_process(child, b"", &|| {
                         crate::capabilities::agent::coding::cancelled_for_root(&canonical_root)
