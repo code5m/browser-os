@@ -1,7 +1,7 @@
 use crate::cmdbuilder::CommandBuilder;
 use crate::win::psuedocon::PsuedoCon;
 use crate::{Child, MasterPty, PtyPair, PtySize, PtySystem, SlavePty};
-use anyhow::Error;
+use anyhow::{ensure, Error};
 use filedescriptor::{FileDescriptor, Pipe};
 use std::sync::{Arc, Mutex};
 use winapi::um::wincon::COORD;
@@ -11,6 +11,12 @@ pub struct ConPtySystem {}
 
 impl PtySystem for ConPtySystem {
     fn openpty(&self, size: PtySize) -> anyhow::Result<PtyPair> {
+        // COORD uses signed 16-bit values. Truncating an arbitrary u16 can
+        // turn a large requested terminal into a negative or zero console.
+        ensure!(size.cols > 0 && size.rows > 0
+            && size.cols <= i16::MAX as u16
+            && size.rows <= i16::MAX as u16,
+            "ConPTY size outside supported 1..=32767 rows/cols");
         let stdin = Pipe::new()?;
         let stdout = Pipe::new()?;
 
@@ -126,5 +132,20 @@ impl SlavePty for ConPtySlavePty {
         let inner = self.inner.lock().unwrap();
         let child = inner.con.spawn_command_suspended(cmd)?;
         Ok(Box::new(child))
+    }
+}
+
+#[cfg(test)]
+mod conpty_input_contract_tests {
+    use super::*;
+
+    #[test]
+    fn invalid_dimensions_are_rejected_before_pipe_creation() {
+        let system = ConPtySystem::default();
+        for (rows, cols) in [(0, 80), (25, 0), (u16::MAX, 80), (25, u16::MAX)] {
+            let size = PtySize { rows, cols, pixel_width: 0, pixel_height: 0 };
+            assert!(system.openpty(size).is_err(),
+                "invalid ConPTY dimensions {rows}x{cols} must be rejected");
+        }
     }
 }

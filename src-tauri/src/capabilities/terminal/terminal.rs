@@ -799,6 +799,19 @@ mod tests {
     use super::*;
     use std::sync::mpsc::Sender;
 
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn conpty_rejects_invalid_terminal_dimensions() {
+        // Invalid u16 dimensions must not overflow signed COORD. This test
+        // works without creating a pseudoconsole or requiring a console host.
+        let system = native_pty_system();
+        for (rows, cols) in [(0, 80), (24, 0), (u16::MAX, 80), (24, u16::MAX)] {
+            let size = PtySize { rows, cols, pixel_width: 0, pixel_height: 0 };
+            assert!(system.openpty(size).is_err(),
+                "ConPTY accepted invalid size {rows}x{cols}");
+        }
+    }
+
     /// 测试用 sink：收集消息，不依赖 Tauri 运行时。
     struct CollectSink {
         tx: Mutex<Sender<(String, String)>>,

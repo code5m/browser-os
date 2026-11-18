@@ -281,4 +281,33 @@ assert.match(windowsMcp, /credential_in_json_key_is_redacted_in_nested_mcp_resul
 // Windows canonical UNC and verbatim drive forms retain absolute identity.
 assert.match(safePathsWindows, /windows_path_normalizer_preserves_drive_and_unc_root_semantics/);
 
+// Follow-up: four real Windows LSP requests, private source snapshots,
+// AppContainer SID isolation, and ConPTY creation/child lifetime.
+const nativeLspStart = windowsLsp.slice(
+  windowsLsp.indexOf('fn start_with_snapshot('),
+  windowsLsp.indexOf('fn reset_deadline(')
+);
+assert.match(nativeLspStart, /"linkedProjects":\[project_file\]/);
+assert.doesNotMatch(nativeLspStart, /stage_runtime_peer\(/);
+assert.match(windowsLsp, /"HOVER",/);
+assert.match(windowsLsp, /"DEFINITION",/);
+assert.match(windowsLsp, /"SYNTAX_DIAGNOSTICS",/);
+assert.match(windowsLsp, /"SYMBOLS",/);
+assert.match(windowsLsp, /legacy_cargo_subprocess_probes_are_diagnostics_only/);
+assert.match(windowsLsp, /private_snapshot_requires_own_package_sid_and_rejects_other_profiles/);
+assert.match(windowsLsp, /write-negative profile/);
+const snapshotAcl = windowsSandbox.slice(
+  windowsSandbox.indexOf('pub fn protect_snapshot_files('),
+  windowsSandbox.indexOf('pub fn protect_snapshot(')
+);
+assert.ok(snapshotAcl.length > 0);
+assert.match(snapshotAcl, /\(OI\)\(CI\)RX/);
+assert.doesNotMatch(snapshotAcl, /\(OI\)\(CI\)M/);
+assert.match(ptyWinSpawn, /fn is_live_pipe_handle/);
+assert.match(ptyWinSpawn, /creation_pipes: Mutex<Option/);
+assert.match(ptyWinSpawn, /self\.creation_pipes/);
+assert.match(ptyWinSpawn, /std::env::current_exe\(\)/);
+assert.doesNotMatch(ptyWinSpawn, /ConPtyFuncs::open\(Path::new\("conpty\.dll"\)\)/);
+assert.match(ptyConpty, /invalid_dimensions_are_rejected_before_pipe_creation/);
+
 console.log('WINDOWS_LINUX_V2_SOURCE_CONTRACT=PASS (static-only, Windows GUI pending)');

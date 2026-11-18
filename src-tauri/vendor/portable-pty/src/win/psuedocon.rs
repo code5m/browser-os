@@ -50,14 +50,20 @@ fn load_conpty() -> ConPtyFuncs {
         "this system does not support conpty.  Windows 10 October 2018 or newer is required",
     );
 
-    // We prefer to use a sideloaded conpty.dll and openconsole.exe host deployed
-    // alongside the application.  We check for this after checking for kernel
-    // support so that we don't try to proceed and do something crazy.
-    if let Ok(sideloaded) = ConPtyFuncs::open(Path::new("conpty.dll")) {
-        sideloaded
-    } else {
-        kernel
+    // Never resolve conpty.dll through the process current directory or
+    // workspace-controlled PATH. A relative DLL name may load attacker
+    // bytes when the integrated terminal is opened inside a repository.
+    // A bundled replacement is valid only beside the current executable.
+    let bundled = std::env::current_exe().ok()
+        .and_then(|executable| executable.parent().map(|parent| parent.join("conpty.dll")))
+        .filter(|candidate| std::fs::symlink_metadata(candidate)
+            .is_ok_and(|meta| meta.file_type().is_file()));
+    if let Some(path) = bundled {
+        if let Ok(sideloaded) = ConPtyFuncs::open(&path) {
+            return sideloaded;
+        }
     }
+    kernel
 }
 
 lazy_static! {
@@ -66,6 +72,10 @@ lazy_static! {
 
 pub struct PsuedoCon {
     con: HPCON,
+    // The host ends must remain open until the ConPTY client has been
+    // successfully created. Closing them in new() loses the I/O endpoints
+    // before CreateProcessW attaches the first client to the pseudo console.
+    creation_pipes: Mutex<Option<(FileDescriptor, FileDescriptor)>>,
 }
 
 unsafe impl Send for PsuedoCon {}
@@ -77,27 +87,50 @@ impl Drop for PsuedoCon {
     }
 }
 
+fn is_live_pipe_handle(handle: HANDLE) -> bool {
+    if handle.is_null() || handle == INVALID_HANDLE_VALUE {
+        return false;
+    }
+    let mut flags: DWORD = 0;
+    unsafe { GetHandleInformation(handle, &mut flags) != 0 }
+}
+
 impl PsuedoCon {
     pub fn new(size: COORD, input: FileDescriptor, output: FileDescriptor) -> Result<Self, Error> {
+        ensure!(size.X > 0 && size.Y > 0, "ConPTY dimensions must be positive");
+        // The pipes belong to this process, regardless of whether the parent
+        // shell/GUI exposes valid STD_INPUT_HANDLE/STD_OUTPUT_HANDLE values.
+        let input_handle = input.as_raw_handle() as HANDLE;
+        let output_handle = output.as_raw_handle() as HANDLE;
+        ensure!(is_live_pipe_handle(input_handle),
+            "ConPTY input pipe handle is invalid before CreatePseudoConsole");
+        ensure!(is_live_pipe_handle(output_handle),
+            "ConPTY output pipe handle is invalid before CreatePseudoConsole");
         let mut con: HPCON = INVALID_HANDLE_VALUE;
         let result = unsafe {
             (CONPTY.CreatePseudoConsole)(
                 size,
-                input.as_raw_handle() as _,
-                output.as_raw_handle() as _,
-                // Cursor inheritance requires an asynchronous request/reply
-                // handshake; without it some ConPTY launches can hang.
-                // Plain terminal input/output does not require any flags.
+                input_handle,
+                output_handle,
+                // Cursor inheritance requires an asynchronous handshake;
+                // ordinary pseudo consoles do not use that flag.
                 0,
                 &mut con,
             )
         };
         ensure!(
             result == S_OK,
-            "failed to create psuedo console: HRESULT {}",
-            result
+            "failed to create psuedo console: HRESULT {}; input_pipe_live={}; output_pipe_live={}; size={}x{}",
+            result,
+            is_live_pipe_handle(input_handle),
+            is_live_pipe_handle(output_handle),
+            size.X,
+            size.Y
         );
-        Ok(Self { con })
+        Ok(Self {
+            con,
+            creation_pipes: Mutex::new(Some((input, output))),
+        })
     }
 
     pub fn resize(&self, size: COORD) -> Result<(), Error> {
@@ -187,6 +220,12 @@ impl PsuedoCon {
             log::error!("{}", msg);
             bail!("{}", msg);
         }
+
+        // Microsoft documents releasing the host ends supplied to
+        // CreatePseudoConsole after the client CreateProcess completes,
+        // not immediately when CreatePseudoConsole returns.
+        let _ = self.creation_pipes
+            .lock().unwrap_or_else(|poison| poison.into_inner()).take();
 
         // Make sure we close out the thread handle so we don't leak it;
         // we do this simply by making it owned

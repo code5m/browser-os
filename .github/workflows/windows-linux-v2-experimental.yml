@@ -272,6 +272,7 @@ jobs:
             'windows_script_timeout_reaps_immediate_node_grandchild'
             'windows_script_parent_crash_drops_job_and_reaps_grandchild'
             'conpty_terminal_uses_atomic_job_list_and_reaps_immediate_grandchild'
+            'conpty_rejects_invalid_terminal_dimensions'
             'conpty_child_exit_code_259_is_terminal_and_kill_is_idempotent'
             'job_tree_is_terminated'
             'windows_script_whitelist_rejects_shell_execution'

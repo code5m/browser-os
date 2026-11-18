@@ -1522,14 +1522,14 @@ mod tests {
         );
     }
 
-    fn read_private_file_in_profile(
-        profile: SandboxProfile, file: &Path,
+    fn run_private_command_in_profile(
+        profile: SandboxProfile, command: String,
     ) -> Result<(u32, String), String> {
         let state = profile.state_dir()?;
         let windows = std::env::var_os("SystemRoot")
             .ok_or("LSP_TEST_SYSTEMROOT_UNAVAILABLE")?;
         let cmd = PathBuf::from(windows).join("System32").join("cmd.exe");
-        let tail = format!("type \"{}\"", file.display());
+        let tail = command;
         let SandboxChild { stdin, mut stdout, process } =
             profile.spawn(&cmd, &["/D".into(), "/C".into(), tail], &[], &state)?;
         drop(stdin);
@@ -1560,6 +1560,14 @@ mod tests {
         Ok((exit, String::from_utf8_lossy(&bytes).into_owned()))
     }
 
+    fn read_private_file_in_profile(
+        profile: SandboxProfile, file: &Path,
+    ) -> Result<(u32, String), String> {
+        run_private_command_in_profile(
+            profile, format!("type \"{}\"", file.display())
+        )
+    }
+
     #[test]
     fn private_snapshot_requires_own_package_sid_and_rejects_other_profiles() {
         let root = std::env::temp_dir().join(format!(
@@ -1574,14 +1582,39 @@ mod tests {
         let copied_file = copy.join("src/lib.rs");
         // Negative control first, while owner profile is still alive.
         let other = SandboxProfile::create().expect("different AppContainer profile");
-        let (other_exit, other_text) =
-            read_private_file_in_profile(other, &copied_file).expect("other profile launched");
-        assert_ne!(other_exit, 0, "unrelated package read owner source: {other_text}");
-        assert!(!other_text.contains("private_snapshot_marker"));
+        let other_copy = snapshot(&root, &other).expect("other package own source copy");
+        // Positive control for the SAME other profile before probing owner
+        // files. A nonzero exit alone can be a loader/runtime failure.
+        let own_file = other_copy.join("src/lib.rs");
+        let command = format!(
+            "type \"{}\" & type \"{}\"", own_file.display(), copied_file.display()
+        );
+        let (other_exit, other_text) = run_private_command_in_profile(other, command)
+            .expect("other package launched and attempted both file reads");
+        assert_eq!(other_text.matches("private_snapshot_marker").count(), 1,
+            "other package should read only its own copy: {other_text}");
+        assert_ne!(other_exit, 0,
+            "unrelated package unexpectedly read owner source: {other_text}");
         let (owner_exit, owner_text) =
             read_private_file_in_profile(owner, &copied_file).expect("owner profile launched");
         assert_eq!(owner_exit, 0, "owner AppContainer cannot read its source");
         assert!(owner_text.contains("private_snapshot_marker"));
+
+        // Verify the authorized AppContainer does not retain directory
+        // Modify rights from the old cargo-metadata snapshot contract.
+        let writer = SandboxProfile::create().expect("write-negative profile");
+        let read_only_copy = snapshot(&root, &writer).expect("read-only source copy");
+        let source_file = read_only_copy.join("src/lib.rs");
+        let before = fs::read(&source_file).unwrap();
+        let write = format!("echo changed > \"{}\"", source_file.display());
+        let (write_exit, _) = run_private_command_in_profile(writer, write)
+            .expect("spawn lowbox denied-write fixture");
+        assert_ne!(write_exit, 0, "AppContainer unexpectedly modified a source file");
+        assert_eq!(fs::read(source_file).unwrap(), before,
+            "host-owned snapshot bytes changed under sandbox token");
+        assert!(fs::read_to_string(root.join("src/lib.rs")).unwrap()
+            .contains("private_snapshot_marker"),
+            "the real host workspace was modified by sandbox operation");
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1660,6 +1693,26 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "legacy Cargo/Rustc AppContainer probes: not part of no-Cargo IDE acceptance"]
+    fn legacy_cargo_subprocess_probes_are_diagnostics_only() {
+        let root = std::env::temp_dir().join(format!(
+            "browseros-legacy-toolchain-probe-{}", uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("Cargo.toml"),
+            "[package]\nname='legacy_probe'\nversion='0.1.0'\nedition='2024'\n").unwrap();
+        fs::write(root.join("src/lib.rs"), "pub fn fixture() {}\n").unwrap();
+        sandbox_token_probe();
+        toolchain_probe(
+            "LOCATE", "cargo",
+            &["locate-project".to_owned(), "--workspace".to_owned()], &root, true,
+        );
+        toolchain_probe("VERSION", "cargo", &["--version".to_owned()], &root, false);
+        toolchain_probe("RUSTC_VERSION", "rustc", &["--version".to_owned()], &root, false);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn real_rust_analyzer_runs_against_private_snapshot() {
         if runtime().is_err() {
             panic!("rust-analyzer.exe is required for Windows LSP acceptance");
@@ -1672,28 +1725,13 @@ mod tests {
             "[package]\nname='lsp_fixture'\nversion='0.1.0'\nedition='2024'\n",
         )
         .unwrap();
-        fs::write(root.join("src/lib.rs"), "pub fn fixture() -> i32 { 42 }\n").unwrap();
-        // Name the sandboxed toolchain failure before asserting on Rust
-        // Analyzer: a probe error is a real capability failure, not a
-        // diagnostics-timing artefact.
-        {
-            sandbox_token_probe();
-            toolchain_probe(
-                "LOCATE",
-                "cargo",
-                &["locate-project".to_string(), "--workspace".to_string()],
-                &root,
-                true,
-            );
-            toolchain_probe("VERSION", "cargo", &["--version".to_string()], &root, false);
-            toolchain_probe(
-                "RUSTC_VERSION",
-                "rustc",
-                &["--version".to_string()],
-                &root,
-                false,
-            );
-        }
+        fs::write(root.join("src/lib.rs"),
+            "pub fn helper() -> i32 { 42 }\npub fn fixture() -> i32 { helper() }\nmod broken;\n").unwrap();
+        fs::write(root.join("src/broken.rs"), "pub fn broken( {\n").unwrap();
+        // This acceptance test measures the non-Cargo, no-network LSP path
+        // only. The legacy Cargo toolchain probes are retained separately
+        // as an ignored diagnostic test; their result cannot mask the IDE
+        // protocol contract.
         let started = acceptance(
             "START",
             execute(
@@ -1702,6 +1740,8 @@ mod tests {
             ),
         );
         let id = started["session_id"].as_str().unwrap();
+        assert_eq!(started["analysis_mode"], "rust-project-no-cargo");
+        assert_eq!(started["compilation_verified"], json!(false));
         let diagnostics = acceptance(
             "DIAGNOSTICS",
             execute(
@@ -1715,13 +1755,58 @@ mod tests {
             "SYMBOLS",
             execute(
                 &root,
-                json!({"action":"lsp_request","approved":true,"session_id":id,"method":"textDocument/documentSymbol","params":{"textDocument":{"uri":uri}},"timeout_seconds":300}),
+                json!({"action":"lsp_request","approved":true,"session_id":id,"method":"textDocument/documentSymbol","params":{"textDocument":{"uri":uri.clone()}},"timeout_seconds":300}),
             ),
         );
         assert!(
-            symbols["result"].to_string().contains("fixture"),
-            "{symbols}"
+            symbols["result"].to_string().contains("fixture")
+                && symbols["result"].to_string().contains("helper"),
+            "symbols missing local Rust functions: {symbols}"
         );
+        // A definition and hover on a local function must work without a
+        // Cargo build or sysroot discovery. The returned file URI must be
+        // remapped from private snapshot to the approved host workspace.
+        let line = "pub fn fixture() -> i32 { helper() }";
+        let character = line.find("helper").expect("fixture call position") as u64 + 2;
+        let hover = acceptance(
+            "HOVER",
+            execute(&root, json!({
+                "action":"lsp_request", "approved":true, "session_id":id,
+                "method":"textDocument/hover",
+                "params":{"textDocument":{"uri":uri.clone()},
+                    "position":{"line":1,"character":character}},
+                "timeout_seconds":120
+            })),
+        );
+        assert!(!hover["result"].is_null(), "hover returned null: {hover}");
+        assert!(hover["result"].to_string().contains("helper"),
+            "hover did not resolve fixture helper: {hover}");
+        let definition = acceptance(
+            "DEFINITION",
+            execute(&root, json!({
+                "action":"lsp_request", "approved":true, "session_id":id,
+                "method":"textDocument/definition",
+                "params":{"textDocument":{"uri":uri.clone()},
+                    "position":{"line":1,"character":character}},
+                "timeout_seconds":120
+            })),
+        );
+        assert!(!definition["result"].is_null(),
+            "definition returned null: {definition}");
+        assert!(definition["result"].to_string().contains("lib.rs"),
+            "definition did not map back into approved workspace: {definition}");
+        assert!(!definition["result"].to_string().contains("snapshot"),
+            "definition leaked the private snapshot path: {definition}");
+        let broken = acceptance(
+            "SYNTAX_DIAGNOSTICS",
+            execute(&root, json!({
+                "action":"lsp_diagnostics", "approved":true, "session_id":id,
+                "path":"src/broken.rs", "timeout_seconds":120
+            })),
+        );
+        assert!(broken["diagnostics"].as_array().is_some_and(|d| !d.is_empty()),
+            "broken Rust code should publish parser diagnostics: {broken}");
+
         let closed = acceptance(
             "CLOSE",
             execute(&root, json!({"action":"lsp_close","session_id":id})),

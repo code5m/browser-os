@@ -533,24 +533,23 @@ impl SandboxProfile {
         Ok(destination.to_path_buf())
     }
 
-    /// Apply the same per-file ACL shape that staged runtime images already
-    /// prove works inside the lowbox (owner full control, SYSTEM full control,
-    /// package read/execute) to a read-only snapshot tree. Snapshot entries
-    /// that only carry the package SID are still rejected by `cargo` with
-    /// "Access is denied (os error 5)" while the identically-shaped staged
-    /// images load fine, so the snapshot must mirror the staged layout.
+    /// Source snapshots are immutable to the AppContainer. Rust-analyzer
+    /// now consumes a reviewed rust-project.json without launching Cargo;
+    /// it must not need to write Cargo.lock or alter any workspace sources.
+    /// Keep owner+SYSTEM full control and only this package SID's RX grants.
+    /// Mutable tool state belongs under the separate private state directory.
     pub fn protect_snapshot_files(&self, root: &Path) -> Result<(), String> {
         no_reparse_path(root)?;
         let icacls = system_binary("icacls.exe")?;
-        // `cargo metadata` resolves the workspace by writing `Cargo.lock` next
-        // to the manifest, so the directory itself must accept a create
-        // inside the lowbox while every existing file stays read-only.
+        // Never grant Modify on the source tree (even on directories):
+        // create/rename/delete of source entries would otherwise remain
+        // possible despite per-file RX ACLs.
         let mut pending = vec![root.to_path_buf()];
         while let Some(directory) = pending.pop() {
             let output = std::process::Command::new(&icacls)
                 .arg(&directory)
                 .arg("/grant")
-                .arg(format!("*{}:(OI)(CI)M", self.sid_string))
+                .arg(format!("*{}:(OI)(CI)RX", self.sid_string))
                 .output()
                 .map_err(|_| "SANDBOX_SNAPSHOT_ACL")?;
             if !output.status.success() {
