@@ -661,7 +661,23 @@ impl Session {
         // This intentionally provides IDE/syntax semantics without Cargo
         // dependency resolution, build scripts or compilation claims.
         let reviewed_graph = reviewed_project_for_initialize(&snapshot)?;
-        let environment: Vec<(String, String)> = Vec::new();
+        // The lowbox PATH is pinned to System32, so a launched analyzer cannot
+        // find `rustc` for its startup `--print cfg` probe. Stage the real
+        // toolchain rustc inside the private profile and point RUSTC at it,
+        // exactly as the reviewed Cargo toolchain probe does. This keeps the
+        // no-network, no-Cargo-build contract: rustc is used only to answer
+        // cfg/data-layout queries, never to compile user code.
+        let mut environment: Vec<(String, String)> = Vec::new();
+        if let Ok(analyzer) = runtime() {
+            if let Some(bin) = analyzer.parent() {
+                if let Ok(rustc) = profile.stage_runtime_peer(&bin.join("rustc.exe")) {
+                    environment.push((
+                        "RUSTC".to_string(),
+                        rustc.to_string_lossy().into_owned(),
+                    ));
+                }
+            }
+        }
         // Do not reintroduce the retired --no-proc-macro CLI flag: use LSP
         // initialization options to disable proc macros and check-on-save.
         let child = profile
@@ -1597,6 +1613,17 @@ mod tests {
     fn run_private_command_in_profile(
         profile: SandboxProfile, command: String,
     ) -> Result<(u32, String, String), String> {
+        run_private_command_in_profile_checked(profile, command, || {})
+    }
+
+    /// Same as `run_private_command_in_profile`, but runs `check` while the
+    /// sandbox process — and therefore its AppContainer profile folder — is
+    /// still alive. Dropping the profile calls `DeleteAppContainerProfile` and
+    /// removes the private folder, so host-side assertions about staged
+    /// snapshot bytes must happen before this function returns.
+    fn run_private_command_in_profile_checked<F: FnOnce()>(
+        profile: SandboxProfile, command: String, check: F,
+    ) -> Result<(u32, String, String), String> {
         let state = profile.state_dir()?;
         let windows = std::env::var_os("SystemRoot")
             .ok_or("LSP_TEST_SYSTEMROOT_UNAVAILABLE")?;
@@ -1629,15 +1656,24 @@ mod tests {
             thread::sleep(Duration::from_millis(20));
         }
         let exit = process.exit_code()?.ok_or("LSP_PROFILE_EXIT_UNAVAILABLE")?;
-        Ok((exit, String::from_utf8_lossy(&bytes).into_owned(),
-            process.profile().stderr_for_test()))
+        let stderr = process.profile().stderr_for_test();
+        // Host-side byte/existence checks must run before `process` (and the
+        // profile it owns) is dropped and its private folder is removed.
+        check();
+        Ok((exit, String::from_utf8_lossy(&bytes).into_owned(), stderr))
     }
 
     /// `cmd.exe` cannot resolve a verbatim `\\?\` path, so lowbox shell
-    /// probes must use the plain form of the same private file.
+    /// probes must use the plain form of the same private file. Its built-in
+    /// commands (notably `type`) also reject `/` as a path separator — a path
+    /// built as `dir.join("src/lib.rs")` keeps the forward slash on Windows,
+    /// and `type` then fails with "系统找不到指定的文件" even though the file
+    /// exists and its package ACE is correct. Normalise both here so the probe
+    /// tests the ACL contract instead of cmd.exe's path syntax.
     fn plain_path_for_shell(path: &Path) -> String {
         let text = path.to_string_lossy().into_owned();
-        text.strip_prefix(r"\\?\").map(str::to_owned).unwrap_or(text)
+        let plain = text.strip_prefix(r"\\?\").unwrap_or(&text);
+        plain.replace('/', "\\")
     }
 
     /// Only emit ACEs for the private snapshot's package SID in test logs;
@@ -1717,7 +1753,8 @@ mod tests {
         // files. A nonzero exit alone can be a loader/runtime failure.
         let own_file = other_copy.join("src/lib.rs");
         let command = format!(
-            "type \"{}\" & type \"{}\"", own_file.display(), copied_file.display()
+            "type \"{}\" & type \"{}\"",
+            plain_path_for_shell(&own_file), plain_path_for_shell(&copied_file)
         );
         let (other_exit, other_text, other_error) =
             run_private_command_in_profile(other, command)
@@ -1731,7 +1768,7 @@ mod tests {
         let own_project = copy.join("rust-project.json");
         let own_command = format!(
             "type \"{}\" & type \"{}\"",
-            copied_file.display(), own_project.display()
+            plain_path_for_shell(&copied_file), plain_path_for_shell(&own_project)
         );
         let (owner_exit, owner_text, owner_error) =
             run_private_command_in_profile(owner, own_command)
@@ -1748,28 +1785,31 @@ mod tests {
         let writer = SandboxProfile::create().expect("write-negative profile");
         let read_only_copy = snapshot(&root, &writer).expect("read-only source copy");
         let source_file = read_only_copy.join("src/lib.rs");
-        let before = fs::read(&source_file).unwrap();
-        let write = format!("echo changed > \"{}\"", source_file.display());
-        let (write_exit, _, _) = run_private_command_in_profile(writer, write)
-            .expect("spawn lowbox denied-write fixture");
-        assert_ne!(write_exit, 0, "AppContainer unexpectedly modified a source file");
-        assert_eq!(fs::read(&source_file).unwrap(), before,
-            "host-owned snapshot bytes changed under sandbox token");
         // Directory create and overwrite are independent Windows ACL rights.
         // A read-only source directory must not permit creating new files.
         let create = read_only_copy.join("src/unreviewed-created.rs");
+        let before = fs::read(&source_file).unwrap();
+        let write = format!("echo changed > \"{}\"", plain_path_for_shell(&source_file));
+        // Host-side byte/existence checks run in the callback while the
+        // profile still owns this private folder; after the call returns the
+        // profile is dropped and the whole folder is removed.
+        let (write_exit, _, _) = run_private_command_in_profile_checked(writer, write, || {
+            assert_eq!(fs::read(&source_file).unwrap(), before,
+                "host-owned snapshot bytes changed under sandbox token");
+            assert!(!create.exists(), "unreviewed source file exists in the first copy");
+        }).expect("spawn lowbox denied-write fixture");
+        assert_ne!(write_exit, 0, "AppContainer unexpectedly modified a source file");
         // The writer profile was consumed by the first probe. Use a separate
         // profile and its own private source copy for the create-negative check.
         let second_writer = SandboxProfile::create().expect("create-negative profile");
         let second_copy = snapshot(&root, &second_writer)
             .expect("read-only create-negative copy");
         let second_create = second_copy.join("src/unreviewed-created.rs");
-        let (create_exit, _, _) = run_private_command_in_profile(
-            second_writer, format!("echo injected > \"{}\"", second_create.display())
+        let (create_exit, _, _) = run_private_command_in_profile_checked(
+            second_writer, format!("echo injected > \"{}\"", plain_path_for_shell(&second_create)),
+            || assert!(!second_create.exists(), "unauthorized snapshot file was created"),
         ).expect("spawn lowbox create-negative fixture");
         assert_ne!(create_exit, 0, "AppContainer created a new source file");
-        assert!(!second_create.exists(), "unauthorized snapshot file was created");
-        assert!(!create.exists(), "unreviewed source file exists in the first copy");
         assert!(fs::read_to_string(root.join("src/lib.rs")).unwrap()
             .contains("private_snapshot_marker"),
             "the real host workspace was modified by sandbox operation");

@@ -703,6 +703,13 @@ pub fn terminate_session(session: &mut TerminalSession) -> Result<(), String> {
     if let Err(error) = terminate_group(&mut session.child, session.pgid, TERM_GROUP_GRACE_MS) {
         errors.push(error);
     }
+    // F7: the worker blocks in `reader.read()`. On Windows ConPTY the read
+    // end only observes EOF once the PTY input writer is closed — killing the
+    // child process alone is not enough because the conhost still holds the
+    // pipe open. Close the writer before joining so the worker wakes on EOF
+    // instead of leaking until join_pipeline gives up. Replacing with a sink
+    // drops the original writer without changing the field's trait-object type.
+    let _ = std::mem::replace(&mut session.writer, Box::new(std::io::sink()));
     if let Some(handles) = session.handles.take() {
         join_pipeline(handles, TERM_THREAD_JOIN_GRACE_MS);
     }
@@ -963,6 +970,11 @@ mod tests {
         stop.store(true, Ordering::SeqCst);
         let _ = child.kill();
         let _ = child.wait();
+        // The worker blocks in reader.read(); on Windows ConPTY the read end
+        // only sees EOF after the PTY input writer is closed. Killing the
+        // child alone leaves conhost holding the pipe, so mirror the real
+        // terminate_session sequence and close the writer before asserting.
+        drop(writer);
         let deadline = Instant::now() + Duration::from_secs(3);
         while Instant::now() < deadline {
             if handles.worker.is_finished() && handles.pump.is_finished() {

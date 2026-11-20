@@ -38,10 +38,30 @@ pub fn atomic_replace_file(source: &Path, target: &Path) -> std::io::Result<()> 
         const MOVEFILE_WRITE_THROUGH: u32 = 0x0000_0008;
         let from: Vec<u16> = source.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
         let to: Vec<u16> = target.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
-        if unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) } == 0 {
-            return Err(Error::last_os_error());
+        // MoveFileExW(REPLACE_EXISTING) can sporadically fail with ERROR_ACCESS_DENIED (5)
+        // on Windows when another handle briefly holds the destination (e.g. an antivirus
+        // or indexer scanning the freshly written file). Retry a bounded number of times
+        // with a short backoff; a genuinely corrupted ACL still surfaces as an error.
+        const ERROR_ACCESS_DENIED: i32 = 5;
+        const ERROR_SHARING_VIOLATION: i32 = 32;
+        let mut last_error = Error::last_os_error();
+        for attempt in 0..8u32 {
+            if unsafe {
+                MoveFileExW(from.as_ptr(), to.as_ptr(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)
+            } != 0
+            {
+                return Ok(());
+            }
+            last_error = Error::last_os_error();
+            if !matches!(
+                last_error.raw_os_error(),
+                Some(ERROR_ACCESS_DENIED) | Some(ERROR_SHARING_VIOLATION)
+            ) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2u64 + attempt as u64 * 3));
         }
-        Ok(())
+        Err(last_error)
     }
     #[cfg(not(windows))]
     {

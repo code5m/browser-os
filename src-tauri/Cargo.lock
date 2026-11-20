@@ -2812,11 +2812,11 @@ dependencies = [
  "tauri-plugin-browser-tabs",
  "tauri-plugin-dialog",
  "tauri-plugin-single-instance",
+ "tokio",
  "url",
  "urlencoding",
  "uuid",
  "windows-sys 0.60.2",
- "tokio",
 ]
 
 [[package]]
@@ -5058,7 +5058,6 @@ dependencies = [
 name = "tauri-plugin-browser-tabs"
 version = "0.1.0"
 dependencies = [
- "windows-sys 0.60.2",
  "gtk",
  "javascriptcore-rs",
  "log",
@@ -5069,6 +5068,7 @@ dependencies = [
  "tauri-plugin",
  "thiserror 1.0.69",
  "webkit2gtk",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]

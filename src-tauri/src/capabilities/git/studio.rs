@@ -179,6 +179,14 @@ fn process(
     let mut command = Command::new(program);
     if program == "git" {
         command.args(["-c", "core.fsmonitor=false"]);
+        // The default `merge` rebase backend cannot create its in-progress state
+        // on some Windows filesystems (e.g. a TMPDIR on a secondary drive): it
+        // prints "could not mark as interactive: No such file or directory" and
+        // still exits 0, silently skipping the rebase. The `apply` backend uses
+        // the plain .git/rebase-apply state and reports conflicts correctly.
+        if args.iter().any(|a| a == "rebase") {
+            command.args(["-c", "rebase.backend=apply"]);
+        }
     }
     command
         .current_dir(root)
