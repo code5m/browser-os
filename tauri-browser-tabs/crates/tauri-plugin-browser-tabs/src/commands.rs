@@ -12,9 +12,7 @@ use std::path::{Path, PathBuf};
 use tauri::webview::PageLoadEvent;
 use std::sync::{Arc, Mutex};
 #[cfg(target_os = "windows")]
-use std::sync::OnceLock;
-#[cfg(target_os = "windows")]
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tauri::{
     webview::NewWindowResponse, AppHandle, Emitter, Manager, State, Webview, WebviewBuilder,
     WebviewUrl, Window, Wry,
@@ -82,7 +80,7 @@ fn browser_profile_security_options() -> browseros_platform_security::windows::P
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(all(test, target_os = "windows"))]
 fn secure_windows_browser_profile(
     profile: &Path,
 ) -> Result<browseros_platform_security::windows::PrivateTreeReport> {
@@ -91,69 +89,13 @@ fn secure_windows_browser_profile(
     ).map_err(|error| BrowserTabError::Platform(format!("BROWSER_PROFILE_ACL_MIGRATION: {error}")))
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(all(test, target_os = "windows"))]
 fn audit_windows_profile_acl(
     profile: &Path, deep: bool,
 ) -> Result<browseros_platform_security::windows::PrivateTreeReport> {
     browseros_platform_security::windows::audit_private_directory(
         profile, deep, &browser_profile_security_options(),
     ).map_err(|error| BrowserTabError::Platform(format!("BROWSER_PROFILE_ACL_AUDIT: {error}")))
-}
-
-#[cfg(target_os = "windows")]
-struct ProfileAudit {
-    identity: browseros_platform_security::windows::FileIdentity,
-    verified_at: Instant,
-}
-
-#[cfg(target_os = "windows")]
-static PROFILE_AUDIT: OnceLock<Mutex<Option<ProfileAudit>>> = OnceLock::new();
-
-#[cfg(target_os = "windows")]
-fn ensure_private_browser_profile(app: &AppHandle<Wry>) -> Result<PathBuf> {
-    let base = app.path().app_data_dir()
-        .map_err(|_| BrowserTabError::Platform("browser profile directory unavailable".into()))?;
-    let profile = browser_profile_path(&base);
-    let audit = PROFILE_AUDIT.get_or_init(|| Mutex::new(None));
-    let mut state = audit.lock().unwrap_or_else(|poison| poison.into_inner());
-    match state.as_ref() {
-        None => {
-            // Before the first browser consumer only. Missing components are
-            // created with a private descriptor; existing data is preserved.
-            let parent_report = browseros_platform_security::windows::ensure_private_directory_root(
-                &base, &browser_profile_security_options(),
-            ).map_err(|error| BrowserTabError::Platform(format!(
-                "BROWSER_PROFILE_PARENT_ACL: {error}"
-            )))?;
-            eprintln!(
-                "BROWSER_PROFILE_PARENT_ACL_READY checked={} repaired={} elapsed_ms={}",
-                parent_report.checked_objects, parent_report.repaired_objects, parent_report.elapsed_ms,
-            );
-            let report = secure_windows_browser_profile(&profile)?;
-            eprintln!(
-                "BROWSER_PROFILE_ACL_READY checked={} repaired={} elapsed_ms={}",
-                report.checked_objects, report.repaired_objects, report.elapsed_ms,
-            );
-            *state = Some(ProfileAudit { identity: report.root_identity, verified_at: Instant::now() });
-        }
-        Some(previous) => {
-            let deep = previous.verified_at.elapsed() >= Duration::from_secs(600);
-            // Audits of an active WebView2 profile never rewrite permissions.
-            // A failed/incomplete audit does not advance the cached evidence.
-            let report = audit_windows_profile_acl(&profile, deep)?;
-            if report.root_identity != previous.identity {
-                return Err(BrowserTabError::Platform("WebView2 profile identity changed".into()));
-            }
-            if deep {
-                eprintln!(
-                    "BROWSER_PROFILE_ACL_AUDITED checked={} elapsed_ms={}",
-                    report.checked_objects, report.elapsed_ms,
-                );
-                *state = Some(ProfileAudit { identity: report.root_identity, verified_at: Instant::now() });
-            }
-        }
-    }
-    Ok(profile)
 }
 
 #[cfg(all(test, any(target_os = "linux", target_os = "windows")))]
@@ -202,6 +144,8 @@ pub struct TabManager {
     tabs: RwLock<HashMap<TabId, Webview<Wry>>>,
     app: AppHandle<Wry>,
     host_label: String,
+    #[cfg(target_os = "windows")]
+    profile: RwLock<Option<Arc<browseros_platform_security::windows::PreparedPrivateDirectory>>>,
 }
 
 impl TabManager {
@@ -210,7 +154,42 @@ impl TabManager {
             tabs: RwLock::new(HashMap::new()),
             app,
             host_label: host_label.into(),
+            #[cfg(target_os = "windows")]
+            profile: RwLock::new(None),
         }
+    }
+
+    /// Call in app setup before creating any WebView or accepting tab commands.
+    /// Full preparation never runs under the tab collection lock. Windows Grid
+    /// children join the same native preparation epoch as the main process.
+    pub fn prepare_storage(&self) -> Result<()> {
+        #[cfg(target_os = "windows")]
+        {
+            let mut slot = self.profile.write();
+            if slot.is_some() { return Ok(()); }
+            let base = self.app.path().app_data_dir()
+                .map_err(|_| BrowserTabError::Platform("BROWSER_PROFILE_LOCATION_UNAVAILABLE".into()))?;
+            browseros_platform_security::windows::ensure_private_directory_root(
+                &base, &browser_profile_security_options(),
+            ).map_err(|error| BrowserTabError::Platform(format!("BROWSER_PROFILE_PARENT_ACL: {error}")))?;
+            let prepared = browseros_platform_security::windows::PreparedPrivateDirectory::prepare(
+                &browser_profile_path(&base), &browser_profile_security_options(),
+            ).map_err(|error| BrowserTabError::Platform(format!("BROWSER_PROFILE_PREPARATION: {error}")))?;
+            let report = prepared.report();
+            eprintln!("BROWSER_PROFILE_ACL_READY reused={} checked={} repaired={} elapsed_ms={}",
+                prepared.reused_preparation(), report.checked_objects, report.repaired_objects, report.elapsed_ms);
+            *slot = Some(Arc::new(prepared));
+        }
+        Ok(())
+    }
+
+    #[cfg(target_os = "windows")]
+    fn prepared_browser_profile(&self) -> Result<PathBuf> {
+        let prepared = self.profile.read().as_ref().cloned()
+            .ok_or_else(|| BrowserTabError::Platform("BROWSER_PROFILE_NOT_PREPARED".into()))?;
+        prepared.check_root()
+            .map_err(|error| BrowserTabError::Platform(format!("BROWSER_PROFILE_ROOT: {error}")))?;
+        Ok(prepared.path().to_path_buf())
     }
 
     fn host_window(&self) -> Result<Window<Wry>> {
@@ -220,12 +199,6 @@ impl TabManager {
     }
 
     pub fn create_tab(&self, options: CreateTabOptions) -> Result<()> {
-        let mut tabs = self.tabs.write();
-
-        if tabs.contains_key(&options.id) {
-            return Err(BrowserTabError::TabAlreadyExists(options.id));
-        }
-
         if options.rect.is_empty() {
             return Err(BrowserTabError::InvalidRect(options.rect));
         }
@@ -234,6 +207,16 @@ impl TabManager {
             .url
             .parse()
             .map_err(|_| BrowserTabError::InvalidUrl(options.url.clone()))?;
+
+        #[cfg(target_os = "windows")]
+        let profile = self.prepared_browser_profile()?;
+        #[cfg(target_os = "linux")]
+        let profile = ensure_private_browser_profile(&self.app)?;
+
+        let mut tabs = self.tabs.write();
+        if tabs.contains_key(&options.id) {
+            return Err(BrowserTabError::TabAlreadyExists(options.id));
+        }
 
         // Navigation permission callbacks are NOT completion notifications.
         // On Windows, use Tauri's page-load lifecycle rather than emitting
@@ -268,7 +251,6 @@ impl TabManager {
         // BFC never reads or exports browser session credentials.
         #[cfg(any(target_os = "linux", target_os = "windows"))]
         {
-            let profile = ensure_private_browser_profile(&self.app)?;
             builder = builder.data_directory(profile);
         }
 
@@ -410,8 +392,8 @@ impl TabManager {
                 let app1 = app_lf.clone();
                 gtk_wv.connect_load_failed(move |_wv, _event, uri, error| {
                     eprintln!(
-                        "[browser-tabs] loadFailed id={} uri={} err={}",
-                        id1, uri, error
+                        "[browser-tabs] loadFailed id={} uri_bytes={}",
+                        id1, uri.len()
                     );
                     let _ = app1.emit(
                         "browser-tabs://event",
@@ -426,7 +408,7 @@ impl TabManager {
                 let id2 = id_lf.clone();
                 let app2 = app_lf.clone();
                 gtk_wv.connect_load_failed_with_tls_errors(move |_wv, uri, _cert, _errors| {
-                    eprintln!("[browser-tabs] loadFailedTLS id={} uri={}", id2, uri);
+                    eprintln!("[browser-tabs] loadFailedTLS id={} uri_bytes={}", id2, uri.len());
                     let _ = app2.emit(
                         "browser-tabs://event",
                         BrowserTabEvent::LoadFailed {

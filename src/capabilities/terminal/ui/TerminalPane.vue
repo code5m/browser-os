@@ -167,7 +167,8 @@ onMounted(() => {
 
     // 用户输入 → 后端 PTY
     term.onData((data) => {
-      terminal.termWrite(props.paneId, data);
+      // The owner handles backpressure, cancellation and visible failures.
+      void terminal.termWrite(props.paneId, data);
     });
 
     // 后端 PTY 输出 → xterm（M0-0.b 吞吐钩子在此拦截）
@@ -212,12 +213,20 @@ onMounted(() => {
   }
 });
 
-function restart() {
-  terminal.killTerm(props.paneId);
-  terminal.addTermPane();
+let restartInFlight = false;
+async function restart() {
+  if (restartInFlight) return;
+  restartInFlight = true;
+  // A pending close still owns native resources. Do not create its replacement
+  // until the owner reports that the old session was actually reaped.
+  try {
+    if (await terminal.killTerm(props.paneId)) terminal.addTermPane();
+  } finally {
+    restartInFlight = false;
+  }
 }
 function closePane() {
-  terminal.killTerm(props.paneId);
+  void terminal.killTerm(props.paneId);
 }
 
 onBeforeUnmount(() => {
@@ -252,6 +261,11 @@ onBeforeUnmount(() => {
         <button v-if="!props.small" @click="closePane" title="关闭进程">⏹</button>
         <button @click="terminal.closeTerminal()" title="隐藏">✕</button>
       </div>
+    </div>
+    <div v-if="terminal.termNotice(props.paneId)" class="term-notice" role="status" aria-live="polite">
+      <span>{{ terminal.termNotice(props.paneId) }}</span>
+      <button v-if="terminal.isTermClosing(props.paneId)" @click="closePane">检查关闭状态</button>
+      <button v-else @click="restart">重启终端</button>
     </div>
     <div ref="termEl" class="term-container"></div>
   </section>
@@ -314,6 +328,26 @@ onBeforeUnmount(() => {
 .term-head button:hover {
   background: #3d3d3d;
   color: #fff;
+}
+.term-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  color: #edc37b;
+  background: #30291e;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.term-notice span { flex: 1; }
+.term-notice button {
+  flex-shrink: 0;
+  padding: 3px 6px;
+  border: 1px solid #796642;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
 }
 .term-container {
   flex: 1;

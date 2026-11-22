@@ -15,6 +15,12 @@
 //! ```rust,no_run
 //! tauri::Builder::default()
 //!     .plugin(tauri_plugin_browser_tabs::init())
+//!     .setup(|app| {
+//!         use tauri::Manager;
+//!         app.state::<tauri_plugin_browser_tabs::TabManagerState>()
+//!             .prepare_storage().map_err(|error| std::io::Error::other(error.to_string()))?;
+//!         Ok(())
+//!     })
 //!     .run(tauri::generate_context!())
 //!     .expect("error while running tauri application");
 //! ```
@@ -51,7 +57,10 @@ const DEFAULT_HOST_WINDOW: &str = "main";
 /// Initialize the browser tabs plugin with the default host window (`main`).
 ///
 /// The plugin is bound to the default `Wry` runtime, which covers all
-/// desktop targets (Windows, macOS, Linux).
+/// desktop targets (Windows, macOS, Linux). Hosts must call
+/// `TabManager::prepare_storage` in app setup before creating any WebViews.
+/// On Windows this performs a shared cold preparation; create_tab never
+/// migrates or deeply audits a live profile.
 pub fn init() -> TauriPlugin<Wry> {
     init_with_host(DEFAULT_HOST_WINDOW)
 }

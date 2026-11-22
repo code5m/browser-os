@@ -29,6 +29,22 @@ from pathlib import Path
 from native_bridge_owner_sources import read_native_bridge_owners
 
 
+def rust_function_body(source: str, name: str) -> str:
+    """Read the top-level function's source contract, not a Rust execution test."""
+    found = re.search(
+        r"\bfn\s+" + re.escape(name) + r"\s*\([^)]*\)[^{]*\{(.*?)^\}",
+        source, re.S | re.M,
+    )
+    return found.group(1) if found else ""
+
+
+def scoped_table_binding(body: str, binding: str):
+    return re.search(
+        r"\blet\s+" + re.escape(binding) + r"\s*=\s*\{(.*?)\n\s*\};",
+        body, re.S,
+    )
+
+
 def detect_violations(files: dict) -> list[str]:
     v: list[str] = []
     term = files.get("terminal_rs", "")
@@ -78,8 +94,8 @@ def detect_violations(files: dict) -> list[str]:
     # ---- F5：resize 真实生效（不得回到空实现）----
     if "let _ = (app, id, cols, rows)" in bridge:
         v.append("TERM_RESIZE_STUB:term_resize 回到空实现（F5 禁止）")
-    if "terminal::resize(" not in bridge:
-        v.append("TERM_RESIZE_MISSING:term_resize 未调用 terminal::resize")
+    if "control.resize(cols, rows)" not in rust_function_body(bridge, "term_resize_sync"):
+        v.append("TERM_RESIZE_MISSING:term_resize_sync 未调用会话 control.resize")
     if ".resize(PtySize" not in term:
         v.append("TERM_MASTER_RESIZE_MISSING:terminal.rs 未调用 master.resize(PtySize)")
 
@@ -96,18 +112,48 @@ def detect_violations(files: dict) -> list[str]:
         v.append("TERM_LIFECYCLE_KILL:生命周期仍用 child.kill()（只杀直接子进程，留孤儿）")
     if "terminal::terminate_session" not in bridge:
         v.append("TERM_LIFECYCLE_MISSING:bridge.rs 未统一走 terminal::terminate_session")
-    # 复核整改 P2：终止最长约 4 s（进程组宽限 + 线程回收），必须先放表锁再终止，
-    # 否则 term_write / term_resize / term_spawn 会一起卡在互斥量上。
-    if "terminal::terminate_session(&mut session)" in bridge and "drop(terms)" not in bridge:
-        v.append(
-            "TERM_KILL_LOCK_HELD:term_kill 持 terminals 锁执行 terminate_session（最长约 4 s 阻塞其它终端 IPC）"
-        )
+    # Native I/O/waits must happen after the lexical table-lock scope.
+    write_body = rust_function_body(bridge, "term_write")
+    write_scope = scoped_table_binding(write_body, "input")
+    if (write_scope is None or "terminals.lock()" not in write_scope.group(1)
+            or ".input()" not in write_scope.group(1)
+            or "input.enqueue(data.as_bytes())" not in write_body[write_scope.end():]
+            or "write_all" in write_scope.group(1)):
+        v.append("TERM_INPUT_LOCK_HELD:输入须在表锁内取得端点，锁外有界enqueue")
+    resize_body = rust_function_body(bridge, "term_resize_sync")
+    resize_scope = scoped_table_binding(resize_body, "control")
+    if (resize_scope is None or "terminals.lock()" not in resize_scope.group(1)
+            or ".control()" not in resize_scope.group(1)
+            or "control.resize(cols, rows)" not in resize_body[resize_scope.end():]):
+        v.append("TERM_RESIZE_LOCK_HELD:resize须在表锁外执行")
+    kill_body = rust_function_body(bridge, "term_kill_sync")
+    kill_scope = scoped_table_binding(kill_body, "removed")
+    if (kill_scope is None or "terminate_session" in kill_scope.group(1)
+            or not re.match(r"\s*match\s+removed\s*\{", kill_body[kill_scope.end():])):
+        v.append("TERM_KILL_LOCK_HELD:关闭等待须在表锁作用域之后")
+    if (kill_scope is None or "session.request_close()" not in kill_scope.group(1)
+            or "terms.remove(&id)" not in kill_scope.group(1)
+            or kill_scope.group(1).find("session.request_close()") >
+               kill_scope.group(1).find("terms.remove(&id)")):
+        v.append("TERM_CLOSE_ATOMIC_MISSING:移除session前须原子登记cleanup owner")
+    for command in ("term_kill", "term_resize"):
+        body = rust_function_body(bridge, command)
+        if ("spawn_blocking" not in body or command + "_sync(" not in body
+                or "pub async fn " + command not in bridge):
+            v.append("TERM_ASYNC_OWNER_MISSING:关闭与resize不得在GUI事件线程等待")
 
     # ---- F7：关闭协议（stop 标志 + 线程回收）----
     if "Arc<AtomicBool>" not in term or "stop" not in term:
         v.append("TERM_STOP_MISSING:terminal.rs 缺 stop 标志（F7 关闭协议）")
     if "is_finished" not in term:
         v.append("TERM_JOIN_MISSING:terminal.rs 缺线程结束判定（worker/pump 不得泄漏）")
+    for token in ("CleanupRegistry", "CleanupResources", "SpawnCleanupGuard",
+                  "TERM_CLEANUP_PENDING", "TERM_CLEANUP_COMPLETED_WITH_ERRORS",
+                  "MAX_TERMINAL_SESSIONS", "_permit: TerminalPermit", "task.uncertain = true"):
+        if token not in term:
+            v.append(f"TERM_CLEANUP_OWNER_MISSING:缺有界cleanup所有权合同 {token}")
+    if "wait_while_running" not in rust_function_body(term, "send_with_backoff"):
+        v.append("TERM_BACKOFF_CANCEL_MISSING:输出退避必须响应stop")
 
     # ---- F8：退避与停止条件 ----
     for token in (
@@ -126,11 +172,12 @@ def detect_violations(files: dict) -> list[str]:
     if "!measure" not in term:
         v.append("TERM_MEASURE_BYPASS:terminal.rs 未按测量模式关闭丢弃/合并")
 
-    # ---- F9：零新依赖（不引 tokio 等运行时）----
-    if re.search(r"^\s*tokio\s*=", cargo, re.M):
-        v.append("TERM_TOKIO_DEP:Cargo.toml 引入 tokio（F9 零新依赖）")
-    if "crossbeam" in cargo:
-        v.append("TERM_TOKIO_DEP:Cargo.toml 引入 crossbeam（F9 零新依赖）")
+    # ---- F9: terminal core adds no runtime dependency ----
+    # Cargo already contains tokio for another capability. Check the owning
+    # source rather than falsely rejecting unrelated package dependencies;
+    # GUI adapters use Tauri's existing spawn_blocking runtime.
+    if re.search(r"\b(?:tokio|crossbeam)::", term):
+        v.append("TERM_TOKIO_DEP:terminal core直接引入额外运行时/队列依赖")
 
     # ---- F10：Channel 必须从 @tauri-apps/api/core 子路径导入 ----
     if not re.search(
@@ -300,14 +347,14 @@ def run_self_test(root: Path) -> int:
     )
 
     # 7. resize 回到空实现
-    #     锚点随真实代码校正（bridge.rs 现为 `let result = terminal::resize(session, cols, rows);`）；
+    #     锚点为表锁外的 control.resize 调用；
     #     只替换调用表达式本身，保证「变异确实改动内容」且仍触发 TERM_RESIZE_STUB。
     add(
         "term_resize 回到空实现",
         mutate(
             bridge_rs=good["bridge_rs"].replace(
-                "terminal::resize(session, cols, rows)",
-                "{ let _ = (app, id, cols, rows); let _ = session; Ok(()) }",
+                "control.resize(cols, rows)",
+                "{ let _ = (app, id, cols, rows); Ok(()) }",
             )
         ),
         "bridge_rs",
@@ -375,11 +422,11 @@ def run_self_test(root: Path) -> int:
         "TERM_MEASURE_MISSING",
     )
 
-    # 13. 引入 tokio（违反零新依赖）
+    # 13. Core ownership, independent from another capability's dependencies.
     add(
-        "引入 tokio 依赖",
-        mutate(cargo_toml=good["cargo_toml"] + '\ntokio = { version = "1", features = ["full"] }\n'),
-        "cargo_toml",
+        "terminal core 引入 tokio",
+        mutate(terminal_rs=good["terminal_rs"] + "\nuse tokio::runtime::Runtime;\n"),
+        "terminal_rs",
         "TERM_TOKIO_DEP",
     )
 
@@ -407,9 +454,33 @@ def run_self_test(root: Path) -> int:
     # 16. term_kill 持锁终止（阻塞其它终端 IPC）
     add(
         "term_kill 持表锁执行终止",
-        mutate(bridge_rs=good["bridge_rs"].replace("    drop(terms);\n", "")),
+        mutate(bridge_rs=good["bridge_rs"].replace(
+            "    match removed {\n        Some(mut session) => terminal::terminate_session",
+            "    let _terms = state.terminals.lock().unwrap();\n    match removed {\n        Some(mut session) => terminal::terminate_session", 1)),
+
         "bridge_rs",
         "TERM_KILL_LOCK_HELD",
+    )
+
+    add(
+        "关闭先remove再登记会产生假完成窗口",
+        mutate(bridge_rs=good["bridge_rs"].replace("session.request_close();", "")),
+        "bridge_rs",
+        "TERM_CLOSE_ATOMIC_MISSING",
+    )
+    add(
+        "删除cleanup pending所有权合同",
+        mutate(terminal_rs=good["terminal_rs"].replace("CleanupRegistry", "MissingCleanupOwner")),
+        "terminal_rs",
+        "TERM_CLEANUP_OWNER_MISSING",
+    )
+    add(
+        "退避重新变成不可取消等待",
+        mutate(terminal_rs=good["terminal_rs"].replace(
+            "wait_while_running(stop, Duration::from_millis(backoff.min(remaining)))",
+            "{ thread::sleep(Duration::from_millis(backoff)); true }")),
+        "terminal_rs",
+        "TERM_BACKOFF_CANCEL_MISSING",
     )
 
     # 17. 前端 resize 上报被移除

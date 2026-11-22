@@ -4,15 +4,16 @@
 //! The host workspace is not mounted or writable by the analyzer.
 #![cfg(windows)]
 
-use super::windows_sandbox::{SandboxChild, SandboxProcess, SandboxProfile, send_bounded};
+use super::windows_sandbox::{OperationBudget, SandboxChild, SandboxProcess, SandboxProfile, send_bounded};
+use browseros_platform_security::windows::{PinnedReadDirectory, PinnedReadFile};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::os::windows::fs::MetadataExt;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock, mpsc};
+use std::sync::{Arc, Condvar, Mutex, OnceLock, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -23,71 +24,155 @@ const MAX_TOTAL_BYTES: usize = 16 * 1024 * 1024;
 const MAX_FILE_BYTES: usize = 1024 * 1024;
 const REPARSE: u32 = 0x0000_0400;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReservationPhase {
+    Preparing,
+    Ready,
+    Cleanup,
+}
+
+struct StartingEntry {
+    root: PathBuf,
+    budget: OperationBudget,
+    phase: ReservationPhase,
+    owner_released: bool,
+}
+
 #[derive(Default)]
 struct SessionCache {
     ready: HashMap<String, Arc<Mutex<Session>>>,
-    /// Each in-flight start belongs to exactly one workspace. A close for
-    /// workspace A must not invalidate an unrelated startup in workspace B.
-    starting: HashMap<uuid::Uuid, PathBuf>,
-    one_shot: usize,
+    // A reservation owns capacity from the first preparation step until its
+    // process, pipe workers and profile owner have actually finished cleanup.
+    // Published sessions retain their reservation; ready.len() is not added.
+    starting: HashMap<uuid::Uuid, StartingEntry>,
 }
 impl SessionCache {
-    fn reserve_start(&mut self, root: &Path) -> Result<uuid::Uuid, String> {
-        if self.ready.len() + self.starting.len() + self.one_shot >= MAX_SESSIONS {
+    fn reserve_start(
+        &mut self, root: &Path, budget: OperationBudget,
+    ) -> Result<uuid::Uuid, String> {
+        check_operation(&budget)?;
+        if self.starting.len() >= MAX_SESSIONS {
             return Err("LSP_SESSION_LIMIT".into());
         }
         let token = uuid::Uuid::new_v4();
-        self.starting.insert(token, root.to_path_buf());
+        self.starting.insert(token, StartingEntry {
+            root: root.to_path_buf(),
+            budget,
+            phase: ReservationPhase::Preparing,
+            owner_released: false,
+        });
         Ok(token)
     }
 
     fn start_is_active(&self, token: &uuid::Uuid, root: &Path) -> bool {
-        self.starting
-            .get(token)
-            .is_some_and(|reserved| reserved == root)
+        self.starting.get(token).is_some_and(|reserved|
+            reserved.root == root
+                && reserved.phase == ReservationPhase::Preparing
+                && reserved.budget.check().is_ok()
+        )
     }
 
     fn cancel_pending_for(&mut self, root: &Path) {
-        self.starting.retain(|_, reserved| reserved != root);
+        for reserved in self.starting.values() {
+            if reserved.root == root && reserved.phase == ReservationPhase::Preparing {
+                // Cancellation does not free capacity. The owner still has to
+                // observe this token and finish startup/cleanup before removal.
+                reserved.budget.cancel();
+            }
+        }
+    }
+
+
+    fn release_start(&mut self, token: &uuid::Uuid) -> bool {
+        if let Some(entry) = self.starting.get_mut(token) {
+            if !entry.budget.cleanup_complete() {
+                // Native create/spawn failure may have queued cleanup without
+                // ever returning a SandboxChild to the caller.
+                entry.phase = ReservationPhase::Cleanup;
+                entry.owner_released = true;
+                return true;
+            }
+        }
+        self.starting.remove(token);
+        false
+    }
+
+    fn reap_released(&mut self) {
+        self.starting.retain(|_, entry|
+            !entry.owner_released || !entry.budget.cleanup_complete()
+        );
+    }
+
+    fn pending_for(&self, root: &Path, phase: ReservationPhase) -> usize {
+        self.starting.values().filter(|entry|
+            entry.root == root && entry.phase == phase
+        ).count()
     }
 }
 static SESSIONS: OnceLock<Mutex<SessionCache>> = OnceLock::new();
 fn sessions() -> &'static Mutex<SessionCache> {
     SESSIONS.get_or_init(|| Mutex::new(SessionCache::default()))
 }
-/// Reserve capacity without holding the global cache mutex through the slow
-/// rust-analyzer process spawn and initialize handshake.
+
+fn operation_error(error: io::Error) -> String {
+    match error.kind() {
+        io::ErrorKind::TimedOut => "LSP_OPERATION_TIMEOUT",
+        io::ErrorKind::Interrupted => "LSP_OPERATION_CANCELLED",
+        _ => "LSP_OPERATION_BUDGET_FAILED",
+    }.into()
+}
+fn check_operation(budget: &OperationBudget) -> Result<(), String> {
+    budget.check().map_err(operation_error)
+}
+fn new_operation(seconds: u64) -> OperationBudget {
+    OperationBudget::new(Duration::from_secs(seconds.clamp(5, 600)))
+}
+
 struct StartReservation {
     token: uuid::Uuid,
 }
+impl StartReservation {
+    fn acquire(root: &Path, budget: OperationBudget) -> Result<Self, String> {
+        check_operation(&budget)?;
+        reap_deferred_cleanup();
+        retry_cleanup_reaper();
+        let mut cache = sessions().lock().map_err(|_| "LSP_SESSION_CACHE")?;
+        cache.reap_released();
+        let token = cache.reserve_start(root, budget)?;
+        Ok(Self { token })
+    }
+
+    fn set_phase(&self, phase: ReservationPhase) {
+        let mut cache = sessions().lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(entry) = cache.starting.get_mut(&self.token) {
+            entry.phase = phase;
+        }
+    }
+}
 impl Drop for StartReservation {
     fn drop(&mut self) {
-        let mut cache = sessions().lock().unwrap_or_else(|p| p.into_inner());
-        cache.starting.remove(&self.token);
+        let pending = {
+            let mut cache = sessions().lock().unwrap_or_else(|p| p.into_inner());
+            cache.release_start(&self.token)
+        };
+        if pending { wake_cleanup_reaper(); }
     }
 }
 
-/// A one-shot legacy request uses the same global process budget as
-/// persistent Windows sessions, preventing unbounded concurrent analyzers.
-struct OneShotPermit;
+/// One-shot requests have the same cancellable reservation and capacity limit
+/// as persistent starts, including time spent loading approved module sources.
+struct OneShotPermit(Option<StartReservation>);
 impl OneShotPermit {
-    fn acquire() -> Result<Self, String> {
-        let mut cache = sessions().lock().map_err(|_| "LSP_SESSION_CACHE")?;
-        if cache.ready.len() + cache.starting.len() + cache.one_shot >= MAX_SESSIONS {
-            return Err("LSP_SESSION_LIMIT".into());
-        }
-        cache.one_shot += 1;
-        Ok(Self)
+    fn acquire(root: &Path, budget: OperationBudget) -> Result<Self, String> {
+        Ok(Self(Some(StartReservation::acquire(root, budget)?)))
     }
-}
-impl Drop for OneShotPermit {
-    fn drop(&mut self) {
-        let mut cache = sessions().lock().unwrap_or_else(|e| e.into_inner());
-        cache.one_shot = cache.one_shot.saturating_sub(1);
+    fn into_reservation(mut self) -> StartReservation {
+        self.0.take().expect("one-shot reservation is owned once")
     }
 }
 
-fn no_reparse(path: &Path) -> Result<(), String> {
+fn no_reparse_with_budget(path: &Path, operation: &OperationBudget) -> Result<(), String> {
+    check_operation(operation)?;
     use std::path::{Component, Prefix};
     if !path.is_absolute()
         || !matches!(
@@ -100,6 +185,7 @@ fn no_reparse(path: &Path) -> Result<(), String> {
     }
     let mut current = PathBuf::new();
     for component in path.components() {
+        check_operation(operation)?;
         current.push(component.as_os_str());
         if matches!(component, Component::Prefix(_)) || !current.has_root() {
             continue;
@@ -116,7 +202,8 @@ fn no_reparse(path: &Path) -> Result<(), String> {
 /// every toolchain call answer "no default is configured", because the shim
 /// resolves its toolchain through a deliberately private USERPROFILE. Resolve
 /// the INSTALLED toolchain images from rustup metadata; never run rustup.
-fn rustup_home() -> Result<Option<PathBuf>, String> {
+fn rustup_home_with_budget(operation: &OperationBudget) -> Result<Option<PathBuf>, String> {
+    check_operation(operation)?;
     let configured = std::env::var_os("RUSTUP_HOME");
     let explicitly_configured = configured.is_some();
     let home = configured.map(PathBuf::from).or_else(|| {
@@ -131,7 +218,7 @@ fn rustup_home() -> Result<Option<PathBuf>, String> {
             if !metadata.is_file() || metadata.file_attributes() & REPARSE != 0 {
                 return Err("LSP_RUSTUP_SETTINGS_UNSAFE".into());
             }
-            no_reparse(&settings).map_err(|_| "LSP_RUSTUP_SETTINGS_UNSAFE")?;
+            no_reparse_with_budget(&settings, operation)?;
             Ok(Some(home))
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound && !explicitly_configured =>
@@ -141,9 +228,15 @@ fn rustup_home() -> Result<Option<PathBuf>, String> {
         Err(_) => Err("LSP_RUSTUP_SETTINGS_UNREADABLE".into()),
     }
 }
-fn rustup_analyzer_binary(rustup_home: &Path) -> Result<PathBuf, String> {
-    let settings = fs::read_to_string(rustup_home.join("settings.toml"))
-        .map_err(|_| "LSP_RUSTUP_SETTINGS_UNREADABLE")?;
+fn rustup_analyzer_binary_with_budget(
+    rustup_home: &Path, operation: &OperationBudget,
+) -> Result<PathBuf, String> {
+    check_operation(operation)?;
+    let settings = crate::capabilities::workspace::safe_paths::read_regular(
+        &rustup_home.join("settings.toml"), &[rustup_home.to_path_buf()], 64 * 1024,
+    ).map_err(|_| "LSP_RUSTUP_SETTINGS_UNREADABLE")?;
+    check_operation(operation)?;
+    let settings = String::from_utf8(settings).map_err(|_| "LSP_RUSTUP_SETTINGS_UNREADABLE")?;
     let default = settings.lines().find_map(|line| {
         let (key, value) = line.split_once('=')?;
         (key.trim() == "default_toolchain").then(|| value.trim().trim_matches('"').to_string())
@@ -171,16 +264,20 @@ fn rustup_analyzer_binary(rustup_home: &Path) -> Result<PathBuf, String> {
     if !candidate.is_file() {
         return Err("LSP_RUST_ANALYZER_TOOLCHAIN_MISSING".into());
     }
-    no_reparse(&candidate)?;
+    no_reparse_with_budget(&candidate, operation)?;
     candidate
         .canonicalize()
         .map_err(|_| "LSP_RUST_ANALYZER_TOOLCHAIN_MISSING".into())
 }
 fn runtime() -> Result<PathBuf, String> {
+    runtime_with_budget(&new_operation(30))
+}
+fn runtime_with_budget(operation: &OperationBudget) -> Result<PathBuf, String> {
+    check_operation(operation)?;
     // Prefer the installed toolchain image. Staging a rustup shim, or staging
     // the shim's cargo/rustc peers, cannot work inside the sandbox.
-    let missing_toolchain = if let Some(home) = rustup_home()? {
-        match rustup_analyzer_binary(&home) {
+    let missing_toolchain = if let Some(home) = rustup_home_with_budget(operation)? {
+        match rustup_analyzer_binary_with_budget(&home, operation) {
             Ok(analyzer) => return Ok(analyzer),
             Err(error) if error == "LSP_RUST_ANALYZER_TOOLCHAIN_MISSING" => Some(error),
             // Invalid or unreadable configured toolchains must not silently
@@ -191,7 +288,9 @@ fn runtime() -> Result<PathBuf, String> {
         None
     };
     if let Some(paths) = std::env::var_os("PATH") {
-        for directory in std::env::split_paths(&paths).filter(|path| path.is_absolute()) {
+        for (index, directory) in std::env::split_paths(&paths).filter(|path| path.is_absolute()).enumerate() {
+            check_operation(operation)?;
+            if index >= 128 { return Err("LSP_RUNTIME_SEARCH_LIMIT".into()); }
             let candidate = directory.join("rust-analyzer.exe");
             if !candidate.is_file() {
                 continue;
@@ -201,7 +300,7 @@ fn runtime() -> Result<PathBuf, String> {
             if directory.join("rustup.exe").is_file() {
                 continue;
             }
-            no_reparse(&candidate)?;
+            no_reparse_with_budget(&candidate, operation)?;
             return candidate
                 .canonicalize()
                 .map_err(|_| "LSP_RUST_ANALYZER_NOT_FOUND".into());
@@ -213,6 +312,12 @@ fn runtime() -> Result<PathBuf, String> {
 /// A real rustc beside the selected analyzer is required for cfg/data-layout
 /// probes. Missing, reparse or non-file peers are explicit preflight failures.
 fn rustc_cfg_peer(analyzer: &Path) -> Result<PathBuf, String> {
+    rustc_cfg_peer_with_budget(analyzer, &new_operation(30))
+}
+fn rustc_cfg_peer_with_budget(
+    analyzer: &Path, operation: &OperationBudget,
+) -> Result<PathBuf, String> {
+    check_operation(operation)?;
     let directory = analyzer.parent().ok_or("LSP_RUSTC_CFG_PEER_MISSING")?;
     let candidate = directory.join("rustc.exe");
     let metadata = fs::symlink_metadata(&candidate)
@@ -220,16 +325,18 @@ fn rustc_cfg_peer(analyzer: &Path) -> Result<PathBuf, String> {
     if !metadata.is_file() || metadata.file_attributes() & REPARSE != 0 {
         return Err("LSP_RUSTC_CFG_PEER_UNSAFE".into());
     }
-    no_reparse(&candidate).map_err(|_| "LSP_RUSTC_CFG_PEER_UNSAFE")?;
+    no_reparse_with_budget(&candidate, operation)?;
     candidate.canonicalize().map_err(|_| "LSP_RUSTC_CFG_PEER_MISSING".into())
 }
 
 fn rustc_cfg_environment(
     profile: &SandboxProfile, analyzer: &Path,
 ) -> Result<Vec<(String, String)>, String> {
-    let peer = rustc_cfg_peer(analyzer)?;
+    check_operation(profile.budget())?;
+    let peer = rustc_cfg_peer_with_budget(analyzer, profile.budget())?;
     let staged = profile.stage_runtime_peer(&peer)
         .map_err(|error| format!("LSP_RUSTC_CFG_STAGE_FAILED:{error}"))?;
+    check_operation(profile.budget())?;
     let path = staged.to_str().ok_or("LSP_RUSTC_CFG_PATH_NOT_UNICODE")?;
     Ok(vec![("RUSTC".to_string(), path.to_string())])
 }
@@ -256,14 +363,23 @@ fn source_file(path: &Path) -> bool {
 /// No Cargo discovery/build is enabled. rustc metadata/cfg probes use the
 /// explicitly staged peer and remain subject to the lowbox restrictions.
 /// Successful syntax/IDE analysis never constitutes compilation verification.
+#[cfg(test)]
 fn write_reviewed_rust_project(snapshot: &Path) -> Result<PathBuf, String> {
+    write_reviewed_rust_project_with_budget(snapshot, &new_operation(30))
+}
+fn write_reviewed_rust_project_with_budget(
+    snapshot: &Path, operation: &OperationBudget,
+) -> Result<PathBuf, String> {
+    check_operation(operation)?;
     let mut pending = vec![(snapshot.to_path_buf(), 0usize)];
     let mut crate_roots = Vec::<PathBuf>::new();
     let mut other_sources = Vec::<PathBuf>::new();
     let mut visited = 0usize;
     while let Some((directory, depth)) = pending.pop() {
+        check_operation(operation)?;
         if depth > 12 { return Err("LSP_PROJECT_DEPTH_LIMIT".into()); }
         for entry in fs::read_dir(&directory).map_err(|_| "LSP_PROJECT_READ_DENIED")? {
+            check_operation(operation)?;
             let entry = entry.map_err(|_| "LSP_PROJECT_READ_DENIED")?;
             visited += 1;
             if visited > MAX_FILES * 2 { return Err("LSP_PROJECT_FILE_LIMIT".into()); }
@@ -290,7 +406,9 @@ fn write_reviewed_rust_project(snapshot: &Path) -> Result<PathBuf, String> {
     }
     crate_roots.sort();
     crate_roots.dedup();
-    let edition = fs::read_to_string(snapshot.join("Cargo.toml")).ok()
+    check_operation(operation)?;
+    let edition = read_reviewed_bytes(&snapshot.join("Cargo.toml"), snapshot, MAX_FILE_BYTES, operation)
+        .ok().and_then(|bytes| String::from_utf8(bytes).ok())
         .and_then(|source| {
             let mut package = false;
             for line in source.lines() {
@@ -314,6 +432,7 @@ fn write_reviewed_rust_project(snapshot: &Path) -> Result<PathBuf, String> {
             }
             None
         }).unwrap_or("2021");
+    check_operation(operation)?;
     let mut crates = Vec::with_capacity(crate_roots.len());
     for (index, root_module) in crate_roots.iter().enumerate() {
         let absolute = root_module.to_str().ok_or("LSP_PROJECT_PATH_INVALID")?;
@@ -332,7 +451,14 @@ fn write_reviewed_rust_project(snapshot: &Path) -> Result<PathBuf, String> {
         .map_err(|_| "LSP_PROJECT_ENCODING_FAILED")?;
     if document.len() > MAX_FRAME { return Err("LSP_PROJECT_FILE_LIMIT".into()); }
     let project_path = snapshot.join("rust-project.json");
-    fs::write(&project_path, document).map_err(|_| "LSP_PROJECT_WRITE_FAILED")?;
+    check_operation(operation)?;
+    let mut output = fs::OpenOptions::new().write(true).create(true).truncate(true)
+        .open(&project_path).map_err(|_| "LSP_PROJECT_WRITE_FAILED")?;
+    for chunk in document.chunks(32 * 1024) {
+        check_operation(operation)?;
+        output.write_all(chunk).map_err(|_| "LSP_PROJECT_WRITE_FAILED")?;
+    }
+    check_operation(operation)?;
     Ok(project_path)
 }
 
@@ -341,9 +467,16 @@ fn write_reviewed_rust_project(snapshot: &Path) -> Result<PathBuf, String> {
 /// to re-open a generated manifest by path. This removes one mutable watch
 /// target and makes it impossible to silently fall back to Cargo discovery
 /// when rust-project.json itself cannot be opened.
+#[cfg(test)]
 fn reviewed_project_for_initialize(snapshot: &Path) -> Result<Value, String> {
+    reviewed_project_for_initialize_with_budget(snapshot, &new_operation(30))
+}
+fn reviewed_project_for_initialize_with_budget(
+    snapshot: &Path, operation: &OperationBudget,
+) -> Result<Value, String> {
+    check_operation(operation)?;
     let manifest = snapshot.join("rust-project.json");
-    no_reparse(&manifest)?;
+    no_reparse_with_budget(&manifest, operation)?;
     let metadata = fs::symlink_metadata(&manifest)
         .map_err(|_| "LSP_PROJECT_MISSING")?;
     if !metadata.is_file()
@@ -372,6 +505,7 @@ fn reviewed_project_for_initialize(snapshot: &Path) -> Result<Value, String> {
     let reviewed_root = snapshot.canonicalize()
         .map_err(|_| "LSP_SNAPSHOT_PATH_INVALID")?;
     for krate in crates {
+        check_operation(operation)?;
         let fields = krate.as_object().ok_or("LSP_PROJECT_INVALID")?;
         if fields.keys().any(|name| ![
             "display_name", "root_module", "edition", "deps", "cfg",
@@ -387,18 +521,122 @@ fn reviewed_project_for_initialize(snapshot: &Path) -> Result<Value, String> {
         }
         let path = krate["root_module"].as_str().ok_or("LSP_PROJECT_INVALID")?;
         let source = Path::new(path);
-        no_reparse(source)?;
+        no_reparse_with_budget(source, operation)?;
         let real = source.canonicalize().map_err(|_| "LSP_PROJECT_SOURCE_MISSING")?;
         if !real.starts_with(&reviewed_root) || !real.is_file() {
             return Err("LSP_PROJECT_SOURCE_OUTSIDE_SNAPSHOT".into());
         }
     }
+    check_operation(operation)?;
     Ok(graph)
 }
 
 struct SnapshotBudget {
+    entries: usize,
     files: usize,
-    bytes: usize,
+    read_bytes: usize,
+    written_bytes: usize,
+}
+impl SnapshotBudget {
+    fn new() -> Self {
+        Self { entries: 1, files: 0, read_bytes: 0, written_bytes: 0 }
+    }
+    fn visit(&mut self) -> Result<(), String> {
+        self.entries = self.entries.checked_add(1).ok_or("LSP_SNAPSHOT_ENTRY_LIMIT")?;
+        if self.entries > MAX_FILES * 2 { return Err("LSP_SNAPSHOT_ENTRY_LIMIT".into()); }
+        Ok(())
+    }
+    fn record_read(&mut self, bytes: usize) -> Result<(), String> {
+        self.read_bytes = self.read_bytes.checked_add(bytes).ok_or("LSP_SNAPSHOT_LIMIT")?;
+        if self.read_bytes > MAX_TOTAL_BYTES { return Err("LSP_SNAPSHOT_LIMIT".into()); }
+        Ok(())
+    }
+    fn record_write(&mut self, bytes: usize) -> Result<(), String> {
+        self.written_bytes = self.written_bytes.checked_add(bytes).ok_or("LSP_SNAPSHOT_LIMIT")?;
+        if self.written_bytes > MAX_TOTAL_BYTES { return Err("LSP_SNAPSHOT_LIMIT".into()); }
+        Ok(())
+    }
+}
+
+fn read_reviewed_bytes(
+    path: &Path, root: &Path, limit: usize, operation: &OperationBudget,
+) -> Result<Vec<u8>, String> {
+    check_operation(operation)?;
+    // The safe-path reader bounds the actual bytes read, not the earlier
+    // pathname metadata. Each source read is at most one bounded file.
+    let bytes = crate::capabilities::workspace::safe_paths::read_regular(
+        path, &[root.to_path_buf()], limit,
+    ).map_err(|_| "LSP_SNAPSHOT_READ_DENIED")?;
+    check_operation(operation)?;
+    if bytes.len() > limit { return Err("LSP_SNAPSHOT_LIMIT".into()); }
+    Ok(bytes)
+}
+
+fn write_snapshot_bytes(
+    target: &Path, bytes: &[u8], budget: &mut SnapshotBudget,
+    operation: &OperationBudget,
+) -> Result<(), String> {
+    check_operation(operation)?;
+    let mut output = fs::OpenOptions::new().write(true).create_new(true)
+        .open(target).map_err(|_| "LSP_SNAPSHOT_WRITE_FAILED")?;
+    let mut remaining = bytes;
+    while !remaining.is_empty() {
+        check_operation(operation)?;
+        let available = MAX_TOTAL_BYTES.saturating_sub(budget.written_bytes);
+        let count = remaining.len().min(32 * 1024).min(available);
+        if count == 0 { return Err("LSP_SNAPSHOT_LIMIT".into()); }
+        let written = output.write(&remaining[..count])
+            .map_err(|_| "LSP_SNAPSHOT_WRITE_FAILED")?;
+        if written == 0 { return Err("LSP_SNAPSHOT_WRITE_FAILED".into()); }
+        budget.record_write(written)?;
+        remaining = &remaining[written..];
+    }
+    check_operation(operation)?;
+    Ok(())
+}
+
+fn snapshot_native_error(error: io::Error) -> String {
+    if matches!(error.kind(), io::ErrorKind::Interrupted | io::ErrorKind::TimedOut) {
+        return operation_error(error);
+    }
+    let stage = error.to_string();
+    if stage.contains("REPARSE") {
+        "LSP_SNAPSHOT_REPARSE_DENIED".into()
+    } else if stage.contains("TREE_OBJECT_LIMIT") {
+        "LSP_SNAPSHOT_ENTRY_LIMIT".into()
+    } else {
+        "LSP_SNAPSHOT_READ_DENIED".into()
+    }
+}
+fn read_pinned_snapshot_file(
+    mut source: PinnedReadFile, budget: &mut SnapshotBudget, operation: &OperationBudget,
+) -> Result<Vec<u8>, String> {
+    check_operation(operation)?;
+    let expected = source.file().metadata().map_err(|_| "LSP_SNAPSHOT_READ_DENIED")?.len();
+    if expected > MAX_FILE_BYTES as u64 { return Err("LSP_SNAPSHOT_FILE_LIMIT".into()); }
+    if expected > MAX_TOTAL_BYTES.saturating_sub(budget.read_bytes) as u64 {
+        return Err("LSP_SNAPSHOT_LIMIT".into());
+    }
+    let expected = expected as usize;
+    let mut bytes = Vec::with_capacity(expected);
+    let mut chunk = [0u8; 32 * 1024];
+    while bytes.len() < expected {
+        check_operation(operation)?;
+        let count = chunk.len().min(expected - bytes.len())
+            .min(MAX_TOTAL_BYTES.saturating_sub(budget.read_bytes));
+        if count == 0 { return Err("LSP_SNAPSHOT_LIMIT".into()); }
+        let read = source.read(&mut chunk[..count]).map_err(|_| "LSP_SNAPSHOT_READ_DENIED")?;
+        if read == 0 { return Err("LSP_SNAPSHOT_SOURCE_CHANGED".into()); }
+        budget.record_read(read)?;
+        bytes.extend_from_slice(&chunk[..read]);
+    }
+    check_operation(operation)?;
+    // Avoid a limit+1 sentinel read: the bounded actual-byte accounting is
+    // strict even if the source grows after its first metadata read.
+    if source.file().metadata().map_err(|_| "LSP_SNAPSHOT_READ_DENIED")?.len() != expected as u64 {
+        return Err("LSP_SNAPSHOT_SOURCE_CHANGED".into());
+    }
+    Ok(bytes)
 }
 fn copy_snapshot_tree(
     source: &Path,
@@ -406,81 +644,73 @@ fn copy_snapshot_tree(
     destination: &Path,
     depth: usize,
     budget: &mut SnapshotBudget,
+    operation: &OperationBudget,
 ) -> Result<(), String> {
-    if depth > 12 {
-        return Err("LSP_SNAPSHOT_DEPTH_LIMIT".into());
-    }
-    for entry in fs::read_dir(source).map_err(|_| "LSP_SNAPSHOT_READ_FAILED")? {
-        let entry = entry.map_err(|_| "LSP_SNAPSHOT_READ_FAILED")?;
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().to_string();
-        if name.starts_with('.')
-            || ["node_modules", "target", "dist", "vendor"].contains(&name.as_str())
-        {
-            continue;
-        }
-        let metadata = fs::symlink_metadata(&path).map_err(|_| "LSP_SNAPSHOT_READ_FAILED")?;
-        if metadata.file_attributes() & REPARSE != 0 {
-            return Err("LSP_SNAPSHOT_REPARSE_DENIED".into());
-        }
-        let relative = path.strip_prefix(root).map_err(|_| "LSP_SNAPSHOT_ESCAPE")?;
-        let target = destination.join(relative);
-        if metadata.is_dir() {
+    check_operation(operation)?;
+    let relative = source.strip_prefix(root).map_err(|_| "LSP_SNAPSHOT_ESCAPE")?;
+    let source = PinnedReadDirectory::open(source, operation).map_err(snapshot_native_error)?;
+    copy_pinned_snapshot_tree(&source, relative, destination, depth, budget, operation)
+}
+fn copy_pinned_snapshot_tree(
+    source: &PinnedReadDirectory,
+    relative: &Path,
+    destination: &Path,
+    depth: usize,
+    budget: &mut SnapshotBudget,
+    operation: &OperationBudget,
+) -> Result<(), String> {
+    check_operation(operation)?;
+    if depth > 12 { return Err("LSP_SNAPSHOT_DEPTH_LIMIT".into()); }
+    let remaining = (MAX_FILES * 2).saturating_sub(budget.entries);
+    let entries = source.entries(remaining, operation).map_err(snapshot_native_error)?;
+    for entry in entries {
+        check_operation(operation)?;
+        // Count every enumerated entry, including directories and excluded
+        // names. Native enumeration itself is bounded by the remaining count.
+        budget.visit()?;
+        let excluded = entry.name.to_str().is_some_and(|name|
+            name.starts_with('.') || ["node_modules", "target", "dist", "vendor"].contains(&name)
+        );
+        if excluded { continue; }
+        let relative = relative.join(&entry.name);
+        let target = destination.join(&relative);
+        if entry.directory {
+            let child = source.child_directory(&entry, operation).map_err(snapshot_native_error)?;
             fs::create_dir(&target).map_err(|_| "LSP_SNAPSHOT_WRITE_FAILED")?;
-            copy_snapshot_tree(&path, root, destination, depth + 1, budget)?;
-        } else if metadata.is_file() && source_file(&path) {
-            if metadata.len() > MAX_FILE_BYTES as u64 {
-                return Err("LSP_SNAPSHOT_FILE_LIMIT".into());
-            }
-            budget.files += 1;
-            budget.bytes = budget
-                .bytes
-                .checked_add(metadata.len() as usize)
-                .ok_or("LSP_SNAPSHOT_LIMIT")?;
-            if budget.files > MAX_FILES || budget.bytes > MAX_TOTAL_BYTES {
-                return Err("LSP_SNAPSHOT_LIMIT".into());
-            }
-            let bytes = crate::capabilities::workspace::safe_paths::read_regular(
-                &path,
-                &[root.to_path_buf()],
-                MAX_FILE_BYTES,
-            )
-            .map_err(|_| "LSP_SNAPSHOT_READ_DENIED")?;
-            fs::write(&target, bytes).map_err(|_| "LSP_SNAPSHOT_WRITE_FAILED")?;
+            copy_pinned_snapshot_tree(&child, &relative, destination, depth + 1, budget, operation)?;
+        } else if source_file(&relative) {
+            budget.files = budget.files.checked_add(1).ok_or("LSP_SNAPSHOT_LIMIT")?;
+            if budget.files > MAX_FILES { return Err("LSP_SNAPSHOT_LIMIT".into()); }
+            let file = source.child_file(&entry, operation).map_err(snapshot_native_error)?;
+            let bytes = read_pinned_snapshot_file(file, budget, operation)?;
+            write_snapshot_bytes(&target, &bytes, budget, operation)?;
         }
     }
+    check_operation(operation)?;
     Ok(())
 }
 fn snapshot(root: &Path, profile: &SandboxProfile) -> Result<PathBuf, String> {
-    no_reparse(root)?;
+    let operation = profile.budget();
+    check_operation(operation)?;
+    no_reparse_with_budget(root, operation)?;
     let destination = profile.snapshot_dir()?;
     copy_snapshot_tree(
-        root,
-        root,
-        &destination,
-        0,
-        &mut SnapshotBudget { files: 0, bytes: 0 },
+        root, root, &destination, 0, &mut SnapshotBudget::new(), operation,
     )?;
-    write_reviewed_rust_project(&destination)?;
+    write_reviewed_rust_project_with_budget(&destination, operation)?;
     profile.protect_lsp_snapshot(&destination)?;
+    check_operation(operation)?;
     Ok(destination)
-}
-fn system_icacls() -> Result<PathBuf, String> {
-    let system_root = std::env::var_os("SystemRoot").ok_or("LSP_SNAPSHOT_ACL")?;
-    let icacls = PathBuf::from(system_root)
-        .join("System32")
-        .join("icacls.exe");
-    if !icacls.is_file() {
-        return Err("LSP_SNAPSHOT_ACL".into());
-    }
-    Ok(icacls)
 }
 fn uri_for(path: &Path) -> Result<String, String> {
     url::Url::from_file_path(path)
         .map(|uri| uri.to_string())
         .map_err(|_| "LSP_URI_INVALID".into())
 }
-fn request_uri_to_snapshot(value: &mut Value, root: &Path, snapshot: &Path) -> Result<(), String> {
+fn request_uri_to_snapshot(
+    value: &mut Value, root: &Path, snapshot: &Path, operation: &OperationBudget,
+) -> Result<(), String> {
+    check_operation(operation)?;
     match value {
         Value::String(text)
             if text
@@ -489,7 +719,7 @@ fn request_uri_to_snapshot(value: &mut Value, root: &Path, snapshot: &Path) -> R
         {
             let uri = url::Url::parse(text).map_err(|_| "LSP_URI_INVALID")?;
             let path = uri.to_file_path().map_err(|_| "LSP_URI_INVALID")?;
-            no_reparse(&path)?;
+            no_reparse_with_budget(&path, operation)?;
             let canonical = path.canonicalize().map_err(|_| "LSP_DOCUMENT_NOT_FOUND")?;
             let relative = canonical
                 .strip_prefix(root)
@@ -498,12 +728,12 @@ fn request_uri_to_snapshot(value: &mut Value, root: &Path, snapshot: &Path) -> R
         }
         Value::Array(items) => {
             for item in items {
-                request_uri_to_snapshot(item, root, snapshot)?;
+                request_uri_to_snapshot(item, root, snapshot, operation)?;
             }
         }
         Value::Object(items) => {
             for item in items.values_mut() {
-                request_uri_to_snapshot(item, root, snapshot)?;
+                request_uri_to_snapshot(item, root, snapshot, operation)?;
             }
         }
         _ => {}
@@ -583,120 +813,300 @@ fn frame(reader: &mut BufReader<std::fs::File>) -> Result<Value, String> {
     serde_json::from_slice(&bytes).map_err(|_| "LSP_FRAME_INVALID".into())
 }
 
-struct Session {
+fn join_finished_worker(handle: &mut Option<thread::JoinHandle<()>>) -> Result<bool, String> {
+    if handle.as_ref().is_some_and(|worker| worker.is_finished()) {
+        handle.take().unwrap().join().map_err(|_| "LSP_IO_THREAD_PANICKED".to_string())?;
+    }
+    Ok(handle.is_none())
+}
+
+struct DeferredCleanup {
     process: SandboxProcess,
+    writer_thread: Option<thread::JoinHandle<()>>,
+    reader_thread: Option<thread::JoinHandle<()>>,
+    // Declared last: process/profile ownership is released before capacity.
+    _reservation: Option<StartReservation>,
+}
+impl DeferredCleanup {
+    fn poll(&mut self) -> bool {
+        let _ = self.process.terminate();
+        for handle in [&mut self.writer_thread, &mut self.reader_thread] {
+            if join_finished_worker(handle).is_err() {
+                eprintln!("[lsp] deferred cleanup: LSP_IO_THREAD_PANICKED");
+            }
+        }
+        self.process.cleanup_complete()
+            && self.writer_thread.is_none() && self.reader_thread.is_none()
+    }
+}
+static DEFERRED_CLEANUP: OnceLock<Mutex<Vec<DeferredCleanup>>> = OnceLock::new();
+fn deferred_cleanup() -> &'static Mutex<Vec<DeferredCleanup>> {
+    DEFERRED_CLEANUP.get_or_init(|| Mutex::new(Vec::new()))
+}
+static CLEANUP_SIGNAL: Condvar = Condvar::new();
+static CLEANUP_WORKER: OnceLock<Mutex<Option<thread::JoinHandle<()>>>> = OnceLock::new();
+
+fn ensure_cleanup_reaper() {
+    let slot = CLEANUP_WORKER.get_or_init(|| Mutex::new(None));
+    let mut worker = slot.lock().unwrap_or_else(|p| p.into_inner());
+    if worker.as_ref().is_some_and(|worker| worker.is_finished()) {
+        if worker.take().unwrap().join().is_err() {
+            eprintln!("[lsp] LSP_CLEANUP_REAPER_PANICKED");
+        }
+    }
+    if worker.is_some() { return; }
+    match thread::Builder::new().name("browseros-lsp-cleanup".into()).spawn(|| {
+        loop {
+            reap_deferred_cleanup();
+            let owners = deferred_cleanup().lock().unwrap_or_else(|p| p.into_inner());
+            let native_pending = sessions().lock().unwrap_or_else(|p| p.into_inner())
+                .starting.values().any(|entry| entry.owner_released);
+            if !owners.is_empty() || native_pending {
+                let (owners, _) = CLEANUP_SIGNAL.wait_timeout(owners, Duration::from_millis(50))
+                    .unwrap_or_else(|p| p.into_inner());
+                drop(owners);
+            } else {
+                // The sender takes this same mutex before notifying, so an
+                // enqueue between the condition check and wait cannot be lost.
+                drop(CLEANUP_SIGNAL.wait(owners).unwrap_or_else(|p| p.into_inner()));
+            }
+        }
+    }) {
+        Ok(handle) => *worker = Some(handle),
+        Err(_) => {
+            // Leave every resource and slot owned. The next entry retries
+            // creation and close_complete continues to report pending cleanup.
+            eprintln!("[lsp] LSP_CLEANUP_REAPER_START_FAILED");
+        }
+    }
+}
+fn wake_cleanup_reaper() {
+    ensure_cleanup_reaper();
+    let owners = deferred_cleanup().lock().unwrap_or_else(|p| p.into_inner());
+    CLEANUP_SIGNAL.notify_one();
+    drop(owners);
+}
+fn retry_cleanup_reaper() {
+    let pending = !deferred_cleanup().lock().unwrap_or_else(|p| p.into_inner()).is_empty()
+        || sessions().lock().unwrap_or_else(|p| p.into_inner())
+            .starting.values().any(|entry| entry.owner_released);
+    if pending { wake_cleanup_reaper(); }
+}
+fn queue_deferred_cleanup(owner: DeferredCleanup) {
+    deferred_cleanup().lock().unwrap_or_else(|p| p.into_inner()).push(owner);
+    wake_cleanup_reaper();
+}
+
+fn reap_deferred_cleanup() {
+    let completed = {
+        let mut owners = deferred_cleanup().lock().unwrap_or_else(|p| p.into_inner());
+        let mut completed = Vec::new();
+        let mut index = 0;
+        while index < owners.len() {
+            if owners[index].poll() {
+                completed.push(owners.swap_remove(index));
+            } else {
+                index += 1;
+            }
+        }
+        completed
+    };
+    drop(completed);
+    let mut cache = sessions().lock().unwrap_or_else(|p| p.into_inner());
+    cache.reap_released();
+}
+
+struct Session {
+    process: Option<SandboxProcess>,
     writer: Option<mpsc::SyncSender<Vec<u8>>>,
     writer_thread: Option<thread::JoinHandle<()>>,
     reader_thread: Option<thread::JoinHandle<()>>,
     write_result: mpsc::Receiver<Result<(), String>>,
     reader: mpsc::Receiver<Result<Value, String>>,
     reader_fault: Arc<Mutex<Option<String>>>,
-    deadline: Instant,
+    operation: OperationBudget,
+    cleanup_budget: OperationBudget,
     next_id: u64,
     root: PathBuf,
     snapshot: PathBuf,
     last_used: Instant,
     closed: bool,
+    reservation: Option<StartReservation>,
 }
 impl Drop for Session {
     fn drop(&mut self) {
-        let _ = self.shutdown();
+        if !self.closed {
+            let _ = self.shutdown();
+        }
+        self.writer.take();
+        if !self.cleanup_complete() {
+            // A timeout must not detach workers or drop the Job/profile owner.
+            // The bounded deferred collection keeps the capacity lease until
+            // all workers and the process have actually finished.
+            if let Some(reservation) = &self.reservation {
+                reservation.set_phase(ReservationPhase::Cleanup);
+            }
+            if let Some(process) = self.process.take() {
+                let _ = process.terminate();
+                let owner = DeferredCleanup {
+                    process,
+                    writer_thread: self.writer_thread.take(),
+                    reader_thread: self.reader_thread.take(),
+                    _reservation: self.reservation.take(),
+                };
+                queue_deferred_cleanup(owner);
+            }
+        } else {
+            self.process.take();
+            self.reservation.take();
+        }
     }
 }
 impl Session {
+    fn process(&self) -> &SandboxProcess {
+        self.process.as_ref().expect("live session retains its process owner")
+    }
+    fn resources_stopped(&self) -> bool {
+        self.process.as_ref().is_none_or(|process| process.cleanup_complete())
+            && self.writer_thread.is_none() && self.reader_thread.is_none()
+    }
+    fn cleanup_complete(&self) -> bool {
+        self.process.is_none() && self.resources_stopped()
+            && self.cleanup_budget.cleanup_complete()
+    }
     fn shutdown(&mut self) -> Result<(), String> {
         self.closed = true;
-        let terminate_error = self.process.terminate().err();
-        // Stop queued writes before waiting for EOF on the owned process tree.
+        if self.process.is_none() {
+            self.reservation.take();
+            return if self.cleanup_budget.cleanup_complete() { Ok(()) }
+                else { Err("LSP_PROFILE_CLEANUP_INCOMPLETE".into()) };
+        }
+        self.operation.cancel();
+        if let Some(reservation) = &self.reservation {
+            reservation.set_phase(ReservationPhase::Cleanup);
+        }
+        let terminate_error = self.process().terminate().err();
         self.writer.take();
         let until = Instant::now() + Duration::from_secs(3);
         while Instant::now() < until
-            && (!matches!(self.process.try_wait(), Ok(true))
+            && (!self.process().cleanup_complete()
                 || self.writer_thread.as_ref().is_some_and(|handle| !handle.is_finished())
                 || self.reader_thread.as_ref().is_some_and(|handle| !handle.is_finished()))
         {
             thread::sleep(Duration::from_millis(10));
         }
         let mut errors = Vec::new();
-        if !matches!(self.process.try_wait(), Ok(true)) {
+        if !self.process().cleanup_complete() {
             errors.push("LSP_PROCESS_CLEANUP_INCOMPLETE".to_string());
         }
-        if let Some(error) = terminate_error {
-            errors.push(error);
-        }
+        if let Some(error) = terminate_error { errors.push(error); }
         for handle in [&mut self.writer_thread, &mut self.reader_thread] {
-            if handle.as_ref().is_some_and(|thread| thread.is_finished()) {
-                if handle.take().unwrap().join().is_err() {
-                    errors.push("LSP_IO_THREAD_PANICKED".into());
-                }
-            } else if handle.is_some() {
-                errors.push("LSP_CLEANUP_TIMEOUT".into());
+            match join_finished_worker(handle) {
+                Ok(true) => {}
+                Ok(false) => errors.push("LSP_CLEANUP_TIMEOUT".into()),
+                Err(error) => errors.push(error),
             }
+        }
+        if self.resources_stopped() {
+            // Destroy the native owner before checking the profile teardown
+            // barrier. A stopped process alone does not mean its private
+            // profile was removed or that the capacity slot may be reused.
+            self.process.take();
+            while !self.cleanup_budget.cleanup_complete() && Instant::now() < until {
+                thread::sleep(Duration::from_millis(10));
+            }
+            self.reservation.take();
+        }
+        if !self.cleanup_budget.cleanup_complete() {
+            errors.push("LSP_PROFILE_CLEANUP_INCOMPLETE".into());
         }
         if errors.is_empty() { Ok(()) } else { Err(errors.join(";")) }
     }
 
+    #[cfg(test)]
     fn start(root: &Path, seconds: u64) -> Result<Self, String> {
+        let operation = new_operation(seconds);
+        check_operation(&operation)?;
         let root = root.canonicalize().map_err(|_| "LSP_ROOT_INVALID")?;
-        let profile = SandboxProfile::create()?;
-        let snapshot = snapshot(&root, &profile)?;
-        Self::start_with_snapshot(root, profile, snapshot, seconds)
+        let reservation = StartReservation::acquire(&root, operation.clone())?;
+        Self::start_reserved(reservation, &root, operation)
     }
-
-    fn start_documents(
+    fn start_reserved(
+        reservation: StartReservation, root: &Path, operation: OperationBudget,
+    ) -> Result<Self, String> {
+        check_operation(&operation)?;
+        no_reparse_with_budget(root, &operation)?;
+        let root = root.canonicalize().map_err(|_| "LSP_ROOT_INVALID")?;
+        no_reparse_with_budget(&root, &operation)?;
+        let profile = SandboxProfile::create_with_budget(operation.clone())?;
+        let snapshot = snapshot(&root, &profile)?;
+        Self::start_with_snapshot(reservation, root, profile, snapshot, operation, None)
+    }
+    fn start_documents_reserved(
+        reservation: StartReservation,
         root: &Path,
         documents: &[(String, String)],
-        seconds: u64,
+        operation: OperationBudget,
+        selected_server: Option<PathBuf>,
     ) -> Result<Self, String> {
+        check_operation(&operation)?;
+        no_reparse_with_budget(root, &operation)?;
         let root = root.canonicalize().map_err(|_| "LSP_ROOT_INVALID")?;
+        no_reparse_with_budget(&root, &operation)?;
         if documents.is_empty() || documents.len() > 128 {
             return Err("LSP_DOCUMENT_LIMIT".into());
         }
-        let profile = SandboxProfile::create()?;
+        let profile = SandboxProfile::create_with_budget(operation.clone())?;
         let snapshot = profile.snapshot_dir()?;
         let mut total = 0usize;
+        let mut copied = SnapshotBudget::new();
         for (relative, content) in documents {
+            check_operation(&operation)?;
             let path = Path::new(relative);
-            if path.is_absolute()
-                || !path
-                    .components()
-                    .all(|part| matches!(part, std::path::Component::Normal(_)))
-                || !relative.ends_with(".rs")
-                || content.len() > MAX_FILE_BYTES
+            if path.is_absolute() || relative.len() > 4096
+                || !path.components().all(|part| matches!(part, std::path::Component::Normal(_)))
+                || path.components().count() > 12
+                || !relative.ends_with(".rs") || content.len() > MAX_FILE_BYTES
             {
                 return Err("LSP_DOCUMENT_DENIED".into());
             }
-            total = total
-                .checked_add(content.len())
-                .ok_or("LSP_DOCUMENT_LIMIT")?;
-            if total > 4 * 1024 * 1024 {
-                return Err("LSP_DOCUMENT_LIMIT".into());
-            }
+            for _ in path.components() { copied.visit()?; }
+            total = total.checked_add(content.len()).ok_or("LSP_DOCUMENT_LIMIT")?;
+            if total > 4 * 1024 * 1024 { return Err("LSP_DOCUMENT_LIMIT".into()); }
             let target = snapshot.join(path);
             fs::create_dir_all(target.parent().ok_or("LSP_DOCUMENT_DENIED")?)
                 .map_err(|_| "LSP_SNAPSHOT_WRITE_FAILED")?;
-            fs::write(&target, content).map_err(|_| "LSP_SNAPSHOT_WRITE_FAILED")?;
+            check_operation(&operation)?;
+            write_snapshot_bytes(&target, content.as_bytes(), &mut copied, &operation)?;
         }
-        write_reviewed_rust_project(&snapshot)?;
+        write_reviewed_rust_project_with_budget(&snapshot, &operation)?;
         profile.protect_lsp_snapshot(&snapshot)?;
-        Self::start_with_snapshot(root, profile, snapshot, seconds)
+        check_operation(&operation)?;
+        Self::start_with_snapshot(reservation, root, profile, snapshot, operation, selected_server)
     }
 
     fn start_with_snapshot(
+        reservation: StartReservation,
         root: PathBuf,
         profile: SandboxProfile,
         snapshot: PathBuf,
-        seconds: u64,
+        operation: OperationBudget,
+        selected_server: Option<PathBuf>,
     ) -> Result<Self, String> {
-        let server = runtime()?;
+        check_operation(&operation)?;
+        let server = match selected_server {
+            Some(server) => server,
+            None => runtime_with_budget(&operation)?,
+        };
         let state = profile.state_dir()?;
         // Keep the source graph read-only and disable Cargo/build execution.
         // rustc is required only for analyzer cfg/data-layout probes. Staging
         // errors must fail before spawning, not become a later timeout.
-        let reviewed_graph = reviewed_project_for_initialize(&snapshot)?;
+        let reviewed_graph = reviewed_project_for_initialize_with_budget(&snapshot, &operation)?;
         let environment = rustc_cfg_environment(&profile, &server)?;
         // Do not reintroduce the retired --no-proc-macro CLI flag: use LSP
         // initialization options to disable proc macros and check-on-save.
+        check_operation(&operation)?;
         let child = profile
             .spawn(&server, &[], &environment, &state)
             .map_err(|error| {
@@ -723,20 +1133,23 @@ impl Session {
         // Establish ownership before spawning either I/O thread. Any later
         // startup error runs Session::drop and closes the entire process tree.
         let mut session = Self {
-            process,
+            process: Some(process),
             writer: Some(writer),
             writer_thread: None,
             reader_thread: None,
             write_result,
             reader,
             reader_fault,
-            deadline: Instant::now() + Duration::from_secs(seconds.clamp(5, 600)),
+            cleanup_budget: operation.clone(),
+            operation,
             next_id: 1,
             root,
             snapshot,
             last_used: Instant::now(),
             closed: false,
+            reservation: Some(reservation),
         };
+        check_operation(&session.operation)?;
         session.writer_thread = Some(thread::Builder::new()
             .name("browseros-lsp-write".into())
             .spawn(move || {
@@ -752,6 +1165,7 @@ impl Session {
                     }
                 }
             }).map_err(|_| "LSP_WRITER_THREAD_START_FAILED")?);
+        check_operation(&session.operation)?;
         session.reader_thread = Some(thread::Builder::new()
             .name("browseros-lsp-read".into())
             .spawn(move || {
@@ -790,89 +1204,83 @@ impl Session {
         if let Err(ref error) = init {
             eprintln!(
                 "LSP_INITIALIZE_DIAG={error}; exit={:?}; stderr={:?}",
-                session.process.exit_code(),
-                session.process.profile().stderr_for_test()
+                session.process().exit_code(),
+                session.process().profile().stderr_for_test()
             );
         }
-        init?;
+        init.map_err(|error| session.describe_error(error))?;
+        check_operation(&session.operation)?;
         session.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}))?;
         Ok(session)
     }
-    fn reset_deadline(&mut self, seconds: u64) {
-        self.deadline = Instant::now() + Duration::from_secs(seconds.clamp(5, 600));
+    fn begin_request(&mut self, operation: OperationBudget) {
+        self.operation = operation;
         self.last_used = Instant::now();
     }
+    fn observed_failure(&self) -> Option<String> {
+        // Prefer the sticky native failure over a downstream EOF/backpressure
+        // symptom. No raw stderr or path reaches the production response.
+        if let Some(code) = self.process().profile().stderr_diagnostic() {
+            return Some(code.to_owned());
+        }
+        self.reader_fault.lock().unwrap_or_else(|p| p.into_inner()).clone()
+    }
     fn recv_frame(&self, timeout_error: &'static str) -> Result<Value, String> {
-        let fault = || self.reader_fault
-            .lock().unwrap_or_else(|p| p.into_inner()).clone();
         loop {
-            if let Some(error) = fault() { return Err(error); }
-            let remaining = self.deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                return Err(fault().unwrap_or_else(|| timeout_error.to_string()));
-            }
-            // A rust-analyzer child failing to open the Windows NUL device
-            // cannot be repaired by waiting longer for a notification.
-            // Test builds keep a capped stderr tail; production never exposes
-            // raw sandbox stderr or private file paths.
-            let wait = remaining.min(Duration::from_millis(500));
+            if let Some(error) = self.observed_failure() { return Err(error); }
+            let remaining = self.operation.remaining().map_err(operation_error)?;
+            let wait = remaining.min(Duration::from_millis(100));
             match self.reader.recv_timeout(wait) {
                 Ok(value) => {
-                    if let Some(error) = fault() { return Err(error); }
+                    check_operation(&self.operation)?;
+                    if let Some(error) = self.observed_failure() { return Err(error); }
                     return value;
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {
-                    #[cfg(test)]
-                    if blocked_null_device_child(
-                        &self.process.profile().stderr_for_test()
-                    ) {
-                        return Err("LSP_CHILD_NULL_DEVICE_DENIED".into());
+                    if let Some(error) = self.observed_failure() { return Err(error); }
+                    if self.operation.remaining().is_err() {
+                        check_operation(&self.operation)?;
+                        return Err(timeout_error.into());
                     }
                 }
                 Err(mpsc::RecvTimeoutError::Disconnected) =>
-                    return Err(fault().unwrap_or_else(|| "LSP_CLOSED".into())),
+                    return Err(self.observed_failure().unwrap_or_else(|| "LSP_CLOSED".into())),
             }
         }
     }
     fn send(&mut self, value: Value) -> Result<(), String> {
+        check_operation(&self.operation)?;
         let body = serde_json::to_vec(&value).map_err(|_| "LSP_ENCODE_FAILED")?;
-        if body.len() > MAX_FRAME {
-            return Err("LSP_REQUEST_LIMIT".into());
-        }
+        if body.len() > MAX_FRAME { return Err("LSP_REQUEST_LIMIT".into()); }
         let mut bytes = format!("Content-Length: {}\r\n\r\n", body.len()).into_bytes();
         bytes.extend(body);
         let mut pending = bytes;
         loop {
-            if let Some(error) = self
-                .reader_fault
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .clone()
-            {
-                return Err(error);
-            }
+            check_operation(&self.operation)?;
+            if let Some(error) = self.observed_failure() { return Err(error); }
             let writer = self.writer.as_ref().ok_or("LSP_SESSION_CLOSED")?;
             match writer.try_send(pending) {
                 Ok(()) => break,
                 Err(mpsc::TrySendError::Disconnected(_)) => return Err("LSP_WRITE_FAILED".into()),
                 Err(mpsc::TrySendError::Full(value)) => {
                     pending = value;
-                    let remaining = self.deadline.saturating_duration_since(Instant::now());
-                    if remaining.is_zero() {
-                        return Err("LSP_WRITE_TIMEOUT".into());
-                    }
+                    let remaining = self.operation.remaining().map_err(operation_error)?;
                     thread::sleep(remaining.min(Duration::from_millis(5)));
                 }
             }
         }
-        let remaining = self.deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            return Err("LSP_WRITE_TIMEOUT".into());
-        }
-        match self.write_result.recv_timeout(remaining) {
-            Ok(result) => result,
-            Err(mpsc::RecvTimeoutError::Timeout) => Err("LSP_WRITE_TIMEOUT".into()),
-            Err(mpsc::RecvTimeoutError::Disconnected) => Err("LSP_WRITE_FAILED".into()),
+        loop {
+            check_operation(&self.operation)?;
+            if let Some(error) = self.observed_failure() { return Err(error); }
+            let remaining = self.operation.remaining().map_err(operation_error)?;
+            match self.write_result.recv_timeout(remaining.min(Duration::from_millis(100))) {
+                Ok(result) => {
+                    check_operation(&self.operation)?;
+                    return result;
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(mpsc::RecvTimeoutError::Disconnected) => return Err("LSP_WRITE_FAILED".into()),
+            }
         }
     }
     fn rpc(&mut self, id: u64, method: &str, params: Value) -> Result<Value, String> {
@@ -944,13 +1352,8 @@ impl Session {
             return Err("LSP_DOCUMENT_INVALID".into());
         }
         let host = self.root.join(&document);
-        no_reparse(&host)?;
-        let bytes = crate::capabilities::workspace::safe_paths::read_regular(
-            &host,
-            &[self.root.clone()],
-            MAX_FILE_BYTES,
-        )
-        .map_err(|_| "LSP_DOCUMENT_READ_DENIED")?;
+        no_reparse_with_budget(&host, &self.operation)?;
+        let bytes = read_reviewed_bytes(&host, &self.root, MAX_FILE_BYTES, &self.operation)?;
         let text = String::from_utf8(bytes).map_err(|_| "LSP_DOCUMENT_NOT_TEXT")?;
         let uri = self.open_document(&document, &text)?;
         let mut diagnostics = self.await_diagnostics(&uri)?;
@@ -958,9 +1361,8 @@ impl Session {
         Ok(diagnostics)
     }
 
-    /// Test builds append the sandboxed analyzer's exit code and captured
-    /// stderr, so a native acceptance failure names its real cause instead of
-    /// only a panic location. Production errors stay opaque.
+    /// Test builds retain bounded native evidence. Production emits fixed
+    /// diagnostic codes and an optional numeric exit code, never raw stderr.
     fn describe_error(&self, error: String) -> String {
         #[cfg(test)]
         {
@@ -974,13 +1376,17 @@ impl Session {
             eprintln!("LSP_SNAPSHOT_PROJECT_ACES={}", tests::snapshot_acl_for_test(&project));
             format!(
                 "{error} exit={:?} stderr={:?}",
-                self.process.exit_code(),
-                self.process.profile().stderr_for_test()
+                self.process().exit_code(),
+                self.process().profile().stderr_for_test()
             )
         }
         #[cfg(not(test))]
         {
-            error
+            let diagnostic = self.process.as_ref()
+                .and_then(|process| process.profile().stderr_diagnostic())
+                .unwrap_or(error.as_str());
+            let exit = self.process.as_ref().and_then(|process| process.exit_code().ok().flatten());
+            format!("{diagnostic}; exit={exit:?}")
         }
     }
 }
@@ -1048,7 +1454,11 @@ fn remap_reviewed_uris(
     }
 }
 
-fn one_shot_document_request(root: &Path, request: &Value) -> Result<Value, String> {
+fn one_shot_document_request(
+    root: &Path, request: &Value, operation: OperationBudget,
+) -> Result<Value, String> {
+    check_operation(&operation)?;
+    let permit = OneShotPermit::acquire(root, operation.clone())?;
     let method = match request["method"].as_str() {
         Some("completion") => "textDocument/completion",
         Some("definition") => "textDocument/definition",
@@ -1080,17 +1490,19 @@ fn one_shot_document_request(root: &Path, request: &Value) -> Result<Value, Stri
     if character as usize > text_line.encode_utf16().count() {
         return Err("LSP_POSITION_INVALID".into());
     }
-    if let Some(selected) = request["server_path"].as_str() {
-        let real = runtime()?;
+    let selected_server = if let Some(selected) = request["server_path"].as_str() {
+        let real = runtime_with_budget(&operation)?;
         let requested = Path::new(selected)
             .canonicalize()
             .map_err(|_| "LSP_SERVER_UNAVAILABLE")?;
         if requested != real {
             return Err("LSP_SERVER_NOT_TRUSTED_PROFILE".into());
         }
-    }
-    let _permit = OneShotPermit::acquire()?;
-    let timeout = request["timeout_seconds"].as_u64().unwrap_or(30);
+        check_operation(&operation)?;
+        Some(real)
+    } else {
+        None
+    };
     let (documents, relative, scope, isolated_document) =
         if let Some(module) = request["module_root"].as_str() {
             if request["approved_module_sources"] != true {
@@ -1103,7 +1515,7 @@ fn one_shot_document_request(root: &Path, request: &Value) -> Result<Value, Stri
             if !Path::new(path).starts_with(directory) {
                 return Err("LSP_DOCUMENT_OUTSIDE_MODULE_ROOT".into());
             }
-            let mut docs = super::coding::lsp_module_sources(root, module)?;
+            let mut docs = super::coding::lsp_module_sources_with_checkpoint(root, module, || check_operation(&operation))?;
             if let Some(file) = docs.iter_mut().find(|file| file.0 == path) {
                 file.1 = content.to_owned();
             } else {
@@ -1121,7 +1533,10 @@ fn one_shot_document_request(root: &Path, request: &Value) -> Result<Value, Stri
                 true,
             )
         };
-    let mut session = Session::start_documents(root, &documents, timeout)?;
+    check_operation(&operation)?;
+    let mut session = Session::start_documents_reserved(
+        permit.into_reservation(), root, &documents, operation, selected_server,
+    )?;
     let private_uri = session.open_document(Path::new(&relative), content)?;
     let public_uri = uri_for(&root.join(path))?;
     let mut diagnostics = if request["method"] == "diagnostics" {
@@ -1185,7 +1600,7 @@ fn retire_expired() {
                 let Ok(mut session) = entry.try_lock() else {
                     return None;
                 };
-                if session.last_used.elapsed() <= Duration::from_secs(120) {
+                if !session.closed && session.last_used.elapsed() <= Duration::from_secs(120) {
                     return None;
                 }
                 session.closed = true;
@@ -1196,19 +1611,32 @@ fn retire_expired() {
             .filter_map(|id| cache.ready.remove(id))
             .collect::<Vec<_>>()
     };
-    drop(expired);
+    for entry in expired {
+        if let Ok(mut session) = entry.try_lock() {
+            let _ = session.shutdown();
+        }
+        // An incomplete owner moves to deferred cleanup when its final Arc
+        // drops. Its reservation remains occupied until that cleanup finishes.
+    }
 }
 
 pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
+    // This clock starts before canonicalization, reservation, snapshot, ACL
+    // changes, runtime staging or process creation. Nested stages never reset it.
+    let operation = new_operation(request["timeout_seconds"].as_u64().unwrap_or(30));
+    reap_deferred_cleanup();
+    retry_cleanup_reaper();
     retire_expired();
+    check_operation(&operation)?;
     let action = request["action"].as_str().unwrap_or("");
     // Capability discovery is a global read-only operation; no workspace
     // has to be selected yet. Other operations require a real pinned root.
     let root = if action == "lsp_status" {
         PathBuf::new()
     } else {
+        no_reparse_with_budget(root, &operation)?;
         let root = root.canonicalize().map_err(|_| "LSP_ROOT_INVALID")?;
-        no_reparse(&root)?;
+        no_reparse_with_budget(&root, &operation)?;
         if !root.is_dir() {
             return Err("LSP_ROOT_INVALID".into());
         }
@@ -1225,7 +1653,8 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
             // created/deleted a Windows AppContainer OS profile on EVERY call.
             // Report prerequisites separately from native launch verification.
             let sandbox_available = super::windows_sandbox::sandbox_prerequisites_available();
-            let toolchain = runtime().and_then(|analyzer| rustc_cfg_peer(&analyzer));
+            let toolchain = runtime_with_budget(&operation)
+                .and_then(|analyzer| rustc_cfg_peer_with_budget(&analyzer, &operation));
             Ok(json!({
                 "profiles":[{"id":"rust_analyzer","language":"rust","available":toolchain.is_ok(),"command":"rust-analyzer.exe",
                     "unavailable_reason":toolchain.as_ref().err()}],
@@ -1241,26 +1670,23 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
             if request["profile"].as_str().unwrap_or("") != "rust_analyzer" {
                 return Err("LSP_PROFILE_UNSUPPORTED".into());
             }
-            let reservation = {
-                let mut cache = sessions().lock().map_err(|_| "LSP_SESSION_CACHE")?;
-                let token = cache.reserve_start(&root)?;
-                StartReservation { token }
-            };
-            let session = Session::start(&root, request["timeout_seconds"].as_u64().unwrap_or(30))?;
+            let reservation = StartReservation::acquire(&root, operation.clone())?;
+            let token = reservation.token;
+            let session = Session::start_reserved(reservation, &root, operation)?;
             let id = format!("lsp-{}", uuid::Uuid::new_v4().simple());
             {
                 let mut cache = sessions().lock().map_err(|_| "LSP_SESSION_CACHE")?;
-                if !cache.start_is_active(&reservation.token, &root) {
+                if !cache.start_is_active(&token, &root) {
                     // Reservation::drop re-locks the cache. Release this
                     // guard before returning on a cancelled startup.
                     drop(cache);
                     return Err("LSP_SESSION_CLOSED_DURING_START".into());
                 }
-                cache
-                    .ready
-                    .insert(id.clone(), Arc::new(Mutex::new(session)));
+                if let Some(entry) = cache.starting.get_mut(&token) {
+                    entry.phase = ReservationPhase::Ready;
+                }
+                cache.ready.insert(id.clone(), Arc::new(Mutex::new(session)));
             }
-            drop(reservation);
             Ok(
                 json!({"session_id":id,"profile":"rust_analyzer",
                     "analysis_mode":"rust-project-no-cargo",
@@ -1271,7 +1697,7 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
         }
         "lsp_request" => {
             if request["session_id"].is_null() {
-                return one_shot_document_request(&root, &request);
+                return one_shot_document_request(&root, &request, operation);
             }
             let id = request["session_id"]
                 .as_str()
@@ -1285,11 +1711,11 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
             if session.closed {
                 return Err("LSP_SESSION_NOT_FOUND".into());
             }
-            session.reset_deadline(request["timeout_seconds"].as_u64().unwrap_or(30));
+            session.begin_request(operation);
             let mut params = request.get("params").cloned().unwrap_or(json!({}));
             let root = session.root.clone();
             let snapshot = session.snapshot.clone();
-            request_uri_to_snapshot(&mut params, &root, &snapshot)?;
+            request_uri_to_snapshot(&mut params, &root, &snapshot, &session.operation)?;
             let mut result = session.rpc_next(method, params)?;
             response_uri_to_workspace(&mut result, &root, &snapshot);
             session.last_used = Instant::now();
@@ -1305,7 +1731,7 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
             if session.closed {
                 return Err("LSP_SESSION_NOT_FOUND".into());
             }
-            session.reset_deadline(request["timeout_seconds"].as_u64().unwrap_or(30));
+            session.begin_request(operation);
             let diagnostics = match session.diagnostics(path) {
                 Ok(value) => value,
                 Err(error) => return Err(session.describe_error(error)),
@@ -1314,79 +1740,63 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
             Ok(json!({"diagnostics":diagnostics}))
         }
         "lsp_close" => {
-            // A caller may close only its own workspace's sessions. Do not
-            // hold the global cache mutex while acquiring per-session locks
-            // or terminating a Job Object.
             let candidates: Vec<_> = {
-                let cache = sessions().lock().map_err(|_| "LSP_SESSION_CACHE")?;
-                cache
-                    .ready
-                    .iter()
-                    .filter(|(id, _)| {
-                        request["session_id"]
-                            .as_str()
-                            .is_none_or(|wanted| id.as_str() == wanted)
-                    })
+                let mut cache = sessions().lock().map_err(|_| "LSP_SESSION_CACHE")?;
+                if request["session_id"].as_str().is_none() {
+                    cache.cancel_pending_for(&root);
+                }
+                cache.ready.iter()
+                    .filter(|(id, _)| request["session_id"].as_str()
+                        .is_none_or(|wanted| id.as_str() == wanted))
                     .map(|(id, entry)| (id.clone(), Arc::clone(entry)))
                     .collect()
             };
             let mut owned = Vec::new();
             let mut busy_candidates = 0usize;
+            let mut completed = 0usize;
             let mut cleanup_errors = Vec::new();
             for (id, entry) in candidates {
                 let matches_workspace = match entry.try_lock() {
                     Ok(mut session) if session.root == root => {
-                        // Mark as closed while holding its mutex. Requests
-                        // that previously cloned this Arc must fail closed.
                         session.closed = true;
                         if let Err(error) = session.shutdown() {
                             cleanup_errors.push(error);
                         }
+                        if session.cleanup_complete() { completed += 1; }
                         true
                     }
-                    Err(_) if request["session_id"].as_str().is_some() => {
-                        return Err("LSP_SESSION_BUSY".into());
-                    }
-                    Err(_) => {
-                        busy_candidates += 1;
-                        false
-                    }
+                    Err(_) if request["session_id"].as_str().is_some() =>
+                        return Err("LSP_SESSION_BUSY".into()),
+                    Err(_) => { busy_candidates += 1; false }
                     _ => false,
                 };
-                // The MutexGuard temporary is gone before Arc ownership
-                // moves into the collection of sessions to terminate.
-                if matches_workspace {
-                    owned.push((id, entry));
-                }
+                if matches_workspace { owned.push((id, entry)); }
             }
             let removed: Vec<_> = {
                 let mut cache = sessions().lock().map_err(|_| "LSP_SESSION_CACHE")?;
-                if request["session_id"].as_str().is_none() {
-                    // Only invalidate starts from this workspace. The previous
-                    // global epoch accidentally cancelled unrelated workspaces.
-                    cache.cancel_pending_for(&root);
-                }
-                owned
-                    .iter()
-                    .filter_map(|(id, entry)| {
-                        if cache
-                            .ready
-                            .get(id)
-                            .is_some_and(|existing| Arc::ptr_eq(existing, entry))
-                        {
-                            cache.ready.remove(id)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect()
+                owned.iter().filter_map(|(id, entry)| {
+                    if cache.ready.get(id).is_some_and(|current| Arc::ptr_eq(current, entry)) {
+                        cache.ready.remove(id)
+                    } else { None }
+                }).collect()
             };
-            let count = removed.len();
             drop(removed);
+            drop(owned);
+            reap_deferred_cleanup();
+            let (pending_starts, pending_cleanup) = {
+                let cache = sessions().lock().map_err(|_| "LSP_SESSION_CACHE")?;
+                (
+                    cache.pending_for(&root, ReservationPhase::Preparing),
+                    cache.pending_for(&root, ReservationPhase::Cleanup),
+                )
+            };
             Ok(json!({
-                "closed_sessions":count,
+                "closed_sessions":completed,
                 "skipped_busy_candidates":busy_candidates,
-                "close_complete":busy_candidates == 0 && cleanup_errors.is_empty(),
+                "pending_starts":pending_starts,
+                "pending_cleanup":pending_cleanup,
+                "close_complete":busy_candidates == 0 && pending_starts == 0
+                    && pending_cleanup == 0 && cleanup_errors.is_empty(),
                 "cleanup_errors":cleanup_errors
             }))
         }
@@ -1425,6 +1835,79 @@ mod tests {
                 eprintln!("::error::LSP_ACCEPTANCE_{label} {error}");
                 panic!("LSP_ACCEPTANCE_{label}: {error}");
             }
+        }
+    }
+
+    /// Keep both the native child and the stdout worker owned on every test
+    /// error path. Diagnostic probes must not hang before reaching their timer.
+    struct ProbeCapture {
+        process: Option<SandboxProcess>,
+        worker: Option<thread::JoinHandle<()>>,
+        output: mpsc::Receiver<Result<Vec<u8>, String>>,
+    }
+    impl ProbeCapture {
+        fn start(child: SandboxChild) -> Result<Self, String> {
+            reap_deferred_cleanup();
+            let SandboxChild { stdin, stdout, process } = child;
+            drop(stdin);
+            let (sender, output) = mpsc::sync_channel(1);
+            let mut owner = Self { process: Some(process), worker: None, output };
+            owner.worker = Some(thread::Builder::new()
+                .name("browseros-lsp-probe-read".into())
+                .spawn(move || {
+                    let mut bytes = Vec::new();
+                    let result = stdout.take((MAX_FRAME + 1) as u64).read_to_end(&mut bytes)
+                        .map_err(|_| "LSP_PROBE_READ_FAILED".to_string())
+                        .and_then(|_| if bytes.len() > MAX_FRAME {
+                            Err("LSP_PROBE_OUTPUT_LIMIT".into())
+                        } else { Ok(bytes) });
+                    let _ = sender.send(result);
+                }).map_err(|_| "LSP_PROBE_THREAD_START_FAILED")?);
+            Ok(owner)
+        }
+        fn finish(&mut self, timeout: Duration) -> Result<(u32, Vec<u8>, String), String> {
+            let deadline = Instant::now() + timeout;
+            let mut bytes = None;
+            loop {
+                if bytes.is_none() {
+                    match self.output.try_recv() {
+                        Ok(result) => bytes = Some(result?),
+                        Err(mpsc::TryRecvError::Empty) => {}
+                        Err(mpsc::TryRecvError::Disconnected) =>
+                            return Err("LSP_PROBE_READER_CLOSED".into()),
+                    }
+                }
+                let process = self.process.as_ref().ok_or("LSP_PROBE_OWNER_MISSING")?;
+                if bytes.is_some() && process.cleanup_complete()
+                    && self.worker.as_ref().is_none_or(|worker| worker.is_finished())
+                {
+                    join_finished_worker(&mut self.worker)?;
+                    let exit = process.exit_code()?.ok_or("LSP_PROBE_EXIT_UNAVAILABLE")?;
+                    // cleanup_complete includes stderr EOF, so this is the
+                    // complete bounded diagnostic tail, not a race with the pump.
+                    return Ok((exit, bytes.take().unwrap(), process.profile().stderr_for_test()));
+                }
+                if Instant::now() >= deadline {
+                    let _ = process.terminate();
+                    return Err("LSP_PROBE_CLEANUP_TIMEOUT".into());
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+        }
+    }
+    impl Drop for ProbeCapture {
+        fn drop(&mut self) {
+            if let Some(process) = self.process.take() {
+                let _ = process.terminate();
+                let _ = join_finished_worker(&mut self.worker);
+                if !process.cleanup_complete() || self.worker.is_some() {
+                    queue_deferred_cleanup(DeferredCleanup {
+                        process, writer_thread: None, reader_thread: self.worker.take(),
+                        _reservation: None,
+                    });
+                }
+            }
+            reap_deferred_cleanup();
         }
     }
 
@@ -1468,27 +1951,19 @@ mod tests {
                 return;
             }
         };
-        let SandboxChild {
-            stdin,
-            mut stdout,
-            process,
-        } = child;
-        drop(stdin);
-        let mut out = Vec::new();
-        let _ = stdout.read_to_end(&mut out);
-        let deadline = Instant::now() + Duration::from_secs(30);
-        while !process.try_wait().unwrap_or(true) {
-            if Instant::now() >= deadline {
-                let _ = process.terminate();
-                break;
+        let captured = ProbeCapture::start(child)
+            .and_then(|mut owner| owner.finish(Duration::from_secs(30)));
+        let (exit, out, stderr) = match captured {
+            Ok(result) => result,
+            Err(error) => {
+                eprintln!("::error::LSP_TOKEN_PROBE {error}");
+                return;
             }
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        let text = String::from_utf8_lossy(&out)
-            .replace('\n', " | ")
-            .replace('"', " ");
+        };
+        let text = String::from_utf8_lossy(&out).replace('\n', " | ").replace('"', " ");
         let head: String = text.chars().take(1200).collect();
-        eprintln!("::error::LSP_TOKEN_PROBE exit={:?} groups={head}", process.exit_code());
+        let stderr_head: String = stderr.chars().take(900).collect();
+        eprintln!("::error::LSP_TOKEN_PROBE exit={exit} groups={head} stderr={stderr_head}");
     }
 
     /// Run one reviewed toolchain image inside the AppContainer and report
@@ -1586,31 +2061,27 @@ mod tests {
                 return;
             }
         };
-        let SandboxChild {
-            stdin,
-            mut stdout,
-            process,
-        } = child;
-        drop(stdin);
-        let mut output = Vec::new();
-        let _ = stdout.read_to_end(&mut output);
-        let deadline = Instant::now() + Duration::from_secs(30);
-        while !process.try_wait().unwrap_or(true) {
-            if Instant::now() >= deadline {
-                let _ = process.terminate();
-                break;
+        let mut owner = match ProbeCapture::start(child) {
+            Ok(owner) => owner,
+            Err(error) => {
+                eprintln!("::error::LSP_CARGO_PROBE_{label} {error}");
+                return;
             }
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        let exit = process.exit_code();
-        let stderr = process.profile().stderr_for_test();
+        };
+        let (exit, output, stderr) = match owner.finish(Duration::from_secs(30)) {
+            Ok(result) => result,
+            Err(error) => {
+                eprintln!("::error::LSP_CARGO_PROBE_{label} {error}");
+                return;
+            }
+        };
         let tail = |text: &str| -> String {
             let bytes = text.as_bytes();
             let start = bytes.len().saturating_sub(900);
             String::from_utf8_lossy(&bytes[start..]).replace('\n', " | ")
         };
         let out = String::from_utf8_lossy(&output).into_owned();
-        let succeeded = exit.as_ref().ok().and_then(|code| code.as_ref()) == Some(&0);
+        let succeeded = exit == 0;
         if !succeeded {
             if let Some(manifest) = manifest.as_ref() {
                 let mut targets = vec![manifest.clone()];
@@ -1620,23 +2091,9 @@ mod tests {
                         targets.push(package.to_path_buf());
                     }
                 }
-                // Keep the head of each listing: icacls prints the path line and
-                // every ACE before the summary, so a tail-only dump hides the
-                // entries that actually decide the access check.
-                for target in targets {
-                    let mut text = String::new();
-                    if let Ok(probe) = std::process::Command::new("icacls.exe")
-                        .arg(&target)
-                        .output()
-                    {
-                        text.push_str(&String::from_utf8_lossy(&probe.stdout));
-                    }
-                    let head: String = text
-                        .chars()
-                        .take(700)
-                        .collect::<String>()
-                        .replace('\n', " | ");
-                    eprintln!("::error::LSP_CARGO_PROBE_{label}_ACL {} :: {head}", target.display());
+                for (index, target) in targets.iter().enumerate() {
+                    let summary = snapshot_acl_for_test(target);
+                    eprintln!("::error::LSP_CARGO_PROBE_{label}_ACL object={index} {summary}");
                 }
             }
         }
@@ -1666,34 +2123,9 @@ mod tests {
             .ok_or("LSP_TEST_SYSTEMROOT_UNAVAILABLE")?;
         let cmd = PathBuf::from(windows).join("System32").join("cmd.exe");
         let tail = command;
-        let SandboxChild { stdin, mut stdout, process } =
-            profile.spawn(&cmd, &["/D".into(), "/C".into(), tail], &[], &state)?;
-        drop(stdin);
-        let (tx, rx) = mpsc::sync_channel(1);
-        thread::spawn(move || {
-            let mut bytes = Vec::new();
-            let output = stdout.read_to_end(&mut bytes)
-                .map(|_| bytes)
-                .map_err(|_| "LSP_PROFILE_READ_FAILED".to_string());
-            let _ = tx.send(output);
-        });
-        let bytes = match rx.recv_timeout(Duration::from_secs(10)) {
-            Ok(Ok(data)) => data,
-            _ => {
-                let _ = process.terminate();
-                return Err("LSP_PROFILE_READ_TIMEOUT".into());
-            }
-        };
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while !process.try_wait()? {
-            if Instant::now() >= deadline {
-                let _ = process.terminate();
-                return Err("LSP_PROFILE_EXIT_TIMEOUT".into());
-            }
-            thread::sleep(Duration::from_millis(20));
-        }
-        let exit = process.exit_code()?.ok_or("LSP_PROFILE_EXIT_UNAVAILABLE")?;
-        let stderr = process.profile().stderr_for_test();
+        let child = profile.spawn(&cmd, &["/D".into(), "/C".into(), tail], &[], &state)?;
+        let mut owner = ProbeCapture::start(child)?;
+        let (exit, bytes, stderr) = owner.finish(Duration::from_secs(15))?;
         // Host-side byte/existence checks must run before `process` (and the
         // profile it owns) is dropped and its private folder is removed.
         check();
@@ -1713,20 +2145,66 @@ mod tests {
         plain.replace('/', "\\")
     }
 
-    /// Only emit ACEs for the private snapshot's package SID in test logs;
-    /// the public path/user profile is deliberately omitted from output.
+    /// Native, read-only diagnostic metadata for a pinned object. This is
+    /// deliberately not the ordinary owner-only policy: these objects use an
+    /// AppContainer package ACL, whose actual access checks are exercised below.
+    /// No localized command output, account names, paths or raw SIDs are emitted.
     pub(super) fn snapshot_acl_for_test(path: &Path) -> String {
-        let Ok(icacls) = system_icacls() else {
-            return "icacls-unavailable".into();
+        use std::os::windows::fs::OpenOptionsExt;
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Foundation::LocalFree;
+        use windows_sys::Win32::Security::Authorization::{GetSecurityInfo, SE_FILE_OBJECT};
+        use windows_sys::Win32::Security::{
+            ACL, DACL_SECURITY_INFORMATION, GetSecurityDescriptorControl,
+            IsValidAcl, IsValidSid, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR,
+            PSID, SE_DACL_PROTECTED,
         };
-        match std::process::Command::new(icacls).arg(path).output() {
-            Ok(out) => String::from_utf8_lossy(&out.stdout).lines()
-                .filter_map(|line| line.find("S-1-15-2")
-                    .map(|start| line[start..].trim().to_owned()))
-                .take(12)
-                .collect::<Vec<_>>().join(" | "),
-            Err(_) => "icacls-execution-failed".into()
+        struct Descriptor(PSECURITY_DESCRIPTOR);
+        impl Drop for Descriptor {
+            fn drop(&mut self) {
+                unsafe { LocalFree(self.0.cast()); }
+            }
         }
+        let file = match fs::OpenOptions::new()
+            .access_mode(0x0002_0000) // READ_CONTROL only.
+            .share_mode(0x0000_0001 | 0x0000_0002) // No FILE_SHARE_DELETE.
+            .custom_flags(0x0200_0000 | 0x0020_0000) // BACKUP_SEMANTICS | OPEN_REPARSE_POINT.
+            .open(path)
+        {
+            Ok(file) => file,
+            Err(error) => return format!("native-acl-open:{}", error.raw_os_error().unwrap_or(-1)),
+        };
+        match file.metadata() {
+            Ok(metadata) if metadata.file_attributes() & REPARSE == 0 => {}
+            _ => return "native-acl-object-rejected".into(),
+        }
+        let mut owner: PSID = std::ptr::null_mut();
+        let mut acl: *mut ACL = std::ptr::null_mut();
+        let mut descriptor: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
+        let status = unsafe {
+            GetSecurityInfo(
+                file.as_raw_handle().cast(), SE_FILE_OBJECT,
+                OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+                &mut owner, std::ptr::null_mut(), &mut acl, std::ptr::null_mut(),
+                &mut descriptor,
+            )
+        };
+        let descriptor = Descriptor(descriptor);
+        if status != 0 || descriptor.0.is_null() {
+            return format!("native-acl-read:{status}");
+        }
+        let owner_valid = !owner.is_null() && unsafe { IsValidSid(owner) } != 0;
+        let acl_valid = !acl.is_null() && unsafe { IsValidAcl(acl) } != 0;
+        let mut control = 0u16;
+        let mut revision = 0u32;
+        if unsafe { GetSecurityDescriptorControl(descriptor.0, &mut control, &mut revision) } == 0 {
+            return "native-acl-control-unavailable".into();
+        }
+        let ace_count = if acl_valid { unsafe { (*acl).AceCount } } else { 0 };
+        format!(
+            "native-acl owner_valid={owner_valid} dacl_present={} dacl_valid={acl_valid} protected={} ace_count={ace_count}",
+            !acl.is_null(), control & SE_DACL_PROTECTED != 0,
+        )
     }
 
     #[test]
@@ -2109,6 +2587,8 @@ mod tests {
         );
         assert_eq!(closed["closed_sessions"], 1);
         assert_eq!(closed["close_complete"], true);
+        assert_eq!(closed["pending_starts"], 0);
+        assert_eq!(closed["pending_cleanup"], 0);
         assert_eq!(closed["cleanup_errors"], json!([]));
         fs::remove_dir_all(root).unwrap();
     }
@@ -2118,14 +2598,167 @@ mod tests {
         let first = PathBuf::from(r"C:\isolated\workspace-a");
         let second = PathBuf::from(r"C:\isolated\workspace-b");
         let mut cache = SessionCache::default();
-        let first_start = cache.reserve_start(&first).unwrap();
-        let second_start = cache.reserve_start(&second).unwrap();
+        let first_start = cache.reserve_start(&first, new_operation(30)).unwrap();
+        let second_start = cache.reserve_start(&second, new_operation(30)).unwrap();
         cache.cancel_pending_for(&first);
         assert!(!cache.start_is_active(&first_start, &first));
         assert!(cache.start_is_active(&second_start, &second));
-        assert_eq!(cache.starting.len(), 1);
+        assert_eq!(cache.starting.len(), 2, "cancelled preparation still owns capacity");
+        assert_eq!(cache.reserve_start(&second, new_operation(30)).unwrap_err(), "LSP_SESSION_LIMIT");
+        cache.starting.remove(&first_start);
         cache.starting.remove(&second_start);
         assert!(cache.starting.is_empty());
+    }
+
+    #[test]
+    fn cancelled_and_cleanup_reservations_do_not_release_capacity() {
+        let root = PathBuf::from(r"C:\isolated\capacity");
+        let mut cache = SessionCache::default();
+        let first = cache.reserve_start(&root, new_operation(30)).unwrap();
+        let second = cache.reserve_start(&root, new_operation(30)).unwrap();
+        cache.cancel_pending_for(&root);
+        assert_eq!(cache.pending_for(&root, ReservationPhase::Preparing), 2);
+        assert_eq!(cache.reserve_start(&root, new_operation(30)).unwrap_err(), "LSP_SESSION_LIMIT");
+        cache.starting.get_mut(&first).unwrap().phase = ReservationPhase::Cleanup;
+        assert_eq!(cache.reserve_start(&root, new_operation(30)).unwrap_err(), "LSP_SESSION_LIMIT");
+        cache.starting.remove(&first);
+        let replacement = cache.reserve_start(&root, new_operation(30)).unwrap();
+        assert!(!cache.start_is_active(&second, &root));
+        assert!(cache.start_is_active(&replacement, &root));
+    }
+
+    #[test]
+    fn failed_native_start_keeps_capacity_until_cleanup_guard_drops() {
+        let root = PathBuf::from(r"C:\isolated\failed-native-start");
+        let mut cache = SessionCache::default();
+        let operation = new_operation(30);
+        let native_owner = operation.hold_cleanup();
+        let failed = cache.reserve_start(&root, operation.clone()).unwrap();
+        operation.cancel();
+        cache.release_start(&failed);
+        assert_eq!(cache.pending_for(&root, ReservationPhase::Cleanup), 1);
+        let other = cache.reserve_start(&root, new_operation(30)).unwrap();
+        assert_eq!(cache.reserve_start(&root, new_operation(30)).unwrap_err(), "LSP_SESSION_LIMIT");
+        cache.reap_released();
+        assert!(cache.starting.contains_key(&failed));
+        drop(native_owner);
+        cache.reap_released();
+        assert!(!cache.starting.contains_key(&failed));
+        assert!(cache.starting.contains_key(&other));
+        assert!(cache.reserve_start(&root, new_operation(30)).is_ok());
+    }
+
+    #[test]
+    fn released_native_cleanup_slot_is_reaped_without_another_request() {
+        let root = PathBuf::from(format!(r"C:\isolated\cleanup-{}", uuid::Uuid::new_v4()));
+        let operation = new_operation(30);
+        let native_owner = operation.hold_cleanup();
+        let reservation = StartReservation::acquire(&root, operation.clone()).unwrap();
+        let token = reservation.token;
+        operation.cancel();
+        drop(reservation);
+        assert!(sessions().lock().unwrap().starting.contains_key(&token));
+        drop(native_owner);
+        // No execute/acquire call drives cleanup here: the owned worker must
+        // observe the native completion barrier and release capacity itself.
+        let until = Instant::now() + Duration::from_secs(3);
+        while sessions().lock().unwrap().starting.contains_key(&token) && Instant::now() < until {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(!sessions().lock().unwrap().starting.contains_key(&token));
+        assert!(CLEANUP_WORKER.get().unwrap().lock().unwrap().is_some());
+    }
+
+    #[test]
+    fn cancelled_or_expired_preparation_cannot_enter_snapshot_io() {
+        let fixture = std::env::temp_dir().join(format!("lsp-budget-{}", uuid::Uuid::new_v4()));
+        let source = fixture.join("source");
+        let destination = fixture.join("copy");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir(&destination).unwrap();
+        fs::write(source.join("lib.rs"), b"fn fixture() {}").unwrap();
+        let cancelled = new_operation(30);
+        cancelled.cancel();
+        let error = copy_snapshot_tree(
+            &source, &source, &destination, 0, &mut SnapshotBudget::new(), &cancelled,
+        ).unwrap_err();
+        assert_eq!(error, "LSP_OPERATION_CANCELLED");
+        assert_eq!(fs::read_dir(&destination).unwrap().count(), 0);
+        let expired = OperationBudget::new(Duration::ZERO);
+        assert_eq!(check_operation(&expired).unwrap_err(), "LSP_OPERATION_TIMEOUT");
+        fs::remove_dir_all(fixture).unwrap();
+    }
+
+    #[test]
+    fn snapshot_counts_ignored_entries_and_empty_directories() {
+        let fixture = std::env::temp_dir().join(format!("lsp-entries-{}", uuid::Uuid::new_v4()));
+        let source = fixture.join("source");
+        let destination = fixture.join("copy");
+        fs::create_dir_all(source.join("empty")).unwrap();
+        fs::create_dir(&destination).unwrap();
+        fs::write(source.join(".ignored"), b"not a copied source").unwrap();
+        fs::write(source.join("image.bin"), b"not a copied source").unwrap();
+        let mut budget = SnapshotBudget::new();
+        copy_snapshot_tree(
+            &source, &source, &destination, 0, &mut budget, &new_operation(30),
+        ).unwrap();
+        assert_eq!(budget.entries, 4); // root + directory + two excluded files
+        assert_eq!(budget.files, 0);
+        assert_eq!(budget.read_bytes, 0);
+        let other = fixture.join("limited");
+        fs::create_dir(&other).unwrap();
+        let mut limit = SnapshotBudget::new();
+        limit.entries = MAX_FILES * 2;
+        assert_eq!(copy_snapshot_tree(
+            &source, &source, &other, 0, &mut limit, &new_operation(30),
+        ).unwrap_err(), "LSP_SNAPSHOT_ENTRY_LIMIT");
+        assert_eq!(fs::read_dir(&other).unwrap().count(), 0);
+        fs::remove_dir_all(fixture).unwrap();
+    }
+
+    #[test]
+    fn actual_snapshot_bytes_obey_remaining_read_and_write_capacity() {
+        let fixture = std::env::temp_dir().join(format!("lsp-bytes-{}", uuid::Uuid::new_v4()));
+        let source = fixture.join("source");
+        let destination = fixture.join("copy");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir(&destination).unwrap();
+        fs::write(source.join("lib.rs"), vec![b'x'; 64]).unwrap();
+        let mut budget = SnapshotBudget::new();
+        budget.read_bytes = MAX_TOTAL_BYTES - 8;
+        assert!(copy_snapshot_tree(
+            &source, &source, &destination, 0, &mut budget, &new_operation(30),
+        ).is_err());
+        assert_eq!(budget.written_bytes, 0);
+        assert!(!destination.join("lib.rs").exists());
+        let mut writes = SnapshotBudget::new();
+        writes.written_bytes = MAX_TOTAL_BYTES - 3;
+        assert_eq!(write_snapshot_bytes(
+            &destination.join("bounded.rs"), b"12345678", &mut writes, &new_operation(30),
+        ).unwrap_err(), "LSP_SNAPSHOT_LIMIT");
+        assert_eq!(fs::metadata(destination.join("bounded.rs")).unwrap().len(), 3);
+        assert_eq!(writes.written_bytes, MAX_TOTAL_BYTES);
+        fs::remove_dir_all(fixture).unwrap();
+    }
+
+    #[test]
+    fn unfinished_io_worker_stays_owned_until_it_can_be_joined() {
+        let (release, waiting) = mpsc::channel();
+        let (started, ready) = mpsc::channel();
+        let mut handle = Some(thread::spawn(move || {
+            started.send(()).unwrap();
+            let _ = waiting.recv();
+        }));
+        ready.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(!join_finished_worker(&mut handle).unwrap());
+        assert!(handle.is_some(), "pending cleanup must retain the JoinHandle");
+        release.send(()).unwrap();
+        let until = Instant::now() + Duration::from_secs(2);
+        while handle.as_ref().is_some_and(|thread| !thread.is_finished()) && Instant::now() < until {
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(join_finished_worker(&mut handle).unwrap());
+        assert!(handle.is_none());
     }
 
     #[test]

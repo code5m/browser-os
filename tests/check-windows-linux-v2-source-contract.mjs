@@ -17,6 +17,7 @@ const winGrid = read('../src-tauri/src/grid_process_windows.rs');
 const scriptRunner = read('../src-tauri/src/capabilities/script/script_runner.rs');
 const terminal = read('../src-tauri/src/capabilities/terminal/terminal.rs');
 const ptyCargo = read('../src-tauri/vendor/portable-pty/Cargo.toml');
+const profileCargo = read('../tauri-browser-tabs/crates/tauri-plugin-browser-tabs/Cargo.toml');
 const ptyApi = read('../src-tauri/vendor/portable-pty/src/lib.rs');
 const ptyConpty = read('../src-tauri/vendor/portable-pty/src/win/conpty.rs');
 const ptyWinSpawn = read('../src-tauri/vendor/portable-pty/src/win/psuedocon.rs');
@@ -38,6 +39,12 @@ const systemCommands = read('../src-tauri/src/bridge/system_commands.rs');
 const codingPublicApi = read('../src-tauri/src/capabilities/agent/public_api.rs');
 const platformSecurity = read('../crates/browseros-platform-security/src/windows.rs');
 const platformSecurityLib = read('../crates/browseros-platform-security/src/lib.rs');
+const privateLease = read('../crates/browseros-platform-security/src/windows/lease.rs');
+const packageAcl = read('../crates/browseros-platform-security/src/windows/appcontainer.rs');
+const auditLock = read('../src-tauri/src/capabilities/workspace/audit_lock.rs');
+const nativeTestRunner = read('../scripts/windows-native-test-runner.ps1');
+const nativeDispatcher = read('../.github/workflows/browseros-developer-feedback.yml');
+const terminalCommands = read('../src-tauri/src/bridge/terminal_commands.rs');
 const startup = read('../src-tauri/src/startup.rs');
 const main = read('../src-tauri/src/main.rs');
 const workspace = read('../src-tauri/src/capabilities/workspace/workspace.rs');
@@ -94,7 +101,9 @@ assert.match(windowsSandbox, /CreateAppContainerProfile/);
 assert.match(windowsSandbox, /PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES/);
 assert.match(windowsSandbox, /CapabilityCount: 0/);
 assert.match(windowsSandbox, /PROC_THREAD_ATTRIBUTE_HANDLE_LIST/);
-assert.match(windowsSandbox, /attach_suspended_pid/);
+assert.match(windowsSandbox, /PROC_THREAD_ATTRIBUTE_JOB_LIST/);
+assert.match(windowsSandbox, /JobObject::create_for_spawn/);
+assert.match(windowsSandbox, /ResumeThread/);
 assert.match(windowsMcp, /MCP_EXPLICIT_APPROVAL_REQUIRED/);
 assert.match(windowsMcp, /MCP_SHELL_COMMAND_REJECTED/);
 assert.match(windowsMcp, /real_appcontainer_stdio_initializes_lists_calls_and_scrubs_secrets/);
@@ -115,7 +124,7 @@ assert.match(windowsLsp, /closing_one_workspace_does_not_cancel_another_workspac
 assert.match(windowsLsp, /if session\.closed/);
 assert.doesNotMatch(windowsLsp, /cache\.epoch/);
 assert.match(windowsSandbox, /sandbox_prerequisites_available/);
-assert.match(windowsSandbox, /canonical\.parent\(\) == Some\(system32_dir\.as_path\(\)\)/);
+assert.match(windowsSandbox, /canonical\.parent\(\) == Some\(system32\.as_path\(\)\)/);
 assert.match(windowsMcp, /MCP_CONFIG_REPARSE_DENIED/);
 // Native identity and a shared ACL implementation replace localized CLI text.
 assert.match(platformSecurityLib, /cfg\(windows\)/);
@@ -164,9 +173,9 @@ assert.match(windowsSandbox, /host-file positive control invalid/);
 assert.match(windowsSandbox, /\.raw_arg\(&read_command\)/);
 assert.match(windowsSandbox, /fn process_command_line/);
 assert.match(windowsSandbox, /command\.extend\(tail\.encode_utf16\(\)\)/);
-assert.match(windowsSandbox, /let directory = self\.folder\.join\("runtime"\)/);
+assert.match(windowsSandbox, /OsStr::new\("runtime"\)/);
 assert.doesNotMatch(windowsSandbox, /let directory = state\.join\("runtime"\)/);
-assert.match(windowsSandbox, /fn grant_profile_root_traverse/);
+assert.match(windowsSandbox, /AppContainerDirectory::open_profile/);
 assert.match(windowsSandbox, /"cmd\.exe", "curl\.exe"/);
 assert.match(windowsSandbox, /environment_block\(environment, current_directory, &profile\.folder\)/);
 assert.doesNotMatch(windowsSandbox, /std::env::var\("LOCALAPPDATA"\)/);
@@ -175,7 +184,8 @@ assert.doesNotMatch(windowsSandbox, /\(A;;GA;;;AC\)/);
 assert.doesNotMatch(windowsSandbox, /S-1-15-2-1:\(OI\)\(CI\)M/);
 assert.match(windowsSandbox, /SANDBOX_CREATE_PROCESS/);
 assert.match(windowsSandbox, /OwnedSecurityDescriptor/);
-assert.match(windowsSandbox, /#\[cfg\(not\(test\)\)\]/);
+assert.match(windowsSandbox, /pub fn stderr_diagnostic/);
+assert.match(windowsSandbox, /LSP_RUSTC_CFG_PROBE_FAILED/);
 assert.match(windowsLsp, /rustup_analyzer_binary/);
 assert.match(windowsLsp, /LSP_SANDBOX_START_FAILED:\{error\}/);
 assert.match(windowsMcp, /MCP_START_FAILED:\{error\}/);
@@ -188,7 +198,10 @@ assert.match(session, /\.json\.tmp/);
 assert.match(tabs, /PageLoadEvent::Started/);
 assert.match(tabs, /PageLoadEvent::Finished/);
 assert.match(tabs, /browser_profile_path/);
-assert.match(tabs, /#\[cfg\(target_os = "windows"\)\]\s*fn ensure_private_browser_profile/);
+assert.match(tabs, /fn prepared_browser_profile/);
+assert.match(tabs, /pub fn prepare_storage/);
+assert.match(tabs, /PreparedPrivateDirectory::prepare/);
+assert.doesNotMatch(tabs, /PROFILE_AUDIT|verified_at|from_secs\(600\)/);
 assert.match(tabs, /secure_windows_browser_profile/);
 assert.match(tabs, /browseros_platform_security::windows/);
 assert.match(tabs, /ensure_private_directory/);
@@ -260,19 +273,38 @@ assert.doesNotMatch(gitStudio, /hash\.update\(fs::read\(path\)/);
 // restricted lowbox traverses directories through non-inheritable generic
 // AppContainer ACEs; those grants must never propagate onto source files.
 assert.match(windowsLsp, /protect_lsp_snapshot/);
-assert.match(windowsSandbox, /if directory && directory_traversal/);
-assert.ok(windowsSandbox.includes('command.arg("*S-1-15-2-1:RX")'));
-assert.doesNotMatch(windowsSandbox, /S-1-15-2-1:\(OI\)/);
-assert.match(windowsSandbox, /let flags = if directory \{ "\(OI\)\(CI\)" \} else \{ "" \}/);
+assert.match(packageAcl, /if directory && self\.directory_traversal/);
+assert.match(packageAcl, /&self\.all_packages, FILE_GENERIC_READ \| FILE_GENERIC_EXECUTE, 0/);
+assert.match(packageAcl, /&self\.package, self\.mask\(\), flags/);
+assert.match(packageAcl, /fn exact_app_descriptor/);
+assert.match(packageAcl, /seen\[slot\]/);
+assert.match(packageAcl, /PACKAGE_SECURITY_READBACK/);
+assert.match(packageAcl, /package_native_repair_removes_world_and_other_container_from_every_object/);
+assert.match(packageAcl, /package_exact_policy_rejects_same_sid_deny_wrong_mask_and_inherited_traversal/);
+assert.match(packageAcl, /package_tree_repairs_are_bounded_and_never_follow_a_hardlink/);
+assert.match(packageAcl, /traversal_parser_rejects_counted_sid_beyond_ace_bounds/);
+assert.match(windowsSandbox, /appcontainer_own_state_create_write_read_and_cross_package_denial/);
+assert.match(windowsSandbox, /own_package_reads_snapshot_but_cannot_overwrite_source/);
+assert.match(windowsSandbox, /runtime_actual_byte_budget_rejects_before_destination_write/);
+assert.match(windowsSandbox, /repeated_runtime_component_compares_bytes_without_mutating_open/);
+assert.match(windowsSandbox, /stderr_diagnostics_are_bounded_sticky_and_path_free/);
+assert.doesNotMatch(windowsSandbox, /icacls\.exe|\/grant:r|\/inheritance:r/);
 assert.match(windowsLsp, /appcontainer-no-network-private-source-copy/);
-assert.match(windowsLsp, /LSP_CHILD_NULL_DEVICE_DENIED/);
-assert.match(windowsSandbox, /same-sized, incompatible DLLs/);
+assert.match(windowsSandbox, /LSP_CHILD_NULL_DEVICE_DENIED/);
+assert.match(windowsLsp, /\.profile\(\)\.stderr_diagnostic\(\)/);
+assert.match(windowsSandbox, /SANDBOX_RUNTIME_STAGE_CONFLICT/);
 assert.match(windowsSandbox, /existing\.read_exact\(&mut actual/);
 const v2Workflow = read('../.github/workflows/windows-linux-v2-experimental.yml');
 assert.match(v2Workflow, /Generate and verify NSIS SHA256SUMS/);
 assert.match(v2Workflow, /Get-FileHash -LiteralPath .* -Algorithm SHA256/);
 // Native jobs are opt-in and all evidence is bound to one requested commit.
-assert.match(v2Workflow, /workflow_dispatch:/);
+assert.match(v2Workflow, /workflow_call:/);
+assert.doesNotMatch(v2Workflow, /workflow_dispatch:/);
+assert.match(nativeDispatcher, /workflow_dispatch:/);
+assert.match(nativeDispatcher, /github\.event_name == 'workflow_dispatch' && inputs\.windows_native == true/);
+assert.match(nativeDispatcher, /uses: \.\/\.github\/workflows\/windows-linux-v2-experimental\.yml/);
+assert.match(nativeDispatcher, /quick:\s+if: inputs\.windows_native != true/);
+assert.match(v2Workflow, /WORKFLOW_SOURCE_SHA/);
 assert.doesNotMatch(v2Workflow, /^  (push|pull_request|schedule):/m);
 assert.match(v2Workflow, /source_sha:/);
 assert.ok(v2Workflow.includes('^[0-9a-fA-F]{40}$'));
@@ -280,19 +312,27 @@ assert.match(v2Workflow, /ref: \$\{\{ needs\.source\.outputs\.sha \}\}/);
 assert.ok(v2Workflow.includes('$matrixPassed = $nativeTests.Count - $failedFilters.Count'));
 assert.ok(v2Workflow.includes('$fullSuiteFailure = $null'));
 assert.doesNotMatch(v2Workflow, /\$failedFilters\.Add\('full_windows_native_suite/);
-assert.ok(v2Workflow.includes(".Groups['passed'].Value -lt 1"));
-assert.ok(v2Workflow.includes(".Groups['ignored'].Value -ne 0"));
-assert.match(v2Workflow, /Required native filter did not execute all selected cases/);
+assert.ok(nativeTestRunner.includes('$result.passed -lt 1'));
+assert.ok(nativeTestRunner.includes('$result.ignored -ne 0'));
+assert.match(nativeTestRunner, /NATIVE_REQUIRED_TESTS_NOT_EXECUTED/);
 assert.match(v2Workflow, /SKIP\(\?:PED\)/);
 assert.match(v2Workflow, /PASS_WITH_IGNORED/);
 assert.match(v2Workflow, /GUI: NOT_RUN/);
 assert.match(v2Workflow, /Vendored ConPTY and process waiter regression/);
-assert.match(v2Workflow, /cargo test --manifest-path src-tauri\/Cargo\.toml --locked(?:\s|\x60)+-p portable-pty --lib/);
-assert.match(v2Workflow, /cargo test --manifest-path crates\/browseros-platform-security\/Cargo\.toml --locked --lib/);
+assert.match(v2Workflow, /Get-NativeRustTestBinary -Manifest 'src-tauri\/Cargo.toml' -Package 'portable-pty'/);
+assert.match(v2Workflow, /Get-NativeRustTestBinary -Manifest 'crates\/browseros-platform-security\/Cargo.toml' -Package 'browseros-platform-security'/);
+assert.match(v2Workflow, /Get-NativeRustTestBinary -Manifest 'src-tauri\/Cargo.toml' -Package 'tauri-plugin-browser-tabs'/);
+assert.match(nativeTestRunner, /cargo test --manifest-path \$Manifest --locked -p \$Package --lib --no-run/);
+assert.equal(v2Workflow.match(/Invoke-NativeRustHarness -Executable \$testExe/g)?.length, 3);
+assert.match(nativeTestRunner, /\.Kill\(\$true\)/);
+assert.match(nativeTestRunner, /NATIVE_TEST_PROCESS_CLEANUP_TIMEOUT/);
+assert.match(v2Workflow, /BROWSEROS_NATIVE_CLEANUP_BLOCKED/);
+assert.match(v2Workflow, /LINUX_REQUIRED_FRAMING_NOT_EXECUTED/);
 // Cargo can test this non-workspace path dependency via the host manifest
 // because it declares no dev-dependencies. Adding any requires revisiting
 // membership/lock ownership instead of quietly abandoning these tests.
 assert.doesNotMatch(ptyCargo, /^\s*\[[^\]\n]*dev-dependencies(?:\.[^\]\n]+)?\]/m);
+assert.doesNotMatch(profileCargo, /^\s*\[[^\]\n]*dev-dependencies(?:\.[^\]\n]+)?\]/m);
 
 // Tauri can turn setup errors into a Ready-event panic. Both entry points
 // report native preparation failures themselves and stop before any WebView.
@@ -302,7 +342,9 @@ assert.match(workspace, /pub fn prepare_data_dir/);
 assert.match(workspace, /PRIVATE_DATA_DIR_PREPARATION_FAILED/);
 assert.match(workspace, /PRIVATE_DATA_DIR_PARENT_PREPARATION_FAILED/);
 assert.match(workspace, /ensure_private_directory_root/);
-assert.match(workspace, /ensure_private_directory_root\([\s\S]*?let dir = base\.join\("mvp-browser-os"\);[\s\S]*?safe_paths::ensure_private_directory\(&dir\)/);
+assert.match(workspace, /ensure_private_directory_root\([\s\S]*?PreparedPrivateDirectory::prepare\(/);
+assert.match(workspace, /_preparation: preparation/);
+assert.match(workspace, /prepare_application_data_directory\(&base\)/);
 assert.match(workspace, /app\.manage\(PreparedDataDirectory/);
 const dataDirectoryGetter = workspace.slice(
   workspace.indexOf('pub fn data_dir('),
@@ -361,15 +403,15 @@ assert.match(windowsLsp, /snapshot_acl_for_test/);
 
 const sandboxedLspStart = windowsLsp.slice(
   windowsLsp.indexOf('fn start_with_snapshot('),
-  windowsLsp.indexOf('fn reset_deadline(')
+  windowsLsp.indexOf('fn begin_request(')
 );
 assert.ok(sandboxedLspStart.length > 0);
-assert.match(sandboxedLspStart, /let server = runtime\(\)\?/);
+assert.match(sandboxedLspStart, /None => runtime_with_budget\(&operation\)\?/);
 assert.match(sandboxedLspStart, /rustc_cfg_environment\(&profile, &server\)\?/);
 assert.doesNotMatch(sandboxedLspStart, /if let Ok\(.*runtime/);
 // Any project source files are copied before package ACLs are locked.
-assert.match(windowsLsp, /write_reviewed_rust_project\(&destination\)\?/);
-assert.match(windowsLsp, /write_reviewed_rust_project\(&snapshot\)\?/);
+assert.match(windowsLsp, /write_reviewed_rust_project_with_budget\(&destination, operation\)\?/);
+assert.match(windowsLsp, /write_reviewed_rust_project_with_budget\(&snapshot, &operation\)\?/);
 // Shared LOLBin guard applies to MCP as well as the native app launcher.
 assert.match(launchPolicy, /pub\(crate\) fn is_blocked_executable_path/);
 assert.match(windowsMcp, /security_policy::is_blocked_executable_path/);
@@ -386,7 +428,7 @@ assert.match(platformSecurity, /native_path_identity_rejects_a_sibling_and_accep
 // AppContainer SID isolation, and ConPTY creation/child lifetime.
 const nativeLspStart = windowsLsp.slice(
   windowsLsp.indexOf('fn start_with_snapshot('),
-  windowsLsp.indexOf('fn reset_deadline(')
+  windowsLsp.indexOf('fn begin_request(')
 );
 assert.match(nativeLspStart, /"linkedProjects":\[reviewed_graph\]/);
 assert.match(nativeLspStart, /\.spawn\(&server, &\[\], &environment, &state\)/);
@@ -421,12 +463,13 @@ assert.match(windowsLsp, /legacy_cargo_subprocess_probes_are_diagnostics_only/);
 assert.match(windowsLsp, /private_snapshot_requires_own_package_sid_and_rejects_other_profiles/);
 assert.match(windowsLsp, /write-negative profile/);
 const snapshotAcl = windowsSandbox.slice(
-  windowsSandbox.indexOf('pub fn protect_snapshot_files('),
-  windowsSandbox.indexOf('pub fn protect_snapshot(')
+  windowsSandbox.indexOf('fn protect_selected_tree('),
+  windowsSandbox.indexOf('pub fn stage_runtime_peer(')
 );
 assert.ok(snapshotAcl.length > 0);
-assert.ok(snapshotAcl.includes('self.apply_private_tree(root, "RX", false)'));
-assert.doesNotMatch(snapshotAcl, /"M"/);
+assert.match(snapshotAcl, /AppContainerAccess::ReadExecute/);
+assert.match(snapshotAcl, /directory\.protect_tree/);
+assert.doesNotMatch(snapshotAcl, /AppContainerAccess::Modify/);
 assert.match(windowsSandbox, /PRIVATE_TREE_MAX_ENTRIES/);
 assert.match(windowsSandbox, /PRIVATE_TREE_MAX_DEPTH/);
 assert.match(windowsSandbox, /SANDBOX_PRIVATE_TREE_OUTSIDE_PROFILE/);
@@ -529,6 +572,76 @@ assert.match(ptyConpty, /validated_dimensions\(size.rows, size.cols\)\?/);
 assert.match(ptyConpty, /resize\(validated_dimensions\(num_rows, num_cols\)\?\)\?/);
 assert.match(ptyWinSpawn, /creation_pipes\.get_mut\(\)/);
 assert.match(terminal, /TERM_CHILD_REAP_TIMEOUT/);
-assert.match(terminal, /TERM_WORKER_CLEANUP_TIMEOUT/);
+assert.match(terminal, /TERM_CLEANUP_PENDING/);
+
+// Startup preparation is shared native evidence, not a persistent marker.
+assert.match(privateLease, /CreateEventW/);
+assert.match(privateLease, /CreateMutexW/);
+assert.match(privateLease, /SE_KERNEL_OBJECT/);
+assert.match(privateLease, /audit_kernel_object/);
+assert.match(privateLease, /VOLUME_NAME_GUID/);
+assert.match(privateLease, /SetEvent/);
+assert.match(privateLease, /active_cache_churn_does_not_enter_a_deep_audit/);
+assert.match(privateLease, /consumers_share_preparation_and_cold_restart_reaudits/);
+assert.match(startup, /tabs\.prepare_storage\(\)/);
+const createTab = tabs.slice(tabs.indexOf('pub fn create_tab('), tabs.indexOf('pub fn update_rect('));
+assert.ok(createTab.indexOf('self.prepared_browser_profile()?') < createTab.indexOf('self.tabs.write()'));
+assert.doesNotMatch(createTab, /secure_windows_browser_profile|audit_private_directory|PreparedPrivateDirectory::prepare/);
+
+// Sensitive URL content remains in trusted routing, never diagnostic records.
+assert.match(systemCommands, /fn external_url_audit_summary/);
+assert.match(systemCommands, /external_url_audit_never_preserves_credentials_or_user_text/);
+assert.doesNotMatch(systemCommands, /\[open-url\] accepted: \{url\}|log_audit\(app, "open_url(?:_rejected)?", url\.to_string\(\)\)/);
+assert.match(workspace, /fn append_audit_at/);
+assert.match(workspace, /AuditLock::acquire\(path\)[\s\S]*?load_audit_unlocked\(path\)\?/);
+assert.match(auditLock, /LockFileEx/);
+assert.match(auditLock, /LOCKFILE_FAIL_IMMEDIATELY/);
+assert.match(auditLock, /libc::flock/);
+assert.match(workspace, /concurrent_audit_appends_keep_every_entry/);
+assert.doesNotMatch(main, /mvp-life\.log/);
+assert.match(main, /workspace::record_lifecycle/);
+const unixRoot = read('../src-tauri/src/capabilities/workspace/private_directory_unix.rs');
+assert.match(unixRoot, /configured_base_alias_resolves_once_without_relaxing_the_owned_leaf/);
+assert.match(unixRoot, /configured_alias_does_not_authorize_a_symlinked_app_leaf/);
+
+// Global terminal-table locks never cover native writes or resize.
+assert.match(terminalCommands, /input\.enqueue\(data\.as_bytes\(\)\)/);
+assert.doesNotMatch(terminalCommands, /writer\.write_all|writer\.flush|session\.master/);
+assert.match(terminal, /struct TerminalInput/);
+assert.match(terminal, /TERM_INPUT_QUEUE_CAPACITY/);
+assert.match(terminal, /struct CleanupRegistry/);
+assert.match(terminal, /wait_while_running/);
+assert.match(process, /cancel_thread_io/);
+assert.match(process, /pub fn is_empty/);
+assert.match(process, /Ok\(accounting\.ActiveProcesses\)/);
+assert.match(process, /self\.active_processes\(\)\.map\(\|count\| count == 0\)/);
+assert.match(terminal, /TERM_CLEANUP_COMPLETED_WITH_ERRORS/);
+assert.match(terminal, /struct SpawnCleanupGuard/);
+assert.match(terminal, /MAX_TERMINAL_SESSIONS: usize = 32/);
+assert.match(terminal, /pending_cleanup_retains_master_and_workers_until_reaped/);
+assert.match(terminal, /spawn_error_guard_retains_native_close_until_completed/);
+assert.match(terminal, /asynchronous_input_failure_emits_a_fixed_exit_without_another_keystroke/);
+assert.match(terminalCommands, /pub async fn term_kill/);
+assert.match(terminalCommands, /pub async fn term_resize/);
+assert.match(terminalCommands, /spawn_blocking/);
+assert.match(terminalCommands, /session\.request_close\(\);[\s\S]*?terms\.remove\(&id\)/);
+assert.match(main, /if report\.ok\(\) \{ 0 \} else \{ 1 \}/);
+
+// Preparation, cancellation and deferred cleanup share one retained owner.
+// These are wiring checks; native access and cleanup still need execution.
+assert.match(platformSecurity, /pub struct OperationBudget/);
+assert.match(windowsSandbox, /OperationCleanupGuard/);
+assert.match(windowsSandbox, /SANDBOX_PREPARATION_INCOMPLETE/);
+assert.match(windowsSandbox, /fn stderr_diagnostic/);
+assert.match(windowsLsp, /fn observed_failure/);
+assert.match(windowsLsp, /Duration::from_millis\(100\)/);
+assert.match(windowsLsp, /cancelled_and_cleanup_reservations_do_not_release_capacity/);
+assert.match(windowsLsp, /failed_native_start_keeps_capacity_until_cleanup_guard_drops/);
+assert.match(windowsLsp, /released_native_cleanup_slot_is_reaped_without_another_request/);
+assert.match(windowsLsp, /snapshot_counts_ignored_entries_and_empty_directories/);
+assert.match(windowsLsp, /actual_snapshot_bytes_obey_remaining_read_and_write_capacity/);
+assert.match(windowsLsp, /unfinished_io_worker_stays_owned_until_it_can_be_joined/);
+assert.match(windowsLsp, /CLEANUP_SIGNAL/);
+assert.doesNotMatch(windowsLsp, /icacls\.exe/);
 
 console.log('WINDOWS_LINUX_V2_SOURCE_CONTRACT=PASS (static-only, Windows GUI pending)');

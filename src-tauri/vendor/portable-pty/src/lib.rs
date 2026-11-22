@@ -7,7 +7,8 @@
 //!
 //! ```no_run
 //! use portable_pty::{CommandBuilder, PtySize, native_pty_system, PtySystem};
-//! use anyhow::Error;
+//! /// Error type used by PTY backend implementations and lifecycle fixtures.
+pub use anyhow::Error;
 //!
 //! // Use the native pty implementation for the system
 //! let pty_system = native_pty_system();

@@ -7,6 +7,7 @@ use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, HANDLE, INVALID_
 use windows_sys::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
     SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+    QueryInformationJobObject, JobObjectBasicAccountingInformation, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
     JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
 };
 use windows_sys::Win32::System::Diagnostics::ToolHelp::{
@@ -171,6 +172,28 @@ impl JobObject {
         Ok(owner)
     }
 
+    /// Kernel accounting, not a snapshot of just the original child's PID.
+    /// TerminateJobObject requests termination; it does not prove descendants
+    /// have exited. Supervisors retain this Job until ActiveProcesses is zero.
+    pub fn active_processes(&self) -> Result<u32, String> {
+        unsafe {
+            let mut accounting: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = std::mem::zeroed();
+            if QueryInformationJobObject(
+                self.0, JobObjectBasicAccountingInformation,
+                &mut accounting as *mut _ as *mut std::ffi::c_void,
+                std::mem::size_of::<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>() as u32,
+                std::ptr::null_mut(),
+            ) == 0 {
+                return Err(format!("WINDOWS_JOB_ACCOUNTING: {}", std::io::Error::last_os_error()));
+            }
+            Ok(accounting.ActiveProcesses)
+        }
+    }
+
+    pub fn is_empty(&self) -> Result<bool, String> {
+        self.active_processes().map(|count| count == 0)
+    }
+
     pub fn terminate(&self) -> Result<(), String> {
         unsafe {
             if TerminateJobObject(self.0, 1) == 0 {
@@ -182,6 +205,25 @@ impl JobObject {
 }
 impl Drop for JobObject {
     fn drop(&mut self) { unsafe { CloseHandle(self.0); } }
+}
+
+/// Cancel synchronous I/O using a live, owned thread handle. This never
+/// closes or duplicates a pipe behind another thread's back. Cancellation is
+/// asynchronous and can race a new I/O request, so the cleanup owner repeats
+/// it until the worker has actually exited and can be joined.
+pub(crate) fn cancel_thread_io<T>(thread: &std::thread::JoinHandle<T>) -> Result<(), String> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Foundation::ERROR_NOT_FOUND;
+    use windows_sys::Win32::System::IO::CancelSynchronousIo;
+    unsafe {
+        if CancelSynchronousIo(thread.as_raw_handle() as HANDLE) == 0 {
+            let error = GetLastError();
+            if error != ERROR_NOT_FOUND {
+                return Err(format!("WINDOWS_THREAD_IO_CANCEL: {}", std::io::Error::from_raw_os_error(error as i32)));
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -229,6 +271,8 @@ mod tests {
             assert!(Instant::now() < deadline, "PowerShell did not create its immediate grandchild; exited={:?}", child.try_wait());
             thread::sleep(Duration::from_millis(25));
         };
+        assert!(job.active_processes().expect("native Job accounting") >= 2,
+            "the parent and immediate grandchild must both be accounted in the Job");
         job.terminate().expect("terminate entire Job");
         let _ = child.wait();
         assert!(wait_pid_exit(grandchild_pid, Duration::from_secs(8)),
@@ -271,13 +315,40 @@ mod tests {
     // describes the calling process; it does not establish ConPTY support.
     // Missing native prerequisites must fail visibly, never return as PASS.
 
+    struct NativeTerminalSink {
+        captured: std::sync::Mutex<Vec<u8>>,
+        fail_data: bool,
+    }
+
+    impl crate::terminal::TermOutput for NativeTerminalSink {
+        fn send(&self, value: &serde_json::Value) -> Result<(), String> {
+            if value.get("kind").and_then(|v| v.as_str()) == Some("data") {
+                let mut captured = self.captured.lock().unwrap();
+                if let Some(data) = value.get("data").and_then(|v| v.as_str()) {
+                    captured.extend_from_slice(data.as_bytes());
+                }
+                if captured.len() > 8192 {
+                    let excess = captured.len() - 8192;
+                    captured.drain(..excess);
+                }
+                if self.fail_data { return Err("intentional native-fixture sink failure".into()); }
+            }
+            Ok(())
+        }
+    }
+
+    fn finish_production_terminal(info: &crate::terminal::TermInfo, session: &mut crate::terminal::TerminalSession) {
+        if let Err(error) = crate::terminal::terminate_session(session) {
+            assert!(error.starts_with("TERM_CLEANUP_PENDING:"), "{error}");
+        }
+        crate::terminal::wait_for_cleanup(&info.id, 8_000)
+            .expect("production close must join its actual input/reader/pump and PTY close owners");
+    }
+
     #[test]
     fn conpty_terminal_uses_atomic_job_list_and_reaps_immediate_grandchild() {
-        use portable_pty::{native_pty_system, CommandBuilder, PtySize, PtySystem};
-        use std::io::{Read, Write};
+        use portable_pty::CommandBuilder;
         use std::sync::{Arc, Mutex};
-        use std::{thread, time::{Duration, Instant}};
-
         let dir = std::env::temp_dir()
             .join(format!("browseros-conpty-job-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -288,68 +359,109 @@ mod tests {
         let script = format!(
             "Set-Content -LiteralPath '{primary_text}' -Value 'started'; $psi=New-Object System.Diagnostics.ProcessStartInfo; $psi.FileName=$env:ComSpec; $psi.Arguments='/c ping -n 60 127.0.0.1 > NUL'; $psi.UseShellExecute=$false; $p=[System.Diagnostics.Process]::Start($psi); Set-Content -LiteralPath '{marker_text}' -Value $p.Id; Start-Sleep -Seconds 60"
         );
-        let pair = native_pty_system().openpty(
-            PtySize { rows: 24, cols: 80, pixel_width: 0, pixel_height: 0 }
-        ).expect("open ConPTY");
-        // ConPTY is a bidirectional pipe. Start draining output before
-        // CreateProcessW so startup control traffic never blocks the child.
-        let mut reader = pair.master.try_clone_reader().expect("clone ConPTY output");
-        let captured = Arc::new(Mutex::new(Vec::<u8>::new()));
-        let capture = Arc::clone(&captured);
-        let pump = thread::spawn(move || {
-            let mut buf = [0u8; 4096];
-            while let Ok(n) = reader.read(&mut buf) {
-                if n == 0 { break; }
-                let mut output = capture.lock().unwrap();
-                output.extend_from_slice(&buf[..n]);
-                if output.len() > 8192 {
-                    let excess = output.len() - 8192;
-                    output.drain(..excess);
-                }
-            }
-        });
-        let job = JobObject::create_for_spawn().expect("create kill-on-close Job");
+        let sink = Arc::new(NativeTerminalSink { captured: Mutex::new(Vec::new()), fail_data: false });
         let mut command = CommandBuilder::new("powershell.exe");
         command.args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script.as_str()]);
-        let mut child = pair.slave.spawn_command_in_job(command, job.as_raw_handle())
-            .expect("CreateProcessW must assign Job atomically with ConPTY");
-        let pid = child.process_id().expect("ConPTY child PID");
-        assert_ne!(pid, 0);
-        let mut writer = pair.master.take_writer().expect("open ConPTY input");
-        writer.write_all(b"\r\n").expect("write initial console input");
-        writer.flush().expect("flush initial console input");
-
+        let (info, mut session) = crate::terminal::spawn_terminal_with_command(command, sink.clone(), false)
+            .expect("production ConPTY spawn must assign Job atomically");
+        let pid = session.process_id().expect("ConPTY child PID");
+        let input = session.input();
+        let control = session.control();
         let deadline = Instant::now() + Duration::from_secs(30);
         let grandchild_pid = loop {
             if let Ok(text) = std::fs::read_to_string(&marker) {
                 if let Ok(pid) = text.trim().parse::<u32>() { break pid; }
             }
             if Instant::now() >= deadline {
-                let output = String::from_utf8_lossy(&captured.lock().unwrap()).into_owned();
-                panic!(
-                    "ConPTY did not create grandchild; primary={:?} marker={:?} status={:?} output={output:?}",
-                    std::fs::read_to_string(&primary).ok(),
-                    std::fs::read_to_string(&marker).ok(),
-                    child.try_wait()
-                );
+                let output = String::from_utf8_lossy(&sink.captured.lock().unwrap()).into_owned();
+                panic!("ConPTY did not create grandchild; primary={:?} marker={:?} output={output:?}",
+                    std::fs::read_to_string(&primary).ok(), std::fs::read_to_string(&marker).ok());
             }
             thread::sleep(Duration::from_millis(25));
         };
         assert_eq!(std::fs::read_to_string(&primary).unwrap().trim(), "started");
-        job.terminate().expect("terminate ConPTY Job and all descendants");
+        // This is the same owner called by term_kill and application shutdown.
+        // In particular, no fixture-only drop(writer)/drop(pair) unlocks EOF.
+        finish_production_terminal(&info, &mut session);
         assert!(wait_pid_exit(pid, Duration::from_secs(8)), "ConPTY shell did not exit");
-        child.wait().expect("reap exited ConPTY shell");
         assert!(wait_pid_exit(grandchild_pid, Duration::from_secs(8)),
             "ConPTY grandchild PID {grandchild_pid} escaped the Job Object");
-        drop(writer);
-        drop(pair);
-        let drain_deadline = Instant::now() + Duration::from_secs(5);
-        while !pump.is_finished() && Instant::now() < drain_deadline {
+        assert!(input.enqueue(b"late").is_err());
+        assert!(control.resize(80, 24).is_err(), "control clones must not keep HPCON alive");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn conpty_production_close_reaps_queued_input_during_output_backoff() {
+        use portable_pty::CommandBuilder;
+        use std::sync::{Arc, Mutex};
+        let sink = Arc::new(NativeTerminalSink { captured: Mutex::new(Vec::new()), fail_data: true });
+        let mut command = CommandBuilder::new("powershell.exe");
+        command.args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+            "[Console]::WriteLine('__PTY_READY__'); Start-Sleep -Seconds 60"]);
+        let (info, mut session) = crate::terminal::spawn_terminal_with_command(command, sink.clone(), false)
+            .expect("native ConPTY must be available; missing prerequisites are a failure");
+        let pid = session.process_id().expect("native child PID");
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            if String::from_utf8_lossy(&sink.captured.lock().unwrap()).contains("__PTY_READY__") { break; }
+            assert!(Instant::now() < deadline, "native child did not reach non-reading state");
             thread::sleep(Duration::from_millis(10));
         }
-        assert!(pump.is_finished(), "ConPTY output reader did not receive EOF");
-        pump.join().expect("join ConPTY output reader");
-        let _ = std::fs::remove_dir_all(dir);
+        let input = session.input();
+        let bytes = vec![b'x'; crate::terminal::TERM_INPUT_MAX_BYTES];
+        let mut accepted = 0usize;
+        for _ in 0..128 {
+            match input.enqueue(&bytes) {
+                Ok(()) => accepted += 1,
+                Err(error) if error == "TERM_INPUT_QUEUE_FULL" => break,
+                Err(error) => panic!("unexpected queued-input failure: {error}"),
+            }
+        }
+        assert!(accepted > 0, "fixture must exercise the real input writer");
+        finish_production_terminal(&info, &mut session);
+        assert!(wait_pid_exit(pid, Duration::from_secs(8)), "native blocked-input child survived close");
+        assert!(input.enqueue(b"after close").is_err());
+    }
+
+    /// This exercises CancelSynchronousIo on a real, full anonymous pipe, not
+    /// a mock writer or an assumption that killing a child unblocks input.
+    #[test]
+    fn owned_thread_cancellation_interrupts_blocked_pipe_input() {
+        use std::io::Write;
+        use std::os::windows::io::FromRawHandle;
+        use std::sync::mpsc;
+        use windows_sys::Win32::System::Pipes::CreatePipe;
+        let mut read = std::ptr::null_mut();
+        let mut write = std::ptr::null_mut();
+        assert_ne!(unsafe { CreatePipe(&mut read, &mut write, std::ptr::null(), 4096) }, 0,
+            "create native synchronous pipe: {}", std::io::Error::last_os_error());
+        let reader = unsafe { std::fs::File::from_raw_handle(read as _) };
+        let mut writer = unsafe { std::fs::File::from_raw_handle(write as _) };
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            entered_tx.send(()).unwrap();
+            writer.write(&vec![b'x'; 1024 * 1024])
+        });
+        entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut cancellation_error = None;
+        while !worker.is_finished() && Instant::now() < deadline {
+            if let Err(error) = cancel_thread_io(&worker) {
+                cancellation_error = Some(error);
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        let cancelled = worker.is_finished();
+        // Closing the still-unread read end makes even a failing fixture
+        // release its writer before reporting the failure.
+        drop(reader);
+        let result = worker.join().expect("join synchronous pipe input");
+        assert!(cancellation_error.is_none(), "{cancellation_error:?}");
+        assert!(cancelled, "CancelSynchronousIo did not finish the owned input thread");
+        assert!(result.map(|written| written < 1024 * 1024).unwrap_or(true),
+            "a full, unread pipe must not accept the entire payload");
     }
 
     #[test]

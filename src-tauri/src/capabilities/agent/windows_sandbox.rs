@@ -4,12 +4,18 @@
 #![cfg(windows)]
 
 use crate::windows_process::{JobObject, CREATE_SUSPENDED};
+pub use browseros_platform_security::windows::OperationBudget;
+use browseros_platform_security::windows::{
+    AppContainerAccess, AppContainerDirectory, AppContainerPolicy,
+    PinnedReadDirectory, PinnedReadFile, PrivateTreeOptions, OperationCleanupGuard, file_identity,
+};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::collections::BTreeMap;
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::{Read, Write};
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::os::windows::fs::MetadataExt;
-use std::os::windows::fs::OpenOptionsExt;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, RawHandle};
 use std::path::{Path, PathBuf};
 use std::ptr;
@@ -35,10 +41,11 @@ use windows_sys::Win32::System::Pipes::CreatePipe;
 use windows_sys::Win32::System::SystemInformation::GetSystemDirectoryW;
 use windows_sys::Win32::System::Threading::{
     CreateProcessW, DeleteProcThreadAttributeList, GetCurrentProcess, GetExitCodeProcess,
-    InitializeProcThreadAttributeList, OpenProcessToken, TerminateProcess,
+    InitializeProcThreadAttributeList, OpenProcessToken,
     UpdateProcThreadAttribute, WaitForSingleObject, CREATE_UNICODE_ENVIRONMENT,
     EXTENDED_STARTUPINFO_PRESENT, PROCESS_INFORMATION, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
-    PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, STARTF_USESTDHANDLES, STARTUPINFOEXW,
+    PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, PROC_THREAD_ATTRIBUTE_JOB_LIST, ResumeThread,
+    STARTF_USESTDHANDLES, STARTUPINFOEXW,
 };
 
 const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
@@ -60,7 +67,6 @@ fn wide_text(value: &str) -> Result<Vec<u16>, String> {
 /// This only checks prerequisites; it is NOT proof that a sandbox can launch.
 pub(super) fn sandbox_prerequisites_available() -> bool {
     system_binary("cmd.exe").is_ok()
-        && system_binary("icacls.exe").is_ok()
         && current_user_sid().is_ok()
 }
 
@@ -177,44 +183,133 @@ fn current_user_sid() -> Result<String, String> {
 const PRIVATE_TREE_MAX_ENTRIES: usize = 8192;
 const PRIVATE_TREE_MAX_DEPTH: usize = 32;
 
-/// Inspect the entire tree before changing permissions. Never follow a
-/// reparse point or turn an unbounded mutable tree into repeated icacls work.
-fn private_tree_entries(root: &Path) -> Result<Vec<(PathBuf, bool)>, String> {
-    no_reparse_path(root)?;
-    let mut pending = vec![(root.to_path_buf(), 0usize)];
-    let mut entries = Vec::new();
-    let mut discovered = 1usize;
-    while let Some((path, depth)) = pending.pop() {
-        if depth > PRIVATE_TREE_MAX_DEPTH {
-            return Err("SANDBOX_PRIVATE_TREE_DEPTH_LIMIT".into());
+const MAX_RUNTIME_FILE: u64 = 256 * 1024 * 1024;
+const MAX_TOTAL_RUNTIME: u64 = 384 * 1024 * 1024;
+const STDERR_TAIL: usize = 8 * 1024;
+
+#[derive(Default)]
+struct StderrDiagnostic {
+    tail: Vec<u8>,
+    code: Option<&'static str>,
+}
+impl StderrDiagnostic {
+    fn append(&mut self, bytes: &[u8]) {
+        self.tail.extend_from_slice(bytes);
+        if self.tail.len() > STDERR_TAIL {
+            let excess = self.tail.len() - STDERR_TAIL;
+            self.tail.drain(..excess);
         }
-        let metadata = std::fs::symlink_metadata(&path)
-            .map_err(|_| "SANDBOX_PRIVATE_TREE_INSPECTION")?;
-        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-            return Err("SANDBOX_REPARSE_DENIED".into());
-        }
-        if !metadata.is_dir() && !metadata.is_file() {
-            return Err("SANDBOX_PRIVATE_TREE_SPECIAL_ENTRY".into());
-        }
-        let directory = metadata.is_dir();
-        if path == root && !directory {
-            return Err("SANDBOX_PRIVATE_TREE_NOT_DIRECTORY".into());
-        }
-        entries.push((path.clone(), directory));
-        if directory {
-            for child in std::fs::read_dir(&path)
-                .map_err(|_| "SANDBOX_PRIVATE_TREE_INSPECTION")?
-            {
-                discovered += 1;
-                if discovered > PRIVATE_TREE_MAX_ENTRIES {
-                    return Err("SANDBOX_PRIVATE_TREE_ENTRY_LIMIT".into());
-                }
-                let child = child.map_err(|_| "SANDBOX_PRIVATE_TREE_INSPECTION")?;
-                pending.push((child.path(), depth + 1));
-            }
+        let lower = String::from_utf8_lossy(&self.tail).to_ascii_lowercase();
+        let denied = ["access is denied", "access denied", "permission denied", "os error 5"]
+            .iter().any(|phrase| lower.contains(phrase));
+        if lower.contains("failed to open nul device for child") && denied {
+            self.code = Some("LSP_CHILD_NULL_DEVICE_DENIED");
+        } else if self.code.is_none() && lower.contains("rustc")
+            && ["--print cfg", "print=cfg", "target-spec-json", "data-layout", "rustc cfg"]
+                .iter().any(|phrase| lower.contains(phrase))
+            && (denied || lower.contains("failed") || lower.contains("error"))
+        {
+            self.code = Some("LSP_RUSTC_CFG_PROBE_FAILED");
         }
     }
-    Ok(entries)
+}
+
+struct ProfileCleanup {
+    name: String,
+    folder: PathBuf,
+    _owner: OperationCleanupGuard,
+    last_try: Option<Instant>,
+    failures: u32,
+}
+impl ProfileCleanup {
+    fn try_finish(&mut self) -> bool {
+        if self.last_try.is_some_and(|last| last.elapsed() < Duration::from_secs(
+            (1u64 << self.failures.min(5)).min(30)
+        )) { return false; }
+        self.last_try = Some(Instant::now());
+        let name = match wide_text(&self.name) { Ok(name) => name, Err(_) => return false };
+        let deleted = unsafe { DeleteAppContainerProfile(name.as_ptr()) };
+        let registration_done = deleted >= 0
+            || matches!(deleted as u32, 0x8007_0002 | 0x8007_0490);
+        let files_done = self.folder.as_os_str().is_empty() || match std::fs::remove_dir_all(&self.folder) {
+            Ok(()) => true,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+            Err(_) => false,
+        };
+        if registration_done && files_done { return true; }
+        self.failures = self.failures.saturating_add(1);
+        if self.failures == 1 { eprintln!("SANDBOX_PROFILE_CLEANUP_PENDING"); }
+        false
+    }
+}
+enum CleanupTask { Process(Box<ProcessResources>), Profile(ProfileCleanup) }
+struct CleanupReaper {
+    queue: Arc<(Mutex<Vec<CleanupTask>>, Condvar)>,
+    _worker: thread::JoinHandle<()>,
+}
+fn cleanup_reaper() -> Result<Arc<CleanupReaper>, String> {
+    static REAPER: OnceLock<Mutex<Option<Arc<CleanupReaper>>>> = OnceLock::new();
+    let mut slot = REAPER.get_or_init(|| Mutex::new(None))
+        .lock().unwrap_or_else(|poison| poison.into_inner());
+    if let Some(reaper) = slot.as_ref() { return Ok(Arc::clone(reaper)); }
+    // Only successful worker creation is cached. A temporary OS thread limit
+    // fails before profile creation and can be retried without restarting.
+    let created = (|| -> Result<CleanupReaper, String> {
+        let queue = Arc::new((Mutex::new(Vec::<CleanupTask>::new()), Condvar::new()));
+        let owned = Arc::clone(&queue);
+        let worker = thread::Builder::new().name("browseros-sandbox-cleanup".into()).spawn(move || {
+            loop {
+                let (lock, wake) = &*owned;
+                let mut queued = lock.lock().unwrap_or_else(|poison| poison.into_inner());
+                while queued.is_empty() {
+                    queued = wake.wait(queued).unwrap_or_else(|poison| poison.into_inner());
+                }
+                let pending = std::mem::take(&mut *queued);
+                drop(queued);
+                let mut unfinished = Vec::new();
+                for task in pending {
+                    match task {
+                        CleanupTask::Process(resources) => {
+                            if resources.is_complete() { drop(resources); }
+                            else {
+                                let _ = resources.job.terminate();
+                                unfinished.push(CleanupTask::Process(resources));
+                            }
+                        }
+                        CleanupTask::Profile(mut profile) => {
+                            if !profile.try_finish() { unfinished.push(CleanupTask::Profile(profile)); }
+                        }
+                    }
+                }
+                lock.lock().unwrap_or_else(|poison| poison.into_inner()).extend(unfinished);
+                thread::sleep(Duration::from_millis(25));
+            }
+        }).map_err(|_| "SANDBOX_CLEANUP_REAPER_START".to_string())?;
+        Ok(CleanupReaper { queue, _worker: worker })
+    })()?;
+    let reaper = Arc::new(created);
+    *slot = Some(Arc::clone(&reaper));
+    Ok(reaper)
+}
+fn enqueue_cleanup(task: CleanupTask) {
+    let reaper = cleanup_reaper().expect("initialized before native profile creation");
+    let (queue, wake) = &*reaper.queue;
+    queue.lock().unwrap_or_else(|poison| poison.into_inner()).push(task);
+    wake.notify_one();
+}
+fn start_stderr_reader(
+    mut file: File, diagnostic: Arc<Mutex<StderrDiagnostic>>,
+) -> Result<thread::JoinHandle<()>, String> {
+    thread::Builder::new().name("browseros-sandbox-stderr".into()).spawn(move || {
+        let mut bytes = [0u8; 4096];
+        loop {
+            match file.read(&mut bytes) {
+                Ok(0) | Err(_) => break,
+                Ok(count) => diagnostic.lock().unwrap_or_else(|poison| poison.into_inner())
+                    .append(&bytes[..count]),
+            }
+        }
+    }).map_err(|_| "SANDBOX_STDERR_THREAD_START".into())
 }
 
 pub struct SandboxProfile {
@@ -222,14 +317,29 @@ pub struct SandboxProfile {
     sid: PSID,
     sid_string: String,
     folder: PathBuf,
-    // Hold the state directory without FILE_SHARE_DELETE after its one-time
-    // initialization. Repeated status/spawn access must not rewrite its tree.
-    state_guard: std::sync::Mutex<Option<File>>,
+    root_guard: Option<AppContainerDirectory>,
+    state_guard: Mutex<Option<AppContainerDirectory>>,
+    runtime_guard: Mutex<Option<AppContainerDirectory>>,
+    snapshot_guard: Mutex<Option<AppContainerDirectory>>,
+    extra_guards: Mutex<Vec<AppContainerDirectory>>,
+    runtime_pins: Mutex<Vec<PinnedReadFile>>,
+    staged_bytes: Mutex<u64>,
+    preparation_failed: AtomicBool,
+    budget: OperationBudget,
+    diagnostic: Arc<Mutex<StderrDiagnostic>>,
+    cleanup_owner: Option<OperationCleanupGuard>,
 }
 unsafe impl Send for SandboxProfile {}
 
 impl SandboxProfile {
     pub fn create() -> Result<Self, String> {
+        Self::create_with_budget(OperationBudget::new(Duration::from_secs(30)))
+    }
+
+    pub fn create_with_budget(budget: OperationBudget) -> Result<Self, String> {
+        budget.check().map_err(|error| error.to_string())?;
+        cleanup_reaper()?;
+        let cleanup_owner = budget.hold_cleanup();
         let name = format!("BrowserOS.Coding.{}", uuid::Uuid::new_v4().simple());
         let name_wide = wide_text(&name)?;
         let display = wide_text("BrowserOS isolated coding tool")?;
@@ -245,7 +355,8 @@ impl SandboxProfile {
                 &mut sid,
             )
         };
-        if result < 0 || sid.is_null() {
+        if result < 0 {
+            if !sid.is_null() { unsafe { FreeSid(sid); } }
             return Err(format!("SANDBOX_PROFILE_CREATE:{result:x}"));
         }
         let profile = Self {
@@ -253,8 +364,19 @@ impl SandboxProfile {
             sid,
             sid_string: String::new(),
             folder: PathBuf::new(),
-            state_guard: std::sync::Mutex::new(None),
+            root_guard: None,
+            state_guard: Mutex::new(None),
+            runtime_guard: Mutex::new(None),
+            snapshot_guard: Mutex::new(None),
+            extra_guards: Mutex::new(Vec::new()),
+            runtime_pins: Mutex::new(Vec::new()),
+            staged_bytes: Mutex::new(0),
+            preparation_failed: AtomicBool::new(false),
+            budget,
+            diagnostic: Arc::new(Mutex::new(StderrDiagnostic::default())),
+            cleanup_owner: Some(cleanup_owner),
         };
+        if profile.sid.is_null() { return Err("SANDBOX_PROFILE_SID_MISSING".into()); }
         profile.finish_create()
     }
 
@@ -298,445 +420,421 @@ impl SandboxProfile {
         };
         unsafe { CoTaskMemFree(folder as _) };
         self.folder = private_folder.ok_or("SANDBOX_PRIVATE_FOLDER")?;
-        std::fs::create_dir_all(&self.folder).map_err(|_| "SANDBOX_PRIVATE_FOLDER")?;
-        // The AppContainer package must be able to traverse its profile root
-        // before it can execute a staged runtime. Do not rewrite OS-managed
-        // root ACLs or grant access to ALL APPLICATION PACKAGES.
-        self.grant_profile_root_traverse()?;
+        // CreateAppContainerProfile provisions the OS-owned folders. A
+        // missing/replaced result fails closed; no path-based recursive mkdir.
+        self.budget.check().map_err(|error| error.to_string())?;
+        let policy = self.policy(AppContainerAccess::ReadExecute, false)?;
+        // Generic package access is directory-only and noninheritable here.
+        // Prepare it once before any child/private-directory pin exists;
+        // later LSP calls never rewrite an active OS-managed ancestor.
+        self.root_guard = Some(AppContainerDirectory::open_profile(
+            &self.folder, &policy, true, &self.budget,
+        ).map_err(|error| format!("SANDBOX_PROFILE_TRAVERSE_ACL:{error}"))?);
         Ok(self)
     }
 
-    /// Grant only this lowbox SID read/traverse on its Windows-managed
-    /// profile root. State is independently writable; runtime and snapshot
-    /// are separately read/execute-only. Do not replace the OS root DACL.
-    fn grant_profile_root_traverse(&self) -> Result<(), String> {
-        no_reparse_path(&self.folder)?;
-        let icacls = system_binary("icacls.exe")?;
-        let result = std::process::Command::new(icacls)
-            .arg(&self.folder)
-            .arg("/grant:r")
-            .arg(format!("*{}:(RX)", self.sid_string))
-            .output()
-            .map_err(|_| "SANDBOX_PROFILE_TRAVERSE_ACL")?;
-        if !result.status.success() {
-            return Err("SANDBOX_PROFILE_TRAVERSE_ACL".into());
+    pub fn budget(&self) -> &OperationBudget { &self.budget }
+
+    fn check_preparation(&self) -> Result<(), String> {
+        self.budget.check().map_err(|error| error.to_string())?;
+        if self.preparation_failed.load(Ordering::Acquire) {
+            return Err("SANDBOX_PREPARATION_INCOMPLETE".into());
         }
         Ok(())
+    }
+
+    fn preparing<T>(&self, work: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+        self.check_preparation()?;
+        let result = work();
+        if result.is_err() { self.preparation_failed.store(true, Ordering::Release); }
+        result
+    }
+
+    fn policy(&self, access: AppContainerAccess, traversal: bool) -> Result<AppContainerPolicy, String> {
+        AppContainerPolicy::new(&self.sid_string, access, traversal)
+            .map_err(|error| format!("SANDBOX_NATIVE_POLICY:{error}"))
+    }
+
+    fn tree_options(&self) -> PrivateTreeOptions {
+        PrivateTreeOptions {
+            max_objects: PRIVATE_TREE_MAX_ENTRIES, max_depth: PRIVATE_TREE_MAX_DEPTH,
+            max_repairs: PRIVATE_TREE_MAX_ENTRIES, max_duration: Duration::from_secs(60),
+        }
+    }
+
+    fn root_guard(&self) -> Result<&AppContainerDirectory, String> {
+        self.root_guard.as_ref().ok_or_else(|| "SANDBOX_PROFILE_NOT_PREPARED".into())
     }
 
     pub fn state_dir(&self) -> Result<PathBuf, String> {
-        let state = self.folder.join("state");
-        let mut guard = self.state_guard.lock().map_err(|_| "SANDBOX_STATE_LOCK")?;
-        if guard.is_some() {
-            // The retained handle denies rename/deletion of this directory.
-            // Descendants inherit its package grant when they are created.
-            no_reparse_path(&state)?;
-            return Ok(state);
-        }
-        match std::fs::create_dir(&state) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(_) => return Err("SANDBOX_STATE_CREATE".into()),
-        }
-        no_reparse_path(&state)?;
-        let pinned = OpenOptions::new()
-            .access_mode(0x0080) // FILE_READ_ATTRIBUTES
-            .share_mode(0x0001 | 0x0002) // READ | WRITE; deliberately no DELETE
-            .custom_flags(0x0200_0000 | 0x0020_0000) // BACKUP_SEMANTICS | OPEN_REPARSE_POINT
-            .open(&state)
-            .map_err(|_| "SANDBOX_STATE_PIN")?;
-        let metadata = pinned.metadata().map_err(|_| "SANDBOX_STATE_PIN")?;
-        if !metadata.is_dir()
-            || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
-        {
-            return Err("SANDBOX_STATE_PIN".into());
-        }
-        self.apply_private_tree(&state, "M", false)?;
-        *guard = Some(pinned);
-        Ok(state)
-    }
-
-    /// One bounded, preflighted permission pass for a private subtree.
-    /// State uses M; runtime and snapshots use RX. Generic AppContainer
-    /// traversal is optional and is NEVER inherited by files.
-    fn apply_private_tree(
-        &self, root: &Path, package_permission: &str, directory_traversal: bool,
-    ) -> Result<(), String> {
-        if !matches!(package_permission, "M" | "RX") {
-            return Err("SANDBOX_PRIVATE_TREE_PERMISSION".into());
-        }
-        no_reparse_path(root)?;
-        let private_root = self.folder.canonicalize().map_err(|_| "SANDBOX_PRIVATE_FOLDER")?;
-        let actual_root = root.canonicalize().map_err(|_| "SANDBOX_PRIVATE_TREE_INSPECTION")?;
-        if actual_root == private_root || !actual_root.starts_with(&private_root) {
-            return Err("SANDBOX_PRIVATE_TREE_OUTSIDE_PROFILE".into());
-        }
-        let entries = private_tree_entries(&actual_root)?;
-        let icacls = system_binary("icacls.exe")?;
-        let user = current_user_sid()?;
-        for (path, directory) in entries {
-            // Recheck immediately before each named ACL operation.
-            no_reparse_path(&path)?;
-            let flags = if directory { "(OI)(CI)" } else { "" };
-            let mut command = std::process::Command::new(&icacls);
-            command.arg(&path).args(["/inheritance:r", "/grant:r"])
-                .arg(format!("*{user}:{flags}F"))
-                .arg(format!("*S-1-5-18:{flags}F"))
-                .arg(format!("*{}:{flags}{package_permission}", self.sid_string));
-            if directory && directory_traversal {
-                // This noninheritable ACE exposes directory names/traversal,
-                // not source file bytes, to other lowboxes.
-                command.arg("*S-1-15-2-1:RX");
+        self.preparing(|| {
+            let policy = self.policy(AppContainerAccess::Modify, false)?;
+            let mut guard = self.state_guard.lock().map_err(|_| "SANDBOX_STATE_LOCK")?;
+            if let Some(directory) = guard.as_ref() {
+                directory.audit_root(&policy, &self.budget)
+                    .map_err(|error| format!("SANDBOX_STATE_AUDIT:{error}"))?;
+                return Ok(directory.path().to_owned());
             }
-            let output = command.output().map_err(|_| "SANDBOX_PRIVATE_TREE_ACL")?;
-            if !output.status.success() {
-                return Err("SANDBOX_PRIVATE_TREE_ACL".into());
-            }
-        }
-        Ok(())
+            let directory = self.root_guard()?.ensure_child(
+                std::ffi::OsStr::new("state"), &policy, &self.tree_options(), &self.budget,
+            ).map_err(|error| format!("SANDBOX_STATE_PREPARE:{error}"))?;
+            let path = directory.path().to_owned();
+            *guard = Some(directory);
+            Ok(path)
+        })
     }
 
     pub fn snapshot_dir(&self) -> Result<PathBuf, String> {
-        let snapshot = self.folder.join("snapshot");
-        std::fs::create_dir(&snapshot).map_err(|_| "SANDBOX_SNAPSHOT_CREATE")?;
-        Ok(snapshot)
+        self.preparing(|| {
+            let mut guard = self.snapshot_guard.lock().map_err(|_| "SANDBOX_SNAPSHOT_LOCK")?;
+            if guard.is_some() { return Err("SANDBOX_SNAPSHOT_ALREADY_CREATED".into()); }
+            let policy = self.policy(AppContainerAccess::ReadExecute, true)?;
+            let directory = self.root_guard()?.ensure_child(
+                std::ffi::OsStr::new("snapshot"), &policy, &self.tree_options(), &self.budget,
+            ).map_err(|error| format!("SANDBOX_SNAPSHOT_PREPARE:{error}"))?;
+            let path = directory.path().to_owned();
+            *guard = Some(directory);
+            Ok(path)
+        })
     }
-    pub fn sid_string(&self) -> &str {
-        &self.sid_string
+
+    pub fn sid_string(&self) -> &str { &self.sid_string }
+
+    /// Sticky, fixed diagnostics only. Raw stderr and private paths never
+    /// cross the production API; the in-memory tail remains bounded.
+    pub fn stderr_diagnostic(&self) -> Option<&'static str> {
+        self.diagnostic.lock().unwrap_or_else(|poison| poison.into_inner()).code
     }
 
     #[cfg(test)]
     pub fn stderr_for_test(&self) -> String {
-        let path = self.folder.join("state/sandbox-stderr.log");
-        let bytes = std::fs::read(path).unwrap_or_default();
-        let tail = if bytes.len() > 16 * 1024 {
-            &bytes[bytes.len() - 16 * 1024..]
-        } else {
-            &bytes[..]
-        };
-        String::from_utf8_lossy(tail).into_owned()
+        String::from_utf8_lossy(
+            &self.diagnostic.lock().unwrap_or_else(|poison| poison.into_inner()).tail
+        ).into_owned()
+    }
+
+    fn copy_component(
+        &self, mut source: PinnedReadFile, directory: &AppContainerDirectory,
+        name: &std::ffi::OsStr, policy: &AppContainerPolicy,
+    ) -> Result<PinnedReadFile, String> {
+        self.check_preparation()?;
+        let expected_length = source.file().metadata().map_err(|_| "SANDBOX_RUNTIME_READ_DENIED")?.len();
+        if expected_length > MAX_RUNTIME_FILE { return Err("SANDBOX_RUNTIME_SIZE_LIMIT".into()); }
+        match directory.pin_file(name, policy, &self.budget) {
+            Ok(mut existing) => {
+                if existing.file().metadata().map_err(|_| "SANDBOX_RUNTIME_STAGE_CONFLICT")?.len() != expected_length {
+                    return Err("SANDBOX_RUNTIME_STAGE_CONFLICT".into());
+                }
+                // Full bounded comparison, including EOF, rather than equal
+                // lengths. Both sources reject write/delete sharing.
+                let mut expected = [0u8; 64 * 1024];
+                let mut actual = [0u8; 64 * 1024];
+                let mut compared = 0u64;
+                loop {
+                    self.budget.check().map_err(|error| error.to_string())?;
+                    let limit = MAX_RUNTIME_FILE.saturating_sub(compared).saturating_add(1)
+                        .min(expected.len() as u64) as usize;
+                    let count = source.read(&mut expected[..limit]).map_err(|_| "SANDBOX_RUNTIME_READ_DENIED")?;
+                    if count == 0 { break; }
+                    compared = compared.checked_add(count as u64).filter(|value| *value <= MAX_RUNTIME_FILE)
+                        .ok_or("SANDBOX_RUNTIME_SIZE_LIMIT")?;
+                    existing.read_exact(&mut actual[..count]).map_err(|_| "SANDBOX_RUNTIME_STAGE_CONFLICT")?;
+                    if expected[..count] != actual[..count] { return Err("SANDBOX_RUNTIME_STAGE_CONFLICT".into()); }
+                }
+                let mut extra = [0u8; 1];
+                if compared != expected_length || existing.read(&mut extra).map_err(|_| "SANDBOX_RUNTIME_STAGE_CONFLICT")? != 0 {
+                    return Err("SANDBOX_RUNTIME_STAGE_CONFLICT".into());
+                }
+                existing.rewind().map_err(|_| "SANDBOX_RUNTIME_STAGE_CONFLICT")?;
+                return Ok(existing);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("SANDBOX_RUNTIME_STAGE_CONFLICT:{error}")),
+        }
+        // FILE_CREATE is used only after the read-only existence probe.
+        // Retained read pins never collide with an unnecessary MAX/DELETE open.
+        let mut output = directory.create_file(name, policy, &self.budget)
+            .map_err(|error| format!("SANDBOX_RUNTIME_STAGE_FAILED:{error}"))?;
+
+        let identity = file_identity(&output).map_err(|_| "SANDBOX_RUNTIME_IDENTITY")?;
+        let mut total = self.staged_bytes.lock().map_err(|_| "SANDBOX_RUNTIME_BUDGET_LOCK")?;
+        let mut written = 0u64;
+        let mut bytes = [0u8; 64 * 1024];
+        loop {
+            self.budget.check().map_err(|error| error.to_string())?;
+            // Read at most the remaining per-file allowance plus one byte.
+            // Any excess is rejected BEFORE it is written to the destination.
+            let remaining = MAX_RUNTIME_FILE.saturating_sub(written)
+                .min(MAX_TOTAL_RUNTIME.saturating_sub(*total));
+            let count_limit = (remaining.saturating_add(1)).min(bytes.len() as u64) as usize;
+            let count = source.read(&mut bytes[..count_limit])
+                .map_err(|_| "SANDBOX_RUNTIME_READ_DENIED")?;
+            if count == 0 { break; }
+            let next = written.checked_add(count as u64).filter(|value| *value <= MAX_RUNTIME_FILE)
+                .ok_or("SANDBOX_RUNTIME_SIZE_LIMIT")?;
+            let next_total = total.checked_add(count as u64).filter(|value| *value <= MAX_TOTAL_RUNTIME)
+                .ok_or("SANDBOX_RUNTIME_SIZE_LIMIT")?;
+            self.budget.check().map_err(|error| error.to_string())?;
+            output.write_all(&bytes[..count]).map_err(|_| "SANDBOX_RUNTIME_STAGE_FAILED")?;
+            written = next;
+            *total = next_total;
+        }
+        if written != expected_length { return Err("SANDBOX_RUNTIME_CHANGED_DURING_COPY".into()); }
+        self.budget.check().map_err(|error| error.to_string())?;
+        output.sync_all().map_err(|_| "SANDBOX_RUNTIME_STAGE_FAILED")?;
+        drop(output);
+        drop(total);
+        let pinned = directory.pin_file(name, policy, &self.budget)
+            .map_err(|error| format!("SANDBOX_RUNTIME_READBACK:{error}"))?;
+        if pinned.identity().map_err(|_| "SANDBOX_RUNTIME_IDENTITY")? != identity {
+            return Err("SANDBOX_RUNTIME_CHANGED_DURING_COPY".into());
+        }
+        Ok(pinned)
     }
 
     fn stage_runtime(&self, runtime: &Path) -> Result<PathBuf, String> {
-        let canonical = runtime
-            .canonicalize()
-            .map_err(|_| "SANDBOX_RUNTIME_MISSING")?;
-        no_reparse_path(&canonical)?;
-        let system32 = system_binary("cmd.exe")?
-            .parent()
-            .ok_or("SANDBOX_SYSTEM_DIRECTORY_UNAVAILABLE")?
-            .to_path_buf();
-        // Only explicitly reviewed System32 tools bypass private staging.
-        // A user-writable C:\Windows subdirectory must never be treated as
-        // trusted merely because it is under the Windows installation root.
-        let system32_dir = system32
-            .canonicalize()
-            .map_err(|_| "SANDBOX_SYSTEM_DIRECTORY_UNAVAILABLE")?;
-        let name = canonical
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("")
-            .to_ascii_lowercase();
-        // Token inspection uses the genuine System32 whoami.exe.
-        // Production System32 bypass policy stays restricted to cmd/curl.
-        let trusted = ["cmd.exe", "curl.exe"].contains(&name.as_str());
-        #[cfg(test)]
-        let trusted = trusted || name == "whoami.exe";
-        if canonical.parent() == Some(system32_dir.as_path()) && trusted {
-            return Ok(canonical);
-        }
-        const MAX_RUNTIME_FILE: u64 = 256 * 1024 * 1024;
-        const MAX_TOTAL_RUNTIME: u64 = 384 * 1024 * 1024;
-        const MAX_SIBLING_DLLS: usize = 32;
-        fn copy_component(from: &Path, to: &Path, budget: &mut u64) -> Result<(), String> {
-            no_reparse_path(from)?;
-            let mut source = OpenOptions::new()
-                .read(true)
-                .custom_flags(0x0020_0000)
-                .open(from)
-                .map_err(|_| "SANDBOX_RUNTIME_READ_DENIED")?;
-            let metadata = source
-                .metadata()
-                .map_err(|_| "SANDBOX_RUNTIME_READ_DENIED")?;
-            if !metadata.is_file()
-                || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
-                || metadata.len() > MAX_RUNTIME_FILE
-            {
-                return Err("SANDBOX_RUNTIME_UNSAFE".into());
+        self.preparing(|| {
+            no_reparse_path(runtime)?;
+            let source = PinnedReadFile::open(runtime, &self.budget)
+                .map_err(|error| format!("SANDBOX_RUNTIME_SOURCE:{error}"))?;
+            let canonical = source.path().to_owned();
+            let system32 = system_binary("cmd.exe")?.parent()
+                .ok_or("SANDBOX_SYSTEM_DIRECTORY_UNAVAILABLE")?.canonicalize()
+                .map_err(|_| "SANDBOX_SYSTEM_DIRECTORY_UNAVAILABLE")?;
+            let name = canonical.file_name().and_then(|name| name.to_str())
+                .ok_or("SANDBOX_RUNTIME_NOT_UNICODE")?.to_ascii_lowercase();
+            let trusted = ["cmd.exe", "curl.exe"].contains(&name.as_str());
+            #[cfg(test)]
+            let trusted = trusted || name == "whoami.exe";
+            if canonical.parent() == Some(system32.as_path()) && trusted {
+                self.runtime_pins.lock().map_err(|_| "SANDBOX_RUNTIME_PIN_LOCK")?.push(source);
+                return Ok(canonical);
             }
-            *budget = budget
-                .checked_add(metadata.len())
-                .filter(|n| *n <= MAX_TOTAL_RUNTIME)
-                .ok_or("SANDBOX_RUNTIME_SIZE_LIMIT")?;
-            let mut output = match OpenOptions::new().write(true).create_new(true).open(to) {
-                Ok(file) => file,
-                // Shared toolchain DLLs are staged once for the first peer and
-                // reused by later peers in the same private runtime. Only an
-                // identical, already-staged regular file is accepted.
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                    // Identical length is not proof of identical content.
-                    // Toolchain peers may ship same-sized, incompatible DLLs.
-                    no_reparse_path(to)?;
-                    let mut existing = OpenOptions::new()
-                        .read(true)
-                        .custom_flags(0x0020_0000)
-                        .open(to)
-                        .map_err(|_| "SANDBOX_RUNTIME_STAGE_CONFLICT")?;
-                    let current = existing.metadata()
-                        .map_err(|_| "SANDBOX_RUNTIME_STAGE_CONFLICT")?;
-                    if !current.is_file()
-                        || current.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
-                        || current.len() != metadata.len()
-                    {
-                        return Err("SANDBOX_RUNTIME_STAGE_CONFLICT".into());
+            let policy = self.policy(AppContainerAccess::ReadExecute, false)?;
+            let mut runtime_guard = self.runtime_guard.lock().map_err(|_| "SANDBOX_RUNTIME_LOCK")?;
+            if runtime_guard.is_none() {
+                *runtime_guard = Some(self.root_guard()?.ensure_child(
+                    std::ffi::OsStr::new("runtime"), &policy, &self.tree_options(), &self.budget,
+                ).map_err(|error| format!("SANDBOX_RUNTIME_PREPARE:{error}"))?);
+            }
+            let directory = runtime_guard.as_ref().expect("prepared above");
+            directory.audit_root(&policy, &self.budget).map_err(|error| format!("SANDBOX_RUNTIME_AUDIT:{error}"))?;
+            let filename = canonical.file_name().ok_or("SANDBOX_RUNTIME_NOT_EXECUTABLE")?;
+            let staged = directory.path().join(filename);
+            // Acquire the parent while the source file's complete chain is
+            // still pinned; the DLL enumeration cannot switch to another dir.
+            let source_directory = PinnedReadDirectory::open(
+                canonical.parent().ok_or("SANDBOX_RUNTIME_NOT_EXECUTABLE")?, &self.budget,
+            ).map_err(|error| format!("SANDBOX_RUNTIME_DIRECTORY:{error}"))?;
+            let pinned = self.copy_component(source, directory, filename, &policy)?;
+            let mut pins = self.runtime_pins.lock().map_err(|_| "SANDBOX_RUNTIME_PIN_LOCK")?;
+            pins.push(pinned);
+            let entries = source_directory.entries(PRIVATE_TREE_MAX_ENTRIES, &self.budget)
+                .map_err(|error| format!("SANDBOX_RUNTIME_ENUMERATE:{error}"))?;
+            let mut dll_count = 0usize;
+            for entry in entries {
+                self.budget.check().map_err(|error| error.to_string())?;
+                if Path::new(&entry.name).extension().and_then(|value| value.to_str())
+                    .is_some_and(|value| value.eq_ignore_ascii_case("dll"))
+                {
+                    if entry.directory { return Err("SANDBOX_RUNTIME_DLL_NOT_FILE".into()); }
+                    dll_count += 1;
+                    if dll_count > 32 { return Err("SANDBOX_RUNTIME_DLL_LIMIT".into()); }
+                    let source = source_directory.child_file(&entry, &self.budget)
+                        .map_err(|error| format!("SANDBOX_RUNTIME_SOURCE:{error}"))?;
+                    pins.push(self.copy_component(source, directory, &entry.name, &policy)?);
+                }
+            }
+            directory.audit_tree(&policy, &self.tree_options(), &self.budget)
+                .map_err(|error| format!("SANDBOX_RUNTIME_AUDIT:{error}"))?;
+            Ok(staged)
+        })
+    }
+
+    /// Bounded source-tree staging. Only a new direct private-profile child
+    /// is accepted; callers cannot use this API to reset OS/state/host ACLs.
+    pub fn stage_readonly_tree(&self, source: &Path, destination: &Path) -> Result<PathBuf, String> {
+        self.preparing(|| {
+            no_reparse_path(source)?;
+            let relative = destination.strip_prefix(&self.folder)
+                .map_err(|_| "SANDBOX_STAGE_TREE_OUTSIDE_PROFILE")?;
+            let mut parts = relative.components();
+            let name = match (parts.next(), parts.next()) {
+                (Some(std::path::Component::Normal(name)), None) => name,
+                _ => return Err("SANDBOX_STAGE_TREE_DESTINATION".into()),
+            };
+            if ["state", "runtime", "snapshot"].iter().any(|reserved|
+                browseros_platform_security::windows::same_path_component(name, std::ffi::OsStr::new(reserved)))
+            { return Err("SANDBOX_STAGE_TREE_DESTINATION".into()); }
+            let policy = self.policy(AppContainerAccess::ReadExecute, true)?;
+            let source = PinnedReadDirectory::open(source, &self.budget)
+                .map_err(|error| format!("SANDBOX_STAGE_TREE_SOURCE:{error}"))?;
+            let target = self.root_guard()?.ensure_child(name, &policy, &self.tree_options(), &self.budget)
+                .map_err(|error| format!("SANDBOX_STAGE_TREE_PREPARE:{error}"))?;
+            let result = target.path().to_owned();
+            let mut pending = vec![(source, target, 0usize)];
+            let mut visited = 1usize;
+            let mut retained = Vec::new();
+            while let Some((source, target, depth)) = pending.pop() {
+                self.budget.check().map_err(|error| error.to_string())?;
+                if depth > PRIVATE_TREE_MAX_DEPTH { return Err("SANDBOX_STAGE_TREE_DEPTH_LIMIT".into()); }
+                let entries = source.entries(PRIVATE_TREE_MAX_ENTRIES.saturating_sub(visited), &self.budget)
+                    .map_err(|error| format!("SANDBOX_STAGE_TREE_ENUMERATE:{error}"))?;
+                visited = visited.checked_add(entries.len()).filter(|value| *value <= PRIVATE_TREE_MAX_ENTRIES)
+                    .ok_or("SANDBOX_STAGE_TREE_ENTRY_LIMIT")?;
+                for entry in entries {
+                    self.budget.check().map_err(|error| error.to_string())?;
+                    if entry.directory {
+                        if depth == PRIVATE_TREE_MAX_DEPTH { return Err("SANDBOX_STAGE_TREE_DEPTH_LIMIT".into()); }
+                        let from = source.child_directory(&entry, &self.budget)
+                            .map_err(|error| format!("SANDBOX_STAGE_TREE_SOURCE:{error}"))?;
+                        let to = target.ensure_child(&entry.name, &policy, &self.tree_options(), &self.budget)
+                            .map_err(|error| format!("SANDBOX_STAGE_TREE_PREPARE:{error}"))?;
+                        pending.push((from, to, depth + 1));
+                    } else {
+                        let file = source.child_file(&entry, &self.budget)
+                            .map_err(|error| format!("SANDBOX_STAGE_TREE_SOURCE:{error}"))?;
+                        let pinned = self.copy_component(file, &target, &entry.name, &policy)?;
+                        self.runtime_pins.lock().map_err(|_| "SANDBOX_RUNTIME_PIN_LOCK")?.push(pinned);
                     }
-                    let mut expected = [0u8; 64 * 1024];
-                    let mut actual = [0u8; 64 * 1024];
-                    let mut remaining = metadata.len();
-                    while remaining > 0 {
-                        let count = remaining.min(expected.len() as u64) as usize;
-                        source.read_exact(&mut expected[..count])
-                            .map_err(|_| "SANDBOX_RUNTIME_CHANGED_DURING_COPY")?;
-                        existing.read_exact(&mut actual[..count])
-                            .map_err(|_| "SANDBOX_RUNTIME_STAGE_CONFLICT")?;
-                        if expected[..count] != actual[..count] {
-                            return Err("SANDBOX_RUNTIME_STAGE_CONFLICT".into());
-                        }
-                        remaining -= count as u64;
-                    }
+                }
+                target.audit_root(&policy, &self.budget).map_err(|error| format!("SANDBOX_STAGE_TREE_AUDIT:{error}"))?;
+                retained.push(target);
+            }
+            self.extra_guards.lock().map_err(|_| "SANDBOX_STAGE_TREE_LOCK")?.extend(retained);
+            Ok(result)
+        })
+    }
+
+    fn protect_selected_tree(&self, root: &Path, lsp: bool) -> Result<(), String> {
+        self.preparing(|| {
+            // All private subtree roots were created and pinned by this profile.
+            // Compare an existing native object, never accept an arbitrary host
+            // path or reinterpret the OS profile root as a private child.
+            let snapshot = self.snapshot_guard.lock().map_err(|_| "SANDBOX_SNAPSHOT_LOCK")?;
+            if let Some(directory) = snapshot.as_ref() {
+                if browseros_platform_security::windows::paths_are_same_file(root, directory.path())
+                    .map_err(|_| "SANDBOX_PRIVATE_TREE_IDENTITY")?
+                {
+                    let policy = self.policy(AppContainerAccess::ReadExecute, true)?;
+                    directory.protect_tree(&policy, &self.tree_options(), &self.budget)
+                        .map_err(|error| format!("SANDBOX_SNAPSHOT_ACL:{error}"))?;
                     return Ok(());
                 }
-                Err(_) => return Err("SANDBOX_RUNTIME_STAGE_FAILED".into()),
-            };
-            let written = std::io::copy(&mut source, &mut output)
-                .map_err(|_| "SANDBOX_RUNTIME_STAGE_FAILED")?;
-            if written != metadata.len() {
-                return Err("SANDBOX_RUNTIME_CHANGED_DURING_COPY".into());
             }
-            output
-                .sync_all()
-                .map_err(|_| "SANDBOX_RUNTIME_STAGE_FAILED")?;
-            no_reparse_path(from)?;
-            Ok(())
-        }
-        // Never place executable bytes under the writable state directory:
-        // a lowbox child with state MODIFY rights could otherwise replace its
-        // own runtime via DELETE_CHILD/rename despite a file-level RX ACL.
-        // The profile root grants traverse only; runtime is a sibling of
-        // writable state and is separately protected with read/execute ACLs.
-        let directory = self.folder.join("runtime");
-        match std::fs::create_dir(&directory) {
-            Ok(()) => {}
-            // A language toolchain is staged as several executables that share
-            // one private runtime. Repeat staging must reuse that directory
-            // instead of failing, and file-level ACLs are re-applied below.
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(_) => return Err("SANDBOX_RUNTIME_STAGE_FAILED".into()),
-        }
-        no_reparse_path(&directory)?;
-        let filename = canonical
-            .file_name()
-            .ok_or("SANDBOX_RUNTIME_NOT_EXECUTABLE")?;
-        let staged = directory.join(filename);
-        let mut total = 0u64;
-        copy_component(&canonical, &staged, &mut total)?;
-        let mut dll_count = 0usize;
-        let original_dir = canonical.parent().ok_or("SANDBOX_RUNTIME_NOT_EXECUTABLE")?;
-        for entry in std::fs::read_dir(original_dir).map_err(|_| "SANDBOX_RUNTIME_READ_DENIED")? {
-            let entry = entry.map_err(|_| "SANDBOX_RUNTIME_READ_DENIED")?;
-            let path = entry.path();
-            if path
-                .extension()
-                .and_then(|v| v.to_str())
-                .is_some_and(|v| v.eq_ignore_ascii_case("dll"))
-            {
-                dll_count += 1;
-                if dll_count > MAX_SIBLING_DLLS {
-                    return Err("SANDBOX_RUNTIME_DLL_LIMIT".into());
-                }
-                copy_component(&path, &directory.join(entry.file_name()), &mut total)?;
-            }
-        }
-        self.protect_snapshot(&directory)?;
-        // protect_snapshot applies explicit file ACEs in the same pass;
-        // do not walk and rewrite every staged image a second time.
-        // Pin the original executable name to a newly staged read-only file.
-        // Access to the private runtime tree must not depend on writable state.
-        no_reparse_path(&staged)?;
-        Ok(staged)
-    }
-
-    /// Copy a read-only source tree into the private profile and give every
-    /// file the ACL shape the staged runtime images already prove works
-    /// inside the lowbox. Rust Analyzer resolves the standard library from
-    /// the sysroot, which lives outside the profile, so its `rust-src` checkout
-    /// has to be materialised here before the analyzer starts.
-    pub fn stage_readonly_tree(&self, source: &Path, destination: &Path) -> Result<PathBuf, String> {
-        no_reparse_path(source)?;
-        std::fs::create_dir_all(destination).map_err(|_| "SANDBOX_STAGE_TREE_FAILED")?;
-        // Seed the destination with inheritable grants *before* copying, so
-        // every copied file and directory receives the ACEs by inheritance.
-        // Per-file `icacls` with `(OI)(CI)` flags is silently refused on
-        // files, and running `icacls` once per file over a source checkout
-        // costs minutes.
-        let icacls = system_binary("icacls.exe")?;
-        let user = current_user_sid()?;
-        let output = std::process::Command::new(&icacls)
-            .arg(destination)
-            .args(["/inheritance:r", "/grant:r"])
-            .arg(format!("*{user}:(OI)(CI)F"))
-            .arg("*S-1-5-18:(OI)(CI)F")
-            .arg(format!("*{}:(OI)(CI)RX", self.sid_string))
-            .output()
-            .map_err(|_| "SANDBOX_STAGE_TREE_ACL")?;
-        if !output.status.success() {
-            return Err("SANDBOX_STAGE_TREE_ACL".into());
-        }
-        let mut pending = vec![(source.to_path_buf(), destination.to_path_buf())];
-        while let Some((from, to)) = pending.pop() {
-            for entry in std::fs::read_dir(&from).map_err(|_| "SANDBOX_STAGE_TREE_FAILED")? {
-                let entry = entry.map_err(|_| "SANDBOX_STAGE_TREE_FAILED")?;
-                let path = entry.path();
-                no_reparse_path(&path)?;
-                let target = to.join(entry.file_name());
-                if path.is_dir() {
-                    std::fs::create_dir_all(&target).map_err(|_| "SANDBOX_STAGE_TREE_FAILED")?;
-                    pending.push((path, target));
-                } else if path.is_file() {
-                    std::fs::copy(&path, &target).map_err(|_| "SANDBOX_STAGE_TREE_FAILED")?;
+            if !lsp {
+                let runtime = self.runtime_guard.lock().map_err(|_| "SANDBOX_RUNTIME_LOCK")?;
+                if let Some(directory) = runtime.as_ref() {
+                    if browseros_platform_security::windows::paths_are_same_file(root, directory.path())
+                        .map_err(|_| "SANDBOX_PRIVATE_TREE_IDENTITY")?
+                    {
+                        let policy = self.policy(AppContainerAccess::ReadExecute, false)?;
+                        directory.protect_tree(&policy, &self.tree_options(), &self.budget)
+                            .map_err(|error| format!("SANDBOX_RUNTIME_ACL:{error}"))?;
+                        return Ok(());
+                    }
                 }
             }
-        }
-        Ok(destination.to_path_buf())
+            Err("SANDBOX_PRIVATE_TREE_OUTSIDE_PROFILE".into())
+        })
     }
 
-    /// Source snapshots and staged runtimes are immutable to the lowbox.
-    /// An explicit per-file RX grant is applied once, without icacls /T.
-    pub fn protect_snapshot_files(&self, root: &Path) -> Result<(), String> {
-        self.apply_private_tree(root, "RX", false)
-    }
+    pub fn protect_snapshot_files(&self, root: &Path) -> Result<(), String> { self.protect_selected_tree(root, false) }
+    pub fn protect_snapshot(&self, root: &Path) -> Result<(), String> { self.protect_selected_tree(root, false) }
+    pub fn protect_lsp_snapshot(&self, root: &Path) -> Result<(), String> { self.protect_selected_tree(root, true) }
 
-    pub fn protect_snapshot(&self, snapshot: &Path) -> Result<(), String> {
-        self.protect_snapshot_files(snapshot)
-    }
-
-    /// Preserve the established LSP traversal policy in one tree pass.
-    /// Owner/SYSTEM and this package can read files; generic AppContainers
-    /// may traverse directories only, with no (OI)/(CI) inheritance.
-    pub fn protect_lsp_snapshot(&self, snapshot: &Path) -> Result<(), String> {
-        self.apply_private_tree(snapshot, "RX", true)?;
-        let icacls = system_binary("icacls.exe")?;
-        let mut ancestors = vec![self.folder.clone()];
-        if let Some(parent) = self.folder.parent() {
-            ancestors.push(parent.to_path_buf());
-        }
-        for directory in ancestors {
-            no_reparse_path(&directory)?;
-            let output = std::process::Command::new(&icacls)
-                .arg(&directory).arg("/grant:r")
-                .arg(format!("*{}:RX", self.sid_string))
-                .arg("*S-1-15-2-1:RX")
-                .output().map_err(|_| "SANDBOX_SNAPSHOT_TRAVERSE_ACL")?;
-            if !output.status.success() {
-                return Err("SANDBOX_SNAPSHOT_TRAVERSE_ACL".into());
-            }
-        }
-        Ok(())
-    }
-
-    /// Stage an explicitly selected executable in the private runtime.
-    /// Production LSP selects only rustc metadata/cfg probes; Cargo probes
-    /// remain diagnostic-only tests, never the production analysis contract.
     pub fn stage_runtime_peer(&self, peer: &Path) -> Result<PathBuf, String> {
-        no_reparse_path(peer)?;
-        let canonical = peer
-            .canonicalize()
-            .map_err(|_| "SANDBOX_TOOLCHAIN_PEER_MISSING")?;
-        if !canonical.is_file()
-            || canonical
-                .extension()
-                .and_then(|value| value.to_str())
-                .unwrap_or("")
-                .to_ascii_lowercase()
-                != "exe"
-        {
-            return Err("SANDBOX_TOOLCHAIN_PEER_MISSING".into());
-        }
-        self.stage_runtime(&canonical)
+        if !peer.extension().and_then(|value| value.to_str())
+            .is_some_and(|value| value.eq_ignore_ascii_case("exe"))
+        { return Err("SANDBOX_TOOLCHAIN_PEER_MISSING".into()); }
+        self.stage_runtime(peer)
     }
 
     pub fn spawn(
-        self,
-        runtime: &Path,
-        args: &[String],
-        environment: &[(String, String)],
-        current_directory: &Path,
+        self, runtime: &Path, args: &[String], environment: &[(String, String)], current_directory: &Path,
     ) -> Result<SandboxChild, String> {
-        no_reparse_path(runtime)?;
-        no_reparse_path(current_directory)?;
-        let profile_root = self
-            .folder
-            .canonicalize()
-            .map_err(|_| "SANDBOX_PRIVATE_FOLDER")?;
-        let actual_workdir = current_directory
-            .canonicalize()
-            .map_err(|_| "SANDBOX_WORKDIR_UNAVAILABLE")?;
-        if !actual_workdir.starts_with(&profile_root) || actual_workdir == profile_root {
-            return Err("SANDBOX_WORKDIR_OUTSIDE_PRIVATE_PROFILE".into());
-        }
-        let canonical = runtime
-            .canonicalize()
-            .map_err(|_| "SANDBOX_RUNTIME_MISSING")?;
-        if !canonical.is_file()
-            || runtime
-                .extension()
-                .and_then(|value| value.to_str())
-                .unwrap_or("")
-                .to_ascii_lowercase()
-                != "exe"
-        {
-            return Err("SANDBOX_RUNTIME_NOT_EXECUTABLE".into());
-        }
+        self.check_preparation()?;
+        if !runtime.extension().and_then(|value| value.to_str())
+            .is_some_and(|value| value.eq_ignore_ascii_case("exe"))
+        { return Err("SANDBOX_RUNTIME_NOT_EXECUTABLE".into()); }
+        let state = self.state_dir()?;
+        if !browseros_platform_security::windows::paths_are_same_file(current_directory, &state)
+            .map_err(|_| "SANDBOX_WORKDIR_IDENTITY")?
+        { return Err("SANDBOX_WORKDIR_OUTSIDE_PRIVATE_STATE".into()); }
         let staged = self.stage_runtime(runtime)?;
-        spawn_inner(self, &staged, args, environment, current_directory)
+        {
+            let state_guard = self.state_guard.lock().map_err(|_| "SANDBOX_STATE_LOCK")?;
+            let policy = self.policy(AppContainerAccess::Modify, false)?;
+            state_guard.as_ref().ok_or("SANDBOX_STATE_NOT_PREPARED")?
+                .audit_tree(&policy, &self.tree_options(), &self.budget)
+                .map_err(|error| format!("SANDBOX_STATE_AUDIT:{error}"))?;
+        }
+        self.budget.check().map_err(|error| error.to_string())?;
+        spawn_inner(self, &staged, args, environment, &state)
     }
 }
 
 impl Drop for SandboxProfile {
     fn drop(&mut self) {
-        // Release the no-delete state pin before removing the OS profile.
+        self.runtime_pins.get_mut().unwrap_or_else(|poison| poison.into_inner()).clear();
+        self.extra_guards.get_mut().unwrap_or_else(|poison| poison.into_inner()).clear();
+        self.snapshot_guard.get_mut().unwrap_or_else(|poison| poison.into_inner()).take();
+        self.runtime_guard.get_mut().unwrap_or_else(|poison| poison.into_inner()).take();
         self.state_guard.get_mut().unwrap_or_else(|poison| poison.into_inner()).take();
+        self.root_guard.take();
         unsafe {
-            if !self.sid.is_null() {
-                FreeSid(self.sid);
-                self.sid = ptr::null_mut();
-            }
-            if let Ok(name) = wide_text(&self.name) {
-                let _ = DeleteAppContainerProfile(name.as_ptr());
-            }
+            if !self.sid.is_null() { FreeSid(self.sid); self.sid = ptr::null_mut(); }
         }
-        if !self.folder.as_os_str().is_empty() {
-            let _ = std::fs::remove_dir_all(&self.folder);
+        if let Some(owner) = self.cleanup_owner.take() {
+            // File/profile deletion can itself be slow. Retain the budget's
+            // cleanup barrier in the background owner until it really ends.
+            enqueue_cleanup(CleanupTask::Profile(ProfileCleanup {
+                name: std::mem::take(&mut self.name),
+                folder: std::mem::take(&mut self.folder),
+                _owner: owner, last_try: None, failures: 0,
+            }));
         }
     }
 }
 
-pub struct SandboxProcess {
+struct ProcessResources {
     handle: HANDLE,
-    // Field order closes the kill-on-close Job before deleting profile data.
-    _job: JobObject,
+    job: JobObject,
     profile: SandboxProfile,
+    stderr: Option<thread::JoinHandle<()>>,
 }
+// One owner controls these process/Job handles. Public access is read-only;
+// the cleanup worker receives ownership only after SandboxProcess is dropped.
+unsafe impl Send for ProcessResources {}
+impl ProcessResources {
+    fn is_complete(&self) -> bool {
+        if unsafe { WaitForSingleObject(self.handle, 0) } != WAIT_OBJECT_0
+            || self.stderr.as_ref().is_some_and(|worker| !worker.is_finished())
+        { return false; }
+        self.job.is_empty().unwrap_or(false)
+    }
+}
+impl Drop for ProcessResources {
+    fn drop(&mut self) {
+        // Only the background owner drops resources after is_complete().
+        if let Some(worker) = self.stderr.take() {
+            if worker.join().is_err() { eprintln!("SANDBOX_STDERR_THREAD_PANICKED"); }
+        }
+        unsafe { CloseHandle(self.handle); }
+    }
+}
+
+pub struct SandboxProcess { resources: Option<Box<ProcessResources>> }
 unsafe impl Send for SandboxProcess {}
 impl SandboxProcess {
+    fn resources(&self) -> &ProcessResources { self.resources.as_deref().expect("owned sandbox process") }
     pub fn exit_code(&self) -> Result<Option<u32>, String> {
-        // Exit code 259 is a valid terminal exit code; only the kernel
-        // process signaled state can establish process completion.
-        match unsafe { WaitForSingleObject(self.handle, 0) } {
+        let handle = self.resources().handle;
+        match unsafe { WaitForSingleObject(handle, 0) } {
             WAIT_TIMEOUT => Ok(None),
             WAIT_OBJECT_0 => {
-                let mut code = 0u32;
-                if unsafe { GetExitCodeProcess(self.handle, &mut code) } == 0 {
+                let mut code = 0;
+                if unsafe { GetExitCodeProcess(handle, &mut code) } == 0 {
                     return Err(win32_error("SANDBOX_EXIT_CODE"));
                 }
                 Ok(Some(code))
@@ -745,25 +843,22 @@ impl SandboxProcess {
         }
     }
     pub fn try_wait(&self) -> Result<bool, String> {
-        match unsafe { WaitForSingleObject(self.handle, 0) } {
-            WAIT_OBJECT_0 => Ok(true),
-            WAIT_TIMEOUT => Ok(false),
+        match unsafe { WaitForSingleObject(self.resources().handle, 0) } {
+            WAIT_OBJECT_0 => Ok(true), WAIT_TIMEOUT => Ok(false),
             _ => Err(win32_error("SANDBOX_WAIT")),
         }
     }
-    pub fn terminate(&self) -> Result<(), String> {
-        self._job.terminate()
-    }
-    pub fn profile(&self) -> &SandboxProfile {
-        &self.profile
-    }
+    pub fn terminate(&self) -> Result<(), String> { self.resources().job.terminate() }
+    pub fn profile(&self) -> &SandboxProfile { &self.resources().profile }
+    pub fn cleanup_complete(&self) -> bool { self.resources().is_complete() }
 }
 impl Drop for SandboxProcess {
     fn drop(&mut self) {
-        let _ = self._job.terminate();
-        unsafe {
-            let _ = WaitForSingleObject(self.handle, 2000);
-            CloseHandle(self.handle);
+        if let Some(resources) = self.resources.take() {
+            let _ = resources.job.terminate();
+            // Includes the afterspawn-error path. Never release the profile,
+            // stderr thread or capacity barrier while native owners are alive.
+            enqueue_cleanup(CleanupTask::Process(resources));
         }
     }
 }
@@ -1023,6 +1118,12 @@ pub(super) fn send_bounded<T>(
     }
 }
 
+fn pipe_security_for_stderr(profile: &SandboxProfile) -> Result<(File, File), String> {
+    let user = current_user_sid()?;
+    let security = OwnedSecurityDescriptor(appcontainer_pipe_security(&user, &profile.sid_string)?);
+    pipe(security.0)
+}
+
 fn spawn_inner(
     profile: SandboxProfile,
     runtime: &Path,
@@ -1040,22 +1141,12 @@ fn spawn_inner(
     inheritable(parent_input.as_raw_handle(), false)?;
     inheritable(child_input.as_raw_handle(), true)?;
     inheritable(child_output.as_raw_handle(), true)?;
-    // Native tests retain child stderr to diagnose runtime/ACL failures.
-    // In production, untrusted MCP/LSP tools must not be able to append
-    // unlimited stderr to disk or persist credentials in a diagnostic file.
-    #[cfg(test)]
-    let error_file = OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .open(current_directory.join("sandbox-stderr.log"))
-        .map_err(|_| "SANDBOX_STDERR_LOG")?;
-    #[cfg(not(test))]
-    let error_file = OpenOptions::new()
-        .write(true)
-        .open("NUL")
-        .map_err(|_| "SANDBOX_STDERR_SINK")?;
-    inheritable(error_file.as_raw_handle(), true)?;
+    let (parent_error, child_error) = pipe_security_for_stderr(&profile)?;
+    inheritable(parent_error.as_raw_handle(), false)?;
+    inheritable(child_error.as_raw_handle(), true)?;
+    let job = JobObject::create_for_spawn()?;
+    let inherited_jobs = [job.as_raw_handle() as HANDLE];
+    profile.budget.check().map_err(|error| error.to_string())?;
 
     // Finish all fallible argument/environment work before the Win32
     // attribute list is initialized. No ? may bypass its cleanup afterward.
@@ -1065,7 +1156,7 @@ fn spawn_inner(
     let environment = environment_block(environment, current_directory, &profile.folder)?;
     let mut size = 0usize;
     unsafe {
-        let _ = InitializeProcThreadAttributeList(ptr::null_mut(), 2, 0, &mut size);
+        let _ = InitializeProcThreadAttributeList(ptr::null_mut(), 3, 0, &mut size);
     }
     if size == 0 {
         return Err("SANDBOX_ATTRIBUTE_SIZE".into());
@@ -1074,7 +1165,7 @@ fn spawn_inner(
     let words = size.div_ceil(std::mem::size_of::<usize>());
     let mut attribute_storage = vec![0usize; words];
     let attribute_list = attribute_storage.as_mut_ptr() as *mut _;
-    if unsafe { InitializeProcThreadAttributeList(attribute_list, 2, 0, &mut size) } == 0 {
+    if unsafe { InitializeProcThreadAttributeList(attribute_list, 3, 0, &mut size) } == 0 {
         return Err(win32_error("SANDBOX_ATTRIBUTE_INIT"));
     }
     let cleanup_attributes = |list| unsafe { DeleteProcThreadAttributeList(list) };
@@ -1087,7 +1178,7 @@ fn spawn_inner(
     let inherited = [
         child_input.as_raw_handle() as HANDLE,
         child_output.as_raw_handle() as HANDLE,
-        error_file.as_raw_handle() as HANDLE,
+        child_error.as_raw_handle() as HANDLE,
     ];
     let security_ok = unsafe {
         UpdateProcThreadAttribute(
@@ -1112,7 +1203,12 @@ fn spawn_inner(
                 ptr::null(),
             ) != 0
         };
-    if !handles_ok {
+    let jobs_ok = handles_ok && unsafe {
+        UpdateProcThreadAttribute(attribute_list, 0, PROC_THREAD_ATTRIBUTE_JOB_LIST as usize,
+            inherited_jobs.as_ptr().cast(), std::mem::size_of_val(&inherited_jobs),
+            ptr::null_mut(), ptr::null()) != 0
+    };
+    if !jobs_ok {
         let error = win32_error("SANDBOX_ATTRIBUTE_UPDATE");
         cleanup_attributes(attribute_list);
         return Err(error);
@@ -1123,7 +1219,7 @@ fn spawn_inner(
     startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
     startup.StartupInfo.hStdInput = child_input.as_raw_handle() as HANDLE;
     startup.StartupInfo.hStdOutput = child_output.as_raw_handle() as HANDLE;
-    startup.StartupInfo.hStdError = error_file.as_raw_handle() as HANDLE;
+    startup.StartupInfo.hStdError = child_error.as_raw_handle() as HANDLE;
     startup.lpAttributeList = attribute_list;
     let mut information: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
     let created = unsafe {
@@ -1143,60 +1239,34 @@ fn spawn_inner(
             &mut information,
         )
     };
-    // Capture GetLastError before cleaning up attribute lists or handles:
-    // those Win32 calls may overwrite the real CreateProcess failure code.
-    let create_error = if created == 0 {
-        #[allow(unused_mut)]
-        let mut error = win32_error("SANDBOX_CREATE_PROCESS");
-        #[cfg(test)]
-        {
-            // Native CI only: expose the staged image ACL next to the Win32
-            // error so an AppContainer image-access failure is diagnosable
-            // from the public annotation instead of another blind run.
-            error.push_str(&format!(" image={}", runtime.display()));
-            if let Ok(icacls) = system_binary("icacls.exe") {
-                if let Ok(probe) = std::process::Command::new(icacls).arg(runtime).output() {
-                    let acl = String::from_utf8_lossy(&probe.stdout)
-                        .split_whitespace()
-                        .collect::<Vec<_>>()
-                        .join(" ");
-                    error.push_str(&format!(" acl={}", acl.chars().take(700).collect::<String>()));
-                }
-            }
-        }
-        Some(error)
-    } else {
-        None
-    };
+    let create_error = if created == 0 { Some(win32_error("SANDBOX_CREATE_PROCESS")) } else { None };
     cleanup_attributes(attribute_list);
     drop(child_input);
     drop(child_output);
-    drop(error_file);
-    if let Some(error) = create_error {
-        return Err(error);
+    drop(child_error);
+    if let Some(error) = create_error { return Err(error); }
+
+    // The native Job attribute owns the child before it can execute. Publish
+    // every native resource into one supervisor before any further fallible
+    // work, including stderr-thread creation, budget checks and ResumeThread.
+    struct PrimaryThread(HANDLE);
+    impl Drop for PrimaryThread { fn drop(&mut self) { unsafe { CloseHandle(self.0); } } }
+    let primary = PrimaryThread(information.hThread);
+    let diagnostic = Arc::clone(&profile.diagnostic);
+    let mut process = SandboxProcess { resources: Some(Box::new(ProcessResources {
+        handle: information.hProcess, job, profile, stderr: None,
+    })) };
+    process.resources.as_mut().expect("owned process").stderr =
+        Some(start_stderr_reader(parent_error, diagnostic)?);
+    process.profile().budget.check().map_err(|error| error.to_string())?;
+    let previous = unsafe { ResumeThread(primary.0) };
+    if previous != 1 {
+        return Err(if previous == u32::MAX { win32_error("SANDBOX_PRIMARY_THREAD_RESUME") }
+            else { format!("SANDBOX_PRIMARY_THREAD_SUSPEND_COUNT:{previous}") });
     }
-    let job = match JobObject::attach_suspended_pid(information.dwProcessId) {
-        Ok(job) => job,
-        Err(error) => {
-            unsafe {
-                TerminateProcess(information.hProcess, 1);
-                WaitForSingleObject(information.hProcess, 2000);
-                CloseHandle(information.hThread);
-                CloseHandle(information.hProcess);
-            }
-            return Err(error);
-        }
-    };
-    unsafe { CloseHandle(information.hThread) };
-    Ok(SandboxChild {
-        stdin: parent_input,
-        stdout: parent_output,
-        process: SandboxProcess {
-            handle: information.hProcess,
-            profile,
-            _job: job,
-        },
-    })
+    process.profile().budget.check().map_err(|error| error.to_string())?;
+    drop(primary);
+    Ok(SandboxChild { stdin: parent_input, stdout: parent_output, process })
 }
 
 #[cfg(test)]
@@ -1206,54 +1276,59 @@ mod tests {
     use std::os::windows::process::CommandExt;
     use std::time::Duration;
 
-    // The read has a deadline so a broken sandbox child cannot block the
-    // entire Windows native matrix until the outer CI timeout.
-    fn run_isolated(
-        executable: &Path,
-        args: &[String],
-        env: &[(String, String)],
-    ) -> Result<(String, String, u32), String> {
-        let profile = SandboxProfile::create()?;
+    // Bound fixture waits and retain the process/profile while assertions need
+    // the private tree. Production ownership uses the background cleanup owner.
+    fn run_profile_retained(
+        profile: SandboxProfile, executable: &Path, args: &[String], env: &[(String, String)],
+    ) -> Result<(String, String, u32, SandboxProcess), String> {
         let state = profile.state_dir()?;
-        let SandboxChild {
-            stdin,
-            mut stdout,
-            process,
-        } = profile.spawn(executable, args, env, &state)?;
+        let SandboxChild { stdin, mut stdout, process } = profile.spawn(executable, args, env, &state)?;
         drop(stdin);
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-        std::thread::spawn(move || {
+        let reader = std::thread::spawn(move || {
             let mut output = Vec::new();
-            let result = stdout
-                .read_to_end(&mut output)
-                .map(|_| output)
-                .map_err(|_| "SANDBOX_FIXTURE_READ".to_string());
+            let result = (&mut stdout).take(1024 * 1024).read_to_end(&mut output)
+                .map(|_| output).map_err(|_| "SANDBOX_FIXTURE_READ".to_string());
             let _ = sender.send(result);
         });
         let bytes = match receiver.recv_timeout(Duration::from_secs(8)) {
             Ok(result) => result?,
             Err(_) => {
                 let _ = process.terminate();
+                let _ = receiver.recv_timeout(Duration::from_secs(3));
+                if reader.is_finished() { let _ = reader.join(); }
                 return Err("SANDBOX_FIXTURE_STDOUT_TIMEOUT".into());
             }
         };
-        let deadline = Instant::now() + Duration::from_secs(3);
-        while !process.try_wait()? {
+        reader.join().map_err(|_| "SANDBOX_FIXTURE_READER_PANIC")?;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !process.cleanup_complete() {
             if Instant::now() >= deadline {
                 let _ = process.terminate();
                 return Err("SANDBOX_FIXTURE_EXIT_TIMEOUT".into());
             }
             std::thread::sleep(Duration::from_millis(20));
         }
-        let exit = process
-            .exit_code()?
-            .ok_or("SANDBOX_FIXTURE_EXIT_UNAVAILABLE")?;
-        let stderr = std::fs::read(state.join("sandbox-stderr.log")).unwrap_or_default();
-        Ok((
-            String::from_utf8_lossy(&bytes).into_owned(),
-            String::from_utf8_lossy(&stderr).into_owned(),
-            exit,
-        ))
+        let exit = process.exit_code()?.ok_or("SANDBOX_FIXTURE_EXIT_UNAVAILABLE")?;
+        let stderr = process.profile().stderr_for_test();
+        Ok((String::from_utf8_lossy(&bytes).into_owned(), stderr, exit, process))
+    }
+
+    fn run_isolated(
+        executable: &Path, args: &[String], env: &[(String, String)],
+    ) -> Result<(String, String, u32), String> {
+        let (stdout, stderr, exit, process) =
+            run_profile_retained(SandboxProfile::create()?, executable, args, env)?;
+        drop(process);
+        Ok((stdout, stderr, exit))
+    }
+
+    fn wait_cleanup(budget: &OperationBudget) {
+        let until = Instant::now() + Duration::from_secs(15);
+        while !budget.cleanup_complete() && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(budget.cleanup_complete(), "native profile cleanup is still owned");
     }
 
     #[test]
@@ -1298,25 +1373,14 @@ mod tests {
         // lowbox process must not read the host-owned, explicitly locked file.
         // cmd avoids requiring PowerShell CLR/module initialization.
         // Deliberately include whitespace to cover Windows path quoting.
-        let host_file = std::env::temp_dir().join(format!(
-            "browseros sandbox host {}.txt",
-            uuid::Uuid::new_v4()
+        let host_folder = std::env::temp_dir().join(format!(
+            "browseros sandbox host {}", uuid::Uuid::new_v4()
         ));
+        browseros_platform_security::windows::ensure_private_directory(
+            &host_folder, &PrivateTreeOptions::default(),
+        ).expect("native owner/SYSTEM host fixture");
+        let host_file = host_folder.join("secret.txt");
         std::fs::write(&host_file, "host-secret-marker").unwrap();
-        let user = current_user_sid().expect("host user SID");
-        let icacls = system_binary("icacls.exe").unwrap();
-        let acl = std::process::Command::new(icacls)
-            .arg(&host_file)
-            .args(["/inheritance:r", "/grant:r"])
-            .arg(format!("*{user}:F"))
-            .arg("*S-1-5-18:F")
-            .output()
-            .unwrap();
-        assert!(
-            acl.status.success(),
-            "host ACL setup failed: {}",
-            String::from_utf8_lossy(&acl.stderr)
-        );
         let cmd = system_binary("cmd.exe").unwrap();
         let read_command = format!("type \"{}\"", host_file.display());
         // std::process::Command::arg() quotes the whole /C string using CRT
@@ -1344,7 +1408,7 @@ mod tests {
             !stderr.to_ascii_lowercase().contains("not recognized"),
             "cmd did not execute the host-file probe: stderr={stderr:?}"
         );
-        std::fs::remove_file(host_file).unwrap();
+        std::fs::remove_dir_all(host_folder).unwrap();
     }
 
     #[test]
@@ -1357,25 +1421,35 @@ mod tests {
         let moved = state.with_file_name("moved-state");
         assert!(std::fs::rename(&state, &moved).is_err(),
             "live state must not be renamed away from its retained handle");
+        let budget = profile.budget().clone();
         drop(profile);
+        wait_cleanup(&budget);
         assert!(!state.exists(), "profile teardown must release the state pin");
     }
 
     #[test]
-    fn private_tree_depth_limit_is_checked_before_acl_application() {
-        let root = std::env::temp_dir().join(format!(
-            "browseros-private-tree-{}", uuid::Uuid::new_v4()
-        ));
+    fn native_private_tree_depth_limit_preserves_existing_data() {
+        let profile = SandboxProfile::create().unwrap();
+        let root = profile.folder.join("preexisting");
         std::fs::create_dir(&root).unwrap();
         let mut deepest = root.clone();
         for _ in 0..=PRIVATE_TREE_MAX_DEPTH {
             deepest.push("d");
             std::fs::create_dir(&deepest).unwrap();
         }
-        let error = private_tree_entries(&root).unwrap_err();
-        assert_eq!(error, "SANDBOX_PRIVATE_TREE_DEPTH_LIMIT");
-        assert!(deepest.is_dir(), "inspection must preserve the existing tree");
-        std::fs::remove_dir_all(root).unwrap();
+        std::fs::write(deepest.join("keep"), b"preserve").unwrap();
+        let policy = profile.policy(AppContainerAccess::Modify, false).unwrap();
+        let error = match profile.root_guard().unwrap().ensure_child(
+            std::ffi::OsStr::new("preexisting"), &policy, &profile.tree_options(), profile.budget(),
+        ) {
+            Err(error) => error,
+            Ok(_) => panic!("native traversal accepted an over-depth tree"),
+        };
+        assert!(error.to_string().contains("PACKAGE_TREE_BUDGET"));
+        assert_eq!(std::fs::read(deepest.join("keep")).unwrap(), b"preserve");
+        let budget = profile.budget().clone();
+        drop(profile);
+        wait_cleanup(&budget);
     }
 
     #[test]
@@ -1415,4 +1489,142 @@ mod tests {
             "cmd quoting failed: stdout={stdout:?} stderr={stderr:?}"
         );
     }
+    #[test]
+    fn appcontainer_own_state_create_write_read_and_cross_package_denial() {
+        let cmd = system_binary("cmd.exe").unwrap();
+        let own = SandboxProfile::create().unwrap();
+        let state = own.state_dir().unwrap();
+        let command = "echo own-state-marker> own-data.txt & type own-data.txt".to_string();
+        let (stdout, stderr, exit, retained) = run_profile_retained(
+            own, &cmd, &["/D".into(), "/C".into(), command], &[],
+        ).unwrap();
+        assert_eq!(exit, 0, "own package state create/write/read failed: {stderr}");
+        assert!(stdout.contains("own-state-marker"));
+        assert!(std::fs::read_to_string(state.join("own-data.txt")).unwrap().contains("own-state-marker"));
+
+        let target = state.join("own-data.txt");
+        let read = format!("type \"{}\"", target.display());
+        let (stdout, stderr, exit) = run_isolated(
+            &cmd, &["/D".into(), "/C".into(), read], &[],
+        ).unwrap();
+        assert_ne!(exit, 0, "other package read succeeded: {stdout} {stderr}");
+        assert!(!stdout.contains("own-state-marker"));
+
+        let write = format!("echo other-package-marker> \"{}\"", target.display());
+        let (_, stderr, exit) = run_isolated(
+            &cmd, &["/D".into(), "/C".into(), write], &[],
+        ).unwrap();
+        assert_ne!(exit, 0, "other package write succeeded: {stderr}");
+        let actual = std::fs::read_to_string(&target).unwrap();
+        assert!(actual.contains("own-state-marker"));
+        assert!(!actual.contains("other-package-marker"));
+        let budget = retained.profile().budget().clone();
+        drop(retained);
+        wait_cleanup(&budget);
+    }
+
+    #[test]
+    fn own_package_reads_snapshot_but_cannot_overwrite_source() {
+        let profile = SandboxProfile::create().unwrap();
+        let snapshot = profile.snapshot_dir().unwrap();
+        let source = snapshot.join("source.txt");
+        std::fs::write(&source, b"source-read-marker").unwrap();
+        profile.protect_lsp_snapshot(&snapshot).unwrap();
+        let cmd = system_binary("cmd.exe").unwrap();
+        let command = format!(
+            "(echo forbidden-write-marker>> \"{}\") & type \"{}\"",
+            source.display(), source.display(),
+        );
+        let (stdout, stderr, exit, retained) = run_profile_retained(
+            profile, &cmd, &["/D".into(), "/C".into(), command], &[],
+        ).unwrap();
+        assert_eq!(exit, 0, "own package could not read snapshot: {stderr}");
+        assert!(stdout.contains("source-read-marker"));
+        assert!(!stdout.contains("forbidden-write-marker"));
+        assert_eq!(std::fs::read(&source).unwrap(), b"source-read-marker");
+        assert!(!stderr.is_empty(), "denied source write produced no diagnostic");
+        let budget = retained.profile().budget().clone();
+        drop(retained);
+        wait_cleanup(&budget);
+    }
+
+    #[test]
+    fn runtime_actual_byte_budget_rejects_before_destination_write() {
+        let source = std::env::temp_dir().join(format!("browseros-bounded-{}.bin", uuid::Uuid::new_v4()));
+        std::fs::write(&source, b"12345678").unwrap();
+        let profile = SandboxProfile::create().unwrap();
+        let policy = profile.policy(AppContainerAccess::ReadExecute, false).unwrap();
+        let destination = profile.root_guard().unwrap().ensure_child(
+            std::ffi::OsStr::new("bounded-copy"), &policy, &profile.tree_options(), profile.budget(),
+        ).unwrap();
+        *profile.staged_bytes.lock().unwrap() = MAX_TOTAL_RUNTIME - 3;
+        let input = PinnedReadFile::open(&source, profile.budget()).unwrap();
+        let error = match profile.copy_component(
+            input, &destination, std::ffi::OsStr::new("runtime.bin"), &policy,
+        ) {
+            Err(error) => error,
+            Ok(_) => panic!("actual runtime byte cap was ignored"),
+        };
+        assert_eq!(error, "SANDBOX_RUNTIME_SIZE_LIMIT");
+        assert_eq!(std::fs::metadata(destination.path().join("runtime.bin")).unwrap().len(), 0);
+        assert_eq!(*profile.staged_bytes.lock().unwrap(), MAX_TOTAL_RUNTIME - 3);
+        drop(destination);
+        std::fs::remove_file(source).unwrap();
+        let budget = profile.budget().clone();
+        drop(profile);
+        wait_cleanup(&budget);
+    }
+
+    #[test]
+    fn repeated_runtime_component_compares_bytes_without_mutating_open() {
+        let source = std::env::temp_dir().join(format!("browseros-duplicate-{}.bin", uuid::Uuid::new_v4()));
+        std::fs::write(&source, b"original").unwrap();
+        let profile = SandboxProfile::create().unwrap();
+        let policy = profile.policy(AppContainerAccess::ReadExecute, false).unwrap();
+        let destination = profile.root_guard().unwrap().ensure_child(
+            std::ffi::OsStr::new("repeat-copy"), &policy, &profile.tree_options(), profile.budget(),
+        ).unwrap();
+        let first = profile.copy_component(PinnedReadFile::open(&source, profile.budget()).unwrap(),
+            &destination, std::ffi::OsStr::new("runtime.bin"), &policy).unwrap();
+        let again = profile.copy_component(PinnedReadFile::open(&source, profile.budget()).unwrap(),
+            &destination, std::ffi::OsStr::new("runtime.bin"), &policy).unwrap();
+        assert_eq!(first.identity().unwrap(), again.identity().unwrap());
+        assert_eq!(*profile.staged_bytes.lock().unwrap(), 8);
+        std::fs::write(&source, b"tampered").unwrap();
+        assert!(profile.copy_component(PinnedReadFile::open(&source, profile.budget()).unwrap(),
+            &destination, std::ffi::OsStr::new("runtime.bin"), &policy).is_err());
+        assert_eq!(std::fs::read(destination.path().join("runtime.bin")).unwrap(), b"original");
+        drop(again);
+        drop(first);
+        drop(destination);
+        std::fs::remove_file(source).unwrap();
+        let budget = profile.budget().clone();
+        drop(profile);
+        wait_cleanup(&budget);
+    }
+
+    #[test]
+    fn cancelled_budget_stops_before_profile_creation_and_keeps_cleanup_observable() {
+        let budget = OperationBudget::new(Duration::from_secs(10));
+        budget.cancel();
+        let error = match SandboxProfile::create_with_budget(budget.clone()) {
+            Err(error) => error, Ok(_) => panic!("cancelled preparation created a profile"),
+        };
+        assert!(error.contains("WINDOWS_OPERATION_CANCELLED"));
+        assert!(budget.cleanup_complete());
+    }
+
+    #[test]
+    fn stderr_diagnostics_are_bounded_sticky_and_path_free() {
+        let mut diagnostic = StderrDiagnostic::default();
+        diagnostic.append(b"rustc --print cfg failed at C:\\private\\workspace\\rustc.exe");
+        assert_eq!(diagnostic.code, Some("LSP_RUSTC_CFG_PROBE_FAILED"));
+        diagnostic.append(b"failed to open nul device for child: Access is denied (os error 5)");
+        assert_eq!(diagnostic.code, Some("LSP_CHILD_NULL_DEVICE_DENIED"));
+        diagnostic.append(&vec![b'x'; STDERR_TAIL * 2]);
+        assert_eq!(diagnostic.tail.len(), STDERR_TAIL);
+        assert_eq!(diagnostic.code, Some("LSP_CHILD_NULL_DEVICE_DENIED"));
+        assert!(!diagnostic.code.unwrap().contains("private"));
+    }
+
 }

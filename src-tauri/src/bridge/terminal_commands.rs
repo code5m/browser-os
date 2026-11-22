@@ -41,27 +41,34 @@ pub fn term_spawn_channel(
     Ok(info)
 }
 
-/// 向终端写入数据（按键/命令/回车/Tab 补全都由真实 shell 处理）。
+/// Queue input for one terminal without holding the global table across I/O.
+/// Queue saturation/oversized input is explicit; the caller may retry.
 #[tauri::command]
 pub fn term_write(app: AppHandle, id: String, data: String) -> Result<(), String> {
     let state = app.state::<AppState>();
-    let mut terms = state.terminals.lock().unwrap();
-    let session = terms.get_mut(&id).ok_or("终端不存在")?;
-    session
-        .writer
-        .write_all(data.as_bytes())
-        .map_err(|e| format!("写入失败: {e}"))?;
-    let _ = session.writer.flush();
-    Ok(())
+    let input = {
+        let terms = state.terminals.lock().unwrap();
+        terms.get(&id).ok_or("终端不存在")?.input()
+    };
+    input.enqueue(data.as_bytes())
 }
 
 /// 调整终端大小（列/行）——M3.a 起真实生效（F5）。
 #[tauri::command]
-pub fn term_resize(app: AppHandle, id: String, cols: u16, rows: u16) -> Result<(), String> {
+pub async fn term_resize(app: AppHandle, id: String, cols: u16, rows: u16) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || term_resize_sync(app, id, cols, rows))
+        .await.map_err(|error| format!("TERM_RESIZE_WORKER_FAILED: {error}"))?
+}
+
+/// Rust-internal callers already running off the UI thread use this helper.
+pub(crate) fn term_resize_sync(app: AppHandle, id: String, cols: u16, rows: u16) -> Result<(), String> {
     let state = app.state::<AppState>();
-    let mut terms = state.terminals.lock().unwrap();
-    let session = terms.get_mut(&id).ok_or("终端不存在")?;
-    let result = terminal::resize(session, cols, rows);
+    let control = {
+        let terms = state.terminals.lock().unwrap();
+        terms.get(&id).ok_or("终端不存在")?.control()
+    };
+    // Native resize may wait on ConPTY; it must not own the table mutex.
+    let result = control.resize(cols, rows);
     if terminal::probe_enabled() {
         eprintln!(
             "[TERM_PROBE] term.resize id={id} cols={cols} rows={rows} ok={}",
@@ -71,20 +78,30 @@ pub fn term_resize(app: AppHandle, id: String, cols: u16, rows: u16) -> Result<(
     result
 }
 
-/// 关闭终端：置 stop → 回收进程组 → 回收 worker/pump 线程（F6/F7）。
+/// Close through the production resource owner. A pending result keeps its
+/// cleanup task registered; a repeated kill waits for that same task.
 #[tauri::command]
-pub fn term_kill(app: AppHandle, id: String) -> Result<(), String> {
+pub async fn term_kill(app: AppHandle, id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || term_kill_sync(app, id))
+        .await.map_err(|error| format!("TERM_CLOSE_WORKER_FAILED: {error}"))?
+}
+
+/// Keep the bounded cleanup wait away from GTK/WebView event callbacks.
+pub(crate) fn term_kill_sync(app: AppHandle, id: String) -> Result<(), String> {
     let state = app.state::<AppState>();
-    let mut terms = state.terminals.lock().unwrap();
-    let removed = terms.remove(&id);
-    // 复核整改（M3 整体裁定 P2）：`terminate_session` 最长约 4 s（进程组宽限 2 s +
-    // 线程回收 2 s）。必须先释放这张表的锁，否则期间 term_write / term_resize /
-    // term_spawn 全部阻塞在互斥量上，前端点「关闭/重启」时会连带卡住其它终端调用。
-    drop(terms);
-    let Some(mut session) = removed else {
-        return Ok(());
+    let removed = {
+        let mut terms = state.terminals.lock().unwrap();
+        if let Some(session) = terms.get_mut(&id) {
+            // Linearize removal with registration. A concurrent repeated kill
+            // can then always find either this session or its cleanup task.
+            session.request_close();
+        }
+        terms.remove(&id)
     };
-    terminal::terminate_session(&mut session)
+    match removed {
+        Some(mut session) => terminal::terminate_session(&mut session),
+        None => terminal::retry_cleanup(&id),
+    }
 }
 
 // ====== M0-0.b 测量钩子（契约 logs/m0-baseline-contract-v1.md §6.1/§6.3） ======

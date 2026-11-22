@@ -70,6 +70,9 @@ pub fn prepare_workspace(app: &AppHandle) -> io::Result<()> {
         // Diagnostics are optional. Never fall back to a public temporary file.
         eprintln!("[startup] private diagnostic log unavailable: {:?}", error.kind());
     }
+    let tabs = app.try_state::<tauri_plugin_browser_tabs::TabManagerState>()
+        .ok_or_else(|| io::Error::other("BROWSER_PROFILE_MANAGER_UNAVAILABLE"))?;
+    tabs.prepare_storage().map_err(|error| io::Error::other(error.to_string()))?;
     release_pending_open_urls(app)
 }
 
@@ -84,11 +87,11 @@ pub fn report_failure(error: &dyn std::fmt::Display) {
         // This OS dialog needs no WebView profile and remains available when
         // private-directory preparation itself failed. Never offer an unsafe
         // fallback, delete user data, or request elevation automatically.
-        let message = if detail.contains("PRIVATE_DATA_DIR") {
+        let message = if detail.contains("PRIVATE_DATA_DIR") || detail.contains("BROWSER_PROFILE") {
             // Private-storage errors contain stage/counters/native codes, never
             // private filenames or account names. Keep the dialog bounded.
             let diagnostic: String = detail.chars().take(1024).collect();
-            format!("BrowserOS 无法安全打开应用数据目录。\n\n{diagnostic}\n\n请关闭其他 BrowserOS 实例，检查当前用户对应用数据目录的所有权、访问权限和磁盘状态后重试。数据未被删除；程序没有使用不安全的备用目录。")
+            format!("BrowserOS 无法安全打开应用数据或浏览器配置目录。\n\n{diagnostic}\n\n请关闭其他 BrowserOS 实例，检查当前用户对应用数据目录的所有权、访问权限和磁盘状态后重试。数据未被删除；程序没有使用不安全的备用目录。")
         } else {
             "BrowserOS 初始化失败，程序已安全退出。\n\n错误代码：STARTUP_INITIALIZATION_FAILED\n\n请查看应用诊断日志后重试。".to_string()
         };

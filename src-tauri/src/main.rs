@@ -230,12 +230,15 @@ fn begin_graceful_shutdown(app: tauri::AppHandle, trigger: &'static str) {
                 started.elapsed().as_millis()
             );
             log_shutdown_report(&report);
+            // The coordinator finishing is not proof that every resource was
+            // reclaimed. Preserve failure/pending status in the process exit.
+            let exit_code = if report.ok() { 0 } else { 1 };
             worker_app
                 .state::<ExitLifecycleState>()
                 .completed
                 .store(true, std::sync::atomic::Ordering::Release);
             let exit_handle = worker_app.clone();
-            if let Err(error) = worker_app.run_on_main_thread(move || exit_handle.exit(0)) {
+            if let Err(error) = worker_app.run_on_main_thread(move || exit_handle.exit(exit_code)) {
                 eprintln!("[shutdown] scheduling final exit failed: {error}");
                 worker_app.exit(1);
             }
@@ -1161,7 +1164,7 @@ fn run_grid_gui_regression(app: tauri::AppHandle) {
                     "printf 'M0_6C_TERMINAL_OK\\n'\n".to_string(),
                 )?;
                 sleep_ms(800);
-                bridge::term_kill(app.clone(), term.id)?;
+                bridge::term_kill_sync(app.clone(), term.id)?;
                 let stats = bridge::resource_stats_blocking(app.clone());
                 native_eval_in_tab(
                     app.clone(),
@@ -1405,7 +1408,7 @@ fn run_m0_driver(app: tauri::AppHandle, cfg: bridge::M0Config) {
             let close_result = match opened_resource {
                 Ok(OpenedResource::Tab(id)) => bridge::tab_close_native(app.clone(), id),
                 Ok(OpenedResource::Grid) => bridge::close_grid_blocking(app.clone()),
-                Ok(OpenedResource::Terminal(id)) => bridge::term_kill(app.clone(), id),
+                Ok(OpenedResource::Terminal(id)) => bridge::term_kill_sync(app.clone(), id),
                 Err(error) => Err(error),
             };
             if cfg.driver == "tab" && close_result.is_ok() {
@@ -1619,7 +1622,7 @@ fn main() {
             if let Some(main_wv) = app.get_webview("main") {
                 let _ = tauri_plugin_browser_tabs::ensure_native_layout(&main_wv);
             }
-            let _ = std::fs::write(std::env::temp_dir().join("mvp-life.log"), "main-window-created-and-shown\n");
+            workspace::record_lifecycle(app.handle(), "main-window-created-and-shown");
             // 宫格子进程管理器：注入 AppHandle（事件转发/定位换算/崩溃自愈）
             app.state::<AppState>()
                 .grid_manager

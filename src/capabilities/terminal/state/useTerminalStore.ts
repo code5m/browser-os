@@ -55,6 +55,122 @@ export const useTerminalStore = defineStore("terminal", () => {
   const termBuffers = new Map<string, string[]>();
   const TERM_TEMP_HISTORY_LIMIT = 40;
 
+  // Input delivery belongs to this session owner, including hidden/remounted
+  // panes. Bound both payload bytes and request count; never chain an unbounded
+  // series of closures retaining pasted text.
+  const TERM_INPUT_CHUNK_BYTES = 16 * 1024;
+  const TERM_INPUT_PENDING_BYTES = 1024 * 1024;
+  const TERM_INPUT_PENDING_REQUESTS = 128;
+  const TERM_INPUT_RETRY_MS = 2_000;
+  const TERM_INPUT_RETRY_PAUSE_MS = 25;
+  type PendingInput = {
+    encoded: Uint8Array;
+    resolve: (accepted: boolean) => void;
+  };
+  type InputQueue = {
+    items: PendingInput[];
+    bytes: number;
+    running: boolean;
+    stopped: boolean;
+    cancelWait?: () => void;
+  };
+  const inputQueues = new Map<string, InputQueue>();
+  const inputClosed = new Set<string>();
+  const pendingKills = new Map<string, Promise<boolean>>();
+  const termNotices = ref<Record<string, string>>({});
+  const closingTerms = ref<Record<string, boolean>>({});
+  const inputEncoder = new TextEncoder();
+  const inputDecoder = new TextDecoder("utf-8", { fatal: true });
+
+  function termNotice(id: string): string {
+    return termNotices.value[id] ?? "";
+  }
+  function isTermClosing(id: string): boolean {
+    return closingTerms.value[id] === true;
+  }
+  function setTermNotice(id: string, message: string, notify = true) {
+    const previous = termNotices.value[id];
+    termNotices.value[id] = message;
+    if (notify && previous !== message) layout.showToast(message);
+  }
+  function cancelTermInput(id: string) {
+    inputClosed.add(id);
+    const queue = inputQueues.get(id);
+    if (!queue) return;
+    queue.stopped = true;
+    queue.cancelWait?.();
+    queue.cancelWait = undefined;
+    for (const item of queue.items) item.resolve(false);
+    queue.items = [];
+    queue.bytes = 0;
+  }
+  function pauseInput(queue: InputQueue, ms: number): Promise<boolean> {
+    if (queue.stopped) return Promise.resolve(false);
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = (running: boolean) => {
+        if (done) return;
+        done = true;
+        window.clearTimeout(timer);
+        queue.cancelWait = undefined;
+        resolve(running);
+      };
+      const timer = window.setTimeout(() => finish(!queue.stopped), ms);
+      queue.cancelWait = () => finish(false);
+    });
+  }
+  function inputFailure(id: string, error: unknown) {
+    const detail = String((error as { message?: unknown })?.message ?? error);
+    cancelTermInput(id);
+    if (isTermClosing(id)) return;
+    if (detail.includes("TERM_INPUT_CLOSED") || detail.includes("终端不存在")) {
+      setTermNotice(id, "终端已停止，本次输入未完整发送。可以重启终端后重试。");
+    } else {
+      setTermNotice(id, "输入未完整发送，后续输入已暂停。请核对终端内容并重启后重试。");
+    }
+  }
+  async function drainInput(id: string, queue: InputQueue): Promise<void> {
+    if (queue.running) return;
+    queue.running = true;
+    try {
+      while (!queue.stopped && queue.items.length > 0) {
+        const item = queue.items[0];
+        let offset = 0;
+        while (!queue.stopped && offset < item.encoded.length) {
+          let end = Math.min(offset + TERM_INPUT_CHUNK_BYTES, item.encoded.length);
+          // A UTF-8 continuation byte cannot start the next native IPC chunk.
+          while (end < item.encoded.length && (item.encoded[end] & 0xc0) === 0x80) end -= 1;
+          const chunk = inputDecoder.decode(item.encoded.subarray(offset, end));
+          const deadline = Date.now() + TERM_INPUT_RETRY_MS;
+          for (;;) {
+            if (queue.stopped) return;
+            try {
+              await bridge.termWrite(id, chunk);
+              break;
+            } catch (error) {
+              if (queue.stopped) return;
+              const detail = String((error as { message?: unknown })?.message ?? error);
+              const remaining = deadline - Date.now();
+              if (!detail.includes("TERM_INPUT_QUEUE_FULL") || remaining <= 0) throw error;
+              if (!await pauseInput(queue, Math.min(TERM_INPUT_RETRY_PAUSE_MS, remaining))) return;
+            }
+          }
+          offset = end;
+        }
+        if (queue.stopped) return;
+        queue.items.shift();
+        queue.bytes -= item.encoded.length;
+        item.resolve(true);
+      }
+    } catch (error) {
+      // Already accepted chunks are never replayed: retry only the chunk for
+      // which the backend explicitly refused queue admission.
+      inputFailure(id, error);
+    } finally {
+      queue.running = false;
+    }
+  }
+
   // M0-0.b 测量配置（契约 §6.3）：term-throughput 模式下 startShell 后自动驱动 10 MiB 负载
   const m0Cfg = ref<M0Config | null>(null);
   // 前端发送吞吐负载的时刻（epoch ms），随 m0_term_report 上报用于计算 elapsed
@@ -127,7 +243,7 @@ export const useTerminalStore = defineStore("terminal", () => {
     if (!isCodeArtsCompatibility || !asksToContinue) return;
     lastAutoConfirmAt.set(id, Date.now());
     confirmScans.set(id, "");
-    window.setTimeout(() => bridge.termWrite(id, "\r").catch(() => {}), 120);
+    window.setTimeout(() => { void termWrite(id, "\r"); }, 120);
   }
 
   function bindM0ThroughputStart(fn: (() => void) | null) {
@@ -153,11 +269,14 @@ export const useTerminalStore = defineStore("terminal", () => {
       termBuffers.set(id, []);
       if (!activeTermId.value) activeTermId.value = id;
       resetDroppedStats();
-      if (cwd) await bridge.termWrite(id, "cd " + cwd + "\n").catch(() => {});
+      if (cwd) await termWrite(id, "cd " + cwd + "\n");
       maybeRunM0Throughput(id);
       return id;
     } catch (e: any) {
-      layout.showToast("终端启动失败: " + (e?.message ?? e));
+      const detail = String(e?.message ?? e);
+      layout.showToast(detail.includes("TERM_SESSION_LIMIT")
+        ? "终端数量已达上限，部分终端可能仍在关闭。请关闭现有终端或稍后重试。"
+        : "终端启动失败: " + detail);
       return "";
     }
   }
@@ -168,15 +287,52 @@ export const useTerminalStore = defineStore("terminal", () => {
   function addTermPane() {
     spawnTerm();
   }
-  async function killTerm(id: string) {
-    await bridge.termKill(id).catch(() => {});
-    termPanes.value = termPanes.value.filter((p) => p.id !== id);
+  function removeClosedTerm(id: string) {
+    termPanes.value = termPanes.value.filter((pane) => pane.id !== id);
     termWriters.delete(id);
-    // 会话结束即清空该 pane 的临时历史（禁止跨会话残影），随后移除桶。
     clearTermHistory(id);
     termHistories.delete(id);
     termBuffers.delete(id);
+    inputQueues.delete(id);
+    inputClosed.delete(id);
+    delete termNotices.value[id];
+    delete closingTerms.value[id];
     if (activeTermId.value === id) activeTermId.value = termPanes.value[0]?.id ?? "";
+  }
+  function killTerm(id: string): Promise<boolean> {
+    const pending = pendingKills.get(id);
+    if (pending) return pending;
+    // Stop accepting input before waiting for the native close command.
+    // This also wakes any queue-full retry timer.
+    cancelTermInput(id);
+    closingTerms.value[id] = true;
+    setTermNotice(id, "终端正在关闭…", false);
+    const operation = (async () => {
+      try {
+        await bridge.termKill(id);
+        removeClosedTerm(id);
+        return true;
+      } catch (error) {
+        const detail = String((error as { message?: unknown })?.message ?? error);
+        if (detail.includes("TERM_CLEANUP_COMPLETED_WITH_ERRORS:")) {
+          // The native owner explicitly confirmed every resource is reaped.
+          // Keep the warning visible without treating a historical error as a
+          // permanently pending terminal.
+          removeClosedTerm(id);
+          layout.showToast("终端已关闭，关闭过程中曾出现异常。可以重新打开终端。");
+          return true;
+        }
+        setTermNotice(id, detail.includes("TERM_CLEANUP_PENDING")
+          ? "终端正在关闭，资源回收尚未完成。稍后可点击“检查关闭状态”。"
+          : "终端关闭尚未完成。请再次检查关闭状态。");
+        // Preserve the pane and its retry action until actual cleanup finishes.
+        return false;
+      } finally {
+        pendingKills.delete(id);
+      }
+    })();
+    pendingKills.set(id, operation);
+    return operation;
   }
 
   // M0-0.b 终端吞吐（契约 §6.3）：term-throughput 模式下 shell 就绪后提交固定
@@ -187,12 +343,10 @@ export const useTerminalStore = defineStore("terminal", () => {
       if (!m0ThroughputStart) return;
       m0ThroughputStart();
       m0StartTs.value = Date.now();
-      bridge
-        .termWrite(
+      void termWrite(
           id,
           "stty -echo; p='__M0_TERM_'; printf '%s' \"${p}BEGIN__\"; head -c 10485760 /dev/zero | tr '\\0' 'x'; printf '%s' \"${p}END__\"; stty echo\n"
-        )
-        .catch(() => {});
+        );
     }, 1500);
   }
 
@@ -216,11 +370,38 @@ export const useTerminalStore = defineStore("terminal", () => {
     else if (k.length === 1) data = k;
     else return;
     e.preventDefault();
-    await bridge.termWrite(tid, data);
+    await termWrite(tid, data);
   }
 
-  async function termWrite(id: string, data: string) {
-    if (id) await bridge.termWrite(id, data);
+  function termWrite(id: string, data: string): Promise<boolean> {
+    if (!id || !termPanes.value.some((pane) => pane.id === id)) return Promise.resolve(false);
+    if (inputClosed.has(id) || isTermClosing(id)) return Promise.resolve(false);
+    if (!data) return Promise.resolve(true);
+    // Reject huge text before encoding; UTF-8 cannot be shorter than the
+    // original UTF-16 code-unit count for these strings.
+    if (data.length > TERM_INPUT_PENDING_BYTES) {
+      setTermNotice(id, "有一段输入未发送：内容过长，请分成较小的段落后重试。");
+      return Promise.resolve(false);
+    }
+    const encoded = inputEncoder.encode(data);
+    let queue = inputQueues.get(id);
+    if (!queue) {
+      queue = { items: [], bytes: 0, running: false, stopped: false };
+      inputQueues.set(id, queue);
+    }
+    if (queue.stopped) return Promise.resolve(false);
+    if (encoded.length > TERM_INPUT_PENDING_BYTES
+      || queue.bytes + encoded.length > TERM_INPUT_PENDING_BYTES
+      || queue.items.length >= TERM_INPUT_PENDING_REQUESTS) {
+      setTermNotice(id, "有一段输入未发送：等待发送的内容过多，请稍后分段重试。");
+      return Promise.resolve(false);
+    }
+    const accepted = new Promise<boolean>((resolve) => {
+      queue!.items.push({ encoded, resolve });
+      queue!.bytes += encoded.length;
+    });
+    void drainInput(id, queue);
+    return accepted;
   }
 
   function toggleTerminal() {
@@ -271,6 +452,14 @@ export const useTerminalStore = defineStore("terminal", () => {
       return;
     }
     if (msg.kind === "exit") {
+      cancelTermInput(id);
+      if (!isTermClosing(id)) {
+        const reason = String(msg.reason ?? "");
+        setTermNotice(id, reason === "input_failed"
+          ? "输入传输失败，部分输入可能未发送。请核对终端内容并重启后重试。"
+          : reason === "eof" ? "终端进程已退出，可以重启终端。"
+          : "终端输出连接已断开，请重启后重试。", reason !== "eof");
+      }
       probeFeRecv(id, data, "exit");
       if (termWriters.has(id)) termWriters.get(id)!(data);
       return;
@@ -320,6 +509,8 @@ export const useTerminalStore = defineStore("terminal", () => {
     termKeydown,
     termWrite,
     killTerm,
+    termNotice,
+    isTermClosing,
     setTermGrid,
     setTermGridCount,
     setActiveTerm,

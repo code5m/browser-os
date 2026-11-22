@@ -551,13 +551,15 @@ pub fn register_shutdown_tasks(app: &AppHandle) -> Result<(), String> {
     {
         let app = app.clone();
         coordinator.register("kill-terminals", move || {
-            let sessions: Vec<(String, TerminalSession)> = app
-                .state::<AppState>()
-                .terminals
-                .lock()
-                .unwrap()
-                .drain()
-                .collect();
+            let sessions: Vec<(String, TerminalSession)> = {
+                let state = app.state::<AppState>();
+                let mut terminals = state.terminals.lock().unwrap();
+                // Register every owner before removing table entries. This
+                // prevents a concurrent IPC close from observing false success
+                // and starts cleanup for all sessions before bounded waits.
+                for session in terminals.values_mut() { session.request_close(); }
+                terminals.drain().collect()
+            };
             let mut errors = Vec::new();
             for (id, mut session) in sessions {
                 // M3.a：统一走进程组回收 + 线程回收（F6/F7），不再只杀直接子进程。

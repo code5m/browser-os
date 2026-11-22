@@ -1039,3 +1039,10 @@ mod cross_platform_file_manager_tests {
         std::fs::remove_dir_all(&outer).unwrap();
     }
 }
+
+/// Resolve a configured Unix data-base alias before publishing the strict
+/// application-owned root. Does not relax file-manager path authorization.
+#[cfg(not(target_os = "windows"))]
+pub fn prepare_application_data_directory(base: &Path) -> std::io::Result<std::path::PathBuf> {
+    private_directory_unix::prepare_application_data_directory(base)
+}

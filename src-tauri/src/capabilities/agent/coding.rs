@@ -352,14 +352,27 @@ pub(super) fn lsp_module_sources(
     root: &Path,
     entry: &str,
 ) -> Result<Vec<(String, String)>, String> {
+    lsp_module_sources_with_checkpoint(root, entry, || Ok(()))
+}
+/// Windows LSP threads its startup cancellation/deadline through this shared
+/// scan. The legacy entry above keeps the existing Linux behavior unchanged.
+pub(super) fn lsp_module_sources_with_checkpoint(
+    root: &Path,
+    entry: &str,
+    checkpoint: impl Fn() -> Result<(), String>,
+) -> Result<Vec<(String, String)>, String> {
+    checkpoint()?;
     validate_lsp_document(root, entry, "")?;
+    checkpoint()?;
     let directory = Path::new(entry).parent().ok_or("LSP_MODULE_ROOT_INVALID")?;
     let mut queue = vec![(directory.to_string_lossy().into_owned(), 0usize)];
     let (mut result, mut scanned, mut bytes) = (Vec::new(), 0usize, 0usize);
     while let Some((directory, depth)) = queue.pop() {
+        checkpoint()?;
         for entry in
             fs::read_dir(resolve(root, &directory, false)?).map_err(|_| "LSP_MODULE_SCAN_FAILED")?
         {
+            checkpoint()?;
             scanned += 1;
             if scanned > 2000 {
                 return Err("LSP_MODULE_SCAN_LIMIT".into());
@@ -388,10 +401,12 @@ pub(super) fn lsp_module_sources(
                 if result.len() >= 128 {
                     return Err("LSP_MODULE_FILE_LIMIT".into());
                 }
+                checkpoint()?;
                 let content = read_file(root, &path)?["content"]
                     .as_str()
                     .ok_or("LSP_MODULE_READ_FAILED")?
                     .to_owned();
+                checkpoint()?;
                 bytes += content.len();
                 if bytes > 4 * 1024 * 1024 {
                     return Err("LSP_MODULE_SIZE_LIMIT".into());
@@ -400,6 +415,7 @@ pub(super) fn lsp_module_sources(
             }
         }
     }
+    checkpoint()?;
     result.sort_by(|a, b| a.0.cmp(&b.0));
     Ok(result)
 }
@@ -2286,5 +2302,27 @@ mod windows_safe_boundary_tests {
             "two-old"
         );
         std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+
+#[cfg(test)]
+mod lsp_checkpoint_tests {
+    use super::*;
+    use std::cell::Cell;
+
+    #[test]
+    fn lsp_module_scan_observes_cancellation_before_reading_sources() {
+        let fixture = std::env::temp_dir().join(format!("lsp-scan-checkpoint-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(fixture.join("src")).unwrap();
+        fs::write(fixture.join("src/lib.rs"), "fn fixture() {}").unwrap();
+        let calls = Cell::new(0usize);
+        let error = lsp_module_sources_with_checkpoint(&fixture, "src/lib.rs", || {
+            calls.set(calls.get() + 1);
+            if calls.get() >= 4 { Err("TEST_CANCELLED".into()) } else { Ok(()) }
+        }).unwrap_err();
+        assert_eq!(error, "TEST_CANCELLED");
+        assert_eq!(calls.get(), 4);
+        fs::remove_dir_all(fixture).unwrap();
     }
 }

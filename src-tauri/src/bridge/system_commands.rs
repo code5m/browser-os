@@ -35,18 +35,35 @@ pub fn extract_open_urls(argv: &[String]) -> Vec<String> {
         .collect()
 }
 
+/// URLs can embed credentials in the host, path, query or fragment. Persistent
+/// records contain no supplied text, including malformed URL/parser errors.
+fn external_url_audit_summary(raw: &str) -> String {
+    let kind = match url::Url::parse(raw) {
+        Ok(parsed) => match parsed.scheme() {
+            "http" => "http",
+            "https" => "https",
+            _ => "other",
+        },
+        Err(_) => "invalid",
+    };
+    format!("scheme={kind} bytes={}", raw.len())
+}
+
 /// M1-4：处理一个外部打开 URL 请求。安全边界：仅放行 http/https，
 /// 其余 scheme 拒绝 + 审计 + 通知前端 toast；合法 URL 进缓存队列，
 /// 前端就绪后发轻提示事件（URL 本体由前端拉取，防事件竞态丢失）。
 pub fn handle_open_url(app: &AppHandle, url: &str) {
-    if let Err(e) = crate::security_policy::check_openable_url(url) {
-        eprintln!("[open-url] rejected: {e}");
-        workspace::log_audit(app, "open_url_rejected", url.to_string());
+    let summary = external_url_audit_summary(url);
+    if crate::security_policy::check_openable_url(url).is_err() {
+        // PolicyError may contain the original URL. Only record a fixed reason
+        // and non-content metadata; the trusted UI still receives the request.
+        eprintln!("[open-url] rejected: URL_POLICY_REJECTED {summary}");
+        workspace::log_audit(app, "open_url_rejected", format!("URL_POLICY_REJECTED {summary}"));
         let _ = app.emit("app://open-url-rejected", serde_json::json!({ "url": url }));
         return;
     }
-    eprintln!("[open-url] accepted: {url}");
-    workspace::log_audit(app, "open_url", url.to_string());
+    eprintln!("[open-url] accepted: {summary}");
+    workspace::log_audit(app, "open_url", summary);
     let state = app.state::<AppState>();
     state
         .pending_open_urls
@@ -355,4 +372,29 @@ pub fn m0_config(app: AppHandle) -> Option<serde_json::Value> {
         "ready_file": cfg.ready_file,
         "report_dir": cfg.report_dir,
     }))
+}
+
+#[cfg(test)]
+mod external_url_privacy_tests {
+    use super::external_url_audit_summary;
+
+    #[test]
+    fn external_url_audit_never_preserves_credentials_or_user_text() {
+        for raw in [
+            "https://username:password@example.test/path-secret?token=query-secret#fragment-secret",
+            "https://secret-subdomain.example.test/code-secret",
+            "custom:private-payload",
+            "invalid\nsecret",
+        ] {
+            let record = external_url_audit_summary(raw);
+            assert!(!record.contains("secret"));
+            assert!(!record.contains("username"));
+            assert!(!record.contains("password"));
+            assert!(!record.contains("example"));
+            assert!(!record.contains("payload"));
+            assert!(!record.contains('\n'));
+        }
+        assert_eq!(external_url_audit_summary("https://a.test/"),
+            "scheme=https bytes=15");
+    }
 }

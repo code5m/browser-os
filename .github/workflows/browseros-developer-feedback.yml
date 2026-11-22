@@ -6,6 +6,21 @@ on:
       - '**'
   workflow_dispatch:
     inputs:
+      windows_native:
+        description: Explicitly run the Windows/Linux native matrix instead of Quick Gate
+        type: boolean
+        default: false
+        required: false
+      source_sha:
+        description: Full source SHA matching the selected repair branch revision (native mode only)
+        type: string
+        default: ''
+        required: false
+      build_windows_installer:
+        description: Also build an UNVERIFIED diagnostic NSIS installer (native mode only)
+        type: boolean
+        default: false
+        required: false
       build_preview:
         description: Build an installable Debian preview for manual testing
         type: boolean
@@ -21,6 +36,7 @@ concurrency:
 
 jobs:
   quick:
+    if: inputs.windows_native != true
     name: Quick Gate
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -42,7 +58,7 @@ jobs:
     name: Installable Preview (.deb)
     needs: quick
     # No automatic .deb on push: native Release compilation is opt-in only.
-    if: github.event_name == 'workflow_dispatch' && inputs.build_preview == true
+    if: github.event_name == 'workflow_dispatch' && inputs.build_preview == true && inputs.windows_native != true
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
@@ -95,3 +111,15 @@ jobs:
             preview-evidence/*
           if-no-files-found: error
           retention-days: 7
+
+  # This file already has workflow_dispatch on the default branch. Select the
+  # repair branch as the dispatch ref; the relative reusable workflow is loaded
+  # from that same commit. No default-branch edit, PR or merge is required.
+  windows-native:
+    if: github.event_name == 'workflow_dispatch' && inputs.windows_native == true
+    uses: ./.github/workflows/windows-linux-v2-experimental.yml
+    with:
+      source_sha: ${{ inputs.source_sha }}
+      build_installer: ${{ inputs.build_windows_installer }}
+    permissions:
+      contents: read

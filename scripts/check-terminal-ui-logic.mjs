@@ -227,6 +227,106 @@ const leaked = storageWrites.filter(
 assert(leaked.length === 0, `E1-T8 终端输出/历史零落盘（泄漏 ${leaked.length} 条）`);
 
 // ===========================================================================
+// Input ownership/backpressure regressions. The native bridge is substituted;
+// these assertions prove frontend ordering/cancellation, not ConPTY support.
+// ===========================================================================
+{
+  const pane = await terminal.spawnTerm();
+  const chunks = [];
+  bridge.termWrite = async (id, data) => { chunks.push([id, data]); };
+  const unicode = "a".repeat(16 * 1024 - 1) + "😀中文".repeat(2_000) + "tail";
+  assert(await terminal.termWrite(pane, unicode), "INPUT-1 UTF-8 paste is admitted");
+  assert(chunks.map(([, text]) => text).join("") === unicode,
+    "INPUT-1a chunk boundaries preserve every Unicode character");
+  assert(chunks.length > 1 && chunks.every(([, text]) => new TextEncoder().encode(text).length <= 16 * 1024),
+    "INPUT-1b each native IPC chunk respects the byte limit");
+
+  chunks.length = 0;
+  let releaseFirst;
+  let first = true;
+  bridge.termWrite = async (id, data) => {
+    chunks.push([id, data]);
+    if (first) {
+      first = false;
+      await new Promise((resolve) => { releaseFirst = resolve; });
+    }
+  };
+  const a = terminal.termWrite(pane, unicode);
+  const b = terminal.termWrite(pane, "AFTER-PASTE");
+  assert(chunks.length === 1, "INPUT-2 only one native admission is in flight per session");
+  releaseFirst();
+  assert(await a && await b, "INPUT-2a both ordered requests finish");
+  assert(chunks.map(([, text]) => text).join("") === unicode + "AFTER-PASTE",
+    "INPUT-2b later keystrokes cannot interleave a multi-chunk paste");
+
+  chunks.length = 0;
+  bridge.termWrite = async (id, data) => { chunks.push([id, data]); };
+  assert(!await terminal.termWrite(pane, "x".repeat(1024 * 1024 + 1)),
+    "INPUT-3 oversized input is refused before any native admission");
+  assert(chunks.length === 0 && terminal.termNotice(pane).includes("未发送"),
+    "INPUT-3a refused input has a visible Chinese notice");
+
+  let attempts = 0;
+  bridge.termWrite = async () => {
+    attempts += 1;
+    if (attempts < 3) throw new Error("TERM_INPUT_QUEUE_FULL");
+  };
+  assert(await terminal.termWrite(pane, "retry-this-chunk"), "INPUT-4 bounded queue-full retry recovers");
+  assert(attempts === 3, "INPUT-4a only the explicitly unaccepted chunk is retried");
+  await terminal.killTerm(pane);
+}
+{
+  const pane = await terminal.spawnTerm();
+  let attempts = 0;
+  bridge.termWrite = async () => { attempts += 1; throw new Error("TERM_INPUT_QUEUE_FULL"); };
+  const pending = terminal.termWrite(pane, "cancel while backend queue is full");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await terminal.killTerm(pane);
+  assert(!await pending, "INPUT-5 close cancels a pending input acknowledgement");
+  const afterClose = attempts;
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert(attempts === afterClose, "INPUT-5a close cancels the retry timer and sends no later input");
+}
+{
+  const pane = await terminal.spawnTerm();
+  let admissions = 0;
+  bridge.termWrite = async () => { admissions += 1; };
+  terminal.onTermChannelMsg({
+    id: pane, kind: "exit", reason: "input_failed",
+    data: "\r\n[输入传输失败]\r\n",
+  });
+  assert(terminal.termNotice(pane).includes("输入传输失败"),
+    "INPUT-6 asynchronous native input failure is visible without another keystroke");
+  assert(!await terminal.termWrite(pane, "late") && admissions === 0,
+    "INPUT-6a failed native input closes the frontend sender");
+  await terminal.killTerm(pane);
+}
+{
+  const pane = await terminal.spawnTerm();
+  const normalKill = bridge.termKill;
+  bridge.termKill = async () => { throw new Error("TERM_CLEANUP_PENDING: fixture"); };
+  assert(!await terminal.killTerm(pane), "CLOSE-1 pending cleanup is not a completed close");
+  assert(terminal.termPanes.some((p) => p.id === pane) && terminal.isTermClosing(pane),
+    "CLOSE-1a pending cleanup retains the pane and retry action");
+  assert(terminal.termNotice(pane).includes("资源回收尚未完成"),
+    "CLOSE-1b pending cleanup has a readable status");
+  bridge.termKill = normalKill;
+  assert(await terminal.killTerm(pane), "CLOSE-2 repeated close observes eventual completion");
+  assert(!terminal.termPanes.some((p) => p.id === pane),
+    "CLOSE-2a only completed cleanup removes the pane");
+}
+{
+  const pane = await terminal.spawnTerm();
+  const normalKill = bridge.termKill;
+  bridge.termKill = async () => { throw new Error("TERM_CLEANUP_COMPLETED_WITH_ERRORS: recorded fixture fault"); };
+  assert(await terminal.killTerm(pane), "CLOSE-3 confirmed completed cleanup with diagnostics permits restart");
+  assert(!terminal.termPanes.some((p) => p.id === pane),
+    "CLOSE-3a completed cleanup diagnostics must not trap a pane as permanently pending");
+  bridge.termKill = normalKill;
+}
+bridge.termWrite = async (id, data) => { calls.push(["write", id, data]); };
+
+// ===========================================================================
 // E2 resize 静默窗口（假时钟，行为完全确定）
 // ===========================================================================
 

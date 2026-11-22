@@ -5,7 +5,7 @@
   "as_of": "2026-11-22",
   "reference_native_run": "https://github.com/code5m/browser-os/actions/runs/44321240531",
   "reference_head": "7783dbd1a175c6fd0bab283ddf63fb0220887a6c",
-  "current_source_patch": "implemented_not_executed",
+  "current_source_patch": "second_round_source_repairs_not_executed",
   "scope": "Windows/Linux source repairs and macOS platform preflight; macOS product support remains unsupported",
   "note": "This repair branch was requested without CI, tests, validators, builds or merge. Historical native results belong only to reference_head. Current native/installer/GUI/performance evidence is NOT_RUN; no current CODE_PASS, PACKAGE_PASS or GUI_PASS claim.",
   "capabilities": [
@@ -15,7 +15,7 @@
       "windows": "source_present_current_native_not_run",
       "macos": "unsupported",
       "severity": "P1",
-      "notes": "Application data and WebView2 profiles share native SID/DACL policy. Private-root preparation precedes windows and workers; startup errors are diagnostic and fail closed. Installed Win11/WebView2/BFC session behavior NOT_RUN.",
+      "notes": "Workspace and WebView2 now retain shared kernel preparation epochs: first consumer performs cold deep audit, Grid joins check the root only, tab creation never traverses active cache. No measured cold-start or installed GUI result.",
       "previous_record": {
         "linux": "implemented_history_ci_pass",
         "windows": "implemented_native_gui_unverified"
@@ -39,7 +39,7 @@
       "windows": "source_present_current_native_not_run",
       "macos": "unsupported",
       "severity": "P2",
-      "notes": "ConPTY tests run without GetConsoleWindow skip; writer, waiter handle, resize and worker teardown source repaired. Actual terminal I/O and process-tree cleanup NOT_RUN.",
+      "notes": "Bounded per-session input, cancellable output retries, independent control and retained cleanup ownership; production ConPTY close path used by native regression definitions. Frontend backpressure/error handling included. Actual I/O/process/thread cleanup NOT_RUN.",
       "previous_record": {
         "linux": "implemented_history_ci_pass",
         "windows": "implemented_conpty_native_history_pass"
@@ -111,7 +111,7 @@
       "windows": "source_present_current_native_not_run",
       "macos": "unsupported",
       "severity": "P1",
-      "notes": "Toolchain preparation fails explicitly; restricted rust-project-no-cargo mode retains compilation_verified=false. Profile state and snapshot ACL ownership remain separate from app-data policy. Diagnostics/symbol/hover/definition and cross-package negatives NOT_RUN.",
+      "notes": "Native exact AppContainer policy is separate from owner-only policy; actual-byte and entry limits with shared deadline/cancellation. LSP active/start/deferred cleanup retain capacity until released, production fixed-code lowbox/cfg diagnostics. Restricted no-Cargo mode keeps compilation_verified=false. Native results NOT_RUN.",
       "previous_record": {
         "linux": "implemented_history_ci_pass",
         "windows": "source_patched_lsp_document_contract_appcontainer_native_unverified"
@@ -135,7 +135,7 @@
       "windows": "source_present_current_native_not_run",
       "macos": "unsupported",
       "severity": "P1",
-      "notes": "Previous Windows synthetic CI pass is historical only. Shared WebView2 private-profile policy source repaired; real login, multi-page readback and restart persistence NOT_RUN.",
+      "notes": "Shared prepared WebView2 profile source changed; previous synthetic CI remains historical. No real login, multipage collection, restart session persistence or GUI execution this round.",
       "previous_record": {
         "linux": "implemented",
         "windows": "synthetic_ci_pass"
@@ -171,7 +171,7 @@
       "windows": "manual_opt_in_not_run",
       "macos": "not_applicable",
       "severity": "P1",
-      "notes": "Manual-only exact-source workflow; NSIS requires build_installer=true and yields UNVERIFIED diagnostic artifact. No current package, install, signing or GUI evidence.",
+      "notes": "Dispatch through Developer Feedback path already on default master, using repair ref + matching source SHA; reusable native workflow only. NSIS remains explicitly opt-in UNVERIFIED; package/GUI/signing NOT_RUN.",
       "previous_record": {
         "linux": "not_applicable",
         "windows": "manual_workflow_dispatch_pending"
@@ -207,7 +207,7 @@
       "windows": "source_shared_sid_dacl_handle_policy_native_not_run",
       "macos": "source_private_root_guard_only_native_not_run",
       "severity": "P0",
-      "notes": "Linux effective UID/mode checked on directory descriptors; macOS extended ACL is handled natively. This is a private-root policy, not completion of macOS filesystem capability APIs."
+      "notes": "Windows owner/SYSTEM policy plus cross-process kernel readiness epochs; only cold preparation deep-audits. Unix configuration-selected base aliases resolve once, application leaf still no-follow/UID/0700 and macOS extended ACL. NOT_RUN; macOS product APIs still unsupported."
     },
     {
       "capability": "credential_store",
@@ -216,9 +216,17 @@
       "macos": "apple_native_keychain_enabled_not_run",
       "severity": "P1",
       "notes": "Explicit native backends; Keychain feature and registry-verified lock dependency entries added. No OS keyring operation executed."
+    },
+    {
+      "capability": "external_url_audit",
+      "linux": "source_patched_not_run",
+      "windows": "source_patched_not_run",
+      "macos": "source_patched_not_run",
+      "severity": "P1",
+      "notes": "No supplied URL text in diagnostic/audit records; OS file lock spans complete audit read/modify/replace; lifecycle marker uses bounded private audit channel. Regressions defined only."
     }
   ],
-  "source_base": "285542f57bd055592b4d5019e5a89e8555bcc805",
+  "source_base": "fecfae2b062fa281a0ced3d0f006dcef5ce39ee2",
   "current_execution": {
     "ci": "NOT_RUN",
     "tests": "NOT_RUN",
@@ -226,8 +234,17 @@
     "build": "NOT_RUN",
     "windows_native": "NOT_RUN",
     "linux_native": "NOT_RUN",
-    "installed_gui": "GUI_PENDING",
+    "installed_gui": "NOT_RUN",
     "performance": "NOT_RUN",
     "merge": "NOT_REQUESTED"
+  },
+  "previous_source_base": "285542f57bd055592b4d5019e5a89e8555bcc805",
+  "dispatch_entry": {
+    "workflow": ".github/workflows/browseros-developer-feedback.yml",
+    "ref": "fix/windows-native-security-convergence-20261122",
+    "windows_native": true,
+    "source_sha": "must_equal_selected_ref_commit",
+    "native_implementation": ".github/workflows/windows-linux-v2-experimental.yml",
+    "execution": "NOT_RUN"
   }
 }

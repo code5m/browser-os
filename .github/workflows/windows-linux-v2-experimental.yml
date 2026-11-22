@@ -1,7 +1,9 @@
 name: BrowserOS Windows V2 experimental native and BFC service
-# Native execution is explicitly opt-in. Branch pushes never start this workflow.
+# Reusable native implementation. The already-registered Developer Feedback
+# workflow dispatches it only with windows_native=true on the selected ref.
+# Branch pushes never start these jobs; do not dispatch this branch-only file.
 on:
-  workflow_dispatch:
+  workflow_call:
     inputs:
       source_sha:
         description: Exact 40-character BrowserOS commit to exercise on every platform
@@ -24,9 +26,14 @@ jobs:
       - name: Require an immutable requested commit
         env:
           REQUESTED_SOURCE_SHA: ${{ inputs.source_sha }}
+          WORKFLOW_SOURCE_SHA: ${{ github.sha }}
         run: |
           if [[ ! "$REQUESTED_SOURCE_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
             echo "::error::source_sha must be an exact 40-character commit SHA"
+            exit 1
+          fi
+          if [[ "${REQUESTED_SOURCE_SHA,,}" != "$WORKFLOW_SOURCE_SHA" ]]; then
+            echo "::error::source_sha must match the selected workflow ref; select the intended branch revision"
             exit 1
           fi
       - uses: actions/checkout@v4
@@ -204,6 +211,7 @@ jobs:
     needs: source
     env:
       BROWSEROS_REQUIRE_CONPTY: '1'
+      BROWSEROS_NATIVE_CLEANUP_BLOCKED: '0'
       BROWSEROS_SOURCE_SHA: ${{ needs.source.outputs.sha }}
     runs-on: windows-latest
     timeout-minutes: 75
@@ -276,49 +284,9 @@ jobs:
             throw 'Compiled Windows native test executable was not found'
           }
           Write-Host "WINDOWS_NATIVE_TEST_BINARY_READY=$nativeTestExe"
+          . ./scripts/windows-native-test-runner.ps1
           function Invoke-NativeCargoTest([string]$filter, [int]$timeoutSeconds = 240) {
-            $slug = ($filter -replace '[^A-Za-z0-9_.-]', '_')
-            $stdout = Join-Path $env:RUNNER_TEMP "$slug.out.log"
-            $stderr = Join-Path $env:RUNNER_TEMP "$slug.err.log"
-            Remove-Item $stdout, $stderr -Force -ErrorAction SilentlyContinue
-            Write-Host "::group::native test $filter (timeout ${timeoutSeconds}s) at $(Get-Date -Format o)"
-            $process = Start-Process -FilePath $nativeTestExe -NoNewWindow -PassThru `
-              -RedirectStandardOutput $stdout -RedirectStandardError $stderr `
-              -ArgumentList @($filter, '--test-threads=1', '--nocapture')
-            $finished = $process.WaitForExit($timeoutSeconds * 1000)
-            if (-not $finished) {
-              try { $process.Kill($true) } catch {}
-              Write-Host "::error::Native test timeout after ${timeoutSeconds}s: $filter"
-              Get-Content $stdout, $stderr -ErrorAction SilentlyContinue | Write-Host
-              Write-Host "::endgroup::"
-              throw "Native test timeout: $filter"
-            }
-            $process.WaitForExit()
-            $code = $process.ExitCode
-            $output = ((Get-Content $stdout -ErrorAction SilentlyContinue) + (Get-Content $stderr -ErrorAction SilentlyContinue) | Out-String)
-            $output | Write-Host
-            Write-Host "::endgroup::"
-            if ($code -ne 0) {
-              $allLines = @($output -split "`r?`n")
-              $details = @($allLines | Where-Object {
-                $_ -match 'FAILED|panicked at|error(\[|:)|failures:|exit=|output=|thread '
-              } | Select-Object -Last 20)
-              if ($details.Count -eq 0) { $details = @($allLines | Select-Object -Last 20) }
-              $details += "Native test failed: $filter"
-              $details | ForEach-Object {
-                $message = "$_" -replace '%', '%25' -replace "`r", '%0D' -replace "`n", '%0A'
-                Write-Host "::error::$message"
-              }
-              throw "Native test failed: $filter"
-            }
-            $summaries = [regex]::Matches($output, '(?m)^test result: ok\. (?<passed>\d+) passed; (?<failed>\d+) failed; (?<ignored>\d+) ignored;')
-            if ($summaries.Count -ne 1 -or
-                [int]$summaries[0].Groups['passed'].Value -lt 1 -or
-                [int]$summaries[0].Groups['failed'].Value -ne 0 -or
-                [int]$summaries[0].Groups['ignored'].Value -ne 0 -or
-                $output -match '(?im)^\s*\[?SKIP(?:PED)?\b') {
-              throw "Required native filter did not execute all selected cases: $filter"
-            }
+            Invoke-NativeRustHarness -Executable $nativeTestExe -Filter $filter -TimeoutSeconds $timeoutSeconds
           }
           $nativeTests = @(
             'windows_grid_tests'
@@ -353,6 +321,8 @@ jobs:
             'fake_loopback_port_occupant_cannot_receive_snapshot_before_identity_proof'
             'process_execution_requires_explicit_approval_and_rejects_shell_actions'
             'knowledge_search_redacts_sensitive_lines'
+            'external_url_privacy_tests'
+            'audit_concurrency_tests'
           )
           $failedFilters = [System.Collections.Generic.List[string]]::new()
           foreach ($filter in $nativeTests) {
@@ -361,6 +331,9 @@ jobs:
               Invoke-NativeCargoTest -filter $filter -timeoutSeconds $seconds
             } catch {
               $failedFilters.Add($filter)
+              if ($env:BROWSEROS_NATIVE_CLEANUP_BLOCKED -eq '1') {
+                throw 'NATIVE_PROCESS_REMAINS: refusing to run another native test'
+              }
               Write-Host "::warning::Continuing native matrix after failed check: $filter"
             }
           }
@@ -377,6 +350,12 @@ jobs:
           $fullFinished = $full.WaitForExit(900000)
           if (-not $fullFinished) {
             try { $full.Kill($true) } catch {}
+            if (-not $full.WaitForExit(5000)) {
+              $env:BROWSEROS_NATIVE_CLEANUP_BLOCKED = '1'
+              'BROWSEROS_NATIVE_CLEANUP_BLOCKED=1' | Add-Content $env:GITHUB_ENV
+              $full.Dispose()
+              throw 'NATIVE_PROCESS_REMAINS: full suite cleanup timed out; following native steps blocked'
+            }
             $fullSuiteFailure = 'full_windows_native_suite_timeout'
             $fullSuiteStatus = 'TIMEOUT'
             Write-Host "::error::Windows full native suite exceeded 900 seconds"
@@ -390,6 +369,7 @@ jobs:
               $fullSuiteStatus = 'COMPLETED'
             }
           }
+          $full.Dispose()
           $fullOutput = ((Get-Content $fullOut -ErrorAction SilentlyContinue) + (Get-Content $fullErr -ErrorAction SilentlyContinue) | Out-String)
           $fullOutput -split "`r?`n" | Select-Object -Last 160 | Write-Host
           $fullSummary = [regex]::Matches($fullOutput, '(?m)^test result: (?<result>ok|FAILED)\. (?<passed>\d+) passed; (?<failed>\d+) failed; (?<ignored>\d+) ignored;')
@@ -421,28 +401,44 @@ jobs:
             throw "Windows native acceptance incomplete: $($failedFilters.Count) failed filters; full suite $fullSuiteStatus"
           }
       - name: Shared Windows SID and DACL regression
-        if: ${{ always() && !cancelled() && steps.windows_native_compile.outcome == 'success' }}
+        if: ${{ always() && !cancelled() && steps.windows_native_compile.outcome == 'success' && env.BROWSEROS_NATIVE_CLEANUP_BLOCKED != '1' }}
         shell: pwsh
         run: |
-          cargo test --manifest-path crates/browseros-platform-security/Cargo.toml --locked --lib -- --test-threads=1
+          . ./scripts/windows-native-test-runner.ps1
+          $testExe = Get-NativeRustTestBinary -Manifest 'crates/browseros-platform-security/Cargo.toml' -Package 'browseros-platform-security'
+          Invoke-NativeRustHarness -Executable $testExe -Filter '' -TimeoutSeconds 240
       - name: Vendored ConPTY and process waiter regression
-        if: ${{ always() && !cancelled() && steps.windows_native_compile.outcome == 'success' }}
+        if: ${{ always() && !cancelled() && steps.windows_native_compile.outcome == 'success' && env.BROWSEROS_NATIVE_CLEANUP_BLOCKED != '1' }}
         shell: pwsh
         run: |
-          cargo test --manifest-path src-tauri/Cargo.toml --locked `
-            -p portable-pty --lib -- --test-threads=1 --nocapture
+          . ./scripts/windows-native-test-runner.ps1
+          $testExe = Get-NativeRustTestBinary -Manifest 'src-tauri/Cargo.toml' -Package 'portable-pty'
+          Invoke-NativeRustHarness -Executable $testExe -Filter '' -TimeoutSeconds 240
       - name: Windows WebView2 profile ACL regression
-        if: ${{ always() && !cancelled() && steps.windows_native_compile.outcome == 'success' }}
+        if: ${{ always() && !cancelled() && steps.windows_native_compile.outcome == 'success' && env.BROWSEROS_NATIVE_CLEANUP_BLOCKED != '1' }}
         shell: pwsh
         run: |
-          cargo test --manifest-path tauri-browser-tabs/Cargo.toml `
-            -p tauri-plugin-browser-tabs --lib `
-            windows_profile_acl_contains_only_current_user_and_system -- --test-threads=1
+          . ./scripts/windows-native-test-runner.ps1
+          # Select the dependency package through the host's committed lockfile.
+          # The plugin has no dev-dependencies requiring an independent workspace.
+          $testExe = Get-NativeRustTestBinary -Manifest 'src-tauri/Cargo.toml' -Package 'tauri-plugin-browser-tabs'
+          Invoke-NativeRustHarness -Executable $testExe -Filter 'browser_profile_tests::' -TimeoutSeconds 240
+      - name: Preserve native execution counts and logs
+        if: ${{ always() && !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: browseros-windows-native-${{ needs.source.outputs.sha }}
+          path: |
+            ${{ runner.temp }}/required-native-test-results.jsonl
+            ${{ runner.temp }}/*.out.log
+            ${{ runner.temp }}/*.err.log
+          if-no-files-found: warn
+          retention-days: 7
       # A separately requested diagnostic installer is never a release or GUI PASS.
       # It can be built after native failures only when explicitly opted in.
       - name: Build experimental NSIS (UNVERIFIED if native tests are red)
         id: nsis_build
-        if: ${{ always() && !cancelled() && steps.windows_native_compile.outcome == 'success' && inputs.build_installer == true }}
+        if: ${{ always() && !cancelled() && steps.windows_native_compile.outcome == 'success' && env.BROWSEROS_NATIVE_CLEANUP_BLOCKED != '1' && inputs.build_installer == true }}
         shell: pwsh
         run: npx tauri build --bundles nsis --ci
       - name: Generate and verify NSIS SHA256SUMS
@@ -508,4 +504,46 @@ jobs:
       - name: Linux native compile (X11 GTK/WebKit regression)
         run: cargo check --manifest-path src-tauri/Cargo.toml --locked
       - name: Linux Grid IPC framing unit tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os framing_tests -- --test-threads=1
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os framing_tests -- --test-threads=1 2>&1 | tee "$RUNNER_TEMP/linux-framing.log"
+          python3 - <<'PY'
+          import os, pathlib, re
+          text = pathlib.Path(os.environ["RUNNER_TEMP"], "linux-framing.log").read_text(errors="replace")
+          rows = re.findall(r"^test result: ok\. (\d+) passed; (\d+) failed; (\d+) ignored;", text, re.M)
+          if len(rows) != 1 or int(rows[0][0]) < 1 or int(rows[0][1]) or int(rows[0][2]) or re.search(r"^\s*\[?SKIP(?:PED)?\b", text, re.M | re.I):
+              raise SystemExit("LINUX_REQUIRED_FRAMING_NOT_EXECUTED")
+          PY
+      - name: Linux complete native regression (GUI remains NOT_RUN)
+        timeout-minutes: 40
+        shell: bash
+        env:
+          BROWSEROS_SOURCE_SHA: ${{ needs.source.outputs.sha }}
+        run: |
+          set -o pipefail
+          cargo test --manifest-path src-tauri/Cargo.toml --locked -- --test-threads=1 2>&1 | tee "$RUNNER_TEMP/linux-native.log"
+          python3 - <<'PY'
+          import os, pathlib, re
+          text = pathlib.Path(os.environ["RUNNER_TEMP"], "linux-native.log").read_text(errors="replace")
+          rows = re.findall(r"^test result: (ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored;", text, re.M)
+          if not rows or sum(int(row[1]) for row in rows) == 0:
+              raise SystemExit("LINUX_NATIVE_NO_EXECUTED_TESTS")
+          if any(row[0] != "ok" or int(row[2]) for row in rows) or re.search(r"^\s*\[?SKIP(?:PED)?\b", text, re.M | re.I):
+              raise SystemExit("LINUX_NATIVE_INCOMPLETE")
+          ignored = sum(int(row[3]) for row in rows)
+          status = "PASS_WITH_IGNORED" if ignored else "PASS"
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+              summary.write(f"Linux source={os.environ['BROWSEROS_SOURCE_SHA']}; native={status}; ignored={ignored}; GUI=NOT_RUN\n")
+          PY
+      - name: Preserve Linux native output
+        if: ${{ always() && !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: browseros-linux-native-${{ needs.source.outputs.sha }}
+          path: |
+            ${{ runner.temp }}/linux-native.log
+            ${{ runner.temp }}/linux-framing.log
+          if-no-files-found: warn
+          retention-days: 7

@@ -184,6 +184,38 @@ mod native {
         Ok(())
     }
 
+    /// Resolve the OS/configuration-selected base once, before appending the
+    /// application-owned leaf. This supports an intentional XDG base symlink
+    /// and macOS system aliases without allowing symlinks inside our root.
+    /// Publish the resolved path, never return to the mutable alias afterwards.
+    pub(super) fn prepare_application_data_directory(base: &Path) -> io::Result<std::path::PathBuf> {
+        components(base)?;
+        let mut existing = base.to_path_buf();
+        let mut missing = Vec::new();
+        let mut resolved = loop {
+            match std::fs::canonicalize(&existing) {
+                Ok(path) => break path,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    let name = existing.file_name()
+                        .ok_or_else(|| invalid("PRIVATE_DIRECTORY_BASE_UNRESOLVED"))?
+                        .to_os_string();
+                    missing.push(name);
+                    if missing.len() > MAX_COMPONENTS || !existing.pop() {
+                        return Err(invalid("PRIVATE_DIRECTORY_BASE_DEPTH"));
+                    }
+                }
+                Err(error) => return Err(io::Error::new(error.kind(), "PRIVATE_DIRECTORY_BASE_UNAVAILABLE")),
+            }
+        };
+        for name in missing.into_iter().rev() { resolved.push(name); }
+        resolved.push("mvp-browser-os");
+        // The app-owned leaf and every unresolved component still pass the
+        // original O_NOFOLLOW/openat + effective UID + 0700/ACL policy. A
+        // dangling configured alias is never followed by a create operation.
+        ensure(&resolved)?;
+        Ok(resolved)
+    }
+
     #[cfg(target_os = "macos")]
     mod macos_acl {
         use super::*;
@@ -304,7 +336,7 @@ mod native {
         impl Fixture {
             fn new() -> Self {
                 // Resolve only the trusted test TEMP base (macOS /var may be a
-                // system symlink). Production input is never canonicalized.
+                // system symlink). The general ensure input is never canonicalized.
                 let base = std::env::temp_dir().canonicalize().expect("test temp base");
                 let path = base.join(format!("browseros-private-dir-{}", uuid::Uuid::new_v4()));
                 fs::create_dir(&path).expect("test directory");
@@ -372,6 +404,33 @@ mod native {
             assert_eq!(fs::read(&file).unwrap(), b"unchanged");
         }
 
+        #[test]
+        fn configured_base_alias_resolves_once_without_relaxing_the_owned_leaf() {
+            let fixture = Fixture::new();
+            let target = Fixture::new();
+            let alias = fixture.0.join("xdg-data");
+            symlink(&target.0, &alias).unwrap();
+            let resolved = prepare_application_data_directory(&alias.join("browseros")).unwrap();
+            assert_eq!(resolved, target.0.join("browseros/mvp-browser-os"));
+            fs::remove_file(&alias).unwrap();
+            let other = Fixture::new();
+            symlink(&other.0, &alias).unwrap();
+            assert!(resolved.is_dir());
+            assert!(!other.0.join("browseros/mvp-browser-os").exists());
+        }
+
+        #[test]
+        fn configured_alias_does_not_authorize_a_symlinked_app_leaf() {
+            let fixture = Fixture::new();
+            let outside = Fixture::new();
+            symlink(&outside.0, fixture.0.join("mvp-browser-os")).unwrap();
+            assert!(prepare_application_data_directory(&fixture.0).is_err());
+            let dangling = fixture.0.join("dangling");
+            symlink(fixture.0.join("absent"), &dangling).unwrap();
+            assert!(prepare_application_data_directory(&dangling).is_err());
+            assert!(!fixture.0.join("absent").exists());
+        }
+
         #[cfg(target_os = "linux")]
         #[test]
         fn preserves_non_utf8_directory_names() {
@@ -412,5 +471,17 @@ pub(super) fn ensure_private_directory(path: &Path) -> io::Result<()> {
             io::ErrorKind::Unsupported,
             "PRIVATE_DIRECTORY_PLATFORM_UNSUPPORTED",
         ))
+    }
+}
+
+/// Application configuration is the only place where a preselected base alias
+/// is resolved. General private-directory callers remain strictly no-symlink.
+pub(super) fn prepare_application_data_directory(base: &Path) -> io::Result<std::path::PathBuf> {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    { native::prepare_application_data_directory(base) }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        let _ = base;
+        Err(io::Error::new(io::ErrorKind::Unsupported, "PRIVATE_DIRECTORY_PLATFORM_UNSUPPORTED"))
     }
 }

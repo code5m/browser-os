@@ -17,6 +17,14 @@ This directory vendors the upstream MIT-licensed portable-pty 0.8.1 source from
 - The creation pipe ends remain alive until the first child CreateProcessW
   succeeds. Error/no-client teardown closes them before ClosePseudoConsole.
   The master releases its pipe endpoints before closing the pseudo console.
+  A cloned reader remains an independent output-pipe owner: callers must keep
+  draining it until ClosePseudoConsole has returned, or close every output
+  handle first. Dropping only the input writer does not establish shutdown.
+  Older Windows builds can block inside ClosePseudoConsole; the BrowserOS
+  terminal cleanup owner closes the sole master on a tracked close thread,
+  keeps its reader draining, then joins the input/reader/pump. A timeout retains
+  the owner and is reported as TERM_CLEANUP_PENDING, never as a completed close.
+  See [Microsoft's close contract](https://github.com/MicrosoftDocs/Console-Docs/blob/main/docs/closepseudoconsole.md).
 - Both creation and resize reject zero dimensions and values above 32767,
   before converting to Win32's signed COORD.
 - Process completion is based on the signaled handle; exit code 259 remains a
@@ -26,6 +34,10 @@ This directory vendors the upstream MIT-licensed portable-pty 0.8.1 source from
   Dropping the Future lets the waiter exit within its bounded polling interval.
 - A bundled conpty.dll is only considered beside the running executable,
   never through a workspace-controlled current directory.
+
+The public Error re-export names the error type already used by the backend
+traits, allowing host lifecycle fixtures to implement those traits without
+adding another dependency. It does not change the error or runtime behavior.
 
 Keep these contracts, upstream license notices in LICENSE.md, and the native
 descendant/input/exit-code regressions when updating or removing this fork.

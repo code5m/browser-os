@@ -31,7 +31,7 @@
       "id": "windows-linux-v2-experimental",
       "path": ".github/workflows/windows-linux-v2-experimental.yml",
       "role": "experimental_platform_feedback",
-      "scope": "manual dispatch only, pinned source_sha across Windows/Linux; required native filters reject zero/ignored/skipped execution, full-suite counts separate; NSIS diagnostic build requires explicit opt-in and remains UNVERIFIED; no GUI PASS"
+      "scope": "reusable workflow_call only; explicitly invoked by registered Developer Feedback workflow_dispatch on selected ref with windows_native=true and matching source_sha; Windows/Linux evidence frozen, all required selections reject zero/ignored/SKIP; optional NSIS remains UNVERIFIED"
     },
     {
       "id": "ui-safety",
@@ -49,7 +49,7 @@
       "id": "developer-feedback",
       "path": ".github/workflows/browseros-developer-feedback.yml",
       "role": "nonblocking_developer_feedback",
-      "scope": "fast contract/governance feedback on every branch push; optional manual-only .deb preview (default false), never a merge or GUI-pass substitute"
+      "scope": "fast feedback on ordinary pushes; explicit manual .deb preview OR Windows/Linux native lane (defaults off), native dispatch reuses this existing default-branch path with repair branch ref; no merge or GUI-pass claim"
     },
     {
       "id": "hot-plug",
@@ -318,6 +318,17 @@
       "paths": [
         ".github/workflows/browseros-developer-feedback.yml",
         "scripts/verify-installed-client.sh"
+      ]
+    },
+    {
+      "id": "windows-linux-native-manual",
+      "blocking": false,
+      "entrypoint": "existing Developer Feedback workflow_dispatch with windows_native=true and matching source_sha",
+      "paths": [
+        ".github/workflows/browseros-developer-feedback.yml",
+        ".github/workflows/windows-linux-v2-experimental.yml",
+        "scripts/windows-native-test-runner.ps1",
+        "tests/check-windows-linux-v2-source-contract.mjs"
       ]
     }
   ],

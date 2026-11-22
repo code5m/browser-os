@@ -24,6 +24,12 @@ use std::os::windows::io::{AsRawHandle, FromRawHandle};
 use std::path::{Component, Path, PathBuf, Prefix};
 use std::ptr;
 use std::time::{Duration, Instant};
+use std::sync::{Arc, atomic::{AtomicBool, AtomicUsize, Ordering}};
+
+mod lease;
+pub use lease::PreparedPrivateDirectory;
+mod appcontainer;
+pub use appcontainer::{AppContainerAccess, AppContainerDirectory, AppContainerPolicy, PinnedReadDirectory, PinnedDirectoryEntry, PinnedReadFile};
 use windows_sys::Wdk::Foundation::OBJECT_ATTRIBUTES;
 use windows_sys::Wdk::Storage::FileSystem::{
     NtCreateFile, FILE_CREATE, FILE_DIRECTORY_FILE, FILE_OPEN,
@@ -71,6 +77,53 @@ const FILE_ADD_SUBDIRECTORY: u32 = 4;
 const ACCESS_ALLOWED_TYPE: u8 = 0;
 const ACCESS_DENIED_TYPE: u8 = 1;
 const DIRECTORY_FLAGS: u32 = OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE;
+
+
+/// One cancellation signal and absolute deadline for the entire preparation.
+/// Clones do not restart the clock. Cleanup must not depend on this budget.
+#[derive(Clone, Debug)]
+pub struct OperationBudget {
+    started: Instant,
+    deadline: Instant,
+    cancelled: Arc<AtomicBool>,
+    cleanup_owners: Arc<AtomicUsize>,
+}
+impl OperationBudget {
+    pub fn new(duration: Duration) -> Self {
+        let started = Instant::now();
+        Self {
+            started, deadline: started.checked_add(duration).unwrap_or(started),
+            cancelled: Arc::new(AtomicBool::new(false)),
+            cleanup_owners: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+    pub fn cancel(&self) { self.cancelled.store(true, Ordering::Release); }
+    pub fn check(&self) -> io::Result<()> {
+        if self.cancelled.load(Ordering::Acquire) {
+            return Err(io::Error::new(io::ErrorKind::Interrupted, "WINDOWS_OPERATION_CANCELLED"));
+        }
+        if Instant::now() >= self.deadline {
+            return Err(io::Error::new(io::ErrorKind::TimedOut, "WINDOWS_OPERATION_DEADLINE"));
+        }
+        Ok(())
+    }
+    pub fn remaining(&self) -> io::Result<Duration> {
+        self.check()?;
+        Ok(self.deadline.saturating_duration_since(Instant::now()))
+    }
+    pub fn elapsed(&self) -> Duration { self.started.elapsed() }
+    /// Resource owners retain this barrier through asynchronous cleanup.
+    /// Cancellation/deadline never prevent the caller from observing cleanup.
+    pub fn hold_cleanup(&self) -> OperationCleanupGuard {
+        self.cleanup_owners.fetch_add(1, Ordering::AcqRel);
+        OperationCleanupGuard { owners: Arc::clone(&self.cleanup_owners) }
+    }
+    pub fn cleanup_complete(&self) -> bool { self.cleanup_owners.load(Ordering::Acquire) == 0 }
+}
+pub struct OperationCleanupGuard { owners: Arc<AtomicUsize> }
+impl Drop for OperationCleanupGuard {
+    fn drop(&mut self) { self.owners.fetch_sub(1, Ordering::AcqRel); }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct FileIdentity {
@@ -287,6 +340,17 @@ fn file_information(file: &File) -> io::Result<BY_HANDLE_FILE_INFORMATION> {
     Ok(info)
 }
 
+/// Audit an already-open ordinary private file without reopening or repair.
+/// Callers retain their own no-reparse/no-delete handle for the whole use.
+pub fn audit_private_file(file: &File) -> io::Result<()> {
+    if private_object(file)? { return Err(failure("PRIVATE_FILE_IS_DIRECTORY", 0)); }
+    let policy = Policy::new()?;
+    if !descriptor_is_private(file, &policy, false, false)? {
+        return Err(failure("PRIVATE_FILE_ACL_NOT_PRIVATE", 0));
+    }
+    Ok(())
+}
+
 fn private_object(file: &File) -> io::Result<bool> {
     let info = file_information(file)?;
     let directory = info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0;
@@ -312,6 +376,13 @@ fn open_relative(
     parent: &File, name: &OsStr, access: u32, directory: bool,
     create: bool, descriptor: PSECURITY_DESCRIPTOR, repair: bool,
 ) -> io::Result<File> {
+    open_relative_with_share(parent, name, access, directory, create, descriptor, share_mode(repair))
+}
+
+fn open_relative_with_share(
+    parent: &File, name: &OsStr, access: u32, directory: bool,
+    create: bool, descriptor: PSECURITY_DESCRIPTOR, sharing: u32,
+) -> io::Result<File> {
     if !name_is_valid(name) { return Err(failure("COMPONENT_INVALID", 0)); }
     let mut name: Vec<u16> = name.encode_wide().collect();
     let bytes = (name.len() * 2) as u16;
@@ -329,7 +400,7 @@ fn open_relative(
     let status = unsafe {
         NtCreateFile(
             &mut raw, access | SYNCHRONIZE, &attributes, &mut status_block,
-            ptr::null(), FILE_ATTRIBUTE_NORMAL, share_mode(repair),
+            ptr::null(), FILE_ATTRIBUTE_NORMAL, sharing,
             if create { FILE_CREATE } else { FILE_OPEN },
             FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT
                 | if directory { FILE_DIRECTORY_FILE } else { 0 },
@@ -366,6 +437,13 @@ impl OpenedPath {
 }
 
 fn open_path(path: &Path, create: Option<&Policy>, repair: bool, target_access: u32) -> io::Result<OpenedPath> {
+    open_path_options(path, create, repair, target_access, 0, None, None)
+}
+
+fn open_path_options(
+    path: &Path, create: Option<&Policy>, repair: bool, target_access: u32,
+    writable_ancestors: usize, target_share: Option<u32>, budget: Option<&OperationBudget>,
+) -> io::Result<OpenedPath> {
     let mut parts = path.components();
     let prefix = match parts.next() {
         Some(Component::Prefix(p)) if matches!(
@@ -389,7 +467,8 @@ fn open_path(path: &Path, create: Option<&Policy>, repair: bool, target_access: 
     if names.len() > 256 { return Err(failure("ANCESTOR_DEPTH_LIMIT", 0)); }
     let mut drive = PathBuf::from(prefix.as_os_str());
     drive.push(r"\");
-    let access = FILE_READ_ATTRIBUTES | FILE_TRAVERSE;
+    let access = FILE_READ_ATTRIBUTES | FILE_TRAVERSE
+        | if budget.is_some() { READ_CONTROL } else { 0 };
     let file = OpenOptions::new().access_mode(access | SYNCHRONIZE)
         .share_mode(share_mode(repair))
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
@@ -397,10 +476,15 @@ fn open_path(path: &Path, create: Option<&Policy>, repair: bool, target_access: 
     file_information(&file)?;
     let mut result = OpenedPath { chain: vec![file] };
     for (index, name) in names.iter().enumerate() {
-        let requested = if index + 1 == names.len() { target_access } else { access };
+        if let Some(budget) = budget { budget.check()?; }
+        let last = index + 1 == names.len();
+        let requested = if last { target_access }
+            else if names.len().saturating_sub(index + 1) <= writable_ancestors { MAXIMUM_ALLOWED }
+            else { access };
         let parent = result.target();
         let directory = index + 1 != names.len() || create.is_some();
-        let child = match open_relative(parent, name, requested, directory, false, ptr::null_mut(), repair) {
+        let sharing = if last { target_share.unwrap_or_else(|| share_mode(repair)) } else { share_mode(repair) };
+        let child = match open_relative_with_share(parent, name, requested, directory, false, ptr::null_mut(), sharing) {
             Ok(child) => child,
             Err(error) if error.kind() == io::ErrorKind::NotFound && create.is_some() => {
                 let policy = create.expect("checked above");
@@ -618,12 +702,20 @@ fn repair_object(file: &File, policy: &Policy, directory: bool) -> io::Result<()
 struct DirectoryEntry { name: OsString, identity: u64, directory: bool }
 
 fn directory_entries(directory: &File, remaining: usize, start: Instant, duration: Duration) -> io::Result<Vec<DirectoryEntry>> {
+    directory_entries_checked(directory, remaining, start, duration, None)
+}
+
+fn directory_entries_checked(
+    directory: &File, remaining: usize, start: Instant, duration: Duration,
+    budget: Option<&OperationBudget>,
+) -> io::Result<Vec<DirectoryEntry>> {
     let header_size = offset_of!(FILE_ID_BOTH_DIR_INFO, FileName);
     let mut storage = vec![0u64; 8192];
     let bytes = storage.len() * size_of::<u64>();
     let mut restart = true;
     let mut entries = Vec::new();
     loop {
+        if let Some(budget) = budget { budget.check()?; }
         if start.elapsed() > duration { return Err(failure("MIGRATION_BUDGET_EXCEEDED", 0)); }
         let ok = unsafe {
             GetFileInformationByHandleEx(
@@ -641,6 +733,8 @@ fn directory_entries(directory: &File, remaining: usize, start: Instant, duratio
         let raw = storage.as_ptr() as *const u8;
         let mut offset = 0usize;
         loop {
+            if let Some(budget) = budget { budget.check()?; }
+            if start.elapsed() > duration { return Err(failure("MIGRATION_BUDGET_EXCEEDED", 0)); }
             if offset + header_size > bytes { return Err(failure("DIRECTORY_RECORD", 0)); }
             // The fixed fields end before FileName. Read those fields without
             // reading a full trailing-array struct beyond the returned record.
@@ -662,9 +756,8 @@ fn directory_entries(directory: &File, remaining: usize, start: Instant, duratio
                 if !name_is_valid(&name) || attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
                     return Err(failure("TREE_REPARSE_OR_ALIAS", 0));
                 }
-                if entries.len() >= remaining || id == 0 {
-                    return Err(failure("TREE_OBJECT_LIMIT_OR_UNSUPPORTED_ID", 0));
-                }
+                if entries.len() >= remaining { return Err(failure("TREE_OBJECT_LIMIT", 0)); }
+                if id == 0 { return Err(failure("TREE_UNSUPPORTED_ID", 0)); }
                 entries.push(DirectoryEntry {
                     name, identity: id, directory: attributes & FILE_ATTRIBUTE_DIRECTORY != 0,
                 });

@@ -2,6 +2,8 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use chrono::Utc;
+#[path = "audit_lock.rs"]
+mod audit_lock;
 use tauri::{AppHandle, Manager};
 
 use crate::domain::{
@@ -15,6 +17,8 @@ use crate::domain::{
 /// 持久化均为该目录下的 JSON，不得另起第二条路径）。
 struct PreparedDataDirectory {
     path: PathBuf,
+    #[cfg(target_os = "windows")]
+    _preparation: browseros_platform_security::windows::PreparedPrivateDirectory,
 }
 
 /// Complete the fallible private-directory migration before starting any
@@ -35,13 +39,30 @@ pub fn prepare_data_dir(app: &AppHandle) -> std::io::Result<()> {
         error.kind(),
         format!("PRIVATE_DATA_DIR_PARENT_PREPARATION_FAILED: {error}"),
     ))?;
-    let dir = base.join("mvp-browser-os");
-    crate::capabilities::workspace::safe_paths::ensure_private_directory(&dir)
+    #[cfg(target_os = "windows")]
+    let preparation = browseros_platform_security::windows::PreparedPrivateDirectory::prepare(
+        &base.join("mvp-browser-os"),
+        &browseros_platform_security::windows::PrivateTreeOptions::default(),
+    ).map_err(|error| std::io::Error::new(
+        error.kind(), format!("PRIVATE_DATA_DIR_PREPARATION_FAILED: {error}"),
+    ))?;
+    #[cfg(target_os = "windows")]
+    let dir = {
+        let report = preparation.report();
+        eprintln!("PRIVATE_DATA_DIR_READY reused={} checked={} repaired={} elapsed_ms={}",
+            preparation.reused_preparation(), report.checked_objects, report.repaired_objects, report.elapsed_ms);
+        preparation.path().to_path_buf()
+    };
+    #[cfg(not(target_os = "windows"))]
+    let dir = crate::capabilities::workspace::safe_paths::prepare_application_data_directory(&base)
         .map_err(|error| std::io::Error::new(
-            error.kind(),
-            format!("PRIVATE_DATA_DIR_PREPARATION_FAILED: {error}"),
+            error.kind(), format!("PRIVATE_DATA_DIR_PREPARATION_FAILED: {error}"),
         ))?;
-    if !app.manage(PreparedDataDirectory { path: dir }) {
+    if !app.manage(PreparedDataDirectory {
+        path: dir,
+        #[cfg(target_os = "windows")]
+        _preparation: preparation,
+    }) {
         return Err(std::io::Error::other("PRIVATE_DATA_DIR_ALREADY_INITIALIZED"));
     }
     Ok(())
@@ -488,31 +509,111 @@ pub fn audit_file(app: &AppHandle) -> PathBuf {
     data_dir(app).join("audit.json")
 }
 pub fn log_audit(app: &AppHandle, action: &str, detail: String) {
-    let mut list = load_audit(app);
-    list.push(AuditEntry {
-        at: Utc::now(),
-        action: action.into(),
-        detail,
-    });
-    if list.len() > 1000 {
-        list.drain(0..list.len() - 1000);
-    }
-    // B4-1：原子写；且**序列化失败绝不写空串**——改前 `unwrap_or_default()` 会把整份
-    // 审计抹成空文件（`let _ =` 还吞掉错误）。现在失败只告警，原文件保持不被覆盖。
-    if let Err(e) = save_audit_at(&audit_file(app), &list) {
-        eprintln!("[workspace] 审计落盘失败（保留原文件，不覆盖写空）：{e}");
+    if let Err(error) = append_audit_at(&audit_file(app), AuditEntry {
+        at: Utc::now(), action: action.into(), detail,
+    }) {
+        // Do not echo an audit detail or filesystem error containing user data.
+        eprintln!("[workspace] audit append failed: {error}");
     }
 }
-/// 审计读取（`_at` 便于无 AppHandle 单测）。B4-2：损坏 → `.corrupt` 备份 + 告警。
+
+/// The lock spans read, corruption recovery, append, trim and atomic replace.
+/// Locking only the final rename would still lose concurrent writers.
+pub fn append_audit_at(path: &Path, entry: AuditEntry) -> Result<(), String> {
+    let _guard = audit_lock::AuditLock::acquire(path)
+        .map_err(|error| format!("AUDIT_LOCK_FAILED:{:?}", error.kind()))?;
+    let mut list = load_audit_unlocked(path)?;
+    list.push(entry);
+    if list.len() > 1000 { list.drain(0..list.len() - 1000); }
+    save_json_list_at(path, &list, "审计日志")
+        .map_err(|_| "AUDIT_ATOMIC_WRITE_FAILED".to_string())
+}
+
+fn load_audit_unlocked(path: &Path) -> Result<Vec<AuditEntry>, String> {
+    let content = match fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(_) => return Err("AUDIT_READ_FAILED".into()),
+    };
+    match serde_json::from_str(&content) {
+        Ok(entries) => Ok(entries),
+        Err(_) => {
+            let mut name = path.as_os_str().to_os_string();
+            name.push(".corrupt");
+            let mut backup = PathBuf::from(name);
+            if backup.exists() {
+                let mut name = path.as_os_str().to_os_string();
+                name.push(format!(".corrupt-{}", uuid::Uuid::new_v4()));
+                backup = PathBuf::from(name);
+            }
+            fs::rename(path, backup).map_err(|_| "AUDIT_CORRUPT_BACKUP_FAILED".to_string())?;
+            eprintln!("[workspace] audit corruption preserved in private backup");
+            Ok(Vec::new())
+        }
+    }
+}
+
+/// Reading can move a corrupt file to a backup, so it uses the same lock.
 pub fn load_audit_at(path: &Path) -> Vec<AuditEntry> {
-    load_json_list_at(path, "审计日志")
+    match audit_lock::AuditLock::acquire(path) {
+        Ok(_guard) => match load_audit_unlocked(path) {
+            Ok(entries) => entries,
+            Err(code) => { eprintln!("[workspace] audit read unavailable: {code}"); Vec::new() }
+        },
+        Err(error) => {
+            eprintln!("[workspace] audit read unavailable: {:?}", error.kind());
+            Vec::new()
+        }
+    }
 }
-/// 审计落盘（`_at` 便于无 AppHandle 单测）。B4-1：原子写。
 pub fn save_audit_at(path: &Path, list: &[AuditEntry]) -> Result<(), String> {
+    let _guard = audit_lock::AuditLock::acquire(path)
+        .map_err(|error| format!("AUDIT_LOCK_FAILED:{:?}", error.kind()))?;
     save_json_list_at(path, list, "审计日志")
+        .map_err(|_| "AUDIT_ATOMIC_WRITE_FAILED".to_string())
 }
 pub fn load_audit(app: &AppHandle) -> Vec<AuditEntry> {
     load_audit_at(&audit_file(app))
+}
+
+/// Use the bounded private audit channel for lifecycle evidence. Never create
+/// a shared temporary marker or an unbounded series of per-launch log files.
+pub fn record_lifecycle(app: &AppHandle, event: &'static str) {
+    if event == "main-window-created-and-shown" {
+        log_audit(app, "lifecycle", event.into());
+    }
+}
+
+#[cfg(test)]
+mod audit_concurrency_tests {
+    use super::*;
+    #[test]
+    fn concurrent_audit_appends_keep_every_entry() {
+        let root = std::env::temp_dir().canonicalize().unwrap()
+            .join(format!("browseros-audit-{}", uuid::Uuid::new_v4()));
+        crate::capabilities::workspace::safe_paths::ensure_private_directory(&root).unwrap();
+        let path = root.join("audit.json");
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+        let workers: Vec<_> = (0..8).map(|writer| {
+            let path = path.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                for index in 0..8 {
+                    append_audit_at(&path, AuditEntry {
+                        at: Utc::now(), action: "concurrent".into(),
+                        detail: format!("{writer}:{index}"),
+                    }).unwrap();
+                }
+            })
+        }).collect();
+        for worker in workers { worker.join().unwrap(); }
+        let entries = load_audit_at(&path);
+        assert_eq!(entries.len(), 64);
+        let details: std::collections::HashSet<_> = entries.iter().map(|entry| &entry.detail).collect();
+        assert_eq!(details.len(), 64);
+        fs::remove_dir_all(root).unwrap();
+    }
 }
 
 /// 收藏持久化文件
@@ -731,13 +832,17 @@ mod b4_atomic_persistence_tests {
 
     #[test]
     fn audit_roundtrip_is_atomic_without_tmp_leftover() {
-        let path = temp_path("audit");
+        let directory = std::env::temp_dir().canonicalize().unwrap()
+            .join(format!("browseros-audit-{}", uuid::Uuid::new_v4()));
+        crate::capabilities::workspace::safe_paths::ensure_private_directory(&directory).unwrap();
+        let path = directory.join("audit.json");
         save_audit_at(&path, &[audit_entry("a.one"), audit_entry("a.two")]).expect("save audit");
         let back = load_audit_at(&path);
         assert_eq!(back.len(), 2);
         assert_eq!(back[0].action, "a.one");
         assert!(!tmp_of(&path).exists(), "atomic_write 后不得残留 .tmp");
         let _ = fs::remove_file(&path);
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
@@ -770,7 +875,10 @@ mod b4_atomic_persistence_tests {
 
     #[test]
     fn corrupt_audit_is_backed_up_and_survives_next_save() {
-        let path = temp_path("corrupt-audit");
+        let directory = std::env::temp_dir().canonicalize().unwrap()
+            .join(format!("browseros-corrupt-audit-{}", uuid::Uuid::new_v4()));
+        crate::capabilities::workspace::safe_paths::ensure_private_directory(&directory).unwrap();
+        let path = directory.join("audit.json");
         fs::write(&path, "{{{ broken").expect("simulate corruption");
         assert!(load_audit_at(&path).is_empty());
 
@@ -784,6 +892,7 @@ mod b4_atomic_persistence_tests {
 
         let _ = fs::remove_file(&backup);
         let _ = fs::remove_file(&path);
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
