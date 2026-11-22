@@ -189,8 +189,31 @@ includes the generated manifest. Tauri development therefore does not race
 a missing resource, and it retains the existing frontend development server
 owner.
 
-`build.rs` validates Cargo's `<profile>/build/<package>/out` output
-layout and passes the profile directory as `-ExecutableDirectory`.
+`build.rs` recognizes the package-bound Cargo output suffixes
+`<profile>/build/<package>-<unit-hash>/out` and Cargo 1.100's
+`<profile>/build/<package>/<unit-hash>/out`. The shared pure path helper
+requires an absolute path, rejects parent traversal, matches the current
+Cargo package exactly and validates the unit hash. It checks only those
+two fixed suffixes and returns the existing profile prefix, preserving an
+explicit target triple and custom profile name. The `PROFILE` environment
+variable reports an inherited debug/release class and cannot reconstruct
+custom profile directory names.
+
+Five tests in the existing host test binary exercise this same helper:
+old and new layouts, target and custom-profile preservation, wrong
+packages or hashes, and relative/traversing/unexpected suffix rejection.
+The helper does not authorize filesystem access; the builder retains its
+directory/reparse and full runtime integrity checks. The fixed Windows
+runtime target remains bound by `source.json` and the embedded manifest.
+
+Cargo's pinned implementation sets `OUT_DIR` from the run unit's
+`out_dir_new_layout`; its package path is `name/unit-hash` in the new
+layout. The compilation unit's executable can have a different hash, so
+the helper validates the shape instead of assuming those hashes match.
+See the [Cargo 1.100 build-script environment construction](https://github.com/rust-lang/cargo/blob/3acc79c0c841844675bc53a605922dbfc441e750/src/compiler/custom_build.rs)
+and [output layout implementation](https://github.com/rust-lang/cargo/blob/3acc79c0c841844675bc53a605922dbfc441e750/src/compiler/layout.rs).
+
+The validated profile directory is passed as `-ExecutableDirectory`.
 The builder publishes the same verified five files into that directory's
 `windows-lsp` subdirectory, with the manifest last, and verifies them
 again. The cached-bundle path performs this publication too. A direct

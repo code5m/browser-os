@@ -2,6 +2,9 @@
 
 // (capabilities/agent + capabilities/skill declared under `mod capabilities` below)
 mod bridge;
+#[cfg(test)]
+#[path = "../build_support/output_layout.rs"]
+mod build_output_layout;
 #[cfg(target_os = "linux")]
 mod crashlog;
 #[cfg(not(target_os = "linux"))]

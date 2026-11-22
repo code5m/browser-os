@@ -390,9 +390,19 @@ assert.match(runtimePreparation, /CARGO_CFG_TARGET_OS/);
 assert.match(runtimePreparation, /!= Ok\("windows"\)/);
 assert.match(runtimePreparation, /Command::new\("pwsh"\)/);
 assert.match(runtimePreparation, /\.arg\("-ExecutableDirectory"\)/);
-assert.match(runtimePreparation, /output\.is_absolute\(\)/);
-assert.match(runtimePreparation, /OsStr::new\("out"\)/);
-assert.match(runtimePreparation, /OsStr::new\("build"\)/);
+const cargoOutputLayout = read('../src-tauri/build_support/output_layout.rs');
+assert.match(nativeBuild, /#\[path = "build_support\/output_layout\.rs"\]\s*mod build_output_layout;/);
+assert.match(runtimePreparation, /std::env::var\("CARGO_PKG_NAME"\)/);
+assert.match(runtimePreparation, /build_output_layout::executable_directory\(&output, &package\)/);
+assert.match(cargoOutputLayout, /!output\.is_absolute\(\)/);
+assert.match(cargoOutputLayout, /Component::ParentDir/);
+assert.match(cargoOutputLayout, /output\.file_name\(\) != Some\(OsStr::new\("out"\)\)/);
+assert.match(cargoOutputLayout, /build\.file_name\(\) != Some\(OsStr::new\("build"\)\)/);
+assert.match(cargoOutputLayout, /unit_hash\(unit_name\)/);
+assert.match(cargoOutputLayout, /package_directory\.file_name\(\) != Some\(OsStr::new\(package\)\)/);
+assert.match(cargoOutputLayout, /unit_name\.strip_prefix\(package\)\?\.strip_prefix\('-'\)\?/);
+assert.doesNotMatch(cargoOutputLayout, /\.ancestors\(/);
+assert.match(main, /#\[cfg\(test\)\]\s*#\[path = "\.\.\/build_support\/output_layout\.rs"\]\s*mod build_output_layout;/);
 assert.match(nativeBuild, /prepare_windows_lsp_runtime\(\);\s*tauri_build::build\(\)/);
 const runtimeBuilder = read('../scripts/build-windows-lsp-runtime.ps1');
 assert.match(runtimeBuilder, /WINDOWS_LSP_SOURCE_COMMIT_MISMATCH/);
@@ -707,7 +717,7 @@ assert.match(mcpPayloadStaging, /staged_name\.push\(name\)/);
 assert.match(mcpPayloadStaging, /profile\.stage_state_file\(&staged_name,\s*&bytes\)\?/);
 assert.doesNotMatch(mcpPayloadStaging, /fs::write|fs::create_dir|to_string_lossy/);
 assert.match(windowsMcp, /PAYLOAD_LIMIT:\s*usize\s*=\s*super::windows_sandbox::MAX_STATE_PAYLOAD_BYTES/);
-for (const [id, count] of [['appcontainer', 14], ['windows-full-suite', 104]]) {
+for (const [id, count] of [['appcontainer', 14], ['windows-full-suite', 109]]) {
   const selection = nativeRequired.selections.find((entry) => entry.id === id);
   assert.equal(selection.required_count, count);
   assert.ok(selection.required_names.includes('state_file_staging_rejects_non_component_names'));
@@ -736,6 +746,15 @@ assert.equal(bundleSelection.allow_additional_tests, false);
 assert.equal(bundleSelection.allow_ignored, false);
 assert.equal(bundleSelection.filter, 'capabilities::agent::coding_lsp::runtime_bundle::tests');
 const fullNativeSelection = nativeRequired.selections.find((entry) => entry.id === 'windows-full-suite');
+for (const name of [
+  'legacy_layout_preserves_profile_directory',
+  'unit_layout_preserves_profile_directory',
+  'target_prefix_and_custom_profile_are_preserved',
+  'unrelated_packages_and_invalid_hashes_are_rejected',
+  'non_absolute_traversal_and_unexpected_suffixes_are_rejected',
+]) {
+  assert.ok(fullNativeSelection.required_names.includes('build_output_layout::tests::' + name));
+}
 for (const name of [
   'verified_bundle_pins_manifest_and_executable_until_staging',
   'altered_bundle_source_manifest_binary_and_size_are_rejected',

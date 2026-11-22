@@ -1,8 +1,12 @@
+#[path = "build_support/output_layout.rs"]
+mod build_output_layout;
+
 fn prepare_windows_lsp_runtime() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
         return;
     }
     for input in [
+        "build_support/output_layout.rs",
         "../scripts/build-windows-lsp-runtime.ps1",
         "../vendor/windows-rust-analyzer/source.json",
         "../vendor/windows-rust-analyzer/metadata-stdin.patch",
@@ -19,21 +23,14 @@ fn prepare_windows_lsp_runtime() {
         std::env::var_os("CARGO_MANIFEST_DIR").expect("Cargo provides the manifest directory"),
     );
     let repository = manifest.parent().expect("host crate belongs to BrowserOS");
-    // Cargo OUT_DIR is <profile>/build/<package>/out. Validate that layout
-    // before publishing the same verified bundle for cargo run --release.
+    // Cargo changed the package-output suffix in 1.100. Preserve its actual
+    // profile and optional target prefix after validating either known suffix.
     let output = std::path::PathBuf::from(
         std::env::var_os("OUT_DIR").expect("Cargo provides the build output directory"),
     );
-    let build = output.parent().and_then(std::path::Path::parent);
-    assert!(
-        output.is_absolute()
-            && output.file_name() == Some(std::ffi::OsStr::new("out"))
-            && build.and_then(std::path::Path::file_name) == Some(std::ffi::OsStr::new("build")),
-        "Unsupported Cargo output layout for Windows LSP resources"
-    );
-    let executable_directory = build
-        .and_then(std::path::Path::parent)
-        .expect("Cargo profile output directory");
+    let package = std::env::var("CARGO_PKG_NAME").expect("Cargo provides the package name");
+    let executable_directory = build_output_layout::executable_directory(&output, &package)
+        .expect("Unsupported Cargo output layout for Windows LSP resources");
     let script = repository.join("scripts/build-windows-lsp-runtime.ps1");
     let status = std::process::Command::new("pwsh")
         .args(["-NoProfile", "-File"])

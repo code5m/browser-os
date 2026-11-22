@@ -163,6 +163,33 @@ def parse_events(path: Path) -> list[dict[str, str]]:
     return events
 
 
+def has_session_cookie(cookie: str) -> bool:
+    return "m0_session=ok" in {part.strip() for part in cookie.split(";")}
+
+
+def restart_request_cookie(events: list[dict[str, str]]) -> bool:
+    """Require the first recovered navigation to send the existing cookie.
+
+    The mock response sets a cookie on every /login. Inspect the request header
+    captured before that response, never a later document.cookie or second load.
+    """
+    before_seen = False
+    first_request_has_cookie: bool | None = None
+    for event in events:
+        if event.get("case") != "9" or event.get("grid") != "0":
+            continue
+        phase = event.get("phase")
+        if not before_seen:
+            if phase == "before_restart":
+                before_seen = True
+            continue
+        if phase == "after_restart":
+            return first_request_has_cookie is True
+        if phase == "server_load" and first_request_has_cookie is None:
+            first_request_has_cookie = has_session_cookie(event.get("cookie_header", ""))
+    return False
+
+
 def event_has(
     events: list[dict[str, str]],
     case_id: str,
@@ -176,9 +203,7 @@ def event_has(
             continue
         if grid is not None and event.get("grid") != grid:
             continue
-        if require_cookie and "m0_session=ok" not in {
-            part.strip() for part in event.get("cookie", "").split(";")
-        }:
+        if require_cookie and not has_session_cookie(event.get("cookie", "")):
             continue
         if menu is not None and event.get("menu") != menu:
             continue
@@ -248,6 +273,11 @@ def validate(driver_report: dict[str, object], events: list[dict[str, str]]) -> 
         event_has(events, "9", "after_restart", "0", True),
         "login-state cookie present after grid restart",
     )
+    check(
+        "restart-request-cookie",
+        restart_request_cookie(events),
+        "first recovered grid-0 request sent the session cookie before the mock response",
+    )
     return checks
 
 
@@ -312,6 +342,33 @@ def run_self_test() -> int:
         [{"case": "8", "phase": "context_menu", "grid": "0", "cookie": "m0_session=ok"}],
         "8", "context_menu", "0", True, "true",
     )
+    before = {"case": "9", "grid": "0", "phase": "before_restart", "cookie": "m0_session=ok"}
+    after = {"case": "9", "grid": "0", "phase": "after_restart", "cookie": "m0_session=ok"}
+    load = {
+        "case": "9", "grid": "0", "phase": "server_load",
+        "cookie_header": "other=value; m0_session=ok",
+    }
+    first_empty = {**load, "cookie_header": ""}
+    false_positive = [before, first_empty, after]
+    assert event_has(false_positive, "9", "before_restart", "0", True)
+    assert event_has(false_positive, "9", "after_restart", "0", True)
+    for trace, expected in [
+        ([before, load, after], "PASS"),
+        (false_positive, "FAIL"),
+        ([before, after], "FAIL"),
+        ([before, {**load, "case": "8"}, after], "FAIL"),
+        ([before, {**load, "grid": "1"}, after], "FAIL"),
+        ([before, first_empty, load, after], "FAIL"),
+        ([before, {**load, "cookie_header": "m0_session=okay"}, after], "FAIL"),
+        ([before, {**load, "cookie_header": "other_m0_session=ok"}, after], "FAIL"),
+        ([load, before, after], "FAIL"),
+        ([before, after, load], "FAIL"),
+    ]:
+        cookie_check = next(
+            check for check in validate({"status": "PASS"}, trace)
+            if check["name"] == "restart-request-cookie"
+        )
+        assert cookie_check["status"] == expected, (trace, cookie_check)
     print("M0_6C_GUI_REGRESSION_SELF_TEST=PASS")
     return 0
 

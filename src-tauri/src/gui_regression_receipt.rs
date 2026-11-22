@@ -43,8 +43,8 @@ impl ReceiptProbe {
         self.wait_with(
             RECEIPT_TIMEOUT,
             || {
-                let file = std::fs::File::open(path)
-                    .map_err(|_| "GUI_RECEIPT_READ_FAILED".to_string())?;
+                let file =
+                    std::fs::File::open(path).map_err(|_| "GUI_RECEIPT_READ_FAILED".to_string())?;
                 let mut bytes = Vec::new();
                 file.take((MAX_RECEIPT_BYTES + 1) as u64)
                     .read_to_end(&mut bytes)
@@ -98,8 +98,8 @@ impl ReceiptProbe {
             .map_err(|_| "GUI_RECEIPT_INVALID_UTF8".to_string())?;
         let mut matched = false;
         for line in complete.lines().filter(|line| !line.is_empty()) {
-            let event: serde_json::Value = serde_json::from_str(line)
-                .map_err(|_| "GUI_RECEIPT_INVALID_RECORD".to_string())?;
+            let event: serde_json::Value =
+                serde_json::from_str(line).map_err(|_| "GUI_RECEIPT_INVALID_RECORD".to_string())?;
             if !event.is_object() {
                 return Err("GUI_RECEIPT_INVALID_RECORD".to_string());
             }
@@ -210,7 +210,11 @@ mod tests {
             ("grid", "1", "GUI_RECEIPT_IDENTITY_MISMATCH"),
             ("phase", "loaded", "GUI_RECEIPT_IDENTITY_MISMATCH"),
             ("cookie", "m0_session=okay", "GUI_RECEIPT_COOKIE_MISSING"),
-            ("cookie", "other_m0_session=ok", "GUI_RECEIPT_COOKIE_MISSING"),
+            (
+                "cookie",
+                "other_m0_session=ok",
+                "GUI_RECEIPT_COOKIE_MISSING",
+            ),
             ("cookie", "", "GUI_RECEIPT_COOKIE_MISSING"),
             ("menu", "false", "GUI_RECEIPT_MENU_MISSING"),
         ] {
@@ -240,8 +244,14 @@ mod tests {
         after_receipt.extend_from_slice(&partial);
         assert_eq!(probe.confirmed(&after_receipt), Ok(true));
         partial.push(b'\n');
-        assert_eq!(probe.confirmed(&partial), Err("GUI_RECEIPT_INVALID_UTF8".into()));
-        assert_eq!(probe.confirmed(b"{broken}\n"), Err("GUI_RECEIPT_INVALID_RECORD".into()));
+        assert_eq!(
+            probe.confirmed(&partial),
+            Err("GUI_RECEIPT_INVALID_UTF8".into())
+        );
+        assert_eq!(
+            probe.confirmed(b"{broken}\n"),
+            Err("GUI_RECEIPT_INVALID_RECORD".into())
+        );
         assert_eq!(
             probe.confirmed(&vec![b'x'; MAX_RECEIPT_BYTES + 1]),
             Err("GUI_RECEIPT_LIMIT".into())
