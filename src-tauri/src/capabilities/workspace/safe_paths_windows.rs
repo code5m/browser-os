@@ -63,7 +63,7 @@ fn system_tool(name: &str) -> io::Result<PathBuf> {
 
 #[cfg(test)]
 mod windows_identity_contract_tests {
-    use super::valid_windows_sid;
+    use super::{acl_listing_is_exclusive, valid_windows_sid};
 
     #[test]
     fn sid_validation_preserves_literal_s_prefix_and_rejects_malformed_segments() {
@@ -72,6 +72,43 @@ mod windows_identity_contract_tests {
         assert!(!valid_windows_sid("S-1--21"));
         assert!(!valid_windows_sid("S-1-5-21-abc"));
         assert!(!valid_windows_sid("S-1-"));
+    }
+
+    /// Real crash on the user's machine: `whoami /user` returned
+    /// `yanghuiqian\yhq` while `icacls` printed `YANGHUIQIAN\Yhq`.
+    /// A case-sensitive owner match reported 0 entries and panicked at
+    /// startup with WINDOWS_PRIVATE_DIR_ACL_NOT_EXCLUSIVE.
+    #[test]
+    fn acl_exclusivity_matches_owner_when_whoami_and_icacls_casing_differs() {
+        let sid = "S-1-5-21-1697530992-2138327965-217515802-1001";
+        let account = r"yanghuiqian\yhq";
+        let listing = concat!(
+            "C:\\data\\app NT AUTHORITY\\SYSTEM:(OI)(CI)(F)\n",
+            "                                    YANGHUIQIAN\\Yhq:(OI)(CI)(F)\n",
+            "\n已成功处理 1 个文件; 处理 0 个文件时失败\n",
+        );
+        assert!(
+            acl_listing_is_exclusive(listing, 1, sid, account),
+            "mixed-case owner/SYSTEM ACEs must be accepted as exclusive"
+        );
+    }
+
+    #[test]
+    fn acl_exclusivity_still_rejects_broad_groups_and_extra_aces() {
+        let sid = "S-1-5-21-1697530992-2138327965-217515802-1001";
+        let account = r"yanghuiqian\yhq";
+        let with_everyone = concat!(
+            "C:\\data\\app NT AUTHORITY\\SYSTEM:(OI)(CI)(F)\n",
+            "                                    YANGHUIQIAN\\Yhq:(OI)(CI)(F)\n",
+            "                                    Everyone:(OI)(CI)(F)\n",
+        );
+        assert!(!acl_listing_is_exclusive(with_everyone, 1, sid, account));
+        let with_extra = concat!(
+            "C:\\data\\app NT AUTHORITY\\SYSTEM:(OI)(CI)(F)\n",
+            "                                    YANGHUIQIAN\\Yhq:(OI)(CI)(F)\n",
+            "                                    BUILTIN\\Users:(OI)(CI)(RX)\n",
+        );
+        assert!(!acl_listing_is_exclusive(with_extra, 1, sid, account));
     }
 }
 
@@ -246,24 +283,8 @@ pub(super) fn ensure_private_directory(path: &Path) -> io::Result<()> {
         ));
     }
     let listing = String::from_utf8_lossy(&verify.stdout);
-    let entries: Vec<_> = listing.lines().filter(|line| line.contains(":(")).collect();
     let object_count = objects.len() + 1;
-    let user_entries = entries
-        .iter()
-        .filter(|line| line.contains(&sid) || line.contains(&account))
-        .count();
-    let system_entries = entries
-        .iter()
-        .filter(|line| line.contains("S-1-5-18") || line.to_ascii_uppercase().contains("SYSTEM"))
-        .count();
-    if entries.len() != object_count * 2
-        || user_entries != object_count
-        || system_entries != object_count
-        || listing.to_ascii_lowercase().contains("everyone")
-        || listing.to_ascii_lowercase().contains("authenticated users")
-        || listing.contains("S-1-1-0")
-        || listing.contains("S-1-5-32-545")
-    {
+    if !acl_listing_is_exclusive(&listing, object_count, &sid, &account) {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
             "WINDOWS_PRIVATE_DIR_ACL_NOT_EXCLUSIVE",
@@ -271,6 +292,43 @@ pub(super) fn ensure_private_directory(path: &Path) -> io::Result<()> {
     }
     Ok(())
 }
+
+/// Verify the `icacls /T` listing grants exactly the owner SID and SYSTEM on
+/// every object, with no broad groups.
+///
+/// Windows account names are case-insensitive but the two tools that produce
+/// the strings here do not agree on casing: `whoami /user` returns
+/// `domain\\user` in lowercase on some systems while `icacls` prints the
+/// `DOMAIN\\User` display form. A case-sensitive `contains` therefore reports
+/// zero owner entries on such machines and rejects an otherwise private
+/// directory. Fold every comparison to ASCII lowercase before matching.
+fn acl_listing_is_exclusive(listing: &str, object_count: usize, sid: &str, account: &str) -> bool {
+    let entries: Vec<_> = listing.lines().filter(|line| line.contains(":(")).collect();
+    let sid_key = sid.to_ascii_lowercase();
+    let account_key = account.to_ascii_lowercase();
+    let user_entries = entries
+        .iter()
+        .filter(|line| {
+            let folded = line.to_ascii_lowercase();
+            folded.contains(&sid_key) || folded.contains(&account_key)
+        })
+        .count();
+    let system_entries = entries
+        .iter()
+        .filter(|line| {
+            line.contains("S-1-5-18") || line.to_ascii_uppercase().contains("SYSTEM")
+        })
+        .count();
+    let folded_listing = listing.to_ascii_lowercase();
+    entries.len() == object_count * 2
+        && user_entries == object_count
+        && system_entries == object_count
+        && !folded_listing.contains("everyone")
+        && !folded_listing.contains("authenticated users")
+        && !listing.contains("S-1-1-0")
+        && !listing.contains("S-1-5-32-545")
+}
+
 fn normalized_path(value: &str) -> String {
     // Keep UNC roots absolute: \\?\UNC\server\share is the same location
     // as \\server\share. Stripping \\?\ blindly produced a relative-looking
