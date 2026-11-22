@@ -31,7 +31,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: browseros-developer-feedback-${{ github.ref }}
+  # Lightweight pushes must not cancel a frozen native run on the same branch.
+  # A new run still supersedes older work in its own branch and lane.
+  group: browseros-developer-feedback-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.windows_native == true && 'native' || 'quick' }}
   cancel-in-progress: true
 
 jobs:

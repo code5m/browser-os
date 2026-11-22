@@ -7,10 +7,14 @@ use std::sync::{Arc, Mutex};
 use winapi::um::wincon::COORD;
 
 fn validated_dimensions(rows: u16, cols: u16) -> anyhow::Result<COORD> {
-    ensure!(rows > 0 && cols > 0
-        && rows <= i16::MAX as u16 && cols <= i16::MAX as u16,
-        "ConPTY size outside supported 1..=32767 rows/cols");
-    Ok(COORD { X: cols as i16, Y: rows as i16 })
+    ensure!(
+        rows > 0 && cols > 0 && rows <= i16::MAX as u16 && cols <= i16::MAX as u16,
+        "ConPTY size outside supported 1..=32767 rows/cols"
+    );
+    Ok(COORD {
+        X: cols as i16,
+        Y: rows as i16,
+    })
 }
 
 #[derive(Default)]
@@ -24,11 +28,7 @@ impl PtySystem for ConPtySystem {
         let stdin = Pipe::new()?;
         let stdout = Pipe::new()?;
 
-        let con = PsuedoCon::new(
-            coordinates,
-            stdin.read,
-            stdout.write,
-        )?;
+        let con = PsuedoCon::new(coordinates, stdin.read, stdout.write)?;
 
         let master = ConPtyMasterPty {
             inner: Arc::new(Mutex::new(Inner {
@@ -116,8 +116,11 @@ impl MasterPty for ConPtyMasterPty {
 }
 
 impl SlavePty for ConPtySlavePty {
-    fn spawn_command_in_job(&self, cmd: CommandBuilder, job: std::os::windows::io::RawHandle)
-        -> anyhow::Result<Box<dyn Child + Send + Sync>> {
+    fn spawn_command_in_job(
+        &self,
+        cmd: CommandBuilder,
+        job: std::os::windows::io::RawHandle,
+    ) -> anyhow::Result<Box<dyn Child + Send + Sync>> {
         let inner = self.inner.lock().unwrap();
         let child = inner.con.spawn_command_in_job(cmd, job as _)?;
         Ok(Box::new(child))
@@ -129,7 +132,10 @@ impl SlavePty for ConPtySlavePty {
         Ok(Box::new(child))
     }
 
-    fn spawn_command_suspended(&self, cmd: CommandBuilder) -> anyhow::Result<Box<dyn Child + Send + Sync>> {
+    fn spawn_command_suspended(
+        &self,
+        cmd: CommandBuilder,
+    ) -> anyhow::Result<Box<dyn Child + Send + Sync>> {
         let inner = self.inner.lock().unwrap();
         let child = inner.con.spawn_command_suspended(cmd)?;
         Ok(Box::new(child))
@@ -154,9 +160,16 @@ mod conpty_input_contract_tests {
     fn invalid_dimensions_are_rejected_before_pipe_creation() {
         let system = ConPtySystem::default();
         for (rows, cols) in [(0, 80), (25, 0), (u16::MAX, 80), (25, u16::MAX)] {
-            let size = PtySize { rows, cols, pixel_width: 0, pixel_height: 0 };
-            assert!(system.openpty(size).is_err(),
-                "invalid ConPTY dimensions {rows}x{cols} must be rejected");
+            let size = PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            };
+            assert!(
+                system.openpty(size).is_err(),
+                "invalid ConPTY dimensions {rows}x{cols} must be rejected"
+            );
         }
     }
 }

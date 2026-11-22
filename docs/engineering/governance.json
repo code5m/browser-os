@@ -49,7 +49,7 @@
       "id": "developer-feedback",
       "path": ".github/workflows/browseros-developer-feedback.yml",
       "role": "nonblocking_developer_feedback",
-      "scope": "fast feedback on ordinary pushes; explicit manual .deb preview OR Windows/Linux native lane (defaults off), native dispatch reuses this existing default-branch path with repair branch ref; no merge or GUI-pass claim"
+      "scope": "fast feedback on ordinary pushes; explicit manual .deb preview OR Windows/Linux native lane (defaults off), native dispatch reuses this existing default-branch path with repair branch ref; branch-scoped quick/native cancellation groups keep ordinary pushes from cancelling frozen native runs; no merge or GUI-pass claim"
     },
     {
       "id": "hot-plug",
@@ -73,7 +73,7 @@
       "id": "supply-chain",
       "path": ".github/workflows/supply-chain-assurance.yml",
       "role": "blocking_supply_chain_gate",
-      "scope": "all branch pushes + PR to master; audits and Node/Rust SBOM"
+      "scope": "all branch pushes + PR to master; audits and Node/Rust SBOM; temporary explicit manual-only Node security candidate generation exports immutable source and hashes without changing checked-out manifests or ordinary gates"
     },
     {
       "id": "mysql-runtime-e2e",

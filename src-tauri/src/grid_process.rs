@@ -1590,7 +1590,6 @@ impl GridProcessManager {
         }
     }
 
-
     /// Remove the live registration, then transfer the complete native owner.
     /// Reusing this index is rejected until retirement confirms group cleanup.
     pub fn kill_child(&self, index: u32) -> bool {

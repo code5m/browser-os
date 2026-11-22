@@ -945,8 +945,8 @@ mod tests {
         let oid = {
             let tree_id = repo.index().expect("index").write_tree().expect("tree");
             let tree = repo.find_tree(tree_id).expect("find tree");
-            let sig = git2::Signature::now("BrowserOS test", "test@example.invalid")
-                .expect("signature");
+            let sig =
+                git2::Signature::now("BrowserOS test", "test@example.invalid").expect("signature");
             repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
                 .expect("commit")
         };

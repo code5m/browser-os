@@ -2383,7 +2383,7 @@ mod tests {
                     let child = fixture_sleep();
                     started.send(()).unwrap();
                     read_provider_process(child, b"", &|| {
-                        crate::capabilities::agent::coding::cancelled_for_root(&canonical_root)
+                        crate::capabilities::agent::coding::cancelled(&canonical_root, &id)
                     })?;
                     unreachable!()
                 },

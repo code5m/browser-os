@@ -1,8 +1,8 @@
 # Windows V2 native LSP regression: follow-up source repair and verification contract
 
-Date: 2026-11-18  
-Branch: feature/browseros-windows-linux-v2-onepass-20261114  
-Base HEAD: 39386d50fca3e3e7b897ce40c4a0cdf5a1e3cd3c  
+Date: 2026-11-18
+Branch: feature/browseros-windows-linux-v2-onepass-20261114
+Base HEAD: 39386d50fca3e3e7b897ce40c4a0cdf5a1e3cd3c
 Scope: no new branch, no master merge, no CI or workflow dispatch.
 
 ## 1. Native results from Windows operator (not rerun in this change)

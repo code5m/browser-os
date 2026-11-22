@@ -97,7 +97,10 @@ fn require_remote_endpoint(
     for_push: bool,
 ) -> Result<(), String> {
     let actual = if for_push {
-        match remote.pushurl().map_err(|_| "REPO_REMOTE_URL_UNAVAILABLE")? {
+        match remote
+            .pushurl()
+            .map_err(|_| "REPO_REMOTE_URL_UNAVAILABLE")?
+        {
             Some(url) => url,
             None => remote.url().map_err(|_| "REPO_REMOTE_URL_UNAVAILABLE")?,
         }

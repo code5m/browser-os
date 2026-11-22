@@ -28,7 +28,9 @@ fn process_status(proc: &OwnedHandle) -> IoResult<Option<ExitStatus>> {
         }
         WAIT_TIMEOUT_RESULT => Ok(None),
         WAIT_FAILED_RESULT => Err(IoError::last_os_error()),
-        other => Err(IoError::other(format!("unexpected process wait result: {other}"))),
+        other => Err(IoError::other(format!(
+            "unexpected process wait result: {other}"
+        ))),
     }
 }
 
@@ -82,7 +84,9 @@ impl ProcessWaitHandle {
             let error = match result {
                 WAIT_OBJECT_0_RESULT => None,
                 WAIT_FAILED_RESULT => Some(IoError::last_os_error()),
-                other => Some(IoError::other(format!("unexpected process wait result: {other}"))),
+                other => Some(IoError::other(format!(
+                    "unexpected process wait result: {other}"
+                ))),
             };
             if let Some(state) = state.upgrade() {
                 let waker = {
@@ -193,7 +197,9 @@ impl std::future::Future for WinChild {
             Ok(Some(status)) => Poll::Ready(Ok(status)),
             Err(error) => Poll::Ready(Err(error).context("Failed to retrieve process exit status")),
             Ok(None) => {
-                let mut state = self.wait_state.lock()
+                let mut state = self
+                    .wait_state
+                    .lock()
                     .unwrap_or_else(|poison| poison.into_inner());
                 if let Some(error) = state.error.take() {
                     return Poll::Ready(Err(error).context("Failed to wait for process exit"));
@@ -213,8 +219,11 @@ impl std::future::Future for WinChild {
                 }
                 state.waker = Some(cx.waker().clone());
                 if !state.started {
-                    let proc = match self.proc.lock()
-                        .unwrap_or_else(|poison| poison.into_inner()).try_clone()
+                    let proc = match self
+                        .proc
+                        .lock()
+                        .unwrap_or_else(|poison| poison.into_inner())
+                        .try_clone()
                     {
                         Ok(proc) => proc,
                         Err(error) => return Poll::Ready(Err(error.into())),
@@ -260,13 +269,19 @@ mod process_wait_tests {
         let mut process = std::process::Command::new("cmd.exe")
             .args(["/D", "/C", "set /p gate= >NUL & exit /B 37"])
             .stdin(std::process::Stdio::piped())
-            .spawn().expect("start native wait fixture");
+            .spawn()
+            .expect("start native wait fixture");
         let mut gate = process.stdin.take().expect("controlled fixture stdin");
         let mut duplicated = std::ptr::null_mut();
         let copied = unsafe {
             DuplicateHandle(
-                GetCurrentProcess(), process.as_raw_handle() as _,
-                GetCurrentProcess(), &mut duplicated, 0, 0, DUPLICATE_SAME_ACCESS,
+                GetCurrentProcess(),
+                process.as_raw_handle() as _,
+                GetCurrentProcess(),
+                &mut duplicated,
+                0,
+                0,
+                DUPLICATE_SAME_ACCESS,
             )
         };
         assert_ne!(copied, 0, "duplicate native process handle");
@@ -277,16 +292,23 @@ mod process_wait_tests {
         let initial_wakes = Arc::new(WakeCount(AtomicUsize::new(0)));
         let initial_waker = Waker::from(Arc::clone(&initial_wakes));
         let mut initial_context = Context::from_waker(&initial_waker);
-        assert!(matches!(Pin::new(&mut child).poll(&mut initial_context), Poll::Pending));
+        assert!(matches!(
+            Pin::new(&mut child).poll(&mut initial_context),
+            Poll::Pending
+        ));
         let wake_count = Arc::new(WakeCount(AtomicUsize::new(0)));
         let waker = Waker::from(Arc::clone(&wake_count));
         let mut context = Context::from_waker(&waker);
         // Re-poll before the long-lived fixture exits; these must share one
         // owned native waiter, not start one detached thread per poll.
         for _ in 0..4 {
-            assert!(matches!(Pin::new(&mut child).poll(&mut context), Poll::Pending));
+            assert!(matches!(
+                Pin::new(&mut child).poll(&mut context),
+                Poll::Pending
+            ));
         }
-        gate.write_all(b"continue\r\n").expect("release native fixture");
+        gate.write_all(b"continue\r\n")
+            .expect("release native fixture");
         drop(gate);
         let until = Instant::now() + Duration::from_secs(10);
         while wake_count.0.load(Ordering::SeqCst) == 0 {
@@ -297,11 +319,16 @@ mod process_wait_tests {
             }
             std::thread::sleep(Duration::from_millis(5));
         }
-        assert_eq!(initial_wakes.0.load(Ordering::SeqCst), 0,
-            "completion must notify the replacement waker");
+        assert_eq!(
+            initial_wakes.0.load(Ordering::SeqCst),
+            0,
+            "completion must notify the replacement waker"
+        );
         match Pin::new(&mut child).poll(&mut context) {
-            Poll::Ready(result) =>
-                assert_eq!(result.expect("owned wait handle remains valid").exit_code(), 37),
+            Poll::Ready(result) => assert_eq!(
+                result.expect("owned wait handle remains valid").exit_code(),
+                37
+            ),
             Poll::Pending => {
                 let _ = process.kill();
                 let _ = process.wait();

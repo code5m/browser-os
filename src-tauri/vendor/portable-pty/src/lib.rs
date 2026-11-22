@@ -169,16 +169,24 @@ pub trait SlavePty {
     /// Object. Other Windows PTY backends must explicitly implement this
     /// contract or fail closed; the caller retains ownership of the Job.
     #[cfg(windows)]
-    fn spawn_command_in_job(&self, _cmd: CommandBuilder, _job: std::os::windows::io::RawHandle)
-        -> Result<Box<dyn Child + Send + Sync>, Error> {
+    fn spawn_command_in_job(
+        &self,
+        _cmd: CommandBuilder,
+        _job: std::os::windows::io::RawHandle,
+    ) -> Result<Box<dyn Child + Send + Sync>, Error> {
         Err(anyhow::anyhow!("atomic ConPTY Job-list spawn unsupported"))
     }
 
     /// Spawns a process with its primary thread suspended. Windows callers can
     /// assign a Job Object before calling ResumeThread through their native
     /// process supervisor. Platforms without this primitive fail closed.
-    fn spawn_command_suspended(&self, _cmd: CommandBuilder) -> Result<Box<dyn Child + Send + Sync>, Error> {
-        Err(anyhow::anyhow!("suspended PTY process creation is unsupported on this platform"))
+    fn spawn_command_suspended(
+        &self,
+        _cmd: CommandBuilder,
+    ) -> Result<Box<dyn Child + Send + Sync>, Error> {
+        Err(anyhow::anyhow!(
+            "suspended PTY process creation is unsupported on this platform"
+        ))
     }
 }
 

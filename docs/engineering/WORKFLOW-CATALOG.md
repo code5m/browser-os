@@ -11,13 +11,15 @@ Workflow registration is machine-enforced by `docs/engineering/governance.json`.
 | `capability-v3-hotplug.yml` | focused Hot-Plug acceptance | all branch pushes / PR to master; risk-aware jobs; manual full |
 | `browseros-developer-feedback.yml` | fast feedback; optional manual .deb OR Windows/Linux native mode | ordinary pushes use Quick Gate; `windows_native=false` and preview=false by default; native mode explicitly bypasses Quick Gate and calls reusable native workflow |
 | `engineering-governance.yml` | governance drift | all branch pushes / PR to master; risk-aware jobs; manual full |
-| `supply-chain-assurance.yml` | supply-chain gate and SBOM evidence | all branch pushes / PR to master; risk-aware jobs; manual full |
+| `supply-chain-assurance.yml` | supply-chain gate and SBOM evidence | all branch pushes / PR to master; risk-aware jobs; manual full; temporary opt-in security lock candidate |
 | `browseros-sustained-performance.yml` | opted-in installed RSS/PSS/CPU evidence | manual dispatch only; no weekly schedule |
 | `mirror-to-gitee.yml` | retired legacy mirror placeholder | manual only; no branch/tag push trigger |
 
 The v2/v3 filenames remain for historical compatibility. Every developer branch push gets the Quick Gate, and existing focused safety/hot-plug/governance workflows remain active. Full Validation no longer starts on developer pushes or draft PRs; it runs on master pushes, non-draft PRs targeting master (including the ready-for-review transition), and explicit manual dispatch. The fail-closed `scripts/ci-impact.py` still selects `docs`, `ui`, or `full` for runs that actually invoke Full Validation. Unknown, native, bridge, dependency, workflow and mixed-sensitive changes remain full. A skipped check is never evidence of passing that check. Commits explicitly created with GitHub's `[skip ci]` instruction do not run push checks; that exception records NOT_RUN, never PASS.
 
 The independent Preview job builds a release Debian package only after an explicit workflow_dispatch request with build_preview=true (default false). Branch pushes never compile a native preview. The formerly weekly installed-resource benchmark is also manual-only.
+
+Developer Feedback concurrency is scoped by branch and by `quick` or `native` mode. A lightweight push therefore cannot cancel a manually dispatched native run for a frozen SHA; a newer native dispatch still supersedes an older native run on the same branch. Manual Debian Preview keeps the Quick Gate lane and its existing cancellation behavior.
 
 Full Validation provides off (default), rust-tests, packaged-gui, and packaged-resource modes, selected by manual input, one PR label, or the CI_NATIVE_MODE repository variable. The current source frontend is built ONCE into a SHA-bound artifact and reused in static and optional native jobs. The same-run master size audit builds a different source commit, which is an approved regression baseline, not a duplicate of the current source.
 

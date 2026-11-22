@@ -54,10 +54,12 @@ fn load_conpty() -> ConPtyFuncs {
     // workspace-controlled PATH. A relative DLL name may load attacker
     // bytes when the integrated terminal is opened inside a repository.
     // A bundled replacement is valid only beside the current executable.
-    let bundled = std::env::current_exe().ok()
+    let bundled = std::env::current_exe()
+        .ok()
         .and_then(|executable| executable.parent().map(|parent| parent.join("conpty.dll")))
-        .filter(|candidate| std::fs::symlink_metadata(candidate)
-            .is_ok_and(|meta| meta.file_type().is_file()));
+        .filter(|candidate| {
+            std::fs::symlink_metadata(candidate).is_ok_and(|meta| meta.file_type().is_file())
+        });
     if let Some(path) = bundled {
         if let Ok(sideloaded) = ConPtyFuncs::open(&path) {
             return sideloaded;
@@ -85,8 +87,10 @@ impl Drop for PsuedoCon {
     fn drop(&mut self) {
         // In the no-client/error path these ends have not yet been released.
         // Close them before ClosePseudoConsole to permit broken-pipe/EOF.
-        self.creation_pipes.get_mut()
-            .unwrap_or_else(|poison| poison.into_inner()).take();
+        self.creation_pipes
+            .get_mut()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .take();
         unsafe { (CONPTY.ClosePseudoConsole)(self.con) };
     }
 }
@@ -101,15 +105,22 @@ fn is_live_pipe_handle(handle: HANDLE) -> bool {
 
 impl PsuedoCon {
     pub fn new(size: COORD, input: FileDescriptor, output: FileDescriptor) -> Result<Self, Error> {
-        ensure!(size.X > 0 && size.Y > 0, "ConPTY dimensions must be positive");
+        ensure!(
+            size.X > 0 && size.Y > 0,
+            "ConPTY dimensions must be positive"
+        );
         // The pipes belong to this process, regardless of whether the parent
         // shell/GUI exposes valid STD_INPUT_HANDLE/STD_OUTPUT_HANDLE values.
         let input_handle = input.as_raw_handle() as HANDLE;
         let output_handle = output.as_raw_handle() as HANDLE;
-        ensure!(is_live_pipe_handle(input_handle),
-            "ConPTY input pipe handle is invalid before CreatePseudoConsole");
-        ensure!(is_live_pipe_handle(output_handle),
-            "ConPTY output pipe handle is invalid before CreatePseudoConsole");
+        ensure!(
+            is_live_pipe_handle(input_handle),
+            "ConPTY input pipe handle is invalid before CreatePseudoConsole"
+        );
+        ensure!(
+            is_live_pipe_handle(output_handle),
+            "ConPTY output pipe handle is invalid before CreatePseudoConsole"
+        );
         let mut con: HPCON = INVALID_HANDLE_VALUE;
         let result = unsafe {
             (CONPTY.CreatePseudoConsole)(
@@ -138,7 +149,10 @@ impl PsuedoCon {
     }
 
     pub fn resize(&self, size: COORD) -> Result<(), Error> {
-        ensure!(size.X > 0 && size.Y > 0, "ConPTY dimensions must be positive");
+        ensure!(
+            size.X > 0 && size.Y > 0,
+            "ConPTY dimensions must be positive"
+        );
         let result = unsafe { (CONPTY.ResizePseudoConsole)(self.con, size) };
         ensure!(
             result == S_OK,
@@ -156,7 +170,11 @@ impl PsuedoCon {
 
     /// Attach this ConPTY child atomically to a pre-created Job during
     /// CreateProcessW. No post-spawn adoption, suspension, or ResumeThread.
-    pub fn spawn_command_in_job(&self, cmd: CommandBuilder, job: HANDLE) -> anyhow::Result<WinChild> {
+    pub fn spawn_command_in_job(
+        &self,
+        cmd: CommandBuilder,
+        job: HANDLE,
+    ) -> anyhow::Result<WinChild> {
         ensure!(!job.is_null(), "ConPTY requires a valid Job Object");
         self.spawn_command_with_options(cmd, 0, Some(job))
     }
@@ -167,7 +185,12 @@ impl PsuedoCon {
         self.spawn_command_with_options(cmd, CREATE_SUSPENDED, None)
     }
 
-    fn spawn_command_with_options(&self, cmd: CommandBuilder, extra_flags: u32, job: Option<HANDLE>) -> anyhow::Result<WinChild> {
+    fn spawn_command_with_options(
+        &self,
+        cmd: CommandBuilder,
+        extra_flags: u32,
+        job: Option<HANDLE>,
+    ) -> anyhow::Result<WinChild> {
         let mut si: STARTUPINFOEXW = unsafe { mem::zeroed() };
         si.StartupInfo.cb = mem::size_of::<STARTUPINFOEXW>() as u32;
         // Explicitly set the stdio handles as invalid handles otherwise
@@ -229,8 +252,11 @@ impl PsuedoCon {
         // Microsoft documents releasing the host ends supplied to
         // CreatePseudoConsole after the client CreateProcess completes,
         // not immediately when CreatePseudoConsole returns.
-        let _ = self.creation_pipes
-            .lock().unwrap_or_else(|poison| poison.into_inner()).take();
+        let _ = self
+            .creation_pipes
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .take();
 
         // Make sure we close out the thread handle so we don't leak it;
         // we do this simply by making it owned

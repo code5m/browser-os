@@ -1,7 +1,7 @@
 # BrowserOS Windows/Linux V2 — LSP、AppContainer、ConPTY 源码收敛记录
 
-基线：`bd7cf45a0697192a2883d646d78897f0fc70104a`  
-目标分支：`feature/browseros-windows-linux-v2-onepass-20261114`  
+基线：`bd7cf45a0697192a2883d646d78897f0fc70104a`
+目标分支：`feature/browseros-windows-linux-v2-onepass-20261114`
 限制：不新建分支、不合并 master、**不运行或主动触发 CI/Actions**。本轮仅通过 GitHub 审查和提交源码，远程 Windows 设备离线。下述测试为**新增测试代码，未运行**。
 
 ## 一、确认的设计缺陷与修复

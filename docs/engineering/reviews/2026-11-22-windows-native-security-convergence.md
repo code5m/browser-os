@@ -1,11 +1,11 @@
 # Windows 原生安全收敛修复台账
 
-日期：2026-11-22  
-仓库：`code5m/browser-os`  
-修复分支：`fix/windows-native-security-convergence-20261122`  
-首轮起点：`fix/windows-private-dir-acl-case@285542f57bd055592b4d5019e5a89e8555bcc805`  
-第二轮接续：`fecfae2b062fa281a0ced3d0f006dcef5ce39ee2`  
-第三轮审查起点：`add44f3b599b526a14ba28c5f993f51cb4561bae`  
+日期：2026-11-22
+仓库：`code5m/browser-os`
+修复分支：`fix/windows-native-security-convergence-20261122`
+首轮起点：`fix/windows-private-dir-acl-case@285542f57bd055592b4d5019e5a89e8555bcc805`
+第二轮接续：`fecfae2b062fa281a0ced3d0f006dcef5ce39ee2`
+第三轮审查起点：`add44f3b599b526a14ba28c5f993f51cb4561bae`
 第四轮审查起点：`e039c83a33c076971f39fbe4f7943ebfea233c3f`；最新结论见 §9.3，本台账随其后的同分支修复提交交付
 
 > 本轮交付是源码、回归定义和文档的修改。没有运行测试、校验脚本、构建、CI、NSIS、GUI 或性能测量。文中的“已修改”不代表原生问题已修愈，也不代表 Windows/Linux 回归通过。macOS 只有明确列出的源码准备，不能据此宣布 macOS 已支持。

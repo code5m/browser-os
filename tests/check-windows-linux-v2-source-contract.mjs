@@ -3,7 +3,10 @@ import { readFileSync } from 'node:fs';
 
 // Static source-contract smoke checks only. They cannot establish Windows
 // compilation, WebView2 reliability, native filesystem safety or GUI PASS.
-const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
+// Git may check out these same source files with CRLF on Windows. Normalize
+// only line endings so region boundaries and safety assertions stay identical.
+const normalizeSourceText = (source) => source.replace(/\r\n/g, '\n');
+const read = (path) => normalizeSourceText(readFileSync(new URL(path, import.meta.url), 'utf8'));
 // Bound each wiring assertion to its production function. An absent marker
 // must fail instead of accidentally searching a different function or a test.
 const sourceRegion = (source, start, end) => {
@@ -12,6 +15,29 @@ const sourceRegion = (source, start, end) => {
   assert.ok(from >= 0 && to > from, `missing source region: ${start}`);
   return source.slice(from, to);
 };
+const beforeRustTests = (source) => {
+  const parts = source.split('#[cfg(test)]\nmod tests');
+  assert.equal(parts.length, 2, 'missing or ambiguous Rust test module boundary');
+  return parts[0];
+};
+// Test cleanup is outside production under either checkout convention; a
+// production deletion or an absent boundary must still fail the contract.
+for (const newline of ['\n', '\r\n']) {
+  const fixture = [
+    'fn production() {}',
+    '#[cfg(test)]',
+    'mod tests { fn cleanup() { std::fs::remove_dir_all("fixture").unwrap(); } }',
+  ].join(newline);
+  assert.doesNotMatch(beforeRustTests(normalizeSourceText(fixture)), /std::fs::remove_dir_all/);
+  const unsafeFixture = fixture.replace(
+    'fn production() {}', 'fn production() { std::fs::remove_dir_all("untrusted").unwrap(); }'
+  );
+  assert.throws(() => assert.doesNotMatch(
+    beforeRustTests(normalizeSourceText(unsafeFixture)), /std::fs::remove_dir_all/
+  ));
+}
+assert.throws(() => beforeRustTests('fn production() {}'), /Rust test module boundary/);
+
 const cas = read('../src-tauri/src/capabilities/workspace/cas.rs');
 const safePaths = read('../src-tauri/src/capabilities/workspace/safe_paths.rs');
 const safePathsWindows = read('../src-tauri/src/capabilities/workspace/safe_paths_windows.rs');
@@ -448,10 +474,7 @@ assert.match(workspace, /ensure_private_directory_root\([\s\S]*?PreparedPrivateD
 assert.match(workspace, /_preparation: preparation/);
 assert.match(workspace, /prepare_application_data_directory\(&base\)/);
 assert.match(workspace, /app\.manage\(PreparedDataDirectory/);
-const dataDirectoryGetter = workspace.slice(
-  workspace.indexOf('pub fn data_dir('),
-  workspace.indexOf('\nfn ensure(')
-);
+const dataDirectoryGetter = sourceRegion(workspace, "pub fn data_dir(", "\nfn ensure(");
 assert.ok(dataDirectoryGetter.length > 0);
 assert.match(dataDirectoryGetter, /PreparedDataDirectory/);
 assert.doesNotMatch(dataDirectoryGetter, /ensure_private_directory|create_dir|panic!/);
@@ -476,10 +499,7 @@ assert.match(startup, /state\.pending\.push_back\(url\.to_owned\(\)\)/);
 assert.match(startup, /drop\(state\);\s*crate::bridge::handle_open_url\(app, url\)/);
 assert.match(startup, /STARTUP_QUEUE_UNAVAILABLE/);
 assert.match(startup, /STARTUP_QUEUE_POISONED/);
-const releaseOpenUrls = startup.slice(
-  startup.indexOf('fn release_pending_open_urls('),
-  startup.indexOf('pub fn prepare_workspace(')
-);
+const releaseOpenUrls = sourceRegion(startup, "fn release_pending_open_urls(", "pub fn prepare_workspace(");
 assert.ok(releaseOpenUrls.length > 0);
 assert.match(releaseOpenUrls, /let pending = \{\s*let mut state = queue\s*\.0\s*\.lock\(\)[\s\S]*?state\.ready = true;\s*std::mem::take\(&mut state\.pending\)\s*\};\s*for url in pending/);
 assert.match(startup, /pub fn prepare_workspace\([\s\S]*?prepare_data_dir\(app\)\?;[\s\S]*?release_pending_open_urls\(app\)/);
@@ -503,10 +523,7 @@ assert.match(windowsLsp, /private_snapshot_requires_own_package_sid_and_rejects_
 assert.match(windowsLsp, /own lowbox source file read failed/);
 assert.match(windowsLsp, /snapshot_acl_for_test/);
 
-const sandboxedLspStart = windowsLsp.slice(
-  windowsLsp.indexOf('fn start_with_snapshot('),
-  windowsLsp.indexOf('fn begin_request(')
-);
+const sandboxedLspStart = sourceRegion(windowsLsp, "fn start_with_snapshot(", "fn begin_request(");
 assert.ok(sandboxedLspStart.length > 0);
 assert.match(sandboxedLspStart, /None => runtime_with_budget\(&operation\)\?/);
 assert.match(sandboxedLspStart, /rustc_cfg_environment\(&profile, &server\)\?/);
@@ -528,17 +545,11 @@ assert.match(platformSecurity, /native_path_identity_rejects_a_sibling_and_accep
 
 // Follow-up: four real Windows LSP requests, private source snapshots,
 // AppContainer SID isolation, and ConPTY creation/child lifetime.
-const nativeLspStart = windowsLsp.slice(
-  windowsLsp.indexOf('fn start_with_snapshot('),
-  windowsLsp.indexOf('fn begin_request(')
-);
+const nativeLspStart = sourceRegion(windowsLsp, "fn start_with_snapshot(", "fn begin_request(");
 assert.match(nativeLspStart, /"linkedProjects":\[reviewed_graph\]/);
 assert.match(nativeLspStart, /\.spawn\(&server, &\[\], &environment, &state\)/);
 assert.match(nativeLspStart, /rustc_cfg_environment\(&profile, &server\)\?/);
-const rustcCfgEnvironment = windowsLsp.slice(
-  windowsLsp.indexOf('fn rustc_cfg_peer('),
-  windowsLsp.indexOf('fn lsp_toolchain_contract(')
-);
+const rustcCfgEnvironment = sourceRegion(windowsLsp, "fn rustc_cfg_peer(", "fn lsp_toolchain_contract(");
 assert.ok(rustcCfgEnvironment.includes('directory.join("rustc.exe")'));
 assert.match(rustcCfgEnvironment, /stage_runtime_peer\(&peer\)/);
 assert.match(rustcCfgEnvironment, /LSP_RUSTC_CFG_STAGE_FAILED:\{error\}/);
@@ -564,10 +575,7 @@ assert.match(windowsLsp, /"SYMBOLS",/);
 assert.match(windowsLsp, /legacy_cargo_subprocess_probes_are_diagnostics_only/);
 assert.match(windowsLsp, /private_snapshot_requires_own_package_sid_and_rejects_other_profiles/);
 assert.match(windowsLsp, /write-negative profile/);
-const snapshotAcl = windowsSandbox.slice(
-  windowsSandbox.indexOf('fn protect_selected_tree('),
-  windowsSandbox.indexOf('pub fn stage_runtime_peer(')
-);
+const snapshotAcl = sourceRegion(windowsSandbox, "fn protect_selected_tree(", "pub fn stage_runtime_peer(");
 assert.ok(snapshotAcl.length > 0);
 assert.match(snapshotAcl, /AppContainerAccess::ReadExecute/);
 assert.match(snapshotAcl, /directory\s*\.protect_tree/);
@@ -604,19 +612,13 @@ assert.match(platformSecurity, /TREE_CHANGED_DURING_OPEN/);
 assert.match(platformSecurity, /FileIdentity/);
 assert.match(platformSecurity, /MAXIMUM_ALLOWED/);
 assert.match(platformSecurity, /ReOpenFile/);
-const privateRepair = platformSecurity.slice(
-  platformSecurity.indexOf('fn repair_object('),
-  platformSecurity.indexOf('#[derive(Debug)]\nstruct DirectoryEntry')
-);
+const privateRepair = sourceRegion(platformSecurity, "fn repair_object(", "#[derive(Debug)]\nstruct DirectoryEntry");
 assert.ok(privateRepair.length > 0);
 assert.match(privateRepair, /let writable = file/);
 assert.match(privateRepair, /SetSecurityInfo/);
 assert.match(privateRepair, /descriptor_is_private\(writable/);
 assert.doesNotMatch(privateRepair, /ReOpenFile|reopen_maximum/);
-const ensurePrivate = platformSecurity.slice(
-  platformSecurity.indexOf('fn ensure_private('),
-  platformSecurity.indexOf('pub fn ensure_private_directory(')
-);
+const ensurePrivate = sourceRegion(platformSecurity, "fn ensure_private(", "pub fn ensure_private_directory(");
 assert.ok(ensurePrivate.length > 0);
 assert.match(ensurePrivate, /private_directory\(path, options, false, deep, start\)/);
 assert.match(ensurePrivate, /migration_candidate\(&error\)/);
@@ -633,10 +635,7 @@ assert.match(platformSecurity, /max_depth/);
 assert.match(platformSecurity, /max_repairs/);
 assert.match(platformSecurity, /max_duration/);
 assert.match(platformSecurity, /MIGRATION_BUDGET_EXCEEDED/);
-const privateAclVerifier = platformSecurity.slice(
-  platformSecurity.indexOf('fn descriptor_is_private('),
-  platformSecurity.indexOf('fn repair_object(')
-);
+const privateAclVerifier = sourceRegion(platformSecurity, "fn descriptor_is_private(", "fn repair_object(");
 assert.ok(privateAclVerifier.length > 0);
 assert.match(privateAclVerifier, /dacl\.is_null\(\)/);
 assert.match(privateAclVerifier, /SE_DACL_PROTECTED/);
@@ -672,7 +671,7 @@ assert.match(ptyWinChild, /owner\.run\(waiter_state\)/);
 assert.match(ptyWinChild, /future_wait_owns_process_handle_across_repeated_polls/);
 assert.match(ptyConpty, /validated_dimensions\(size.rows, size.cols\)\?/);
 assert.match(ptyConpty, /resize\(validated_dimensions\(num_rows, num_cols\)\?\)\?/);
-assert.match(ptyWinSpawn, /creation_pipes\.get_mut\(\)/);
+assert.match(ptyWinSpawn, /creation_pipes\s*\.get_mut\(\)/);
 assert.match(terminal, /TERM_CHILD_REAP_TIMEOUT/);
 assert.match(terminal, /TERM_CLEANUP_PENDING/);
 
@@ -686,7 +685,7 @@ assert.match(privateLease, /SetEvent/);
 assert.match(privateLease, /active_cache_churn_does_not_enter_a_deep_audit/);
 assert.match(privateLease, /consumers_share_preparation_and_cold_restart_reaudits/);
 assert.match(startup, /tabs\.prepare_storage\(\)/);
-const createTab = tabs.slice(tabs.indexOf('pub fn create_tab('), tabs.indexOf('pub fn update_rect('));
+const createTab = sourceRegion(tabs, "pub fn create_tab(", "pub fn update_rect(");
 assert.ok(createTab.indexOf('self.prepared_browser_profile()?') < createTab.indexOf('self.tabs.write()'));
 assert.doesNotMatch(createTab, /secure_windows_browser_profile|audit_private_directory|PreparedPrivateDirectory::prepare/);
 
@@ -787,7 +786,7 @@ assert.match(nativeRecovery, /OpenFileById/);
 assert.match(nativeRecovery, /hold_profile_cleanup_namespace/);
 assert.match(nativeRecovery, /RECOVERY_NAMESPACE_UNTRUSTED_WRITER/);
 assert.match(sandboxLifecycle, /namespace\s*\.recheck/);
-const sandboxProduction = windowsSandbox.split('#[cfg(test)]\nmod tests')[0];
+const sandboxProduction = beforeRustTests(windowsSandbox);
 assert.doesNotMatch(sandboxProduction, /std::fs::remove_dir_all/);
 assert.match(privateLease, /NOT a continuous descendant ACL monitor/);
 
@@ -797,7 +796,7 @@ assert.match(sessionExit, /pub\(crate\) fn prepare_exit_sessions/);
 assert.match(sessionExit, /SessionFlushOutcome::Failed/);
 assert.match(sessionExit, /reconcile_snapshot_changes/);
 assert.match(sessionExit, /if accept_exit && report\.can_exit\(\)/);
-const exitPreflight = main.slice(main.indexOf('fn begin_graceful_shutdown('), main.indexOf('fn log_shutdown_report('));
+const exitPreflight = sourceRegion(main, "fn begin_graceful_shutdown(", "fn log_shutdown_report(");
 assert.ok(exitPreflight.indexOf('prepare_exit_sessions(') < exitPreflight.indexOf('.shutdown_until('));
 assert.match(exitPreflight, /if !saved\.can_exit\(\)/);
 assert.doesNotMatch(exitPreflight, /shutdown_requested\.store\(true/);

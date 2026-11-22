@@ -193,7 +193,9 @@ jobs:
         id: app_check_diagnostics
         if: failure() && needs.impact.outputs.mode != 'docs' && steps.app_checks.outcome == 'failure'
         timeout-minutes: 15
-        run: node scripts/collect-check-diagnostics.mjs
+        run: |
+          node scripts/collect-check-diagnostics.mjs --self-test
+          node scripts/collect-check-diagnostics.mjs
       - name: Preserve independent check failure summary
         if: always() && steps.app_checks.outcome == 'failure' && steps.app_check_diagnostics.outcome != 'skipped'
         uses: actions/upload-artifact@v4

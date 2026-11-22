@@ -7,6 +7,12 @@ on:
     branches:
       - master
   workflow_dispatch:
+    inputs:
+      generate_node_security_candidate:
+        description: Generate a temporary Vite security lock candidate for review
+        type: boolean
+        default: false
+        required: false
 permissions:
   contents: read
 concurrency:
@@ -89,3 +95,31 @@ jobs:
         run: |
           echo "DEPENDENCY_REVIEW_RESULT=NON_BLOCKING_REPOSITORY_SUPPORT_GATED"
           echo "Dependency Review requires GitHub Dependency Graph support; npm audit, cargo audit and SBOM gates remain authoritative."
+
+  # Temporary, explicitly requested lock generation. It never changes or pushes
+  # the checkout and does not replace any ordinary audit or build gate.
+  node-security-candidate:
+    if: github.event_name == 'workflow_dispatch' && inputs.generate_node_security_candidate == true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - id: candidate
+        name: Generate an exact-source frontend dependency candidate
+        run: node scripts/generate-vite-security-candidate.mjs
+      - name: Preserve candidate files and audit evidence
+        if: always() && steps.candidate.outputs.directory != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: browseros-node-security-candidate-${{ github.sha }}-${{ github.run_id }}
+          path: ${{ steps.candidate.outputs.directory }}
+          if-no-files-found: error
+          retention-days: 7

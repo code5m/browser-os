@@ -49,7 +49,10 @@ impl ProcThreadAttributeList {
 
     pub fn set_job_list(&mut self, jobs: &mut [winapi::um::winnt::HANDLE]) -> Result<(), Error> {
         ensure!(!jobs.is_empty(), "empty process Job attribute list");
-        ensure!(jobs.iter().all(|job| !job.is_null()), "invalid process Job handle");
+        ensure!(
+            jobs.iter().all(|job| !job.is_null()),
+            "invalid process Job handle"
+        );
         // UpdateProcThreadAttribute retains the caller's buffer until
         // DeleteProcThreadAttributeList; its storage outlives CreateProcessW.
         let res = unsafe {
@@ -63,7 +66,11 @@ impl ProcThreadAttributeList {
                 ptr::null_mut(),
             )
         };
-        ensure!(res != 0, "UpdateProcThreadAttribute(job_list) failed: {}", IoError::last_os_error());
+        ensure!(
+            res != 0,
+            "UpdateProcThreadAttribute(job_list) failed: {}",
+            IoError::last_os_error()
+        );
         Ok(())
     }
 
