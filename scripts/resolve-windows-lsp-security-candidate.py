@@ -308,13 +308,35 @@ def main() -> None:
             allowed = {source["metadata_source_file"], SUBDIRECTORY + "/Cargo.lock", XTASK_MANIFEST, XTASK_DIST}
             if changed != allowed:
                 raise RuntimeError("RA_SECURITY_UNEXPECTED_SOURCE_CHANGES:" + repr(sorted(changed)))
-            patch_bytes = run(
+            patch_text = run(
                 ["git", "-C", str(checkout), "diff", "--no-ext-diff", "--no-textconv",
                  "--full-index", "--", source["metadata_source_file"], XTASK_MANIFEST, XTASK_DIST],
                 quiet=True,
+            )
+            # Git accepts GNU diff's bare empty context lines. Normalize only a
+            # context line containing one space; never alter added/deleted text.
+            # This keeps patch assets valid under the repository whitespace gate.
+            patch_bytes = "".join(
+                "\n" if line == " \n" else line
+                for line in patch_text.splitlines(keepends=True)
             ).encode("utf-8")
             (ARTIFACTS / "Cargo.lock").write_bytes(resolved)
-            (ARTIFACTS / "metadata-stdin.patch").write_bytes(patch_bytes)
+            candidate_patch = ARTIFACTS / "metadata-stdin.patch"
+            candidate_patch.write_bytes(patch_bytes)
+            original_patched = {
+                path: path.read_bytes() for path in (metadata_path, xtask_path, dist_path)
+            }
+            run(["git", "-C", str(checkout), "apply", "--reverse", "--check",
+                 "--whitespace=error-all", str(candidate_patch)])
+            run(["git", "-C", str(checkout), "apply", "--reverse",
+                 "--whitespace=error-all", str(candidate_patch)])
+            run(["git", "-C", str(checkout), "apply", "--check",
+                 "--whitespace=error-all", str(candidate_patch)])
+            run(["git", "-C", str(checkout), "apply",
+                 "--whitespace=error-all", str(candidate_patch)])
+            for path, expected_bytes in original_patched.items():
+                if path.read_bytes() != expected_bytes:
+                    raise RuntimeError("RA_SECURITY_PATCH_ROUNDTRIP_MISMATCH:" + path.name)
             (ARTIFACTS / "xtask.Cargo.toml").write_bytes(xtask_path.read_bytes())
             (ARTIFACTS / "xtask.dist.rs").write_bytes(dist_path.read_bytes())
             source["patch_sha256"] = sha256(patch_bytes)
