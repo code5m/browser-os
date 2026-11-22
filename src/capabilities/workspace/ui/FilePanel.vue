@@ -4,6 +4,7 @@ import { computed, onMounted, ref, watch } from "vue";
 import { contributionRegistry } from "../../../capability/contribution/registry";
 import { CONTRIBUTION_SLOTS } from "../../../capability/contribution/types";
 import { useFileStore } from "../state/useFileStore";
+import { documentPathName, documentPathParent } from "../../../application/documentPaths.mjs";
 import { useWorkbenchStore } from "../../../stores/useWorkbenchStore";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
 import FileTreeNode from "./FileTreeNode.vue";
@@ -40,7 +41,7 @@ const fileActionsOpen = ref(false);
 function openIdeaProjectScan() {
   const entry=ws.fileCtx.entry;
   if(!entry)return;
-  const path=entry.is_dir?entry.path:entry.path.slice(0,entry.path.lastIndexOf("/"));
+  const path=entry.is_dir?entry.path:documentPathParent(entry.path);
   requestIdeaProjectScan(path);
   ws.closeFileCtx();
   layout.activateView("db");
@@ -127,7 +128,7 @@ onMounted(async () => {
     <div v-if="props.ide" class="fedit">
       <template v-if="ws.inlineFile">
         <div class="fedit-head">
-          <span class="fedit-name" :title="ws.inlineFile">{{ ws.inlineFile.split("/").pop() }}</span>
+          <span class="fedit-name" :title="ws.inlineFile">{{ documentPathName(ws.inlineFile) }}</span>
           <div class="fedit-actions">
             <button v-if="ws.inlineIsMd" @click="ws.inlineToggleEdit">
               {{ ws.inlineEdit ? "👁 预览" : "✎ 编辑" }}
@@ -151,7 +152,7 @@ onMounted(async () => {
       </template>
       <template v-else-if="ws.previewDir">
         <div class="fedit-head">
-          <span class="fedit-name" :title="ws.previewDir">{{ ws.previewDir.split("/").pop() || ws.previewDir }}</span>
+          <span class="fedit-name" :title="ws.previewDir">{{ documentPathName(ws.previewDir) }}</span>
           <div class="fedit-actions">
             <label class="thumb-size">
               缩略图

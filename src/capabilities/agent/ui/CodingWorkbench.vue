@@ -5,6 +5,7 @@ import { bridge } from '../../../bridge';
 import { aiService, type AiProfile } from '../../../settings/public';
 import CodingCodeEditor from './CodingCodeEditor.vue';
 import { documentOwnership, documentKey } from '../../../application/documentOwnership.mjs';
+import { documentPathName } from '../../../application/documentPaths.mjs';
 import CodingCommandPanel from './CodingCommandPanel.vue';
 import SandboxRecoveryPanel from './SandboxRecoveryPanel.vue';
 import CodingOperationReview from './CodingOperationReview.vue';
@@ -14,20 +15,17 @@ import {readRecoveryFile} from '../model/codingWorkbench.mjs';
 import {saveWorkbenchMemory, takeWorkbenchMemory, manualMcpRunning} from '../model/codingWorkbenchMemory';
 type Buffer={path:string;content:string;saved:string;original:string;hash:string|null};
 type Entry={name:string;path?:string;kind:'directory'|'file'};
-function updateBufferEdit(value:{path:string;content:string;scope?:string}){if(value.scope!==connectedRoot.value)return;const buffer=buffers.value.find(item=>item.path===value.path);if(buffer)buffer.content=value.content;}
+function updateBufferEdit(value:{path:string;content:string;scope?:string}){if(value.scope!==connectedRoot.value)return;const buffer=buffers.value.find(item=>sameBufferPath(item.path,value.path));if(buffer)buffer.content=value.content;}
 const root=ref(''), connectedRoot=ref(''), tree=ref<Entry[]>([]), folders=ref<Record<string,Entry[]>>({}), expanded=ref<string[]>([]);
 const truncatedDirs=ref<Record<string,boolean>>({});
 const directoryPages=ref<Record<string,{snapshot:string;nextOffset:number|null}>>({});
 const buffers=ref<Buffer[]>([]), active=ref(''), sidebar=ref('files'), search=ref(''), searchResults=ref<any[]>([]);
+function sameBufferPath(a:string,b:string){return !!a&&!!b&&documentKey(connectedRoot.value,a)===documentKey(connectedRoot.value,b);}
 // Share document identity/dirty metadata, never text, with the filesystem
 // editors. Immediate publishing prevents same-turn saves from missing drafts.
 const CODING_DOCUMENT_OWNER = 'coding-workbench';
-watch([buffers,connectedRoot],()=>{
-  const scope=connectedRoot.value;
-  documentOwnership.replace(CODING_DOCUMENT_OWNER,scope
-    ? buffers.value.map(buffer=>({root:scope,path:buffer.path,dirty:isDirtyBuffer(buffer)}))
-    : []);
-},{deep:true,flush:'sync',immediate:true});
+const documentPathRevision=ref(0);
+function bufferPathInvalidated(buffer:Buffer){documentPathRevision.value;return documentOwnership.pathInvalidated(CODING_DOCUMENT_OWNER,documentKey(connectedRoot.value,buffer.path));}
 
 const searchTruncated=ref(false);
 let searchSequence=0;
@@ -39,6 +37,10 @@ const operations=ref<any[]>([]);
 const pendingOperations=computed(()=>operations.value.filter(item=>item.status==='pending'||item.status==='executing'));
 const output=ref(''), diagnostics=ref<string[]>([]), notice=ref('打开项目后开始编码'), busy=ref(false);
 const modelRequestRunning=ref(false), streamingText=ref('');
+const releasePathObserver=documentOwnership.onPathInvalidated(CODING_DOCUMENT_OWNER,()=>{
+  documentPathRevision.value++;
+  notice.value='文件路径已移动或删除；草稿保留，旧路径已禁止保存。请复制需要的内容，关闭文件后从新位置重新打开。';
+});
 const context=ref<{name:string;text:string}[]>([]), knowledgeQuery=ref(''), preview=ref<{path:string;original:string;content:string}|null>(null);
 const newFilePath=ref(''), resumeId=ref('');
 const recentSessions=ref<any[]>([]), sessionsTruncated=ref(false);
@@ -53,6 +55,15 @@ if(remembered){
   sessionRecoveryRequired.value=remembered.sessionRecoveryRequired;
   notice.value=manualMcpRunning.value?'MCP 调用仍在执行，切换视图后结果可能无法显示；请核对外部状态。':sessionRecoveryRequired.value?'工作区已恢复；请先核对会话状态':'工作区已从内存恢复，草稿尚未保存';
 }
+// Restore retained buffers before publishing ownership. An initial empty
+// publish would clear path invalidation while this view was unmounted.
+watch([buffers,connectedRoot],()=>{
+  const scope=connectedRoot.value;
+  documentOwnership.replace(CODING_DOCUMENT_OWNER,scope
+    ? buffers.value.map(buffer=>({root:scope,path:buffer.path,dirty:isDirtyBuffer(buffer)}))
+    : []);
+},{deep:true,flush:'sync',immediate:true});
+if(buffers.value.some(bufferPathInvalidated))notice.value='文件路径已移动或删除；草稿保留，旧路径已禁止保存。请复制需要的内容，关闭文件后从新位置重新打开。';
 const previewReady=ref(false);
 const editorReady=ref(false),editorRef=ref<{renameSymbol:()=>void}|null>(null);
 const previewLoading=ref(false);
@@ -74,7 +85,7 @@ function requestLsp(method:string,path:string,content:string,line:number,charact
   const scope=lspEpoch,project=projectEpoch,server=lspServer.value;
   const run=async()=>{
     if(!lspEnabled.value||scope!==lspEpoch||project!==projectEpoch||cancelled?.())throw new ProjectScopeChanged();
-    if(lspModules.value&&buffers.value.some(buffer=>buffer.path!==path&&buffer.path.endsWith('.rs')&&isDirtyBuffer(buffer))){lspStatus.value='请先保存其他 Rust 文件，再进行模块树分析';throw Error(lspStatus.value);}
+    if(lspModules.value&&buffers.value.some(buffer=>!sameBufferPath(buffer.path,path)&&buffer.path.endsWith('.rs')&&isDirtyBuffer(buffer))){lspStatus.value='请先保存其他 Rust 文件，再进行模块树分析';throw Error(lspStatus.value);}
     try{const result=await call({action:'lsp_request',approved:true,server_path:server,method,path,content,line,character,...(lspModules.value?{module_root:lspModuleRoot.value.trim(),approved_module_sources:true}:{})});if(!lspEnabled.value||scope!==lspEpoch)throw new ProjectScopeChanged();lspStatus.value=lspModules.value?'Rust 模块树分析就绪':'Rust 当前文件分析就绪';return result;}
     catch(error){if(!(error instanceof ProjectScopeChanged)&&scope===lspEpoch)lspStatus.value=lspFailureHint(error);throw error;}
   };
@@ -84,7 +95,7 @@ async function navigateDefinition(target:any):Promise<boolean>{
   const scope=lspEpoch,source=active.value;
   try{
     if(!lspEnabled.value)return false;
-    const existing=buffers.value.find(buffer=>buffer.path===target.path);
+    const existing=buffers.value.find(buffer=>sameBufferPath(buffer.path,target.path));
     if(existing&&isDirtyBuffer(existing)){notice.value='目标文件有未保存内容，请先保存后重新跳转';return false;}
     const result=await call({action:'read',path:target.path});
     if(scope!==lspEpoch||!lspEnabled.value||source!==active.value)return false;
@@ -94,13 +105,14 @@ async function navigateDefinition(target:any):Promise<boolean>{
   }catch(error){if(!(error instanceof ProjectScopeChanged))notice.value=lspFailureHint(error);return false;}
 }
 async function navigateOpenBuffer(target:{path:string;line:number;column:number}):Promise<boolean>{
-  if(!buffers.value.some(buffer=>buffer.path===target.path))return false;
-  fileOpenRequest++;invalidatePreview();definitionLocation.value={...target,id:Date.now()};active.value=target.path;preview.value=null;diff.value=false;return true;
+  const existing=buffers.value.find(buffer=>sameBufferPath(buffer.path,target.path));
+  if(!existing)return false;
+  fileOpenRequest++;invalidatePreview();definitionLocation.value={...target,path:existing.path,id:Date.now()};active.value=existing.path;preview.value=null;diff.value=false;return true;
 }
 async function runRequestedDiagnostics(input:{path:string}){
   if(!lspEnabled.value||changes.value.length)throw Error('请先启用语言服务并处理待审核变更');
   const scope=lspEpoch,project=projectEpoch;
-  const buffer=buffers.value.find(item=>item.path===input.path);
+  const buffer=buffers.value.find(item=>sameBufferPath(item.path,input.path));
   const content=buffer?.content??(await call({action:'read',path:input.path})).content;
   if(!lspEnabled.value||scope!==lspEpoch||project!==projectEpoch)throw new ProjectScopeChanged();
   const response=await requestLsp('diagnostics',input.path,content,0,0,()=>scope!==lspEpoch||project!==projectEpoch||(!!buffer&&buffer.content!==content));
@@ -147,8 +159,8 @@ async function syncInterruptedSession(){
   let matches=!save||Boolean(file&&reconcileSavedBuffer(save.buffer,save.attempted,file));
   for(const item of applyFiles){
     if(!item.file||item.file.content!==item.change.content){matches=false;continue;}
-    const buffer=buffers.value.find(b=>b.path===item.change.path);
-    if(buffer){reconcileSavedBuffer(buffer,item.change.content,item.file);if(buffer.content===interruptedApply.value?.snapshots.get(item.change.path))buffer.content=item.file.content;}
+    const buffer=buffers.value.find(b=>sameBufferPath(b.path,item.change.path));
+    if(buffer){reconcileSavedBuffer(buffer,item.change.content,item.file);if(buffer.content===interruptedApply.value?.snapshots.get(buffer.path))buffer.content=item.file.content;}
   }
   updateSession(session);
   interruptedSave.value=null;
@@ -182,7 +194,7 @@ async function openProject(){
   if(dirty.value.length){notice.value='请先保存或关闭未保存文件，再切换项目';return;}
   if(changes.value.length){notice.value='请先应用或放弃待审核变更，再切换项目';return;}
   ++projectEpoch;++searchSequence;++resourceSequence;folderRequests.clear();stopLsp();lspModules.value=false;lspModuleRoot.value='src/main.rs';definitionLocation.value=undefined;lspProfiles.value=[];lspServer.value='';busy.value=true;recentSessions.value=[];sessionsTruncated.value=false;
-  try{await act(async()=>{const nextRoot=root.value.trim();const result=await call({action:'tree',root:nextRoot,path:''});const session=await call({action:'session',root:nextRoot});connectedRoot.value=session.root||nextRoot;tree.value=result.entries||[];buffers.value=[];active.value='';folders.value={};expanded.value=[];truncatedDirs.value={'':!!result.truncated};directoryPages.value={};updateSession(session);resources.value=[];context.value=[];preview.value=null;searchResults.value=[];searchTruncated.value=false;diagnostics.value=[];output.value='';mcpTools.value=[];mcpServerId.value='';mcpApproved.value=false;notice.value=`已打开 ${connectedRoot.value}`;});}finally{busy.value=false;}
+  try{await act(async()=>{const nextRoot=root.value.trim();documentKey('',nextRoot);const result=await call({action:'tree',root:nextRoot,path:''});const session=await call({action:'session',root:nextRoot});const approvedRoot=session.root||nextRoot;documentKey('',approvedRoot);buffers.value=[];connectedRoot.value=approvedRoot;tree.value=result.entries||[];active.value='';folders.value={};expanded.value=[];truncatedDirs.value={'':!!result.truncated};directoryPages.value={};updateSession(session);resources.value=[];context.value=[];preview.value=null;searchResults.value=[];searchTruncated.value=false;diagnostics.value=[];output.value='';mcpTools.value=[];mcpServerId.value='';mcpApproved.value=false;notice.value=`已打开 ${connectedRoot.value}`;});}finally{busy.value=false;}
 }
 const folderRequests=new Map<string,symbol>();
 async function toggleFolder(path:string){
@@ -213,16 +225,36 @@ async function loadDirectoryPage(path:string){
 const visibleEntries=computed(()=>{const rows:{entry:Entry;path:string;depth:number}[]=[];function walk(entries:Entry[],parent:string,depth:number){for(const entry of entries){const path=entryPath(parent,entry);rows.push({entry,path,depth});if(expanded.value.includes(path))walk(folders.value[path]||[],path,depth+1);}}walk(tree.value,'',0);return rows;});
 async function openFile(path:string){
   const request=++fileOpenRequest;invalidatePreview();
-  if(buffers.value.some(buffer=>buffer.path===path)){active.value=path;diff.value=false;preview.value=null;return;}
-  await act(async()=>{const result=await call({action:'read',path});if(request!==fileOpenRequest)return;if(!buffers.value.some(buffer=>buffer.path===path))buffers.value.push(newBuffer(path,result.content,result.hash));active.value=path;diff.value=false;preview.value=null;});
+  await act(async()=>{
+    documentKey(connectedRoot.value,path);
+    const existing=buffers.value.find(buffer=>sameBufferPath(buffer.path,path));
+    if(existing){active.value=existing.path;diff.value=false;preview.value=null;return;}
+    const result=await call({action:'read',path});
+    if(request!==fileOpenRequest)return;
+    const opened=buffers.value.find(buffer=>sameBufferPath(buffer.path,path));
+    if(!opened)buffers.value.push(newBuffer(path,result.content,result.hash));
+    active.value=opened?.path||path;diff.value=false;preview.value=null;
+  });
 }
-function createFile(){const path=newFilePath.value.trim();if(!connectedRoot.value||!path||path.startsWith('/')||/[\\\0]/.test(path)||path.split('/').some(part=>!part||part==='.'||part==='..')){notice.value='请输入项目内相对文件路径';return;}fileOpenRequest++;invalidatePreview();if(buffers.value.some(buffer=>buffer.path===path)){active.value=path;return;}buffers.value.push(newBuffer(path,'',null));active.value=path;preview.value=null;newFilePath.value='';notice.value='新文件将在首次保存时创建';}
+function createFile(){
+  const path=newFilePath.value.trim();
+  if(!connectedRoot.value||!path||path.startsWith('/')||/^[A-Za-z]:/.test(path)||/[\\\0]/.test(path)||path.split('/').some(part=>!part||part==='.'||part==='..')){
+    notice.value='请输入项目内相对文件路径';return;
+  }
+  try{documentKey(connectedRoot.value,path);}catch{notice.value='文件路径无效或不受支持';return;}
+  fileOpenRequest++;invalidatePreview();
+  const existing=buffers.value.find(buffer=>sameBufferPath(buffer.path,path));
+  if(existing){active.value=existing.path;return;}
+  buffers.value.push(newBuffer(path,'',null));active.value=path;preview.value=null;newFilePath.value='';notice.value='新文件将在首次保存时创建';
+}
 async function listSessions(){if(!connectedRoot.value||busy.value)return;await act(async()=>{const result=await call({action:'sessions_list'});recentSessions.value=result.sessions||[];sessionsTruncated.value=!!result.truncated;});}
 async function resumeSession(){if(mcpRunning.value){notice.value='MCP 调用进行中，请等待完成后恢复其他会话';return;}if(pendingOperations.value.length){notice.value='请先处理待审批操作，再恢复其他会话';return;}if(!connectedRoot.value||busy.value||dirty.value.length||changes.value.length){notice.value='请先处理草稿与待审核变更';return;}busy.value=true;try{await act(async()=>{updateSession(await call({action:'session',session_id:resumeId.value.trim()}));notice.value='已恢复项目会话';});}finally{busy.value=false;}}
 async function save(){
   const buffer=current.value;
   if(!buffer||busy.value||preview.value||sessionRecoveryRequired.value)return;
+  if(bufferPathInvalidated(buffer)){notice.value='文件路径已变更；旧路径禁止保存，请关闭文件后从新位置重新打开，未保存内容可先复制。';return;}
   if(changes.value.length){notice.value='请先处理智能体的待审核变更，再保存编辑器文件';return;}
+  if(buffers.value.some(other=>other!==buffer&&sameBufferPath(other.path,buffer.path)&&isDirtyBuffer(other))){notice.value='同一文件还有另一份未保存草稿，请先核对后再保存';return;}
   let releaseSave:(()=>void)|undefined;
   try{releaseSave=documentOwnership.beginSave(CODING_DOCUMENT_OWNER,documentKey(connectedRoot.value,buffer.path));}
   catch{notice.value='同一文件在其他工作台中有未保存修改或正在保存；请先解决冲突';return;}
@@ -252,9 +284,9 @@ async function searchFiles(){const request=++searchSequence;searchResults.value=
 async function openSearchMatch(match:{path:string;line:number}){
   const request=fileOpenRequest+1;
   await openFile(match.path);
-  if(request!==fileOpenRequest||active.value!==match.path)return;
+  if(request!==fileOpenRequest||!sameBufferPath(active.value,match.path))return;
   const line=Number.isSafeInteger(match.line)&&match.line>0?match.line:1;
-  definitionLocation.value={path:match.path,line,column:1,id:Math.max(Date.now(),(definitionLocation.value?.id||0)+1)};
+  definitionLocation.value={path:active.value,line,column:1,id:Math.max(Date.now(),(definitionLocation.value?.id||0)+1)};
 }
 async function loadResources(tab:string){const sequence=++resourceSequence;sidebar.value=tab;resources.value=[];if(tab==='files'||tab==='search'||tab==='knowledge'||!connectedRoot.value)return;await act(async()=>{try{const result=await call({action:tab==='skills'?'skills_list':'mcp_list'});if(sequence!==resourceSequence)return;resources.value=result.skills||result.servers||[];}catch(error){if(sequence===resourceSequence)throw error;}});}
 async function addSkill(item:any){await act(async()=>{const result=await call({action:'skill_read',path:item.path});if(!context.value.some(c=>c.name===item.name))context.value.push({name:item.name,text:result.text});notice.value=`已加入技能 ${item.name}`;});}
@@ -301,18 +333,18 @@ async function previewChange(change:any){
   fileOpenRequest++;const request=++previewRequest;previewLoading.value=true;previewFailed.value=false;previewReady.value=false;preview.value=null;diff.value=false;try{let original='';if(change.expected_hash!==null){const file=await call({action:'read',path:change.path});original=file.content;}if(request!==previewRequest||!changes.value.includes(change))return;preview.value={path:change.path,original,content:change.content};}catch(error){if(request===previewRequest&&!(error instanceof ProjectScopeChanged)){previewFailed.value=true;notice.value='预览读取失败，请重新预览或取消预览后再决定是否应用。';}}finally{if(request===previewRequest)previewLoading.value=false;}
 }
 async function applyChanges(){
-  if(busy.value||sessionRecoveryRequired.value)return;if(previewLoading.value||previewFailed.value||(preview.value&&!previewReady.value)){notice.value='预览尚未就绪，请重新预览或取消预览';return;}if(!canApplyChanges(buffers.value,changes.value)){notice.value='目标文件有未保存草稿，请先放弃草稿或放弃智能体变更';return;}
+  if(busy.value||sessionRecoveryRequired.value)return;if(previewLoading.value||previewFailed.value||(preview.value&&!previewReady.value)){notice.value='预览尚未就绪，请重新预览或取消预览';return;}if(!canApplyChanges(buffers.value,changes.value,connectedRoot.value)){notice.value='目标文件有未保存草稿，请先放弃草稿或放弃智能体变更';return;}
   const releaseWrites:(()=>void)[]=[];
   try{
     const paths=new Set(changes.value.map(item=>documentKey(connectedRoot.value,item.path)));
     for(const path of paths)releaseWrites.push(documentOwnership.beginSave(CODING_DOCUMENT_OWNER,path));
   }catch{
     for(const release of releaseWrites.reverse())release();
-    notice.value='待应用文件在其他工作台中有未保存修改或正在保存；请先解决冲突';
+    notice.value='待应用文件可能已移动、删除或在其他工作台中仍有草稿；请核对路径与冲突后重试';
     return;
   }
   const pending=changes.value.map(item=>({path:item.path,content:item.content}));const snapshots=new Map(buffers.value.map(buffer=>[buffer.path,buffer.content]));interruptedApply.value={pending,snapshots};busy.value=true;
-  try{const result=await call({action:'apply',session_id:sessionId.value});let conflict=false;for(const change of pending){const resultFile=await call({action:'read',path:change.path});if(resultFile.content!==change.content){conflict=true;continue;}const buffer=buffers.value.find(item=>item.path===change.path);if(buffer){reconcileSavedBuffer(buffer,change.content,resultFile);if(buffer.content===snapshots.get(change.path))buffer.content=resultFile.content;}}updateSession(result);interruptedApply.value=null;preview.value=null;diff.value=false;notice.value=conflict?'变更已应用，但磁盘内容已发生变化；草稿和原校验基准保留，请检查。':'已应用审核后的变更';}catch(error){if(error instanceof ProjectScopeChanged)return;sessionRecoveryRequired.value=true;notice.value='应用响应中断，文件或会话状态未知；请先恢复会话并核对文件，勿重复应用。';}finally{for(const release of releaseWrites.reverse())release();busy.value=false;}
+  try{const result=await call({action:'apply',session_id:sessionId.value});let conflict=false;for(const change of pending){const resultFile=await call({action:'read',path:change.path});if(resultFile.content!==change.content){conflict=true;continue;}const buffer=buffers.value.find(item=>sameBufferPath(item.path,change.path));if(buffer){reconcileSavedBuffer(buffer,change.content,resultFile);if(buffer.content===snapshots.get(buffer.path))buffer.content=resultFile.content;}}updateSession(result);interruptedApply.value=null;preview.value=null;diff.value=false;notice.value=conflict?'变更已应用，但磁盘内容已发生变化；草稿和原校验基准保留，请检查。':'已应用审核后的变更';}catch(error){if(error instanceof ProjectScopeChanged)return;sessionRecoveryRequired.value=true;notice.value='应用响应中断，文件或会话状态未知；请先恢复会话并核对文件，勿重复应用。';}finally{for(const release of releaseWrites.reverse())release();busy.value=false;}
 }
 async function discardChanges(){if(busy.value||sessionRecoveryRequired.value)return;busy.value=true;try{await act(async()=>{updateSession(await call({action:'discard',session_id:sessionId.value}));invalidatePreview();preview.value=null;notice.value='已放弃智能体待审核变更，编辑器草稿保留';});}finally{busy.value=false;}}
 let cleanupDrag:(()=>void)|undefined;
@@ -331,6 +363,7 @@ async function refreshModels(announce=true){
 }
 onMounted(()=>refreshModels(false));
 onBeforeUnmount(()=>{
+  releasePathObserver();
   if(connectedRoot.value){
     const copy=(value:unknown)=>JSON.parse(JSON.stringify(value));
     saveWorkbenchMemory({root:root.value,connectedRoot:connectedRoot.value,tree:copy(tree.value),folders:copy(folders.value),expanded:copy(expanded.value),truncatedDirs:copy(truncatedDirs.value),directoryPages:copy(directoryPages.value),buffers:copy(buffers.value),active:active.value,sessionId:sessionId.value,messages:copy(messages.value),changes:copy(changes.value),tools:copy(tools.value),operations:copy(operations.value),context:copy(context.value),prompt:prompt.value,mode:mode.value,modelId:modelId.value,mcpDetached:mcpDetached.value||mcpRunning.value,interruptedSave:interruptedSave.value?{path:interruptedSave.value.buffer.path,attempted:interruptedSave.value.attempted}:null,interruptedApply:interruptedApply.value?{pending:copy(interruptedApply.value.pending),snapshots:[...interruptedApply.value.snapshots]}:null,sessionRecoveryRequired:sessionRecoveryRequired.value||busy.value||modelRequestRunning.value});
@@ -346,16 +379,16 @@ onBeforeUnmount(()=>{
       <nav class="activity-bar" aria-label="工作区面板"><button v-for="tab in [{id:'files',icon:'▱',label:'文件'},{id:'search',icon:'⌕',label:'搜索'},{id:'skills',icon:'✦',label:'技能'},{id:'mcp',icon:'⌘',label:'MCP'},{id:'knowledge',icon:'▧',label:'知识库'}]" :key="tab.id" :title="tab.label" :aria-label="tab.label" :class="{selected:sidebar===tab.id&&leftVisible}" @click="leftVisible=true;loadResources(tab.id)">{{tab.icon}}</button><button title="折叠侧栏" aria-label="折叠侧栏" @click="leftVisible=!leftVisible">‹</button></nav>
       <aside v-if="leftVisible" class="explorer" :style="{width:leftWidth+'px'}"><div class="pane-heading">{{({files:'资源管理器',search:'全局搜索',skills:'可用技能',mcp:'MCP 工具',knowledge:'项目知识库'} as any)[sidebar]}}</div>
         <div v-if="sidebar==='mcp'" class="resource"><label>服务<select v-model="mcpServerId" aria-label="MCP 服务" @change="mcpApproved=false;mcpTools=[];mcpTool=''"><option value="">手动输入 stdio 配置</option><option v-for="server in resources" :key="server.id" :value="server.id">{{server.name}} · {{server.transport}}</option></select></label><p v-if="mcpServerId" class="hint">将使用所选服务的本机配置；下面手动启动参数仅在未选择服务时生效。</p></div>
-        <template v-if="sidebar==='files'"><div class="folder-root">{{connectedRoot.split('/').pop()||'尚未打开项目'}}</div><p v-if="truncatedDirs['']" class="hint">项目根目录未完整显示；可从第一页分页查看，超出扫描上限的内容仍须另行检查。</p><button v-if="canLoadDirectoryPage('')" @click="loadDirectoryPage('')">{{directoryPages['']?'加载更多根目录文件':'分页查看项目根目录'}}</button><form @submit.prevent="createFile"><input v-model="newFilePath" aria-label="新文件相对路径" placeholder="src/new-file.ts"><button :disabled="!connectedRoot">新建</button></form><template v-for="row in visibleEntries" :key="row.path"><button class="file-row" :class="{selected:active===row.path}" :style="{paddingLeft:(12+row.depth*14)+'px'}" @click="row.entry.kind==='directory'?toggleFolder(row.path):openFile(row.path)"><span>{{row.entry.kind==='directory'?(expanded.includes(row.path)?'▾':'▸'):'·'}}</span>{{row.entry.name}}</button><p v-if="expanded.includes(row.path)&&truncatedDirs[row.path]" class="hint">{{row.path}} 未完整显示；可分页查看，超出扫描上限的内容仍须另行检查。</p><button v-if="expanded.includes(row.path)&&canLoadDirectoryPage(row.path)" @click="loadDirectoryPage(row.path)">{{directoryPages[row.path]?'加载更多':'分页查看'}} {{row.path}}</button></template></template>
+        <template v-if="sidebar==='files'"><div class="folder-root">{{documentPathName(connectedRoot)||'尚未打开项目'}}</div><p v-if="truncatedDirs['']" class="hint">项目根目录未完整显示；可从第一页分页查看，超出扫描上限的内容仍须另行检查。</p><button v-if="canLoadDirectoryPage('')" @click="loadDirectoryPage('')">{{directoryPages['']?'加载更多根目录文件':'分页查看项目根目录'}}</button><form @submit.prevent="createFile"><input v-model="newFilePath" aria-label="新文件相对路径" placeholder="src/new-file.ts"><button :disabled="!connectedRoot">新建</button></form><template v-for="row in visibleEntries" :key="row.path"><button class="file-row" :class="{selected:active===row.path}" :style="{paddingLeft:(12+row.depth*14)+'px'}" @click="row.entry.kind==='directory'?toggleFolder(row.path):openFile(row.path)"><span>{{row.entry.kind==='directory'?(expanded.includes(row.path)?'▾':'▸'):'·'}}</span>{{row.entry.name}}</button><p v-if="expanded.includes(row.path)&&truncatedDirs[row.path]" class="hint">{{row.path}} 未完整显示；可分页查看，超出扫描上限的内容仍须另行检查。</p><button v-if="expanded.includes(row.path)&&canLoadDirectoryPage(row.path)" @click="loadDirectoryPage(row.path)">{{directoryPages[row.path]?'加载更多':'分页查看'}} {{row.path}}</button></template></template>
         <template v-else-if="sidebar==='search'"><form @submit.prevent="searchFiles"><input v-model="search" placeholder="搜索文件内容" aria-label="搜索文件内容"><button :disabled="!connectedRoot">查找</button></form><p v-if="searchTruncated" class="hint">搜索不完整：部分内容超出扫描上限或无法按文本读取，可能还有其他匹配。</p><button v-for="(match,index) in searchResults" :key="index" class="search-match" @click="openSearchMatch(match)"><strong>{{match.path}}</strong><span>{{match.line}} {{match.text}}</span></button></template>
         <template v-else><p class="hint">{{sidebar==='skills'?'读取技能内容后作为本轮上下文':sidebar==='mcp'?'已发现的服务；每次执行需明确批准':'检索项目 docs 文档作为上下文'}}</p><form v-if="sidebar==='knowledge'" @submit.prevent="searchKnowledge"><input v-model="knowledgeQuery" aria-label="知识库关键词" placeholder="搜索项目知识库"><button :disabled="!connectedRoot">检索</button></form><article v-for="(item,index) in resources" :key="index" class="resource"><strong>{{item.name||item.title||item.path}}</strong><p>{{item.description||item.text||item.transport||item.status}}</p><button v-if="sidebar==='skills'" @click="addSkill(item)">读取并加入上下文</button><button v-if="sidebar==='knowledge'" @click="context.push({name:item.path+':'+item.line,text:item.text})">加入上下文</button><p v-if="sidebar==='mcp'">{{item.source}}</p></article><section v-if="sidebar==='mcp'" class="resource"><strong>显式配置 stdio 服务</strong><input v-model="mcpCommand" aria-label="MCP 可执行文件" placeholder="绝对路径，例如 /usr/bin/node"><textarea v-model="mcpArgs" aria-label="MCP 启动参数" placeholder="JSON 参数数组"/><select v-model="mcpTool" aria-label="MCP 工具"><option value="">选择工具</option><option v-for="tool in mcpTools" :key="tool.name" :value="tool.name">{{tool.name}}</option></select><textarea v-model="mcpArguments" aria-label="MCP 工具参数" placeholder="JSON 对象参数"/><label><input v-model="mcpApproved" type="checkbox" :disabled="mcpRunning">批准本次启动服务 / 工具调用</label><button :disabled="!connectedRoot||!mcpApproved||mcpRunning" @click="mcpAction('mcp_tools')">启动并列出工具</button><button :disabled="!connectedRoot||!mcpApproved||mcpRunning||!mcpTool" @click="mcpAction('mcp_call')">执行所选工具</button></section><p v-if="!resources.length" class="hint">暂无可用项目，打开项目后刷新此面板。</p></template>
       </aside>
       <div v-if="leftVisible" class="resize vertical" role="separator" aria-label="调整资源管理器宽度" aria-orientation="vertical" tabindex="0" @pointerdown="resize($event,'left')" @keydown="keyboardResize($event,'left')"/>
-      <main class="editor-column"><div class="editor-tabs"><div v-for="buffer in buffers" :key="buffer.path" class="editor-tab" :class="{selected:active===buffer.path&&!preview}"><button @click="fileOpenRequest++;invalidatePreview();active=buffer.path;diff=false;preview=null">{{buffer.path.split('/').pop()}}{{isDirtyBuffer(buffer)?' ●':''}}</button><button :aria-label="'关闭 '+buffer.path" @click="closeFile(buffer.path)">×</button></div></div>
-        <div class="editor-toolbar"><span>{{preview?'变更预览 · '+preview.path:current?.path||'编辑器'}}</span><button v-if="preview" @click="invalidatePreview();preview=null;diff=false">返回编辑</button><button v-else-if="previewLoading||previewFailed" @click="invalidatePreview()">取消预览</button><button v-else :disabled="!current" @click="diff=!diff">{{diff?'编辑':'对比修改'}}</button><button :disabled="!current||!!preview||diff||!editorReady||!/\.(?:ts|tsx|js|jsx)$/i.test(current.path)" @click="editorRef?.renameSymbol()">重命名符号 F2</button><button :disabled="!current||!!preview||busy" @click="save">保存 ⌘/Ctrl S</button><button :disabled="!current||!!preview||!isDirtyBuffer(current)" @click="discard">放弃修改</button></div>
+      <main class="editor-column"><div class="editor-tabs"><div v-for="buffer in buffers" :key="buffer.path" class="editor-tab" :class="{selected:active===buffer.path&&!preview}"><button @click="fileOpenRequest++;invalidatePreview();active=buffer.path;diff=false;preview=null">{{buffer.path.split('/').pop()}}{{isDirtyBuffer(buffer)?' ●':''}}{{bufferPathInvalidated(buffer)?' · 路径已变更':''}}</button><button :aria-label="'关闭 '+buffer.path" @click="closeFile(buffer.path)">×</button></div></div>
+        <div class="editor-toolbar"><span>{{preview?'变更预览 · '+preview.path:current?.path||'编辑器'}}</span><button v-if="preview" @click="invalidatePreview();preview=null;diff=false">返回编辑</button><button v-else-if="previewLoading||previewFailed" @click="invalidatePreview()">取消预览</button><button v-else :disabled="!current" @click="diff=!diff">{{diff?'编辑':'对比修改'}}</button><button :disabled="!current||bufferPathInvalidated(current)||!!preview||diff||!editorReady||!/\.(?:ts|tsx|js|jsx)$/i.test(current.path)" @click="editorRef?.renameSymbol()">重命名符号 F2</button><button :disabled="!current||bufferPathInvalidated(current)||!!preview||busy" @click="save">保存 ⌘/Ctrl S</button><button :disabled="!current||!!preview||!isDirtyBuffer(current)" @click="discard">放弃修改</button></div>
         <details class="language-service"><summary>语言服务 · {{lspStatus}}</summary><p>TypeScript / JavaScript 自动提供补全、诊断和跳转；跨文件分析限于已打开的文件，不读取项目配置或下载依赖。</p><button :disabled="!connectedRoot||lspEnabled" @click="discoverLsp">检测本机语言服务</button><select v-model="lspServer" :disabled="lspEnabled" aria-label="语言服务程序"><option value="">选择已安装语言服务</option><option v-for="profile in lspProfiles" :key="profile.path" :value="profile.path">{{profile.name}}</option></select><label><input v-model="lspConsent" type="checkbox" :disabled="lspEnabled" aria-label="批准当前项目语言服务">批准在当前项目启用隔离 Rust 语言服务</label><label><input v-model="lspModules" type="checkbox" :disabled="lspEnabled" aria-label="批准读取 Rust 模块树">额外批准读取模块根文件所在目录内的 Rust 源文件</label><input v-if="lspModules" v-model="lspModuleRoot" :disabled="lspEnabled" aria-label="Rust 模块根文件" placeholder="src/main.rs 或 src/lib.rs"><p>{{lspModules?'模块树最多 128 个 Rust 文件、4 MiB；其他未保存 Rust 文件需先保存。':'默认仅复制当前 Rust 文本，不读取其他项目文件。'}} 无网络、只读沙箱，不运行 Cargo、构建脚本或过程宏。补全 Ctrl+Space，跨文件定义跳转 F12。Rust 外部依赖及 Cargo 特性推断尚未接入。</p><button :disabled="!lspConsent||!lspAvailable||!sandboxCanStart||!lspServer||lspEnabled||(lspModules&&!lspModuleRoot.trim())" @click="enableLsp">启用语言服务</button><button :disabled="!lspEnabled" @click="stopLsp">停用语言服务</button></details>
         <p v-if="current&&!preview" class="hint">F2 重命名仅覆盖已打开的 TypeScript / JavaScript 文件；其他文件需另行检查。跨文件修改须逐个文件撤销或重做。</p>
-        <div class="editor-area"><CodingCodeEditor v-if="preview" :key="'preview:'+preview.path" :model-value="preview.content" :path="preview.path" :original="preview.original" diff read-only @ready="previewReady=$event"/><CodingCodeEditor v-if="current" v-show="!preview" ref="editorRef" :key="connectedRoot" :model-value="current.content" :scope="connectedRoot" :path="current.path" :open-paths="buffers.map(buffer=>buffer.path)" :original="current.saved" :diff="diff" :lsp-request="lspEnabled&&!preview?requestLsp:undefined" :navigate-definition="navigateDefinition" :navigate-open-buffer="navigateOpenBuffer" :location="definitionLocation" @ready="editorReady=$event" @edit="updateBufferEdit" @save="save" @diagnostics="diagnostics=$event"/><div v-if="!current&&!preview" class="welcome"><span>⌘</span><h2>让想法成为可运行的代码</h2><p>打开项目，浏览文件，选择模型开始协作。</p><div>⌘/Ctrl F 查找　·　Alt + 点击 多光标　·　⌘/Ctrl S 保存</div></div></div>
+        <div class="editor-area"><CodingCodeEditor v-if="preview" :key="'preview:'+preview.path" :model-value="preview.content" :path="preview.path" :original="preview.original" diff read-only @ready="previewReady=$event"/><CodingCodeEditor v-if="current" v-show="!preview" ref="editorRef" :key="connectedRoot" :model-value="current.content" :scope="connectedRoot" :path="current.path" :read-only="bufferPathInvalidated(current)" :open-paths="buffers.map(buffer=>buffer.path)" :original="current.saved" :diff="diff" :lsp-request="lspEnabled&&!preview&&!bufferPathInvalidated(current)?requestLsp:undefined" :navigate-definition="navigateDefinition" :navigate-open-buffer="navigateOpenBuffer" :location="definitionLocation" @ready="editorReady=$event" @edit="updateBufferEdit" @save="save" @diagnostics="diagnostics=$event"/><div v-if="!current&&!preview" class="welcome"><span>⌘</span><h2>让想法成为可运行的代码</h2><p>打开项目，浏览文件，选择模型开始协作。</p><div>⌘/Ctrl F 查找　·　Alt + 点击 多光标　·　⌘/Ctrl S 保存</div></div></div>
         <div class="resize horizontal" role="separator" aria-label="调整输出面板高度" aria-orientation="horizontal" tabindex="0" @pointerdown="resize($event,'bottom')" @keydown="keyboardResize($event,'bottom')"/>
         <section class="bottom-panel" :style="{height:bottomHeight+'px'}"><nav><button :class="{selected:bottomTab==='output'}" @click="bottomTab='output'">工具输出</button><button :class="{selected:bottomTab==='commands'}" @click="bottomTab='commands'">受控命令</button><button :class="{selected:bottomTab==='diagnostics'}" @click="bottomTab='diagnostics'">问题 {{diagnostics.length}}</button></nav><template v-if="bottomTab==='output'"><p class="hint">文件、MCP 和受控命令已接入。Rust 当前文件或模块树语言服务需批准；Cargo 外部依赖推断、调试器尚未接入。</p><pre>{{output||'工具与错误记录显示在这里'}}</pre></template><CodingCommandPanel v-else-if="bottomTab==='commands'" @context="context.push($event)"/><pre v-else>{{diagnostics.join('\n')||'当前没有诊断。未启用语言服务或分析未完成，不代表编译通过。'}}</pre></section>
       </main>

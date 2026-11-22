@@ -3,6 +3,16 @@
 //! rename uses those pinned directory descriptors. If unavailable, fail closed.
 use std::path::{Path, PathBuf};
 
+/// A bounded snapshot of one native file object. Identity is opaque and only
+/// meaningful together with its authorized root and exact content. This is not
+/// a durable lock against arbitrary external writers.
+#[derive(Clone, Debug)]
+pub struct FileSnapshot {
+    pub identity: String,
+    pub bytes: Vec<u8>,
+}
+
+
 #[cfg(target_os = "linux")]
 mod linux {
     use super::*;
@@ -489,103 +499,180 @@ mod linux {
         )
     }
 
-    /// Compare and replace an existing regular file using only a pinned parent
-    /// directory FD. The advisory sidecar lock serializes cooperating BrowserOS
-    /// writers; the second content/identity check detects ordinary external
-    /// edits before rename. A non-cooperating writer can still race the final
-    /// rename syscall, which is not a kernel CAS primitive.
-    fn save_if_unchanged_at(
+    fn snapshot_at(
         parent: &File,
         filename: &OsStr,
-        expected: &[u8],
-        content: &[u8],
         limit: usize,
-    ) -> Result<(), String> {
-        if expected.len() > limit || content.len() > limit {
-            return Err("FILE_SAVE_TOO_LARGE".into());
+    ) -> Result<Option<(std::fs::Metadata, Vec<u8>)>, String> {
+        let mut file = match open_regular_at(parent, filename) {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(_) => return Err("FILE_TARGET_NOT_REGULAR".into()),
+        };
+        let before = file.metadata().map_err(|_| "FILE_READ_FAILED")?;
+        if before.len() > limit as u64 { return Err("FILE_SAVE_TOO_LARGE".into()); }
+        let mut bytes = Vec::new();
+        (&mut file).take(limit as u64 + 1).read_to_end(&mut bytes)
+            .map_err(|_| "FILE_READ_FAILED")?;
+        if bytes.len() > limit { return Err("FILE_SAVE_TOO_LARGE".into()); }
+        let after = file.metadata().map_err(|_| "FILE_READ_FAILED")?;
+        if !same_file_identity(&before, &after) {
+            return Err("FILE_CONFLICT".into());
         }
+        entry_still_matches(parent, filename, &file).map_err(|_| "FILE_CONFLICT")?;
+        Ok(Some((after, bytes)))
+    }
+
+    fn object_identity(metadata: &std::fs::Metadata) -> String {
+        use std::os::unix::fs::MetadataExt;
+        format!("linux:{:x}:{:x}", metadata.dev(), metadata.ino())
+    }
+
+    pub(super) fn directory_identity(path: &Path) -> io::Result<String> {
+        let directory = open_abs_dir_no_symlinks(path)?;
+        Ok(object_identity(&directory.metadata()?))
+    }
+
+    fn cas_lock(parent: &File, filename: &OsStr) -> Result<File, String> {
         let digest = format!("{:x}", sha2::Sha256::digest(filename.as_bytes()));
         let lock_name = std::ffi::OsString::from(format!(".browseros-cas-{digest}.lock"));
         let lock = open_lock_at(parent, &lock_name).map_err(|_| "FILE_LOCK_UNAVAILABLE")?;
         lock.lock().map_err(|_| "FILE_LOCK_UNAVAILABLE")?;
+        Ok(lock)
+    }
 
+    /// Persist the receipt before taking the commit lock, so owner metadata can
+    /// be written without recursively acquiring a target lock. The parent stays
+    /// pinned; after locking, recheck the original snapshot before publication.
+    fn write_versioned_at(
+        parent: &File,
+        filename: &OsStr,
+        expected: Option<&[u8]>,
+        expected_identity: Option<&str>,
+        content: &[u8],
+        limit: usize,
+        prepare: impl FnOnce(&str) -> Result<(), String>,
+    ) -> Result<(), String> {
+        if limit == 0 || expected.is_some_and(|b| b.len() > limit) || content.len() > limit {
+            return Err("FILE_SAVE_TOO_LARGE".into());
+        }
+        let initial = snapshot_at(parent, filename, limit)?;
+        // Preserve the existing editor error for a removed target. Versioned
+        // recovery still treats disappearance of an expected object as conflict.
+        if initial.is_none() && expected.is_some() && expected_identity.is_none() {
+            return Err("FILE_TARGET_MISSING".into());
+        }
+        if initial.as_ref().map(|(_, bytes)| bytes.as_slice()) != expected
+            || expected_identity.is_some_and(|id| {
+                initial.as_ref().is_none_or(|(meta, _)| object_identity(meta) != id)
+            })
+        {
+            return Err("FILE_CONFLICT".into());
+        }
+        let temp_name =
+            std::ffi::OsString::from(format!(".browseros-cas-{}.tmp", uuid::Uuid::new_v4()));
+        let mut published = false;
         let result = (|| {
-            let current_file = open_regular_at(parent, filename).map_err(|error| {
-                if error.kind() == io::ErrorKind::NotFound {
-                    "FILE_TARGET_MISSING"
-                } else {
-                    "FILE_TARGET_NOT_REGULAR"
-                }
-            })?;
-            let initial_meta = current_file.metadata().map_err(|_| "FILE_READ_FAILED")?;
-            if initial_meta.len() > limit as u64 {
-                return Err("FILE_SAVE_TOO_LARGE".into());
-            }
-            let mut current = Vec::with_capacity(initial_meta.len() as usize);
-            current_file
-                .take(limit as u64 + 1)
-                .read_to_end(&mut current)
-                .map_err(|_| "FILE_READ_FAILED")?;
-            if current.len() > limit {
-                return Err("FILE_SAVE_TOO_LARGE".into());
-            }
-            if current != expected {
-                return Err("FILE_CONFLICT".into());
-            }
-
-            let temp_name =
-                std::ffi::OsString::from(format!(".browseros-cas-{}.tmp", uuid::Uuid::new_v4()));
-            let stage_result = (|| {
-                let mut staged =
-                    create_temp_at(parent, &temp_name).map_err(|_| "FILE_STAGE_FAILED")?;
-                staged.write_all(content).map_err(|_| "FILE_STAGE_FAILED")?;
+            let mut stage = create_temp_at(parent, &temp_name).map_err(|_| "FILE_STAGE_FAILED")?;
+            stage.write_all(content).map_err(|_| "FILE_STAGE_FAILED")?;
+            if let Some((metadata, _)) = &initial {
                 use std::os::unix::fs::PermissionsExt;
-                staged
-                    .set_permissions(std::fs::Permissions::from_mode(
-                        initial_meta.permissions().mode() & 0o777,
-                    ))
-                    .map_err(|_| "FILE_STAGE_FAILED")?;
-                staged.sync_all().map_err(|_| "FILE_STAGE_FAILED")?;
-
-                let latest_file = open_regular_at(parent, filename).map_err(|_| "FILE_CONFLICT")?;
-                let latest_meta = latest_file.metadata().map_err(|_| "FILE_CONFLICT")?;
-                if !same_file_identity(&initial_meta, &latest_meta) {
-                    return Err("FILE_CONFLICT".into());
-                }
-                let mut latest = Vec::with_capacity(latest_meta.len() as usize);
-                latest_file
-                    .take(limit as u64 + 1)
-                    .read_to_end(&mut latest)
-                    .map_err(|_| "FILE_CONFLICT")?;
-                if latest != expected {
-                    return Err("FILE_CONFLICT".into());
-                }
-
-                replace_at(parent, &temp_name, filename).map_err(|_| "FILE_REPLACE_FAILED")?;
-                sync_directory(parent).map_err(|_| "FILE_DURABILITY_UNCERTAIN")?;
-                Ok(())
-            })();
-            if stage_result.is_err() {
-                unlink_at(parent, &temp_name);
+                stage.set_permissions(std::fs::Permissions::from_mode(
+                    metadata.permissions().mode() & 0o777,
+                )).map_err(|_| "FILE_STAGE_FAILED")?;
             }
-            stage_result
+            stage.sync_all().map_err(|_| "FILE_STAGE_FAILED")?;
+            sync_directory(parent).map_err(|_| "FILE_DURABILITY_UNCERTAIN")?;
+            let staged_identity = object_identity(&stage.metadata().map_err(|_| "FILE_STAGE_FAILED")?);
+            prepare(&staged_identity)?;
+            let _lock = cas_lock(parent, filename)?;
+            // Journal persistence and lock acquisition may take time. Recheck
+            // after both, so a stale snapshot never bypasses the commit lock.
+            let latest = snapshot_at(parent, filename, limit)?;
+            match (&initial, &latest) {
+                (None, None) => {}
+                (Some((before, bytes)), Some((after, current)))
+                    if same_file_identity(before, after) && bytes == current => {}
+                _ => return Err("FILE_CONFLICT".into()),
+            }
+            entry_still_matches(parent, &temp_name, &stage).map_err(|_| "FILE_STAGE_CHANGED")?;
+            if initial.is_some() {
+                replace_at(parent, &temp_name, filename).map_err(|_| "FILE_REPLACE_FAILED")?;
+            } else {
+                // Atomic no-replace; a newly appearing file is never overwritten.
+                rename_bound(parent, &temp_name, parent, filename).map_err(|e| {
+                    if e.kind() == io::ErrorKind::AlreadyExists { "FILE_CONFLICT" }
+                    else { "FILE_REPLACE_FAILED" }
+                })?;
+            }
+            published = true;
+            sync_directory(parent).map_err(|_| "FILE_DURABILITY_UNCERTAIN")?;
+            Ok(())
         })();
-        drop(lock);
+        if result.is_err() && !published { unlink_at(parent, &temp_name); }
         result
     }
 
+    fn save_if_unchanged_at(
+        parent: &File, filename: &OsStr, expected: &[u8], content: &[u8], limit: usize,
+    ) -> Result<(), String> {
+        write_versioned_at(parent, filename, Some(expected), None, content, limit, |_| Ok(()))
+    }
+
     pub(super) fn save_if_unchanged(
-        canonical: &Path,
-        roots: &[PathBuf],
-        expected: &[u8],
-        content: &[u8],
-        limit: usize,
+        canonical: &Path, roots: &[PathBuf], expected: &[u8], content: &[u8], limit: usize,
     ) -> Result<(), String> {
         let parent_path = canonical.parent().ok_or("FILE_PARENT_INVALID")?;
         let filename = canonical.file_name().ok_or("FILE_NAME_INVALID")?;
-        let parent =
-            open_allowed_dir(parent_path, roots).map_err(|_| "FILE_PARENT_NOT_AUTHORIZED")?;
+        let parent = open_allowed_dir(parent_path, roots).map_err(|_| "FILE_PARENT_NOT_AUTHORIZED")?;
         save_if_unchanged_at(&parent, filename, expected, content, limit)
+    }
+
+    pub(super) fn read_versioned(
+        path: &Path, roots: &[PathBuf], limit: usize,
+    ) -> Result<Option<FileSnapshot>, String> {
+        let parent_path = path.parent().ok_or("FILE_PARENT_INVALID")?;
+        let filename = path.file_name().ok_or("FILE_NAME_INVALID")?;
+        let parent = match open_allowed_dir(parent_path, roots) {
+            Ok(parent) => parent,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(_) => return Err("FILE_PARENT_NOT_AUTHORIZED".into()),
+        };
+        Ok(snapshot_at(&parent, filename, limit)?.map(|(meta, bytes)| FileSnapshot {
+            identity: object_identity(&meta), bytes,
+        }))
+    }
+
+    pub(super) fn write_versioned(
+        path: &Path, roots: &[PathBuf], expected: Option<&FileSnapshot>,
+        content: &[u8], limit: usize, prepare: impl FnOnce(&str) -> Result<(), String>,
+    ) -> Result<(), String> {
+        let parent_path = path.parent().ok_or("FILE_PARENT_INVALID")?;
+        let filename = path.file_name().ok_or("FILE_NAME_INVALID")?;
+        let parent = open_allowed_dir(parent_path, roots).map_err(|_| "FILE_PARENT_NOT_AUTHORIZED")?;
+        write_versioned_at(
+            &parent, filename, expected.map(|s| s.bytes.as_slice()),
+            expected.map(|s| s.identity.as_str()), content, limit, prepare,
+        )
+    }
+
+    pub(super) fn remove_if_unchanged(
+        path: &Path, roots: &[PathBuf], expected: &FileSnapshot, limit: usize,
+    ) -> Result<(), String> {
+        let parent_path = path.parent().ok_or("FILE_PARENT_INVALID")?;
+        let filename = path.file_name().ok_or("FILE_NAME_INVALID")?;
+        let parent = open_allowed_dir(parent_path, roots).map_err(|_| "FILE_PARENT_NOT_AUTHORIZED")?;
+        let _lock = cas_lock(&parent, filename)?;
+        let (metadata, bytes) = snapshot_at(&parent, filename, limit)?
+            .ok_or("FILE_CONFLICT")?;
+        if object_identity(&metadata) != expected.identity || bytes != expected.bytes {
+            return Err("FILE_CONFLICT".into());
+        }
+        let name = name(filename).map_err(|_| "FILE_NAME_INVALID")?;
+        if unsafe { libc::unlinkat(parent.as_raw_fd(), name.as_ptr(), 0) } != 0 {
+            return Err("FILE_DELETE_FAILED".into());
+        }
+        sync_directory(&parent).map_err(|_| "FILE_DURABILITY_UNCERTAIN".into())
     }
 
     #[cfg(test)]
@@ -949,6 +1036,61 @@ pub fn save_if_unchanged(
 }
 
 
+/// A read-only object identity for duplicate/storage preflight. This does not
+/// authorize later access: callers still use the pinned-root write primitives.
+pub fn directory_identity(path: &Path) -> std::io::Result<String> {
+    #[cfg(target_os = "linux")]
+    { linux::directory_identity(path) }
+    #[cfg(target_os = "windows")]
+    { windows::directory_identity(path) }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    { let _ = path; Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "native directory identity unavailable")) }
+}
+
+/// Read an object-bound snapshot; a missing target is distinct from a bad type,
+/// link, authorization failure, or a concurrently changing file.
+pub fn read_versioned(
+    path: &Path, roots: &[PathBuf], limit: usize,
+) -> Result<Option<FileSnapshot>, String> {
+    #[cfg(target_os = "linux")]
+    { linux::read_versioned(path, roots, limit) }
+    #[cfg(target_os = "windows")]
+    { windows::read_versioned(path, roots, limit) }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    { let _ = (path, roots, limit); Err("FILE_DESCRIPTOR_CAS_UNSUPPORTED".into()) }
+}
+
+/// Uses the same native parent and sidecar lock as editor CAS. The owner must
+/// persist the staged object's receipt in prepare BEFORE publication; if that
+/// fails, no target is changed. None means atomic create without replacement.
+/// Non-cooperating writers can still race the final replacement on Linux and
+/// Windows, or Linux unlink; this is not a kernel-wide transaction or hostile
+/// same-SID isolation. Windows serializes cooperating writes per native parent.
+/// prepare runs before acquiring the commit lock; the snapshot is rechecked
+/// afterwards while holding that lock.
+pub fn write_versioned(
+    path: &Path, roots: &[PathBuf], expected: Option<&FileSnapshot>,
+    content: &[u8], limit: usize, prepare: impl FnOnce(&str) -> Result<(), String>,
+) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    { linux::write_versioned(path, roots, expected, content, limit, prepare) }
+    #[cfg(target_os = "windows")]
+    { windows::write_versioned(path, roots, expected, content, limit, prepare) }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    { let _ = (path, roots, expected, content, limit, prepare); Err("FILE_DESCRIPTOR_CAS_UNSUPPORTED".into()) }
+}
+
+pub fn remove_if_unchanged(
+    path: &Path, roots: &[PathBuf], expected: &FileSnapshot, limit: usize,
+) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    { linux::remove_if_unchanged(path, roots, expected, limit) }
+    #[cfg(target_os = "windows")]
+    { windows::remove_if_unchanged(path, roots, expected, limit) }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    { let _ = (path, roots, expected, limit); Err("FILE_DESCRIPTOR_CAS_UNSUPPORTED".into()) }
+}
+
 #[cfg(all(test, any(target_os = "linux", target_os = "windows")))]
 mod cross_platform_file_manager_tests {
     use super::*;
@@ -1045,4 +1187,78 @@ mod cross_platform_file_manager_tests {
 #[cfg(not(target_os = "windows"))]
 pub fn prepare_application_data_directory(base: &Path) -> std::io::Result<std::path::PathBuf> {
     private_directory_unix::prepare_application_data_directory(base)
+}
+
+
+#[cfg(all(test, any(target_os = "linux", target_os = "windows")))]
+mod versioned_write_tests {
+    use super::*;
+    use std::fs;
+    fn fixture() -> PathBuf {
+        let root = std::env::temp_dir().join(format!("browseros-receipt-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        root.canonicalize().unwrap()
+    }
+
+    #[test]
+    fn staged_receipt_precedes_publication_and_a_failed_record_preserves_content() {
+        let root = fixture();
+        let target = root.join("target.txt");
+        fs::write(&target, b"before").unwrap();
+        let before = read_versioned(&target, &[root.clone()], 1024).unwrap().unwrap();
+        let result = write_versioned(&target, &[root.clone()], Some(&before), b"after", 1024, |receipt| {
+            assert_ne!(receipt, before.identity);
+            assert_eq!(fs::read(&target).unwrap(), b"before");
+            Err("JOURNAL_NOT_DURABLE".into())
+        });
+        assert_eq!(result.unwrap_err(), "JOURNAL_NOT_DURABLE");
+        assert_eq!(fs::read(&target).unwrap(), b"before");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn publication_rechecks_external_edits_after_persisting_the_receipt() {
+        let root = fixture();
+        let target = root.join("target.txt");
+        fs::write(&target, b"before").unwrap();
+        let before = read_versioned(&target, &[root.clone()], 1024).unwrap().unwrap();
+        let result = write_versioned(&target, &[root.clone()], Some(&before), b"after", 1024, |_| {
+            fs::write(&target, b"external").unwrap();
+            Ok(())
+        });
+        assert_eq!(result.unwrap_err(), "FILE_CONFLICT");
+        assert_eq!(fs::read(&target).unwrap(), b"external");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn new_file_publication_never_overwrites_a_concurrent_creation() {
+        let root = fixture();
+        let target = root.join("new.txt");
+        let result = write_versioned(&target, &[root.clone()], None, b"ours", 1024, |_| {
+            fs::write(&target, b"someone else").unwrap();
+            Ok(())
+        });
+        assert_eq!(result.unwrap_err(), "FILE_CONFLICT");
+        assert_eq!(fs::read(&target).unwrap(), b"someone else");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn equal_bytes_in_a_different_file_object_cannot_be_removed_by_old_receipt() {
+        let root = fixture();
+        let target = root.join("new.txt");
+        let mut receipt = None;
+        write_versioned(&target, &[root.clone()], None, b"ours", 1024, |id| {
+            receipt = Some(id.to_owned());
+            Ok(())
+        }).unwrap();
+        let ours = read_versioned(&target, &[root.clone()], 1024).unwrap().unwrap();
+        assert_eq!(Some(&ours.identity), receipt.as_ref());
+        fs::rename(&target, root.join("held.txt")).unwrap();
+        fs::write(&target, b"ours").unwrap();
+        assert_eq!(remove_if_unchanged(&target, &[root.clone()], &ours, 1024).unwrap_err(), "FILE_CONFLICT");
+        assert_eq!(fs::read(&target).unwrap(), b"ours");
+        fs::remove_dir_all(root).unwrap();
+    }
 }

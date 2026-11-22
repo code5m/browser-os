@@ -6,8 +6,12 @@ use tauri::{AppHandle, Webview};
 
 /// 用系统文件管理器打开指定路径（文件树右键"资源管理器打开"）
 #[tauri::command]
-pub fn reveal_path(app: AppHandle, webview: Webview, path: String) -> Result<(), String> {
+pub async fn reveal_path(app: AppHandle, webview: Webview, path: String) -> Result<(), String> {
     check_invocation_source(&webview, "reveal_path", None, &app)?;
+    super::FILESYSTEM_IO.run(move || reveal_path_blocking(app, path)).await
+}
+
+fn reveal_path_blocking(app: AppHandle, path: String) -> Result<(), String> {
     let roots = crate::workspace::allowed_roots(&app);
     let canonical = sp::check_path_within_roots(&path, &roots).map_err(|e| e.to_string())?;
     let target = if canonical.is_dir() {
@@ -21,13 +25,12 @@ pub fn reveal_path(app: AppHandle, webview: Webview, path: String) -> Result<(),
 /// 将文件或目录移动到目标目录（文件树拖拽移动用）。
 /// 源与目标都必须在允许根目录内；禁止移动到自身或自身子目录内。
 #[tauri::command]
-pub fn move_path(
-    app: AppHandle,
-    webview: Webview,
-    src: String,
-    dst_dir: String,
-) -> Result<(), String> {
+pub async fn move_path(app: AppHandle, webview: Webview, src: String, dst_dir: String) -> Result<(), String> {
     check_invocation_source(&webview, "move_path", None, &app)?;
+    super::FILESYSTEM_IO.run(move || move_path_blocking(app, src, dst_dir)).await
+}
+
+fn move_path_blocking(app: AppHandle, src: String, dst_dir: String) -> Result<(), String> {
     // Linux uses renameat2 with pinned dirfds; Windows uses
     // SetFileInformationByHandle(FileRenameInfo, ReplaceIfExists=false)
     // against verified source/destination handles. Other OSes fail closed.

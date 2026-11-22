@@ -1,3 +1,5 @@
+import { documentPathKey } from '../../../application/documentPaths.mjs';
+
 export function languageForPath(path) {
   const extension = path.split('.').pop()?.toLowerCase();
   return ({ts:'typescript',tsx:'typescript',js:'javascript',jsx:'javascript',rs:'rust',py:'python',java:'java',vue:'html',html:'html',css:'css',scss:'scss',json:'json',md:'markdown',sql:'sql',sh:'shell',yaml:'yaml',yml:'yaml',toml:'ini',xml:'xml'})[extension] || 'plaintext';
@@ -13,7 +15,11 @@ export function dirtyBuffers(buffers) { return buffers.filter(isDirtyBuffer); }
 export function clampPane(value, min, max) { return Math.max(min, Math.min(max, value)); }
 export function entryPath(parent, entry) { return entry.path || `${parent ? parent.replace(/\/$/,'')+'/' : ''}${entry.name}`; }
 export function sessionMessages(session) { return (session.messages || []).filter(message => ['user','assistant'].includes(message.role) && typeof message.content === 'string').map(({role,content}) => ({role,content})); }
-export function canApplyChanges(buffers, changes) { return !buffers.some(buffer => isDirtyBuffer(buffer) && changes.some(change => change.path === buffer.path)); }
+export function canApplyChanges(buffers, changes, root = '') {
+  const identity = path => root ? documentPathKey(root, path) : path;
+  const targets = new Set(changes.map(change => identity(change.path)));
+  return !buffers.some(buffer => isDirtyBuffer(buffer) && targets.has(identity(buffer.path)));
+}
 export function proposalFor(buffer) { return {action:'propose',path:buffer.path,content:buffer.content,expected_hash:buffer.hash}; }
 export function parseMcpJson(argsText,argumentsText) {
   let args,argumentsValue;

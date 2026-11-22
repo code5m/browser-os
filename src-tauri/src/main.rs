@@ -34,6 +34,7 @@ mod hang_diagnostics;
 #[path = "hang_diagnostics_windows.rs"]
 mod hang_diagnostics;
 mod shared {
+    pub mod blocking;
     pub mod clipboard;
     pub mod images;
     pub mod invocation;
@@ -173,7 +174,7 @@ fn native_main_webview(app: &tauri::AppHandle) -> Result<tauri::Webview, String>
         .ok_or_else(|| "NATIVE_MAIN_WEBVIEW_REQUIRED".into())
 }
 fn native_eval_in_tab(app: tauri::AppHandle, id: String, js: String) -> Result<String, String> {
-    bridge::eval_in_tab(native_main_webview(&app)?, app, id, js)
+    bridge::eval_in_tab_sync(native_main_webview(&app)?, app, id, js)
 }
 fn native_tab_activate(app: tauri::AppHandle, id: String) -> Result<(), String> {
     bridge::tab_activate(native_main_webview(&app)?, app, id)
@@ -1233,7 +1234,7 @@ fn run_grid_gui_regression(app: tauri::AppHandle) {
             (|| {
                 open_grid("8", 0)?;
                 sleep_ms(1000);
-                let term = bridge::term_spawn(app.clone())?;
+                let term = bridge::term_spawn_sync(app.clone())?;
                 bridge::term_write(
                     app.clone(),
                     term.id.clone(),
@@ -1462,7 +1463,7 @@ fn run_m0_driver(app: tauri::AppHandle, cfg: bridge::M0Config) {
                         Err(error) => Err(error),
                     }
                 }
-                "terminal" => bridge::term_spawn(app.clone()).map(|term| {
+                "terminal" => bridge::term_spawn_sync(app.clone()).map(|term| {
                     log(&format!("cycle {n}: term_spawn ok id={}", term.id));
                     OpenedResource::Terminal(term.id)
                 }),

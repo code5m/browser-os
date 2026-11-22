@@ -103,8 +103,8 @@ pub(crate) fn dispatch_coding_request(
     super::coding::execute(root, storage, request, provider)
 }
 
-pub(crate) fn coding_cancelled(root: &std::path::Path) -> bool {
-    super::coding::cancelled_for_root(root)
+pub(crate) fn coding_cancelled(root: &std::path::Path, session_id: &str) -> bool {
+    super::coding::cancelled(root, session_id)
 }
 
 #[cfg(test)]

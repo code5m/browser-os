@@ -29,3 +29,8 @@ pub mod fs_cmds;
 pub mod safe_paths;
 pub mod weixin_drafts;
 pub mod workspace;
+
+// Workspace owns admission for its synchronous filesystem operations. The
+// native safe_paths owner still authorizes, locks and commits every mutation.
+pub(crate) static FILESYSTEM_IO: crate::shared::blocking::BlockingLane =
+    crate::shared::blocking::BlockingLane::new(8, "FILESYSTEM_BUSY", "FILESYSTEM_WORKER_FAILED");

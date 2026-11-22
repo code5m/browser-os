@@ -826,8 +826,26 @@ pub fn tab_reload(webview: tauri::Webview, app: AppHandle, id: String) -> Result
 
 /// 在指定子 webview 中执行 JavaScript（用于 AI 模式向宫格注入问题）。
 /// 宫格 grid-N 经 UDS 转发到子进程，页签 tab-N 仍走本地插件。
+static TAB_EVAL_WORKERS: crate::shared::blocking::BlockingLane =
+    crate::shared::blocking::BlockingLane::new(16, "TAB_EVAL_BUSY", "TAB_EVAL_WORKER_FAILED");
+
 #[tauri::command]
-pub fn eval_in_tab(
+pub async fn eval_in_tab(
+    webview: tauri::Webview,
+    app: AppHandle,
+    id: String,
+    js: String,
+) -> Result<String, String> {
+    // Reject untrusted/oversized calls before occupying a native worker.
+    crate::shared::native_legacy_policy::require_main(&webview, "eval_in_tab")?;
+    crate::shared::native_legacy_policy::bound_text("eval_in_tab", "id", &id)?;
+    crate::shared::native_legacy_policy::bound_text("eval_in_tab", "js", &js)?;
+    TAB_EVAL_WORKERS.run(move || eval_in_tab_blocking(app, id, js)).await
+}
+
+/// Native-only callers already executing on their own worker retain the exact
+/// authorization and plugin/IPC route; public IPC never waits on Grid here.
+pub(crate) fn eval_in_tab_sync(
     webview: tauri::Webview,
     app: AppHandle,
     id: String,
@@ -837,6 +855,10 @@ pub fn eval_in_tab(
     crate::shared::native_legacy_policy::bound_text("eval_in_tab", "id", &id)?;
     crate::shared::native_legacy_policy::bound_text("eval_in_tab", "js", &js)?;
 
+    eval_in_tab_blocking(app, id, js)
+}
+
+fn eval_in_tab_blocking(app: AppHandle, id: String, js: String) -> Result<String, String> {
     if let Some(index) = grid_index_of(&id) {
         app.state::<AppState>()
             .grid_manager

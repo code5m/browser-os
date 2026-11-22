@@ -8,6 +8,11 @@ use super::*;
 
 pub(crate) const MAX_GRID: usize = 12;
 
+static GRID_ZOOM_WORKERS: crate::shared::blocking::BlockingLane =
+    crate::shared::blocking::BlockingLane::new(24, "GRID_ZOOM_BUSY", "GRID_ZOOM_WORKER_FAILED");
+// Only one send per cell may be in progress. Different cells remain independent.
+static GRID_ZOOM_WRITERS: [Mutex<()>; MAX_GRID] = [const { Mutex::new(()) }; MAX_GRID];
+
 /// 每宫格子进程（Tauri + WebKitWebProcess + AI 站点）的实测内存估算（MB）。
 /// 实测 WebKitWebProcess 约 330~365MB/格，加子进程本体取 450。
 const GRID_MEM_MB: u64 = 450;
@@ -411,28 +416,38 @@ fn ensure_grid_child(app: &AppHandle, index: usize) -> Result<(), String> {
 
 /// 真正给宫格 webview 应用缩放（WebKitGTK 原生 zoom_level，经 UDS 到子进程）。
 /// 仅在页面加载完成后调用，避免加载中设置被重置导致卡顿。
-fn apply_grid_zoom(app: &AppHandle, label: &str, z: f64) {
-    if z <= 0.1 || (z - 1.0).abs() < 0.01 {
+fn apply_grid_zoom(app: &AppHandle, label: &str, _requested_zoom: f64) {
+    let Some(index) = grid_index_of(label).filter(|index| (*index as usize) < MAX_GRID) else {
+        return;
+    };
+    let _send = GRID_ZOOM_WRITERS[index as usize].lock()
+        .unwrap_or_else(|error| error.into_inner());
+    // A delayed page-load replay and an older blocking worker must both read
+    // the current owner intent after acquiring the cell's send lock. Never
+    // replay the value captured before a more recent user zoom.
+    let state = app.state::<AppState>();
+    let zoom = state.grid_zooms.lock().unwrap().get(label).copied();
+    let Some(zoom) = zoom else { return; };
+    if !zoom.is_finite() || zoom <= 0.1 {
         return;
     }
-    if let Some(index) = grid_index_of(label) {
-        app.state::<AppState>().grid_manager.send(
-            index,
-            GridCmd::SetZoom {
-                id: label.to_string(),
-                zoom: z,
-            },
-        );
-    }
+    // 1.0 is a real reset to 100%, not a reason to skip the native command.
+    state.grid_manager.send(index, GridCmd::SetZoom {
+        id: label.to_string(),
+        zoom,
+    });
 }
 
-/// 设置宫格某格的缩放（存起来 + 若页面已加载则立即应用）。
-/// 前端在每次定位/布局变化后调用；应用时机做了防抖，避免反复 zoom 卡顿。
+/// Store the desired zoom before dispatch, then serialize only this cell's I/O.
+/// A saturated lane rejects before changing intent; no unbounded task queue.
 #[tauri::command]
-pub fn grid_set_zoom(app: AppHandle, index: usize, zoom: f64) -> Result<(), String> {
+pub async fn grid_set_zoom(app: AppHandle, index: usize, zoom: f64) -> Result<(), String> {
     require_grid_platform()?;
+    if index >= MAX_GRID || !zoom.is_finite() || zoom <= 0.1 {
+        return Err("GRID_ZOOM_INVALID".into());
+    }
+    let permit = GRID_ZOOM_WORKERS.reserve()?;
     let label = format!("grid-{index}");
-    // 与上次相同则跳过（去重，避免重复 zoom 触发重排卡顿）
     {
         let state = app.state::<AppState>();
         let mut zooms = state.grid_zooms.lock().unwrap();
@@ -443,8 +458,10 @@ pub fn grid_set_zoom(app: AppHandle, index: usize, zoom: f64) -> Result<(), Stri
         }
         zooms.insert(label.clone(), zoom);
     }
-    apply_grid_zoom(&app, &label, zoom);
-    Ok(())
+    permit.run(move || {
+        apply_grid_zoom(&app, &label, zoom);
+        Ok(())
+    }).await
 }
 
 /// 批量定位所有宫格（前端按网格计算好每个格子的 x/y/w/h 后调用）。

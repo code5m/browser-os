@@ -1338,6 +1338,7 @@ pub async fn coding_service(
                 &cancel_root,
                 request["session_id"].as_str(),
             )?;
+        let cancel_session = request["session_id"].as_str().unwrap_or("").to_owned();
         let response = crate::capabilities::agent::public_api::dispatch_coding_request(
             &root,
             &storage,
@@ -1348,12 +1349,16 @@ pub async fn coding_service(
                     &id,
                     messages,
                     tools,
-                    &|| crate::capabilities::agent::public_api::coding_cancelled(&cancel_root),
+                    &|| crate::capabilities::agent::public_api::coding_cancelled(&cancel_root, &cancel_session),
                     &mut emit_delta,
                 )
             },
         );
-        execution.finish(response.is_ok())?;
+        if response.as_ref().is_ok_and(|value| value["status"] == "cancelled") {
+            execution.cancel()?;
+        } else {
+            execution.finish(response.is_ok())?;
+        }
         response
     })
     .await

@@ -1,5 +1,8 @@
 import { defineStore } from "pinia";
 import { ref, reactive, computed } from "vue";
+import { documentPathKey, documentPathName, sameDocumentPath, replaceDocumentPathPrefix } from "../application/documentPaths.mjs";
+
+export type ViewChangeCommit = (() => boolean) & { isCurrent(): boolean };
 
 // 活动栏 9 个模块 + 浏览器/编辑器，对应 prototype.html 的 9 视图 + 浏览器主视图
 export type MainView =
@@ -206,29 +209,43 @@ export const useLayoutStore = defineStore("layout", () => {
   function canNavigateTo(v: MainView): boolean {
     return [...beforeViewChange.values()].every((guard) => guard(v, mainView.value));
   }
-  // 仅做 UI 状态切换；需要触发 bridge 的地方委托给其他 store 的 action
-  // Phase 1：这是 mainView 的**唯一**写入点；组件禁止直接写 layout.mainView。
-  function setView(v: MainView) {
-    if (v !== mainView.value && !canNavigateTo(v)) return false;
+  // Layout is the sole writer of the visible view. An asynchronous owner may
+  // reserve a guarded navigation, perform its work, then publish only if no
+  // newer navigation has taken over. A rejected/failed action never changes UI.
+  let navigationRevision = 0;
+  function commitView(v: MainView): boolean {
     mainView.value = v;
-    // 进入模块视图时关闭文件编辑器覆盖层
+    navigationRevision += 1;
     if (v !== "editor") fileEditorOpen.value = false;
-    // M5-W17：视图一变就收起活动条扩展行，避免"换了视图还挂着上一视图的菜单"
     navSection.value = "";
     return true;
+  }
+  function navigationCommit(isCurrent: () => boolean, publish: () => boolean): ViewChangeCommit {
+    return Object.assign(() => isCurrent() && publish(), { isCurrent });
+  }
+  function prepareViewChange(v: MainView, contextChanged = false): ViewChangeCommit | null {
+    if ((v !== mainView.value || contextChanged) && !canNavigateTo(v)) return null;
+    // Accepting a newer intent supersedes in-flight owners even before that
+    // intent has completed its directory/native work.
+    const revision = ++navigationRevision;
+    return navigationCommit(() => revision === navigationRevision, () => commitView(v));
+  }
+  function setView(v: MainView): boolean {
+    const publish = prepareViewChange(v);
+    return publish ? publish() : false;
   }
 
   // ===== Phase 1 canonical View Intent API（View Navigation owner）=====
   // 一个用户意图 = 一个语义化入口；组件只表达意图，不拼 mainView，不做生命周期决策。
   // 这些是**纯视图导航**意图，不含 Grid 资源生命周期（后者归 useBrowserStore）。
-  function activateView(v: MainView) { setView(v); }
-  function activateBrowser() { setView("browser"); }
-  function activateHome() { setView("home"); }
-  function activateFiles() { setView("files"); }
-  function activateTerm() { setView("term"); }
-  function activateEditor() { setView("editor"); }
+  function activateView(v: MainView) { return setView(v); }
+  function activateBrowser() { return setView("browser"); }
+  function activateHome() { return setView("home"); }
+  function activateFiles() { return setView("files"); }
+  function activateTerm() { return setView("term"); }
+  function activateEditor() { return setView("editor"); }
   // 语义别名：Workspace = 文件工作区视图
-  function activateWorkspace() { setView("files"); }
+  function activateWorkspace() { return setView("files"); }
 
   function toggleSidebar() {
     sidebarOpen.value = !sidebarOpen.value;
@@ -301,80 +318,139 @@ export const useLayoutStore = defineStore("layout", () => {
   }
 
   // 同视图去重复用：已存在则激活，否则新建（避免主页/文件等同一模块被反复点开成一排）
-  function openModule(view: MainView) {
+  function openModule(view: MainView): boolean {
+    const existing = modTabs.find((t) => t.view === view && !t.path);
+    if (existing) return activateModTab(existing.id);
+    const publish = prepareViewChange(view, mainView.value === view);
+    if (!publish || !publish()) return false;
     const meta = MOD_META[view] ?? { icon: "📄", label: view };
-    const existing = modTabs.find((t) => t.view === view);
-    if (existing) {
-      if (existing.id !== activeModTab.value && mainView.value === existing.view && !canNavigateTo(existing.view)) return;
-      if (!setView(existing.view)) return;
-      activeModTab.value = existing.id;
-      return;
-    }
-    if (!setView(view)) return;
     const id = `mod-${++modTabSeq}`;
     modTabs.push({ id, view, ...meta });
     activeModTab.value = id;
+    return true;
   }
 
-  // 目录页签：同路径去重复用（避免一排完全相同的目录标签），新路径新建
-  function openDirTab(path: string, reuseCurrent = false) {
-    // Entering a second path in an already active DIRECTORY tab navigates it,
-    // while context-menu "Open in new tab" keeps its existing deduped semantics.
+  // Directory identity is shared with Workspace; original paths remain intact.
+  // Async callers prepare, read through Workspace, then publish this intent.
+  function prepareDirTab(path: string, reuseCurrent = false): ViewChangeCommit | null {
+    documentPathKey("", path);
+    const name = documentPathName(path);
     if (reuseCurrent && mainView.value === "files") {
       const current = modTabs.find((t) => t.id === activeModTab.value && !!t.path);
       if (current) {
-        if (current.path !== path && !canNavigateTo("files")) return;
-        current.path = path;
-        current.label = path.replace(/\/+$/, "").split("/").pop() || path;
-        return;
+        const oldPath = current.path!;
+        const publish = prepareViewChange("files", !sameDocumentPath(oldPath, path));
+        if (!publish) return null;
+        return navigationCommit(
+          () => publish.isCurrent() && modTabs.some((t) => t.id === current.id && t.path === oldPath),
+          () => {
+            if (!publish()) return false;
+            current.path = path;
+            current.label = name;
+            return true;
+          },
+        );
       }
     }
-    const existing = modTabs.find((t) => t.path === path);
-    if (existing) {
-      if (existing.id !== activeModTab.value && mainView.value === existing.view && !canNavigateTo(existing.view)) return;
-      if (!setView(existing.view)) return;
-      activeModTab.value = existing.id;
-      return;
-    }
-    if (mainView.value === "files" && !canNavigateTo("files")) return;
-    if (!setView("files")) return;
-    const name = path.replace(/\/+$/, "").split("/").pop() || path;
-    const id = `dir-${++modTabSeq}`;
-    modTabs.push({ id, view: "files", icon: "📁", label: name, path });
-    activeModTab.value = id;
+    const existing = modTabs.find((t) => t.path && sameDocumentPath(t.path, path));
+    if (existing) return prepareModTabActivation(existing.id);
+    const publish = prepareViewChange("files", mainView.value === "files");
+    if (!publish) return null;
+    return navigationCommit(publish.isCurrent, () => {
+      if (!publish()) return false;
+      const id = `dir-${++modTabSeq}`;
+      modTabs.push({ id, view: "files", icon: "📁", label: name, path });
+      activeModTab.value = id;
+      return true;
+    });
+  }
+  function openDirTab(path: string, reuseCurrent = false): boolean {
+    const publish = prepareDirTab(path, reuseCurrent);
+    return publish ? publish() : false;
   }
 
-  function activateModTab(id: string) {
+  function prepareModTabActivation(id: string): ViewChangeCommit | null {
     const t = modTabs.find((x) => x.id === id);
-    if (!t) return;
-    if (id !== activeModTab.value && mainView.value === t.view && !canNavigateTo(t.view)) return;
-    if (!setView(t.view)) return;
-    activeModTab.value = id;
-    // 目录页签：地址栏同步显示目录路径。
-    // M0-4.b：此处**必须**保持动态引入——useBrowserStore 深度依赖本 store
-    // （mainView / showToast / isBrowserView 等多处），改为静态会形成
-    // layout ↔ browser 循环依赖。Vite 的 mix 告警属已知且必要的取舍，
-    // 已在 checkpoint `M0-4.b` 记录，不要为了消除告警把它改成静态引入。
-    if (t.path) {
-      const p = t.path;
+    if (!t) return null;
+    const p = t.path;
+    const publish = prepareViewChange(t.view, id !== activeModTab.value);
+    if (!publish) return null;
+    return navigationCommit(
+      () => publish.isCurrent() && modTabs.some((tab) => tab.id === id && tab.path === p),
+      () => {
+        if (!publish()) return false;
+        activeModTab.value = id;
+        // Keep the deferred public-boundary import: Browser already depends on Layout.
+        // A late import must not overwrite another tab's URL or directory address.
+        if (p) {
+          import("../capabilities/browser/public").then(({ useBrowserStore }) => {
+            if (activeModTab.value === id && mainView.value === t.view
+                && modTabs.some((tab) => tab.id === id && tab.path === p)) {
+              useBrowserStore().url = p;
+            }
+          });
+        }
+        return true;
+      },
+    );
+  }
+  function activateModTab(id: string): boolean {
+    const publish = prepareModTabActivation(id);
+    return publish ? publish() : false;
+  }
+
+  // Workspace calls this only after its native move/rename succeeds.
+  // Updating the existing logical Owner also invalidates old async navigation.
+  function relocateDirectoryTabs(from: string, to: string): void {
+    const updates = modTabs.filter((tab) => !!tab.path).map((tab) => {
+      const path = replaceDocumentPathPrefix(tab.path!, from, to);
+      return { tab, path, label: documentPathName(path) };
+    }).filter(({ tab, path }) => path !== tab.path);
+    if (!updates.length) return;
+    navigationRevision += 1;
+    for (const { tab, path, label } of updates) {
+      tab.path = path;
+      tab.label = label;
+    }
+    const current = modTabs.find((tab) => tab.id === activeModTab.value && tab.view === mainView.value && tab.path);
+    if (current?.path) {
+      const id = current.id, path = current.path;
       import("../capabilities/browser/public").then(({ useBrowserStore }) => {
-        useBrowserStore().url = p;
+        if (activeModTab.value === id && mainView.value === current.view
+            && modTabs.some((tab) => tab.id === id && tab.path === path)) useBrowserStore().url = path;
       });
     }
   }
 
-  function closeModTab(id: string) {
-    const i = modTabs.findIndex((x) => x.id === id);
-    if (i < 0) return;
-    const wasActive = activeModTab.value === id;
-    const next = modTabs[i + 1] || modTabs[i - 1];
-    if (wasActive) {
-      const destination = next?.view ?? "home";
-      if (mainView.value === destination && !canNavigateTo(destination)) return;
-      if (!setView(destination)) return;
-    }
-    modTabs.splice(i, 1);
-    if (wasActive) activeModTab.value = next?.id ?? "";
+  function prepareModTabClose(id: string): { publish: ViewChangeCommit; next?: ModTab; wasVisible: boolean } | null {
+    const i = modTabs.findIndex((tab) => tab.id === id);
+    if (i < 0) return null;
+    const target = { ...modTabs[i] };
+    const selected = activeModTab.value;
+    const wasVisible = selected === id && mainView.value === target.view;
+    const adjacent = modTabs[i + 1] || modTabs[i - 1];
+    const next = adjacent ? { ...adjacent } : undefined;
+    const publishView = wasVisible ? prepareViewChange(next?.view ?? "home", true) : null;
+    if (wasVisible && !publishView) return null;
+    const revision = navigationRevision;
+    const publish = navigationCommit(
+      () => revision === navigationRevision
+        && modTabs.some((tab) => tab.id === id && tab.path === target.path)
+        && (!next || modTabs.some((tab) => tab.id === next.id && tab.path === next.path)),
+      () => {
+        if (publishView && !publishView()) return false;
+        const index = modTabs.findIndex((tab) => tab.id === id);
+        modTabs.splice(index, 1);
+        if (selected === id) activeModTab.value = next?.id ?? "";
+        if (!publishView) navigationRevision += 1;
+        return true;
+      },
+    );
+    return { publish, next, wasVisible };
+  }
+  function closeModTab(id: string): boolean {
+    const prepared = prepareModTabClose(id);
+    return prepared ? prepared.publish() : false;
   }
 
   // 浏览器视图右侧 Dock：指定 tab 时做"切到该 tab/再点收起"语义
@@ -419,6 +495,10 @@ export const useLayoutStore = defineStore("layout", () => {
     showToast,
     isBrowserView,
     setView,
+    prepareViewChange,
+    prepareModTabActivation,
+    prepareModTabClose,
+    prepareDirTab,
     registerBeforeViewChange,
     // Phase 1 canonical View Intent API
     activateView,
@@ -442,6 +522,7 @@ export const useLayoutStore = defineStore("layout", () => {
     isModView,
     openModule,
     openDirTab,
+    relocateDirectoryTabs,
     activateModTab,
     closeModTab,
   };

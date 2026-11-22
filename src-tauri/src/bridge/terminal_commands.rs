@@ -6,6 +6,9 @@
 
 use super::*;
 
+static TERMINAL_STARTS: crate::shared::blocking::BlockingLane =
+    crate::shared::blocking::BlockingLane::new(4, "TERM_START_BUSY", "TERM_START_WORKER_FAILED");
+
 fn term_measure_mode(app: &AppHandle) -> bool {
     m0_config_of(app).driver == "term-throughput"
 }
@@ -14,7 +17,13 @@ fn term_measure_mode(app: &AppHandle) -> bool {
 /// 仅 M0 内部回归驱动（`main.rs` scenario-8 / `M0_DRIVER` 资源循环）使用；前端一律走
 /// `term_spawn_channel`（夹具锚定前端不得调用本命令）。
 #[tauri::command]
-pub fn term_spawn(app: AppHandle) -> Result<TermInfo, String> {
+pub async fn term_spawn(app: AppHandle) -> Result<TermInfo, String> {
+    reject_terminal_during_shutdown(&app)?;
+    TERMINAL_STARTS.run(move || term_spawn_sync(app)).await
+}
+
+/// Native regression drivers already run off the UI thread.
+pub(crate) fn term_spawn_sync(app: AppHandle) -> Result<TermInfo, String> {
     reject_terminal_during_shutdown(&app)?;
     let measure = term_measure_mode(&app);
     let (info, session) = terminal::spawn_terminal(Arc::new(EventSink(app.clone())), measure)?;
@@ -23,14 +32,17 @@ pub fn term_spawn(app: AppHandle) -> Result<TermInfo, String> {
 
 /// 创建并启动一个 PTY 终端，输出走**每终端独立 Channel 单播**（F4 Channel sink，前端唯一入口）。
 #[tauri::command]
-pub fn term_spawn_channel(
+pub async fn term_spawn_channel(
     app: AppHandle,
     channel: tauri::ipc::Channel<serde_json::Value>,
 ) -> Result<TermInfo, String> {
     reject_terminal_during_shutdown(&app)?;
     let measure = term_measure_mode(&app);
-    let (info, session) = terminal::spawn_terminal(Arc::new(ChannelSink(channel)), measure)?;
-    publish_terminal(&app, info, session)
+    TERMINAL_STARTS.run(move || {
+        reject_terminal_during_shutdown(&app)?;
+        let (info, session) = terminal::spawn_terminal(Arc::new(ChannelSink(channel)), measure)?;
+        publish_terminal(&app, info, session)
+    }).await
 }
 
 fn reject_terminal_during_shutdown(app: &AppHandle) -> Result<(), String> {

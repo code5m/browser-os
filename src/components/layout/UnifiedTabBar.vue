@@ -3,27 +3,21 @@ import { useLayoutStore } from "../../stores/useLayoutStore";
 import { useBrowserStore } from "../../capabilities/browser/public";
 import { ref, computed } from "vue";
 import { useFileStore } from "../../capabilities/workspace/public";
-import { useAppsStore } from "../../capabilities/apps/public";
-import { useTerminalStore } from "../../capabilities/terminal/public";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Globe, Plus, X } from '@lucide/vue';
 import { bridge } from '../../bridge';
-import { projectTabResources } from "../../application/tabResourceProjection.mjs";
+import { useUnifiedTabs } from "../../composables/useUnifiedTabs";
+import { documentPathName, relativeDocumentPath } from "../../application/documentPaths.mjs";
 
 // 统一页签条：浏览器网页页签 + 目录页签 + 模块页签（终端/文件等）混排在同一条，
 // 不区分类型 —— 点击即切换对应视图，行为与浏览器标签一致。
 const layout = useLayoutStore();
 const browser = useBrowserStore();
 const fs = useFileStore();
-const appsStore = useAppsStore();
-const term = useTerminalStore();
 const context = ref<{ id: string; kind: 'web' | 'module' } | null>(null);
-// One read-only tab resource projection, routing operations to existing Owners.
-// A module tab is never represented as a fake native WebView.
-const projectedTabs = computed(() => projectTabResources(
-  browser.tabs,layout.modTabs,layout.mainView,browser.activeTabId,layout.activeModTab
-));
-
+// Read-only projection and actions are shared with the global shortcuts.
+const tabActions = useUnifiedTabs();
+const projectedTabs = tabActions.projectedTabs;
 
 // Resolve the native window only after an explicit user action so a browser/dev
 // preview can render the shell even when Tauri APIs are unavailable.
@@ -58,54 +52,9 @@ async function closeContext(others = false) {
   const target = context.value;
   context.value = null;
   if (!target) return;
-  if (target.kind === 'web') await browser.tabClose(target.id);
-  else {
-    const ids = others ? layout.modTabs.filter(t => t.id !== target.id).map(t => t.id) : [target.id];
-    for (const id of ids) layout.closeModTab(id);
-  }
-}
-
-// 取右键目标所处的页签列表（web 与 module 各用各的列表，互不串）
-function listFor(kind: 'web' | 'module') {
-  return kind === 'web' ? browser.tabs : layout.modTabs;
-}
-
-async function closeMany(kind: 'web' | 'module', ids: string[]) {
-  for (const id of ids) {
-    if (kind === 'web') await browser.tabClose(id);
-    else layout.closeModTab(id);
-  }
-}
-
-// 关闭当前页签左侧的所有页签
-async function closeLeft() {
-  const c = context.value;
-  context.value = null;
-  if (!c) return;
-  const list = listFor(c.kind);
-  const idx = list.findIndex((t) => t.id === c.id);
-  if (idx <= 0) return;
-  await closeMany(c.kind, list.slice(0, idx).map((t) => t.id));
-}
-
-// 关闭当前页签右侧的所有页签
-async function closeRight() {
-  const c = context.value;
-  context.value = null;
-  if (!c) return;
-  const list = listFor(c.kind);
-  const idx = list.findIndex((t) => t.id === c.id);
-  if (idx < 0) return;
-  await closeMany(c.kind, list.slice(idx + 1).map((t) => t.id));
-}
-
-// 关闭除当前页签外的所有页签
-async function closeOthers() {
-  const c = context.value;
-  context.value = null;
-  if (!c) return;
-  const list = listFor(c.kind);
-  await closeMany(c.kind, list.filter((t) => t.id !== c.id).map((t) => t.id));
+  const key = `${target.kind}:${target.id}`;
+  if (others) await tabActions.closeOthers(key);
+  else await tabActions.close(key);
 }
 
 // 当前右键页签若是本地目录/文件（module 类且带 path），返回其绝对路径，否则 null
@@ -118,14 +67,16 @@ const contextPath = computed(() => {
 
 // 相对路径：相对到命中的最长“起始目录”前缀；无匹配时退化为文件名
 function relativeOf(abs: string): string {
-  const dirs = (fs.startDirs || []).map((d) => d.path || "").filter(Boolean);
-  let best = "";
-  for (const d of dirs) {
-    if (abs.startsWith(d) && d.length > best.length) best = d;
+  let best: string | null = null;
+  for (const dir of fs.startDirs || []) {
+    try {
+      const relative = relativeDocumentPath(dir.path, abs);
+      if (relative !== null && (best === null || relative.length < best.length)) best = relative;
+    } catch {
+      // An unsupported historical start-directory entry cannot match this file.
+    }
   }
-  if (best) return abs.slice(best.length).replace(/^\/+/, "");
-  const parts = abs.split("/");
-  return parts[parts.length - 1] || abs;
+  return best === null ? documentPathName(abs) : best || ".";
 }
 
 async function revealHere() {
@@ -155,40 +106,15 @@ async function copyRelPath() {
   layout.showToast("已复制相对路径");
 }
 
-async function activateWeb(id: string) {
-  if (term.m0Cfg?.driver) return;
-  // 本函数语义是"切到普通浏览器页签"：必须精确判断是否已处于 browser 视图。
-  // 不能用 isBrowserView()（它把 grid 也算作 browser-like），否则宫格视图下
-  // mainView 会停留在 grid、schedulePosition 走宫格分支，点击的页签不显示。
-  if (layout.mainView !== "browser") layout.activateBrowser();
-  await browser.tabSwitch(id);
+function activateProjectedTab(tab: { key: string }) {
+  void tabActions.activate(tab.key);
 }
-
-function isActiveWeb(id: string) {
-  return layout.mainView === "browser" && browser.activeTabId === id;
+function closeProjectedTab(tab: { key: string }) {
+  void tabActions.close(tab.key);
 }
-
-function isActiveMod(id: string) {
-  return layout.isModView() && layout.activeModTab === id;
-}
-
-function activateProjectedTab(tab: { id:string;kind:string;view?:string;path?:string|null }) {
-  if (tab.kind === "web") void activateWeb(tab.id);
-  else activateMod({ id:tab.id, view:tab.view || "home", path:tab.path || undefined });
-}
-function closeProjectedTab(tab: { id:string;kind:string }) {
-  if (tab.kind === "web") void browser.tabClose(tab.id);
-  else layout.closeModTab(tab.id);
-}
-
-function activateMod(t: { id: string; view: string; path?: string }) {
-  if (term.m0Cfg?.driver) return;
-  layout.activateModTab(t.id);
-  if (t.view === "apps") appsStore.loadApps();
-  if (t.path) fs.enterDir(t.path);
-  // Grid owns its lifecycle. Switching mainView to "grid" is sufficient:
-  // useGridStore observes this intent and reuses/repositions the existing cells.
-  // Browser store intentionally exposes no Grid lifecycle methods.
+async function newTab() {
+  try { await browser.tabNew(); }
+  catch { layout.showToast("新建页签失败，请重试"); }
 }
 </script>
 
@@ -209,7 +135,7 @@ function activateMod(t: { id: string; view: string; path?: string }) {
       <span class="tab-title">{{ tab.title }}</span>
       <button class="tab-close" @click.stop="closeProjectedTab(tab)" title="关闭"><X :size="14"/></button>
     </div>
-    <button class="tab-new" @click="browser.tabNew()" title="新建页签"><Plus :size="18"/></button>
+    <button class="tab-new" @click="newTab" title="新建页签"><Plus :size="18"/></button>
     </div>
     <div class="titlebar-drag" aria-hidden="true"></div>
     <div class="window-controls" aria-label="窗口控制">

@@ -16,6 +16,7 @@ import { useTerminalStore } from "./capabilities/terminal/public";
 import { useLayoutStore } from "./stores/useLayoutStore";
 import { openModuleInCurrentTab } from "./composables/browserNav";
 import { onChildShellShortcut } from "./composables/shellShortcuts";
+import { useUnifiedTabs } from "./composables/useUnifiedTabs";
 import { quickCreateAction } from "./composables/quickCreate.mjs";
 import { useSettingsStore } from "./settings/public";
 
@@ -39,6 +40,7 @@ const clipboardStore = useClipboardStore();
 const term = useTerminalStore();
 const layout = useLayoutStore();
 const settings = useSettingsStore();
+const tabActions = useUnifiedTabs();
 
 // 全局浮层 / AI 导航面板经通用 Contribution Registry 渲染，Shell 不 import 能力内部 UI（C3 关键）。
 const confirmModalComp = computed(() => contributionRegistry
@@ -301,17 +303,13 @@ onMounted(async () => {
       browser.tabNew();
     } else if (matchKey(e, km.closeTab)) {
       e.preventDefault();
-      if (browser.activeTabId) browser.tabClose(browser.activeTabId);
+      void tabActions.closeActive();
     } else if (matchKey(e, km.nextTab)) {
       e.preventDefault();
-      const idx = browser.tabs.findIndex((x) => x.id === browser.activeTabId);
-      const next = browser.tabs[idx + 1] || browser.tabs[0];
-      if (next) browser.tabSwitch(next.id);
+      void tabActions.cycle(1);
     } else if (matchKey(e, km.prevTab)) {
       e.preventDefault();
-      const idx = browser.tabs.findIndex((x) => x.id === browser.activeTabId);
-      const prev = browser.tabs[idx - 1] || browser.tabs[browser.tabs.length - 1];
-      if (prev) browser.tabSwitch(prev.id);
+      void tabActions.cycle(-1);
     } else if (matchKey(e, km.terminal)) {
       e.preventDefault();
       if (layout.mainView === "browser") layout.toggleBrowserDock("term");

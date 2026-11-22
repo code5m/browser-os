@@ -560,9 +560,13 @@ fn identity(file: &File) -> io::Result<FileIdentity> {
         }
         info
     };
+    let index = ((info.nFileIndexHigh as u64) << 32) | info.nFileIndexLow as u64;
+    if index == 0 {
+        return Err(io::Error::new(io::ErrorKind::Unsupported, "WINDOWS_FILE_IDENTITY_UNAVAILABLE"));
+    }
     Ok(FileIdentity {
         volume: info.dwVolumeSerialNumber,
-        index: ((info.nFileIndexHigh as u64) << 32) | info.nFileIndexLow as u64,
+        index,
         size: ((info.nFileSizeHigh as u64) << 32) | info.nFileSizeLow as u64,
         modified: (
             info.ftLastWriteTime.dwLowDateTime,
@@ -575,6 +579,7 @@ fn read_snapshot(file: &mut File, limit: usize) -> Result<(FileIdentity, Vec<u8>
     use std::io::{Seek, SeekFrom};
     file.seek(SeekFrom::Start(0))
         .map_err(|_| "FILE_READ_FAILED")?;
+    let before = identity(file).map_err(|_| "FILE_IDENTITY_UNAVAILABLE")?;
     let metadata = file.metadata().map_err(|_| "FILE_READ_FAILED")?;
     if metadata.len() > limit as u64 {
         return Err("FILE_SAVE_TOO_LARGE".into());
@@ -587,6 +592,7 @@ fn read_snapshot(file: &mut File, limit: usize) -> Result<(FileIdentity, Vec<u8>
         return Err("FILE_SAVE_TOO_LARGE".into());
     }
     let identity = identity(file).map_err(|_| "FILE_IDENTITY_UNAVAILABLE")?;
+    if before != identity { return Err("FILE_CONFLICT".into()); }
     Ok((identity, bytes))
 }
 
@@ -636,6 +642,10 @@ fn copy_dacl(source: &File, destination: &File) -> Result<(), String> {
 }
 
 fn rename_replace_at(source: &File, parent: &File, target: &std::ffi::OsStr) -> io::Result<()> {
+    rename_at(source, parent, target, true)
+}
+
+fn rename_at(source: &File, parent: &File, target: &std::ffi::OsStr, replace: bool) -> io::Result<()> {
     use std::ffi::c_void;
     use std::os::windows::{ffi::OsStrExt, io::AsRawHandle};
     use windows_sys::Wdk::Storage::FileSystem::{
@@ -659,7 +669,7 @@ fn rename_replace_at(source: &File, parent: &File, target: &std::ffi::OsStr) -> 
     let info = buffer.as_mut_ptr() as *mut FILE_RENAME_INFORMATION;
     unsafe {
         (*info).Anonymous = FILE_RENAME_INFORMATION_0 {
-            ReplaceIfExists: true,
+            ReplaceIfExists: replace,
         };
         (*info).RootDirectory = parent.as_raw_handle() as _;
         (*info).FileNameLength = (chars.len() * 2) as u32;
@@ -917,140 +927,237 @@ pub(super) fn remove_regular(canonical: &Path, roots: &[PathBuf]) -> io::Result<
 /// Compare and replace through a pinned parent directory. Both the lock and
 /// the unique stage file are created relative to that handle, so a renamed
 /// parent or replacement junction cannot redirect writes outside the root.
-fn save_if_unchanged_at(
-    parent: &File,
-    filename: &std::ffi::OsStr,
-    expected: &[u8],
-    content: &[u8],
-    limit: usize,
-) -> Result<(), String> {
+fn object_identity(value: &FileIdentity) -> String {
+    format!("windows:{:x}:{:x}", value.volume, value.index)
+}
+
+pub(super) fn directory_identity(path: &Path) -> io::Result<String> {
+    const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
+    reject_reparse_ancestors(path)?;
+    let directory = OpenOptions::new()
+        .access_mode(FILE_READ_ATTRIBUTES)
+        .share_mode(FILE_SHARE_READ_WRITE_DELETE)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)?;
+    if !directory.metadata()?.is_dir() { return Err(denied()); }
+    verify_path_handle(path, &directory)?;
+    let id = browseros_platform_security::windows::file_identity(&directory)?;
+    Ok(format!("windows:{:x}:{:x}", id.volume_serial, id.file_index))
+}
+
+fn cas_lock(parent: &File, filename: &std::ffi::OsStr) -> Result<(File, File), String> {
     use sha2::Digest;
-    use windows_sys::Wdk::Storage::FileSystem::{FILE_CREATE, FILE_OPEN, FILE_OPEN_IF};
-    const DELETE: u32 = 0x0001_0000;
+    use windows_sys::Wdk::Storage::FileSystem::FILE_OPEN_IF;
     const FILE_READ_DATA: u32 = 0x0000_0001;
+    const FILE_WRITE_DATA: u32 = 0x0000_0002;
+    const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
+    const FILE_SHARE_READ_WRITE: u32 = 0x0000_0003;
+    // One native parent object owns the lock, independent of a target's case,
+    // Unicode spelling or 8.3 alias. Do not invent Windows casing rules here.
+    // Deny delete sharing so a held sidecar cannot be removed and recreated.
+    let directory_lock = open_child_at(
+        parent, std::ffi::OsStr::new(".browseros-cas-directory.lock"),
+        FILE_READ_DATA | FILE_WRITE_DATA | FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ_WRITE, FILE_OPEN_IF,
+    ).map_err(|_| "FILE_LOCK_UNAVAILABLE")?;
+    directory_lock.lock().map_err(|_| "FILE_LOCK_UNAVAILABLE")?;
+    // Keep the original exact-name sidecar as well, for older cooperating
+    // callers using this spelling. Only upgraded callers share alias safety.
+    let digest = format!("{:x}", sha2::Sha256::digest(filename.as_encoded_bytes()));
+    let lock_name = std::ffi::OsString::from(format!(".browseros-cas-{digest}.lock"));
+    let legacy_lock = open_child_at(
+        parent, &lock_name, FILE_READ_DATA | FILE_WRITE_DATA | FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ_WRITE, FILE_OPEN_IF,
+    ).map_err(|_| "FILE_LOCK_UNAVAILABLE")?;
+    legacy_lock.lock().map_err(|_| "FILE_LOCK_UNAVAILABLE")?;
+    Ok((directory_lock, legacy_lock))
+}
+
+fn snapshot_at(
+    parent: &File, filename: &std::ffi::OsStr, limit: usize,
+) -> Result<Option<(File, FileIdentity, Vec<u8>)>, String> {
+    use windows_sys::Wdk::Storage::FileSystem::FILE_OPEN;
+    const FILE_READ_DATA: u32 = 0x0000_0001;
+    const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
+    const READ_CONTROL: u32 = 0x0002_0000;
+    let mut file = match open_child_at(
+        parent, filename, FILE_READ_DATA | FILE_READ_ATTRIBUTES | READ_CONTROL,
+        FILE_SHARE_READ_WRITE_DELETE, FILE_OPEN,
+    ) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err("FILE_TARGET_NOT_REGULAR".into()),
+    };
+    let (identity, bytes) = read_snapshot(&mut file, limit)?;
+    Ok(Some((file, identity, bytes)))
+}
+
+fn write_versioned_at(
+    parent: &File, filename: &std::ffi::OsStr, expected: Option<&[u8]>,
+    expected_identity: Option<&str>, content: &[u8], limit: usize,
+    prepare: impl FnOnce(&str) -> Result<(), String>,
+) -> Result<(), String> {
+    use windows_sys::Wdk::Storage::FileSystem::FILE_CREATE;
+    const DELETE: u32 = 0x0001_0000;
     const FILE_WRITE_DATA: u32 = 0x0000_0002;
     const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
     const READ_CONTROL: u32 = 0x0002_0000;
     const WRITE_DAC: u32 = 0x0004_0000;
-    if expected.len() > limit || content.len() > limit || limit == 0 {
+    if limit == 0 || expected.is_some_and(|b| b.len() > limit) || content.len() > limit {
         return Err("FILE_SAVE_TOO_LARGE".into());
     }
-    let digest = format!("{:x}", sha2::Sha256::digest(filename.as_encoded_bytes()));
-    let lock_name = std::ffi::OsString::from(format!(".browseros-cas-{digest}.lock"));
-    let lock = open_child_at(
-        parent,
-        &lock_name,
-        FILE_READ_DATA | FILE_WRITE_DATA | FILE_READ_ATTRIBUTES,
-        FILE_SHARE_READ_WRITE_DELETE,
-        FILE_OPEN_IF,
-    )
-    .map_err(|_| "FILE_LOCK_UNAVAILABLE")?;
-    lock.lock().map_err(|_| "FILE_LOCK_UNAVAILABLE")?;
-
+    let initial = snapshot_at(parent, filename, limit)?;
+    // Preserve the existing editor error for a removed target. Versioned
+    // recovery still treats disappearance of an expected object as conflict.
+    if initial.is_none() && expected.is_some() && expected_identity.is_none() {
+        return Err("FILE_TARGET_MISSING".into());
+    }
+    if initial.as_ref().map(|(_, _, bytes)| bytes.as_slice()) != expected
+        || expected_identity.is_some_and(|id| {
+            initial.as_ref().is_none_or(|(_, identity, _)| object_identity(identity) != id)
+        })
+    {
+        return Err("FILE_CONFLICT".into());
+    }
+    let original_identity = initial.as_ref().map(|(_, id, _)| FileIdentity {
+        volume: id.volume, index: id.index, size: id.size, modified: id.modified,
+    });
+    drop(initial);
+    let candidate = std::ffi::OsString::from(format!(".browseros-cas-{}.tmp", uuid::Uuid::new_v4()));
+    let mut stage = open_child_at(
+        parent, &candidate,
+        DELETE | FILE_WRITE_DATA | FILE_READ_ATTRIBUTES | READ_CONTROL | WRITE_DAC,
+        0, FILE_CREATE,
+    ).map_err(|_| "FILE_STAGE_CREATE_FAILED")?;
+    let mut published = false;
     let result = (|| {
-        let mut current = open_child_at(
-            parent,
-            filename,
-            FILE_READ_DATA | FILE_READ_ATTRIBUTES | READ_CONTROL,
-            FILE_SHARE_READ_WRITE_DELETE,
-            FILE_OPEN,
-        )
-        .map_err(|error| {
-            if error.kind() == io::ErrorKind::NotFound {
-                "FILE_TARGET_MISSING"
-            } else {
-                "FILE_TARGET_NOT_REGULAR"
-            }
-        })?;
-        let (original_identity, actual) = read_snapshot(&mut current, limit)?;
-        if actual != expected {
+        use std::io::Write;
+        stage.write_all(content).map_err(|_| "FILE_STAGE_WRITE_FAILED")?;
+        stage.sync_all().map_err(|_| "FILE_STAGE_SYNC_FAILED")?;
+        let receipt = object_identity(&identity(&stage).map_err(|_| "FILE_IDENTITY_UNAVAILABLE")?);
+        prepare(&receipt)?;
+        // Receipt persistence may itself use the same directory. Acquire the
+        // commit lock afterwards, then revalidate under it before replacement.
+        let _lock = cas_lock(parent, filename)?;
+        let latest = snapshot_at(parent, filename, limit)?;
+        if latest.as_ref().map(|(_, id, _)| id) != original_identity.as_ref()
+            || latest.as_ref().map(|(_, _, bytes)| bytes.as_slice()) != expected
+        {
             return Err("FILE_CONFLICT".into());
         }
-        drop(current);
-
-        let mut stage = None;
-        for _ in 0..8 {
-            let candidate =
-                std::ffi::OsString::from(format!(".browseros-cas-{}.tmp", uuid::Uuid::new_v4()));
-            match open_child_at(
-                parent,
-                &candidate,
-                DELETE | FILE_WRITE_DATA | FILE_READ_ATTRIBUTES | READ_CONTROL | WRITE_DAC,
-                0,
-                FILE_CREATE,
-            ) {
-                Ok(file) => {
-                    stage = Some(file);
-                    break;
-                }
-                Err(_) => continue,
-            }
-        }
-        let mut stage = stage.ok_or("FILE_STAGE_CREATE_FAILED")?;
-        let stage_result = (|| {
-            use std::io::Write;
-            stage
-                .write_all(content)
-                .map_err(|_| "FILE_STAGE_WRITE_FAILED")?;
-            stage.sync_all().map_err(|_| "FILE_STAGE_SYNC_FAILED")?;
-
-            let mut latest = open_child_at(
-                parent,
-                filename,
-                FILE_READ_DATA | FILE_READ_ATTRIBUTES | READ_CONTROL,
-                FILE_SHARE_READ_WRITE_DELETE,
-                FILE_OPEN,
-            )
-            .map_err(|_| "FILE_CONFLICT")?;
-            let (latest_identity, latest_bytes) = read_snapshot(&mut latest, limit)?;
-            if latest_identity != original_identity || latest_bytes != expected {
-                return Err("FILE_CONFLICT".into());
-            }
-            copy_dacl(&latest, &stage)?;
-            drop(latest);
-            rename_replace_at(&stage, parent, filename).map_err(|_| "FILE_REPLACE_FAILED")?;
-            // FlushFileBuffers on a directory is not supported by every
-            // Windows filesystem. The stage itself is always flushed; a
-            // directory flush is best-effort rather than a false failure.
-            let _ = parent.sync_all();
-            Ok(())
-        })();
-        if stage_result.is_err() {
-            delete_on_close(&stage);
-        }
-        stage_result
+        if let Some((file, _, _)) = &latest { copy_dacl(file, &stage)?; }
+        drop(latest);
+        rename_at(&stage, parent, filename, expected.is_some())
+            .map_err(|e| if e.kind() == io::ErrorKind::AlreadyExists {
+                "FILE_CONFLICT"
+            } else { "FILE_REPLACE_FAILED" })?;
+        published = true;
+        let _ = parent.sync_all();
+        Ok(())
     })();
-    drop(lock);
+    if result.is_err() && !published { delete_on_close(&stage); }
     result
 }
 
-pub(super) fn save_if_unchanged(
-    path: &Path,
-    roots: &[PathBuf],
-    expected: &[u8],
-    content: &[u8],
-    limit: usize,
+fn save_if_unchanged_at(
+    parent: &File, filename: &std::ffi::OsStr, expected: &[u8], content: &[u8], limit: usize,
 ) -> Result<(), String> {
-    if !path.is_absolute() {
-        return Err("FILE_PARENT_NOT_AUTHORIZED".into());
-    }
+    write_versioned_at(parent, filename, Some(expected), None, content, limit, |_| Ok(()))
+}
+
+fn authorized_parent(path: &Path, roots: &[PathBuf]) -> Result<File, String> {
+    if !path.is_absolute() { return Err("FILE_PARENT_NOT_AUTHORIZED".into()); }
+    let parent_path = path.parent().ok_or("FILE_PARENT_INVALID")?;
+    let root = open_authorized_root(parent_path, roots).map_err(|_| "FILE_PARENT_NOT_AUTHORIZED")?;
+    let parent = open_destination_directory(parent_path).map_err(|_| "FILE_PARENT_NOT_AUTHORIZED")?;
+    authorize_with_root(&parent, &root).map_err(|_| "FILE_PARENT_NOT_AUTHORIZED")?;
+    Ok(parent)
+}
+
+pub(super) fn save_if_unchanged(
+    path: &Path, roots: &[PathBuf], expected: &[u8], content: &[u8], limit: usize,
+) -> Result<(), String> {
+    let parent = authorized_parent(path, roots)?;
+    let filename = path.file_name().ok_or("FILE_NAME_INVALID")?;
+    save_if_unchanged_at(&parent, filename, expected, content, limit)
+}
+
+pub(super) fn read_versioned(
+    path: &Path, roots: &[PathBuf], limit: usize,
+) -> Result<Option<FileSnapshot>, String> {
+    if !path.is_absolute() { return Err("FILE_PARENT_NOT_AUTHORIZED".into()); }
     let parent_path = path.parent().ok_or("FILE_PARENT_INVALID")?;
     let filename = path.file_name().ok_or("FILE_NAME_INVALID")?;
-    let root =
-        open_authorized_root(parent_path, roots).map_err(|_| "FILE_PARENT_NOT_AUTHORIZED")?;
-    let parent =
-        open_destination_directory(parent_path).map_err(|_| "FILE_PARENT_NOT_AUTHORIZED")?;
+    let root = match open_authorized_root(parent_path, roots) {
+        Ok(root) => root,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            // Missing parents are not a reason to skip root authorization.
+            let mut ancestor = parent_path;
+            loop {
+                match open_authorized_root(ancestor, roots) {
+                    Ok(_) => return Ok(None),
+                    Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                        ancestor = ancestor.parent().ok_or("FILE_PARENT_NOT_AUTHORIZED")?;
+                    }
+                    Err(_) => return Err("FILE_PARENT_NOT_AUTHORIZED".into()),
+                }
+            }
+        }
+        Err(_) => return Err("FILE_PARENT_NOT_AUTHORIZED".into()),
+    };
+    let parent = match open_destination_directory(parent_path) {
+        Ok(parent) => parent,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err("FILE_PARENT_NOT_AUTHORIZED".into()),
+    };
     authorize_with_root(&parent, &root).map_err(|_| "FILE_PARENT_NOT_AUTHORIZED")?;
-    save_if_unchanged_at(&parent, filename, expected, content, limit)
+    Ok(snapshot_at(&parent, filename, limit)?.map(|(_, identity, bytes)| FileSnapshot {
+        identity: object_identity(&identity), bytes,
+    }))
+}
+
+pub(super) fn write_versioned(
+    path: &Path, roots: &[PathBuf], expected: Option<&FileSnapshot>,
+    content: &[u8], limit: usize, prepare: impl FnOnce(&str) -> Result<(), String>,
+) -> Result<(), String> {
+    let parent = authorized_parent(path, roots)?;
+    let filename = path.file_name().ok_or("FILE_NAME_INVALID")?;
+    write_versioned_at(
+        &parent, filename, expected.map(|s| s.bytes.as_slice()),
+        expected.map(|s| s.identity.as_str()), content, limit, prepare,
+    )
+}
+
+pub(super) fn remove_if_unchanged(
+    path: &Path, roots: &[PathBuf], expected: &FileSnapshot, limit: usize,
+) -> Result<(), String> {
+    use windows_sys::Wdk::Storage::FileSystem::FILE_OPEN;
+    const DELETE: u32 = 0x0001_0000;
+    const FILE_READ_DATA: u32 = 0x0000_0001;
+    const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
+    const FILE_SHARE_READ: u32 = 0x0000_0001;
+    let parent = authorized_parent(path, roots)?;
+    let filename = path.file_name().ok_or("FILE_NAME_INVALID")?;
+    let _lock = cas_lock(&parent, filename)?;
+    // No write/delete sharing: the same handle is checked and marked deleted.
+    // Existing incompatible external writers make this operation fail closed.
+    let mut target = open_child_at(
+        &parent, filename, DELETE | FILE_READ_DATA | FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ, FILE_OPEN,
+    ).map_err(|_| "FILE_CONFLICT")?;
+    let (identity, bytes) = read_snapshot(&mut target, limit)?;
+    if object_identity(&identity) != expected.identity || bytes != expected.bytes {
+        return Err("FILE_CONFLICT".into());
+    }
+    mark_object_deleted(&target).map_err(|_| "FILE_DELETE_FAILED")
 }
 
 /// Atomic create/replace for Agent-owned drafts, new files and recovery
 /// backups. Missing parent components are created relative to the nearest
 /// verified existing ancestor, never through an unchecked junction path.
 pub(super) fn atomic_write(path: &Path, bytes: &[u8], limit: usize) -> Result<(), String> {
-    use sha2::Digest;
     use std::io::Write;
-    use windows_sys::Wdk::Storage::FileSystem::{FILE_CREATE, FILE_OPEN, FILE_OPEN_IF};
+    use windows_sys::Wdk::Storage::FileSystem::{FILE_CREATE, FILE_OPEN};
     const DELETE: u32 = 0x0001_0000;
     const FILE_READ_DATA: u32 = 0x0000_0001;
     const FILE_WRITE_DATA: u32 = 0x0000_0002;
@@ -1064,17 +1171,7 @@ pub(super) fn atomic_write(path: &Path, bytes: &[u8], limit: usize) -> Result<()
     let filename = path.file_name().ok_or("AGENT_PATH_DENIED")?;
     let parent_path = path.parent().ok_or("AGENT_PATH_DENIED")?;
     let parent = open_parent_tree(parent_path).map_err(|_| "AGENT_WRITE_FAILED")?;
-    let digest = format!("{:x}", sha2::Sha256::digest(filename.as_encoded_bytes()));
-    let lock_name = std::ffi::OsString::from(format!(".browseros-cas-{digest}.lock"));
-    let lock = open_child_at(
-        &parent,
-        &lock_name,
-        FILE_READ_DATA | FILE_WRITE_DATA | FILE_READ_ATTRIBUTES,
-        FILE_SHARE_READ_WRITE_DELETE,
-        FILE_OPEN_IF,
-    )
-    .map_err(|_| "AGENT_LOCK_UNAVAILABLE")?;
-    lock.lock().map_err(|_| "AGENT_LOCK_UNAVAILABLE")?;
+    let lock = cas_lock(&parent, filename).map_err(|_| "AGENT_LOCK_UNAVAILABLE")?;
     let result = (|| {
         let mut stage = None;
         for _ in 0..8 {
@@ -1193,6 +1290,51 @@ mod tests {
             .unwrap()
             .flatten()
             .any(|entry| { entry.file_name().to_string_lossy().ends_with(".tmp") }));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn windows_case_alias_writers_share_the_same_commit_lock() {
+        use std::sync::{Arc, Barrier};
+        let root = std::env::temp_dir().join(format!("browseros-wincas-alias-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let root = root.canonicalize().unwrap();
+        std::fs::write(root.join("Entry.txt"), b"before").unwrap();
+        let gate = Arc::new(Barrier::new(3));
+        let workers: Vec<_> = ["Entry.txt", "entry.txt"].into_iter().enumerate().map(|(index, name)| {
+            let root = root.clone();
+            let gate = Arc::clone(&gate);
+            std::thread::spawn(move || {
+                gate.wait();
+                save_if_unchanged(&root.join(name), &[root.clone()], b"before", format!("writer-{index}").as_bytes(), 1024)
+            })
+        }).collect();
+        gate.wait();
+        let results: Vec<_> = workers.into_iter().map(|worker| worker.join().unwrap()).collect();
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(results.iter().filter(|result| result.as_ref().err().is_some_and(|error| error == "FILE_CONFLICT")).count(), 1);
+        let content = std::fs::read(root.join("Entry.txt")).unwrap();
+        assert!(content == b"writer-0" || content == b"writer-1");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn receipt_persistence_in_the_same_parent_does_not_reenter_the_commit_lock() {
+        let root = std::env::temp_dir().join(format!("browseros-wincas-receipt-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let root = root.canonicalize().unwrap();
+        let target = root.join("entry.txt");
+        std::fs::write(&target, b"before").unwrap();
+        let expected = read_versioned(&target, &[root.clone()], 1024).unwrap().unwrap();
+        let receipt = root.join("owner-receipt.json");
+        write_versioned(&target, &[root.clone()], Some(&expected), b"after", 1024, |identity| {
+            atomic_write(&receipt, identity.as_bytes(), 1024)
+        }).unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"after");
+        assert_eq!(
+            std::fs::read_to_string(&receipt).unwrap(),
+            read_versioned(&target, &[root.clone()], 1024).unwrap().unwrap().identity,
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 

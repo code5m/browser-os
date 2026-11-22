@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useFileStore } from "../state/useFileStore";
+import { sameDocumentPath } from "../../../application/documentPaths.mjs";
 
 // 递归树节点：文件夹点击展开/收起（懒加载子级），文件点击打开
 const props = defineProps<{ entry: DirEntry; depth: number; ide: boolean }>();
@@ -50,7 +51,7 @@ function onDrop(ev: DragEvent) {
 <template>
   <div
     class="tnode"
-    :class="{ active: ws.inlineFile === entry.path, locate: ws.locateTarget === entry.path, drop: ws.dropTarget === entry.path }"
+    :class="{ active: sameDocumentPath(ws.inlineFile, entry.path), locate: sameDocumentPath(ws.locateTarget, entry.path), drop: sameDocumentPath(ws.dropTarget, entry.path) }"
     :style="{ paddingLeft: indent }"
     :title="entry.path"
     :data-path="entry.path"

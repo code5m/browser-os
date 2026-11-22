@@ -5,6 +5,7 @@ import { useLayoutStore } from "../../../stores/useLayoutStore";
 import { openTerminalAt } from "../../../composables/terminalNav";
 import { renderMd } from "../../../utils/markdown";
 import { documentOwnership } from "../../../application/documentOwnership.mjs";
+import { documentPathKey, documentPathName, documentPathParent, joinDocumentPath, sameDocumentPath, containsDocumentPath, relativeDocumentPath, replaceDocumentPathPrefix } from "../../../application/documentPaths.mjs";
 import { persistDraftAfterSave } from "../model/draftRecovery.mjs";
 
 // ============================================================
@@ -89,6 +90,7 @@ export const useFileStore = defineStore("files", () => {
 
   // ===== 文件树：定位 / 拖拽移动 =====
   const locateTarget = ref("");
+  let locateRequest = 0;
   const dragSource = ref("");
   const dropTarget = ref("");
   const moveConfirm = reactive({ show: false, src: "", dst: "", name: "" });
@@ -185,8 +187,7 @@ export const useFileStore = defineStore("files", () => {
     const e = fileCtx.entry;
     if (e) {
       if (e.is_dir) return e.path;
-      const i = e.path.lastIndexOf("/");
-      return i > 0 ? e.path.slice(0, i) : "/";
+      return documentPathParent(e.path);
     }
     return filePath.value || "/";
   }
@@ -197,8 +198,13 @@ export const useFileStore = defineStore("files", () => {
       closeFileCtx();
       return;
     }
+    if (name === "." || name === ".." || /[\/\\\0]/.test(name)) {
+      layout.showToast("名称无效：请输入单个文件或目录名称");
+      closeFileCtx();
+      return;
+    }
     try {
-      await bridge.createFile(base.replace(/\/$/, "") + "/" + name, "");
+      await bridge.createFile(joinDocumentPath(base, name), "");
       layout.showToast("已新建文件: " + name);
       treeExpanded.add(base); // 展开目标目录让新文件可见
       await refreshTree();
@@ -214,8 +220,13 @@ export const useFileStore = defineStore("files", () => {
       closeFileCtx();
       return;
     }
+    if (name === "." || name === ".." || /[\/\\\0]/.test(name)) {
+      layout.showToast("名称无效：请输入单个文件或目录名称");
+      closeFileCtx();
+      return;
+    }
     try {
-      await bridge.createDir(base.replace(/\/$/, "") + "/" + name);
+      await bridge.createDir(joinDocumentPath(base, name));
       layout.showToast("已新建目录: " + name);
       treeExpanded.add(base);
       await refreshTree();
@@ -227,12 +238,10 @@ export const useFileStore = defineStore("files", () => {
   // 目录预览以目录本身为目标；编辑文件时使用文件的父目录。
   function currentBaseDir(): string {
     if (layout.fileEditorOpen && editorFilePath.value) {
-      const i = editorFilePath.value.lastIndexOf('/');
-      return i > 0 ? editorFilePath.value.slice(0, i) : '/';
+      return documentPathParent(editorFilePath.value);
     }
     if (inlineFile.value) {
-      const i = inlineFile.value.lastIndexOf('/');
-      return i > 0 ? inlineFile.value.slice(0, i) : '/';
+      return documentPathParent(inlineFile.value);
     }
     if (previewDir.value) return previewDir.value;
     if (filePath.value) return filePath.value;
@@ -250,10 +259,10 @@ export const useFileStore = defineStore("files", () => {
     }
     try {
       if (kind === "file") {
-        await bridge.createFile(base.replace(/\/$/, "") + "/" + name, "");
+        await bridge.createFile(joinDocumentPath(base, name), "");
         layout.showToast("已新建文件: " + name);
       } else {
-        await bridge.createDir(base.replace(/\/$/, "") + "/" + name);
+        await bridge.createDir(joinDocumentPath(base, name));
         layout.showToast("已新建目录: " + name);
       }
       treeExpanded.add(base);
@@ -265,10 +274,11 @@ export const useFileStore = defineStore("files", () => {
   // Refuse path mutations that could orphan or silently replace an active
   // unsaved document, including deleting/moving its containing directory.
   function containsDocument(target: string, openPath: string, isDir: boolean): boolean {
-    const clean = target.replace(/\/+$/, "") || "/";
-    return !!openPath && (openPath === clean || (isDir && openPath.startsWith(clean === "/" ? "/" : clean + "/")));
+    return !!openPath && (sameDocumentPath(target, openPath) || (isDir && containsDocumentPath(target, openPath)));
   }
   function blocksDirtyPathMutation(path: string, isDir: boolean): boolean {
+    try { documentPathKey("", path); }
+    catch { layout.showToast("文件路径无效或不受支持"); return true; }
     // Coding Workbench may own an independently dirty buffer for the same
     // filesystem path. Directory mutation must respect every open editor.
     if (documentOwnership.dirtyUnder(path, isDir) || documentOwnership.writingUnder(path, isDir)) {
@@ -288,8 +298,7 @@ export const useFileStore = defineStore("files", () => {
     catch { layout.showToast('文件或目录正在被编辑、保存或移动，请处理后重试'); return null; }
   }
   function replacePathPrefix(oldPath: string, from: string, to: string): string {
-    const clean = from.replace(/\/+$/, "") || "/";
-    return oldPath === clean ? to : oldPath.startsWith(clean + "/") ? to + oldPath.slice(clean.length) : oldPath;
+    return replaceDocumentPathPrefix(oldPath, from, to);
   }
   function updateOpenPaths(from: string, to: string) {
     editorFilePath.value = replacePathPrefix(editorFilePath.value, from, to);
@@ -297,13 +306,17 @@ export const useFileStore = defineStore("files", () => {
     previewDir.value = replacePathPrefix(previewDir.value, from, to);
     const updatedDir = replacePathPrefix(filePath.value, from, to);
     if (updatedDir !== filePath.value) { filePath.value = updatedDir; pathInput.value = updatedDir; }
+    const expanded = [...treeExpanded].map(path => replacePathPrefix(path, from, to));
+    treeExpanded.clear();
+    for (const path of expanded) treeExpanded.add(path);
+    locateTarget.value = replacePathPrefix(locateTarget.value, from, to);
+    layout.relocateDirectoryTabs(from, to);
   }
   async function ctxDelete(entry: DirEntry) {
     if (blocksDirtyPathMutation(entry.path, entry.is_dir)) return;
-    const target = entry.path.replace(/\/+$/, '') || '/';
+    const target = entry.path;
     const openPath = inlineFile.value;
-    const containsOpenFile = !!openPath && (openPath === target ||
-      (entry.is_dir && openPath.startsWith(target === '/' ? '/' : target + '/')));
+    const containsOpenFile = containsDocument(target, openPath, entry.is_dir);
     if (containsOpenFile && !canDiscardInline()) return;
     if (!confirm(`删除「${entry.name}」？此操作不可恢复`)) {
       closeFileCtx();
@@ -313,6 +326,7 @@ export const useFileStore = defineStore("files", () => {
     if (!releaseMutation) return;
     try {
       await bridge.deletePath(entry.path);
+      documentOwnership.invalidatePath(entry.path, entry.is_dir);
       const overlayRemoved = containsDocument(target, editorFilePath.value, entry.is_dir);
       const preserveOverlay = overlayRemoved && editorDirty.value;
       const preserveInline = containsOpenFile && inlineFile.value === openPath && inlineText.value !== inlineSavedText.value;
@@ -343,12 +357,19 @@ export const useFileStore = defineStore("files", () => {
       closeFileCtx();
       return;
     }
-    const parent = entry.path.slice(0, entry.path.lastIndexOf("/")) || "/";
-    const renamed = parent.replace(/\/$/, "") + "/" + name;
+    if (name === "." || name === ".." || /[\/\\\0]/.test(name)) {
+      layout.showToast("名称无效：请输入单个文件或目录名称");
+      closeFileCtx();
+      return;
+    }
+    let renamed: string;
+    try { renamed = joinDocumentPath(documentPathParent(entry.path), name); }
+    catch { layout.showToast("名称或路径无效，请输入单个文件或目录名称"); closeFileCtx(); return; }
     const releaseMutation = lockPathMutation([{path: entry.path, isDirectory: entry.is_dir}, {path: renamed, isDirectory: entry.is_dir}]);
     if (!releaseMutation) return;
     try {
       await bridge.renamePath(entry.path, name);
+      documentOwnership.invalidatePath(entry.path, entry.is_dir, ["workspace-overlay", "workspace-inline"]);
       const editedDuringMutation = documentOwnership.dirtyUnder(entry.path, entry.is_dir);
       updateOpenPaths(entry.path, renamed);
       layout.showToast(editedDuringMutation
@@ -371,21 +392,24 @@ export const useFileStore = defineStore("files", () => {
   async function copyPath(entry: DirEntry, relative: boolean) {
     let value = entry.path;
     if (relative) {
-      const root = treeRoots.value.find((item) => entry.path === item.path || entry.path.startsWith(item.path.replace(/\/$/, "") + "/"));
-      value = root ? entry.path.slice(root.path.length).replace(/^\//, "") || "." : entry.name;
+      const root = treeRoots.value.find((item) => containsDocumentPath(item.path, entry.path));
+      value = root ? relativeDocumentPath(root.path, entry.path) || "." : entry.name;
     }
     await bridge.clipboardWrite(value);
     layout.showToast(relative ? "已复制相对路径" : "已复制绝对路径");
     closeFileCtx();
   }
   // 文件树右键：新标签打开（目录→目录页签；文件→行内编辑/预览）
-  function ctxOpenInNewTab(entry: DirEntry) {
+  async function ctxOpenInNewTab(entry: DirEntry) {
     closeFileCtx();
     if (entry.is_dir) {
-      layout.openDirTab(entry.path);
-      void enterDir(entry.path);
+      try {
+        const publish = layout.prepareDirTab(entry.path);
+        if (!publish || !await enterDir(entry.path, publish.isCurrent)) return;
+        publish();
+      } catch { layout.showToast("目录路径无效或目录切换未完成"); }
     } else {
-      openFileInline(entry);
+      await openFileInline(entry);
     }
   }
   // 文件树右键：系统文件管理器定位（资源管理器打开）
@@ -400,11 +424,7 @@ export const useFileStore = defineStore("files", () => {
   // 文件树右键：终端打开并 cd 到该路径
   async function ctxOpenInTerminal(entry: DirEntry) {
     closeFileCtx();
-    const dir = entry.is_dir
-      ? entry.path
-      : entry.path.lastIndexOf("/") > 0
-        ? entry.path.slice(0, entry.path.lastIndexOf("/"))
-        : "/";
+    const dir = entry.is_dir ? entry.path : documentPathParent(entry.path);
     await openTerminalAt(dir);
   }
 
@@ -425,7 +445,7 @@ export const useFileStore = defineStore("files", () => {
   // 树根：已进入某目录则以它为根（自动展开），否则展示起始目录集合
   async function loadTree() {
     if (filePath.value) {
-      const name = filePath.value.split("/").filter(Boolean).pop() || "/";
+      const name = documentPathName(filePath.value);
       treeRoots.value = [{ name, path: filePath.value, is_dir: true, size: 0 }];
       treeExpanded.add(filePath.value);
       await ensureTreeChildren(filePath.value);
@@ -445,7 +465,7 @@ export const useFileStore = defineStore("files", () => {
     treeChildren.clear();
     treeErrors.clear();
     if (filePath.value) {
-      const name = filePath.value.split("/").filter(Boolean).pop() || "/";
+      const name = documentPathName(filePath.value);
       treeRoots.value = [{ name, path: filePath.value, is_dir: true, size: 0 }];
     } else {
       treeRoots.value = await bridge.getStartDirs();
@@ -483,44 +503,60 @@ export const useFileStore = defineStore("files", () => {
 
   // 展开 root → targetPath 的祖先链并高亮该节点
   async function locateTo(targetPath: string) {
+    const request = ++locateRequest;
     if (!targetPath) return;
     if (!startDirs.value.length) {
       try {
         await loadStartDirs();
+        if (request !== locateRequest) return;
       } catch {
         return;
       }
     }
-    const dirs = (startDirs.value || []).map((d) => d.path).filter(Boolean);
+    const dirs = [...treeRoots.value, ...startDirs.value].map((d) => d.path).filter(Boolean);
     let root = "";
-    for (const d of dirs) {
-      if (targetPath.startsWith(d) && d.length > root.length) root = d;
+    for (const dir of dirs) {
+      if (containsDocumentPath(dir, targetPath) &&
+          (!root || documentPathKey("", dir).length > documentPathKey("", root).length)) root = dir;
     }
     if (!root) {
-      // 不在任何起始目录内：仅高亮（若树中已存在）
       locateTarget.value = targetPath;
       return;
     }
-    // 若当前是单根(filePath)模式且根不是目标所在 root，切回 startDirs 多根
-    if (
-      treeRoots.value.length === 1 &&
-      filePath.value &&
-      treeRoots.value[0].path === filePath.value &&
-      filePath.value !== root
-    ) {
-      treeRoots.value = startDirs.value;
+    if (treeRoots.value.length === 1 && filePath.value &&
+        sameDocumentPath(treeRoots.value[0].path, filePath.value) &&
+        !sameDocumentPath(filePath.value, root)) treeRoots.value = startDirs.value;
+    // Follow the actual native entries so case or separator aliases never
+    // become a second Map key and a file is never queried as a directory.
+    let current = root;
+    const relative = relativeDocumentPath(root, targetPath) || "";
+    let directory = true;
+    for (const segment of relative.split("/").filter(Boolean)) {
+      treeExpanded.add(current);
+      await ensureTreeChildren(current);
+      if (request !== locateRequest) return;
+      const next = (treeChildren.get(current) || []).find(entry =>
+        sameDocumentPath(entry.path, joinDocumentPath(current, segment)));
+      if (!next) break;
+      current = next.path;
+      directory = next.is_dir;
+      if (!directory) break;
     }
-    const segs = targetPath.split("/").filter(Boolean);
-    let cur = "";
-    for (const s of segs) {
-      cur += "/" + s;
-      treeExpanded.add(cur);
-      await ensureTreeChildren(cur);
+    if (directory && sameDocumentPath(current, targetPath)) {
+      treeExpanded.add(current);
+      await ensureTreeChildren(current);
+      if (request !== locateRequest) return;
     }
-    locateTarget.value = targetPath;
+    locateTarget.value = sameDocumentPath(current, targetPath) ? current : targetPath;
     await nextTick();
-    const selectorPath = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(targetPath) : targetPath.replace(/"/g, '\\"');
-    document.querySelector(`[data-path="${selectorPath}"]`)?.scrollIntoView({ block: "center" });
+    if (request !== locateRequest) return;
+    // Attribute comparison avoids CSS escaping differences for backslashes.
+    for (const node of document.querySelectorAll<HTMLElement>("[data-path]")) {
+      if (node.dataset.path === locateTarget.value) {
+        node.scrollIntoView({ block: "center" });
+        break;
+      }
+    }
   }
 
   // 准星按钮：定位到“当前打开位置”
@@ -552,8 +588,10 @@ export const useFileStore = defineStore("files", () => {
     dropTarget.value = "";
     dragSource.value = "";
     if (!src || !path) return;
-    if (src === path) return;
-    if (path.startsWith(src + "/")) {
+    try { documentPathKey("", src); documentPathKey("", path); }
+    catch { layout.showToast("移动路径无效或不受支持"); return; }
+    if (sameDocumentPath(src, path)) return;
+    if (containsDocumentPath(src, path)) {
       layout.showToast("不能移动到自身子目录内");
       return;
     }
@@ -561,7 +599,9 @@ export const useFileStore = defineStore("files", () => {
   }
 
   function requestMove(src: string, dstDir: string) {
-    const name = src.split("/").filter(Boolean).pop() || src;
+    try { documentPathKey("", src); documentPathKey("", dstDir); }
+    catch { layout.showToast("移动路径无效或不受支持"); return; }
+    const name = documentPathName(src);
     moveConfirm.src = src;
     moveConfirm.dst = dstDir;
     moveConfirm.name = name;
@@ -577,16 +617,17 @@ export const useFileStore = defineStore("files", () => {
     const dst = moveConfirm.dst;
     moveConfirm.show = false;
     if (blocksDirtyPathMutation(src, true)) return;
-    const target = dst.replace(/\/$/, "") + "/" + (src.split("/").filter(Boolean).pop() || src);
+    const target = joinDocumentPath(dst, documentPathName(src));
     const releaseMutation = lockPathMutation([{path: src, isDirectory: true}, {path: target, isDirectory: true}]);
     if (!releaseMutation) return;
     try {
       await bridge.movePath(src, dst);
+      documentOwnership.invalidatePath(src, true, ["workspace-overlay", "workspace-inline"]);
       const editedDuringMutation = documentOwnership.dirtyUnder(src, true);
       updateOpenPaths(src, target);
       layout.showToast(editedDuringMutation
         ? "已移动；操作期间产生了编辑草稿，请检查原路径及新路径后再保存。"
-        : "已移动: " + (dst.split("/").filter(Boolean).pop() || dst));
+        : "已移动: " + documentPathName(dst));
       await refreshTree();
     } catch (e: any) {
       layout.showToast("移动失败: " + (e?.message ?? e));
@@ -624,6 +665,7 @@ export const useFileStore = defineStore("files", () => {
     const oldFile = inlineFile.value;
     const oldText = inlineText.value;
     try {
+      documentPathKey("", entry.path);
       const text = await bridge.readFile(entry.path);
       let recovered: { session_id: string; baseline: string; content: string } | null = null;
       try {
@@ -634,7 +676,7 @@ export const useFileStore = defineStore("files", () => {
       }
       if (request !== inlineReadRequest || inlineFile.value !== oldFile || inlineText.value !== oldText) return;
       inlineFile.value = entry.path;
-      filePath.value = entry.path.lastIndexOf("/") > 0 ? entry.path.slice(0, entry.path.lastIndexOf("/")) : "/";
+      filePath.value = documentPathParent(entry.path);
       pathInput.value = filePath.value;
       inlineText.value = recovered?.content ?? text;
       inlineSavedText.value = recovered?.baseline ?? text;
@@ -661,7 +703,9 @@ export const useFileStore = defineStore("files", () => {
       releaseSave = documentOwnership.beginSave("workspace-inline", path);
       await bridge.writeFileCas(path, inlineSavedText.value, text);
     } catch (error: any) {
-      layout.showToast("保存失败或磁盘冲突，草稿仍保留: " + (error?.message ?? error));
+      layout.showToast(String(error).includes("DOCUMENT_PATH_CHANGED")
+        ? "原文件已移动或删除，草稿仍保留；请复制内容后从新位置重新打开"
+        : "保存失败或磁盘冲突，草稿仍保留: " + (error?.message ?? error));
       return;
     } finally {
       releaseSave?.();
@@ -688,7 +732,7 @@ export const useFileStore = defineStore("files", () => {
       return;
     }
     if (inlineIsMd.value && !inlineEdit.value) inlineHtml.value = renderMd(inlineText.value);
-    layout.showToast("已保存: " + inlineFile.value.split("/").pop());
+    layout.showToast("已保存: " + documentPathName(inlineFile.value));
   }
   function closeInline() {
     if (!canDiscardInline()) return;
@@ -756,6 +800,8 @@ export const useFileStore = defineStore("files", () => {
   }
   async function openDirPreview(entry: DirEntry) {
     if (!entry.is_dir) return;
+    try { documentPathKey("", entry.path); }
+    catch { layout.showToast("目录路径无效或不受支持"); return; }
     if (!canDiscardInline()) return;
     ++inlineReadRequest;
     const request = ++previewRequest;
@@ -806,27 +852,41 @@ export const useFileStore = defineStore("files", () => {
   async function loadStartDirs() {
     startDirs.value = await bridge.getStartDirs();
   }
-  async function enterDir(path: string) {
-    if (!canDiscardEditor()) return;
-    ++editorReadRequest;
+  async function enterDir(path: string, canPublish: () => boolean = () => true): Promise<boolean> {
+    if (!canPublish()) return false;
+    try { documentPathKey("", path); }
+    catch { layout.showToast("目录路径无效或不受支持"); return false; }
+    if (!canDiscardEditor()) return false;
+    const request = ++editorReadRequest;
+    const previousEditor = editorFilePath.value;
+    const previousContent = fileContent.value;
+    let entries: DirEntry[];
+    try {
+      entries = await bridge.listDir(path);
+    } catch (error: any) {
+      if (request === editorReadRequest) layout.showToast("无法读取目录: " + (error?.message ?? error));
+      return false;
+    }
+    // A later navigation or an edit while the read was pending owns the view.
+    // Do not discard that newer state when an older directory response arrives.
+    if (request !== editorReadRequest || editorFilePath.value !== previousEditor ||
+        fileContent.value !== previousContent || !canPublish()) return false;
     editorFilePath.value = "";
     editorSavedContent.value = "";
+    fileContent.value = "";
     filePath.value = path;
     pathInput.value = path;
-    fileContent.value = "";
-    try {
-      fileEntries.value = await bridge.listDir(path);
-    } catch (e: any) {
-      layout.showToast("无法读取目录: " + (e ?? e));
-      fileEntries.value = [];
-    }
-    // 地址栏打开目录时同步树：以该目录为根
-    await loadTree();
+    fileEntries.value = entries;
+    treeChildren.set(path, entries);
+    treeErrors.delete(path);
+    treeRoots.value = [{ name: documentPathName(path), path, is_dir: true, size: 0 }];
+    treeExpanded.add(path);
+    return true;
   }
   function goUp() {
     const p = filePath.value;
     if (!p) return;
-    const parent = p.split("/").slice(0, -1).join("/") || "/";
+    const parent = documentPathParent(p);
     enterDir(parent);
   }
   function goPath() {
@@ -863,6 +923,7 @@ export const useFileStore = defineStore("files", () => {
     const currentPath = editorFilePath.value;
     const currentContent = fileContent.value;
     try {
+      documentPathKey("", path);
       const text = await bridge.readFile(path);
       let recovered: { session_id: string; baseline: string; content: string } | null = null;
       try {
@@ -923,9 +984,11 @@ export const useFileStore = defineStore("files", () => {
           layout.showToast("文件已写入，但草稿恢复记录未能安全更新；请勿关闭当前编辑器: " + String(journalError).slice(0, 70));
           return;
         }
-      layout.showToast("已保存: " + path.split("/").pop());
+      layout.showToast("已保存: " + documentPathName(path));
     } catch (error: any) {
-      layout.showToast("保存失败或磁盘冲突，草稿仍保留: " + (error?.message ?? error));
+      layout.showToast(String(error).includes("DOCUMENT_PATH_CHANGED")
+        ? "原文件已移动或删除，草稿仍保留；请复制内容后从新位置重新打开"
+        : "保存失败或磁盘冲突，草稿仍保留: " + (error?.message ?? error));
     } finally {
       releaseSave?.();
     }

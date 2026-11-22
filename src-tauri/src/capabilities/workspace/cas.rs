@@ -26,18 +26,16 @@ pub async fn write_file_cas(
     sp::check_text_field("content", &content, MAX_EDITOR_BYTES).map_err(|e| e.to_string())?;
     sp::check_text_field("expected_content", &expected_content, MAX_EDITOR_BYTES)
         .map_err(|e| e.to_string())?;
-    let roots = crate::workspace::allowed_roots(&app);
-    let canonical = sp::check_path_within_roots(&path, &roots).map_err(|e| e.to_string())?;
-    tauri::async_runtime::spawn_blocking(move || {
+    super::FILESYSTEM_IO.run(move || {
+        let roots = crate::workspace::allowed_roots(&app);
+        let canonical = sp::check_path_within_roots(&path, &roots).map_err(|e| e.to_string())?;
         save_if_unchanged(
             &canonical,
             &roots,
             expected_content.as_bytes(),
             content.as_bytes(),
         )
-    })
-    .await
-    .map_err(|_| "FILE_SAVE_WORKER_FAILED".to_string())?
+    }).await
 }
 
 fn save_if_unchanged(

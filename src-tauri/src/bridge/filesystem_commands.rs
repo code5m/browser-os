@@ -114,10 +114,10 @@ pub async fn list_dir(
     app: AppHandle, webview: tauri::Webview, path: String,
 ) -> Result<Vec<DirEntry>, String> {
     crate::shared::native_legacy_policy::require_main(&webview, "list_dir")?;
-    let roots = workspace::allowed_roots(&app);
-    tauri::async_runtime::spawn_blocking(move || list_dir_blocking(path, roots))
-        .await
-        .map_err(|_| "LIST_DIR_WORKER_FAILED".to_string())?
+    crate::capabilities::workspace::FILESYSTEM_IO.run(move || {
+        let roots = workspace::allowed_roots(&app);
+        list_dir_blocking(path, roots)
+    }).await
 }
 
 fn list_dir_blocking(path: String, roots: Vec<std::path::PathBuf>) -> Result<Vec<DirEntry>, String> {
@@ -155,10 +155,10 @@ pub async fn read_file(
     app: AppHandle, webview: tauri::Webview, path: String,
 ) -> Result<String, String> {
     crate::shared::native_legacy_policy::require_main(&webview, "read_file")?;
-    let roots = workspace::allowed_roots(&app);
-    tauri::async_runtime::spawn_blocking(move || read_file_blocking(path, roots))
-        .await
-        .map_err(|_| "READ_FILE_WORKER_FAILED".to_string())?
+    crate::capabilities::workspace::FILESYSTEM_IO.run(move || {
+        let roots = workspace::allowed_roots(&app);
+        read_file_blocking(path, roots)
+    }).await
 }
 
 fn read_file_blocking(
@@ -192,12 +192,17 @@ fn image_mime_from_path(path: &std::path::Path) -> Option<&'static str> {
 
 /// 读取本地图片为 data URL（仅主窗口文件预览使用，不扩大 asset:// 读盘范围）
 #[tauri::command]
-pub fn read_image_data_url(
+pub async fn read_image_data_url(
     app: AppHandle, webview: tauri::Webview, path: String,
 ) -> Result<String, String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "read_image_data_url")?;
+    crate::capabilities::workspace::FILESYSTEM_IO
+        .run(move || read_image_data_url_blocking(app, path)).await
+}
+
+fn read_image_data_url_blocking(app: AppHandle, path: String) -> Result<String, String> {
     use base64::Engine;
     const MAX_IMAGE_BYTES: usize = 8 * 1024 * 1024;
-    crate::shared::native_legacy_policy::require_main(&webview, "read_image_data_url")?;
     let roots = workspace::allowed_roots(&app);
     let p = crate::security_policy::check_path_within_roots(&path, &roots)
         .map_err(|e| e.to_string())?;
@@ -245,11 +250,18 @@ fn write_file_authorized(
 
 /// 写入文本文件（创建或覆盖）。仅可操作已授权目录内的普通文件。
 #[tauri::command]
-pub fn write_file(
+pub async fn write_file(
     app: AppHandle, webview: tauri::Webview, path: String, content: String,
 ) -> Result<(), String> {
-    use crate::security_policy as sp;
     crate::shared::native_legacy_policy::require_main(&webview, "write_file")?;
+    crate::security_policy::check_text_field("content", &content, crate::security_policy::MAX_HTML_BYTES)
+        .map_err(|error| error.to_string())?;
+    crate::capabilities::workspace::FILESYSTEM_IO
+        .run(move || write_file_blocking(app, path, content)).await
+}
+
+fn write_file_blocking(app: AppHandle, path: String, content: String) -> Result<(), String> {
+    use crate::security_policy as sp;
     sp::check_text_field("content", &content, sp::MAX_HTML_BYTES)
         .map_err(|e| e.to_string())?;
     let roots = workspace::allowed_roots(&app);
@@ -322,12 +334,20 @@ pub fn get_start_dirs(app: AppHandle, webview: tauri::Webview) -> Vec<DirEntry> 
 
 /// 新建文件（content 为空则创建空文件）。已存在则报错。
 #[tauri::command]
-pub fn create_file(
-    app: AppHandle, webview: tauri::Webview,
-    path: String, content: Option<String>,
+pub async fn create_file(
+    app: AppHandle, webview: tauri::Webview, path: String, content: Option<String>,
 ) -> Result<(), String> {
-    use crate::security_policy as sp;
     crate::shared::native_legacy_policy::require_main(&webview, "create_file")?;
+    if let Some(content) = &content {
+        crate::security_policy::check_text_field("content", content, crate::security_policy::MAX_HTML_BYTES)
+            .map_err(|error| error.to_string())?;
+    }
+    crate::capabilities::workspace::FILESYSTEM_IO
+        .run(move || create_file_blocking(app, path, content)).await
+}
+
+fn create_file_blocking(app: AppHandle, path: String, content: Option<String>) -> Result<(), String> {
+    use crate::security_policy as sp;
     let p = std::path::PathBuf::from(&path);
     let name = p.file_name().and_then(|n| n.to_str()).ok_or("文件名无效")?;
     sp::check_path_component(name).map_err(|e| e.to_string())?;
@@ -346,11 +366,16 @@ pub fn create_file(
 
 /// 新建目录（递归创建父目录）。
 #[tauri::command]
-pub fn create_dir(
+pub async fn create_dir(
     app: AppHandle, webview: tauri::Webview, path: String,
 ) -> Result<(), String> {
-    use crate::security_policy as sp;
     crate::shared::native_legacy_policy::require_main(&webview, "create_dir")?;
+    crate::capabilities::workspace::FILESYSTEM_IO
+        .run(move || create_dir_blocking(app, path)).await
+}
+
+fn create_dir_blocking(app: AppHandle, path: String) -> Result<(), String> {
+    use crate::security_policy as sp;
     let p = std::path::PathBuf::from(&path);
     let name = p.file_name().and_then(|n| n.to_str()).ok_or("目录名无效")?;
     sp::check_path_component(name).map_err(|e| e.to_string())?;
@@ -372,10 +397,15 @@ pub fn create_dir(
 
 /// 删除文件或目录（递归删除）。
 #[tauri::command]
-pub fn delete_path(
+pub async fn delete_path(
     app: AppHandle, webview: tauri::Webview, path: String,
 ) -> Result<(), String> {
     crate::shared::native_legacy_policy::require_main(&webview, "delete_path")?;
+    crate::capabilities::workspace::FILESYSTEM_IO
+        .run(move || delete_path_blocking(app, path)).await
+}
+
+fn delete_path_blocking(app: AppHandle, path: String) -> Result<(), String> {
     use crate::security_policy as sp;
     let p = std::path::PathBuf::from(&path);
     if !p.exists() {
@@ -399,11 +429,15 @@ pub fn delete_path(
 
 /// 重命名 / 移动文件或目录。
 #[tauri::command]
-pub fn rename_path(
-    app: AppHandle, webview: tauri::Webview,
-    path: String, new_name: String,
+pub async fn rename_path(
+    app: AppHandle, webview: tauri::Webview, path: String, new_name: String,
 ) -> Result<(), String> {
     crate::shared::native_legacy_policy::require_main(&webview, "rename_path")?;
+    crate::capabilities::workspace::FILESYSTEM_IO
+        .run(move || rename_path_blocking(app, path, new_name)).await
+}
+
+fn rename_path_blocking(app: AppHandle, path: String, new_name: String) -> Result<(), String> {
     use crate::security_policy as sp;
     let p = std::path::PathBuf::from(&path);
     if !p.exists() {

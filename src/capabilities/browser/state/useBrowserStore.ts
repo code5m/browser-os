@@ -60,24 +60,52 @@ export const useBrowserStore = defineStore("browser", () => {
       : aiSites.filter((s) => s.region === aiFilter.value)
   );
 
-  async function tabNew(target?: string) {
-    if (!isBrowserResourceAllowed()) {
-      bridge.debugLog("tabNew refused: browser capability not ACTIVE");
-      return;
-    }
-    const u = target === undefined ? "about:blank" : target.trim() || "about:blank";
-    // 网页内 target=_blank / window.open 触发的新页签：若当前不在浏览器视图则切过去
-    if (layout.mainView !== "browser") layout.setView("browser");
-    const t = await bridge.tabNew(u);
-    tabs.push(t);
-    activeTabId.value = t.id;
-    url.value = t.url;
-    // Native create_tab already starts hidden. Do not race an extra offscreen
-    // tabPosition against the first real viewport position: when it arrives last,
-    // the active tab stays offscreen (blank browser area).
-    await nextTick();
-    relocate();
-    syncFreeze();
+  // Serialize the existing owner's native mutations. A slow activation or close
+  // must not publish an older selection after a newer request has completed.
+  let tabMutationTail: Promise<unknown> = Promise.resolve();
+  function mutateTabs<T>(operation: () => Promise<T>): Promise<T> {
+    const result = tabMutationTail.then(operation);
+    tabMutationTail = result.catch(() => {});
+    return result;
+  }
+
+  async function tabNew(target?: string): Promise<boolean> {
+    return mutateTabs(async () => {
+      if (!isBrowserResourceAllowed()) {
+        bridge.debugLog("tabNew refused: browser capability not ACTIVE");
+        return false;
+      }
+      const u = target === undefined ? "about:blank" : target.trim() || "about:blank";
+      const publish = layout.prepareViewChange("browser");
+      if (!publish) return false;
+      let t: TabInfo;
+      try {
+        t = await bridge.tabNew(u);
+      } catch (error) {
+        await syncViewVisibility();
+        throw error;
+      }
+      if (!isBrowserResourceAllowed()) {
+        await bridge.tabClose(t.id);
+        return false;
+      }
+      tabs.push(t);
+      // Module navigation may have won while native creation was pending.
+      // Retain the new tab without taking that module's view or address away.
+      if (publish()) {
+        activeTabId.value = t.id;
+        url.value = t.url;
+        await nextTick();
+        relocate();
+        syncFreeze();
+      } else {
+        if (activeTabId.value && tabs.some((tab) => tab.id === activeTabId.value)) {
+          await bridge.tabActivate(activeTabId.value);
+        }
+        await syncViewVisibility();
+      }
+      return true;
+    });
   }
   // A fresh about:blank tab is a disposable placeholder when the user chooses
   // a different surface (directory/Grid). Never discard an occupied web page.
@@ -87,8 +115,7 @@ export const useBrowserStore = defineStore("browser", () => {
     if (layout.mainView !== "browser" || activeTab.value?.url !== "about:blank") return false;
     const id = activeTabId.value;
     blankTabReplacement = (async () => {
-      await tabClose(id);
-      return true;
+      return tabClose(id);
     })();
     try {
       return await blankTabReplacement;
@@ -97,43 +124,73 @@ export const useBrowserStore = defineStore("browser", () => {
     }
   }
 
-  async function tabSwitch(id: string) {
-    activeTabId.value = id;
-    const t = tabs.find((x) => x.id === id);
-    if (t) url.value = t.url;
-    await bridge.tabActivate(id);
-    await nextTick();
-    relocate();
-    syncFreeze();
+  async function tabSwitch(id: string): Promise<boolean> {
+    return mutateTabs(async () => {
+      const t = tabs.find((x) => x.id === id);
+      if (!t || !isBrowserResourceAllowed()) return false;
+      const publish = layout.prepareViewChange("browser");
+      if (!publish) return false;
+      try {
+        await bridge.tabActivate(id);
+      } catch (error) {
+        // Native failure never publishes a new visible view or activeTabId.
+        await syncViewVisibility();
+        throw error;
+      }
+      if (!isBrowserResourceAllowed() || !tabs.some((tab) => tab.id === id) || !publish()) {
+        // Another owner changed the visible surface while IPC was in flight.
+        if (activeTabId.value && tabs.some((tab) => tab.id === activeTabId.value)) {
+          await bridge.tabActivate(activeTabId.value);
+        }
+        await syncViewVisibility();
+        return false;
+      }
+      activeTabId.value = id;
+      url.value = t.url;
+      await nextTick();
+      relocate();
+      syncFreeze();
+      return true;
+    });
   }
   // ===== 普通 Tab 关闭 =====
   // Owner 最终裁决（2026-09-12）：普通 Tab 关闭 = 不弹确认框 + 不持久化 + 直接关闭。
   // 直接走 closeTabNow（其内部先 recordClose 写入 recentlyClosed 内存栈，再完成
   // WebView 生命周期关闭）。不再挂接任何关闭拦截器 / 确认框（M1-9 关闭协议已撤销）。
-  async function tabClose(id: string) {
-    await closeTabNow(id);
+  async function tabClose(id: string): Promise<boolean> {
+    return closeTabNow(id);
   }
   // 真正执行关闭：先 recordClose 写入 recentlyClosed 内存栈，再完成 WebView 生命周期关闭。
   // 普通 Tab 关闭（tabClose）与手动恢复入口均复用此路径，无可绕过。
-  async function closeTabNow(id: string) {
-    recordClose(id);
-    const idx = tabs.findIndex((t) => t.id === id);
-    if (idx < 0) return;
-    await bridge.tabClose(id);
-    nativeTabFailures.delete(id);
-    tabs.splice(idx, 1);
-    if (activeTabId.value === id) {
-      const next = tabs[idx] || tabs[idx - 1];
-      activeTabId.value = next ? next.id : "";
-      if (next) {
-        url.value = next.url;
-        await bridge.tabActivate(next.id);
+  async function closeTabNow(id: string): Promise<boolean> {
+    return mutateTabs(async () => {
+      if (!tabs.some((t) => t.id === id)) return false;
+      recordClose(id);
+      await bridge.tabClose(id);
+      nativeTabFailures.delete(id);
+      const idx = tabs.findIndex((t) => t.id === id);
+      if (idx < 0) return true;
+      tabs.splice(idx, 1);
+      let activateNext = "";
+      if (activeTabId.value === id) {
+        const next = tabs[idx] || tabs[idx - 1];
+        activeTabId.value = next ? next.id : "";
+        if (layout.mainView === "browser") {
+          url.value = next?.url ?? "";
+          activateNext = next?.id ?? "";
+        }
       }
-    }
-    if (!tabs.length) layout.setView("browser");
-    await nextTick();
-    relocate();
-    syncFreeze();
+      // Closing a background web tab (including the last one) never changes
+      // the visible module. Ordinary close remains direct, with no save/prompt.
+      try {
+        if (activateNext) await bridge.tabActivate(activateNext);
+      } finally {
+        await nextTick();
+        relocate();
+        syncFreeze();
+      }
+      return true;
+    });
   }
   // Phase 04：记录被关闭的页签（在真正拆除前读取 url/title）
   function recordClose(id: string) {
@@ -146,12 +203,15 @@ export const useBrowserStore = defineStore("browser", () => {
   }
   // Phase 04：恢复最近关闭的页签（Ctrl+Shift+T）；栈空则提示
   async function restoreRecent() {
-    const item = recentlyClosed.value.shift();
+    const item = recentlyClosed.value[0];
     if (!item) {
       layout.showToast("没有可恢复的页签");
       return;
     }
-    await tabNew(item.url);
+    if (await tabNew(item.url)) {
+      const index = recentlyClosed.value.indexOf(item);
+      if (index >= 0) recentlyClosed.value.splice(index, 1);
+    }
   }
   async function tabReload(id: string) {
     const t = tabs.find((x) => x.id === id);
@@ -159,7 +219,7 @@ export const useBrowserStore = defineStore("browser", () => {
     t.title = t.url;
     nativeTabFailures.delete(id);
     await bridge.tabOpen(id, t.url);
-    if (activeTabId.value === id) url.value = t.url;
+    if (activeTabId.value === id && layout.mainView === "browser") url.value = t.url;
     await nextTick();
     relocate();
   }
@@ -219,7 +279,7 @@ export const useBrowserStore = defineStore("browser", () => {
       t.url = navUrl;
       t.title = navUrl; // Placeholder until document.title arrives.
     }
-    if (id === activeTabId.value) url.value = navUrl;
+    if (id === activeTabId.value && layout.mainView === "browser") url.value = navUrl;
   }
   function handleTabRecovery(event: TabRecoveryEvent) {
     const failureKind = classifyNativeTabLoadFailure(event.status, event.message);
@@ -268,29 +328,35 @@ export const useBrowserStore = defineStore("browser", () => {
   }
   // Omnibox navigation is intentionally different from explicitly opening a
   // NEW tab (tabNew/openBrowser). A current tab must retain its ID and WebView.
-  async function navigateCurrent() {
+  async function navigateCurrent(): Promise<boolean> {
     const target = url.value.trim() || "https://www.baidu.com";
-    recordRecentUrl(target);
-    layout.setView("browser");
-    const current = tabs.find((t) => t.id === activeTabId.value);
-    if (!current) {
-      await tabNew(target);
-      return;
+    if (!tabs.some((t) => t.id === activeTabId.value)) {
+      const created = await tabNew(target);
+      if (created) recordRecentUrl(target);
+      return created;
     }
-    current.title = target;
-    nativeTabFailures.delete(current.id);
-    await bridge.tabOpen(current.id, target);
-    current.url = target;
-    await nextTick();
-    relocate();
+    return mutateTabs(async () => {
+      const current = tabs.find((t) => t.id === activeTabId.value);
+      if (!current || !isBrowserResourceAllowed()) return false;
+      const publish = layout.prepareViewChange("browser");
+      if (!publish) return false;
+      await bridge.tabOpen(current.id, target);
+      if (!tabs.some((t) => t.id === current.id)) return false;
+      current.title = target;
+      current.url = target;
+      nativeTabFailures.delete(current.id);
+      recordRecentUrl(target);
+      if (!publish()) return false;
+      url.value = target;
+      await nextTick();
+      relocate();
+      return true;
+    });
   }
 
   async function openBrowser() {
     const target = url.value.trim() || "https://www.baidu.com";
-    recordRecentUrl(target);
-    layout.setView("browser");
-    await tabNew(target);
-    layout.showToast("已打开。在网页右键 → 保存选区/整页");
+    if (await tabNew(target)) recordRecentUrl(target);
   }
 
   // 定位调度器从 composable 注入（避免 store 直接依赖 DOM）
