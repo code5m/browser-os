@@ -65,6 +65,9 @@ fn system_tool(name: &str) -> io::Result<PathBuf> {
 mod windows_identity_contract_tests {
     use super::{acl_listing_is_exclusive, valid_windows_sid};
 
+    const OWNER_SID: &str = "S-1-5-21-1697530992-2138327965-217515802-1001";
+    const OWNER_ACCOUNT: &str = r"yanghuiqian\yhq";
+
     #[test]
     fn sid_validation_preserves_literal_s_prefix_and_rejects_malformed_segments() {
         assert!(valid_windows_sid("S-1-5-21-100-200-300-1001"));
@@ -74,41 +77,97 @@ mod windows_identity_contract_tests {
         assert!(!valid_windows_sid("S-1-"));
     }
 
-    /// Real crash on the user's machine: `whoami /user` returned
-    /// `yanghuiqian\yhq` while `icacls` printed `YANGHUIQIAN\Yhq`.
-    /// A case-sensitive owner match reported 0 entries and panicked at
-    /// startup with WINDOWS_PRIVATE_DIR_ACL_NOT_EXCLUSIVE.
+    /// Verbatim shape captured from `icacls <appdata> /T` on the machine that
+    /// hit the startup panic: lowercase `whoami` account vs mixed-case
+    /// `YANGHUIQIAN\Yhq` display, inherited `(I)` flags on children, and the
+    /// localized footer. Two objects -> four ACEs.
     #[test]
-    fn acl_exclusivity_matches_owner_when_whoami_and_icacls_casing_differs() {
-        let sid = "S-1-5-21-1697530992-2138327965-217515802-1001";
-        let account = r"yanghuiqian\yhq";
+    fn acl_exclusivity_accepts_real_icacls_output_mixed_case_and_localized_footer() {
         let listing = concat!(
-            "C:\\data\\app NT AUTHORITY\\SYSTEM:(OI)(CI)(F)\n",
-            "                                    YANGHUIQIAN\\Yhq:(OI)(CI)(F)\n",
-            "\n已成功处理 1 个文件; 处理 0 个文件时失败\n",
+            "C:/Users/10146/AppData/Roaming/app NT AUTHORITY\\SYSTEM:(OI)(CI)(F)\n",
+            "                                          YANGHUIQIAN\\Yhq:(OI)(CI)(F)\n",
+            "\n",
+            "C:/Users/10146/AppData/Roaming/app\\sessions NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n",
+            "                                                     YANGHUIQIAN\\Yhq:(I)(OI)(CI)(F)\n",
+            "\n已成功处理 2 个文件; 处理 0 个文件时失败\n",
         );
         assert!(
-            acl_listing_is_exclusive(listing, 1, sid, account),
-            "mixed-case owner/SYSTEM ACEs must be accepted as exclusive"
+            acl_listing_is_exclusive(listing, 2, OWNER_SID, OWNER_ACCOUNT),
+            "real mixed-case / localized output must be accepted as exclusive"
         );
     }
 
+    /// P1: account names may contain non-ASCII characters. Folding must use
+    /// Unicode-aware `to_lowercase()`, not `to_ascii_lowercase()`.
     #[test]
-    fn acl_exclusivity_still_rejects_broad_groups_and_extra_aces() {
-        let sid = "S-1-5-21-1697530992-2138327965-217515802-1001";
-        let account = r"yanghuiqian\yhq";
-        let with_everyone = concat!(
+    fn acl_exclusivity_folds_non_ascii_account_names() {
+        let listing = concat!(
             "C:\\data\\app NT AUTHORITY\\SYSTEM:(OI)(CI)(F)\n",
-            "                                    YANGHUIQIAN\\Yhq:(OI)(CI)(F)\n",
-            "                                    Everyone:(OI)(CI)(F)\n",
+            "            CONTOSO\\JÖRG:(OI)(CI)(F)\n",
         );
-        assert!(!acl_listing_is_exclusive(with_everyone, 1, sid, account));
-        let with_extra = concat!(
+        assert!(
+            acl_listing_is_exclusive(listing, 1, OWNER_SID, "contoso\\jörg"),
+            "non-ASCII account case differences must fold to the same key"
+        );
+    }
+
+    /// P2: a trustee whose name merely contains "SYSTEM" must never be counted
+    /// as the SYSTEM trustee (the old code used `contains("SYSTEM")`).
+    #[test]
+    fn acl_exclusivity_rejects_system_name_substring_impostor() {
+        let impostor = concat!(
+            "C:\\data\\app CONTOSO\\SystemAdmins:(OI)(CI)(F)\n",
+            "            YANGHUIQIAN\\Yhq:(OI)(CI)(F)\n",
+        );
+        assert!(
+            !acl_listing_is_exclusive(impostor, 1, OWNER_SID, OWNER_ACCOUNT),
+            "a lookalike trustee must not satisfy the SYSTEM requirement"
+        );
+    }
+
+    /// P3: broad groups must be rejected whether they appear as English names,
+    /// localized names, or SIDs — without a locale-dependent name blacklist.
+    #[test]
+    fn acl_exclusivity_rejects_broad_groups_by_name_and_sid() {
+        let broad_trustees = [
+            "Everyone",
+            "每个人",                              // localized Everyone
+            "NT AUTHORITY\\Authenticated Users",
+            "BUILTIN\\Users",
+            "BUILTIN\\Administrators",
+            "*S-1-1-0",                            // Everyone SID
+            "S-1-5-11",                            // Authenticated Users SID
+            "S-1-5-32-544",                        // Administrators SID
+            "S-1-5-32-545",                        // Users SID
+        ];
+        for trustee in broad_trustees {
+            let listing = format!(
+                "C:\\data\\app NT AUTHORITY\\SYSTEM:(OI)(CI)(F)\n  {trustee}:(OI)(CI)(F)\n  YANGHUIQIAN\\Yhq:(OI)(CI)(F)\n"
+            );
+            assert!(
+                !acl_listing_is_exclusive(&listing, 1, OWNER_SID, OWNER_ACCOUNT),
+                "broad trustee must be rejected: {trustee}"
+            );
+        }
+    }
+
+    #[test]
+    fn acl_exclusivity_accepts_sid_form_owner_and_system() {
+        // When name resolution fails, icacls prints raw SIDs instead of names.
+        let listing = format!(
+            "C:\\data\\app *S-1-5-18:(OI)(CI)(F)\n  *{OWNER_SID}:(OI)(CI)(F)\n"
+        );
+        assert!(acl_listing_is_exclusive(&listing, 1, OWNER_SID, OWNER_ACCOUNT));
+    }
+
+    #[test]
+    fn acl_exclusivity_rejects_wrong_ace_count() {
+        let one_object = concat!(
             "C:\\data\\app NT AUTHORITY\\SYSTEM:(OI)(CI)(F)\n",
-            "                                    YANGHUIQIAN\\Yhq:(OI)(CI)(F)\n",
-            "                                    BUILTIN\\Users:(OI)(CI)(RX)\n",
+            "            YANGHUIQIAN\\Yhq:(OI)(CI)(F)\n",
         );
-        assert!(!acl_listing_is_exclusive(with_extra, 1, sid, account));
+        // Claim two objects but supply one object's worth of ACEs.
+        assert!(!acl_listing_is_exclusive(one_object, 2, OWNER_SID, OWNER_ACCOUNT));
     }
 }
 
@@ -293,40 +352,60 @@ pub(super) fn ensure_private_directory(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// Verify the `icacls /T` listing grants exactly the owner SID and SYSTEM on
-/// every object, with no broad groups.
+/// Verify the `icacls /T` listing grants exactly the current user and SYSTEM
+/// on every object, with no other trustee.
 ///
-/// Windows account names are case-insensitive but the two tools that produce
-/// the strings here do not agree on casing: `whoami /user` returns
-/// `domain\\user` in lowercase on some systems while `icacls` prints the
-/// `DOMAIN\\User` display form. A case-sensitive `contains` therefore reports
-/// zero owner entries on such machines and rejects an otherwise private
-/// directory. Fold every comparison to ASCII lowercase before matching.
+/// Two properties of the producer make string matching non-trivial:
+///   1. `icacls` prints trustees as display names (`DOMAIN\\User`,
+///      `NT AUTHORITY\\SYSTEM`) and resolves SIDs when it can. Windows account
+///      names are case-insensitive, but `whoami /user` and `icacls` disagree on
+///      casing (`yanghuiqian\\yhq` vs `YANGHUIQIAN\\Yhq`). A case-sensitive match
+///      reports zero owner entries and rejects an otherwise private directory.
+///      Fold with Unicode-aware `to_lowercase()` (not `to_ascii_lowercase()`,
+///      which silently misses non-ASCII account names).
+///   2. The summary/footer line is localized ("已成功处理 N 个文件",
+///      "N fichiers traités", ...), so group names in the listing are locale
+///      dependent too.
+///
+/// Instead of blacklisting broad groups by (localized) name — which can never
+/// be exhaustive — classify *every* ACE: its trustee must be the owner or
+/// SYSTEM. Any other trustee (Everyone, Authenticated Users, BUILTIN\\Users,
+/// or their localized equivalents) falls through and fails closed. This keeps
+/// the check strict on any Windows locale without a name blacklist.
 fn acl_listing_is_exclusive(listing: &str, object_count: usize, sid: &str, account: &str) -> bool {
-    let entries: Vec<_> = listing.lines().filter(|line| line.contains(":(")).collect();
-    let sid_key = sid.to_ascii_lowercase();
-    let account_key = account.to_ascii_lowercase();
-    let user_entries = entries
-        .iter()
-        .filter(|line| {
-            let folded = line.to_ascii_lowercase();
-            folded.contains(&sid_key) || folded.contains(&account_key)
-        })
-        .count();
-    let system_entries = entries
-        .iter()
-        .filter(|line| {
-            line.contains("S-1-5-18") || line.to_ascii_uppercase().contains("SYSTEM")
-        })
-        .count();
-    let folded_listing = listing.to_ascii_lowercase();
-    entries.len() == object_count * 2
-        && user_entries == object_count
+    let owner_key = account.to_lowercase();
+    let owner_sid_key = sid.to_lowercase();
+    // SYSTEM's well-known SID, and the SDDL display name icacls resolves it to.
+    // Both are locale-independent; the SID is the authoritative form.
+    const SYSTEM_SID: &str = "s-1-5-18";
+    const SYSTEM_NAME: &str = "nt authority\\system";
+
+    let mut ace_lines = 0usize;
+    let mut owner_entries = 0usize;
+    let mut system_entries = 0usize;
+
+    for line in listing.lines() {
+        // ACE lines carry the rights marker ":(..."; blank lines and the
+        // localized footer do not. The trustee is the text before that marker
+        // (the first line of each object also carries its path, hence the
+        // suffix match below rather than an exact equality).
+        let Some(rights_at) = line.find(":(") else { continue; };
+        ace_lines += 1;
+        let trustee = line[..rights_at].trim().to_lowercase();
+        if trustee.ends_with(owner_key.as_str()) || trustee.ends_with(owner_sid_key.as_str()) {
+            owner_entries += 1;
+        } else if trustee.ends_with(SYSTEM_SID) || trustee.ends_with(SYSTEM_NAME) {
+            system_entries += 1;
+        } else {
+            // Unknown trustee: fail closed rather than maintain a
+            // locale-dependent broad-group blacklist.
+            return false;
+        }
+    }
+
+    ace_lines == object_count * 2
+        && owner_entries == object_count
         && system_entries == object_count
-        && !folded_listing.contains("everyone")
-        && !folded_listing.contains("authenticated users")
-        && !listing.contains("S-1-1-0")
-        && !listing.contains("S-1-5-32-545")
 }
 
 fn normalized_path(value: &str) -> String {
