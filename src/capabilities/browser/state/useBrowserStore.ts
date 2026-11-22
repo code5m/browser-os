@@ -338,18 +338,25 @@ export const useBrowserStore = defineStore("browser", () => {
   // NEW tab (tabNew/openBrowser). A current tab must retain its ID and WebView.
   async function navigateCurrent(): Promise<boolean> {
     const target = url.value.trim() || "https://www.baidu.com";
-    if (!tabs.some((t) => t.id === activeTabId.value)) {
+    const current = tabs.find((t) => t.id === activeTabId.value);
+    if (!current) {
       const created = await tabNew(target);
       if (created) recordRecentUrl(target);
       return created;
     }
+    // Reserve this intent and its tab before waiting behind native mutations.
+    // A queued address submission must not retarget another tab or supersede
+    // a later Home, directory, or module navigation.
+    const publish = layout.prepareViewChange("browser");
+    if (!publish) return false;
     return mutateTabs(async () => {
-      const current = tabs.find((t) => t.id === activeTabId.value);
-      if (!current || !isBrowserResourceAllowed()) return false;
-      const publish = layout.prepareViewChange("browser");
-      if (!publish) return false;
+      if (!tabs.some((t) => t.id === current.id) ||
+          !isBrowserResourceAllowed() || !publish.isCurrent()) return false;
       await bridge.tabOpen(current.id, target);
-      if (!tabs.some((t) => t.id === current.id)) return false;
+      if (!isBrowserResourceAllowed() || !tabs.some((t) => t.id === current.id)) {
+        await syncViewVisibility();
+        return false;
+      }
       current.title = target;
       current.url = target;
       nativeTabFailures.delete(current.id);

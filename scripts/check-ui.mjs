@@ -204,6 +204,14 @@ function hasReactiveActivityContributions(activityBar) {
   )) && !activityBar.includes('v-for="c in trailingActions"');
 }
 
+// A persistent exit-save failure may take priority over transient messages.
+// Both branches must remain real status-bar text, never a WebView overlay.
+function hasStatusBarMessage(source) {
+  const live = source.replace(/<!--[\s\S]*?-->/g, "");
+  const footer = live.match(/<footer\b[^>]*class="status"[^>]*>[\s\S]*?<\/footer>/)?.[0] ?? "";
+  return /<span\s+v-(?:if|else-if)="layout\.msg"[^>]*class="msg"[^>]*>\s*\{\{\s*layout\.msg\s*\}\}\s*<\/span>/.test(footer);
+}
+
 // ===== 结构检查 =====
 
 function structuralChecks(findings, warnings) {
@@ -225,12 +233,12 @@ function structuralChecks(findings, warnings) {
         rule: "PROJECT-RULES.md 规则 3.8 / [APPROVED] 错误和状态只显示在状态栏",
       });
     }
-    if (!/<span\s+v-if="layout\.msg"[^>]*class="msg"/.test(sb)) {
+    if (!hasStatusBarMessage(sb)) {
       findings.push({
         severity: "P1",
         file: "src/components/layout/StatusBar.vue",
         line: 0,
-        message: "StatusBar 必须保留 <span v-if=\"layout.msg\" class=\"msg\"> 状态栏消息",
+        message: "StatusBar 必须在 footer.status 内按 layout.msg 条件渲染真实消息（允许退出保存告警优先）",
         rule: "PROJECT-RULES.md 规则 3.8",
       });
     }
@@ -453,6 +461,20 @@ function runSelfTest() {
   if (hasReactiveActivityContributions(liveSlots + '<template v-for="c in trailingActions"></template>')) failures.push("Duplicate trailing slot accepted");
   if (hasReactiveActivityContributions(liveSlots.replace("CONTRIBUTION_SLOTS.ADDRESS_BAR_ACTIONS", "CONTRIBUTION_SLOTS.ACTIVITY_BAR_TRAILING"))) failures.push("Wrong slot accepted");
   if (hasReactiveActivityContributions(liveSlots.replace("const addressBarActions = computed(", "const addressBarActions = nothing("))) failures.push("Non-reactive slot accepted");
+
+  const status = '<footer class="status"><span v-if="layout.msg" class="msg" role="status">{{ layout.msg }}</span></footer>';
+  const priorityStatus = status.replace('<span v-if="layout.msg"', '<span v-if="layout.exitSaveNotice" class="msg warn" role="alert">{{ layout.exitSaveNotice }}</span><span v-else-if="layout.msg"');
+  if (!hasStatusBarMessage(status) || !hasStatusBarMessage(priorityStatus)) failures.push("Status message branches rejected");
+  for (const sample of [
+    status.replace('v-if="layout.msg"', 'v-if="false"'),
+    status.replace('{{ layout.msg }}', ''),
+    status.replace('{{ layout.msg }}', '{{ layout.exitSaveNotice }}'),
+    status.replace('class="msg"', 'class="other"'),
+    status.replace('footer', 'div').replace('</footer>', '</div>'),
+    '<!--' + status + '-->',
+  ]) {
+    if (hasStatusBarMessage(sample)) failures.push("Missing or dead status message accepted");
+  }
 
   return failures;
 }

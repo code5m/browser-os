@@ -2,7 +2,7 @@
   "version": 1,
   "generated_at": "2026-09-23",
   "generated_from_head": "3f57a92e5fb7d9a6bc978f1572964d3c14fb8caf",
-  "note": "UI-1 边界门禁的**显式基线**。原则：LEGACY_COUPLING 不是立即删除，但绝不允许静默洗绿。任何新增耦合必须 FAIL；任何消除必须显式更新本文件并在 commit 说明原因。 2026-10-10 PR #17: StatusBar 已实际去除 Terminal/Workspace/Repo store 依赖以及固定浮层 CSS；显式销账三个 UI-03b 历史耦合和一个 UI-05 固定定位，不新增允许项、不变更门禁阈值。",
+  "note": "UI-1 边界门禁的**显式基线**。原则：LEGACY_COUPLING 不是立即删除，但绝不允许静默洗绿。任何新增耦合必须 FAIL；任何消除必须显式更新本文件并在 commit 说明原因。 2026-10-10 PR #17: StatusBar 已实际去除 Terminal/Workspace/Repo store 依赖以及固定浮层 CSS；显式销账三个 UI-03b 历史耦合和一个 UI-05 固定定位，不新增允许项、不变更门禁阈值。 2026-11-22：UnifiedTabBar 的 Apps/Terminal 操作已交给现有 useUnifiedTabs 协调入口，显式销账两条 Shell 直接 store 耦合；退出保存由 Native 单一事务负责，Shell 不再调用 flushSessions，仅订阅 onExitStatus 显示 saving/blocked/closing 状态，不新增原生命令执行权限。",
   "policy": {
     "on_new_coupling": "FAIL",
     "on_removed_coupling": "FAIL (baseline 必须与现实一致，消除即更新)",
@@ -46,11 +46,6 @@
     },
     {
       "shell": "src/components/layout/ActivityBar.vue",
-      "store": "useAppsStore",
-      "from": "src/capabilities/apps/public"
-    },
-    {
-      "shell": "src/components/layout/UnifiedTabBar.vue",
       "store": "useAppsStore",
       "from": "src/capabilities/apps/public"
     },
@@ -123,11 +118,6 @@
       "shell": "src/components/layout/UnifiedTabBar.vue",
       "store": "useFileStore",
       "from": "src/capabilities/workspace/public"
-    },
-    {
-      "shell": "src/components/layout/UnifiedTabBar.vue",
-      "store": "useTerminalStore",
-      "from": "src/capabilities/terminal/public"
     },
     {
       "shell": "src/components/layout/StatusBar.vue",
@@ -223,7 +213,7 @@
     "onTermData",
     "onOpenTerminal",
     "onNoteSaved",
-    "flushSessions"
+    "onExitStatus"
   ],
   "ui09_host_hardcoded_views_baseline": [
     "home",

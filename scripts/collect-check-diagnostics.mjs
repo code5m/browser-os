@@ -36,8 +36,9 @@ function parseCommand(text) {
     if (rest.length !== 2 || rest[0] !== 'run' || !Object.hasOwn(pkg.scripts, rest[1])
         || ['check', 'precheck'].includes(rest[1])) throw new Error('UNSUPPORTED_NPM_COMMAND');
   } else if (program === 'node' || program === 'python3') {
-    if (!/^(scripts|tests)\/[A-Za-z0-9_./-]+\.(mjs|cjs|js|py)$/.test(rest[0] || '')
-        || rest[0].split('/').includes('..') || !existsSync(join(root, rest[0]))) {
+    const script = program === 'node' && rest[0] === '--experimental-strip-types' ? rest[1] : rest[0];
+    if (!/^(scripts|tests)\/[A-Za-z0-9_./-]+\.(mjs|cjs|js|py)$/.test(script || '')
+        || script.split('/').includes('..') || !existsSync(join(root, script))) {
       throw new Error('UNSUPPORTED_CHECK_SCRIPT');
     }
   } else {
@@ -50,12 +51,24 @@ const cases = [];
 for (const phase of ['precheck', 'check']) {
   if (typeof pkg.scripts?.[phase] !== 'string') throw new Error('CHECK_CHAIN_MISSING');
   for (const [index, text] of pkg.scripts[phase].split('&&').entries()) {
-    try {
-      cases.push({ phase, index: index + 1, ...parseCommand(text), status: 'NOT_RUN' });
-    } catch (error) {
-      // Do not echo unsupported shell text; never eval it or pass it to a shell.
-      cases.push({ phase, index: index + 1, command: phase + '[' + (index + 1) + ']',
-        status: 'BLOCKED', reason: error.message });
+    const parent = text.trim();
+    // The module chain has no npm lifecycle hooks. Diagnose its independent
+    // checks individually so one failing fixture cannot hide later regressions.
+    const expand = parent === 'npm run check:module-contracts'
+      && typeof pkg.scripts['check:module-contracts'] === 'string'
+      && !pkg.scripts['precheck:module-contracts']
+      && !pkg.scripts['postcheck:module-contracts'];
+    const commands = expand ? pkg.scripts['check:module-contracts'].split('&&') : [text];
+    for (const [childIndex, command] of commands.entries()) {
+      const position = expand ? (index + 1) + '.' + (childIndex + 1) : index + 1;
+      try {
+        cases.push({ phase, index: position, ...(expand ? { parent_command: parent } : {}),
+          ...parseCommand(command), status: 'NOT_RUN' });
+      } catch (error) {
+        // Do not echo unsupported shell text; never eval it or pass it to a shell.
+        cases.push({ phase, index: position, command: phase + '[' + position + ']',
+          status: 'BLOCKED', reason: error.message });
+      }
     }
   }
 }
@@ -147,6 +160,9 @@ function diagnosticStatus(result) {
   return result.reason ? 'BLOCKED' : result.code === 0 ? 'PASSED' : 'FAILED';
 }
 if (selfTest) {
+  assert.equal(parseCommand('node --experimental-strip-types tests/check-cross-workbench-file-store.mjs').args[0],
+    '--experimental-strip-types');
+  assert.throws(() => parseCommand('node --eval process.exit(0)'), /UNSUPPORTED_/);
   const run = async (code, budget = 3000) => execute({
     program: process.execPath, args: ['-e', code],
   }, budget);
@@ -166,7 +182,7 @@ if (selfTest) {
   const timedOut = await run('setInterval(() => {}, 1000)', 100);
   assert.equal(timedOut.reason, 'TIMEOUT');
   assert.equal(diagnosticStatus(timedOut), 'BLOCKED');
-  console.log('CHECK_DIAGNOSTICS_SELF_TEST=PASS cases=6 (real owned process groups)');
+  console.log('CHECK_DIAGNOSTICS_SELF_TEST=PASS process_groups=6 command_flags=2');
   process.exit(0);
 }
 

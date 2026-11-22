@@ -14,7 +14,6 @@ globalThis.setTimeout = callback => { timers.set(++timerId, callback); return ti
 globalThis.clearTimeout = id => timers.delete(id);
 globalThis.window = { setTimeout: () => 0 };
 globalThis.confirm = () => true;
-globalThis.document = { querySelectorAll: () => [] };
 const flushDraftTimers = () => {
   const callbacks = [...timers.values()]; timers.clear();
   for (const callback of callbacks) callback();
@@ -29,6 +28,9 @@ const { createPinia, setActivePinia } = await import('pinia');
 const { documentOwnership } = await import('../src/application/documentOwnership.mjs');
 const { useFileStore } = await import('../src/capabilities/workspace/state/useFileStore.ts');
 const { useLayoutStore } = await import('../src/stores/useLayoutStore.ts');
+// Load Vue in its real Node environment before supplying the narrow tree lookup
+// used by these owner tests. This is not a renderer or an incomplete DOM.
+globalThis.document = { querySelectorAll: () => [] };
 bridge.editorDraftList = async () => [];
 bridge.getStartDirs = async () => [];
 bridge.listDir = async () => [];
@@ -159,4 +161,14 @@ bridge.listDir = async () => [];
 assert.equal(await startupFiles.initializeDirectory('/startup'), true);
 assert.equal(startupLayout.mainView, 'home', 'background initialization never opens a Files tab');
 assert.equal(startupLayout.modTabs.length, 0);
+await startupFiles.ctxOpenInNewTab({ path: '/first', name: 'first', is_dir: true, size: 0 });
+const firstDirectoryTab = startupLayout.activeModTab;
+await startupFiles.ctxOpenInNewTab({ path: '/second', name: 'second', is_dir: true, size: 0 });
+assert.equal(startupLayout.modTabs.length, 2, 'explicit directory new-tab does not reuse the active directory');
+assert.equal(startupLayout.modTabs.find(tab => tab.id === firstDirectoryTab).path, '/first');
+assert.equal(startupFiles.filePath, '/second');
+bridge.listDir = async () => { throw Error('UNREADABLE_CONTEXT_DIRECTORY'); };
+await startupFiles.ctxOpenInNewTab({ path: '/denied', name: 'denied', is_dir: true, size: 0 });
+assert.equal(startupLayout.modTabs.length, 2, 'an unreadable directory creates no context-menu tab');
+assert.equal(startupFiles.filePath, '/second');
 console.log('WORKSPACE_RECOVERY_NAVIGATION=PASS');

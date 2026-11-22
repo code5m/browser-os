@@ -32,6 +32,10 @@ export function relocateBrowser(): void {
 
 /** Navigate to a module in the current empty tab, without closing visited sites. */
 export async function openModuleInCurrentTab(view: MainView): Promise<void> {
+  const publish = useLayoutStore().prepareModule(view)
+  if (!publish) return
   await useBrowserStore().consumeActiveBlankTab()
-  useLayoutStore().openModule(view)
+  // Closing a native placeholder can be slow. A later navigation owns the
+  // view even when this earlier close eventually succeeds.
+  publish()
 }

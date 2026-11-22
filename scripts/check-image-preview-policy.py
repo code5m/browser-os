@@ -70,7 +70,8 @@ BASELINE_DEPS = {
         # PR35: pinned build-only CSS optimizer; runtime dependencies unchanged.
         "lightningcss": "1.33.0",
         "terser": "^5.51.2",
-        "vite": "^5.2.0",
+        # Reviewed Vite security upgrade; the direct dependency set stays frozen.
+        "vite": "6.4.6",
     },
     "optionalDependencies": {},
     "peerDependencies": {},

@@ -75,7 +75,8 @@ BASELINE_DEPS = {
         # PR35: pinned build-only CSS optimizer; runtime dependencies unchanged.
         "lightningcss": "1.33.0",
         "terser": "^5.51.2",
-        "vite": "^5.2.0",
+        # Reviewed Vite security upgrade; the direct dependency set stays frozen.
+        "vite": "6.4.6",
     },
     "optionalDependencies": {},
     "peerDependencies": {},
@@ -521,7 +522,14 @@ def run_self_test(root: Path) -> int:
         "package.json 新增 dependencies 依赖",
         mutate(**{"package.json": _mutate_pkg(good["package.json"], add_dep=("dependencies", "some-gallery-lib", "^1.0.0"))}),
         "SCR_NPM_DEP_ADDED"))
-    # 17. lock 根依赖漂移必须被抓住；合法传递安全升级不按整文件 hash 拦截\n    samples.append((\n        "package-lock 根依赖被扩张",\n        mutate(**{"package-lock.json": mutate_lock_root_dependency(\n            good["package-lock.json"], "some-lock-only-lib", "^1.0.0")}),\n        "SCR_NPM_DEP_ADDED"))\n\n    # 18. 凭据字面量赋值
+    # 17. lock 根依赖漂移必须被抓住；合法传递安全升级不按整文件 hash 拦截
+    samples.append((
+        "package-lock 根依赖被扩张",
+        mutate(**{"package-lock.json": mutate_lock_root_dependency(
+            good["package-lock.json"], "some-lock-only-lib", "^1.0.0")}),
+        "SCR_NPM_DEP_ADDED"))
+
+    # 18. 凭据字面量赋值
     samples.append((
         "scripts.rs 出现 token 字面量赋值",
         mutate(scripts=good["scripts"] + '\npub const TOKEN: &str = "abc123";\n'),

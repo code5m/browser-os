@@ -8,9 +8,11 @@
 
 version: 1
 generated_from_head: 3f57a92e5fb7d9a6bc978f1572964d3c14fb8caf
-total: 98
+total: 100
 
 components:
+  - { id: agent.mcp-execution-review, name: McpExecutionReview, layer: CAPABILITY_UI, owner: agent, file: src/capabilities/agent/ui/McpExecutionReview.vue, public: false, business_semantics: "Displays the exact MCP invocation and emits explicit credential/environment approval without reading secret values", capability_specific: true, dependencies: [Vue props/emits], consumers: [CodingWorkbench], status: OBSERVED }
+  - { id: agent.sandbox-recovery, name: SandboxRecoveryPanel, layer: CAPABILITY_UI, owner: agent, file: src/capabilities/agent/ui/SandboxRecoveryPanel.vue, public: false, business_semantics: "Reads native sandbox recovery status and requests explicit retry of the existing ownership journal", capability_specific: true, dependencies: [bridge.codingService, sandboxRecoveryHint], consumers: [CodingWorkbench], status: OBSERVED }
   - { id: agent.operation-review, name: CodingOperationReview, layer: CAPABILITY_UI, owner: agent, file: src/capabilities/agent/ui/CodingOperationReview.vue, public: false, business_semantics: "Explicit per-operation approval and result recording", capability_specific: true, dependencies: [bridge, CodingCommandPanel], consumers: [CodingWorkbench], status: OBSERVED }
   - { id: agent.coding-command, name: CodingCommandPanel, layer: CAPABILITY_UI, owner: agent, file: src/capabilities/agent/ui/CodingCommandPanel.vue, public: false, business_semantics: "Explicit approval of existing command snippets through script public adapter", capability_specific: true, dependencies: [commandWorkbench], consumers: [CodingWorkbench], status: OBSERVED }
   - { id: agent.general-chat, name: GeneralChatPanel, layer: CAPABILITY_UI, owner: agent, file: src/capabilities/agent/ui/GeneralChatPanel.vue, public: false, business_semantics: "Project-free bounded multi-turn chat using configured AI provider; no tools or workspace permissions", capability_specific: true, dependencies: [aiService], consumers: [AgentManagerPanel], status: OBSERVED }

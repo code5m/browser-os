@@ -323,16 +323,23 @@ export const useLayoutStore = defineStore("layout", () => {
   }
 
   // 同视图去重复用：已存在则激活，否则新建（避免主页/文件等同一模块被反复点开成一排）
-  function openModule(view: MainView): boolean {
+  function prepareModule(view: MainView): ViewChangeCommit | null {
     const existing = modTabs.find((t) => t.view === view && !t.path);
-    if (existing) return activateModTab(existing.id);
+    if (existing) return prepareModTabActivation(existing.id);
     const publish = prepareViewChange(view, mainView.value === view);
-    if (!publish || !publish()) return false;
-    const meta = MOD_META[view] ?? { icon: "📄", label: view };
-    const id = `mod-${++modTabSeq}`;
-    modTabs.push({ id, view, ...meta });
-    activeModTab.value = id;
-    return true;
+    if (!publish) return null;
+    return navigationCommit(publish.isCurrent, () => {
+      if (!publish()) return false;
+      const meta = MOD_META[view] ?? { icon: "📄", label: view };
+      const id = `mod-${++modTabSeq}`;
+      modTabs.push({ id, view, ...meta });
+      activeModTab.value = id;
+      return true;
+    });
+  }
+  function openModule(view: MainView): boolean {
+    const publish = prepareModule(view);
+    return publish ? publish() : false;
   }
 
   // Directory identity is shared with Workspace; original paths remain intact.
@@ -505,6 +512,7 @@ export const useLayoutStore = defineStore("layout", () => {
     prepareModTabActivation,
     prepareModTabClose,
     prepareDirTab,
+    prepareModule,
     registerBeforeViewChange,
     // Phase 1 canonical View Intent API
     activateView,

@@ -73,7 +73,7 @@
       "id": "supply-chain",
       "path": ".github/workflows/supply-chain-assurance.yml",
       "role": "blocking_supply_chain_gate",
-      "scope": "all branch pushes + PR to master; audits and Node/Rust SBOM; temporary explicit manual-only Node security candidate generation exports immutable source and hashes without changing checked-out manifests or ordinary gates"
+      "scope": "all branch pushes + PR to master; full Node dependency audit including build tools, Rust audit and Node/Rust SBOM"
     },
     {
       "id": "mysql-runtime-e2e",

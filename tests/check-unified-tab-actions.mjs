@@ -1,4 +1,4 @@
-// Regression definitions only in this repair; execution is intentionally NOT_RUN.
+// Actual owner regressions with controlled native completions; GUI evidence is separate.
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import vm from "node:vm";
@@ -47,6 +47,7 @@ function fixture() {
     return exports;
   }
   let browser, lifecycle;
+  const availability = { browser: true };
   const layoutModule = owner("src/stores/useLayoutStore.ts", {
     "../application/documentPaths.mjs": documentPaths,
     "../capabilities/browser/public": { useBrowserStore: () => browser },
@@ -58,6 +59,7 @@ function fixture() {
     debugLog() {},
     tabNew: async (url) => { calls.push(["new", url]); return { id: "new-" + ++nextId, url, title: url }; },
     tabActivate: async (id) => { calls.push(["activate", id]); },
+    tabOpen: async (id, url) => { calls.push(["open", id, url]); },
     tabClose: async (id) => { calls.push(["close", id]); },
     hideAllWebviews: async () => { calls.push(["hide"]); },
     hideWebview: async () => {},
@@ -66,7 +68,7 @@ function fixture() {
   const browserModule = owner("src/capabilities/browser/state/useBrowserStore.ts", {
     "../../../bridge": { bridge: native },
     "../../../utils/webviewFreeze": { WEBVIEW_FREEZE_JS: "", WEBVIEW_UNFREEZE_JS: "" },
-    "../resource/guard": { isBrowserResourceAllowed: () => true },
+    "../resource/guard": { isBrowserResourceAllowed: () => availability.browser },
     "../../../stores/useLayoutStore": { useLayoutStore: () => layout },
     "../model/nativeTabLoadFailure.mjs": { classifyNativeTabLoadFailure: () => null, recentNativeTabLoadFailure: () => null },
     "../../../composables/recentsNav": { recordRecentUrl() {} },
@@ -79,7 +81,11 @@ function fixture() {
     activate: (tab) => tab.kind === "web" ? browser.tabSwitch(tab.id) : layout.activateModTab(tab.id),
     close: (tab) => tab.kind === "web" ? browser.tabClose(tab.id) : layout.closeModTab(tab.id),
   });
-  return { layout, browser, native, calls, actions, resources, lifecycle };
+  const navigation = owner("src/composables/browserNav.ts", {
+    "../capabilities/browser/public": { useBrowserStore: () => browser },
+    "../stores/useLayoutStore": { useLayoutStore: () => layout },
+  });
+  return { layout, browser, native, calls, actions, resources, lifecycle, navigation, availability };
 }
 
 {
@@ -284,5 +290,163 @@ function fixture() {
   assert.equal(await switching, false);
   assert.equal(activations, 0, "navigation is reserved before entering the native mutation queue");
   assert.equal(layout.mainView, "home");
+}
+
+{
+  const { layout, browser, calls } = fixture();
+  browser.tabs.push({ id: "current", url: "https://before.test", title: "Before" });
+  browser.activeTabId = "current";
+  layout.activateBrowser();
+  browser.url = "https://after.test";
+  assert.equal(await browser.navigateCurrent(), true);
+  assert.equal(browser.tabs.length, 1, "omnibox navigation reuses the current native tab");
+  assert.equal(browser.activeTabId, "current");
+  assert.equal(browser.tabs[0].url, "https://after.test");
+  assert.deepEqual(calls.filter(([kind]) => kind === "open"), [["open", "current", "https://after.test"]]);
+  assert.equal(calls.some(([kind]) => kind === "new"), false);
+}
+{
+  const { browser, calls } = fixture();
+  browser.url = "https://first.test";
+  assert.equal(await browser.navigateCurrent(), true);
+  assert.equal(browser.tabs.length, 1);
+  assert.deepEqual(calls.filter(([kind]) => kind === "new"), [["new", "https://first.test"]]);
+  assert.equal(calls.some(([kind]) => kind === "open"), false, "no current tab means one explicit creation");
+}
+{
+  const { layout, browser, calls } = fixture();
+  browser.tabs.push({ id: "kept", url: "https://kept.test" });
+  browser.activeTabId = "kept";
+  layout.openModule("files");
+  layout.registerBeforeViewChange("dirty", next => next !== "browser");
+  browser.url = "https://refused.test";
+  assert.equal(await browser.navigateCurrent(), false);
+  assert.equal(calls.length, 0);
+  assert.equal(browser.tabs[0].url, "https://kept.test");
+  assert.equal(layout.mainView, "files");
+}
+{
+  const { layout, browser, calls } = fixture();
+  browser.tabs.push({ id: "queued-address", url: "https://kept.test" });
+  browser.activeTabId = "queued-address";
+  layout.activateBrowser();
+  browser.url = "https://stale.test";
+  const navigating = browser.navigateCurrent();
+  layout.activateHome();
+  assert.equal(await navigating, false);
+  assert.equal(layout.mainView, "home", "a queued old address cannot take over a newer navigation");
+  assert.equal(calls.some(([kind]) => kind === "open" || kind === "new"), false);
+}
+{
+  const { browser, native, calls } = fixture();
+  browser.tabs.push({ id: "closing-address", url: "https://kept.test" });
+  browser.activeTabId = "closing-address";
+  browser.url = "https://stale.test";
+  let release;
+  native.tabClose = () => new Promise(resolve => { release = resolve; });
+  const closing = browser.tabClose("closing-address");
+  await Promise.resolve();
+  const navigating = browser.navigateCurrent();
+  release();
+  await closing;
+  assert.equal(await navigating, false);
+  assert.equal(browser.tabs.length, 0);
+  assert.equal(calls.some(([kind]) => kind === "open" || kind === "new"), false,
+    "a tab removed while an address is queued must not be recreated or retargeted");
+}
+{
+  const { layout, browser, native } = fixture();
+  browser.tabs.push({ id: "failed-open", url: "https://kept.test", title: "Kept" });
+  browser.activeTabId = "failed-open";
+  layout.openModule("files");
+  browser.url = "https://failed.test";
+  native.tabOpen = async () => { throw Error("native open failed"); };
+  await assert.rejects(browser.navigateCurrent(), /native open failed/);
+  assert.equal(browser.tabs[0].url, "https://kept.test");
+  assert.equal(browser.tabs[0].title, "Kept");
+  assert.equal(layout.mainView, "files", "failed IPC cannot publish a browser navigation");
+}
+{
+  const { layout, browser, calls } = fixture();
+  browser.tabs.push({ id: "raced-blank", url: "about:blank" });
+  browser.activeTabId = "raced-blank";
+  layout.activateBrowser();
+  const replacing = browser.consumeActiveBlankTab("raced-blank");
+  browser.tabs[0].url = "https://occupied.test";
+  assert.equal(await replacing, false);
+  assert.equal(browser.tabs.length, 1);
+  assert.equal(calls.some(([kind]) => kind === "close"), false,
+    "the blank-only condition is rechecked at the queued native operation");
+}
+{
+  const { layout, browser, calls, navigation } = fixture();
+  browser.tabs.push({ id: "denied-module", url: "about:blank" });
+  browser.activeTabId = "denied-module";
+  layout.activateBrowser();
+  layout.registerBeforeViewChange("deny-grid", next => next !== "grid");
+  await navigation.openModuleInCurrentTab("grid");
+  assert.equal(layout.mainView, "browser");
+  assert.equal(layout.modTabs.length, 0);
+  assert.equal(calls.length, 0, "a rejected module intent never disposes its blank browser tab");
+}
+{
+  const { layout, browser, native, navigation } = fixture();
+  browser.tabs.push({ id: "slow-placeholder", url: "about:blank" });
+  browser.activeTabId = "slow-placeholder";
+  layout.activateBrowser();
+  let release;
+  native.tabClose = () => new Promise(resolve => { release = resolve; });
+  const opening = navigation.openModuleInCurrentTab("grid");
+  await Promise.resolve();
+  layout.activateHome();
+  release();
+  await opening;
+  assert.equal(layout.mainView, "home", "a late placeholder close cannot resurrect its old module request");
+  assert.equal(layout.modTabs.length, 0);
+}
+{
+  const { layout, browser, native, navigation } = fixture();
+  browser.tabs.push({ id: "failed-placeholder", url: "about:blank" });
+  browser.activeTabId = "failed-placeholder";
+  layout.activateBrowser();
+  native.tabClose = async () => { throw Error("native close failed"); };
+  await assert.rejects(navigation.openModuleInCurrentTab("grid"), /native close failed/);
+  assert.equal(layout.mainView, "browser");
+  assert.equal(layout.modTabs.length, 0);
+  assert.equal(browser.tabs.length, 1, "a failed native close keeps its owner record retryable");
+}
+{
+  const { layout, browser, calls, navigation } = fixture();
+  browser.tabs.push({ id: "replace-once", url: "about:blank" });
+  browser.activeTabId = "replace-once";
+  layout.activateBrowser();
+  let approvals = 0;
+  layout.registerBeforeViewChange("count", () => { approvals++; return true; });
+  await navigation.openModuleInCurrentTab("grid");
+  assert.equal(layout.mainView, "grid");
+  assert.equal(layout.modTabs.length, 1);
+  assert.equal(browser.tabs.length, 0);
+  assert.equal(approvals, 1, "the async module route preserves one guarded owner intent");
+  assert.deepEqual(calls.filter(([kind]) => kind === "close"), [["close", "replace-once"]]);
+}
+
+for (const deactivate of [false, true]) {
+  const { layout, browser, native, lifecycle, availability } = fixture();
+  browser.tabs.push({ id: "suspending-open", url: "https://before.test" });
+  browser.activeTabId = "suspending-open";
+  layout.openModule("files");
+  browser.url = "https://pending.test";
+  let release;
+  native.tabOpen = () => new Promise(resolve => { release = resolve; });
+  const opening = browser.navigateCurrent();
+  await Promise.resolve();
+  availability.browser = false;
+  lifecycle.suspend();
+  const releasing = deactivate ? lifecycle.deactivate() : Promise.resolve();
+  release();
+  assert.equal(await opening, false, "resource revocation during IPC cancels navigation publication");
+  await releasing;
+  assert.equal(layout.mainView, "files", "suspension and cleanup preserve the unrelated visible module");
+  assert.equal(browser.tabs.length, deactivate ? 0 : 1, "only successful owner cleanup removes the native tab record");
 }
 console.log("UNIFIED_TAB_ACTIONS=PASS");

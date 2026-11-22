@@ -78,7 +78,8 @@ BASELINE_DEPS = {
         # PR35: pinned build-only CSS optimizer; runtime dependencies unchanged.
         "lightningcss": "1.33.0",
         "terser": "^5.51.2",
-        "vite": "^5.2.0",
+        # Reviewed Vite security upgrade; the direct dependency set stays frozen.
+        "vite": "6.4.6",
     },
     "optionalDependencies": {},
     "peerDependencies": {},
@@ -585,7 +586,13 @@ def run_self_test(root: Path) -> int:
         mutate(**{"package.json": _mutate_pkg(good["package.json"], add_dep=("dependencies", "some-gallery-lib", "^1.0.0"))}),
         "package.json", "CMD_NPM_DEP_ADDED")
 
-    # 17. lock 根依赖漂移\n    add("package-lock 根依赖被扩张",\n        mutate(**{"package-lock.json": mutate_lock_root_dependency(\n            good["package-lock.json"], "some-lock-only-lib", "^1.0.0")}),\n        "package-lock.json", "CMD_NPM_DEP_ADDED")\n\n    # 18. 修改依赖版本
+    # 17. lock 根依赖漂移
+    add("package-lock 根依赖被扩张",
+        mutate(**{"package-lock.json": mutate_lock_root_dependency(
+            good["package-lock.json"], "some-lock-only-lib", "^1.0.0")}),
+        "package-lock.json", "CMD_NPM_DEP_ADDED")
+
+    # 18. 修改依赖版本
     add("package.json 修改 vue 版本",
         mutate(**{"package.json": _mutate_pkg(good["package.json"], bump_dep=("dependencies", "vue", "^3.5.0"))}),
         "package.json", "CMD_NPM_DEP_ADDED")
