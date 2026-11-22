@@ -253,11 +253,30 @@ try {
         Read-CheckedOutput "git" @("-C", $Checkout, "diff", "--name-only")
     ) -split "\r?\n" | Where-Object { $_ })
     $ExpectedChanged = @(
-        $Source.metadata_source_file, $Source.source_subdirectory + "/Cargo.lock",
-        $Source.xtask_manifest_file, $Source.xtask_dist_source_file
+        $Source.metadata_source_file,
+        ($Source.source_subdirectory + "/Cargo.lock"),
+        $Source.xtask_manifest_file,
+        $Source.xtask_dist_source_file
     ) | Sort-Object
-    if ((($Changed | Sort-Object) -join "|") -cne ($ExpectedChanged -join "|")) {
-        throw "WINDOWS_LSP_UNEXPECTED_SOURCE_CHANGE"
+    if ($ExpectedChanged.Count -ne 4) {
+        throw "WINDOWS_LSP_SOURCE_CHANGE_CONTRACT_INVALID"
+    }
+    if ($Changed.Count -ne 4 -or
+        (($Changed | Sort-Object) -join "|") -cne ($ExpectedChanged -join "|")) {
+        $ActualPreview = @($Changed | Select-Object -First 8 | ForEach-Object {
+            $ChangedPath = [string]$_
+            if ($ChangedPath.Length -gt 512) {
+                $ChangedPath.Substring(0, 512) + "..."
+            } else {
+                $ChangedPath
+            }
+        })
+        $ChangeDetails = [ordered]@{
+            expected = $ExpectedChanged
+            actual_count = $Changed.Count
+            actual_preview = $ActualPreview
+        } | ConvertTo-Json -Depth 3 -Compress
+        throw "WINDOWS_LSP_UNEXPECTED_SOURCE_CHANGE:$ChangeDetails"
     }
 
     # build.rs supplies host-Cargo variables. Do not let those select another
