@@ -66,6 +66,10 @@ pub(super) fn profile_identity(file: &File) -> io::Result<NativeProfileIdentity>
     if !private_object(file)? || !current_owner(file, &policy)? {
         return Err(failure("RECOVERY_PROFILE_OWNER", 0));
     }
+    native_directory_identity(file)
+}
+
+fn native_directory_identity(file: &File) -> io::Result<NativeProfileIdentity> {
     let info = file_information(file)?;
     let mut buffer = vec![0u16; 32768];
     let used = unsafe {
@@ -134,11 +138,7 @@ fn audit_namespace_writers(file: &File, package: &AppContainerPolicy) -> io::Res
     audit_namespace_dacl(file, &policy, package)
 }
 
-fn audit_namespace_dacl(
-    file: &File,
-    policy: &Policy,
-    package: &AppContainerPolicy,
-) -> io::Result<()> {
+fn builtin_administrators_sid() -> io::Result<OwnedSid> {
     let mut administrators = OwnedSid {
         words: vec![0; 17],
         bytes: 68,
@@ -154,6 +154,73 @@ fn audit_namespace_dacl(
     {
         return Err(last_failure("RECOVERY_ADMIN_SID"));
     }
+    Ok(administrators)
+}
+
+fn os_namespace_owner_matches(owner: PSID, policy: &Policy) -> io::Result<bool> {
+    if owner.is_null() || unsafe { IsValidSid(owner) } == 0 {
+        return Ok(false);
+    }
+    let administrators = builtin_administrators_sid()?;
+    Ok([&policy.owner, &policy.system, &administrators]
+        .iter()
+        .any(|trusted| unsafe { EqualSid(owner, trusted.as_ptr()) } != 0))
+}
+
+// Windows may use the token's default owner group for its Packages directory.
+// This read-only exception is confined to that OS namespace. Profile roots and
+// application-private objects continue to require the exact TokenUser SID.
+fn audit_os_namespace_owner(file: &File, policy: &Policy) -> io::Result<()> {
+    if !private_object(file)? {
+        return Err(failure("RECOVERY_NAMESPACE_OWNER", 0));
+    }
+    if !final_path(file)?
+        .file_name()
+        .is_some_and(|component| same_path_component(component, OsStr::new("Packages")))
+    {
+        return Err(failure("RECOVERY_PROFILE_LAYOUT", 0));
+    }
+    let mut owner = ptr::null_mut();
+    let mut raw = ptr::null_mut();
+    let code = unsafe {
+        GetSecurityInfo(
+            file.as_raw_handle() as _,
+            SE_FILE_OBJECT,
+            OWNER_SECURITY_INFORMATION,
+            &mut owner,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            &mut raw,
+        )
+    };
+    let _allocation = NativeAllocation(raw);
+    if code != 0 {
+        return Err(failure("RECOVERY_OWNER_READ", code));
+    }
+    if !os_namespace_owner_matches(owner, policy)? {
+        return Err(failure("RECOVERY_NAMESPACE_OWNER", 0));
+    }
+    Ok(())
+}
+
+fn os_namespace_identity(file: &File) -> io::Result<NativeProfileIdentity> {
+    audit_os_namespace_owner(file, &Policy::new()?)?;
+    native_directory_identity(file)
+}
+
+fn audit_os_namespace_writers(file: &File, package: &AppContainerPolicy) -> io::Result<()> {
+    let policy = Policy::new()?;
+    audit_os_namespace_owner(file, &policy)?;
+    audit_namespace_dacl(file, &policy, package)
+}
+
+fn audit_namespace_dacl(
+    file: &File,
+    policy: &Policy,
+    package: &AppContainerPolicy,
+) -> io::Result<()> {
+    let administrators = builtin_administrators_sid()?;
     let mut acl = ptr::null_mut();
     let mut raw = ptr::null_mut();
     let code = unsafe {
@@ -284,7 +351,7 @@ pub(super) fn prepare_created_profile_owner(
     let policy = Policy::new()?;
     let package = AppContainerPolicy::new(package_sid, AppContainerAccess::ReadExecute, false)?;
     let (parent, _) = profile_layout(opened, name, package_sid)?;
-    audit_namespace_writers(&opened.chain[parent], &package)?;
+    audit_os_namespace_writers(&opened.chain[parent], &package)?;
     for index in parent + 1..opened.chain.len() {
         budget.check()?;
         let original = &opened.chain[index];
@@ -337,7 +404,8 @@ pub(super) fn profile_scope(
     // This Packages namespace parent is outside the profile that userenv may delete.
     // Keep it fixed across the final name-based API, and disallow any writer
     // other than the owner, SYSTEM, administrators or this inactive package.
-    for directory in &opened.chain[parent..] {
+    audit_os_namespace_writers(&opened.chain[parent], &package)?;
+    for directory in &opened.chain[parent + 1..] {
         audit_namespace_writers(directory, &package)?;
     }
     let parent_path: Vec<_> = final_path(&opened.chain[parent])?
@@ -345,7 +413,7 @@ pub(super) fn profile_scope(
         .encode_wide()
         .collect();
     Ok(NativeProfileScope {
-        parent: profile_identity(&opened.chain[parent])?,
+        parent: os_namespace_identity(&opened.chain[parent])?,
         parent_path,
         component,
     })
@@ -402,7 +470,7 @@ pub fn hold_profile_cleanup_namespace(
         return Err(last_failure("RECOVERY_NAMESPACE_OPEN_ID"));
     }
     let pinned = unsafe { File::from_raw_handle(raw) };
-    if profile_identity(&pinned)? != scope.parent {
+    if os_namespace_identity(&pinned)? != scope.parent {
         return Err(failure("RECOVERY_NAMESPACE_IDENTITY", 0));
     }
     let native = final_path(&pinned)?;
@@ -416,11 +484,11 @@ pub fn hold_profile_cleanup_namespace(
         return Err(failure("RECOVERY_NAMESPACE_MOVED", 0));
     }
     let opened = open_path_options(&native, None, true, RECORD_ACCESS, 0, None, Some(budget))?;
-    if profile_identity(opened.target())? != scope.parent {
+    if os_namespace_identity(opened.target())? != scope.parent {
         return Err(failure("RECOVERY_NAMESPACE_CHANGED", 0));
     }
     let package = AppContainerPolicy::new(package_sid, AppContainerAccess::ReadExecute, false)?;
-    audit_namespace_writers(opened.target(), &package)?;
+    audit_os_namespace_writers(opened.target(), &package)?;
     // Existing profile base, if still present, must also be non-writable by
     // unrelated principals before its filesystem path is passed to userenv.
     match open_relative(
@@ -446,11 +514,11 @@ pub fn hold_profile_cleanup_namespace(
 impl ProfileCleanupNamespace {
     pub fn recheck(&self, package_sid: &str, budget: &OperationBudget) -> io::Result<()> {
         budget.check()?;
-        if profile_identity(self.opened.target())? != self.expected {
+        if os_namespace_identity(self.opened.target())? != self.expected {
             return Err(failure("RECOVERY_NAMESPACE_CHANGED", 0));
         }
         let package = AppContainerPolicy::new(package_sid, AppContainerAccess::ReadExecute, false)?;
-        audit_namespace_writers(self.opened.target(), &package)
+        audit_os_namespace_writers(self.opened.target(), &package)
     }
 }
 
@@ -1097,7 +1165,9 @@ impl NamedPrivateJob {
 mod tests {
     use super::*;
     use std::io::Write;
-    use windows_sys::Win32::Security::WinWorldSid;
+    use windows_sys::Win32::Security::{
+        GetSecurityDescriptorOwner, WinBuiltinAnyPackageSid, WinBuiltinUsersSid, WinWorldSid,
+    };
 
     fn fixture(label: &str) -> PathBuf {
         let nonce = std::time::SystemTime::now()
@@ -1111,6 +1181,189 @@ mod tests {
     }
     fn budget() -> OperationBudget {
         OperationBudget::new(Duration::from_secs(10))
+    }
+
+    fn namespace_security_snapshot(file: &File) -> (Vec<u8>, u16, Vec<Vec<u8>>) {
+        let mut owner = ptr::null_mut();
+        let mut acl = ptr::null_mut();
+        let mut raw = ptr::null_mut();
+        assert_eq!(
+            unsafe {
+                GetSecurityInfo(
+                    file.as_raw_handle() as _,
+                    SE_FILE_OBJECT,
+                    OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+                    &mut owner,
+                    ptr::null_mut(),
+                    &mut acl,
+                    ptr::null_mut(),
+                    &mut raw,
+                )
+            },
+            0
+        );
+        let _allocation = NativeAllocation(raw);
+        assert!(!owner.is_null() && unsafe { IsValidSid(owner) } != 0);
+        assert!(!acl.is_null() && unsafe { IsValidAcl(acl) } != 0);
+        let mut control = 0;
+        let mut revision = 0;
+        assert_ne!(
+            unsafe { GetSecurityDescriptorControl(raw, &mut control, &mut revision) },
+            0
+        );
+        let owner = unsafe {
+            std::slice::from_raw_parts(owner as *const u8, GetLengthSid(owner) as usize).to_vec()
+        };
+        let mut entries = Vec::new();
+        for index in 0..u32::from(unsafe { (*acl).AceCount }) {
+            let mut ace = ptr::null_mut();
+            assert_ne!(unsafe { GetAce(acl, index, &mut ace) }, 0);
+            assert!(!ace.is_null());
+            let header = unsafe { ptr::read_unaligned(ace as *const ACE_HEADER) };
+            entries.push(unsafe {
+                std::slice::from_raw_parts(ace as *const u8, header.AceSize as usize).to_vec()
+            });
+        }
+        (owner, control, entries)
+    }
+
+    #[test]
+    fn native_os_namespace_owner_descriptor_accepts_only_trusted_sids() {
+        fn observed_owner_matches(sid: &OwnedSid, policy: &Policy) -> bool {
+            let mut value: SECURITY_DESCRIPTOR = unsafe { std::mem::zeroed() };
+            let descriptor = (&mut value as *mut SECURITY_DESCRIPTOR).cast();
+            assert_ne!(unsafe { InitializeSecurityDescriptor(descriptor, 1) }, 0);
+            assert_ne!(
+                unsafe { SetSecurityDescriptorOwner(descriptor, sid.as_ptr(), 0) },
+                0
+            );
+            let mut observed = ptr::null_mut();
+            let mut defaulted = 0;
+            assert_ne!(
+                unsafe { GetSecurityDescriptorOwner(descriptor, &mut observed, &mut defaulted) },
+                0
+            );
+            assert_eq!(defaulted, 0);
+            assert_ne!(unsafe { EqualSid(observed, sid.as_ptr()) }, 0);
+            os_namespace_owner_matches(observed, policy).unwrap()
+        }
+
+        let policy = Policy::new().unwrap();
+        let administrators = builtin_administrators_sid().unwrap();
+        for sid in [&policy.owner, &policy.system, &administrators] {
+            assert!(observed_owner_matches(sid, &policy));
+        }
+        for kind in [WinWorldSid, WinBuiltinUsersSid, WinBuiltinAnyPackageSid] {
+            let mut sid = OwnedSid {
+                words: vec![0; 17],
+                bytes: 68,
+            };
+            assert_ne!(
+                unsafe {
+                    CreateWellKnownSid(kind, ptr::null_mut(), sid.as_mut_ptr(), &mut sid.bytes)
+                },
+                0
+            );
+            assert!(!observed_owner_matches(&sid, &policy));
+        }
+        let package = AppContainerPolicy::new(
+            "S-1-15-2-1-2-3-4-5-6-7",
+            AppContainerAccess::ReadExecute,
+            false,
+        )
+        .unwrap();
+        assert!(!observed_owner_matches(package.package_sid(), &policy));
+        let mut different_user = OwnedSid {
+            words: policy.owner.words.clone(),
+            bytes: policy.owner.bytes,
+        };
+        let last_subauthority = different_user.bytes as usize / 4 - 1;
+        different_user.words[last_subauthority] ^= 0x4000_0000;
+        assert_ne!(unsafe { IsValidSid(different_user.as_ptr()) }, 0);
+        assert_eq!(
+            unsafe { EqualSid(different_user.as_ptr(), policy.owner.as_ptr()) },
+            0
+        );
+        assert!(!observed_owner_matches(&different_user, &policy));
+        assert!(!os_namespace_owner_matches(ptr::null_mut(), &policy).unwrap());
+    }
+
+    #[test]
+    fn native_os_namespace_keeps_default_owner_and_private_identity_strict() {
+        let base = fixture("os-namespace-owner");
+        let parent = base.join("Packages");
+        let name = "BrowserOS.Coding.0123456789abcdef0123456789abcdef";
+        let sid = "S-1-15-2-1-2-3-4-5-6-7";
+        let root = parent.join(name).join("AC");
+        // Keep Windows' actual default owner, which may be a token group.
+        std::fs::create_dir_all(&parent).unwrap();
+        let policy = Policy::new().unwrap();
+        let opened = open_path(&parent, None, true, MAXIMUM_ALLOWED).unwrap();
+        let original_owner = namespace_security_snapshot(opened.target()).0;
+        let descriptor = policy.descriptor(true).unwrap();
+        assert_eq!(
+            unsafe {
+                SetSecurityInfo(
+                    opened.target().as_raw_handle() as _,
+                    SE_FILE_OBJECT,
+                    DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    descriptor.value.Dacl,
+                    ptr::null(),
+                )
+            },
+            0
+        );
+        let expected_security = namespace_security_snapshot(opened.target());
+        assert_eq!(expected_security.0, original_owner);
+        let namespace_identity = os_namespace_identity(opened.target()).unwrap();
+        let private_owner = current_owner(opened.target(), &policy).unwrap();
+        assert_eq!(profile_identity(opened.target()).is_ok(), private_owner);
+        if private_owner {
+            eprintln!("OS_NAMESPACE_DEFAULT_OWNER=current-user");
+        } else {
+            eprintln!("OS_NAMESPACE_DEFAULT_OWNER=trusted-system-or-administrators");
+        }
+        drop(opened);
+
+        ensure_private_directory(&root, &PrivateTreeOptions::default()).unwrap();
+        std::fs::write(root.join("data"), b"only this private profile").unwrap();
+        let parent_pin = open_path(&parent, None, true, RECORD_ACCESS).unwrap();
+        assert_eq!(
+            namespace_security_snapshot(parent_pin.target()),
+            expected_security
+        );
+        let budget = budget();
+        let pin = PinnedReadDirectory::open(&root, &budget).unwrap();
+        let identity = pin.identity_record().unwrap();
+        let scope = pin.recovery_scope(name, sid).unwrap();
+        assert_eq!(scope.parent, namespace_identity);
+        drop(pin);
+        let guard = hold_profile_cleanup_namespace(&scope, name, sid, &budget).unwrap();
+        delete_recorded_profile_tree(&root, &identity, &PrivateTreeOptions::default(), &budget)
+            .unwrap();
+        assert!(!root.exists());
+        guard.recheck(sid, &budget).unwrap();
+        assert_eq!(
+            os_namespace_identity(parent_pin.target()).unwrap(),
+            namespace_identity
+        );
+        assert_eq!(
+            namespace_security_snapshot(parent_pin.target()),
+            expected_security
+        );
+        assert_eq!(profile_identity(parent_pin.target()).is_ok(), private_owner);
+        drop(guard);
+        let restored = hold_profile_cleanup_namespace(&scope, name, sid, &budget).unwrap();
+        restored.recheck(sid, &budget).unwrap();
+        drop(restored);
+        assert_eq!(
+            namespace_security_snapshot(parent_pin.target()),
+            expected_security
+        );
+        drop(parent_pin);
+        std::fs::remove_dir_all(base).unwrap();
     }
 
     #[test]

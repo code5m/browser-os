@@ -987,6 +987,26 @@ fn descriptor_is_private(
     if unsafe { GetSecurityDescriptorControl(descriptor.0, &mut control, &mut revision) } == 0 {
         return Err(last_failure("DESCRIPTOR_CONTROL"));
     }
+    // The allocation returned by GetSecurityInfo retains both pointers until
+    // the complete policy check returns.
+    unsafe { native_descriptor_is_private(owner, dacl, control, policy, directory, root) }
+}
+
+/// Check the contents of a native security descriptor without normalizing ACEs.
+///
+/// # Safety
+/// Owner and DACL must come from the same live native security descriptor.
+/// Each non-null pointer must reference a complete valid SID/ACL allocation,
+/// including all ACE storage, that stays alive and unchanged for this call.
+/// Control must be read from that descriptor, not inferred from requested flags.
+unsafe fn native_descriptor_is_private(
+    owner: PSID,
+    dacl: *mut ACL,
+    control: u16,
+    policy: &Policy,
+    directory: bool,
+    root: bool,
+) -> io::Result<bool> {
     let owner_ok = !owner.is_null()
         && unsafe { IsValidSid(owner) } != 0
         && unsafe { EqualSid(owner, policy.owner.as_ptr()) } != 0;
@@ -1454,12 +1474,13 @@ pub fn audit_private_directory(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use windows_sys::Win32::Security::{AddAccessDeniedAceEx, WinWorldSid};
+    use windows_sys::Win32::Security::{
+        AddAccessDeniedAceEx, GetSecurityDescriptorDacl, GetSecurityDescriptorOwner, WinWorldSid,
+    };
 
-    // Tests alter DACLs through handles opened before the alteration. This
-    // lets the audit inspect a deliberately bad descriptor without depending
-    // on whether that descriptor still grants a fresh open of the test file.
-    fn set_test_dacl(file: &File, entries: &[(&OwnedSid, bool, u32, u32)]) {
+    // This constructor retains every ACE in native memory. SetSecurityInfo
+    // may merge identical ACEs when assigning the descriptor to a real file.
+    fn test_acl(entries: &[(&OwnedSid, bool, u32, u32)]) -> Vec<u32> {
         let bytes = size_of::<ACL>()
             + entries
                 .iter()
@@ -1481,6 +1502,17 @@ mod tests {
             };
             assert_ne!(result, 0);
         }
+        assert_ne!(unsafe { IsValidAcl(acl) }, 0);
+        assert_eq!(usize::from(unsafe { (*acl).AceCount }), entries.len());
+        words
+    }
+
+    // Tests alter DACLs through handles opened before the alteration. This
+    // lets the audit inspect a deliberately bad descriptor without depending
+    // on whether that descriptor still grants a fresh open of the test file.
+    fn set_test_dacl(file: &File, entries: &[(&OwnedSid, bool, u32, u32)]) {
+        let mut words = test_acl(entries);
+        let acl = words.as_mut_ptr() as *mut ACL;
         assert_eq!(
             unsafe {
                 SetSecurityInfo(
@@ -1536,6 +1568,79 @@ mod tests {
             let actual_sid = unsafe { (ace as *mut u8).add(offset) };
             assert_ne!(unsafe { EqualSid(actual_sid.cast(), sid.as_ptr()) }, 0);
         }
+    }
+
+    // Exercise the production policy against an actual native in-memory SD.
+    // No file assignment is involved, so duplicate ACEs cannot be merged away.
+    fn memory_descriptor_is_private(
+        policy: &Policy,
+        entries: &[(&OwnedSid, bool, u32, u32)],
+    ) -> bool {
+        let mut words = test_acl(entries);
+        let acl = words.as_mut_ptr() as *mut ACL;
+        let mut descriptor = Descriptor {
+            value: unsafe { std::mem::zeroed() },
+            _acl: words,
+        };
+        assert_ne!(
+            unsafe { InitializeSecurityDescriptor(descriptor.as_ptr(), 1) },
+            0
+        );
+        assert_ne!(
+            unsafe { SetSecurityDescriptorOwner(descriptor.as_ptr(), policy.owner.as_ptr(), 0) },
+            0
+        );
+        assert_ne!(
+            unsafe { SetSecurityDescriptorDacl(descriptor.as_ptr(), 1, acl, 0) },
+            0
+        );
+        assert_ne!(
+            unsafe {
+                SetSecurityDescriptorControl(
+                    descriptor.as_ptr(),
+                    SE_DACL_PROTECTED,
+                    SE_DACL_PROTECTED,
+                )
+            },
+            0
+        );
+        let mut owner = ptr::null_mut();
+        let mut owner_defaulted = 0;
+        assert_ne!(
+            unsafe {
+                GetSecurityDescriptorOwner(descriptor.as_ptr(), &mut owner, &mut owner_defaulted)
+            },
+            0
+        );
+        let mut dacl = ptr::null_mut();
+        let mut present = 0;
+        let mut dacl_defaulted = 0;
+        assert_ne!(
+            unsafe {
+                GetSecurityDescriptorDacl(
+                    descriptor.as_ptr(),
+                    &mut present,
+                    &mut dacl,
+                    &mut dacl_defaulted,
+                )
+            },
+            0
+        );
+        let mut control = 0u16;
+        let mut revision = 0u32;
+        assert_ne!(
+            unsafe {
+                GetSecurityDescriptorControl(descriptor.as_ptr(), &mut control, &mut revision)
+            },
+            0
+        );
+        assert_ne!(present, 0);
+        assert!(!dacl.is_null());
+        assert_eq!(usize::from(unsafe { (*dacl).AceCount }), entries.len());
+        // Both allocations and the policy's owner SID remain live here.
+        let result =
+            unsafe { native_descriptor_is_private(owner, dacl, control, policy, false, false) };
+        result.unwrap()
     }
 
     // Windows chooses a new object's owner from TokenOwner, which can be
@@ -1870,20 +1975,36 @@ mod tests {
     #[test]
     fn owner_and_system_counts_are_checked_per_object() {
         let policy = Policy::new().unwrap();
+        let valid = owner_entries(&policy, false, FILE_ALL_ACCESS);
+        assert!(memory_descriptor_is_private(&policy, &valid));
+        assert!(!memory_descriptor_is_private(&policy, &[]));
+        let mut duplicate_owner = valid.clone();
+        duplicate_owner.push((&policy.owner, false, FILE_ALL_ACCESS, 0));
+        assert!(!memory_descriptor_is_private(&policy, &duplicate_owner));
         if policy.owner_is_system() {
-            // SYSTEM is the sole trustee in this policy. Exercise its exact
-            // one-ACE count instead of silently skipping the negative case.
+            // A single-trustee policy still executes a real missing-principal
+            // refusal. The retained handle can restore this isolated fixture.
             let (root, file) = test_file("single-trustee-count", &policy);
-            set_test_dacl(
-                file.target(),
-                &[
-                    (&policy.owner, false, FILE_ALL_ACCESS, 0),
-                    (&policy.owner, false, FILE_ALL_ACCESS, 0),
-                ],
-            );
+            set_test_dacl(file.target(), &[]);
             assert_bad_file_then_restore(root, file, &policy);
             return;
         }
+        let mut duplicate_system = valid;
+        duplicate_system.push((&policy.system, false, FILE_ALL_ACCESS, 0));
+        assert!(!memory_descriptor_is_private(&policy, &duplicate_system));
+        // Across these two native SDs the totals are two owner and two SYSTEM
+        // ACEs. Each object must nevertheless have its own exact trustee pair.
+        let owners_only = [
+            (&policy.owner, false, FILE_ALL_ACCESS, 0),
+            (&policy.owner, false, FILE_ALL_ACCESS, 0),
+        ];
+        let systems_only = [
+            (&policy.system, false, FILE_ALL_ACCESS, 0),
+            (&policy.system, false, FILE_ALL_ACCESS, 0),
+        ];
+        assert!(!memory_descriptor_is_private(&policy, &owners_only));
+        assert!(!memory_descriptor_is_private(&policy, &systems_only));
+
         let root = fixture("per-object");
         ensure_private_directory(&root, &PrivateTreeOptions::default()).unwrap();
         std::fs::write(root.join("a"), b"a").unwrap();
@@ -1894,28 +2015,20 @@ mod tests {
         set_fixture_owner(b.target(), &policy);
         assert!(descriptor_is_private(a.target(), &policy, false, false).unwrap());
         assert!(descriptor_is_private(b.target(), &policy, false, false).unwrap());
-        // Across both files the totals are exactly two owner and two SYSTEM
-        // ACEs, but neither individual object has its required pair.
-        set_test_dacl(
-            a.target(),
-            &[
-                (&policy.owner, false, FILE_ALL_ACCESS, 0),
-                (&policy.owner, false, FILE_ALL_ACCESS, 0),
-            ],
-        );
-        set_test_dacl(
-            b.target(),
-            &[
-                (&policy.system, false, FILE_ALL_ACCESS, 0),
-                (&policy.system, false, FILE_ALL_ACCESS, 0),
-            ],
-        );
+        // One remaining ACE per file survives Windows descriptor assignment.
+        // The native readback must prove each missing-principal fixture exists.
+        set_test_dacl(a.target(), &[(&policy.owner, false, FILE_ALL_ACCESS, 0)]);
+        set_test_dacl(b.target(), &[(&policy.system, false, FILE_ALL_ACCESS, 0)]);
         assert!(!descriptor_is_private(a.target(), &policy, false, false).unwrap());
         assert!(!descriptor_is_private(b.target(), &policy, false, false).unwrap());
         assert!(audit_private_directory(&root, true, &PrivateTreeOptions::default()).is_err());
         repair_object(a.target(), &policy, false).unwrap();
+        assert!(audit_private_directory(&root, true, &PrivateTreeOptions::default()).is_err());
         repair_object(b.target(), &policy, false).unwrap();
+        assert!(audit_private_directory(&root, true, &PrivateTreeOptions::default()).is_ok());
         drop((a, b));
+        assert_eq!(std::fs::read(root.join("a")).unwrap(), b"a");
+        assert_eq!(std::fs::read(root.join("b")).unwrap(), b"b");
         std::fs::remove_dir_all(root).unwrap();
     }
 

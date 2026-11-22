@@ -642,7 +642,7 @@ assert.match(nativeRecovery, /self\.opened\s*\.reopen_directory\(\s*2\s*\/\* FIL
 // Existing namespace parents and every DACL remain outside this repair.
 const createdOwner = sourceRegion(nativeRecovery, "pub(super) fn prepare_created_profile_owner(", "pub(super) fn profile_scope(");
 const assertCreatedOwnerScope = (source) => {
-  assert.match(source, /audit_namespace_writers\(&opened\.chain\[parent\],\s*&package\)\?/);
+  assert.match(source, /audit_os_namespace_writers\(&opened\.chain\[parent\],\s*&package\)\?/);
   assert.match(source, /for index in parent\s*\+\s*1\.\.opened\.chain\.len\(\)/);
   assert.match(source, /reopen_directory\(WRITE_OWNER\s*\|\s*READ_CONTROL\)/);
   assert.match(source, /SetSecurityInfo\(\s*writable\.as_raw_handle\(\) as _,\s*SE_FILE_OBJECT,\s*OWNER_SECURITY_INFORMATION,\s*policy\.owner\.as_ptr\(\)/);
@@ -665,6 +665,61 @@ const finishProfile = sourceRegion(windowsSandbox, "fn finish_create(", "pub fn 
 assert.match(finishProfile, /\.prepare_created_owner\(&self\.name,\s*&self\.sid_string,\s*&self\.budget\)[\s\S]*?\.identity_record\(\)[\s\S]*?\.recovery_scope/);
 assert.match(nativeRecovery, /fn current_owner[\s\S]*?EqualSid\(owner,\s*policy\.owner\.as_ptr\(\)\)/);
 
+
+// Only the Windows-owned Packages namespace has the bounded OS-owner policy.
+// Its immutable native identity still pins deletion, while every new profile
+// and application-private object continues to require the exact current user.
+const assertNamespaceOwnerBoundaries = (source) => {
+  const strictIdentity = sourceRegion(source, "pub(super) fn profile_identity(", "fn native_directory_identity(");
+  assert.match(strictIdentity, /if !private_object\(file\)\?\s*\|\|\s*!current_owner\(file,\s*&policy\)\?/);
+  assert.match(strictIdentity, /native_directory_identity\(file\)/);
+  assert.doesNotMatch(strictIdentity, /os_namespace/);
+  const strictWriters = sourceRegion(source, "fn audit_namespace_writers(", "fn builtin_administrators_sid(");
+  assert.match(strictWriters, /!current_owner\(file,\s*&policy\)\?/);
+  assert.match(strictWriters, /audit_namespace_dacl\(file,\s*&policy,\s*package\)/);
+  const osOwner = sourceRegion(source, "fn os_namespace_owner_matches(", "fn audit_os_namespace_owner(");
+  assert.match(osOwner, /owner\.is_null\(\)\s*\|\|\s*unsafe\s*\{\s*IsValidSid\(owner\)\s*\}\s*==\s*0/);
+  assert.match(osOwner, /\[&policy\.owner,\s*&policy\.system,\s*&administrators\]/);
+  assert.match(osOwner, /EqualSid\(owner,\s*trusted\.as_ptr\(\)\)/);
+  assert.doesNotMatch(osOwner, /package_sid|WinBuiltinUsersSid|WinWorldSid/);
+  const namespaceAudit = sourceRegion(source, "fn audit_os_namespace_owner(", "fn os_namespace_identity(");
+  assert.match(namespaceAudit, /if !private_object\(file\)\?/);
+  assert.match(namespaceAudit, /same_path_component\(component,\s*OsStr::new\("Packages"\)\)/);
+  assert.match(namespaceAudit, /GetSecurityInfo\([\s\S]*?OWNER_SECURITY_INFORMATION/);
+  assert.match(namespaceAudit, /if !os_namespace_owner_matches\(owner,\s*policy\)\?/);
+  assert.doesNotMatch(namespaceAudit, /SetSecurityInfo|WRITE_OWNER|WRITE_DAC|DACL_SECURITY_INFORMATION|MAXIMUM_ALLOWED/);
+  const namespaceIdentity = sourceRegion(source, "fn os_namespace_identity(", "fn audit_os_namespace_writers(");
+  assert.match(namespaceIdentity, /audit_os_namespace_owner\(file,\s*&Policy::new\(\)\?\)\?;[\s\S]*?native_directory_identity\(file\)/);
+  const namespaceWriters = sourceRegion(source, "fn audit_os_namespace_writers(", "fn audit_namespace_dacl(");
+  assert.match(namespaceWriters, /audit_os_namespace_owner\(file,\s*&policy\)\?;[\s\S]*?audit_namespace_dacl\(file,\s*&policy,\s*package\)/);
+  assert.doesNotMatch(namespaceIdentity + namespaceWriters, /SetSecurityInfo|WRITE_OWNER|WRITE_DAC|MAXIMUM_ALLOWED/);
+  const scope = sourceRegion(source, "pub(super) fn profile_scope(", "pub fn hold_profile_cleanup_namespace(");
+  assert.match(scope, /audit_os_namespace_writers\(&opened\.chain\[parent\],\s*&package\)\?/);
+  assert.match(scope, /for directory in &opened\.chain\[parent\s*\+\s*1\.\.\]\s*\{\s*audit_namespace_writers\(directory,\s*&package\)\?/);
+  assert.match(scope, /parent:\s*os_namespace_identity\(&opened\.chain\[parent\]\)\?/);
+  const hold = sourceRegion(source, "pub fn hold_profile_cleanup_namespace(", "fn remove_opened_object(");
+  assert.match(hold, /os_namespace_identity\(&pinned\)\?\s*!=\s*scope\.parent/);
+  assert.match(hold, /os_namespace_identity\(opened\.target\(\)\)\?\s*!=\s*scope\.parent/);
+  assert.match(hold, /native\.as_os_str\(\)\.encode_wide\(\)\.collect::<Vec<_>>\(\)\s*!=\s*scope\.parent_path/);
+  assert.match(hold, /audit_os_namespace_writers\(opened\.target\(\),\s*&package\)\?/);
+  assert.match(hold, /Ok\(profile\)\s*=>\s*audit_namespace_writers\(&profile,\s*&package\)\?/);
+  assert.match(hold, /os_namespace_identity\(self\.opened\.target\(\)\)\?\s*!=\s*self\.expected/);
+  assert.match(hold, /audit_os_namespace_writers\(self\.opened\.target\(\),\s*&package\)/);
+};
+assertNamespaceOwnerBoundaries(nativeRecovery);
+for (const [from, to] of [
+  ['!current_owner(file, &policy)?', 'false'],
+  ['[&policy.owner, &policy.system, &administrators]', '[&policy.owner, &policy.system, &administrators, package.package_sid()]'],
+  ['same_path_component(component, OsStr::new("Packages"))', 'true'],
+  ['for directory in &opened.chain[parent + 1..]', 'for directory in &opened.chain[parent..]'],
+  ['parent: os_namespace_identity(&opened.chain[parent])?', 'parent: profile_identity(&opened.chain[parent])?'],
+  ['Ok(profile) => audit_namespace_writers(&profile, &package)?', 'Ok(profile) => audit_os_namespace_writers(&profile, &package)?'],
+]) {
+  const unsafeNamespace = nativeRecovery.replace(from, to);
+  assert.notEqual(unsafeNamespace, nativeRecovery, 'namespace negative fixture must mutate source');
+  assert.throws(() => assertNamespaceOwnerBoundaries(unsafeNamespace));
+}
+
 const privateReadWrite = sourceRegion(platformSecurity, "pub fn open_private_read_write_file(", "fn private_object(");
 assert.match(privateReadWrite, /policy\.descriptor\(false\)/);
 assert.match(privateReadWrite, /audit_private_file\(&file\)\?/);
@@ -673,10 +728,17 @@ assert.doesNotMatch(privateReadWrite, /\brepair_object\s*\(|\bSetSecurityInfo\s*
 assert.match(auditLock, /open_private_read_write_file\(&lock_path\)/);
 assert.match(platformSecurity, /private_read_write_file_preserves_identity_and_rejects_existing_extra_aces/);
 const platformSelection = nativeRequired.selections.find((selection) => selection.id === 'platform-security');
-assert.equal(platformSelection.required_count, 37);
+assert.equal(platformSelection.required_count, 39);
 assert.equal(platformSelection.allow_additional_tests, false);
 assert.equal(platformSelection.allow_ignored, false);
 assert.ok(platformSelection.required_names.includes('windows::tests::private_read_write_file_preserves_identity_and_rejects_existing_extra_aces'));
+for (const name of [
+  'native_os_namespace_owner_descriptor_accepts_only_trusted_sids',
+  'native_os_namespace_keeps_default_owner_and_private_identity_strict',
+]) {
+  assert.ok(platformSelection.required_names.includes(`windows::recovery::tests::${name}`));
+  assert.ok(nativeRecovery.includes(`fn ${name}(`));
+}
 
 const privateRepair = sourceRegion(platformSecurity, "fn repair_object(", "#[derive(Debug)]\nstruct DirectoryEntry");
 assert.ok(privateRepair.length > 0);
@@ -703,6 +765,7 @@ assert.match(platformSecurity, /max_duration/);
 assert.match(platformSecurity, /MIGRATION_BUDGET_EXCEEDED/);
 const privateAclVerifier = sourceRegion(platformSecurity, "fn descriptor_is_private(", "fn repair_object(");
 assert.ok(privateAclVerifier.length > 0);
+assert.match(privateAclVerifier, /native_descriptor_is_private\(owner,\s*dacl,\s*control,\s*policy,\s*directory,\s*root\)/);
 assert.match(privateAclVerifier, /dacl\.is_null\(\)/);
 assert.match(privateAclVerifier, /SE_DACL_PROTECTED/);
 assert.match(privateAclVerifier, /AceType != ACCESS_ALLOWED_TYPE/);
