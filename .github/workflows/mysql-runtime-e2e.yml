@@ -7,6 +7,7 @@ on:
       - "src-tauri/src/capabilities/database/**"
       - "src/capabilities/database/**"
       - "src/utils/dbUi.ts"
+      - "scripts/check-mysql-runtime-e2e.sh"
       - ".github/workflows/mysql-runtime-e2e.yml"
   pull_request:
     branches: [master]
@@ -14,6 +15,7 @@ on:
       - "src-tauri/src/capabilities/database/**"
       - "src/capabilities/database/**"
       - "src/utils/dbUi.ts"
+      - "scripts/check-mysql-runtime-e2e.sh"
       - ".github/workflows/mysql-runtime-e2e.yml"
 
 permissions:
@@ -62,7 +64,7 @@ jobs:
       - name: Linux native build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev openssl ca-certificates
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
       - name: Set up Node
@@ -77,8 +79,14 @@ jobs:
       - name: MySQL real driver integration test
         env:
           BROWSEROS_MYSQL_E2E_PASSWORD: browseros-ci-pass
-        run: cargo test --manifest-path src-tauri/Cargo.toml --locked mysql_real_e2e -- --ignored --nocapture
+        run: bash scripts/check-mysql-runtime-e2e.sh drivers
       - name: PostgreSQL real driver binary and bigint round trip
         env:
           BROWSEROS_POSTGRES_E2E_PASSWORD: browseros-postgres-fixture
-        run: cargo test --manifest-path src-tauri/Cargo.toml --locked postgres_real_e2e_bigint_binary_roundtrip -- --ignored --nocapture
+        run: bash scripts/check-mysql-runtime-e2e.sh postgres
+      - name: MySQL trusted TLS and read-only boundaries
+        env:
+          BROWSEROS_MYSQL_TLS_CONTAINER: ${{ job.services.mysql.id }}
+          BROWSEROS_MYSQL_ROOT_PASSWORD: browseros-root-test
+          BROWSEROS_MYSQL_TLS_E2E_PASSWORD: browseros-tls-readonly-fixture
+        run: bash scripts/check-mysql-runtime-e2e.sh tls

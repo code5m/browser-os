@@ -29,6 +29,8 @@ pub mod commands;
 pub mod database;
 #[cfg(test)]
 mod mysql_studio_e2e;
+#[cfg(all(test, target_os = "linux"))]
+mod mysql_tls_e2e;
 pub mod profiles;
 pub mod studio;
 pub mod table_data;

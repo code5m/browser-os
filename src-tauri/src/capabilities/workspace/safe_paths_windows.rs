@@ -492,7 +492,7 @@ fn open_object_with_security_at(
     attributes.RootDirectory = parent.as_raw_handle() as _;
     attributes.ObjectName = &mut object_name;
     attributes.Attributes = 0; // Preserve exact names in case-sensitive directories.
-    attributes.SecurityDescriptor = descriptor;
+    attributes.SecurityDescriptor = descriptor.cast();
     let mut raw = std::ptr::null_mut();
     let mut status_block = IO_STATUS_BLOCK::default();
     let status = unsafe {

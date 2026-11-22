@@ -30,7 +30,7 @@ on:
           - "packaged-resource"
 
 concurrency:
-  group: browseros-full-validation-${{ github.ref }}
+  group: browseros-full-validation-${{ github.ref }}-${{ inputs.native_mode || 'off' }}
   cancel-in-progress: true
 
 jobs:
@@ -220,6 +220,10 @@ jobs:
           node scripts/check-native-semantic-closure.mjs --self-test
           node scripts/check-evidence-lifecycle.mjs --self-test
           node scripts/generate-sbom.mjs --self-test
+      - name: Diagnostic process ownership regression
+        if: needs.impact.outputs.mode == 'full'
+        timeout-minutes: 2
+        run: node scripts/collect-check-diagnostics.mjs --self-test
       - name: Runtime startup checks
         if: needs.impact.outputs.mode == 'full'
         run: npm run check:runtime
@@ -466,6 +470,7 @@ jobs:
           test -f src-tauri/target/release/bundle/deb/mvp-browser-os_0.1.0_amd64.deb
           git rev-parse HEAD > /tmp/browseros-native-source-sha
           sha256sum src-tauri/target/release/bundle/deb/mvp-browser-os_0.1.0_amd64.deb > /tmp/browseros-native-package-sha256
+          cat /tmp/browseros-native-package-sha256
       - name: Upload the verified release Debian package
         if: needs.impact.outputs.native_mode == 'packaged-gui' || needs.impact.outputs.native_mode == 'packaged-resource'
         uses: actions/upload-artifact@v4

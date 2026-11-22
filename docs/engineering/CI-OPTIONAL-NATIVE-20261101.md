@@ -17,6 +17,8 @@ Pull Request 和 master 的 **默认 Full Validation 只进行静态/安全/前�
 
 因为 Rust 测试二进制和 Release 安装包是**不同构建目标/配置**，不能诚实地声称一次编译覆盖两者。需要发行级全套证明时，在相同 Git SHA 分别运行 `rust-tests` 与 `packaged-resource` 两次手动工作流，分别要求通过。**单次只选择一种构建**，不把多个 Cargo 编译堆在同一次 CI 中。
 
+手动工作流的并发组按分支及显式 `native_mode` 区分，因此分别发起的 `rust-tests` 与 `packaged-resource` 可以独立完成。同一分支、同一模式的新运行仍会取消旧运行。没有手动输入的 Push 和 PR 继续共用 `off` 并发组；PR 标签或仓库变量不会改变这个分组。
+
 ## 如何选择
 
 - **手动**：仓库 GitHub Actions → BrowserOS Full Validation → Run workflow → `native_mode` 选择上述模式；默认 `off`。Workflow Dispatch 在该工作流合入默认分支后可用。

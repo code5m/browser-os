@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "selections": [
+    {
+      "id": "linux-lsp-isolation",
+      "package": "mvp-browser-os",
+      "filter": "capabilities::agent::coding_lsp::tests::",
+      "role": "required",
+      "required_count": 5,
+      "required_names": [
+        "capabilities::agent::coding_lsp::tests::diagnostic_approval_result_drives_reviewed_repair",
+        "capabilities::agent::coding_lsp::tests::isolated_cross_file_rust_module_definition",
+        "capabilities::agent::coding_lsp::tests::isolated_rust_analyzer_completion_hover_and_diagnostics",
+        "capabilities::agent::coding_lsp::tests::isolated_rust_analyzer_definition",
+        "capabilities::agent::coding_lsp::tests::sandbox_has_only_readonly_document_and_no_host_or_shell"
+      ],
+      "allow_additional_tests": false,
+      "allow_ignored": false
+    }
+  ]
+}

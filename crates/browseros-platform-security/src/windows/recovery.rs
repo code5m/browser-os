@@ -18,7 +18,7 @@ use windows_sys::Win32::System::JobObjects::{
     CreateJobObjectW, JobObjectBasicAccountingInformation, JobObjectExtendedLimitInformation,
     OpenJobObjectW, QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
     JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-    JOB_OBJECT_ALL_ACCESS, JOB_OBJECT_LIMIT_BREAKAWAY_OK, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    JOB_OBJECT_LIMIT_BREAKAWAY_OK, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK,
 };
 
@@ -26,6 +26,9 @@ const RECORD_ROOT: &str = "sandbox-profile-journal-v1";
 const RECORD_ACCESS: u32 =
     READ_CONTROL | FILE_READ_ATTRIBUTES | FILE_LIST_DIRECTORY | FILE_TRAVERSE;
 const JOB_PREFIX: &str = r"Global\BrowserOS.Coding.Job.v1.";
+// windows-sys 0.60.2 omits this SDK mask from its JobObjects bindings.
+// winnt.h defines STANDARD_RIGHTS_REQUIRED | SYNCHRONIZE | 0x3F.
+const JOB_OBJECT_ALL_ACCESS: u32 = 0x001f_003f;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NativeProfileIdentity {

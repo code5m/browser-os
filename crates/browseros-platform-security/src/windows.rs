@@ -589,7 +589,7 @@ fn open_relative_with_share(
     // Names from handle enumeration must preserve exact spelling, including
     // case-sensitive NTFS directories. Caller paths are also resolved exactly.
     attributes.Attributes = 0;
-    attributes.SecurityDescriptor = descriptor;
+    attributes.SecurityDescriptor = descriptor.cast();
     let mut status_block: IO_STATUS_BLOCK = unsafe { std::mem::zeroed() };
     let mut raw = ptr::null_mut();
     let status = unsafe {

@@ -45,21 +45,74 @@ const base=process.env.CODING_UI_URL||'http://127.0.0.1:1433';
   await page.waitForFunction(()=>typeof window.fixture.finishKnowledge==='function');await page.getByRole('button',{name:'技能',exact:true}).click();await page.getByText('fixture-skill',{exact:true}).waitFor();
   await page.evaluate(()=>window.fixture.finishKnowledge());await page.waitForTimeout(100);
   assert.equal(await page.getByText('stale knowledge',{exact:true}).count(),0,'late knowledge result must not replace the skills panel');
-  await page.evaluate(()=>{const original=window.fixture.bridge.codingService;window.fixture.mcpRuns=0;window.fixture.bridge.codingService=async request=>request.action==='mcp_tools'?(window.fixture.mcpRuns++,new Promise(resolve=>{window.fixture.finishMcp=()=>resolve({result:{tools:[]}})})):original(request)});
-  await page.getByRole('button',{name:'MCP',exact:true}).click();await page.getByLabel('MCP 可执行文件').fill('/usr/bin/fixture');await page.getByText('批准本次启动服务 / 工具调用',{exact:true}).click();await page.getByRole('button',{name:'启动并列出工具',exact:true}).click();
+  await page.evaluate(()=>{
+    const original=window.fixture.bridge.codingService;
+    window.fixture.mcpRuns=0;window.fixture.mcpReviews=[];window.fixture.mcpRequests=[];
+    window.fixture.bridge.codingService=async request=>{
+      if(request.action==='mcp_review'){
+        window.fixture.mcpReviews.push(structuredClone(request));
+        const reference='ai:1234567890abcdef12345678:11111111-1111-4111-8111-111111111111';
+        const review={action:request.review_action,command:request.server.command,args:request.server.args,
+          workspace:request.root,cwd:request.root,isolation:'user_process',source:'Manual fixture configuration',
+          environment_names:['FIXTURE_MODE'],credential_refs:[reference],
+          credentials:[{environment:'FIXTURE_TOKEN',name:'Fixture model',endpoint:'https://fixture.invalid/v1',reference}],
+          tool:null,arguments:null,timeout_seconds:20,revision:String(window.fixture.mcpReviews.length).padStart(64,'0')};
+        window.fixture.latestMcpReview=structuredClone(review);return review;
+      }
+      if(request.action==='mcp_tools'){
+        window.fixture.mcpRequests.push(structuredClone(request));window.fixture.mcpRuns++;
+        return new Promise(resolve=>{window.fixture.finishMcp=()=>resolve({result:{tools:[]}})});
+      }
+      return original(request);
+    };
+  });
+  await page.getByRole('button',{name:'MCP',exact:true}).click();await page.getByLabel('MCP 可执行文件').fill('/usr/bin/fixture');
+  const mcpApproval=page.getByRole('checkbox',{name:'我已检查并批准本次启动及工具参数',exact:true});
+  const mcpScopeApproval=page.getByRole('checkbox',{name:'我允许本次进程取得以上凭据和配置环境变量',exact:true});
+  const mcpLaunch=page.getByRole('button',{name:'启动并列出工具',exact:true});
+  const mcpReview=page.getByRole('button',{name:'审阅列出工具的执行范围',exact:true});
+  assert.equal(await mcpApproval.isDisabled(),true,'execution approval requires a native review');
+  assert.equal(await mcpLaunch.isDisabled(),true);
+  await mcpReview.click();await page.locator('.mcp-execution-review').waitFor();
+  assert.match(await page.locator('.mcp-execution-review').innerText(),/\/usr\/bin\/fixture/);
+  await mcpApproval.check();
+  assert.equal(await mcpLaunch.isDisabled(),true,'parameter approval cannot grant credential or environment access');
+  await mcpScopeApproval.check();assert.equal(await mcpLaunch.isEnabled(),true);
+  await page.getByLabel('MCP 启动参数').fill('["--reviewed"]');
+  await page.locator('.mcp-execution-review').waitFor({state:'hidden'});
+  assert.equal(await mcpApproval.isChecked(),false,'changed arguments revoke approval');
+  assert.equal(await mcpLaunch.isDisabled(),true);assert.equal(await page.evaluate(()=>window.fixture.mcpRuns),0);
+  await mcpReview.click();await page.locator('.mcp-execution-review').waitFor();
+  assert.equal(await mcpApproval.isChecked(),false);assert.equal(await mcpScopeApproval.isChecked(),false);
+  await mcpApproval.check();await mcpScopeApproval.check();await mcpLaunch.click();
   await page.waitForFunction(()=>typeof window.fixture.finishMcp==='function');
+  const mcpExecution=await page.evaluate(()=>({request:window.fixture.mcpRequests[0],review:window.fixture.latestMcpReview,reviews:window.fixture.mcpReviews}));
+  assert.equal(mcpExecution.reviews.length,2);
+  assert.equal(mcpExecution.reviews[1].review_action,'mcp_tools');
+  assert.deepEqual(mcpExecution.request,{root:'/fixture',action:'mcp_tools',server:{command:'/usr/bin/fixture',args:['--reviewed']},
+    tool:'',arguments:{},approved:true,review_revision:mcpExecution.review.revision,
+    approved_credential_refs:mcpExecution.review.credential_refs,approved_environment_names:['FIXTURE_MODE']},
+    'execution must carry the current native revision and exactly the separately approved scopes');
   await page.getByLabel('项目目录',{exact:true}).fill('/other-project');await page.getByRole('button',{name:'打开项目',exact:true}).click();
   await page.getByRole('status').filter({hasText:'MCP 调用进行中，请等待完成后切换项目'}).waitFor();
   await page.getByLabel('项目目录',{exact:true}).fill('/fixture');
   await page.getByText('会话恢复',{exact:true}).click();await page.getByLabel('恢复会话 ID').fill('other-session');await page.getByRole('button',{name:'恢复',exact:true}).click();
   await page.getByRole('status').filter({hasText:'MCP 调用进行中，请等待完成后恢复其他会话'}).waitFor();
-  assert.equal(await page.getByRole('button',{name:'启动并列出工具',exact:true}).isDisabled(),true,'an in-flight MCP request must prevent a second launch');
-  assert.equal(await page.getByRole('checkbox',{name:'批准本次启动服务 / 工具调用'}).isDisabled(),true,'approval cannot be reused while a request is running');
+  assert.equal(await mcpLaunch.isDisabled(),true,'an in-flight MCP request must prevent a second launch');
+  assert.equal(await mcpApproval.isDisabled(),true,'approval cannot be reused while a request is running');
+  assert.equal(await mcpScopeApproval.isDisabled(),true,'credential scope cannot be changed while a request is running');
   await page.evaluate(()=>{window.fixture.show.value=false});await page.getByText('other view',{exact:true}).waitFor();await page.evaluate(()=>{window.fixture.show.value=true});
   await page.getByRole('status').filter({hasText:'MCP 调用仍在执行'}).waitFor();await page.getByRole('button',{name:'MCP',exact:true}).click();
-  assert.equal(await page.getByRole('checkbox',{name:'批准本次启动服务 / 工具调用'}).isDisabled(),true,'remount must retain the in-flight lock');
-  await page.evaluate(()=>window.fixture.finishMcp());await page.waitForFunction(()=>{const label=[...document.querySelectorAll('label')].find(item=>item.textContent.includes('批准本次启动服务 / 工具调用'));return label?.querySelector('input')?.disabled===false;});
-  assert.equal(await page.getByRole('checkbox',{name:'批准本次启动服务 / 工具调用'}).isChecked(),false,'completion must require a fresh approval');assert.equal(await page.evaluate(()=>window.fixture.mcpRuns),1);
+  assert.equal(await mcpApproval.isDisabled(),true,'remount must retain the in-flight lock');
+  await page.evaluate(()=>window.fixture.finishMcp());
+  await page.waitForFunction(()=>[...document.querySelectorAll('button')].some(button=>button.textContent.trim()==='审阅列出工具的执行范围'&&!button.disabled));
+  assert.equal(await mcpApproval.isChecked(),false,'completion must require a fresh approval');
+  assert.equal(await mcpApproval.isDisabled(),true,'a consumed review cannot authorize another launch');
+  assert.equal(await mcpLaunch.isDisabled(),true);assert.equal(await page.evaluate(()=>window.fixture.mcpRuns),1);
+  await page.getByLabel('MCP 可执行文件').fill('/usr/bin/fixture');await mcpReview.click();await page.locator('.mcp-execution-review').waitFor();
+  assert.equal(await mcpApproval.isEnabled(),true,'completion releases the lock for a new explicit review');
+  assert.equal(await mcpApproval.isChecked(),false);assert.equal(await mcpScopeApproval.isChecked(),false);
+  assert.equal(await mcpLaunch.isDisabled(),true);assert.equal(await page.evaluate(()=>window.fixture.mcpRuns),1);
   await page.getByRole('button',{name:'文件',exact:true}).click();
   await page.getByLabel('新文件相对路径').fill('empty-new.ts');await page.getByRole('button',{name:'新建',exact:true}).click();
   await page.getByRole('button',{name:'empty-new.ts ●',exact:true}).waitFor();
@@ -191,6 +244,13 @@ const base=process.env.CODING_UI_URL||'http://127.0.0.1:1433';
     const state={session_id:'fixture-session',root:'/fixture',messages:[],changes:[],tool_events:[],status:'approval_required',operations:[{id:'operation-fixture',kind:'mcp',input:{server_id:'fixture-server',tool:'fixture-read',arguments:{query:'test'}},status:'pending'}]};let chats=0,failRecovery=true;
     window.fixture.bridge.codingService=async request=>{
       if(request.action==='chat'){window.fixture.calls.push(request);chats++;if(chats>1){state.status='complete';state.messages=[{role:'assistant',content:'Continued after reviewed operation'}];}return structuredClone(state);}
+      if(request.action==='mcp_review'){
+        window.fixture.calls.push(structuredClone(request));
+        const review={action:'mcp_call',command:'/usr/bin/fixture',args:['--operation'],workspace:request.root,cwd:request.root,
+          isolation:'user_process',source:'Fixture saved MCP server',environment_names:['FIXTURE_MODE'],credential_refs:[],credentials:[],
+          tool:request.tool,arguments:request.arguments,timeout_seconds:20,revision:'f'.repeat(64)};
+        window.fixture.operationReview=structuredClone(review);return review;
+      }
       if(request.action==='mcp_call'){window.fixture.calls.push(request);return {result:{content:[{type:'text',text:'fixture MCP result'}]}};}
       if(request.action==='claim_operation'){window.fixture.calls.push(request);state.operations[0].status='executing';return structuredClone(state);}
       if(request.action==='resolve_operation'){window.fixture.calls.push(request);state.operations[0].status=request.status;state.status='ready';throw Error('fixture response lost after saving');}
@@ -207,8 +267,19 @@ const base=process.env.CODING_UI_URL||'http://127.0.0.1:1433';
   assert.equal(await review.count(),1,'pending review must remain visible when session switching is rejected');
   assert.equal(await page.evaluate(()=>window.fixture.calls.filter(r=>r.action==='mcp_call').length),0);
   assert.equal(await review.getByRole('button',{name:'执行本次 MCP 请求',exact:true}).isDisabled(),true);
-  await review.getByRole('checkbox').check();await review.getByRole('button',{name:'执行本次 MCP 请求',exact:true}).click();
+  await review.getByRole('button',{name:'读取本次执行范围',exact:true}).click();
+  await review.locator('.mcp-execution-review').waitFor();
+  await review.getByRole('checkbox',{name:'我批准这一次工作区操作',exact:true}).check();
+  assert.equal(await review.getByRole('button',{name:'执行本次 MCP 请求',exact:true}).isDisabled(),true,'operation approval must not grant configured environment access');
+  await review.getByRole('checkbox',{name:'我允许本次进程取得以上凭据和配置环境变量',exact:true}).check();
+  await review.getByRole('button',{name:'执行本次 MCP 请求',exact:true}).click();
   await review.getByLabel('待记录的操作结果',{exact:true}).waitFor();
+  const operationExecution=await page.evaluate(()=>({calls:window.fixture.calls.filter(request=>['mcp_review','claim_operation','mcp_call'].includes(request.action)),review:window.fixture.operationReview}));
+  assert.deepEqual(operationExecution.calls.map(request=>request.action),['mcp_review','claim_operation','mcp_call']);
+  assert.deepEqual(operationExecution.calls[2],{root:'/fixture',action:'mcp_call',approved:true,server_id:'fixture-server',
+    tool:'fixture-read',arguments:{query:'test'},review_revision:operationExecution.review.revision,
+    approved_credential_refs:[],approved_environment_names:['FIXTURE_MODE']},
+    'Workbench operation review must bind execution to the reviewed saved server and exact environment scope');
   assert.equal(await review.getByRole('button',{name:'执行本次 MCP 请求',exact:true}).isDisabled(),true);
   assert.equal(await page.evaluate(()=>window.fixture.calls.filter(r=>r.action==='resolve_operation').length),0);
   await review.getByRole('button',{name:'记录结果供智能体续跑',exact:true}).click();await review.waitFor({state:'detached'});

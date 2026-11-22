@@ -420,6 +420,7 @@ jobs:
               throw "NSIS_HASH_VERIFICATION_FAILED: $($installer.Name)"
             }
           }
+          $lines | Write-Output
       - name: Upload NSIS experimental installer and hashes
         if: ${{ always() && !cancelled() && steps.nsis_hashes.outcome == 'success' }}
         uses: actions/upload-artifact@v4
@@ -456,6 +457,30 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev pkg-config
+      - name: Provision official Rust LSP and namespace sandbox
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup component add rust-analyzer --toolchain stable
+          rustup run stable rust-analyzer --version
+          # Jammy's 0.6.1 lacks the required --disable-userns option.
+          # Pin the upstream release asset and verify it before building.
+          sudo apt-get install -y libcap-dev libselinux1-dev meson ninja-build
+          bwrap_archive="$RUNNER_TEMP/bubblewrap-0.13.1.tar.xz"
+          bwrap_source="$(mktemp -d "$RUNNER_TEMP/browseros-bwrap.XXXXXX")"
+          curl --fail --location --proto '=https' --tlsv1.2 --retry 3 \
+            --output "$bwrap_archive" \
+            https://github.com/containers/bubblewrap/releases/download/v0.13.1/bubblewrap-0.13.1.tar.xz
+          printf '%s  %s\n' \
+            '0e85c8702248b8dd64144f594147553650cdd0e4c951690345faace79c217c4d' \
+            "$bwrap_archive" | sha256sum --check --strict
+          tar --extract --xz --file="$bwrap_archive" --directory="$bwrap_source" --strip-components=1
+          meson setup "$bwrap_source/build" "$bwrap_source" --buildtype=release --prefix=/usr \
+            -Dman=disabled -Dbash_completion=disabled -Dzsh_completion=disabled -Dtests=false
+          meson compile -C "$bwrap_source/build" bwrap
+          sudo install -m 0755 "$bwrap_source/build/bwrap" /usr/bin/bwrap
+          /usr/bin/bwrap --version
       - name: Linux native compile (X11 GTK/WebKit regression)
         run: cargo check --manifest-path src-tauri/Cargo.toml --locked
       - name: Linux Grid IPC framing unit tests
@@ -491,6 +516,24 @@ jobs:
             --listing "$RUNNER_TEMP/linux-libraries-list.log" \
             --output "$RUNNER_TEMP/linux-libraries.log" \
             --evidence "$RUNNER_TEMP/linux-libraries-required-results.json"
+      - name: Linux real Rust LSP and bubblewrap isolation regression
+        timeout-minutes: 10
+        shell: bash
+        env:
+          BROWSEROS_SOURCE_SHA: ${{ needs.source.outputs.sha }}
+        run: |
+          set -euo pipefail
+          lsp_args=(--manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os
+            capabilities::agent::coding_lsp::tests::)
+          cargo test "${lsp_args[@]}" -- --ignored --list --format terse --color never 2>&1 | tee "$RUNNER_TEMP/linux-lsp-list.log"
+          cargo test "${lsp_args[@]}" -- --ignored --test-threads=1 --show-output --color never 2>&1 | tee "$RUNNER_TEMP/linux-lsp.log"
+          python3 scripts/check-native-required-results.py \
+            --manifest scripts/linux-native-required-tests.json \
+            --selection linux-lsp-isolation \
+            --listing "$RUNNER_TEMP/linux-lsp-list.log" \
+            --output "$RUNNER_TEMP/linux-lsp.log" \
+            --evidence "$RUNNER_TEMP/linux-lsp-required-results.json" \
+            --failure-prefix LINUX_REQUIRED_LSP_NOT_EXECUTED
       - name: Linux complete native regression (GUI remains NOT_RUN)
         timeout-minutes: 40
         shell: bash
@@ -525,5 +568,8 @@ jobs:
             ${{ runner.temp }}/linux-libraries.log
             ${{ runner.temp }}/linux-libraries-list.log
             ${{ runner.temp }}/linux-libraries-required-results.json
+            ${{ runner.temp }}/linux-lsp.log
+            ${{ runner.temp }}/linux-lsp-list.log
+            ${{ runner.temp }}/linux-lsp-required-results.json
           if-no-files-found: warn
           retention-days: 7

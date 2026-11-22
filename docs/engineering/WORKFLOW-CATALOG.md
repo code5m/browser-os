@@ -23,7 +23,7 @@ Developer Feedback concurrency is scoped by branch and by `quick` or `native` mo
 
 Full Validation provides off (default), rust-tests, packaged-gui, and packaged-resource modes, selected by manual input, one PR label, or the CI_NATIVE_MODE repository variable. The current source frontend is built ONCE into a SHA-bound artifact and reused in static and optional native jobs. The same-run master size audit builds a different source commit, which is an approved regression baseline, not a duplicate of the current source.
 
-Skipping Rust or GUI is reported as SKIPPED, not PASS. For release evidence, explicitly run rust-tests and packaged-resource at the same SHA in two separately requested workflows. Details: [Optional Native CI and Build Reuse](./CI-OPTIONAL-NATIVE-20261101.md).
+Skipping Rust or GUI is reported as SKIPPED, not PASS. For release evidence, explicitly run rust-tests and packaged-resource at the same SHA in two separately requested workflows. Full Validation concurrency is scoped by branch and requested manual native_mode, so these separate modes can complete independently. A newer run still supersedes an older run in the same branch/mode; push and PR runs without a manual input retain the shared off group. Details: [Optional Native CI and Build Reuse](./CI-OPTIONAL-NATIVE-20261101.md).
 
 ## Evidence
 
