@@ -407,8 +407,8 @@ fn runtime() -> Result<SelectedRuntime, String> {
 fn runtime_with_budget(operation: &OperationBudget) -> Result<SelectedRuntime, String> {
     check_operation(operation)?;
     let compiler = installed_compiler_with_budget(operation)?;
-    let rustc = PinnedReadFile::open(&compiler, operation)
-        .map_err(|_| "LSP_RUSTC_CFG_PEER_UNSAFE")?;
+    let rustc =
+        PinnedReadFile::open(&compiler, operation).map_err(|_| "LSP_RUSTC_CFG_PEER_UNSAFE")?;
     let analyzer = runtime_bundle::open(operation)?;
     check_operation(operation)?;
     Ok(SelectedRuntime { analyzer, rustc })

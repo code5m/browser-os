@@ -35,6 +35,7 @@ function cargoComponents(text) {
     return {
       type: "library", name, version,
       purl: "pkg:cargo/" + encodeURIComponent(name) + "@" + version,
+      "bom-ref": "urn:browseros:cargo:" + sha256(JSON.stringify([name, version, source || "path-or-workspace"])),
       properties: [{ name: "browseros:cargo-source", value: source || "path-or-workspace" }],
       ...(checksum ? { hashes: [{ alg: "SHA-256", content: checksum }] } : {}),
     };
@@ -101,7 +102,7 @@ function readSidecar(root) {
 
 function bom(name, components, application = { type: "application", name: "BrowserOS", version: "0.1.0" }) {
   const unique = new Map();
-  for (const c of components) unique.set(c.purl, c);
+  for (const c of components) unique.set(c["bom-ref"] || c.purl, c);
   return {
     bomFormat: "CycloneDX",
     specVersion: "1.6",
@@ -111,7 +112,8 @@ function bom(name, components, application = { type: "application", name: "Brows
       tools: [{ vendor: "BrowserOS", name }],
       properties: [{ name: "browseros:inventory-scope", value: "Lockfile source inventory across targets; not compiled reachability or binary attestation" }],
     },
-    components: [...unique.values()].sort((a, b) => a.purl.localeCompare(b.purl)),
+    components: [...unique.values()].sort((a, b) => a.purl.localeCompare(b.purl)
+      || (a["bom-ref"] || a.purl).localeCompare(b["bom-ref"] || b.purl)),
   };
 }
 
@@ -121,6 +123,22 @@ if (process.argv.includes("--self-test")) {
   assert.equal(n.length, 1);
   assert.equal(c.length, 1);
   assert.equal(bom("test", [...n, ...c]).components.length, 2);
+
+  // A workspace crate can share a name/version with an independent registry
+  // crate. Preserve both origins and never attach its archive hash to local code.
+  const sameVersion = cargoComponents('\n[[package]]\nname = "la-arena"\nversion = "0.3.1"\n'
+    + '\n[[package]]\nname = "la-arena"\nversion = "0.3.1"\n'
+    + 'source = "registry+https://github.com/rust-lang/crates.io-index"\n'
+    + 'checksum = "' + "a".repeat(64) + '"\n');
+  const distinctOrigins = bom("test", sameVersion).components;
+  assert.equal(distinctOrigins.length, 2);
+  assert.equal(new Set(distinctOrigins.map(component => component["bom-ref"])).size, 2);
+  assert.equal(new Set(distinctOrigins.map(component => component.purl)).size, 1);
+  const localOrigin = distinctOrigins.find(component => component.properties[0].value === "path-or-workspace");
+  const registryOrigin = distinctOrigins.find(component => component.properties[0].value.startsWith("registry+"));
+  assert.equal(localOrigin.hashes, undefined);
+  assert.equal(registryOrigin.hashes[0].content, "a".repeat(64));
+  assert.equal(bom("test", [...sameVersion, ...sameVersion]).components.length, 2);
   const lock = Buffer.from("checked-in-lock\n");
   const patch = Buffer.from("checked-in-patch\n");
   const source = {
@@ -149,7 +167,7 @@ if (process.argv.includes("--self-test")) {
   assert.equal(local[0].hashes, undefined);
   assert.ok(local[0].properties.some(property => property.name === "browseros:modified" && property.value === "true"));
   assert.ok(local[0].properties.some(property => property.name === "browseros:upstream-advisory"));
-  console.log("SBOM_SELF_TEST=PASS sidecar_negative=5 glib_origin=visible");
+  console.log("SBOM_SELF_TEST=PASS sidecar_negative=5 glib_origin=visible cargo_distinct_origins=2");
   process.exit(0);
 }
 

@@ -186,8 +186,8 @@ mod tests {
 
     impl Fixture {
         fn new() -> Self {
-            let directory = std::env::temp_dir()
-                .join(format!("browseros-lsp-bundle-{}", uuid::Uuid::new_v4()));
+            let directory =
+                std::env::temp_dir().join(format!("browseros-lsp-bundle-{}", uuid::Uuid::new_v4()));
             fs::create_dir(&directory).unwrap();
             let bytes = b"non-executable bundled runtime fixture";
             let source: Value = serde_json::from_str(SOURCE_CONTRACT).unwrap();

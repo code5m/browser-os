@@ -2036,7 +2036,10 @@ mod tests {
         // its recorded leaf-to-root paths before asking the same bounded
         // production cleanup owner to finish; never relax its depth policy.
         drop(fixture);
-        assert!(!root.exists(), "the over-depth fixture must be fully retracted");
+        assert!(
+            !root.exists(),
+            "the over-depth fixture must be fully retracted"
+        );
         let budget = profile.budget().clone();
         drop(profile);
         wait_cleanup(&budget);
@@ -2272,7 +2275,10 @@ mod tests {
             std::fs::read(&executable).unwrap()
         );
         assert!(!staged.parent().unwrap().join("unreviewed.dll").exists());
-        assert_eq!(std::fs::read_dir(staged.parent().unwrap()).unwrap().count(), 1);
+        assert_eq!(
+            std::fs::read_dir(staged.parent().unwrap()).unwrap().count(),
+            1
+        );
 
         // The existing runtime path still stages selected-runtime DLL peers.
         // Neither branch executes this deliberately synthetic DLL.
@@ -2385,7 +2391,10 @@ try {
             matches!(stderr.trim(), "list:EACCES" | "list:EPERM"),
             "foreign list/read probe failed for an unrelated reason: {stderr:?}"
         );
-        assert!(stdout.is_empty(), "another package exposed snapshot contents");
+        assert!(
+            stdout.is_empty(),
+            "another package exposed snapshot contents"
+        );
         drop(other_retained);
         wait_cleanup(&other_budget);
         let budget = retained.profile().budget().clone();

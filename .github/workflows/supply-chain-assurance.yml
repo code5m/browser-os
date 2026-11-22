@@ -119,63 +119,162 @@ jobs:
           echo "DEPENDENCY_REVIEW_RESULT=NON_BLOCKING_REPOSITORY_SUPPORT_GATED"
           echo "Dependency Review requires GitHub Dependency Graph support; npm audit, cargo audit and SBOM gates remain authoritative."
 
-  # Temporary review-only lock generation. It is removed when the generated
-  # candidate is imported; the regular audit jobs keep the committed lock.
-  maintenance-lock-candidate:
+  maintenance-lock-transport:
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/fix/windows-owner-integrity-complete-20261122'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Resolve the reviewed compatible maintenance candidate
+      - name: Retrieve the immutable resolver artifact
+        uses: actions/download-artifact@v4
+        with:
+          artifact-ids: 14762283278
+          repository: code5m/browser-os
+          run-id: 45044400425
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: maintenance-lock-candidate
+      - name: Verify and expose exact candidate bytes for review
         shell: bash
         run: |
-          set -euo pipefail
-          mkdir -p artifacts/maintenance-lock-candidate
-          printf '%s\n' "$GITHUB_SHA" > artifacts/maintenance-lock-candidate/source-sha.txt
           python3 - <<'PY'
-          from pathlib import Path
-          manifest = Path("src-tauri/vendor/portable-pty/Cargo.toml")
-          text = manifest.read_text(encoding="utf-8")
-          before = 'nix = {version="0.25", features=["term"]}'
-          after = 'nix = { version = "0.25", default-features = false, features = ["fs", "term"] }'
-          if text.count(before) != 1:
-              raise SystemExit("MAINTENANCE_NIX_SOURCE_MISMATCH")
-          manifest.write_text(text.replace(before, after), encoding="utf-8")
-          PY
-          cargo update --manifest-path src-tauri/Cargo.toml -p tauri-utils --precise 2.10.4 2>&1 | tee artifacts/maintenance-lock-candidate/cargo-update.log
-          cargo metadata --locked --format-version=1 --manifest-path src-tauri/Cargo.toml > artifacts/maintenance-lock-candidate/metadata.json
-          python3 - <<'PY'
+          import base64
+          import hashlib
           import json
           from pathlib import Path
-          folder = Path("artifacts/maintenance-lock-candidate")
+
+          folder = Path("maintenance-lock-candidate")
+          expected_source = "8dac38d64ef4cffa1293dceb9aaeb8935c0a8451"
+          source = (folder / "source-sha.txt").read_text().strip()
+          if source != expected_source:
+              raise SystemExit("LOCK_TRANSPORT_SOURCE_MISMATCH")
+          expected_files = {"Cargo.lock", "portable-pty.Cargo.toml"}
+          seen = set()
+          for line in (folder / "SHA256SUMS").read_text().splitlines():
+              digest, path = line.split(None, 1)
+              name = Path(path).name
+              if name not in expected_files or name in seen:
+                  raise SystemExit("LOCK_TRANSPORT_CHECKSUM_SET_MISMATCH")
+              seen.add(name)
+              if hashlib.sha256((folder / name).read_bytes()).hexdigest() != digest:
+                  raise SystemExit("LOCK_TRANSPORT_CHECKSUM_MISMATCH")
+          if seen != expected_files:
+              raise SystemExit("LOCK_TRANSPORT_CHECKSUM_INCOMPLETE")
           metadata = json.loads((folder / "metadata.json").read_text())
           packages = metadata["packages"]
+          glib = [p for p in packages if p["name"] == "glib"]
+          if len(glib) != 1 or glib[0]["version"] != "0.18.5" or glib[0]["source"] is not None:
+              raise SystemExit("LOCK_TRANSPORT_GLIB_SOURCE_MISMATCH")
+          if not glib[0]["manifest_path"].replace("\\", "/").endswith("/src-tauri/vendor/glib-0.18.5/Cargo.toml"):
+              raise SystemExit("LOCK_TRANSPORT_GLIB_PATH_MISMATCH")
+          if glib[0]["id"] in metadata["workspace_members"]:
+              raise SystemExit("LOCK_TRANSPORT_GLIB_WORKSPACE_MISMATCH")
+          node_ids = {n["id"] for n in metadata["resolve"]["nodes"]}
+          if glib[0]["id"] not in node_ids:
+              raise SystemExit("LOCK_TRANSPORT_GLIB_NOT_RESOLVED")
           selected = [p for p in packages if p["name"] == "tauri-utils"]
           if len(selected) != 1 or selected[0]["version"] != "2.10.4":
-              raise SystemExit("MAINTENANCE_TAURI_UTILS_NOT_SELECTED")
+              raise SystemExit("LOCK_TRANSPORT_TAURI_UTILS_MISMATCH")
           retired = {"pin-utils", "unic-char-property", "unic-char-range", "unic-common", "unic-ucd-ident", "unic-ucd-version"}
-          remaining = sorted({p["name"] for p in packages} & retired)
-          if remaining:
-              raise SystemExit("MAINTENANCE_DEPENDENCIES_RETAINED:" + ",".join(remaining))
+          if {p["name"] for p in packages} & retired:
+              raise SystemExit("LOCK_TRANSPORT_RETIRED_DEPENDENCY")
           if any(p["name"] == "memoffset" and p["version"] == "0.6.5" for p in packages):
-              raise SystemExit("MAINTENANCE_UNUSED_NIX_MEMOFFSET_RETAINED")
-          (folder / "status.txt").write_text(
-              "LOCK_CANDIDATE_ONLY; compiler/runtime/GUI acceptance NOT_RUN\n",
-              encoding="utf-8",
-          )
+              raise SystemExit("LOCK_TRANSPORT_UNUSED_NIX_MEMOFFSET")
+          print("LOCK_TRANSPORT_METADATA " + json.dumps({
+              "source": source,
+              "metadata_sha256": hashlib.sha256((folder / "metadata.json").read_bytes()).hexdigest(),
+              "package_count": len(packages),
+              "glib": {"version": glib[0]["version"], "source": glib[0]["source"], "resolved": True},
+              "tauri_utils": selected[0]["version"],
+              "retired_absent": sorted(retired),
+          }, sort_keys=True))
+          for name in sorted(expected_files):
+              data = (folder / name).read_bytes()
+              data.decode("utf-8")
+              encoded = base64.b64encode(data).decode("ascii")
+              chunks = [encoded[i:i + 4096] for i in range(0, len(encoded), 4096)]
+              identity = {
+                  "file": name,
+                  "bytes": len(data),
+                  "sha256": hashlib.sha256(data).hexdigest(),
+                  "git_blob": hashlib.sha1(b"blob " + str(len(data)).encode("ascii") + b"\0" + data).hexdigest(),
+                  "chunks": len(chunks),
+              }
+              print("BROWSEROS_TRANSPORT_START " + json.dumps(identity, sort_keys=True))
+              for index, chunk in enumerate(chunks):
+                  print(f"BROWSEROS_TRANSPORT_CHUNK {name} {index} {chunk}")
+              print("BROWSEROS_TRANSPORT_END " + name)
+          print("LOCK_CANDIDATE_TRANSPORT=PASS; compiler/runtime/GUI acceptance NOT_RUN")
           PY
-          cp src-tauri/Cargo.lock artifacts/maintenance-lock-candidate/Cargo.lock
-          cp src-tauri/vendor/portable-pty/Cargo.toml artifacts/maintenance-lock-candidate/portable-pty.Cargo.toml
-          git diff -- src-tauri/Cargo.lock src-tauri/vendor/portable-pty/Cargo.toml > artifacts/maintenance-lock-candidate/candidate.diff
-          sha256sum artifacts/maintenance-lock-candidate/Cargo.lock artifacts/maintenance-lock-candidate/portable-pty.Cargo.toml > artifacts/maintenance-lock-candidate/SHA256SUMS
-          echo 'LOCK_CANDIDATE_ONLY; final committed lock still requires same-SHA native and package validation' >> "$GITHUB_STEP_SUMMARY"
-      - name: Preserve the candidate and actual resolver evidence
+
+  formatter-patch-transport:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/fix/windows-owner-integrity-complete-20261122'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Retrieve the exact formatter evidence
+        uses: actions/download-artifact@v4
+        with:
+          artifact-ids: 14763028726
+          repository: code5m/browser-os
+          run-id: 45044572596
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: formatter-evidence
+      - name: Verify and expose the formatter patch
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import base64
+          import hashlib
+          import json
+          from pathlib import Path
+          folder = Path("formatter-evidence")
+          if (folder / "SOURCE_COMMIT").read_text().strip() != "8dac38d64ef4cffa1293dceb9aaeb8935c0a8451":
+              raise SystemExit("FORMAT_TRANSPORT_SOURCE_MISMATCH")
+          status = (folder / "formatter-status.txt").read_text()
+          expected = "main_formatter_exit=0\nplugin_formatter_exit=0\noriginal_format_check=FAILED\n"
+          if status != expected:
+              raise SystemExit("FORMAT_TRANSPORT_FORMATTER_FAILURE")
+          name = "formatter.patch"
+          data = (folder / name).read_bytes()
+          data.decode("utf-8")
+          encoded = base64.b64encode(data).decode("ascii")
+          chunks = [encoded[i:i + 4096] for i in range(0, len(encoded), 4096)]
+          print("BROWSEROS_TRANSPORT_START " + json.dumps({
+              "file": name, "bytes": len(data), "chunks": len(chunks),
+              "sha256": hashlib.sha256(data).hexdigest(),
+              "git_blob": hashlib.sha1(b"blob " + str(len(data)).encode("ascii") + b"\0" + data).hexdigest(),
+          }, sort_keys=True))
+          for index, chunk in enumerate(chunks):
+              print(f"BROWSEROS_TRANSPORT_CHUNK {name} {index} {chunk}")
+          print("BROWSEROS_TRANSPORT_END " + name)
+          print("FORMAT_TRANSPORT=PASS; original format gate remains FAILED")
+          PY
+
+  rust-analyzer-security-candidate:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/fix/windows-owner-integrity-complete-20261122'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.100.0
+      - name: Install the unchanged advisory scanner
+        run: cargo install cargo-audit --locked
+      - name: Resolve and check the pinned rust-analyzer security candidate
+        run: python3 scripts/resolve-windows-lsp-security-candidate.py
+      - name: Preserve resolver and compatibility evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: maintenance-lock-candidate-${{ github.sha }}
-          path: artifacts/maintenance-lock-candidate/
+          name: rust-analyzer-security-candidate-${{ github.sha }}
+          path: artifacts/rust-analyzer-security-candidate/
           if-no-files-found: error
           retention-days: 7
