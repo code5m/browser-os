@@ -24,15 +24,21 @@ pub fn push_artifacts(app: &AppHandle, job: &SyncJob) -> Result<(), String> {
             .join("repos")
             .join(&repo.id);
         fs::create_dir_all(&base).map_err(|e| e.to_string())?;
-    
+
         let repository = if base.join(".git").exists() {
             Repository::open(&base).map_err(|e| e.to_string())?
         } else {
             clone_repo(&repo.remote_url, &base, &repo.username, &token)?
         };
-    
-        pull(&repository, &repo.branch, &repo.username, &token, &repo.remote_url)?;
-    
+
+        pull(
+            &repository,
+            &repo.branch,
+            &repo.username,
+            &token,
+            &repo.remote_url,
+        )?;
+
         let arts: Vec<Artifact> = workspace::load_artifacts(app)
             .into_iter()
             .filter(|a| job.artifact_ids.contains(&a.id))
@@ -40,7 +46,7 @@ pub fn push_artifacts(app: &AppHandle, job: &SyncJob) -> Result<(), String> {
         if arts.is_empty() {
             return Err("没有可同步的成果".into());
         }
-    
+
         for art in &arts {
             let dir = base.join("artifacts");
             fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -53,12 +59,18 @@ pub fn push_artifacts(app: &AppHandle, job: &SyncJob) -> Result<(), String> {
                 fs::write(&html_path, render_html(art)).map_err(|e| e.to_string())?;
             }
         }
-    
+
         commit(
             &repository,
             &format!("sync {} artifact(s) via 极智简单", arts.len()),
         )?;
-        push(&repository, &repo.branch, &repo.username, &token, &repo.remote_url)?;
+        push(
+            &repository,
+            &repo.branch,
+            &repo.username,
+            &token,
+            &repo.remote_url,
+        )?;
         Ok(())
     })();
     // The artifact-sync caller persists errors to both task state and audit.
@@ -75,15 +87,29 @@ fn credential_endpoint_matches(expected: &str, actual: &str) -> bool {
         && expected.scheme() == actual.scheme()
         && expected.host_str() == actual.host_str()
         && expected.port_or_known_default() == actual.port_or_known_default()
-        && expected.path() == actual.path() && expected.query() == actual.query()
+        && expected.path() == actual.path()
+        && expected.query() == actual.query()
 }
 
-fn require_remote_endpoint(remote: &git2::Remote<'_>, expected: &str, for_push: bool) -> Result<(), String> {
-    let actual = if for_push { remote.pushurl().or_else(|| remote.url()) } else { remote.url() }
-        .ok_or("REPO_REMOTE_URL_UNAVAILABLE")?;
+fn require_remote_endpoint(
+    remote: &git2::Remote<'_>,
+    expected: &str,
+    for_push: bool,
+) -> Result<(), String> {
+    let actual = if for_push {
+        match remote.pushurl().map_err(|_| "REPO_REMOTE_URL_UNAVAILABLE")? {
+            Some(url) => url,
+            None => remote.url().map_err(|_| "REPO_REMOTE_URL_UNAVAILABLE")?,
+        }
+    } else {
+        remote.url().map_err(|_| "REPO_REMOTE_URL_UNAVAILABLE")?
+    };
     // Local repositories in internal operations need no credential callback.
-    if actual == expected || credential_endpoint_matches(expected, actual) { Ok(()) }
-    else { Err("REPO_REMOTE_CONFIG_CHANGED".into()) }
+    if actual == expected || credential_endpoint_matches(expected, actual) {
+        Ok(())
+    } else {
+        Err("REPO_REMOTE_CONFIG_CHANGED".into())
+    }
 }
 
 fn cred_cb(username: String, token: String, endpoint: String) -> RemoteCallbacks<'static> {
@@ -99,18 +125,32 @@ fn cred_cb(username: String, token: String, endpoint: String) -> RemoteCallbacks
 
 fn clone_repo(url: &str, dest: &Path, username: &str, token: &str) -> Result<Repository, String> {
     let mut fo = FetchOptions::new();
-    fo.remote_callbacks(cred_cb(username.to_string(), token.to_string(), url.to_string()));
+    fo.remote_callbacks(cred_cb(
+        username.to_string(),
+        token.to_string(),
+        url.to_string(),
+    ));
     RepoBuilder::new()
         .fetch_options(fo)
         .clone(url, dest)
         .map_err(|e| format!("clone 失败: {e}"))
 }
 
-fn pull(repo: &Repository, branch: &str, username: &str, token: &str, endpoint: &str) -> Result<(), String> {
+fn pull(
+    repo: &Repository,
+    branch: &str,
+    username: &str,
+    token: &str,
+    endpoint: &str,
+) -> Result<(), String> {
     let mut remote = repo.find_remote("origin").map_err(|e| e.to_string())?;
     require_remote_endpoint(&remote, endpoint, false)?;
     let mut fo = FetchOptions::new();
-    fo.remote_callbacks(cred_cb(username.to_string(), token.to_string(), endpoint.to_string()));
+    fo.remote_callbacks(cred_cb(
+        username.to_string(),
+        token.to_string(),
+        endpoint.to_string(),
+    ));
     // 远端可能是空仓库（首次推送），fetch 失败不视为致命错误
     if let Err(e) = remote.fetch(&[branch], Some(&mut fo), None) {
         // 空仓库 / 分支不存在：无可合并，直接返回让后续 commit+push 建立分支
@@ -262,11 +302,21 @@ fn commit(repo: &Repository, message: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn push(repo: &Repository, branch: &str, username: &str, token: &str, endpoint: &str) -> Result<(), String> {
+fn push(
+    repo: &Repository,
+    branch: &str,
+    username: &str,
+    token: &str,
+    endpoint: &str,
+) -> Result<(), String> {
     let mut remote = repo.find_remote("origin").map_err(|e| e.to_string())?;
     require_remote_endpoint(&remote, endpoint, true)?;
     let mut po = PushOptions::new();
-    po.remote_callbacks(cred_cb(username.to_string(), token.to_string(), endpoint.to_string()));
+    po.remote_callbacks(cred_cb(
+        username.to_string(),
+        token.to_string(),
+        endpoint.to_string(),
+    ));
     let refspec = format!("refs/heads/{branch}:refs/heads/{branch}");
     remote
         .push(&[refspec.as_str()], Some(&mut po))
@@ -384,9 +434,12 @@ pub fn read_status(repo: &Repository) -> Result<Vec<GitFileStatus>, String> {
     let statuses = repo.statuses(Some(&mut opts)).map_err(|e| e.to_string())?;
     let mut out = Vec::new();
     for entry in statuses.iter() {
-        let path = entry.path().unwrap_or_default().to_string();
+        let path = entry
+            .path()
+            .map_err(|_| "GIT_STATUS_PATH_INVALID")?
+            .to_owned();
         if path.is_empty() {
-            continue;
+            return Err("GIT_STATUS_PATH_INVALID".into());
         }
         let st = entry.status();
         let status = if st.contains(git2::Status::CONFLICTED) {
@@ -976,21 +1029,19 @@ pub(crate) fn build_push_refspec(branch: &str) -> Result<String, String> {
 ///
 /// 凭据回调复用既有 `cred_cb`（与 `push_artifacts` 同一思路：token 作为
 /// HTTPS 密码），但 token 本身由调用方在推送瞬间传入，本函数不接触密钥库。
-#[cfg(test)]
-fn write_push(repo: &Repository, username: &str, token: &str) -> Result<String, String> {
-    let endpoint = repo.find_remote(GIT_PUSH_REMOTE).ok()
-        .and_then(|remote| remote.url().map(str::to_owned)).unwrap_or_default();
-    write_push_bound(repo, username, token, &endpoint)
-}
-
-pub fn write_push_bound(repo: &Repository, username: &str, token: &str, endpoint: &str) -> Result<String, String> {
+pub fn write_push_bound(
+    repo: &Repository,
+    username: &str,
+    token: &str,
+    endpoint: &str,
+) -> Result<String, String> {
     let head = repo.head().map_err(|e| e.to_string())?;
     if !head.is_branch() {
         return Err("当前为 detached HEAD，禁止推送".to_string());
     }
     let branch = head
         .shorthand()
-        .ok_or_else(|| "无法解析当前分支名".to_string())?
+        .map_err(|_| "无法解析当前分支名".to_string())?
         .to_string();
     let refspec = build_push_refspec(&branch)?;
     let mut remote = repo
@@ -998,7 +1049,11 @@ pub fn write_push_bound(repo: &Repository, username: &str, token: &str, endpoint
         .map_err(|_| format!("远端未配置: {GIT_PUSH_REMOTE}"))?;
     require_remote_endpoint(&remote, endpoint, true)?;
     let mut po = PushOptions::new();
-    po.remote_callbacks(cred_cb(username.to_string(), token.to_string(), endpoint.to_string()));
+    po.remote_callbacks(cred_cb(
+        username.to_string(),
+        token.to_string(),
+        endpoint.to_string(),
+    ));
     // 非 force：refspec 无 `+` 前缀，远端对非 fast-forward 会直接拒绝（fail-closed）
     remote
         .push(&[refspec.as_str()], Some(&mut po))
@@ -1124,6 +1179,25 @@ mod readonly_tests {
         assert!(st.is_empty(), "干净仓库不应有状态项: {st:?}");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn t_status_non_utf8_path_is_rejected_without_hiding_changes() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let (dir, repo) = temp_repo("status-invalid-utf8");
+        fs::write(dir.join("base.txt"), "base\n").expect("write");
+        commit_all(&repo, "init");
+        let path = dir.join(OsString::from_vec(b"untracked-\xff.txt".to_vec()));
+        fs::write(&path, "untracked\n").expect("write non-UTF-8 file");
+        let result = read_status(&repo);
+        let contents = fs::read(&path).expect("untracked file");
+        drop(repo);
+        fs::remove_dir_all(&dir).expect("remove repository");
+        assert_eq!(result.unwrap_err(), "GIT_STATUS_PATH_INVALID");
+        assert_eq!(contents, b"untracked\n");
+    }
+
     // T-status-2：1 modified + 1 untracked → 2 条且状态正确
     #[test]
     fn t_status_2_modified_and_untracked() {
@@ -1234,8 +1308,7 @@ mod readonly_tests {
         commit_all(&repo, "init");
         let head_name = repo
             .head()
-            .ok()
-            .and_then(|h| h.shorthand().map(|s| s.to_string()))
+            .and_then(|h| h.shorthand().map(str::to_owned))
             .expect("head name");
         let branches = read_branches(&repo).expect("branches");
         let _ = fs::remove_dir_all(&dir);
@@ -1292,6 +1365,17 @@ mod git_write_tests {
     use std::fs;
     use std::sync::atomic::{AtomicU32, Ordering};
 
+    fn write_push(repo: &Repository, username: &str, token: &str) -> Result<String, String> {
+        let remote = repo
+            .find_remote(GIT_PUSH_REMOTE)
+            .map_err(|_| format!("远端未配置: {GIT_PUSH_REMOTE}"))?;
+        let endpoint = remote
+            .url()
+            .map_err(|_| "REPO_REMOTE_URL_UNAVAILABLE")?
+            .to_owned();
+        write_push_bound(repo, username, token, &endpoint)
+    }
+
     /// 建一个本地临时 git 仓库（不联网、不依赖 AppHandle）。
     fn temp_repo(tag: &str) -> (std::path::PathBuf, Repository) {
         static COUNTER: AtomicU32 = AtomicU32::new(0);
@@ -1335,7 +1419,7 @@ mod git_write_tests {
         opts.include_untracked(true);
         let st = repo.statuses(Some(&mut opts)).expect("statuses");
         for e in st.iter() {
-            if e.path() == Some(path) {
+            if e.path().expect("status path") == path {
                 return e.status();
             }
         }
@@ -1344,8 +1428,7 @@ mod git_write_tests {
 
     fn head_shorthand(repo: &Repository) -> String {
         repo.head()
-            .ok()
-            .and_then(|h| h.shorthand().map(|s| s.to_string()))
+            .and_then(|h| h.shorthand().map(str::to_owned))
             .expect("head shorthand")
     }
 
@@ -1885,7 +1968,13 @@ mod git_write_tests {
         commit_all(&repo, "init");
         let oid = head_oid(&repo).expect("oid");
         repo.set_head_detached(oid).expect("detach");
-        let err = write_push(&repo, "mvp-test", "dummy-token").expect_err("detached HEAD 必须拒绝");
+        let err = write_push_bound(
+            &repo,
+            "mvp-test",
+            "dummy-token",
+            "https://example.invalid/repository.git",
+        )
+        .expect_err("detached HEAD 必须拒绝");
         let after = head_oid(&repo);
         let _ = fs::remove_dir_all(&dir);
         assert!(err.contains("detached"), "实际错误: {err}");
@@ -2023,13 +2112,106 @@ mod git_write_tests {
 
 #[cfg(test)]
 mod credential_endpoint_tests {
-    use super::credential_endpoint_matches;
+    use super::{credential_endpoint_matches, require_remote_endpoint};
+    use git2::Repository;
+
+    fn with_remote_config(config: &[u8], check: impl FnOnce(&Repository)) {
+        struct Cleanup(std::path::PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+
+        let name = format!("browseros-git-endpoint-{}", uuid::Uuid::new_v4());
+        let dir = std::env::temp_dir().join(name);
+        let _cleanup = Cleanup(dir.clone());
+        let repo = Repository::init(&dir).expect("init repository");
+        let path = repo.path().join("config");
+        drop(repo);
+        let mut bytes = std::fs::read(&path).expect("read config");
+        bytes.extend_from_slice(b"\n[remote \"origin\"]\n");
+        bytes.extend_from_slice(config);
+        std::fs::write(&path, bytes).expect("write remote config");
+        let repo = Repository::open(&dir).expect("reopen repository");
+        check(&repo);
+    }
+
     #[test]
     fn credentials_follow_the_captured_repository_endpoint() {
-        assert!(credential_endpoint_matches("https://EXAMPLE.com/team/repo.git", "https://user@example.com/team/repo.git"));
-        assert!(!credential_endpoint_matches("https://a.example/team/repo.git", "https://b.example/team/repo.git"));
-        assert!(!credential_endpoint_matches("https://example.com/team/repo.git", "https://example.com/other/repo.git"));
-        assert!(!credential_endpoint_matches("https://example.com/team/repo.git", "http://example.com/team/repo.git"));
-        assert!(!credential_endpoint_matches("/tmp/repository", "/tmp/repository"));
+        assert!(credential_endpoint_matches(
+            "https://EXAMPLE.com/team/repo.git",
+            "https://user@example.com/team/repo.git"
+        ));
+        assert!(!credential_endpoint_matches(
+            "https://a.example/team/repo.git",
+            "https://b.example/team/repo.git"
+        ));
+        assert!(!credential_endpoint_matches(
+            "https://example.com/team/repo.git",
+            "https://example.com/other/repo.git"
+        ));
+        assert!(!credential_endpoint_matches(
+            "https://example.com/team/repo.git",
+            "http://example.com/team/repo.git"
+        ));
+        assert!(!credential_endpoint_matches(
+            "/tmp/repository",
+            "/tmp/repository"
+        ));
+    }
+
+    #[test]
+    fn configured_remote_fetch_and_push_endpoints_are_pinned() {
+        let expected = "https://example.invalid/r.git";
+        with_remote_config(b"url = https://example.invalid/r.git\n", |repo| {
+            let remote = repo.find_remote("origin").expect("remote");
+            assert_eq!(remote.pushurl().expect("push URL"), None);
+            assert!(require_remote_endpoint(&remote, expected, false).is_ok());
+            assert!(require_remote_endpoint(&remote, expected, true).is_ok());
+        });
+        with_remote_config(
+            b"url = https://example.invalid/r.git\npushurl = https://other.invalid/repo.git\n",
+            |repo| {
+                let remote = repo.find_remote("origin").expect("remote");
+                assert!(require_remote_endpoint(&remote, expected, false).is_ok());
+                assert_eq!(
+                    require_remote_endpoint(&remote, expected, true).unwrap_err(),
+                    "REPO_REMOTE_CONFIG_CHANGED"
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn non_utf8_push_url_never_falls_back_to_fetch_url() {
+        let expected = "https://example.invalid/r.git";
+        with_remote_config(
+            b"url = https://example.invalid/r.git\npushurl = https://example.invalid/\xff.git\n",
+            |repo| {
+                let remote = repo.find_remote("origin").expect("remote");
+                assert!(remote.pushurl().is_err());
+                assert!(require_remote_endpoint(&remote, expected, false).is_ok());
+                assert_eq!(
+                    require_remote_endpoint(&remote, expected, true).unwrap_err(),
+                    "REPO_REMOTE_URL_UNAVAILABLE"
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn non_utf8_fetch_url_is_rejected_before_credentials() {
+        let expected = "https://example.invalid/r.git";
+        with_remote_config(b"url = https://example.invalid/\xff.git\n", |repo| {
+            let remote = repo.find_remote("origin").expect("remote");
+            assert!(remote.url().is_err());
+            for for_push in [false, true] {
+                assert_eq!(
+                    require_remote_endpoint(&remote, expected, for_push).unwrap_err(),
+                    "REPO_REMOTE_URL_UNAVAILABLE"
+                );
+            }
+        });
     }
 }

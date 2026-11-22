@@ -533,18 +533,31 @@ fn retain_terminal_receipts(app: &AppHandle, now: DateTime<Utc>) {
     let table = Arc::clone(&app.state::<AppState>().script_runs);
     let mut guard = in_flight().lock().unwrap_or_else(|p| p.into_inner());
     for (task_id, flight) in guard.iter_mut() {
-        if flight.receipt.is_some() { continue; }
+        if flight.receipt.is_some() {
+            continue;
+        }
         let snapshot = table.snapshot(&flight.run_id);
-        if snapshot.as_ref().is_some_and(|run| !run.status.is_terminal()) { continue; }
+        if snapshot
+            .as_ref()
+            .is_some_and(|run| !run.status.is_terminal())
+        {
+            continue;
+        }
         flight.receipt = Some(TaskRunRecord {
             task_id: task_id.clone(),
             run_id: flight.run_id.clone(),
             trigger: flight.trigger,
             scheduled_at: flight.scheduled_at,
             attempt: flight.attempt,
-            started_at: snapshot.as_ref().map(|run| run.started_at).unwrap_or(flight.scheduled_at),
+            started_at: snapshot
+                .as_ref()
+                .map(|run| run.started_at)
+                .unwrap_or(flight.scheduled_at),
             finished_at: Some(now),
-            status: snapshot.as_ref().map(|run| run.status).unwrap_or(RunStatus::Failed),
+            status: snapshot
+                .as_ref()
+                .map(|run| run.status)
+                .unwrap_or(RunStatus::Failed),
             exit_code: snapshot.as_ref().and_then(|run| run.exit_code),
             error_code: snapshot.as_ref().and_then(|run| run.error.clone()),
         });
@@ -561,8 +574,15 @@ fn reap_finished(
 ) -> Vec<String> {
     let finished: Vec<(String, InFlight, TaskRunRecord)> = {
         let guard = in_flight().lock().unwrap_or_else(|p| p.into_inner());
-        guard.iter().filter_map(|(task_id, flight)| flight.receipt.as_ref()
-            .map(|record| (task_id.clone(), flight.clone(), record.clone()))).collect()
+        guard
+            .iter()
+            .filter_map(|(task_id, flight)| {
+                flight
+                    .receipt
+                    .as_ref()
+                    .map(|record| (task_id.clone(), flight.clone(), record.clone()))
+            })
+            .collect()
     };
     let mut to_disable = Vec::new();
     for (task_id, flight, record) in finished {
@@ -570,13 +590,18 @@ fn reap_finished(
         let error_code = record.error_code.clone();
         if tasks::append_task_run(&tasks::task_runs_file(app), &record).is_err() {
             if !TASK_HISTORY_ERROR_REPORTED.swap(true, Ordering::AcqRel) {
-                eprintln!("[scheduler] TASK_HISTORY_UNAVAILABLE: terminal receipts retained for retry");
+                eprintln!(
+                    "[scheduler] TASK_HISTORY_UNAVAILABLE: terminal receipts retained for retry"
+                );
             }
             continue;
         }
         TASK_HISTORY_ERROR_REPORTED.store(false, Ordering::Release);
         let mut guard = in_flight().lock().unwrap_or_else(|p| p.into_inner());
-        if guard.get(&task_id).is_some_and(|current| current.run_id == flight.run_id) {
+        if guard
+            .get(&task_id)
+            .is_some_and(|current| current.run_id == flight.run_id)
+        {
             guard.remove(&task_id);
         }
         drop(guard);
@@ -675,9 +700,7 @@ fn fire(
                 Ok(scripts) => scripts,
                 Err(_) => return FireOutcome::Retryable("TASK_STORE_UNAVAILABLE"),
             };
-            let script = match scripts.into_iter()
-                .find(|s| s.id == task.target_id)
-            {
+            let script = match scripts.into_iter().find(|s| s.id == task.target_id) {
                 Some(s) => s,
                 None => return FireOutcome::Reject(tasks::TASK_TARGET_NOT_FOUND),
             };
@@ -714,9 +737,7 @@ fn fire(
                 Ok(snippets) => snippets,
                 Err(_) => return FireOutcome::Retryable("TASK_STORE_UNAVAILABLE"),
             };
-            let snippet = match snippets.into_iter()
-                .find(|s| s.id == task.target_id)
-            {
+            let snippet = match snippets.into_iter().find(|s| s.id == task.target_id) {
                 Some(s) => s,
                 None => return FireOutcome::Reject(tasks::TASK_TARGET_NOT_FOUND),
             };
@@ -818,7 +839,11 @@ pub fn cancel_in_flight(app: &AppHandle, id: &str) -> usize {
     let ok = table.cancel(&run_id).is_ok();
     // Cancellation requests do not erase ownership. Reaping records the
     // eventual terminal outcome durably before retiring this in-flight entry.
-    if ok { 1 } else { 0 }
+    if ok {
+        1
+    } else {
+        0
+    }
 }
 
 // ----------------------------- 审计（契约 §7，低频动作级） -----------------------------

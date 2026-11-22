@@ -434,20 +434,19 @@ pub fn write_image_file(
     let root = workspace.join("images");
     let target = workspace.join(&rel);
     let parent = target.parent().ok_or(ImageError::PathEscape)?;
-    let workspace_root = workspace.canonicalize()
+    let workspace_root = workspace
+        .canonicalize()
         .map_err(|_| ImageError::PathEscape)?;
     let allowed = [workspace_root.clone()];
     for directory in [&root, parent] {
         if directory.exists() {
-            crate::security_policy::check_path_within_roots(
-                &directory.to_string_lossy(), &allowed,
-            ).map_err(|_| ImageError::PathEscape)?;
+            crate::security_policy::check_path_within_roots(&directory.to_string_lossy(), &allowed)
+                .map_err(|_| ImageError::PathEscape)?;
         } else {
             // mkdirat/NtCreateFile against an authorized pinned parent: no
             // write-before-validate and no junction/symlink parent escape.
-            crate::capabilities::workspace::safe_paths::create_directory_all(
-                directory, &allowed,
-            ).map_err(|e| ImageError::Io(format!("创建图片目录失败: {e}")))?;
+            crate::capabilities::workspace::safe_paths::create_directory_all(directory, &allowed)
+                .map_err(|e| ImageError::Io(format!("创建图片目录失败: {e}")))?;
         }
     }
     let root_canon = root.canonicalize().map_err(|_| ImageError::PathEscape)?;
@@ -458,9 +457,8 @@ pub fn write_image_file(
     // Unique image IDs are create-only. A pinned, no-overwrite atomic
     // stage/rename is shared by Linux and Windows; a duplicate ID cannot
     // silently overwrite an earlier image.
-    crate::capabilities::workspace::safe_paths::create_new_file(
-        &target, &allowed, bytes,
-    ).map_err(|e| ImageError::Io(format!("图片落盘失败: {e}")))?;
+    crate::capabilities::workspace::safe_paths::create_new_file(&target, &allowed, bytes)
+        .map_err(|e| ImageError::Io(format!("图片落盘失败: {e}")))?;
     Ok(rel)
 }
 

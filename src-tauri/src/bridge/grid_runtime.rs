@@ -64,16 +64,23 @@ pub(crate) fn mem_total_mb() -> Option<u64> {
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-pub(crate) fn mem_available_mb() -> Option<u64> { None }
+pub(crate) fn mem_available_mb() -> Option<u64> {
+    None
+}
 
 #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-pub(crate) fn mem_total_mb() -> Option<u64> { None }
+pub(crate) fn mem_total_mb() -> Option<u64> {
+    None
+}
 
 fn require_grid_platform() -> Result<(), String> {
     if cfg!(any(target_os = "linux", target_os = "windows")) {
         Ok(())
     } else {
-        Err(format!("GRID_PLATFORM_UNSUPPORTED:{}", std::env::consts::OS))
+        Err(format!(
+            "GRID_PLATFORM_UNSUPPORTED:{}",
+            std::env::consts::OS
+        ))
     }
 }
 
@@ -420,22 +427,28 @@ fn apply_grid_zoom(app: &AppHandle, label: &str, _requested_zoom: f64) {
     let Some(index) = grid_index_of(label).filter(|index| (*index as usize) < MAX_GRID) else {
         return;
     };
-    let _send = GRID_ZOOM_WRITERS[index as usize].lock()
+    let _send = GRID_ZOOM_WRITERS[index as usize]
+        .lock()
         .unwrap_or_else(|error| error.into_inner());
     // A delayed page-load replay and an older blocking worker must both read
     // the current owner intent after acquiring the cell's send lock. Never
     // replay the value captured before a more recent user zoom.
     let state = app.state::<AppState>();
     let zoom = state.grid_zooms.lock().unwrap().get(label).copied();
-    let Some(zoom) = zoom else { return; };
+    let Some(zoom) = zoom else {
+        return;
+    };
     if !zoom.is_finite() || zoom <= 0.1 {
         return;
     }
     // 1.0 is a real reset to 100%, not a reason to skip the native command.
-    state.grid_manager.send(index, GridCmd::SetZoom {
-        id: label.to_string(),
-        zoom,
-    });
+    state.grid_manager.send(
+        index,
+        GridCmd::SetZoom {
+            id: label.to_string(),
+            zoom,
+        },
+    );
 }
 
 /// Store the desired zoom before dispatch, then serialize only this cell's I/O.
@@ -458,10 +471,12 @@ pub async fn grid_set_zoom(app: AppHandle, index: usize, zoom: f64) -> Result<()
         }
         zooms.insert(label.clone(), zoom);
     }
-    permit.run(move || {
-        apply_grid_zoom(&app, &label, zoom);
-        Ok(())
-    }).await
+    permit
+        .run(move || {
+            apply_grid_zoom(&app, &label, zoom);
+            Ok(())
+        })
+        .await
 }
 
 /// 批量定位所有宫格（前端按网格计算好每个格子的 x/y/w/h 后调用）。
@@ -692,7 +707,9 @@ fn find_icon_recursive(
 }
 
 #[cfg(not(target_os = "linux"))]
-fn resolve_icon(_icon: &str) -> Option<String> { None }
+fn resolve_icon(_icon: &str) -> Option<String> {
+    None
+}
 
 #[cfg(target_os = "linux")]
 #[tauri::command]
@@ -745,18 +762,25 @@ fn list_windows_apps_blocking() -> Vec<AppEntry> {
         name: &str,
         executable: &str,
     ) {
-        if apps.len() >= 256 || name.is_empty() || name.len() > 128
-            || name.contains(['\r', '\n'])
-        { return; }
+        if apps.len() >= 256 || name.is_empty() || name.len() > 128 || name.contains(['\r', '\n']) {
+            return;
+        }
         let path = std::path::Path::new(executable);
-        if !path.is_absolute() || executable.starts_with(r"\\")
-            || !path.extension().is_some_and(|ext| ext.to_string_lossy().eq_ignore_ascii_case("exe"))
-        { return; }
+        if !path.is_absolute()
+            || executable.starts_with(r"\\")
+            || !path
+                .extension()
+                .is_some_and(|ext| ext.to_string_lossy().eq_ignore_ascii_case("exe"))
+        {
+            return;
+        }
         let proposed = format!("\"{}\"", executable);
         let Ok((real, arguments)) = crate::security_policy::check_launch_target(&proposed) else {
             return;
         };
-        if !arguments.is_empty() { return; }
+        if !arguments.is_empty() {
+            return;
+        }
         if seen.insert(real.to_lowercase()) {
             apps.push(AppEntry {
                 name: name.to_owned(),
@@ -774,9 +798,8 @@ fn list_windows_apps_blocking() -> Vec<AppEntry> {
     if len == 0 || len as usize >= system.len() {
         return apps;
     }
-    let system_dir = std::path::PathBuf::from(
-        std::ffi::OsString::from_wide(&system[..len as usize]),
-    );
+    let system_dir =
+        std::path::PathBuf::from(std::ffi::OsString::from_wide(&system[..len as usize]));
     // A stuck COM shortcut reader must not block the workbench forever:
     // share the 8s/192KiB bounded PowerShell runner with AUMID discovery.
     const SCRIPT: &str = r#"
@@ -804,8 +827,7 @@ ConvertTo-Json -InputObject @($apps) -Depth 3 -Compress
         if let Ok(items) = serde_json::from_slice::<serde_json::Value>(bytes) {
             if let Some(values) = items.as_array() {
                 for item in values.iter().take(256) {
-                    if let (Some(name), Some(exe)) =
-                        (item["name"].as_str(), item["exec"].as_str())
+                    if let (Some(name), Some(exe)) = (item["name"].as_str(), item["exec"].as_str())
                     {
                         add_target(&mut apps, &mut seen, name, exe);
                     }
@@ -818,29 +840,28 @@ ConvertTo-Json -InputObject @($apps) -Depth 3 -Compress
     // command: the native launcher revalidates the installed AUMID before
     // opening its trusted shell namespace target.
     for (name, id) in crate::windows_apps::installed_packaged_apps() {
-        if apps.len() >= 512 { break; }
+        if apps.len() >= 512 {
+            break;
+        }
         let key = format!("appsfolder:{}", id.to_ascii_lowercase());
         if seen.insert(key) {
             apps.push(AppEntry {
-                name, exec: format!("appsfolder:{id}"),
-                icon: "🪟".into(), icon_path: None,
+                name,
+                exec: format!("appsfolder:{id}"),
+                icon: "🪟".into(),
+                icon_path: None,
             });
         }
     }
     // System applications are legitimate Windows launch targets even on
     // machines where Start Menu link enumeration is disabled by policy.
-    for (name, exe) in [
-        ("Notepad", "notepad.exe"),
-        ("Paint", "mspaint.exe"),
-    ] {
+    for (name, exe) in [("Notepad", "notepad.exe"), ("Paint", "mspaint.exe")] {
         let candidate = system_dir.join(exe);
         if candidate.is_file() {
-            add_target(
-                &mut apps, &mut seen, name, &candidate.to_string_lossy()
-            );
+            add_target(&mut apps, &mut seen, name, &candidate.to_string_lossy());
         }
     }
-    apps.sort_by(|a,b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    apps.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     apps
 }
 
@@ -855,7 +876,10 @@ pub async fn list_apps() -> Vec<AppEntry> {
 #[cfg(not(any(target_os = "linux", target_os = "windows")))]
 #[tauri::command]
 pub fn list_apps() -> Result<Vec<AppEntry>, String> {
-    Err(format!("APP_DISCOVERY_PLATFORM_UNSUPPORTED:{}", std::env::consts::OS))
+    Err(format!(
+        "APP_DISCOVERY_PLATFORM_UNSUPPORTED:{}",
+        std::env::consts::OS
+    ))
 }
 
 // ====== 浏览器页签命令（供前端页签栏调用） ======

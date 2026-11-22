@@ -4,6 +4,14 @@ import { readFileSync } from 'node:fs';
 // Static source-contract smoke checks only. They cannot establish Windows
 // compilation, WebView2 reliability, native filesystem safety or GUI PASS.
 const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
+// Bound each wiring assertion to its production function. An absent marker
+// must fail instead of accidentally searching a different function or a test.
+const sourceRegion = (source, start, end) => {
+  const from = source.indexOf(start);
+  const to = source.indexOf(end, from + start.length);
+  assert.ok(from >= 0 && to > from, `missing source region: ${start}`);
+  return source.slice(from, to);
+};
 const cas = read('../src-tauri/src/capabilities/workspace/cas.rs');
 const safePaths = read('../src-tauri/src/capabilities/workspace/safe_paths.rs');
 const safePathsWindows = read('../src-tauri/src/capabilities/workspace/safe_paths_windows.rs');
@@ -18,6 +26,7 @@ const scriptRunner = read('../src-tauri/src/capabilities/script/script_runner.rs
 const terminal = read('../src-tauri/src/capabilities/terminal/terminal.rs');
 const ptyCargo = read('../src-tauri/vendor/portable-pty/Cargo.toml');
 const profileCargo = read('../tauri-browser-tabs/crates/tauri-plugin-browser-tabs/Cargo.toml');
+const foundationCargo = read('../agent-foundation/Cargo.toml');
 const ptyApi = read('../src-tauri/vendor/portable-pty/src/lib.rs');
 const ptyConpty = read('../src-tauri/vendor/portable-pty/src/win/conpty.rs');
 const ptyWinSpawn = read('../src-tauri/vendor/portable-pty/src/win/psuedocon.rs');
@@ -103,7 +112,40 @@ assert.doesNotMatch(cas, /save_if_unchanged_path\s*\(/);
 assert.match(cas, /unsupported_platform_save_is_denied_without_mutating_the_file/);
 assert.match(safePaths, /#\[path = "safe_paths_windows\.rs"\]/);
 assert.match(safePathsWindows, /NtCreateFile/);
-assert.match(safePathsWindows, /authorize_named_child/);
+// The former named-child helper was replaced by a pinned parent plus native
+// object ancestry. Preserve the authorization chain, not its retired name.
+const allowedParent = sourceRegion(
+  safePathsWindows, 'fn authorized_parent(', 'pub(super) fn save_if_unchanged('
+);
+assert.match(allowedParent, /open_authorized_root\(parent_path, roots\)/);
+assert.match(allowedParent, /open_destination_directory\(parent_path\)/);
+assert.match(allowedParent, /authorize_with_root\(&parent, &root\)/);
+const rootAuthorization = sourceRegion(
+  safePathsWindows, 'fn authorize_with_root(', '/// No-overwrite rename'
+);
+assert.match(rootAuthorization, /handle_is_within_root\(file, root\)\?/);
+assert.match(rootAuthorization, /Err\(denied\(\)\)/);
+const relativeChildOpen = sourceRegion(
+  safePathsWindows, 'fn open_object_with_security_at(', 'fn open_child_at('
+);
+assert.match(relativeChildOpen, /filename\.is_empty\(\)/);
+assert.match(relativeChildOpen, /filename\.to_string_lossy\(\)\.contains/);
+assert.match(relativeChildOpen, /filename\.to_string_lossy\(\)\.ends_with/);
+assert.match(relativeChildOpen, /RootDirectory = parent\.as_raw_handle\(\)/);
+assert.match(relativeChildOpen, /NtCreateFile\([\s\S]*?&attributes/);
+assert.match(relativeChildOpen, /FILE_OPEN_REPARSE_POINT/);
+assert.match(relativeChildOpen, /metadata\.file_attributes\(\) & FILE_ATTRIBUTE_REPARSE_POINT != 0/);
+assert.match(relativeChildOpen, /directory && !metadata\.is_dir\(\)/);
+assert.match(relativeChildOpen, /!directory && !metadata\.is_file\(\)/);
+assert.match(relativeChildOpen, /!browseros_platform_security::windows::handle_is_within_root\(&file, parent\)\?\s*\{\s*return Err\(denied\(\)\)/);
+const nativeAncestry = sourceRegion(
+  platformSecurity, 'pub fn handle_is_within_root(', 'pub fn path_is_within_root('
+);
+assert.match(nativeAncestry, /let actual = file_identity\(file\)\?/);
+assert.match(nativeAncestry, /let trusted = file_identity\(root\)\?/);
+assert.match(nativeAncestry, /file_identity\(opened\.target\(\)\)\? != actual/);
+assert.match(nativeAncestry, /file_identity\(ancestor\)\? == trusted/);
+assert.match(nativeAncestry, /Ok\(false\)/);
 assert.match(safePathsWindows, /rename_replace_at/);
 assert.match(safePathsWindows, /copy_dacl/);
 assert.match(safePathsWindows, /windows_cas_pinned_parent_survives_junction_replacement/);
@@ -169,7 +211,7 @@ assert.match(windowsApps, /launch_packaged_app/);
 assert.match(gridRuntime, /installed_packaged_apps/);
 assert.match(nativeService, /strip_prefix\("appsfolder:"\)/);
 assert.match(systemCommands, /crate::session::atomic_write/);
-assert.match(codingPublicApi, /"lsp_start", "lsp_request", "lsp_diagnostics", "lsp_close"/);
+assert.match(codingPublicApi, /"lsp_start",\s*"lsp_request",\s*"lsp_diagnostics",\s*"lsp_close"/);
 assert.ok(windowsLsp.includes('persistent_response_uris_mask_unreviewed_locations'));
 assert.ok(windowsLsp.includes('skipped_busy_candidates'));
 assert.ok(windowsLsp.includes('symbol_only.then_some(0)'));
@@ -307,7 +349,7 @@ assert.match(windowsLsp, /appcontainer-no-network-private-source-copy/);
 assert.match(windowsSandbox, /LSP_CHILD_NULL_DEVICE_DENIED/);
 assert.match(windowsLsp, /\.profile\(\)\.stderr_diagnostic\(\)/);
 assert.match(windowsSandbox, /SANDBOX_RUNTIME_STAGE_CONFLICT/);
-assert.match(windowsSandbox, /existing\.read_exact\(&mut actual/);
+assert.match(windowsSandbox, /existing\s*\.read_exact\(&mut actual/);
 const v2Workflow = read('../.github/workflows/windows-linux-v2-experimental.yml');
 assert.match(v2Workflow, /Generate and verify NSIS SHA256SUMS/);
 assert.match(v2Workflow, /Get-FileHash -LiteralPath .* -Algorithm SHA256/);
@@ -341,6 +383,35 @@ assert.match(v2Workflow, /Get-NativeRustTestBinary -Manifest 'src-tauri\/Cargo.t
 assert.match(v2Workflow, /Get-NativeRustTestBinary -Manifest 'crates\/browseros-platform-security\/Cargo.toml' -Package 'browseros-platform-security'/);
 assert.match(v2Workflow, /Get-NativeRustTestBinary -Manifest 'src-tauri\/Cargo.toml' -Package 'tauri-plugin-browser-tabs'/);
 assert.match(nativeTestRunner, /cargo test --manifest-path \$Manifest --locked -p \$Package --lib --no-run/);
+// The host binary harness does not execute its library target or a dependency's
+// own tests. Resolve each target explicitly using the host's committed lock.
+assert.match(v2Workflow, /Get-NativeRustTestBinary -Manifest 'src-tauri\/Cargo.toml' -Package 'mvp-browser-os' -TargetName 'mvp_core'/);
+assert.match(v2Workflow, /Invoke-NativeRustHarness -Executable \$testExe -SelectionId 'host-core'/);
+assert.match(v2Workflow, /Get-NativeRustTestBinary -Manifest 'src-tauri\/Cargo.toml' -Package 'browseros-agent-foundation'[\s\S]*?-HostPackage 'mvp-browser-os' -Features @\('adapter-rig', 'experimental-rig-run'\)/);
+assert.match(v2Workflow, /Invoke-NativeRustHarness -Executable \$testExe -SelectionId 'agent-foundation-production'/);
+assert.match(nativeTestRunner, /-p \$Package --lib --no-run --message-format=json @additionalArguments/);
+assert.match(nativeTestRunner, /\$additionalArguments \+= @\('-p', \$HostPackage\)/);
+assert.match(nativeTestRunner, /"\$Package\/\$_"/);
+assert.match(nativeTestRunner, /\$artifacts\[0\]\.features -cnotcontains \$feature/);
+assert.match(nativeTestRunner, /NATIVE_TEST_FEATURE_NOT_ENABLED/);
+assert.match(nativeTestRunner, /\$_.target.name -eq \$expectedTargetName/);
+assert.match(v2Workflow, /--locked -p mvp-browser-os -p browseros-agent-foundation --lib/);
+assert.match(v2Workflow, /--features browseros-agent-foundation\/adapter-rig,browseros-agent-foundation\/experimental-rig-run/);
+assert.match(v2Workflow, /--selection host-core --selection agent-foundation-production --harness-count 2/);
+for (const [id, packageName, role, count] of [
+  ['host-core', 'mvp-browser-os', 'full-suite', 2],
+  ['agent-foundation-production', 'browseros-agent-foundation', 'required', 15],
+]) {
+  const selections = nativeRequired.selections.filter((selection) => selection.id === id);
+  assert.equal(selections.length, 1, id);
+  const [selection] = selections;
+  assert.equal(selection.package, packageName);
+  assert.equal(selection.role, role);
+  assert.equal(selection.filter, '');
+  assert.equal(selection.required_count, count);
+  assert.equal(selection.allow_ignored, false);
+}
+
 assert.match(v2Workflow, /-SelectionId 'windows-full-suite'/);
 assert.match(v2Workflow, /Get-NativeSelectionManifest/);
 assert.match(nativeTestRunner, /NATIVE_JOB_CLEANUP_UNCONFIRMED/);
@@ -363,6 +434,7 @@ assert.match(v2Workflow, /LINUX_REQUIRED_FRAMING_NOT_EXECUTED/);
 // membership/lock ownership instead of quietly abandoning these tests.
 assert.doesNotMatch(ptyCargo, /^\s*\[[^\]\n]*dev-dependencies(?:\.[^\]\n]+)?\]/m);
 assert.doesNotMatch(profileCargo, /^\s*\[[^\]\n]*dev-dependencies(?:\.[^\]\n]+)?\]/m);
+assert.doesNotMatch(foundationCargo, /^\s*\[[^\]\n]*dev-dependencies(?:\.[^\]\n]+)?\]/m);
 
 // Tauri can turn setup errors into a Ready-event panic. Both entry points
 // report native preparation failures themselves and stop before any WebView.
@@ -409,7 +481,7 @@ const releaseOpenUrls = startup.slice(
   startup.indexOf('pub fn prepare_workspace(')
 );
 assert.ok(releaseOpenUrls.length > 0);
-assert.match(releaseOpenUrls, /let pending = \{\s*let mut state = queue\.0\.lock\(\)[\s\S]*?state\.ready = true;\s*std::mem::take\(&mut state\.pending\)\s*\};\s*for url in pending/);
+assert.match(releaseOpenUrls, /let pending = \{\s*let mut state = queue\s*\.0\s*\.lock\(\)[\s\S]*?state\.ready = true;\s*std::mem::take\(&mut state\.pending\)\s*\};\s*for url in pending/);
 assert.match(startup, /pub fn prepare_workspace\([\s\S]*?prepare_data_dir\(app\)\?;[\s\S]*?release_pending_open_urls\(app\)/);
 
 // Non-Cargo LSP project-mode safety: explicitly supply bounded source graphs
@@ -498,7 +570,7 @@ const snapshotAcl = windowsSandbox.slice(
 );
 assert.ok(snapshotAcl.length > 0);
 assert.match(snapshotAcl, /AppContainerAccess::ReadExecute/);
-assert.match(snapshotAcl, /directory\.protect_tree/);
+assert.match(snapshotAcl, /directory\s*\.protect_tree/);
 assert.doesNotMatch(snapshotAcl, /AppContainerAccess::Modify/);
 assert.match(windowsSandbox, /PRIVATE_TREE_MAX_ENTRIES/);
 assert.match(windowsSandbox, /PRIVATE_TREE_MAX_DEPTH/);
@@ -550,7 +622,7 @@ assert.match(ensurePrivate, /private_directory\(path, options, false, deep, star
 assert.match(ensurePrivate, /migration_candidate\(&error\)/);
 assert.match(ensurePrivate, /Err\(error\) => Err\(error\)/);
 assert.match(platformSecurity, /downcast_ref::<StorageFailure>/);
-assert.match(platformSecurity, /if self\.repair \{ MAXIMUM_ALLOWED \}/);
+assert.match(platformSecurity, /if self\.repair\s*\{\s*MAXIMUM_ALLOWED\s*\}/);
 
 assert.match(platformSecurity, /REPAIR_READBACK/);
 assert.match(platformSecurity, /ensure_private_directory_root/);
@@ -697,7 +769,7 @@ assert.match(shutdown, /SHUTDOWN_DEPENDENCY_NOT_EXECUTED/);
 assert.match(shutdown, /CleanupOutcome::Pending/);
 assert.match(main, /\.shutdown_until\(deadline\)/);
 assert.match(main, /worker: std::sync::Mutex<Option<std::thread::JoinHandle<\(\)>>>/);
-assert.match(bridgeLifecycle, /register_with_deadline\("kill-terminals"/);
+assert.match(bridgeLifecycle, /register_with_deadline\(\s*"kill-terminals"/);
 assert.match(bridgeLifecycle, /terminal::shutdown_until\(deadline\)/);
 assert.match(terminalCommands, /fn publish_terminal/);
 assert.match(terminalCommands, /state\.shutdown_requested\.load\(Ordering::Acquire\)/);
@@ -714,7 +786,7 @@ assert.match(nativeRecovery, /SetFileInformationByHandle/);
 assert.match(nativeRecovery, /OpenFileById/);
 assert.match(nativeRecovery, /hold_profile_cleanup_namespace/);
 assert.match(nativeRecovery, /RECOVERY_NAMESPACE_UNTRUSTED_WRITER/);
-assert.match(sandboxLifecycle, /namespace\.recheck/);
+assert.match(sandboxLifecycle, /namespace\s*\.recheck/);
 const sandboxProduction = windowsSandbox.split('#[cfg(test)]\nmod tests')[0];
 assert.doesNotMatch(sandboxProduction, /std::fs::remove_dir_all/);
 assert.match(privateLease, /NOT a continuous descendant ACL monitor/);

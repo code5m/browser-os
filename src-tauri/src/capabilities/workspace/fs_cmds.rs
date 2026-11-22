@@ -8,7 +8,9 @@ use tauri::{AppHandle, Webview};
 #[tauri::command]
 pub async fn reveal_path(app: AppHandle, webview: Webview, path: String) -> Result<(), String> {
     check_invocation_source(&webview, "reveal_path", None, &app)?;
-    super::FILESYSTEM_IO.run(move || reveal_path_blocking(app, path)).await
+    super::FILESYSTEM_IO
+        .run(move || reveal_path_blocking(app, path))
+        .await
 }
 
 fn reveal_path_blocking(app: AppHandle, path: String) -> Result<(), String> {
@@ -25,9 +27,16 @@ fn reveal_path_blocking(app: AppHandle, path: String) -> Result<(), String> {
 /// 将文件或目录移动到目标目录（文件树拖拽移动用）。
 /// 源与目标都必须在允许根目录内；禁止移动到自身或自身子目录内。
 #[tauri::command]
-pub async fn move_path(app: AppHandle, webview: Webview, src: String, dst_dir: String) -> Result<(), String> {
+pub async fn move_path(
+    app: AppHandle,
+    webview: Webview,
+    src: String,
+    dst_dir: String,
+) -> Result<(), String> {
     check_invocation_source(&webview, "move_path", None, &app)?;
-    super::FILESYSTEM_IO.run(move || move_path_blocking(app, src, dst_dir)).await
+    super::FILESYSTEM_IO
+        .run(move || move_path_blocking(app, src, dst_dir))
+        .await
 }
 
 fn move_path_blocking(app: AppHandle, src: String, dst_dir: String) -> Result<(), String> {

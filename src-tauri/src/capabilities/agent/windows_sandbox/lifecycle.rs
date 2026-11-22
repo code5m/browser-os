@@ -3,13 +3,12 @@
 //! crash, the private journal remains for an identity-checked later recovery.
 use super::*;
 use browseros_platform_security::windows::{
-    ExclusivePrivateRecord, PrivateRecordStore, NativeProfileIdentity, NativeProfileScope, NamedPrivateJob,
-    hold_profile_cleanup_namespace,
-    delete_recorded_profile_tree,
+    delete_recorded_profile_tree, hold_profile_cleanup_namespace, ExclusivePrivateRecord,
+    NamedPrivateJob, NativeProfileIdentity, NativeProfileScope, PrivateRecordStore,
 };
 use serde::{Deserialize, Serialize};
 use std::io::{Seek, SeekFrom};
-use std::sync::{Weak, atomic::AtomicUsize};
+use std::sync::{atomic::AtomicUsize, Weak};
 
 const PROFILE_PREFIX: &str = "BrowserOS.Coding.";
 const JOB_PREFIX: &str = r"Global\BrowserOS.Coding.Job.v1.";
@@ -38,7 +37,6 @@ pub(crate) struct RecoveryReport {
     pub pending: usize,
     pub rejected: usize,
 }
-
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -80,19 +78,31 @@ struct Registry {
 impl Registry {
     fn new(store: PrivateRecordStore) -> Self {
         Self {
-            store, controls: Mutex::new(Vec::new()), recovering: AtomicBool::new(false),
-            rejected: AtomicBool::new(false), pending_recovery: AtomicUsize::new(0),
-            stopping: AtomicBool::new(false), cleanup_deadline: Mutex::new(None), recovery_budget: Mutex::new(None),
+            store,
+            controls: Mutex::new(Vec::new()),
+            recovering: AtomicBool::new(false),
+            rejected: AtomicBool::new(false),
+            pending_recovery: AtomicUsize::new(0),
+            stopping: AtomicBool::new(false),
+            cleanup_deadline: Mutex::new(None),
+            recovery_budget: Mutex::new(None),
             observation: Mutex::new(RecoveryObservation::default()),
         }
     }
     fn remember(&self, report: &RecoveryReport, code: Option<&str>) {
-        *self.observation.lock().unwrap_or_else(|poison| poison.into_inner()) =
-            RecoveryObservation { report: report.clone(), code: code.map(str::to_owned) };
+        *self
+            .observation
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner()) = RecoveryObservation {
+            report: report.clone(),
+            code: code.map(str::to_owned),
+        };
     }
     fn gate_open(&self) -> bool {
-        !STOPPING.load(Ordering::Acquire) && !self.stopping.load(Ordering::Acquire)
-            && !self.recovering.load(Ordering::Acquire) && !self.rejected.load(Ordering::Acquire)
+        !STOPPING.load(Ordering::Acquire)
+            && !self.stopping.load(Ordering::Acquire)
+            && !self.recovering.load(Ordering::Acquire)
+            && !self.rejected.load(Ordering::Acquire)
             && self.pending_recovery.load(Ordering::Acquire) == 0
     }
     fn can_start(&self) -> bool {
@@ -101,54 +111,98 @@ impl Registry {
     fn track(&self, budget: &OperationBudget, starting: bool) -> Result<Arc<Control>, String> {
         let mut owners = self.controls.lock().map_err(|_| "SANDBOX_OWNER_LOCK")?;
         owners.retain(|owner| owner.strong_count() != 0);
-        if STOPPING.load(Ordering::Acquire) || self.stopping.load(Ordering::Acquire) || (starting && !self.gate_open()) { return Err("SANDBOX_ADMISSION_CLOSED".into()); }
+        if STOPPING.load(Ordering::Acquire)
+            || self.stopping.load(Ordering::Acquire)
+            || (starting && !self.gate_open())
+        {
+            return Err("SANDBOX_ADMISSION_CLOSED".into());
+        }
         if starting && owners.len() >= MAX_NATIVE_OWNERS {
             return Err("SANDBOX_CAPACITY_BUSY".into());
         }
         let control = Arc::new(Control {
-            operation: budget.clone(), job: Mutex::new(None), cleanup_budget: Mutex::new(None),
+            operation: budget.clone(),
+            job: Mutex::new(None),
+            cleanup_budget: Mutex::new(None),
         });
         owners.push(Arc::downgrade(&control));
         Ok(control)
     }
     fn owners(&self) -> Vec<Arc<Control>> {
-        let mut owners = self.controls.lock().unwrap_or_else(|poison| poison.into_inner());
+        let mut owners = self
+            .controls
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
         let alive: Vec<_> = owners.iter().filter_map(Weak::upgrade).collect();
         owners.retain(|owner| owner.strong_count() != 0);
         alive
     }
     fn active_count(&self) -> usize {
-        self.controls.lock().unwrap_or_else(|poison| poison.into_inner())
-            .iter().filter(|owner| owner.strong_count() != 0).count()
+        self.controls
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .iter()
+            .filter(|owner| owner.strong_count() != 0)
+            .count()
     }
     fn stop(&self) {
         self.stopping.store(true, Ordering::Release);
-        if let Some(budget) = self.recovery_budget.lock().unwrap_or_else(|poison| poison.into_inner()).as_ref() {
+        if let Some(budget) = self
+            .recovery_budget
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .as_ref()
+        {
             budget.cancel();
         }
-        for owner in self.owners() { owner.stop(); }
+        for owner in self.owners() {
+            owner.stop();
+        }
     }
     fn set_deadline(&self, until: Instant) {
-        let mut deadline = self.cleanup_deadline.lock().unwrap_or_else(|poison| poison.into_inner());
+        let mut deadline = self
+            .cleanup_deadline
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
         *deadline = Some(deadline.map_or(until, |old| old.min(until)));
         let exact = deadline.expect("assigned above");
         drop(deadline);
-        if let Some(budget) = self.recovery_budget.lock().unwrap_or_else(|poison| poison.into_inner()).as_ref() {
+        if let Some(budget) = self
+            .recovery_budget
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .as_ref()
+        {
             budget.shorten_to(exact);
         }
         for owner in self.owners() {
-            if let Some(budget) = owner.cleanup_budget.lock().unwrap_or_else(|poison| poison.into_inner()).as_ref() {
+            if let Some(budget) = owner
+                .cleanup_budget
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .as_ref()
+            {
                 budget.shorten_to(exact);
             }
         }
     }
     fn cleanup_budget(&self, control: &Control) -> OperationBudget {
-        let until = self.cleanup_deadline.lock().unwrap_or_else(|poison| poison.into_inner())
+        let until = self
+            .cleanup_deadline
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
             .unwrap_or_else(|| Instant::now() + Duration::from_secs(2));
         let budget = OperationBudget::until(until);
-        *control.cleanup_budget.lock().unwrap_or_else(|poison| poison.into_inner()) = Some(budget.clone());
+        *control
+            .cleanup_budget
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner()) = Some(budget.clone());
         // A shutdown may have installed its deadline between those two locks.
-        if let Some(deadline) = *self.cleanup_deadline.lock().unwrap_or_else(|poison| poison.into_inner()) {
+        if let Some(deadline) = *self
+            .cleanup_deadline
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+        {
             budget.shorten_to(deadline);
         }
         budget
@@ -169,18 +223,24 @@ struct Control {
 impl Control {
     fn stop(&self) {
         self.operation.cancel();
-        if let Some(job) = self.job.lock().unwrap_or_else(|poison| poison.into_inner()).as_ref() {
+        if let Some(job) = self
+            .job
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .as_ref()
+        {
             let _ = job.terminate();
         }
     }
 }
 
-
 struct Initializing;
 impl Initializing {
     fn enter() -> Result<Self, String> {
         let _gate = PRODUCER_GATE.lock().map_err(|_| "SANDBOX_PRODUCER_GATE")?;
-        if STOPPING.load(Ordering::Acquire) { return Err("SANDBOX_ADMISSION_CLOSED".into()); }
+        if STOPPING.load(Ordering::Acquire) {
+            return Err("SANDBOX_ADMISSION_CLOSED".into());
+        }
         INITIALIZING.fetch_add(1, Ordering::AcqRel);
         Ok(Self)
     }
@@ -195,7 +255,11 @@ impl Drop for Initializing {
 fn initialize_until(parent: &Path, until: Instant) -> Result<Arc<Registry>, String> {
     let _initializing = Initializing::enter()?;
     if let Some(registry) = REGISTRY.get() {
-        if !registry.store.parent_matches(parent).map_err(|_| "SANDBOX_JOURNAL_PARENT")? {
+        if !registry
+            .store
+            .parent_matches(parent)
+            .map_err(|_| "SANDBOX_JOURNAL_PARENT")?
+        {
             return Err("SANDBOX_JOURNAL_PARENT_CHANGED".into());
         }
         return Ok(Arc::clone(registry));
@@ -203,14 +267,22 @@ fn initialize_until(parent: &Path, until: Instant) -> Result<Arc<Registry>, Stri
     super::cleanup_reaper()?;
     let budget = OperationBudget::until(until);
     let store = PrivateRecordStore::open(parent, &budget).map_err(|_| "SANDBOX_JOURNAL_PREPARE")?;
-    if STOPPING.load(Ordering::Acquire) { return Err("SANDBOX_ADMISSION_CLOSED".into()); }
+    if STOPPING.load(Ordering::Acquire) {
+        return Err("SANDBOX_ADMISSION_CLOSED".into());
+    }
     let registry = Arc::new(Registry::new(store));
     let _ = REGISTRY.set(Arc::clone(&registry));
     let installed = REGISTRY.get().ok_or("SANDBOX_JOURNAL_NOT_INITIALIZED")?;
-    if !installed.store.parent_matches(parent).map_err(|_| "SANDBOX_JOURNAL_PARENT")? {
+    if !installed
+        .store
+        .parent_matches(parent)
+        .map_err(|_| "SANDBOX_JOURNAL_PARENT")?
+    {
         return Err("SANDBOX_JOURNAL_PARENT_CHANGED".into());
     }
-    if STOPPING.load(Ordering::Acquire) { installed.stop(); }
+    if STOPPING.load(Ordering::Acquire) {
+        installed.stop();
+    }
     Ok(Arc::clone(installed))
 }
 pub(crate) fn initialize_recovery_store(parent: &Path) -> Result<(), String> {
@@ -220,24 +292,35 @@ pub(crate) fn initialize_recovery_store(parent: &Path) -> Result<(), String> {
 #[cfg(test)]
 fn initialize_test_store() -> Result<(), String> {
     static TEST_INIT: Mutex<()> = Mutex::new(());
-    if REGISTRY.get().is_some() { return Ok(()); }
+    if REGISTRY.get().is_some() {
+        return Ok(());
+    }
     let _guard = TEST_INIT.lock().map_err(|_| "SANDBOX_TEST_JOURNAL_LOCK")?;
     if REGISTRY.get().is_none() {
-        let path = std::env::temp_dir().join(format!("browseros-sandbox-journal-test-{}-{}",
-            std::process::id(), uuid::Uuid::new_v4().simple()));
+        let path = std::env::temp_dir().join(format!(
+            "browseros-sandbox-journal-test-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4().simple()
+        ));
         browseros_platform_security::windows::ensure_private_directory(
-            &path, &PrivateTreeOptions::default(),
-        ).map_err(|_| "SANDBOX_TEST_JOURNAL_PREPARE")?;
+            &path,
+            &PrivateTreeOptions::default(),
+        )
+        .map_err(|_| "SANDBOX_TEST_JOURNAL_PREPARE")?;
         initialize_recovery_store(&path)?;
     }
     Ok(())
 }
 
 fn valid_id(id: &str) -> bool {
-    id.len() == 32 && id.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    id.len() == 32
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 fn id_from_name(name: &str) -> Result<&str, String> {
-    name.strip_prefix(PROFILE_PREFIX).filter(|id| valid_id(id))
+    name.strip_prefix(PROFILE_PREFIX)
+        .filter(|id| valid_id(id))
         .ok_or_else(|| "SANDBOX_JOURNAL_PROFILE_NAME".into())
 }
 fn sid_from_name(name: &str) -> Result<String, String> {
@@ -246,33 +329,61 @@ fn sid_from_name(name: &str) -> Result<String, String> {
     let name = super::wide_text(name)?;
     let mut sid = ptr::null_mut();
     let result = unsafe { DeriveAppContainerSidFromAppContainerName(name.as_ptr(), &mut sid) };
-    if result < 0 || sid.is_null() { return Err("SANDBOX_JOURNAL_DERIVE_SID".into()); }
+    if result < 0 || sid.is_null() {
+        return Err("SANDBOX_JOURNAL_DERIVE_SID".into());
+    }
     struct Sid(PSID);
-    impl Drop for Sid { fn drop(&mut self) { unsafe { FreeSid(self.0); } } }
+    impl Drop for Sid {
+        fn drop(&mut self) {
+            unsafe {
+                FreeSid(self.0);
+            }
+        }
+    }
     let sid = Sid(sid);
     let mut raw = ptr::null_mut();
     if unsafe { ConvertSidToStringSidW(sid.0, &mut raw) } == 0 || raw.is_null() {
         return Err("SANDBOX_JOURNAL_SID_TEXT".into());
     }
     let mut len = 0;
-    unsafe { while len < 256 && *raw.add(len) != 0 { len += 1; } }
+    unsafe {
+        while len < 256 && *raw.add(len) != 0 {
+            len += 1;
+        }
+    }
     let text = if len < 256 {
         unsafe { String::from_utf16(std::slice::from_raw_parts(raw, len)) }.ok()
-    } else { None };
-    unsafe { LocalFree(raw as _); }
+    } else {
+        None
+    };
+    unsafe {
+        LocalFree(raw as _);
+    }
     text.ok_or_else(|| "SANDBOX_JOURNAL_SID_TEXT".into())
 }
 fn os_profile_folder(sid: &str) -> Result<PathBuf, String> {
     let sid = super::wide_text(sid)?;
     let mut raw = ptr::null_mut();
     let result = unsafe { GetAppContainerFolderPath(sid.as_ptr(), &mut raw) };
-    if result < 0 || raw.is_null() { return Err("SANDBOX_RECOVERY_OS_PROFILE_FOLDER".into()); }
+    if result < 0 || raw.is_null() {
+        return Err("SANDBOX_RECOVERY_OS_PROFILE_FOLDER".into());
+    }
     let mut len = 0;
-    unsafe { while len < 32768 && *raw.add(len) != 0 { len += 1; } }
+    unsafe {
+        while len < 32768 && *raw.add(len) != 0 {
+            len += 1;
+        }
+    }
     let path = if len < 32768 {
-        Some(PathBuf::from(unsafe { std::ffi::OsString::from_wide(std::slice::from_raw_parts(raw, len)) }))
-    } else { None };
-    unsafe { CoTaskMemFree(raw as _); }
+        Some(PathBuf::from(unsafe {
+            std::ffi::OsString::from_wide(std::slice::from_raw_parts(raw, len))
+        }))
+    } else {
+        None
+    };
+    unsafe {
+        CoTaskMemFree(raw as _);
+    }
     path.ok_or_else(|| "SANDBOX_RECOVERY_OS_PROFILE_FOLDER".into())
 }
 
@@ -286,17 +397,23 @@ struct Identity {
 }
 impl From<NativeProfileIdentity> for Identity {
     fn from(value: NativeProfileIdentity) -> Self {
-        Self { volume_serial: value.file.volume_serial, file_index: value.file.file_index,
-            volume_guid: value.volume_guid, created: value.created }
+        Self {
+            volume_serial: value.file.volume_serial,
+            file_index: value.file.file_index,
+            volume_guid: value.volume_guid,
+            created: value.created,
+        }
     }
 }
 impl Identity {
     fn native(&self) -> NativeProfileIdentity {
         NativeProfileIdentity {
             file: browseros_platform_security::windows::FileIdentity {
-                volume_serial: self.volume_serial, file_index: self.file_index,
+                volume_serial: self.volume_serial,
+                file_index: self.file_index,
             },
-            volume_guid: self.volume_guid.clone(), created: self.created,
+            volume_guid: self.volume_guid.clone(),
+            created: self.created,
         }
     }
 }
@@ -310,17 +427,30 @@ struct Scope {
 }
 impl From<NativeProfileScope> for Scope {
     fn from(value: NativeProfileScope) -> Self {
-        Self { parent: value.parent.into(), parent_path: value.parent_path, component: value.component }
+        Self {
+            parent: value.parent.into(),
+            parent_path: value.parent_path,
+            component: value.component,
+        }
     }
 }
 impl Scope {
     fn native(&self) -> NativeProfileScope {
-        NativeProfileScope { parent: self.parent.native(), parent_path: self.parent_path.clone(), component: self.component.clone() }
+        NativeProfileScope {
+            parent: self.parent.native(),
+            parent_path: self.parent_path.clone(),
+            component: self.component.clone(),
+        }
     }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-enum Phase { Intent, Bound, DataRemoved, NotRegistered }
+enum Phase {
+    Intent,
+    Bound,
+    DataRemoved,
+    NotRegistered,
+}
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Record {
@@ -336,17 +466,35 @@ struct Record {
 impl Record {
     fn verify(&self, file_name: &str, current_owner: &str) -> Result<(), String> {
         let id = id_from_name(&self.name)?;
-        if self.version != 1 || self.sequence == 0 || file_name != format!("{id}.profile")
-            || self.owner_sid != current_owner || self.package_sid != sid_from_name(&self.name)?
-            || ((self.phase == Phase::Bound || self.phase == Phase::DataRemoved) && (self.identity.is_none() || self.scope.is_none()))
-            || ((self.phase == Phase::Intent || self.phase == Phase::NotRegistered) && (self.identity.is_some() || self.scope.is_some()))
-        { return Err("SANDBOX_JOURNAL_IDENTITY_INVALID".into()); }
+        if self.version != 1
+            || self.sequence == 0
+            || file_name != format!("{id}.profile")
+            || self.owner_sid != current_owner
+            || self.package_sid != sid_from_name(&self.name)?
+            || ((self.phase == Phase::Bound || self.phase == Phase::DataRemoved)
+                && (self.identity.is_none() || self.scope.is_none()))
+            || ((self.phase == Phase::Intent || self.phase == Phase::NotRegistered)
+                && (self.identity.is_some() || self.scope.is_some()))
+        {
+            return Err("SANDBOX_JOURNAL_IDENTITY_INVALID".into());
+        }
         if let Some(identity) = &self.identity {
-            if identity.file_index == 0 || identity.volume_guid.len() != 36
-                || identity.volume_guid.bytes().enumerate().any(|(index, byte)|
-                    if matches!(index, 8 | 13 | 18 | 23) { byte != b'-' }
-                    else { !byte.is_ascii_hexdigit() || byte.is_ascii_uppercase() })
-            { return Err("SANDBOX_JOURNAL_FILE_ID_INVALID".into()); }
+            if identity.file_index == 0
+                || identity.volume_guid.len() != 36
+                || identity
+                    .volume_guid
+                    .bytes()
+                    .enumerate()
+                    .any(|(index, byte)| {
+                        if matches!(index, 8 | 13 | 18 | 23) {
+                            byte != b'-'
+                        } else {
+                            !byte.is_ascii_hexdigit() || byte.is_ascii_uppercase()
+                        }
+                    })
+            {
+                return Err("SANDBOX_JOURNAL_FILE_ID_INVALID".into());
+            }
         }
         Ok(())
     }
@@ -358,13 +506,17 @@ fn crc32(bytes: &[u8]) -> u32 {
     let mut crc = !0u32;
     for &byte in bytes {
         crc ^= u32::from(byte);
-        for _ in 0..8 { crc = (crc >> 1) ^ (0xedb8_8320 & 0u32.wrapping_sub(crc & 1)); }
+        for _ in 0..8 {
+            crc = (crc >> 1) ^ (0xedb8_8320 & 0u32.wrapping_sub(crc & 1));
+        }
     }
     !crc
 }
 fn frame(record: &Record) -> Result<Vec<u8>, String> {
     let payload = serde_json::to_vec(record).map_err(|_| "SANDBOX_JOURNAL_ENCODE")?;
-    if payload.len() > MAX_FRAME_BYTES { return Err("SANDBOX_JOURNAL_FRAME_LIMIT".into()); }
+    if payload.len() > MAX_FRAME_BYTES {
+        return Err("SANDBOX_JOURNAL_FRAME_LIMIT".into());
+    }
     let mut output = b"BOSJ".to_vec();
     output.extend_from_slice(&(payload.len() as u32).to_le_bytes());
     output.extend_from_slice(&crc32(&payload).to_le_bytes());
@@ -375,22 +527,36 @@ fn last_record(bytes: &[u8]) -> Result<(Record, usize), String> {
     let mut offset = 0usize;
     let mut last: Option<Record> = None;
     while offset + 12 <= bytes.len() {
-        if &bytes[offset..offset + 4] != b"BOSJ" { break; }
+        if &bytes[offset..offset + 4] != b"BOSJ" {
+            break;
+        }
         let length = u32::from_le_bytes(bytes[offset + 4..offset + 8].try_into().unwrap()) as usize;
         let checksum = u32::from_le_bytes(bytes[offset + 8..offset + 12].try_into().unwrap());
-        if length == 0 || length > MAX_FRAME_BYTES || offset + 12 + length > bytes.len() { break; }
+        if length == 0 || length > MAX_FRAME_BYTES || offset + 12 + length > bytes.len() {
+            break;
+        }
         let payload = &bytes[offset + 12..offset + 12 + length];
-        if crc32(payload) != checksum { break; }
-        let record: Record = serde_json::from_slice(payload).map_err(|_| "SANDBOX_JOURNAL_PARSE")?;
+        if crc32(payload) != checksum {
+            break;
+        }
+        let record: Record =
+            serde_json::from_slice(payload).map_err(|_| "SANDBOX_JOURNAL_PARSE")?;
         if let Some(old) = &last {
-            if old.sequence.checked_add(1) != Some(record.sequence) || record.name != old.name
-                || record.owner_sid != old.owner_sid || record.package_sid != old.package_sid
-            { return Err("SANDBOX_JOURNAL_SEQUENCE".into()); }
-        } else if record.sequence != 1 { return Err("SANDBOX_JOURNAL_SEQUENCE".into()); }
+            if old.sequence.checked_add(1) != Some(record.sequence)
+                || record.name != old.name
+                || record.owner_sid != old.owner_sid
+                || record.package_sid != old.package_sid
+            {
+                return Err("SANDBOX_JOURNAL_SEQUENCE".into());
+            }
+        } else if record.sequence != 1 {
+            return Err("SANDBOX_JOURNAL_SEQUENCE".into());
+        }
         offset += 12 + length;
         last = Some(record);
     }
-    last.map(|record| (record, offset)).ok_or_else(|| "SANDBOX_JOURNAL_INCOMPLETE_INTENT".into())
+    last.map(|record| (record, offset))
+        .ok_or_else(|| "SANDBOX_JOURNAL_INCOMPLETE_INTENT".into())
 }
 struct Journal {
     file: ExclusivePrivateRecord,
@@ -400,36 +566,72 @@ struct Journal {
 impl Journal {
     fn create(mut file: ExclusivePrivateRecord, value: Record) -> Result<Self, String> {
         let bytes = frame(&value)?;
-        let result = file.file_mut().write_all(&bytes).and_then(|_| file.file().sync_all());
+        let result = file
+            .file_mut()
+            .write_all(&bytes)
+            .and_then(|_| file.file().sync_all());
         if result.is_err() {
             let _ = file.mark_deleted(); // No profile API was called yet.
             return Err("SANDBOX_JOURNAL_INTENT_FLUSH".into());
         }
-        Ok(Self { file, value, used: bytes.len() as u64 })
+        Ok(Self {
+            file,
+            value,
+            used: bytes.len() as u64,
+        })
     }
     fn read(mut file: ExclusivePrivateRecord, name: &str, owner: &str) -> Result<Self, String> {
         let mut bytes = Vec::new();
-        file.file_mut().seek(SeekFrom::Start(0)).map_err(|_| "SANDBOX_JOURNAL_READ")?;
-        file.file_mut().take((MAX_JOURNAL_BYTES + 1) as u64).read_to_end(&mut bytes)
+        file.file_mut()
+            .seek(SeekFrom::Start(0))
             .map_err(|_| "SANDBOX_JOURNAL_READ")?;
-        if bytes.len() > MAX_JOURNAL_BYTES { return Err("SANDBOX_JOURNAL_LIMIT".into()); }
+        file.file_mut()
+            .take((MAX_JOURNAL_BYTES + 1) as u64)
+            .read_to_end(&mut bytes)
+            .map_err(|_| "SANDBOX_JOURNAL_READ")?;
+        if bytes.len() > MAX_JOURNAL_BYTES {
+            return Err("SANDBOX_JOURNAL_LIMIT".into());
+        }
         let (value, used) = last_record(&bytes)?;
         value.verify(name, owner)?;
-        Ok(Self { file, value, used: used as u64 })
+        Ok(Self {
+            file,
+            value,
+            used: used as u64,
+        })
     }
-    fn append(&mut self, phase: Phase, identity: Option<Identity>, scope: Option<Scope>) -> Result<(), String> {
+    fn append(
+        &mut self,
+        phase: Phase,
+        identity: Option<Identity>,
+        scope: Option<Scope>,
+    ) -> Result<(), String> {
         let mut next = self.value.clone();
-        next.sequence = next.sequence.checked_add(1).ok_or("SANDBOX_JOURNAL_SEQUENCE")?;
+        next.sequence = next
+            .sequence
+            .checked_add(1)
+            .ok_or("SANDBOX_JOURNAL_SEQUENCE")?;
         next.phase = phase;
         next.identity = identity;
         next.scope = scope;
         let bytes = frame(&next)?;
-        if self.used + bytes.len() as u64 > MAX_JOURNAL_BYTES as u64 { return Err("SANDBOX_JOURNAL_LIMIT".into()); }
+        if self.used + bytes.len() as u64 > MAX_JOURNAL_BYTES as u64 {
+            return Err("SANDBOX_JOURNAL_LIMIT".into());
+        }
         // Discard only an incomplete trailing frame, preserving the last
         // fsynced ownership state if a previous write was interrupted.
-        self.file.file().set_len(self.used).map_err(|_| "SANDBOX_JOURNAL_WRITE")?;
-        self.file.file_mut().seek(SeekFrom::Start(self.used)).map_err(|_| "SANDBOX_JOURNAL_WRITE")?;
-        self.file.file_mut().write_all(&bytes).and_then(|_| self.file.file().sync_all())
+        self.file
+            .file()
+            .set_len(self.used)
+            .map_err(|_| "SANDBOX_JOURNAL_WRITE")?;
+        self.file
+            .file_mut()
+            .seek(SeekFrom::Start(self.used))
+            .map_err(|_| "SANDBOX_JOURNAL_WRITE")?;
+        self.file
+            .file_mut()
+            .write_all(&bytes)
+            .and_then(|_| self.file.file().sync_all())
             .map_err(|_| "SANDBOX_JOURNAL_FLUSH")?;
         self.used += bytes.len() as u64;
         self.value = next;
@@ -453,30 +655,61 @@ impl ProfileLease {
             _cleanup: self.control.operation.hold_cleanup(),
         }
     }
-    pub(super) fn name(&self) -> &str { &self.journal.as_ref().expect("owned journal").value.name }
-    pub(super) fn expected_sid(&self) -> &str { &self.journal.as_ref().expect("owned journal").value.package_sid }
-    pub(super) fn registered(&mut self) { self.registered = true; }
+    pub(super) fn name(&self) -> &str {
+        &self.journal.as_ref().expect("owned journal").value.name
+    }
+    pub(super) fn expected_sid(&self) -> &str {
+        &self
+            .journal
+            .as_ref()
+            .expect("owned journal")
+            .value
+            .package_sid
+    }
+    pub(super) fn registered(&mut self) {
+        self.registered = true;
+    }
     pub(super) fn not_registered(&mut self) {
         self.registered = false;
         if let Some(journal) = &mut self.journal {
             let _ = journal.append(Phase::NotRegistered, None, None);
         }
     }
-    pub(super) fn bind(&mut self, identity: NativeProfileIdentity, scope: NativeProfileScope) -> Result<(), String> {
-        if !self.registered { return Err("SANDBOX_JOURNAL_UNREGISTERED".into()); }
-        self.journal.as_mut().ok_or("SANDBOX_JOURNAL_CLOSED")?
+    pub(super) fn bind(
+        &mut self,
+        identity: NativeProfileIdentity,
+        scope: NativeProfileScope,
+    ) -> Result<(), String> {
+        if !self.registered {
+            return Err("SANDBOX_JOURNAL_UNREGISTERED".into());
+        }
+        self.journal
+            .as_mut()
+            .ok_or("SANDBOX_JOURNAL_CLOSED")?
             .append(Phase::Bound, Some(identity.into()), Some(scope.into()))
     }
     pub(super) fn create_job(&self) -> Result<NamedPrivateJob, String> {
-        self.control.operation.check().map_err(|error| error.to_string())?;
+        self.control
+            .operation
+            .check()
+            .map_err(|error| error.to_string())?;
         let id = id_from_name(self.name())?;
         let job = NamedPrivateJob::create(&format!("{JOB_PREFIX}{id}"))
             .map_err(|_| "SANDBOX_NAMED_JOB_CREATE")?;
-        *self.control.job.lock().map_err(|_| "SANDBOX_JOB_OWNER_LOCK")? = Some(job.clone());
-        self.control.operation.check().map_err(|error| error.to_string())?;
+        *self
+            .control
+            .job
+            .lock()
+            .map_err(|_| "SANDBOX_JOB_OWNER_LOCK")? = Some(job.clone());
+        self.control
+            .operation
+            .check()
+            .map_err(|error| error.to_string())?;
         Ok(job)
     }
-    fn cleanup_budget(&self) -> OperationBudget { self.registry.cleanup_budget(&self.control) }
+    fn cleanup_budget(&self) -> OperationBudget {
+        self.registry.cleanup_budget(&self.control)
+    }
     pub(super) fn try_cleanup(&mut self) -> Result<(), String> {
         let budget = self.cleanup_budget();
         self.try_cleanup_with(&budget)
@@ -485,19 +718,31 @@ impl ProfileLease {
         budget.check().map_err(|error| error.to_string())?;
         let journal = self.journal.as_mut().ok_or("SANDBOX_JOURNAL_CLOSED")?;
         if self.registered {
-            let current_job = self.control.job.lock().map_err(|_| "SANDBOX_JOB_OWNER_LOCK")?.clone();
+            let current_job = self
+                .control
+                .job
+                .lock()
+                .map_err(|_| "SANDBOX_JOB_OWNER_LOCK")?
+                .clone();
             if let Some(job) = current_job {
                 if !job.is_empty().map_err(|_| "SANDBOX_RECOVERY_JOB_QUERY")? {
                     let _ = job.terminate();
                     return Err("SANDBOX_RECOVERY_JOB_ACTIVE".into());
                 }
-            } else if let Some(job) = NamedPrivateJob::open(&format!("{JOB_PREFIX}{}", id_from_name(&journal.value.name)?))
-                .map_err(|_| "SANDBOX_RECOVERY_JOB_OPEN")?
+            } else if let Some(job) = NamedPrivateJob::open(&format!(
+                "{JOB_PREFIX}{}",
+                id_from_name(&journal.value.name)?
+            ))
+            .map_err(|_| "SANDBOX_RECOVERY_JOB_OPEN")?
             {
                 // An orphan recovery must never delete a profile while the
                 // named Job still owns any process, including descendants.
                 let active = !job.is_empty().map_err(|_| "SANDBOX_RECOVERY_JOB_QUERY")?;
-                *self.control.job.lock().map_err(|_| "SANDBOX_JOB_OWNER_LOCK")? = Some(job.clone());
+                *self
+                    .control
+                    .job
+                    .lock()
+                    .map_err(|_| "SANDBOX_JOB_OWNER_LOCK")? = Some(job.clone());
                 if active {
                     let _ = job.terminate();
                     return Err("SANDBOX_RECOVERY_JOB_ACTIVE".into());
@@ -507,35 +752,63 @@ impl ProfileLease {
                 // Only this still-live host may bind an intent after it knows
                 // CreateAppContainerProfile succeeded. Restart recovery never
                 // invents this missing proof.
-                if self.recovery { return Err("SANDBOX_RECOVERY_IDENTITY_NOT_BOUND".into()); }
+                if self.recovery {
+                    return Err("SANDBOX_RECOVERY_IDENTITY_NOT_BOUND".into());
+                }
                 let path = os_profile_folder(&journal.value.package_sid)?;
-                let pin = PinnedReadDirectory::open(&path, budget).map_err(|_| "SANDBOX_RECOVERY_PROFILE_PIN")?;
-                let identity = pin.identity_record().map_err(|_| "SANDBOX_RECOVERY_PROFILE_OWNER")?;
-                let scope = pin.recovery_scope(&journal.value.name, &journal.value.package_sid)
+                let pin = PinnedReadDirectory::open(&path, budget)
+                    .map_err(|_| "SANDBOX_RECOVERY_PROFILE_PIN")?;
+                let identity = pin
+                    .identity_record()
+                    .map_err(|_| "SANDBOX_RECOVERY_PROFILE_OWNER")?;
+                let scope = pin
+                    .recovery_scope(&journal.value.name, &journal.value.package_sid)
                     .map_err(|_| "SANDBOX_RECOVERY_NAMESPACE_BIND")?;
                 journal.append(Phase::Bound, Some(identity.into()), Some(scope.into()))?;
                 drop(pin);
             }
             let namespace = hold_profile_cleanup_namespace(
-                &journal.value.scope.as_ref().ok_or("SANDBOX_RECOVERY_SCOPE_NOT_BOUND")?.native(),
-                &journal.value.name, &journal.value.package_sid, budget,
-            ).map_err(|error| format!("SANDBOX_RECOVERY_NAMESPACE:{error}"))?;
+                &journal
+                    .value
+                    .scope
+                    .as_ref()
+                    .ok_or("SANDBOX_RECOVERY_SCOPE_NOT_BOUND")?
+                    .native(),
+                &journal.value.name,
+                &journal.value.package_sid,
+                budget,
+            )
+            .map_err(|error| format!("SANDBOX_RECOVERY_NAMESPACE:{error}"))?;
             if journal.value.phase == Phase::Bound {
                 let path = os_profile_folder(&journal.value.package_sid)?;
-                let expected = journal.value.identity.as_ref().ok_or("SANDBOX_RECOVERY_IDENTITY_NOT_BOUND")?.native();
+                let expected = journal
+                    .value
+                    .identity
+                    .as_ref()
+                    .ok_or("SANDBOX_RECOVERY_IDENTITY_NOT_BOUND")?
+                    .native();
                 let options = PrivateTreeOptions {
-                    max_objects: PRIVATE_TREE_MAX_ENTRIES, max_depth: PRIVATE_TREE_MAX_DEPTH,
-                    max_repairs: 0, max_duration: budget.remaining().map_err(|error| error.to_string())?,
+                    max_objects: PRIVATE_TREE_MAX_ENTRIES,
+                    max_depth: PRIVATE_TREE_MAX_DEPTH,
+                    max_repairs: 0,
+                    max_duration: budget.remaining().map_err(|error| error.to_string())?,
                 };
                 delete_recorded_profile_tree(&path, &expected, &options, budget)
                     .map_err(|error| format!("SANDBOX_RECOVERY_NATIVE_DELETE:{error}"))?;
-                journal.append(Phase::DataRemoved, journal.value.identity.clone(), journal.value.scope.clone())?;
+                journal.append(
+                    Phase::DataRemoved,
+                    journal.value.identity.clone(),
+                    journal.value.scope.clone(),
+                )?;
             }
             budget.check().map_err(|error| error.to_string())?;
-            if journal.value.phase != Phase::DataRemoved { return Err("SANDBOX_RECOVERY_PHASE".into()); }
+            if journal.value.phase != Phase::DataRemoved {
+                return Err("SANDBOX_RECOVERY_PHASE".into());
+            }
             // The API receives only the strict recorded profile name. Never
             // pass a ledger-provided filesystem path to recursive deletion.
-            namespace.recheck(&journal.value.package_sid, budget)
+            namespace
+                .recheck(&journal.value.package_sid, budget)
                 .map_err(|_| "SANDBOX_RECOVERY_NAMESPACE_CHANGED")?;
             let name = super::wide_text(&journal.value.name)?;
             // Microsoft documents deletion of a non-existent profile as
@@ -543,10 +816,15 @@ impl ProfileLease {
             // therefore retried idempotently with the namespace guard held.
             // https://learn.microsoft.com/windows/win32/api/userenv/nf-userenv-deleteappcontainerprofile
             let result = unsafe { DeleteAppContainerProfile(name.as_ptr()) };
-            if result < 0 { return Err("SANDBOX_RECOVERY_UNREGISTER_PENDING".into()); }
+            if result < 0 {
+                return Err("SANDBOX_RECOVERY_UNREGISTER_PENDING".into());
+            }
         }
         budget.check().map_err(|error| error.to_string())?;
-        journal.file.mark_deleted().map_err(|_| "SANDBOX_JOURNAL_DELETE_PENDING")?;
+        journal
+            .file
+            .mark_deleted()
+            .map_err(|_| "SANDBOX_JOURNAL_DELETE_PENDING")?;
         self.journal.take(); // Native disposition completes when this handle closes.
         self.cleaned = true;
         Ok(())
@@ -555,7 +833,9 @@ impl ProfileLease {
 impl Drop for ProfileLease {
     fn drop(&mut self) {
         if self.recovery && self.cleaned {
-            self.registry.pending_recovery.fetch_sub(1, Ordering::AcqRel);
+            self.registry
+                .pending_recovery
+                .fetch_sub(1, Ordering::AcqRel);
         }
         // An incomplete lease leaves the durable file intact. No claim that
         // this in-process cleanup owner can survive std::process::exit.
@@ -565,29 +845,51 @@ impl Drop for ProfileLease {
 pub(super) fn begin(budget: &OperationBudget) -> Result<ProfileLease, String> {
     #[cfg(test)]
     initialize_test_store()?;
-    let registry = REGISTRY.get().cloned().ok_or("SANDBOX_JOURNAL_NOT_INITIALIZED")?;
+    let registry = REGISTRY
+        .get()
+        .cloned()
+        .ok_or("SANDBOX_JOURNAL_NOT_INITIALIZED")?;
     begin_in_registry(registry, budget)
 }
-fn begin_in_registry(registry: Arc<Registry>, budget: &OperationBudget) -> Result<ProfileLease, String> {
+fn begin_in_registry(
+    registry: Arc<Registry>,
+    budget: &OperationBudget,
+) -> Result<ProfileLease, String> {
     let control = registry.track(budget, true)?;
     budget.check().map_err(|error| error.to_string())?;
     let cleanup_owner = budget.hold_cleanup();
     let id = uuid::Uuid::new_v4().simple().to_string();
     let name = format!("{PROFILE_PREFIX}{id}");
     let record = Record {
-        version: 1, sequence: 1, package_sid: sid_from_name(&name)?,
-        owner_sid: current_user_sid()?, name, phase: Phase::Intent, identity: None, scope: None,
+        version: 1,
+        sequence: 1,
+        package_sid: sid_from_name(&name)?,
+        owner_sid: current_user_sid()?,
+        name,
+        phase: Phase::Intent,
+        identity: None,
+        scope: None,
     };
-    let file = registry.store.create(std::ffi::OsStr::new(&format!("{id}.profile")), budget)
+    let file = registry
+        .store
+        .create(std::ffi::OsStr::new(&format!("{id}.profile")), budget)
         .map_err(|_| "SANDBOX_JOURNAL_CREATE")?;
     let journal = Journal::create(file, record)?;
     Ok(ProfileLease {
-        registry, control, journal: Some(journal), _cleanup_owner: cleanup_owner,
-        registered: false, recovery: false, cleaned: false,
+        registry,
+        control,
+        journal: Some(journal),
+        _cleanup_owner: cleanup_owner,
+        registered: false,
+        recovery: false,
+        cleaned: false,
     })
 }
 
-pub(crate) fn recover_abandoned_profiles(parent: &Path, until: Instant) -> Result<RecoveryReport, String> {
+pub(crate) fn recover_abandoned_profiles(
+    parent: &Path,
+    until: Instant,
+) -> Result<RecoveryReport, String> {
     let registry = initialize_until(parent, until)?;
     recover_registry(registry, until)
 }
@@ -597,39 +899,69 @@ fn recover_registry(registry: Arc<Registry>, until: Instant) -> Result<RecoveryR
         if STOPPING.load(Ordering::Acquire) || registry.stopping.load(Ordering::Acquire) {
             return Err("SANDBOX_ADMISSION_CLOSED".into());
         }
-        if registry.recovering.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_err() {
+        if registry
+            .recovering
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
             return Err("SANDBOX_RECOVERY_BUSY".into());
         }
     }
-    registry.remember(&RecoveryReport::default(), Some("SANDBOX_RECOVERY_SCANNING"));
-    struct Recovering<'a> { registry: &'a Registry, completed: bool }
+    registry.remember(
+        &RecoveryReport::default(),
+        Some("SANDBOX_RECOVERY_SCANNING"),
+    );
+    struct Recovering<'a> {
+        registry: &'a Registry,
+        completed: bool,
+    }
     impl Drop for Recovering<'_> {
         fn drop(&mut self) {
             if !self.completed {
                 self.registry.rejected.store(true, Ordering::Release);
-                let mut observation = self.registry.observation.lock().unwrap_or_else(|poison| poison.into_inner());
+                let mut observation = self
+                    .registry
+                    .observation
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner());
                 if observation.code.as_deref() == Some("SANDBOX_RECOVERY_SCANNING") {
                     observation.code = Some("SANDBOX_RECOVERY_SCAN_FAILED".into());
                 }
             }
-            self.registry.recovery_budget.lock().unwrap_or_else(|poison| poison.into_inner()).take();
+            self.registry
+                .recovery_budget
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .take();
             self.registry.recovering.store(false, Ordering::Release);
             super::wake_cleanup_reaper();
         }
     }
-    let mut recovering = Recovering { registry: &registry, completed: false };
+    let mut recovering = Recovering {
+        registry: &registry,
+        completed: false,
+    };
     if STOPPING.load(Ordering::Acquire) || registry.stopping.load(Ordering::Acquire) {
         return Err("SANDBOX_ADMISSION_CLOSED".into());
     }
     let budget = OperationBudget::until(until);
-    *registry.recovery_budget.lock().map_err(|_| "SANDBOX_RECOVERY_BUDGET_LOCK")? = Some(budget.clone());
-    if STOPPING.load(Ordering::Acquire) || registry.stopping.load(Ordering::Acquire) { budget.cancel(); }
+    *registry
+        .recovery_budget
+        .lock()
+        .map_err(|_| "SANDBOX_RECOVERY_BUDGET_LOCK")? = Some(budget.clone());
+    if STOPPING.load(Ordering::Acquire) || registry.stopping.load(Ordering::Acquire) {
+        budget.cancel();
+    }
     let entries = match registry.store.entries(MAX_RECORDS, &budget) {
         Ok(entries) => entries,
         Err(error) => {
-            let code = if budget.check().is_err() { "SANDBOX_RECOVERY_BUDGET" }
-                else if error.to_string().contains("TREE_OBJECT_LIMIT") { "SANDBOX_RECOVERY_RECORD_LIMIT" }
-                else { "SANDBOX_RECOVERY_ENUMERATE" };
+            let code = if budget.check().is_err() {
+                "SANDBOX_RECOVERY_BUDGET"
+            } else if error.to_string().contains("TREE_OBJECT_LIMIT") {
+                "SANDBOX_RECOVERY_RECORD_LIMIT"
+            } else {
+                "SANDBOX_RECOVERY_ENUMERATE"
+            };
             registry.remember(&RecoveryReport::default(), Some(code));
             registry.rejected.store(true, Ordering::Release);
             return Err(code.into());
@@ -639,16 +971,31 @@ fn recover_registry(registry: Arc<Registry>, until: Instant) -> Result<RecoveryR
     let mut report = RecoveryReport::default();
     let total = entries.len();
     for (index, entry) in entries.into_iter().enumerate() {
-        if budget.check().is_err() { report.pending += total - index; break; }
+        if budget.check().is_err() {
+            report.pending += total - index;
+            break;
+        }
         let file = match registry.store.try_open(&entry, &budget) {
             Ok(Some(file)) => file,
-            Ok(None) => { report.active += 1; continue; }
-            Err(_) => { report.rejected += 1; continue; }
+            Ok(None) => {
+                report.active += 1;
+                continue;
+            }
+            Err(_) => {
+                report.rejected += 1;
+                continue;
+            }
         };
-        let Some(name) = entry.name.to_str() else { report.rejected += 1; continue; };
+        let Some(name) = entry.name.to_str() else {
+            report.rejected += 1;
+            continue;
+        };
         let journal = match Journal::read(file, name, &owner) {
             Ok(journal) => journal,
-            Err(_) => { report.rejected += 1; continue; }
+            Err(_) => {
+                report.rejected += 1;
+                continue;
+            }
         };
         if journal.value.phase == Phase::Intent {
             // Crash between native registration and binding its filesystem
@@ -664,18 +1011,31 @@ fn recover_registry(registry: Arc<Registry>, until: Instant) -> Result<RecoveryR
             let job_name = format!("{JOB_PREFIX}{}", id_from_name(&journal.value.name)?);
             match NamedPrivateJob::open(&job_name) {
                 Ok(job) => job,
-                Err(_) => { report.rejected += 1; continue; }
+                Err(_) => {
+                    report.rejected += 1;
+                    continue;
+                }
             }
-        } else { None };
+        } else {
+            None
+        };
         let control = registry.track(&budget, false)?;
         *control.job.lock().map_err(|_| "SANDBOX_JOB_OWNER_LOCK")? = job;
         registry.pending_recovery.fetch_add(1, Ordering::AcqRel);
         let mut lease = ProfileLease {
-            registry: Arc::clone(&registry), control, journal: Some(journal),
-            _cleanup_owner: budget.hold_cleanup(), registered, recovery: true, cleaned: false,
+            registry: Arc::clone(&registry),
+            control,
+            journal: Some(journal),
+            _cleanup_owner: budget.hold_cleanup(),
+            registered,
+            recovery: true,
+            cleaned: false,
         };
         match lease.try_cleanup_with(&budget) {
-            Ok(()) => { report.recovered += 1; drop(lease); }
+            Ok(()) => {
+                report.recovered += 1;
+                drop(lease);
+            }
             Err(_) => {
                 report.pending += 1;
                 super::enqueue_cleanup(CleanupTask::Profile(ProfileCleanup::new(lease)));
@@ -683,13 +1043,19 @@ fn recover_registry(registry: Arc<Registry>, until: Instant) -> Result<RecoveryR
         }
     }
     if report.rejected != 0 || report.pending != 0 {
-        let code = if report.rejected != 0 { "SANDBOX_RECOVERY_REVIEW_REQUIRED" }
-            else if budget.check().is_err() { "SANDBOX_RECOVERY_BUDGET" }
-            else { "SANDBOX_RECOVERY_PENDING" };
+        let code = if report.rejected != 0 {
+            "SANDBOX_RECOVERY_REVIEW_REQUIRED"
+        } else if budget.check().is_err() {
+            "SANDBOX_RECOVERY_BUDGET"
+        } else {
+            "SANDBOX_RECOVERY_PENDING"
+        };
         registry.remember(&report, Some(code));
         registry.rejected.store(true, Ordering::Release);
-        return Err(format!("SANDBOX_RECOVERY_PENDING; recovered={}; active={}; pending={}; rejected={}",
-            report.recovered, report.active, report.pending, report.rejected));
+        return Err(format!(
+            "SANDBOX_RECOVERY_PENDING; recovered={}; active={}; pending={}; rejected={}",
+            report.recovered, report.active, report.pending, report.rejected
+        ));
     }
     // Only a complete native rescan may clear this admission failure. The
     // read-only diagnostic API and completion of one queued task cannot
@@ -700,10 +1066,15 @@ fn recover_registry(registry: Arc<Registry>, until: Instant) -> Result<RecoveryR
     Ok(report)
 }
 
-
-fn diagnostic_id(entry: &browseros_platform_security::windows::PinnedDirectoryEntry) -> Option<String> {
-    entry.name.to_str().and_then(|name| name.strip_suffix(".profile"))
-        .filter(|id| valid_id(id)).map(str::to_owned)
+fn diagnostic_id(
+    entry: &browseros_platform_security::windows::PinnedDirectoryEntry,
+) -> Option<String> {
+    entry
+        .name
+        .to_str()
+        .and_then(|name| name.strip_suffix(".profile"))
+        .filter(|id| valid_id(id))
+        .map(str::to_owned)
 }
 fn diagnostic_record(
     registry: &Registry,
@@ -712,18 +1083,28 @@ fn diagnostic_record(
     budget: &OperationBudget,
 ) -> RecoveryRecordDiagnostic {
     let mut result = RecoveryRecordDiagnostic {
-        record_id: diagnostic_id(entry), phase: "unknown".into(),
-        code: "SANDBOX_RECOVERY_RECORD_UNREADABLE".into(), retryable: false,
+        record_id: diagnostic_id(entry),
+        phase: "unknown".into(),
+        code: "SANDBOX_RECOVERY_RECORD_UNREADABLE".into(),
+        retryable: false,
     };
     let file = match registry.store.open_readonly(entry, budget) {
         Ok(file) => file,
         Err(_) => return result,
     };
     let mut bytes = Vec::new();
-    if file.take((MAX_JOURNAL_BYTES + 1) as u64).read_to_end(&mut bytes).is_err()
-        || bytes.len() > MAX_JOURNAL_BYTES || budget.check().is_err()
-    { return result; }
-    let Some(file_name) = entry.name.to_str() else { return result; };
+    if file
+        .take((MAX_JOURNAL_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .is_err()
+        || bytes.len() > MAX_JOURNAL_BYTES
+        || budget.check().is_err()
+    {
+        return result;
+    }
+    let Some(file_name) = entry.name.to_str() else {
+        return result;
+    };
     let record = match last_record(&bytes) {
         Ok((record, _)) if record.verify(file_name, owner).is_ok() => record,
         _ => {
@@ -734,7 +1115,11 @@ fn diagnostic_record(
     let (phase, code, retryable) = match record.phase {
         Phase::Intent => ("intent", "SANDBOX_RECOVERY_IDENTITY_NOT_BOUND", false),
         Phase::Bound => ("bound", "SANDBOX_RECOVERY_BOUND_RETRYABLE", true),
-        Phase::DataRemoved => ("data_removed", "SANDBOX_RECOVERY_UNREGISTER_RETRYABLE", true),
+        Phase::DataRemoved => (
+            "data_removed",
+            "SANDBOX_RECOVERY_UNREGISTER_RETRYABLE",
+            true,
+        ),
         Phase::NotRegistered => ("not_registered", "SANDBOX_RECOVERY_RECORD_RETRYABLE", true),
     };
     result.phase = phase.into();
@@ -744,7 +1129,9 @@ fn diagnostic_record(
 }
 
 fn status_for_registry(
-    registry: &Registry, until: Instant, record_limit: usize,
+    registry: &Registry,
+    until: Instant,
+    record_limit: usize,
 ) -> Result<RecoveryStatus, String> {
     let budget = OperationBudget::until(until.min(Instant::now() + STATUS_BUDGET));
     let mut records = Vec::new();
@@ -775,32 +1162,52 @@ fn status_for_registry(
             }
             Err(error) => {
                 truncated = true;
-                diagnostic_code = Some(if budget.check().is_err() { "SANDBOX_RECOVERY_STATUS_BUDGET" }
-                    else if error.to_string().contains("TREE_OBJECT_LIMIT") { "SANDBOX_RECOVERY_RECORD_LIMIT" }
-                    else { "SANDBOX_RECOVERY_STATUS_ENUMERATE" });
+                diagnostic_code = Some(if budget.check().is_err() {
+                    "SANDBOX_RECOVERY_STATUS_BUDGET"
+                } else if error.to_string().contains("TREE_OBJECT_LIMIT") {
+                    "SANDBOX_RECOVERY_RECORD_LIMIT"
+                } else {
+                    "SANDBOX_RECOVERY_STATUS_ENUMERATE"
+                });
             }
         }
     }
     // This is an observation, not a deletion authorization or a claim that
     // live owners are inactive. Creating a profile/retrying recovery rechecks
     // its native admission, record lease, Job and identity at the action.
-    let observation = registry.observation.lock().map_err(|_| "SANDBOX_RECOVERY_STATUS_LOCK")?.clone();
+    let observation = registry
+        .observation
+        .lock()
+        .map_err(|_| "SANDBOX_RECOVERY_STATUS_LOCK")?
+        .clone();
     let pending = registry.pending_recovery.load(Ordering::Acquire);
     let stopping = STOPPING.load(Ordering::Acquire) || registry.stopping.load(Ordering::Acquire);
     let recovering = registry.recovering.load(Ordering::Acquire);
     let rejected = registry.rejected.load(Ordering::Acquire);
-    let state = if stopping { "stopping" }
-        else if recovering { "recovering" }
-        else if rejected && observation.report.rejected != 0 { "review_required" }
-        else if rejected || pending != 0 { "pending" }
-        else { "ready" };
-    let last_code = observation.code.or_else(|| diagnostic_code.map(str::to_owned))
+    let state = if stopping {
+        "stopping"
+    } else if recovering {
+        "recovering"
+    } else if rejected && observation.report.rejected != 0 {
+        "review_required"
+    } else if rejected || pending != 0 {
+        "pending"
+    } else {
+        "ready"
+    };
+    let last_code = observation
+        .code
+        .or_else(|| diagnostic_code.map(str::to_owned))
         .or_else(|| (pending != 0).then(|| "SANDBOX_RECOVERY_CLEANUP_PENDING".into()));
     Ok(RecoveryStatus {
-        state: state.into(), can_start: registry.can_start(),
+        state: state.into(),
+        can_start: registry.can_start(),
         retry_available: !stopping && !recovering,
-        last_code, last_report: observation.report, pending_cleanup: pending,
-        records, truncated,
+        last_code,
+        last_report: observation.report,
+        pending_cleanup: pending,
+        records,
+        truncated,
     })
 }
 
@@ -811,12 +1218,26 @@ pub(crate) fn recovery_status(until: Instant) -> Result<RecoveryStatus, String> 
     let Some(registry) = REGISTRY.get() else {
         let stopping = STOPPING.load(Ordering::Acquire);
         return Ok(RecoveryStatus {
-            state: if stopping { "stopping" } else { "not_initialized" }.into(),
-            can_start: false, retry_available: false,
-            last_code: Some(if stopping { "SANDBOX_ADMISSION_CLOSED" }
-                else { "SANDBOX_JOURNAL_NOT_INITIALIZED" }.into()),
-            last_report: RecoveryReport::default(), pending_cleanup: 0,
-            records: Vec::new(), truncated: false,
+            state: if stopping {
+                "stopping"
+            } else {
+                "not_initialized"
+            }
+            .into(),
+            can_start: false,
+            retry_available: false,
+            last_code: Some(
+                if stopping {
+                    "SANDBOX_ADMISSION_CLOSED"
+                } else {
+                    "SANDBOX_JOURNAL_NOT_INITIALIZED"
+                }
+                .into(),
+            ),
+            last_report: RecoveryReport::default(),
+            pending_cleanup: 0,
+            records: Vec::new(),
+            truncated: false,
         });
     };
     status_for_registry(registry, until, MAX_STATUS_RECORDS)
@@ -832,10 +1253,14 @@ fn retry_registry(registry: Arc<Registry>, until: Instant) -> Result<RecoverySta
         // In-progress/shutdown admission is already reflected by the native
         // state. Other failures must remain observable even if they occurred
         // before the scan guard could publish its normal failure snapshot.
-        if error != "SANDBOX_RECOVERY_BUSY" && error != "SANDBOX_ADMISSION_CLOSED"
+        if error != "SANDBOX_RECOVERY_BUSY"
+            && error != "SANDBOX_ADMISSION_CLOSED"
             && !registry.rejected.load(Ordering::Acquire)
         {
-            registry.remember(&RecoveryReport::default(), Some("SANDBOX_RECOVERY_SCAN_FAILED"));
+            registry.remember(
+                &RecoveryReport::default(),
+                Some("SANDBOX_RECOVERY_SCAN_FAILED"),
+            );
             registry.rejected.store(true, Ordering::Release);
         }
     }
@@ -845,7 +1270,10 @@ fn retry_registry(registry: Arc<Registry>, until: Instant) -> Result<RecoverySta
 /// Explicit retry accepts no filesystem path or record identifier from a UI.
 /// It uses only the journal installed by trusted startup preparation.
 pub(crate) fn retry_recovery(until: Instant) -> Result<RecoveryStatus, String> {
-    let registry = REGISTRY.get().cloned().ok_or("SANDBOX_JOURNAL_NOT_INITIALIZED")?;
+    let registry = REGISTRY
+        .get()
+        .cloned()
+        .ok_or("SANDBOX_JOURNAL_NOT_INITIALIZED")?;
     retry_registry(registry, until)
 }
 
@@ -854,49 +1282,78 @@ pub(super) fn admission_available() -> bool {
     // Only test builds install this private fixture; production initialization
     // remains owned by startup and never falls back to a temporary store.
     #[cfg(test)]
-    if initialize_test_store().is_err() { return false; }
+    if initialize_test_store().is_err() {
+        return false;
+    }
     REGISTRY.get().is_some_and(|registry| registry.can_start())
 }
-pub(super) fn shutdown_requested() -> bool { STOPPING.load(Ordering::Acquire) }
+pub(super) fn shutdown_requested() -> bool {
+    STOPPING.load(Ordering::Acquire)
+}
 
 pub(super) fn reaper_may_exit() -> bool {
-    STOPPING.load(Ordering::Acquire) && INITIALIZING.load(Ordering::Acquire) == 0
-        && REGISTRY.get().map_or(true, |registry|
-            !registry.recovering.load(Ordering::Acquire) && registry.active_count() == 0)
+    STOPPING.load(Ordering::Acquire)
+        && INITIALIZING.load(Ordering::Acquire) == 0
+        && REGISTRY.get().map_or(true, |registry| {
+            !registry.recovering.load(Ordering::Acquire) && registry.active_count() == 0
+        })
 }
 pub(crate) fn request_shutdown() {
     {
-        let _gate = PRODUCER_GATE.lock().unwrap_or_else(|poison| poison.into_inner());
+        let _gate = PRODUCER_GATE
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
         STOPPING.store(true, Ordering::Release);
     }
-    if let Some(registry) = REGISTRY.get() { registry.stop(); }
+    if let Some(registry) = REGISTRY.get() {
+        registry.stop();
+    }
     super::wake_cleanup_reaper();
 }
 pub(crate) fn shutdown_until(until: Instant) -> Result<(), String> {
     request_shutdown();
-    if let Some(registry) = REGISTRY.get() { registry.set_deadline(until); }
+    if let Some(registry) = REGISTRY.get() {
+        registry.set_deadline(until);
+    }
     loop {
         let (active, pending, recovering, rejected) = if let Some(registry) = REGISTRY.get() {
             registry.stop();
             registry.set_deadline(until);
-            (registry.active_count(), registry.pending_recovery.load(Ordering::Acquire),
-                registry.recovering.load(Ordering::Acquire), registry.rejected.load(Ordering::Acquire))
-        } else { (0, 0, false, false) };
+            (
+                registry.active_count(),
+                registry.pending_recovery.load(Ordering::Acquire),
+                registry.recovering.load(Ordering::Acquire),
+                registry.rejected.load(Ordering::Acquire),
+            )
+        } else {
+            (0, 0, false, false)
+        };
         let initializing = INITIALIZING.load(Ordering::Acquire);
         super::wake_cleanup_reaper();
         // Even failed initialization may have started an idle service. Never
         // report success before the already-created cleanup thread is joined.
-        if active == 0 && pending == 0 && !recovering && initializing == 0
+        if active == 0
+            && pending == 0
+            && !recovering
+            && initializing == 0
             && super::join_cleanup_reaper_if_finished()?
         {
-            return if rejected { Err("SANDBOX_PROFILE_RECOVERY_PENDING".into()) } else { Ok(()) };
+            return if rejected {
+                Err("SANDBOX_PROFILE_RECOVERY_PENDING".into())
+            } else {
+                Ok(())
+            };
         }
         if Instant::now() >= until {
             return Err(format!(
                 "SANDBOX_SHUTDOWN_PENDING; native_owners={active}; recovery={pending}; scanning={recovering}; initializing={initializing}"
             ));
         }
-        thread::sleep(until.saturating_duration_since(Instant::now()).min(Duration::from_millis(10)));
+        thread::sleep(
+            until
+                .saturating_duration_since(Instant::now())
+                .min(Duration::from_millis(10)),
+        );
     }
 }
 
@@ -906,8 +1363,15 @@ mod tests {
 
     fn local_registry(label: &str) -> (PathBuf, Arc<Registry>, OperationBudget) {
         super::super::cleanup_reaper().unwrap();
-        let parent = std::env::temp_dir().join(format!("browseros-journal-{label}-{}", uuid::Uuid::new_v4().simple()));
-        browseros_platform_security::windows::ensure_private_directory(&parent, &PrivateTreeOptions::default()).unwrap();
+        let parent = std::env::temp_dir().join(format!(
+            "browseros-journal-{label}-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        browseros_platform_security::windows::ensure_private_directory(
+            &parent,
+            &PrivateTreeOptions::default(),
+        )
+        .unwrap();
         let budget = OperationBudget::new(Duration::from_secs(30));
         let store = PrivateRecordStore::open(&parent, &budget).unwrap();
         (parent, Arc::new(Registry::new(store)), budget)
@@ -915,7 +1379,11 @@ mod tests {
     fn discard_test_records(registry: &Registry) {
         let budget = OperationBudget::new(Duration::from_secs(10));
         for entry in registry.store.entries(MAX_RECORDS, &budget).unwrap() {
-            let file = registry.store.try_open(&entry, &budget).unwrap().expect("test lease released");
+            let file = registry
+                .store
+                .try_open(&entry, &budget)
+                .unwrap()
+                .expect("test lease released");
             file.mark_deleted().unwrap();
             drop(file);
         }
@@ -929,7 +1397,9 @@ mod tests {
             owners.push(registry.track(&budget, true).unwrap());
         }
         assert!(!registry.can_start());
-        assert!(matches!(registry.track(&budget, true), Err(code) if code == "SANDBOX_CAPACITY_BUSY"));
+        assert!(
+            matches!(registry.track(&budget, true), Err(code) if code == "SANDBOX_CAPACITY_BUSY")
+        );
         let io = NativeIoOwner {
             _control: Arc::clone(&owners[0]),
             _cleanup: budget.hold_cleanup(),
@@ -951,7 +1421,11 @@ mod tests {
         let (parent, registry, budget) = local_registry("unbound");
         let lease = begin_in_registry(Arc::clone(&registry), &budget).unwrap();
         drop(lease); // Simulate process loss before a filesystem identity was bound.
-        assert!(recover_registry(Arc::clone(&registry), Instant::now() + Duration::from_secs(2)).is_err());
+        assert!(recover_registry(
+            Arc::clone(&registry),
+            Instant::now() + Duration::from_secs(2)
+        )
+        .is_err());
         assert_eq!(registry.store.entries(2, &budget).unwrap().len(), 1);
         assert!(!registry.can_start());
         assert!(registry.track(&budget, true).is_err());
@@ -964,7 +1438,11 @@ mod tests {
     fn recovery_skips_a_live_native_record_lease() {
         let (parent, registry, budget) = local_registry("active");
         let lease = begin_in_registry(Arc::clone(&registry), &budget).unwrap();
-        let report = recover_registry(Arc::clone(&registry), Instant::now() + Duration::from_secs(2)).unwrap();
+        let report = recover_registry(
+            Arc::clone(&registry),
+            Instant::now() + Duration::from_secs(2),
+        )
+        .unwrap();
         assert_eq!(report.active, 1);
         assert_eq!(report.recovered, 0);
         assert_eq!(report.rejected, 0);
@@ -983,19 +1461,41 @@ mod tests {
         let display = wide_text("BrowserOS recovery fixture").unwrap();
         let mut sid = ptr::null_mut();
         let result = unsafe {
-            CreateAppContainerProfile(name.as_ptr(), display.as_ptr(), display.as_ptr(), ptr::null(), 0, &mut sid)
+            CreateAppContainerProfile(
+                name.as_ptr(),
+                display.as_ptr(),
+                display.as_ptr(),
+                ptr::null(),
+                0,
+                &mut sid,
+            )
         };
-        assert!(result >= 0 && !sid.is_null(), "native profile fixture failed: {result:x}");
-        unsafe { FreeSid(sid); }
+        assert!(
+            result >= 0 && !sid.is_null(),
+            "native profile fixture failed: {result:x}"
+        );
+        unsafe {
+            FreeSid(sid);
+        }
         lease.registered();
         let folder = os_profile_folder(lease.expected_sid()).unwrap();
         let pin = PinnedReadDirectory::open(&folder, &budget).unwrap();
-        lease.bind(pin.identity_record().unwrap(), pin.recovery_scope(lease.name(), lease.expected_sid()).unwrap()).unwrap();
+        lease
+            .bind(
+                pin.identity_record().unwrap(),
+                pin.recovery_scope(lease.name(), lease.expected_sid())
+                    .unwrap(),
+            )
+            .unwrap();
         drop(pin);
         std::fs::create_dir(folder.join("state")).unwrap();
         std::fs::write(folder.join("state/private"), b"recover me").unwrap();
         drop(lease); // Persisted record, no live host lease and no child Job.
-        let report = recover_registry(Arc::clone(&registry), Instant::now() + Duration::from_secs(10)).unwrap();
+        let report = recover_registry(
+            Arc::clone(&registry),
+            Instant::now() + Duration::from_secs(10),
+        )
+        .unwrap();
         assert_eq!(report.recovered, 1);
         assert_eq!(report.pending, 0);
         assert!(!folder.exists());
@@ -1013,7 +1513,10 @@ mod tests {
         registry.set_deadline(Instant::now());
         assert!(!registry.can_start());
         assert!(budget.check().is_err());
-        assert_eq!(cleanup.check().unwrap_err().kind(), std::io::ErrorKind::TimedOut);
+        assert_eq!(
+            cleanup.check().unwrap_err().kind(),
+            std::io::ErrorKind::TimedOut
+        );
         assert!(lease.try_cleanup().is_err());
         assert!(!budget.cleanup_complete());
         drop(lease);
@@ -1027,16 +1530,34 @@ mod tests {
     fn sample_record() -> Record {
         let id = "0123456789abcdef0123456789abcdef";
         let name = format!("{PROFILE_PREFIX}{id}");
-        Record { version: 1, sequence: 1, owner_sid: current_user_sid().unwrap(),
-            package_sid: sid_from_name(&name).unwrap(), name, phase: Phase::Intent, identity: None, scope: None }
+        Record {
+            version: 1,
+            sequence: 1,
+            owner_sid: current_user_sid().unwrap(),
+            package_sid: sid_from_name(&name).unwrap(),
+            name,
+            phase: Phase::Intent,
+            identity: None,
+            scope: None,
+        }
     }
     #[test]
     fn journal_rejects_path_fields_and_sid_substitution() {
         let record = sample_record();
-        record.verify("0123456789abcdef0123456789abcdef.profile", &record.owner_sid).unwrap();
+        record
+            .verify(
+                "0123456789abcdef0123456789abcdef.profile",
+                &record.owner_sid,
+            )
+            .unwrap();
         let mut wrong = record.clone();
         wrong.package_sid = "S-1-1-0".into();
-        assert!(wrong.verify("0123456789abcdef0123456789abcdef.profile", &record.owner_sid).is_err());
+        assert!(wrong
+            .verify(
+                "0123456789abcdef0123456789abcdef.profile",
+                &record.owner_sid
+            )
+            .is_err());
         let mut value = serde_json::to_value(&record).unwrap();
         value["path"] = serde_json::json!("C:\\arbitrary\\user-data");
         let payload = serde_json::to_vec(&value).unwrap();
@@ -1044,7 +1565,10 @@ mod tests {
         bytes.extend_from_slice(&(payload.len() as u32).to_le_bytes());
         bytes.extend_from_slice(&crc32(&payload).to_le_bytes());
         bytes.extend_from_slice(&payload);
-        assert!(last_record(&bytes).is_err(), "journal-supplied deletion paths must be rejected");
+        assert!(
+            last_record(&bytes).is_err(),
+            "journal-supplied deletion paths must be rejected"
+        );
     }
 
     #[test]
@@ -1053,10 +1577,17 @@ mod tests {
         let mut bound = intent.clone();
         bound.sequence = 2;
         bound.phase = Phase::Bound;
-        bound.identity = Some(Identity { volume_serial: 1, file_index: 2,
-            volume_guid: "12345678-1234-1234-1234-123456789abc".into(), created: 3 });
-        bound.scope = Some(Scope { parent: bound.identity.clone().unwrap(),
-            parent_path: r"C:\fixture".encode_utf16().collect(), component: bound.name.clone() });
+        bound.identity = Some(Identity {
+            volume_serial: 1,
+            file_index: 2,
+            volume_guid: "12345678-1234-1234-1234-123456789abc".into(),
+            created: 3,
+        });
+        bound.scope = Some(Scope {
+            parent: bound.identity.clone().unwrap(),
+            parent_path: r"C:\fixture".encode_utf16().collect(),
+            component: bound.name.clone(),
+        });
         let mut bytes = frame(&intent).unwrap();
         bytes.extend_from_slice(&frame(&bound).unwrap());
         let intact = bytes.len();
@@ -1076,18 +1607,34 @@ mod tests {
         let (parent, registry, budget) = local_registry("status-intent");
         let lease = begin_in_registry(Arc::clone(&registry), &budget).unwrap();
         drop(lease);
-        assert!(recover_registry(Arc::clone(&registry), Instant::now() + Duration::from_secs(2)).is_err());
-        let status = status_for_registry(&registry, Instant::now() + Duration::from_secs(2), MAX_STATUS_RECORDS).unwrap();
+        assert!(recover_registry(
+            Arc::clone(&registry),
+            Instant::now() + Duration::from_secs(2)
+        )
+        .is_err());
+        let status = status_for_registry(
+            &registry,
+            Instant::now() + Duration::from_secs(2),
+            MAX_STATUS_RECORDS,
+        )
+        .unwrap();
         assert_eq!(status.state, "review_required");
         assert!(!status.can_start);
         assert!(status.retry_available);
         assert_eq!(status.records.len(), 1);
         assert_eq!(status.records[0].phase, "intent");
-        assert_eq!(status.records[0].code, "SANDBOX_RECOVERY_IDENTITY_NOT_BOUND");
+        assert_eq!(
+            status.records[0].code,
+            "SANDBOX_RECOVERY_IDENTITY_NOT_BOUND"
+        );
         assert!(!status.records[0].retryable);
         assert_eq!(registry.store.entries(2, &budget).unwrap().len(), 1);
         assert!(registry.rejected.load(Ordering::Acquire));
-        let retried = retry_registry(Arc::clone(&registry), Instant::now() + Duration::from_secs(2)).unwrap();
+        let retried = retry_registry(
+            Arc::clone(&registry),
+            Instant::now() + Duration::from_secs(2),
+        )
+        .unwrap();
         assert_eq!(retried.state, "review_required");
         assert_eq!(registry.store.entries(2, &budget).unwrap().len(), 1);
         discard_test_records(&registry);
@@ -1104,7 +1651,11 @@ mod tests {
         drop(lease);
         assert!(recover_registry(Arc::clone(&registry), Instant::now()).is_err());
         assert!(!registry.can_start());
-        let status = retry_registry(Arc::clone(&registry), Instant::now() + Duration::from_secs(10)).unwrap();
+        let status = retry_registry(
+            Arc::clone(&registry),
+            Instant::now() + Duration::from_secs(10),
+        )
+        .unwrap();
         assert_eq!(status.state, "ready");
         assert!(status.can_start);
         assert_eq!(status.last_report.recovered, 1);
@@ -1122,10 +1673,14 @@ mod tests {
         for _ in 0..3 {
             owners.push(begin_in_registry(Arc::clone(&registry), &budget).unwrap());
         }
-        let status = status_for_registry(&registry, Instant::now() + Duration::from_secs(2), 2).unwrap();
+        let status =
+            status_for_registry(&registry, Instant::now() + Duration::from_secs(2), 2).unwrap();
         assert_eq!(status.records.len(), 2);
         assert!(status.truncated);
-        assert!(status.records.iter().all(|record| record.phase == "intent" && !record.retryable));
+        assert!(status
+            .records
+            .iter()
+            .all(|record| record.phase == "intent" && !record.retryable));
         assert_eq!(registry.store.entries(4, &budget).unwrap().len(), 3);
         // A status read must neither steal the native owner lease nor mutate
         // the admission state because an active intent was merely observed.
@@ -1135,5 +1690,4 @@ mod tests {
         drop(registry);
         std::fs::remove_dir_all(parent).unwrap();
     }
-
 }

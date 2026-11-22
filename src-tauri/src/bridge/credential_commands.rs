@@ -680,7 +680,8 @@ mod browser_credential_tests {
         );
         assert!(!raw.contains("FakePassword"), "索引文件不得出现任何密码值");
         let list: Vec<BrowserCredentialMeta> =
-            workspace::load_json_list_at(&path, "browser-credentials").expect("load credential index");
+            workspace::load_json_list_at(&path, "browser-credentials")
+                .expect("load credential index");
         assert_eq!(list.len(), 2, "按 key 去重后仍应为 2 条");
         let _ = std::fs::remove_dir_all(&dir);
     }

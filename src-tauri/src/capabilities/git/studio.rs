@@ -131,11 +131,9 @@ fn check_file(root: &Path, relative: &str, allow_missing: bool) -> Result<PathBu
     let canonical_parent = parent
         .canonicalize()
         .map_err(|_| "GIT_STUDIO_PATH_INVALID")?;
-    let authorized_root = crate::security_policy::canonical_root(root)
-        .map_err(|_| "GIT_STUDIO_ROOT_INVALID")?;
-    if !crate::security_policy::within_root(
-        &canonical_parent, &authorized_root,
-    ) {
+    let authorized_root =
+        crate::security_policy::canonical_root(root).map_err(|_| "GIT_STUDIO_ROOT_INVALID")?;
+    if !crate::security_policy::within_root(&canonical_parent, &authorized_root) {
         return Err("GIT_STUDIO_PATH_ESCAPE".into());
     }
     match path.symlink_metadata() {
@@ -148,15 +146,14 @@ fn check_file(root: &Path, relative: &str, allow_missing: bool) -> Result<PathBu
 /// Pin the authorized directory before opening a Git Studio worktree file.
 /// Never use std::fs::read after a path-only preflight; the parent can be
 /// replaced with a symlink/Junction while a worktree operation is underway.
-fn read_worktree_file(
-    root: &Path, path: &Path, limit: usize,
-) -> Result<Option<Vec<u8>>, String> {
+fn read_worktree_file(root: &Path, path: &Path, limit: usize) -> Result<Option<Vec<u8>>, String> {
     let roots = [root.to_path_buf()];
     match crate::capabilities::workspace::safe_paths::read_regular(path, &roots, limit) {
         Ok(bytes) => Ok(Some(bytes)),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) if error.kind() == std::io::ErrorKind::InvalidData =>
-            Err("GIT_STUDIO_TEXT_LIMIT".into()),
+        Err(error) if error.kind() == std::io::ErrorKind::InvalidData => {
+            Err("GIT_STUDIO_TEXT_LIMIT".into())
+        }
         Err(_) => Err("GIT_STUDIO_FILE_READ".into()),
     }
 }
@@ -366,20 +363,21 @@ fn status(root: &Path) -> Result<Vec<Value>, String> {
 fn snapshot(root: &Path) -> Result<String, String> {
     let repo = git2::Repository::open(root).map_err(|_| "GIT_STUDIO_REPOSITORY_MISSING")?;
     let mut hash = Sha256::new();
+    let head = match repo.head() {
+        Ok(head) => Some(head),
+        Err(error) if error.code() == git2::ErrorCode::UnbornBranch => None,
+        Err(_) => return Err("GIT_STUDIO_HEAD_READ_FAILED".into()),
+    };
     hash.update(
-        repo.head()
-            .ok()
-            .and_then(|h| h.target())
-            .map(|h| h.to_string())
+        head.as_ref()
+            .and_then(|head| head.target())
+            .map(|oid| oid.to_string())
             .unwrap_or_default(),
     );
     hash.update(format!("{:?}", repo.state()));
-    hash.update(
-        repo.head()
-            .ok()
-            .and_then(|h| h.name().map(str::to_owned))
-            .unwrap_or_default(),
-    );
+    if let Some(head) = head {
+        hash.update(head.name().map_err(|_| "GIT_STUDIO_HEAD_INVALID")?);
+    }
     hash.update(git(root, &["config", "--local", "--null", "--list"])?);
     let index_path = repo.path().join("index");
     if index_path.exists() {
@@ -402,8 +400,9 @@ fn snapshot(root: &Path) -> Result<String, String> {
                 hash.update(b"missing");
                 continue;
             }
-            Err(error) if error == "GIT_STUDIO_TEXT_LIMIT" =>
-                return Err("GIT_STUDIO_PREVIEW_CONTENT_LIMIT".into()),
+            Err(error) if error == "GIT_STUDIO_TEXT_LIMIT" => {
+                return Err("GIT_STUDIO_PREVIEW_CONTENT_LIMIT".into())
+            }
             Err(error) => return Err(error),
         };
         total += contents.len() as u64;
@@ -594,11 +593,15 @@ fn read(root: &Path, input: &StudioInput) -> Result<Value, String> {
     match input.action.as_str() {
         "status" => {
             let repo = git2::Repository::open(root).map_err(|_| "GIT_STUDIO_REPOSITORY_MISSING")?;
-            let head = repo.head().ok();
-            let name = head
-                .as_ref()
-                .and_then(|h| h.shorthand())
-                .unwrap_or("(unborn)");
+            let head = match repo.head() {
+                Ok(head) => Some(head),
+                Err(error) if error.code() == git2::ErrorCode::UnbornBranch => None,
+                Err(_) => return Err("GIT_STUDIO_HEAD_READ_FAILED".into()),
+            };
+            let name = match head.as_ref() {
+                Some(head) => head.shorthand().map_err(|_| "GIT_STUDIO_HEAD_INVALID")?,
+                None => "(unborn)",
+            };
             let branches = git(
                 root,
                 &[
@@ -628,8 +631,7 @@ fn read(root: &Path, input: &StudioInput) -> Result<Value, String> {
             let p = selected.ok_or("GIT_STUDIO_SELECT_FILE")?;
             let file = check_file(root, p, true)?;
             let working = match read_worktree_file(root, &file, TEXT_CAP)? {
-                Some(bytes) => String::from_utf8(bytes)
-                    .map_err(|_| "GIT_STUDIO_BINARY_FILE")?,
+                Some(bytes) => String::from_utf8(bytes).map_err(|_| "GIT_STUDIO_BINARY_FILE")?,
                 None => String::new(),
             };
             let repo = git2::Repository::open(root).map_err(|_| "GIT_STUDIO_REPOSITORY_MISSING")?;
@@ -1390,13 +1392,17 @@ fn execute(
             // The GUI's conflict resolver must also reject symlink/junction
             // redirects on BOTH platforms, not write before authorization.
             let roots = [root.to_path_buf()];
-            let before = crate::capabilities::workspace::safe_paths::read_regular(
-                &path, &roots, TEXT_CAP,
-            ).map_err(|_| "GIT_STUDIO_FILE_READ")?;
+            let before =
+                crate::capabilities::workspace::safe_paths::read_regular(&path, &roots, TEXT_CAP)
+                    .map_err(|_| "GIT_STUDIO_FILE_READ")?;
             crate::capabilities::workspace::safe_paths::save_if_unchanged(
-                &path, &roots, &before,
-                input.content.as_deref().unwrap_or("").as_bytes(), TEXT_CAP,
-            ).map_err(|_| "GIT_STUDIO_RESOLUTION_WRITE")?;
+                &path,
+                &roots,
+                &before,
+                input.content.as_deref().unwrap_or("").as_bytes(),
+                TEXT_CAP,
+            )
+            .map_err(|_| "GIT_STUDIO_RESOLUTION_WRITE")?;
             ("git", vec!["add".into(), "--".into()])
         }
         "worktree_add" => (
@@ -1929,7 +1935,11 @@ mod tests {
     fn case_variant_symlink_never_exposes_other_git_workspace() {
         use std::os::unix::fs::symlink;
         let root = fixture();
-        let sibling_name = root.file_name().unwrap().to_string_lossy().to_ascii_uppercase();
+        let sibling_name = root
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_ascii_uppercase();
         let sibling = root.with_file_name(sibling_name);
         fs::create_dir_all(&sibling).unwrap();
         fs::write(sibling.join("secret.txt"), "outside workspace").unwrap();
@@ -1938,9 +1948,9 @@ mod tests {
             check_file(&root, "other-project/secret.txt", true).unwrap_err(),
             "GIT_STUDIO_PATH_ESCAPE"
         );
-        assert!(read_worktree_file(
-            &root, &root.join("other-project/secret.txt"), TEXT_CAP
-        ).is_err());
+        assert!(
+            read_worktree_file(&root, &root.join("other-project/secret.txt"), TEXT_CAP).is_err()
+        );
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(sibling).unwrap();
     }

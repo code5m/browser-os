@@ -488,15 +488,27 @@ fn resolve_windows_interpreter(program: &str, cwd: &Path) -> Result<PathBuf, Run
     {
         return Err(RunError::UnsupportedPlatform);
     }
-    let cwd = cwd.canonicalize().map_err(|_| RunError::UnsupportedPlatform)?;
-    let cwd_key = cwd.to_string_lossy().replace('/', "\\").trim_end_matches('\\').to_lowercase();
+    let cwd = cwd
+        .canonicalize()
+        .map_err(|_| RunError::UnsupportedPlatform)?;
+    let cwd_key = cwd
+        .to_string_lossy()
+        .replace('/', "\\")
+        .trim_end_matches('\\')
+        .to_lowercase();
     let cwd_prefix = format!("{cwd_key}\\");
     let path = std::env::var_os("PATH").ok_or(RunError::UnsupportedPlatform)?;
     for directory in std::env::split_paths(&path) {
-        if !directory.is_absolute() { continue; }
+        if !directory.is_absolute() {
+            continue;
+        }
         let candidate = directory.join(program);
-        let Ok(resolved) = candidate.canonicalize() else { continue };
-        if !resolved.is_file() { continue; }
+        let Ok(resolved) = candidate.canonicalize() else {
+            continue;
+        };
+        if !resolved.is_file() {
+            continue;
+        }
         let resolved_key = resolved.to_string_lossy().replace('/', "\\").to_lowercase();
         if resolved_key == cwd_key || resolved_key.starts_with(&cwd_prefix) {
             continue;
@@ -834,10 +846,21 @@ fn start_argv_run(
     let resolved_program = {
         // The Windows run path is opt-in for Node/Python only. Resolve the
         // executable from an absolute PATH entry, never the workspace cwd.
-        let executable = Path::new(program).file_name()
-            .and_then(|part| part.to_str()).unwrap_or("").to_ascii_lowercase();
-        if !["node", "node.exe", "python", "python.exe", "python3", "python3.exe"]
-            .contains(&executable.as_str()) {
+        let executable = Path::new(program)
+            .file_name()
+            .and_then(|part| part.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if ![
+            "node",
+            "node.exe",
+            "python",
+            "python.exe",
+            "python3",
+            "python3.exe",
+        ]
+        .contains(&executable.as_str())
+        {
             table.lock_runs().remove(&run_id);
             return Err(RunError::UnsupportedPlatform);
         }
@@ -858,9 +881,20 @@ fn start_argv_run(
     {
         // Preserve only variables required for Windows loader, temporary
         // files, and executable discovery. No user secrets/tokens are passed.
-        for name in ["SystemRoot", "WINDIR", "PATH", "PATHEXT", "TEMP", "TMP",
-            "LOCALAPPDATA", "APPDATA", "USERPROFILE"] {
-            if let Some(value) = std::env::var_os(name) { cmd.env(name, value); }
+        for name in [
+            "SystemRoot",
+            "WINDIR",
+            "PATH",
+            "PATHEXT",
+            "TEMP",
+            "TMP",
+            "LOCALAPPDATA",
+            "APPDATA",
+            "USERPROFILE",
+        ] {
+            if let Some(value) = std::env::var_os(name) {
+                cmd.env(name, value);
+            }
         }
         cmd.env("PYTHONUTF8", "1");
     }
@@ -894,7 +928,9 @@ fn start_argv_run(
             let _ = child.kill();
             let _ = child.wait();
             table.lock_runs().remove(&run_id);
-            return Err(RunError::SpawnFailed(format!("WINDOWS_SCRIPT_JOB_FAILED: {error}")));
+            return Err(RunError::SpawnFailed(format!(
+                "WINDOWS_SCRIPT_JOB_FAILED: {error}"
+            )));
         }
     };
     let pgid = child.id() as i32;
@@ -1852,7 +1888,6 @@ mod script_runner_tests {
     }
 }
 
-
 #[cfg(all(test, windows))]
 mod windows_script_lifecycle_tests {
     use super::*;
@@ -1862,22 +1897,36 @@ mod windows_script_lifecycle_tests {
         let dir = std::env::temp_dir().join(format!("windows-node-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let script = dir.join("fixture.js");
-        std::fs::write(&script,
-            "setTimeout(() => { console.log('WINDOWS_NODE_JOB_OK'); }, 200);"
-        ).unwrap();
+        std::fs::write(
+            &script,
+            "setTimeout(() => { console.log('WINDOWS_NODE_JOB_OK'); }, 200);",
+        )
+        .unwrap();
         let table = Arc::new(ScriptProcessTable::new());
         let run = start_argv_run(
-            &table, "node-test", 15,
-            vec!["node.exe".to_string(), script.to_string_lossy().into_owned()],
-            dir.clone(), &dir, None, None,
-        ).expect("start reviewed Node fixture");
+            &table,
+            "node-test",
+            15,
+            vec![
+                "node.exe".to_string(),
+                script.to_string_lossy().into_owned(),
+            ],
+            dir.clone(),
+            &dir,
+            None,
+            None,
+        )
+        .expect("start reviewed Node fixture");
         let deadline = Instant::now() + Duration::from_secs(15);
         loop {
             let status = table.snapshot(&run).expect("record");
             if status.status.is_terminal() {
                 assert_eq!(status.status, RunStatus::Succeeded);
-                assert!(status.output_tail.contains("WINDOWS_NODE_JOB_OK"),
-                    "expected captured stdout: {}",status.output_tail);
+                assert!(
+                    status.output_tail.contains("WINDOWS_NODE_JOB_OK"),
+                    "expected captured stdout: {}",
+                    status.output_tail
+                );
                 break;
             }
             if Instant::now() >= deadline {
@@ -1892,9 +1941,14 @@ mod windows_script_lifecycle_tests {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             if let Ok(text) = std::fs::read_to_string(path) {
-                if let Ok(pid) = text.trim().parse::<u32>() { return pid; }
+                if let Ok(pid) = text.trim().parse::<u32>() {
+                    return pid;
+                }
             }
-            assert!(Instant::now() < deadline, "Node child PID marker was not written");
+            assert!(
+                Instant::now() < deadline,
+                "Node child PID marker was not written"
+            );
             std::thread::sleep(Duration::from_millis(25));
         }
     }
@@ -1909,15 +1963,17 @@ mod windows_script_lifecycle_tests {
             if process.is_null() {
                 return GetLastError() == 87;
             }
-            let result = WaitForSingleObject(
-                process, timeout.as_millis().min(u32::MAX as u128) as u32,
-            );
+            let result =
+                WaitForSingleObject(process, timeout.as_millis().min(u32::MAX as u128) as u32);
             CloseHandle(process);
             result == WAIT_OBJECT_0
         }
     }
 
-    fn write_node_tree_fixture(dir: &std::path::Path, tail: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+    fn write_node_tree_fixture(
+        dir: &std::path::Path,
+        tail: &str,
+    ) -> (std::path::PathBuf, std::path::PathBuf) {
         let script = dir.join("spawn-child.js");
         let marker = dir.join("child.pid");
         let marker_js = serde_json::to_string(&marker.to_string_lossy().to_string()).unwrap();
@@ -1932,42 +1988,75 @@ mod windows_script_lifecycle_tests {
         let deadline = Instant::now() + timeout;
         loop {
             let status = table.snapshot(run).expect("run snapshot").status;
-            if status.is_terminal() { return status; }
-            assert!(Instant::now() < deadline, "script did not reach terminal state");
+            if status.is_terminal() {
+                return status;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "script did not reach terminal state"
+            );
             std::thread::sleep(Duration::from_millis(25));
         }
     }
 
     #[test]
     fn windows_script_cancel_reaps_immediate_node_grandchild() {
-        let dir = std::env::temp_dir().join(format!("windows-node-cancel-{}", uuid::Uuid::new_v4()));
+        let dir =
+            std::env::temp_dir().join(format!("windows-node-cancel-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let (script, marker) = write_node_tree_fixture(&dir, "setInterval(()=>{},1000);");
         let table = Arc::new(ScriptProcessTable::new());
-        let run = start_argv_run(&table, "node-cancel", 20,
+        let run = start_argv_run(
+            &table,
+            "node-cancel",
+            20,
             vec!["node.exe".into(), script.to_string_lossy().into_owned()],
-            dir.clone(), &dir, None, None).expect("start Node tree");
+            dir.clone(),
+            &dir,
+            None,
+            None,
+        )
+        .expect("start Node tree");
         let child_pid = wait_for_marker_pid(&marker);
         table.cancel(&run).expect("cancel Node tree");
-        assert_eq!(wait_run_terminal(&table, &run, Duration::from_secs(10)), RunStatus::Cancelled);
-        assert!(wait_process_exit(child_pid, Duration::from_secs(8)),
-            "Node grandchild PID {child_pid} survived cancellation");
+        assert_eq!(
+            wait_run_terminal(&table, &run, Duration::from_secs(10)),
+            RunStatus::Cancelled
+        );
+        assert!(
+            wait_process_exit(child_pid, Duration::from_secs(8)),
+            "Node grandchild PID {child_pid} survived cancellation"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn windows_script_timeout_reaps_immediate_node_grandchild() {
-        let dir = std::env::temp_dir().join(format!("windows-node-timeout-{}", uuid::Uuid::new_v4()));
+        let dir =
+            std::env::temp_dir().join(format!("windows-node-timeout-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let (script, marker) = write_node_tree_fixture(&dir, "setInterval(()=>{},1000);");
         let table = Arc::new(ScriptProcessTable::new());
-        let run = start_argv_run(&table, "node-timeout", 1,
+        let run = start_argv_run(
+            &table,
+            "node-timeout",
+            1,
             vec!["node.exe".into(), script.to_string_lossy().into_owned()],
-            dir.clone(), &dir, None, None).expect("start Node tree");
+            dir.clone(),
+            &dir,
+            None,
+            None,
+        )
+        .expect("start Node tree");
         let child_pid = wait_for_marker_pid(&marker);
-        assert_eq!(wait_run_terminal(&table, &run, Duration::from_secs(10)), RunStatus::Timeout);
-        assert!(wait_process_exit(child_pid, Duration::from_secs(8)),
-            "Node grandchild PID {child_pid} survived timeout");
+        assert_eq!(
+            wait_run_terminal(&table, &run, Duration::from_secs(10)),
+            RunStatus::Timeout
+        );
+        assert!(
+            wait_process_exit(child_pid, Duration::from_secs(8)),
+            "Node grandchild PID {child_pid} survived timeout"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1977,13 +2066,26 @@ mod windows_script_lifecycle_tests {
         std::fs::create_dir_all(&dir).unwrap();
         let (script, marker) = write_node_tree_fixture(&dir, "process.exit(23);");
         let table = Arc::new(ScriptProcessTable::new());
-        let run = start_argv_run(&table, "node-crash", 20,
+        let run = start_argv_run(
+            &table,
+            "node-crash",
+            20,
             vec!["node.exe".into(), script.to_string_lossy().into_owned()],
-            dir.clone(), &dir, None, None).expect("start Node tree");
+            dir.clone(),
+            &dir,
+            None,
+            None,
+        )
+        .expect("start Node tree");
         let child_pid = wait_for_marker_pid(&marker);
-        assert_eq!(wait_run_terminal(&table, &run, Duration::from_secs(10)), RunStatus::Failed);
-        assert!(wait_process_exit(child_pid, Duration::from_secs(8)),
-            "Node grandchild PID {child_pid} survived parent crash");
+        assert_eq!(
+            wait_run_terminal(&table, &run, Duration::from_secs(10)),
+            RunStatus::Failed
+        );
+        assert!(
+            wait_process_exit(child_pid, Duration::from_secs(8)),
+            "Node grandchild PID {child_pid} survived parent crash"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1994,10 +2096,18 @@ mod windows_script_lifecycle_tests {
         let marker = dir.join("never.txt");
         let table = Arc::new(ScriptProcessTable::new());
         let result = start_argv_run(
-            &table, "test", 2,
-            vec!["powershell.exe".to_string(), "-Command".to_string(),
-                format!("Set-Content '{}' hello", marker.display())],
-            dir.clone(), &dir, None, None,
+            &table,
+            "test",
+            2,
+            vec![
+                "powershell.exe".to_string(),
+                "-Command".to_string(),
+                format!("Set-Content '{}' hello", marker.display()),
+            ],
+            dir.clone(),
+            &dir,
+            None,
+            None,
         );
         assert!(matches!(result, Err(RunError::UnsupportedPlatform)));
         assert!(!marker.exists());

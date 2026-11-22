@@ -68,17 +68,20 @@ fn blame(repo: &Repository, ctx: &LocalGitContext) -> Result<LocalBlameResult, S
             truncated = true;
             break;
         }
+        let author = match h.final_signature() {
+            Some(signature) => signature
+                .name()
+                .map_err(|_| "GIT_LOCAL_BLAME_FAILED")?
+                .chars()
+                .take(80)
+                .collect(),
+            None => String::new(),
+        };
         hunks.push(LocalBlameLine {
             start: h.final_start_line() as u32,
             lines: lines as u32,
             commit: h.final_commit_id().to_string(),
-            author: h
-                .final_signature()
-                .name()
-                .unwrap_or("")
-                .chars()
-                .take(80)
-                .collect(),
+            author,
         });
         seen += lines;
     }
@@ -138,11 +141,17 @@ fn follow(repo: &Repository, ctx: &LocalGitContext) -> Result<LocalFollowResult,
         if touched {
             entries.push(LocalFollowEntry {
                 oid: commit.id().to_string(),
-                summary: commit.summary().unwrap_or("").chars().take(180).collect(),
+                summary: commit
+                    .summary()
+                    .map_err(|_| "GIT_LOCAL_FOLLOW_FAILED")?
+                    .unwrap_or("")
+                    .chars()
+                    .take(180)
+                    .collect(),
                 author: commit
                     .author()
                     .name()
-                    .unwrap_or("")
+                    .map_err(|_| "GIT_LOCAL_FOLLOW_FAILED")?
                     .chars()
                     .take(80)
                     .collect(),

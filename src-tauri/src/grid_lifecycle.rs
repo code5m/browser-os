@@ -7,11 +7,14 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-
 const MAX_GRID_WORKERS: usize = 64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum VisibilityMode { Show, Blur, Minimized }
+pub(super) enum VisibilityMode {
+    Show,
+    Blur,
+    Minimized,
+}
 
 #[derive(Clone, Copy)]
 pub(super) struct VisibilityIntent {
@@ -36,7 +39,9 @@ impl LatestVisibility {
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
         state.revision = state.revision.wrapping_add(1);
         state.pending = Some(VisibilityIntent {
-            revision: state.revision, mode, ready_at: Instant::now() + delay,
+            revision: state.revision,
+            mode,
+            ready_at: Instant::now() + delay,
         });
         let start = !state.running;
         state.running = true;
@@ -56,16 +61,26 @@ impl LatestVisibility {
                 return None;
             };
             let remaining = intent.ready_at.saturating_duration_since(Instant::now());
-            if remaining.is_zero() { return Some(intent); }
+            if remaining.is_zero() {
+                return Some(intent);
+            }
             // The existing 150 ms focus policy is interruptible by a newer
             // intent. A short bound also observes application shutdown.
-            state = self.wake.wait_timeout(state, remaining.min(Duration::from_millis(20)))
-                .unwrap_or_else(|p| p.into_inner()).0;
+            state = self
+                .wake
+                .wait_timeout(state, remaining.min(Duration::from_millis(20)))
+                .unwrap_or_else(|p| p.into_inner())
+                .0;
         }
     }
     pub(super) fn finish(&self, revision: u64) -> bool {
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        if state.pending.is_some_and(|intent| intent.revision != revision) { return true; }
+        if state
+            .pending
+            .is_some_and(|intent| intent.revision != revision)
+        {
+            return true;
+        }
         state.pending = None;
         state.running = false;
         false
@@ -75,7 +90,9 @@ impl LatestVisibility {
     }
     pub(super) fn reserve_pending(&self) -> bool {
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        if state.running || state.pending.is_none() { return false; }
+        if state.running || state.pending.is_none() {
+            return false;
+        }
         state.running = true;
         true
     }
@@ -141,9 +158,14 @@ impl GridLifecycle {
         let mut lock = self.wake_lock.lock().unwrap_or_else(|p| p.into_inner());
         while !self.is_stopping() {
             let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() { break; }
-            lock = self.wake.wait_timeout(lock, remaining.min(Duration::from_millis(20)))
-                .unwrap_or_else(|p| p.into_inner()).0;
+            if remaining.is_zero() {
+                break;
+            }
+            lock = self
+                .wake
+                .wait_timeout(lock, remaining.min(Duration::from_millis(20)))
+                .unwrap_or_else(|p| p.into_inner())
+                .0;
         }
         self.is_stopping()
     }
@@ -159,7 +181,9 @@ impl GridLifecycle {
         if workers.len() >= MAX_GRID_WORKERS {
             return Err("GRID_WORKER_CAPACITY_BUSY".into());
         }
-        let handle = std::thread::Builder::new().name(name.to_owned()).spawn(work)
+        let handle = std::thread::Builder::new()
+            .name(name.to_owned())
+            .spawn(work)
             .map_err(|error| format!("GRID_WORKER_START_FAILED:{name}:{error}"))?;
         // Even if shutdown won after enter(), retain the actual thread. The
         // worker observes the same stop gate; its handle is never detached.
@@ -172,7 +196,10 @@ impl GridLifecycle {
     pub(super) fn retire(&self, index: u32, child: GridChildHandle) {
         *self.retiring.lock().unwrap().entry(index).or_insert(0) += 1;
         self.retiring_total.fetch_add(1, Ordering::SeqCst);
-        self.retired.lock().unwrap().push_back(Arc::new(Mutex::new(GridRetirement::new(index, child))));
+        self.retired
+            .lock()
+            .unwrap()
+            .push_back(Arc::new(Mutex::new(GridRetirement::new(index, child))));
         self.wake.notify_all();
     }
 
@@ -210,7 +237,13 @@ impl GridLifecycle {
     fn poll_retirements(&self) {
         // Keep an owning Arc in the shared registry while native polling is
         // in progress. A cleanup worker panic cannot drop its entire batch.
-        let batch = self.retired.lock().unwrap().iter().cloned().collect::<Vec<_>>();
+        let batch = self
+            .retired
+            .lock()
+            .unwrap()
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>();
         for slot in batch {
             let mut owner = slot.lock().unwrap_or_else(|p| p.into_inner());
             let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| owner.poll()));
@@ -228,7 +261,9 @@ impl GridLifecycle {
                         let mut retiring = self.retiring.lock().unwrap();
                         if let Some(count) = retiring.get_mut(&index) {
                             *count -= 1;
-                            if *count == 0 { retiring.remove(&index); }
+                            if *count == 0 {
+                                retiring.remove(&index);
+                            }
                         }
                         self.retiring_total.fetch_sub(1, Ordering::SeqCst);
                         self.wake.notify_all();
@@ -250,7 +285,9 @@ impl GridLifecycle {
         listeners: Listeners,
     ) -> Result<(), String> {
         let mut slot = self.cleanup_worker.lock().unwrap();
-        if self.cleanup_done.load(Ordering::SeqCst) { return Ok(()); }
+        if self.cleanup_done.load(Ordering::SeqCst) {
+            return Ok(());
+        }
         if slot.as_ref().is_some_and(|worker| !worker.is_finished()) {
             self.wake.notify_all();
             return Ok(());
@@ -264,7 +301,8 @@ impl GridLifecycle {
         let lifecycle = Arc::clone(self);
         // The closure only captures shared registry references. A spawn error
         // leaves every process and worker in the original registry for retry.
-        let worker = std::thread::Builder::new().name("grid-cleanup".into())
+        let worker = std::thread::Builder::new()
+            .name("grid-cleanup".into())
             .spawn(move || lifecycle.cleanup_loop(children, listeners))
             .map_err(|error| format!("GRID_CLEANUP_START_FAILED:{error}"))?;
         *slot = Some(worker);
@@ -277,13 +315,19 @@ impl GridLifecycle {
             if self.is_stopping() {
                 // Never wait behind ordinary close/spawn on a manager mutex.
                 if let Ok(mut live) = children.try_lock() {
-                    for (index, child) in live.drain() { self.retire(index, child); }
+                    for (index, child) in live.drain() {
+                        self.retire(index, child);
+                    }
                     children_empty = live.is_empty();
                 }
-                let connections = listeners.try_lock().ok().map(|map|
-                    map.values().cloned().collect::<Vec<_>>());
+                let connections = listeners
+                    .try_lock()
+                    .ok()
+                    .map(|map| map.values().cloned().collect::<Vec<_>>());
                 if let Some(connections) = connections {
-                    for comms in connections { comms.request_shutdown(); }
+                    for comms in connections {
+                        comms.request_shutdown();
+                    }
                 }
             }
             // Native termination / I/O cancellation / joins are off the caller
@@ -316,17 +360,22 @@ impl GridLifecycle {
                 }
             }
             let lock = self.wake_lock.lock().unwrap_or_else(|p| p.into_inner());
-            let _ = self.wake.wait_timeout(lock, Duration::from_millis(20))
+            let _ = self
+                .wake
+                .wait_timeout(lock, Duration::from_millis(20))
                 .unwrap_or_else(|p| p.into_inner());
         }
     }
 
     fn pending_error(&self, stage: &str) -> String {
         let detail = self.last_error.lock().unwrap().clone().unwrap_or_default();
-        format!("{stage}:operations={},retired={},workers={}:{}",
+        format!(
+            "{stage}:operations={},retired={},workers={}:{}",
             self.operations.load(Ordering::SeqCst),
             self.retiring_total.load(Ordering::SeqCst),
-            self.workers.lock().unwrap().len(), detail)
+            self.workers.lock().unwrap().len(),
+            detail
+        )
     }
 
     pub(super) fn wait_retired_until(&self, deadline: Instant) -> Result<(), String> {
@@ -336,7 +385,9 @@ impl GridLifecycle {
                 return Err(self.pending_error("GRID_PROCESS_CLEANUP_PENDING"));
             }
             let lock = self.wake_lock.lock().unwrap_or_else(|p| p.into_inner());
-            let _ = self.wake.wait_timeout(lock, remaining.min(Duration::from_millis(20)))
+            let _ = self
+                .wake
+                .wait_timeout(lock, remaining.min(Duration::from_millis(20)))
                 .unwrap_or_else(|p| p.into_inner());
         }
         Ok(())
@@ -358,7 +409,10 @@ impl GridLifecycle {
                     // may otherwise replace an exited service with a live one.
                     (true, slot.take())
                 } else {
-                    (slot.is_none() && self.cleanup_done.load(Ordering::SeqCst), None)
+                    (
+                        slot.is_none() && self.cleanup_done.load(Ordering::SeqCst),
+                        None,
+                    )
                 }
             };
             if finished {
@@ -375,7 +429,9 @@ impl GridLifecycle {
                 return Err(self.pending_error("GRID_SHUTDOWN_PENDING"));
             }
             let lock = self.wake_lock.lock().unwrap_or_else(|p| p.into_inner());
-            let _ = self.wake.wait_timeout(lock, remaining.min(Duration::from_millis(20)))
+            let _ = self
+                .wake
+                .wait_timeout(lock, remaining.min(Duration::from_millis(20)))
                 .unwrap_or_else(|p| p.into_inner());
         }
     }
@@ -387,7 +443,10 @@ mod tests {
     use std::sync::mpsc;
 
     fn registries() -> (Children, Listeners) {
-        (Arc::new(Mutex::new(HashMap::new())), Arc::new(Mutex::new(HashMap::new())))
+        (
+            Arc::new(Mutex::new(HashMap::new())),
+            Arc::new(Mutex::new(HashMap::new())),
+        )
     }
 
     #[test]
@@ -424,15 +483,23 @@ mod tests {
     fn grid_shutdown_retains_worker_owner_until_released() {
         let lifecycle = Arc::new(GridLifecycle::default());
         let (children, listeners) = registries();
-        lifecycle.ensure_cleanup(children.clone(), listeners.clone()).unwrap();
+        lifecycle
+            .ensure_cleanup(children.clone(), listeners.clone())
+            .unwrap();
         let (release, wait) = mpsc::channel();
-        lifecycle.spawn("grid-test-held-worker", move || { let _ = wait.recv(); }).unwrap();
+        lifecycle
+            .spawn("grid-test-held-worker", move || {
+                let _ = wait.recv();
+            })
+            .unwrap();
         let result = lifecycle.shutdown_until(children.clone(), listeners.clone(), Instant::now());
         assert!(result.unwrap_err().contains("GRID_SHUTDOWN_PENDING"));
         assert_eq!(lifecycle.workers.lock().unwrap().len(), 1);
         assert!(lifecycle.enter().is_err());
         release.send(()).unwrap();
-        lifecycle.shutdown_until(children, listeners, Instant::now() + Duration::from_secs(5)).unwrap();
+        lifecycle
+            .shutdown_until(children, listeners, Instant::now() + Duration::from_secs(5))
+            .unwrap();
         assert!(lifecycle.workers.lock().unwrap().is_empty());
         assert!(lifecycle.cleanup_worker.lock().unwrap().is_none());
     }
@@ -443,11 +510,15 @@ mod tests {
         let (children, listeners) = registries();
         let operation = lifecycle.enter().unwrap();
         let started = Instant::now();
-        assert!(lifecycle.shutdown_until(children.clone(), listeners.clone(), started).is_err());
+        assert!(lifecycle
+            .shutdown_until(children.clone(), listeners.clone(), started)
+            .is_err());
         assert!(started.elapsed() < Duration::from_millis(500));
         assert!(lifecycle.enter().is_err());
         drop(operation);
-        lifecycle.shutdown_until(children, listeners, Instant::now() + Duration::from_secs(5)).unwrap();
+        lifecycle
+            .shutdown_until(children, listeners, Instant::now() + Duration::from_secs(5))
+            .unwrap();
     }
 
     #[test]
@@ -456,6 +527,8 @@ mod tests {
         lifecycle.wait_retired_until(Instant::now()).unwrap();
         assert!(lifecycle.enter().is_ok());
         let (children, listeners) = registries();
-        lifecycle.shutdown_until(children, listeners, Instant::now() + Duration::from_secs(5)).unwrap();
+        lifecycle
+            .shutdown_until(children, listeners, Instant::now() + Duration::from_secs(5))
+            .unwrap();
     }
 }

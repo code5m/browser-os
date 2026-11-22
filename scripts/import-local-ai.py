@@ -343,7 +343,8 @@ def native_export(home, request_bytes):
 
 def summary(home):
     data, secrets = discover(home)
-    return dict(models=len(data['profiles']),
+    return dict(mode='read-only', next_step='在 BrowserOS 设置 → 统一 AI 配置中选择“导入本机配置”完成导入。',
+                models=len(data['profiles']),
                 plugin_credentials=sum(ref.startswith('ai-plugin:') for ref in secrets),
                 plugins=len(data['plugins']), sources=data['sources'], skipped=data['skipped'])
 

@@ -58,7 +58,11 @@ pub fn handle_open_url(app: &AppHandle, url: &str) {
         // PolicyError may contain the original URL. Only record a fixed reason
         // and non-content metadata; the trusted UI still receives the request.
         eprintln!("[open-url] rejected: URL_POLICY_REJECTED {summary}");
-        workspace::log_audit(app, "open_url_rejected", format!("URL_POLICY_REJECTED {summary}"));
+        workspace::log_audit(
+            app,
+            "open_url_rejected",
+            format!("URL_POLICY_REJECTED {summary}"),
+        );
         let _ = app.emit("app://open-url-rejected", serde_json::json!({ "url": url }));
         return;
     }
@@ -149,18 +153,22 @@ pub fn get_default_browser(webview: tauri::Webview) -> Result<String, String> {
         use windows_sys::Win32::System::Registry::{
             RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_SZ,
         };
-        let wide = |value: &str| -> Vec<u16> {
-            value.encode_utf16().chain(std::iter::once(0)).collect()
-        };
-        let subkey = wide(r"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\https\UserChoice");
+        let wide =
+            |value: &str| -> Vec<u16> { value.encode_utf16().chain(std::iter::once(0)).collect() };
+        let subkey =
+            wide(r"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\https\UserChoice");
         let name = wide("ProgId");
         let mut value = vec![0u16; 1024];
         let mut bytes = (value.len() * 2) as u32;
         let status = unsafe {
             RegGetValueW(
-                HKEY_CURRENT_USER, subkey.as_ptr(), name.as_ptr(),
-                RRF_RT_REG_SZ, std::ptr::null_mut(),
-                value.as_mut_ptr() as *mut std::ffi::c_void, &mut bytes,
+                HKEY_CURRENT_USER,
+                subkey.as_ptr(),
+                name.as_ptr(),
+                RRF_RT_REG_SZ,
+                std::ptr::null_mut(),
+                value.as_mut_ptr() as *mut std::ffi::c_void,
+                &mut bytes,
             )
         };
         if status != 0 {
@@ -168,7 +176,8 @@ pub fn get_default_browser(webview: tauri::Webview) -> Result<String, String> {
         }
         let len = (bytes as usize / 2).min(value.len());
         let name = String::from_utf16_lossy(&value[..len])
-            .trim_end_matches('\0').to_string();
+            .trim_end_matches('\0')
+            .to_string();
         if name.trim().is_empty() {
             return Err("WINDOWS_DEFAULT_BROWSER_UNKNOWN".into());
         }
@@ -176,21 +185,24 @@ pub fn get_default_browser(webview: tauri::Webview) -> Result<String, String> {
     }
     #[cfg(target_os = "linux")]
     {
-    let out = std::process::Command::new("xdg-settings")
-        .args(["get", "default-web-browser"])
-        .output()
-        .map_err(|e| format!("xdg-settings 不可用: {e}"))?;
-    if !out.status.success() {
-        return Err(format!(
-            "xdg-settings get 失败: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+        let out = std::process::Command::new("xdg-settings")
+            .args(["get", "default-web-browser"])
+            .output()
+            .map_err(|e| format!("xdg-settings 不可用: {e}"))?;
+        if !out.status.success() {
+            return Err(format!(
+                "xdg-settings get 失败: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ));
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
     }
     #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     {
-        Err(format!("DEFAULT_BROWSER_PLATFORM_UNSUPPORTED:{}", std::env::consts::OS))
+        Err(format!(
+            "DEFAULT_BROWSER_PLATFORM_UNSUPPORTED:{}",
+            std::env::consts::OS
+        ))
     }
 }
 
@@ -226,28 +238,31 @@ pub fn set_default_browser(
     }
     #[cfg(target_os = "linux")]
     {
-    let desktop = ensure_desktop_entry()?;
-    let out = std::process::Command::new("xdg-settings")
-        .args(["set", "default-web-browser", &desktop])
-        .output()
-        .map_err(|e| format!("xdg-settings 不可用: {e}"))?;
-    if !out.status.success() {
-        let msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
-        eprintln!("[open-url] set default browser failed: {msg}");
-        workspace::log_audit(
-            &app,
-            "set_default_browser_failed",
-            format!("{desktop}: {msg}"),
-        );
-        return Err(format!("设为默认浏览器失败: {msg}"));
-    }
-    eprintln!("[open-url] set default browser -> {desktop}");
-    workspace::log_audit(&app, "set_default_browser", desktop.clone());
-    Ok(desktop)
+        let desktop = ensure_desktop_entry()?;
+        let out = std::process::Command::new("xdg-settings")
+            .args(["set", "default-web-browser", &desktop])
+            .output()
+            .map_err(|e| format!("xdg-settings 不可用: {e}"))?;
+        if !out.status.success() {
+            let msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
+            eprintln!("[open-url] set default browser failed: {msg}");
+            workspace::log_audit(
+                &app,
+                "set_default_browser_failed",
+                format!("{desktop}: {msg}"),
+            );
+            return Err(format!("设为默认浏览器失败: {msg}"));
+        }
+        eprintln!("[open-url] set default browser -> {desktop}");
+        workspace::log_audit(&app, "set_default_browser", desktop.clone());
+        Ok(desktop)
     }
     #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     {
-        Err(format!("DEFAULT_BROWSER_PLATFORM_UNSUPPORTED:{}", std::env::consts::OS))
+        Err(format!(
+            "DEFAULT_BROWSER_PLATFORM_UNSUPPORTED:{}",
+            std::env::consts::OS
+        ))
     }
 }
 
@@ -394,7 +409,9 @@ mod external_url_privacy_tests {
             assert!(!record.contains("payload"));
             assert!(!record.contains('\n'));
         }
-        assert_eq!(external_url_audit_summary("https://a.test/"),
-            "scheme=https bytes=15");
+        assert_eq!(
+            external_url_audit_summary("https://a.test/"),
+            "scheme=https bytes=15"
+        );
     }
 }

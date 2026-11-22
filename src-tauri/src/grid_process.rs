@@ -45,15 +45,20 @@ pub struct ChildComms {
 impl ChildComms {
     fn new() -> Self {
         Self {
-            writer: Mutex::new(None), control: Mutex::new(None),
+            writer: Mutex::new(None),
+            control: Mutex::new(None),
             closing: AtomicBool::new(false),
-            pending: Mutex::new(HashMap::new()), seq: AtomicU64::new(1),
-            generation: AtomicU64::new(0), connected: AtomicBool::new(false),
+            pending: Mutex::new(HashMap::new()),
+            seq: AtomicU64::new(1),
+            generation: AtomicU64::new(0),
+            connected: AtomicBool::new(false),
         }
     }
 
     fn attach(&self, stream: UnixStream) -> Result<u64, String> {
-        let control = stream.try_clone().map_err(|_| "GRID_CONTROL_CLONE_FAILED")?;
+        let control = stream
+            .try_clone()
+            .map_err(|_| "GRID_CONTROL_CLONE_FAILED")?;
         // Never retain control while waiting for an active writer. Shutdown
         // needs only the short control lock to interrupt that writer.
         let mut writer = self.writer.lock().unwrap();
@@ -79,7 +84,9 @@ impl ChildComms {
         if let Some(control) = self.control.lock().unwrap().as_ref() {
             let _ = control.shutdown(std::net::Shutdown::Both);
         }
-        if let Ok(mut writer) = self.writer.try_lock() { writer.take(); }
+        if let Ok(mut writer) = self.writer.try_lock() {
+            writer.take();
+        }
         if let Ok(mut pending) = self.pending.try_lock() {
             for (_, tx) in pending.drain() {
                 let _ = tx.send(Err("GRID_CONNECTION_CLOSING".into()));
@@ -89,12 +96,16 @@ impl ChildComms {
 
     fn fail_pending(&self, reason: &str) {
         let mut pending = self.pending.lock().unwrap();
-        for (_, tx) in pending.drain() { let _ = tx.send(Err(reason.to_owned())); }
+        for (_, tx) in pending.drain() {
+            let _ = tx.send(Err(reason.to_owned()));
+        }
     }
 
     fn detach_if_current(&self, generation: u64) {
         let mut writer = self.writer.lock().unwrap();
-        if self.generation.load(Ordering::SeqCst) != generation { return; }
+        if self.generation.load(Ordering::SeqCst) != generation {
+            return;
+        }
         if let Some(control) = self.control.lock().unwrap().take() {
             let _ = control.shutdown(std::net::Shutdown::Both);
         }
@@ -104,7 +115,8 @@ impl ChildComms {
     }
 
     fn is_current(&self, generation: u64) -> bool {
-        !self.closing.load(Ordering::SeqCst) && self.connected.load(Ordering::SeqCst)
+        !self.closing.load(Ordering::SeqCst)
+            && self.connected.load(Ordering::SeqCst)
             && self.generation.load(Ordering::SeqCst) == generation
     }
 
@@ -121,7 +133,6 @@ struct SavedChildState {
     blur_hidden: bool,
 }
 
-
 /// Observe an owned child without consuming its wait status. Keeping the
 /// leader waitable pins its PID until the entire original process group is
 /// gone, so a later negative-PGID kill cannot target a reused identifier.
@@ -129,20 +140,34 @@ struct SavedChildState {
 fn peek_grid_exit(child: &Child) -> std::io::Result<Option<i32>> {
     let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
     let result = unsafe {
-        libc::waitid(libc::P_PID, child.id() as libc::id_t, &mut info,
-            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT)
+        libc::waitid(
+            libc::P_PID,
+            child.id() as libc::id_t,
+            &mut info,
+            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+        )
     };
-    if result != 0 { return Err(std::io::Error::last_os_error()); }
+    if result != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
     let observed = unsafe { info.si_pid() };
-    if observed == 0 { return Ok(None); }
+    if observed == 0 {
+        return Ok(None);
+    }
     if observed != child.id() as libc::pid_t {
-        return Err(std::io::Error::new(std::io::ErrorKind::Other, "GRID_WAIT_IDENTITY_CHANGED"));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "GRID_WAIT_IDENTITY_CHANGED",
+        ));
     }
     let status = unsafe { info.si_status() };
     match info.si_code {
         libc::CLD_EXITED => Ok(Some(status)),
         libc::CLD_KILLED | libc::CLD_DUMPED => Ok(Some(128 + status)),
-        _ => Err(std::io::Error::new(std::io::ErrorKind::Other, "GRID_WAIT_STATE_UNKNOWN")),
+        _ => Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "GRID_WAIT_STATE_UNKNOWN",
+        )),
     }
 }
 
@@ -150,7 +175,12 @@ fn proc_stat_group(stat: &[u8]) -> Option<i32> {
     // comm may contain non-UTF-8 bytes, spaces and parentheses. Parse only
     // ASCII fields after its final ')': state, ppid, then pgrp.
     let end = stat.iter().rposition(|byte| *byte == b')')?;
-    std::str::from_utf8(&stat[end + 1..]).ok()?.split_whitespace().nth(2)?.parse().ok()
+    std::str::from_utf8(&stat[end + 1..])
+        .ok()?
+        .split_whitespace()
+        .nth(2)?
+        .parse()
+        .ok()
 }
 
 fn group_has_other_members(leader: i32) -> Result<bool, String> {
@@ -162,10 +192,16 @@ fn group_has_other_members(leader: i32) -> Result<bool, String> {
         }
         entries += 1;
         let entry = entry.map_err(|_| "GRID_PROC_GROUP_ENUMERATE")?;
-        let Some(pid) = entry.file_name().to_str().and_then(|name| name.parse::<i32>().ok()) else {
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<i32>().ok())
+        else {
             continue;
         };
-        if pid <= 0 || pid == leader { continue; }
+        if pid <= 0 || pid == leader {
+            continue;
+        }
         let file = match std::fs::File::open(entry.path().join("stat")) {
             Ok(file) => file,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
@@ -177,9 +213,13 @@ fn group_has_other_members(leader: i32) -> Result<bool, String> {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
             Err(_) => return Err("GRID_PROC_GROUP_READ".into()),
         }
-        if bytes.len() > 4096 { return Err("GRID_PROC_GROUP_STAT_LIMIT".into()); }
+        if bytes.len() > 4096 {
+            return Err("GRID_PROC_GROUP_STAT_LIMIT".into());
+        }
         let group = proc_stat_group(&bytes).ok_or("GRID_PROC_GROUP_STAT")?;
-        if group == leader { return Ok(true); }
+        if group == leader {
+            return Ok(true);
+        }
     }
     Ok(false)
 }
@@ -196,31 +236,53 @@ struct GridRetirement {
 }
 impl GridRetirement {
     fn new(index: u32, child: GridChildHandle) -> Self {
-        Self { index, child: Some(child), identity_lost: false, identity_consumed: false }
+        Self {
+            index,
+            child: Some(child),
+            identity_lost: false,
+            identity_consumed: false,
+        }
     }
-    fn index(&self) -> u32 { self.index }
+    fn index(&self) -> u32 {
+        self.index
+    }
 
     fn complete_after_reap(&mut self, pgid: i32) -> Result<bool, String> {
         // /proc enumeration is not atomic. Close its last observation window
         // after reaping with a read-only kernel group lookup. A live/unknown
         // result retains the owner, but cannot authorize any further signals.
-        if unsafe { libc::kill(-pgid, 0) } == 0 { return Ok(false); }
+        if unsafe { libc::kill(-pgid, 0) } == 0 {
+            return Ok(false);
+        }
         match std::io::Error::last_os_error().raw_os_error() {
-            Some(libc::ESRCH) => { self.child.take(); Ok(true) }
+            Some(libc::ESRCH) => {
+                self.child.take();
+                Ok(true)
+            }
             _ => Err("GRID_REAPED_GROUP_OBSERVATION_PENDING".into()),
         }
     }
 
     fn poll(&mut self) -> Result<bool, String> {
-        if self.identity_lost { return Err("GRID_CHILD_IDENTITY_LOST".into()); }
-        let Some(owner) = self.child.as_mut() else { return Ok(true); };
+        if self.identity_lost {
+            return Err("GRID_CHILD_IDENTITY_LOST".into());
+        }
+        let Some(owner) = self.child.as_mut() else {
+            return Ok(true);
+        };
         let pid = i32::try_from(owner.child.id()).map_err(|_| "GRID_CHILD_PID_RANGE")?;
-        if pid <= 0 { return Err("GRID_CHILD_PID_RANGE".into()); }
-        if self.identity_consumed { return self.complete_after_reap(pid); }
+        if pid <= 0 {
+            return Err("GRID_CHILD_PID_RANGE".into());
+        }
+        if self.identity_consumed {
+            return self.complete_after_reap(pid);
+        }
         match peek_grid_exit(&owner.child) {
             Ok(_) => {}
             Err(error) => {
-                if error.raw_os_error() == Some(libc::ECHILD) { self.identity_lost = true; }
+                if error.raw_os_error() == Some(libc::ECHILD) {
+                    self.identity_lost = true;
+                }
                 return Err("GRID_CHILD_WAIT_STATE_UNKNOWN".into());
             }
         }
@@ -229,17 +291,23 @@ impl GridRetirement {
         for target in [-pid, pid] {
             if unsafe { libc::kill(target, libc::SIGKILL) } != 0
                 && std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
-            { return Err("GRID_PROCESS_GROUP_TERMINATE_FAILED".into()); }
+            {
+                return Err("GRID_PROCESS_GROUP_TERMINATE_FAILED".into());
+            }
         }
         match peek_grid_exit(&owner.child) {
             Ok(None) => return Ok(false),
             Ok(Some(_)) => {}
             Err(error) => {
-                if error.raw_os_error() == Some(libc::ECHILD) { self.identity_lost = true; }
+                if error.raw_os_error() == Some(libc::ECHILD) {
+                    self.identity_lost = true;
+                }
                 return Err("GRID_CHILD_WAIT_STATE_UNKNOWN".into());
             }
         }
-        if group_has_other_members(pid)? { return Ok(false); }
+        if group_has_other_members(pid)? {
+            return Ok(false);
+        }
         // Reap only after all other group members (including zombies) are
         // absent. Once this consumes the identity, no further signal is sent.
         match owner.child.try_wait() {
@@ -249,7 +317,9 @@ impl GridRetirement {
             }
             Ok(None) => Ok(false),
             Err(error) => {
-                if error.raw_os_error() == Some(libc::ECHILD) { self.identity_lost = true; }
+                if error.raw_os_error() == Some(libc::ECHILD) {
+                    self.identity_lost = true;
+                }
                 Err("GRID_CHILD_REAP_PENDING".into())
             }
         }
@@ -338,7 +408,8 @@ impl GridProcessManager {
 
     fn spawn_worker(&self, name: &str, work: impl FnOnce() + Send + 'static) -> Result<(), String> {
         let _operation = self.lifecycle.enter()?;
-        self.lifecycle.ensure_cleanup(Arc::clone(&self.children), Arc::clone(&self.listeners))?;
+        self.lifecycle
+            .ensure_cleanup(Arc::clone(&self.children), Arc::clone(&self.listeners))?;
         self.lifecycle.spawn(name, work)
     }
 
@@ -353,8 +424,12 @@ impl GridProcessManager {
     }
 
     fn request_visibility(&self, mode: VisibilityMode, delay: std::time::Duration) {
-        if self.lifecycle.is_stopping() { return; }
-        if self.visibility.request(mode, delay) { self.start_visibility_worker(); }
+        if self.lifecycle.is_stopping() {
+            return;
+        }
+        if self.visibility.request(mode, delay) {
+            self.start_visibility_worker();
+        }
     }
 
     fn retry_visibility_worker(&self) {
@@ -376,14 +451,19 @@ impl GridProcessManager {
                     {
                         // Relocation also sends UpdateRect (which shows the
                         // native window), so it shares this publication order.
-                        let _dispatch = manager.visibility_dispatch.lock().unwrap_or_else(|p| p.into_inner());
+                        let _dispatch = manager
+                            .visibility_dispatch
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner());
                         match intent.mode {
                             VisibilityMode::Show => manager.apply_show_for_focus(),
                             VisibilityMode::Blur => manager.apply_hide_for_blur_if_no_child_focus(),
                             VisibilityMode::Minimized => manager.apply_hide_for_blur(),
                         }
                     }
-                    if !manager.visibility.finish(intent.revision) { break; }
+                    if !manager.visibility.finish(intent.revision) {
+                        break;
+                    }
                 }
             }));
             if let Err(panic) = outcome {
@@ -429,7 +509,9 @@ impl GridProcessManager {
         let _ = std::fs::remove_file(&path); // 清理残留
         let listener = UnixListener::bind(&path)
             .map_err(|e| format!("绑定 UDS {} 失败: {e}", path.display()))?;
-        listener.set_nonblocking(true).map_err(|_| "GRID_LISTENER_NONBLOCKING")?;
+        listener
+            .set_nonblocking(true)
+            .map_err(|_| "GRID_LISTENER_NONBLOCKING")?;
         self.lifecycle.check()?;
         let comms = Arc::new(ChildComms::new());
         listeners.insert(index, comms.clone());
@@ -441,125 +523,151 @@ impl GridProcessManager {
         let owner = Arc::clone(&self.lifecycle);
         let accept_owner = Arc::clone(&owner);
         let started = owner.spawn("grid-accept", move || {
-          while !accept_owner.is_stopping() && !comms_accept.closing.load(Ordering::SeqCst) {
-            match listener.accept() {
-                Ok((stream, _)) => {
-                    eprintln!("[grid-manager] grid-child-{} UDS 已连接", index);
-                    if stream.set_nonblocking(false).is_err() { continue; }
-                    let reader = match stream.try_clone() {
-                        Ok(s) => s,
-                        Err(e) => {
-                            eprintln!("[grid-manager] grid-child-{} try_clone 失败: {e}", index);
+            while !accept_owner.is_stopping() && !comms_accept.closing.load(Ordering::SeqCst) {
+                match listener.accept() {
+                    Ok((stream, _)) => {
+                        eprintln!("[grid-manager] grid-child-{} UDS 已连接", index);
+                        if stream.set_nonblocking(false).is_err() {
                             continue;
                         }
-                    };
-                    // 子进程不读时也必须限制 writer 阻塞时长，避免请求堆积。
-                    if let Err(e) =
-                        stream.set_write_timeout(Some(std::time::Duration::from_secs(2)))
-                    {
-                        eprintln!(
-                            "[grid-manager] grid-child-{} UDS 写超时配置失败: {e}",
-                            index
-                        );
-                        continue;
-                    }
-                    let generation = match comms_accept.attach(stream) {
-                        Ok(generation) => generation,
-                        Err(_) => continue,
-                    };
-                    // 每连接一个 reader 线程：Response 按 seq 路由，Event 转发 app.emit。
-                    let comms_reader = comms_accept.clone();
-                    let app_reader = app.clone();
-                    let reader_owner = Arc::clone(&accept_owner);
-                    let started_reader = accept_owner.spawn("grid-reader", move || {
-                        let mut r = BufReader::new(reader);
-                        loop {
-                            if reader_owner.is_stopping() || !comms_reader.is_current(generation) { break; }
-                            let frame = crate::grid_ipc::read_wire(&mut r);
-                            // 旧连接仍有缓冲帧时，不允许覆盖新连接的响应/焦点状态。
-                            if reader_owner.is_stopping() || !comms_reader.is_current(generation) {
-                                break;
+                        let reader = match stream.try_clone() {
+                            Ok(s) => s,
+                            Err(e) => {
+                                eprintln!(
+                                    "[grid-manager] grid-child-{} try_clone 失败: {e}",
+                                    index
+                                );
+                                continue;
                             }
-                            match frame {
-                                Ok(Some(Wire::Response { seq, ok, err, data })) => {
-                                    let tx = comms_reader.pending.lock().unwrap().remove(&seq);
-                                    if let Some(tx) = tx {
-                                        let _ = tx.send(if ok {
-                                            Ok(data)
-                                        } else {
-                                            Err(err.unwrap_or_else(|| "子进程执行失败".into()))
-                                        });
-                                    }
+                        };
+                        // 子进程不读时也必须限制 writer 阻塞时长，避免请求堆积。
+                        if let Err(e) =
+                            stream.set_write_timeout(Some(std::time::Duration::from_secs(2)))
+                        {
+                            eprintln!(
+                                "[grid-manager] grid-child-{} UDS 写超时配置失败: {e}",
+                                index
+                            );
+                            continue;
+                        }
+                        let generation = match comms_accept.attach(stream) {
+                            Ok(generation) => generation,
+                            Err(_) => continue,
+                        };
+                        // 每连接一个 reader 线程：Response 按 seq 路由，Event 转发 app.emit。
+                        let comms_reader = comms_accept.clone();
+                        let app_reader = app.clone();
+                        let reader_owner = Arc::clone(&accept_owner);
+                        let started_reader = accept_owner.spawn("grid-reader", move || {
+                            let mut r = BufReader::new(reader);
+                            loop {
+                                if reader_owner.is_stopping()
+                                    || !comms_reader.is_current(generation)
+                                {
+                                    break;
                                 }
-                                Ok(Some(Wire::Event { name, payload })) => {
-                                    if let Some(app) = &app_reader {
-                                        match name.as_str() {
-                                            // 内部事件：子窗口焦点上报，不转发前端
-                                            "grid-child-focus" => {
-                                                let state = app.state::<crate::bridge::AppState>();
-                                                state.grid_manager.set_child_focus(index, true);
-                                            }
-                                            "grid-child-blur" => {
-                                                let state = app.state::<crate::bridge::AppState>();
-                                                state.grid_manager.set_child_focus(index, false);
-                                                // 从宫格切到其它应用时主窗不会再次 blur，
-                                                // 子窗口 blur 后若主窗也无焦点 → 隐藏防幽灵浮层
-                                                state.grid_manager.request_hide_for_blur_async();
-                                            }
-                                            "tab-navigated" => {
-                                                // Keep the native memory guard in sync with
-                                                // same-WebView redirects and in-page links.
-                                                // Only accept navigation for this Grid child.
-                                                if let (Some(id), Some(url)) = (
-                                                    payload.get("id").and_then(|v| v.as_str()),
-                                                    payload.get("url").and_then(|v| v.as_str()),
-                                                ) {
-                                                    if id == format!("grid-{index}")
-                                                        && !url.is_empty()
-                                                    {
-                                                        app.state::<crate::bridge::AppState>()
-                                                            .grid_manager
-                                                            .record_url(index, url);
-                                                    }
+                                let frame = crate::grid_ipc::read_wire(&mut r);
+                                // 旧连接仍有缓冲帧时，不允许覆盖新连接的响应/焦点状态。
+                                if reader_owner.is_stopping()
+                                    || !comms_reader.is_current(generation)
+                                {
+                                    break;
+                                }
+                                match frame {
+                                    Ok(Some(Wire::Response { seq, ok, err, data })) => {
+                                        let tx = comms_reader.pending.lock().unwrap().remove(&seq);
+                                        if let Some(tx) = tx {
+                                            let _ = tx.send(if ok {
+                                                Ok(data)
+                                            } else {
+                                                Err(err.unwrap_or_else(|| "子进程执行失败".into()))
+                                            });
+                                        }
+                                    }
+                                    Ok(Some(Wire::Event { name, payload })) => {
+                                        if let Some(app) = &app_reader {
+                                            match name.as_str() {
+                                                // 内部事件：子窗口焦点上报，不转发前端
+                                                "grid-child-focus" => {
+                                                    let state =
+                                                        app.state::<crate::bridge::AppState>();
+                                                    state.grid_manager.set_child_focus(index, true);
                                                 }
-                                                let _ = app.emit(&name, payload);
-                                            }
-                                            _ => {
-                                                let _ = app.emit(&name, payload);
+                                                "grid-child-blur" => {
+                                                    let state =
+                                                        app.state::<crate::bridge::AppState>();
+                                                    state
+                                                        .grid_manager
+                                                        .set_child_focus(index, false);
+                                                    // 从宫格切到其它应用时主窗不会再次 blur，
+                                                    // 子窗口 blur 后若主窗也无焦点 → 隐藏防幽灵浮层
+                                                    state
+                                                        .grid_manager
+                                                        .request_hide_for_blur_async();
+                                                }
+                                                "tab-navigated" => {
+                                                    // Keep the native memory guard in sync with
+                                                    // same-WebView redirects and in-page links.
+                                                    // Only accept navigation for this Grid child.
+                                                    if let (Some(id), Some(url)) = (
+                                                        payload.get("id").and_then(|v| v.as_str()),
+                                                        payload.get("url").and_then(|v| v.as_str()),
+                                                    ) {
+                                                        if id == format!("grid-{index}")
+                                                            && !url.is_empty()
+                                                        {
+                                                            app.state::<crate::bridge::AppState>()
+                                                                .grid_manager
+                                                                .record_url(index, url);
+                                                        }
+                                                    }
+                                                    let _ = app.emit(&name, payload);
+                                                }
+                                                _ => {
+                                                    let _ = app.emit(&name, payload);
+                                                }
                                             }
                                         }
                                     }
-                                }
-                                Ok(Some(Wire::Request { .. })) => {
-                                    // 主进程不会收到 Request，忽略
-                                }
-                                Ok(None) => {
-                                    eprintln!("[grid-manager] grid-child-{} UDS 对端关闭", index);
-                                    break;
-                                }
-                                Err(e) => {
-                                    eprintln!(
-                                        "[grid-manager] grid-child-{} UDS 读错误: {e}",
-                                        index
-                                    );
-                                    break;
+                                    Ok(Some(Wire::Request { .. })) => {
+                                        // 主进程不会收到 Request，忽略
+                                    }
+                                    Ok(None) => {
+                                        eprintln!(
+                                            "[grid-manager] grid-child-{} UDS 对端关闭",
+                                            index
+                                        );
+                                        break;
+                                    }
+                                    Err(e) => {
+                                        eprintln!(
+                                            "[grid-manager] grid-child-{} UDS 读错误: {e}",
+                                            index
+                                        );
+                                        break;
+                                    }
                                 }
                             }
+                            comms_reader.detach_if_current(generation);
+                        });
+                        if started_reader.is_err() {
+                            comms_accept.detach_if_current(generation);
                         }
-                        comms_reader.detach_if_current(generation);
-                    });
-                    if started_reader.is_err() { comms_accept.detach_if_current(generation); }
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                    if accept_owner.wait_or_stop(std::time::Duration::from_millis(20)) { break; }
-                }
-                Err(e) => {
-                    eprintln!("[grid-manager] grid-child-{} accept 失败: {e}", index);
-                    if accept_owner.wait_or_stop(std::time::Duration::from_millis(200)) { break; }
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        if accept_owner.wait_or_stop(std::time::Duration::from_millis(20)) {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("[grid-manager] grid-child-{} accept 失败: {e}", index);
+                        if accept_owner.wait_or_stop(std::time::Duration::from_millis(200)) {
+                            break;
+                        }
+                    }
                 }
             }
-          }
-          comms_accept.request_shutdown();
+            comms_accept.request_shutdown();
         });
         if let Err(error) = started {
             comms.request_shutdown();
@@ -579,7 +687,8 @@ impl GridProcessManager {
 
     fn spawn_with_state(&self, index: u32, saved: Option<SavedChildState>) -> Result<(), String> {
         let _operation = self.lifecycle.enter()?;
-        self.lifecycle.ensure_cleanup(Arc::clone(&self.children), Arc::clone(&self.listeners))?;
+        self.lifecycle
+            .ensure_cleanup(Arc::clone(&self.children), Arc::clone(&self.listeners))?;
         let _gate = self.lifecycle_lock.lock().unwrap();
         self.lifecycle.check()?;
         self.spawn_locked(index, saved)
@@ -592,22 +701,35 @@ impl GridProcessManager {
         if self.children.lock().unwrap().contains_key(&index) {
             return Err("GRID_ALREADY_OPEN".into());
         }
-        if self.lifecycle.is_retiring(index) { return Err("GRID_PROCESS_CLEANUP_PENDING".into()); }
+        if self.lifecycle.is_retiring(index) {
+            return Err("GRID_PROCESS_CLEANUP_PENDING".into());
+        }
         self.ensure_listener(index)?;
         let exe = std::env::current_exe().map_err(|e| format!("获取当前可执行文件失败: {e}"))?;
         let child = Command::new(exe)
-            .arg("--grid-child").arg(index.to_string())
+            .arg("--grid-child")
+            .arg(index.to_string())
             .env("GRID_CHILD_INDEX", index.to_string())
             .env("GRID_SOCK_PATH", Self::socket_path(index))
             .process_group(0)
-            .stdin(Stdio::null()).stdout(Stdio::inherit()).stderr(Stdio::inherit())
-            .spawn().map_err(|e| format!("spawn 宫格子进程 grid-{index} 失败: {e}"))?;
+            .stdin(Stdio::null())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .map_err(|e| format!("spawn 宫格子进程 grid-{index} 失败: {e}"))?;
         let pid = child.id();
         let saved = saved.unwrap_or_default();
         let handle = GridChildHandle {
-            child, last_url: saved.last_url, last_rect: saved.last_rect,
-            hidden: saved.hidden, blur_hidden: saved.blur_hidden,
-            hidden_since: if saved.hidden { Some(std::time::Instant::now()) } else { None },
+            child,
+            last_url: saved.last_url,
+            last_rect: saved.last_rect,
+            hidden: saved.hidden,
+            blur_hidden: saved.blur_hidden,
+            hidden_since: if saved.hidden {
+                Some(std::time::Instant::now())
+            } else {
+                None
+            },
         };
         {
             let mut children = self.children.lock().unwrap();
@@ -627,15 +749,27 @@ impl GridProcessManager {
     /// 获取或 spawn：同一生命周期锁覆盖查找、恢复元数据与实际创建。
     pub fn get_or_spawn(&self, index: u32) -> Result<bool, String> {
         let _operation = self.lifecycle.enter()?;
-        self.lifecycle.ensure_cleanup(Arc::clone(&self.children), Arc::clone(&self.listeners))?;
+        self.lifecycle
+            .ensure_cleanup(Arc::clone(&self.children), Arc::clone(&self.listeners))?;
         let _gate = self.lifecycle_lock.lock().unwrap();
         self.lifecycle.check()?;
-        if self.children.lock().unwrap().contains_key(&index) { return Ok(false); }
-        if self.lifecycle.is_retiring(index) { return Err("GRID_PROCESS_CLEANUP_PENDING".into()); }
-        let saved = self.hibernated.lock().unwrap().remove(&index)
-            .or_else(|| self.pending_restarts.lock().unwrap().remove(&index).map(|(_, saved)| saved));
+        if self.children.lock().unwrap().contains_key(&index) {
+            return Ok(false);
+        }
+        if self.lifecycle.is_retiring(index) {
+            return Err("GRID_PROCESS_CLEANUP_PENDING".into());
+        }
+        let saved = self.hibernated.lock().unwrap().remove(&index).or_else(|| {
+            self.pending_restarts
+                .lock()
+                .unwrap()
+                .remove(&index)
+                .map(|(_, saved)| saved)
+        });
         if let Err(error) = self.spawn_locked(index, saved.clone()) {
-            if let Some(saved) = saved { self.hibernated.lock().unwrap().insert(index, saved); }
+            if let Some(saved) = saved {
+                self.hibernated.lock().unwrap().insert(index, saved);
+            }
             return Err(error);
         }
         Ok(true)
@@ -648,10 +782,20 @@ impl GridProcessManager {
     /// Preserve child metadata while releasing its process. Used to roll back
     /// a failed resume without losing the URL/layout that existed pre-resume.
     pub fn hibernate_child(&self, index: u32) -> bool {
-        let Ok(_operation) = self.lifecycle.enter() else { return false; };
-        if self.lifecycle.ensure_cleanup(Arc::clone(&self.children), Arc::clone(&self.listeners)).is_err() { return false; }
+        let Ok(_operation) = self.lifecycle.enter() else {
+            return false;
+        };
+        if self
+            .lifecycle
+            .ensure_cleanup(Arc::clone(&self.children), Arc::clone(&self.listeners))
+            .is_err()
+        {
+            return false;
+        }
         let _gate = self.lifecycle_lock.lock().unwrap();
-        if self.lifecycle.check().is_err() { return false; }
+        if self.lifecycle.check().is_err() {
+            return false;
+        }
         self.pending_restarts.lock().unwrap().remove(&index);
         let _ = self.request(
             index,
@@ -689,11 +833,16 @@ impl GridProcessManager {
         let start = std::time::Instant::now();
         while !comms.is_connected() {
             self.lifecycle.check()?;
-            if comms.closing.load(Ordering::SeqCst) { return Err("GRID_CONNECTION_CLOSING".into()); }
+            if comms.closing.load(Ordering::SeqCst) {
+                return Err("GRID_CONNECTION_CLOSING".into());
+            }
             if start.elapsed().as_millis() as u64 > timeout_ms {
                 return Err(format!("等待 grid-child-{index} UDS 连接超时"));
             }
-            if self.lifecycle.wait_or_stop(std::time::Duration::from_millis(50)) {
+            if self
+                .lifecycle
+                .wait_or_stop(std::time::Duration::from_millis(50))
+            {
                 return Err("GRID_SHUTDOWN_IN_PROGRESS".into());
             }
         }
@@ -765,13 +914,17 @@ impl GridProcessManager {
         timeout_ms: u64,
     ) -> Result<Option<String>, String> {
         self.lifecycle.check()?;
-        if comms.closing.load(Ordering::SeqCst) { return Err("GRID_CONNECTION_CLOSING".into()); }
+        if comms.closing.load(Ordering::SeqCst) {
+            return Err("GRID_CONNECTION_CLOSING".into());
+        }
         let seq = comms.seq.fetch_add(1, Ordering::SeqCst);
         let (tx, rx) = mpsc::channel();
         let write_res = {
             let mut guard = comms.writer.lock().unwrap();
             self.lifecycle.check()?;
-            if comms.closing.load(Ordering::SeqCst) { return Err("GRID_CONNECTION_CLOSING".into()); }
+            if comms.closing.load(Ordering::SeqCst) {
+                return Err("GRID_CONNECTION_CLOSING".into());
+            }
             match guard.as_mut() {
                 Some(w) => {
                     // 与 attach 的 writer -> pending 锁序一致：请求只登记到当前连接。
@@ -818,13 +971,17 @@ impl GridProcessManager {
 
     /// 发后即忘（高频定位/显隐），错误只记日志。
     pub fn send(&self, index: u32, cmd: GridCmd) {
-        let Ok(_operation) = self.lifecycle.enter() else { return; };
+        let Ok(_operation) = self.lifecycle.enter() else {
+            return;
+        };
         let comms = match self.listeners.lock().unwrap().get(&index).cloned() {
             Some(c) => c,
             None => return,
         };
         let mut guard = comms.writer.lock().unwrap();
-        if self.lifecycle.is_stopping() || comms.closing.load(Ordering::SeqCst) { return; }
+        if self.lifecycle.is_stopping() || comms.closing.load(Ordering::SeqCst) {
+            return;
+        }
         if let Some(w) = guard.as_mut() {
             let seq = comms.seq.fetch_add(1, Ordering::SeqCst);
             if let Err(e) = crate::grid_ipc::write_wire(w, &Wire::Request { seq, cmd }) {
@@ -878,8 +1035,16 @@ impl GridProcessManager {
         idle_for: std::time::Duration,
         max_children: usize,
     ) -> Vec<u32> {
-        let Ok(_operation) = self.lifecycle.enter() else { return Vec::new(); };
-        if self.lifecycle.ensure_cleanup(Arc::clone(&self.children), Arc::clone(&self.listeners)).is_err() { return Vec::new(); }
+        let Ok(_operation) = self.lifecycle.enter() else {
+            return Vec::new();
+        };
+        if self
+            .lifecycle
+            .ensure_cleanup(Arc::clone(&self.children), Arc::clone(&self.listeners))
+            .is_err()
+        {
+            return Vec::new();
+        }
         if max_children == 0 {
             return Vec::new();
         }
@@ -970,7 +1135,9 @@ impl GridProcessManager {
                 continue;
             }
             let _gate = self.lifecycle_lock.lock().unwrap();
-            if self.lifecycle.is_stopping() { break; }
+            if self.lifecycle.is_stopping() {
+                break;
+            }
             let mut children = self.children.lock().unwrap();
             let still_eligible = children.get(&index).is_some_and(|child| {
                 child.hidden_since == Some(hidden_since)
@@ -1039,7 +1206,9 @@ impl GridProcessManager {
     /// UDS writer lock. Slow grid children can take up to 2 seconds per write,
     /// which must never happen on the GTK main event loop.
     pub fn request_reposition_async(&self) {
-        if self.lifecycle.is_stopping() { return; }
+        if self.lifecycle.is_stopping() {
+            return;
+        }
         self.reposition_pending.fetch_add(1, Ordering::AcqRel);
         if self.reposition_running.swap(true, Ordering::AcqRel) {
             return;
@@ -1100,7 +1269,10 @@ impl GridProcessManager {
     /// Worker thread only: recompute latest CSS→screen rectangles and emit UDS
     /// writes in sequence. Visibility checks remain the source of truth.
     pub fn reposition_visible(&self) {
-        let _dispatch = self.visibility_dispatch.lock().unwrap_or_else(|p| p.into_inner());
+        let _dispatch = self
+            .visibility_dispatch
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         let items: Vec<(u32, (f64, f64, f64, f64))> = self
             .children
             .lock()
@@ -1213,11 +1385,12 @@ impl GridProcessManager {
 
     // ===== 崩溃自愈（Phase 3） =====
 
-
     /// Observe exits without reaping the leader. Retirement owns the child
     /// until its group is empty; crash restart waits for that same index.
     fn start_monitor(&self) {
-        if self.monitor_started.swap(true, Ordering::SeqCst) { return; }
+        if self.monitor_started.swap(true, Ordering::SeqCst) {
+            return;
+        }
         let Some(app) = self.app() else {
             self.monitor_started.store(false, Ordering::SeqCst);
             return;
@@ -1300,18 +1473,32 @@ impl GridProcessManager {
     }
 
     fn restart_ready_children(&self) {
-        let Ok(_operation) = self.lifecycle.enter() else { return; };
+        let Ok(_operation) = self.lifecycle.enter() else {
+            return;
+        };
         let mut replay = Vec::new();
         {
             let _gate = self.lifecycle_lock.lock().unwrap();
-            if self.lifecycle.is_stopping() { return; }
-            let ready: Vec<_> = self.pending_restarts.lock().unwrap().iter()
-                .filter(|(index, (when, _))| *when <= std::time::Instant::now()
-                    && !self.lifecycle.is_retiring(**index))
-                .map(|(index, _)| *index).collect();
+            if self.lifecycle.is_stopping() {
+                return;
+            }
+            let ready: Vec<_> = self
+                .pending_restarts
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(index, (when, _))| {
+                    *when <= std::time::Instant::now() && !self.lifecycle.is_retiring(**index)
+                })
+                .map(|(index, _)| *index)
+                .collect();
             for index in ready {
-                let Some((_, saved)) = self.pending_restarts.lock().unwrap().remove(&index) else { continue; };
-                if self.children.lock().unwrap().contains_key(&index) { continue; }
+                let Some((_, saved)) = self.pending_restarts.lock().unwrap().remove(&index) else {
+                    continue;
+                };
+                if self.children.lock().unwrap().contains_key(&index) {
+                    continue;
+                }
                 if let Err(error) = self.spawn_locked(index, Some(saved.clone())) {
                     if !self.lifecycle.is_stopping() {
                         self.hibernated.lock().unwrap().insert(index, saved);
@@ -1322,7 +1509,9 @@ impl GridProcessManager {
                 }
             }
         }
-        for index in replay { self.replay(index); }
+        for index in replay {
+            self.replay(index);
+        }
     }
 
     /// 重启后状态重放：等 UDS 重连 → 重建 webview（url）→ 恢复定位（若可见）→ 恢复缩放。
@@ -1354,7 +1543,9 @@ impl GridProcessManager {
         let app = self.app();
         let replay_owner = Arc::clone(&self.lifecycle);
         let started = self.spawn_worker("grid-replay", move || {
-            if replay_owner.is_stopping() { return; }
+            if replay_owner.is_stopping() {
+                return;
+            }
             let Some(app) = app else { return };
             let state = app.state::<crate::bridge::AppState>();
             let manager = &state.grid_manager;
@@ -1403,12 +1594,20 @@ impl GridProcessManager {
     /// Remove the live registration, then transfer the complete native owner.
     /// Reusing this index is rejected until retirement confirms group cleanup.
     pub fn kill_child(&self, index: u32) -> bool {
-        let Ok(_operation) = self.lifecycle.enter() else { return false; };
-        if self.lifecycle.ensure_cleanup(Arc::clone(&self.children), Arc::clone(&self.listeners)).is_err() {
+        let Ok(_operation) = self.lifecycle.enter() else {
+            return false;
+        };
+        if self
+            .lifecycle
+            .ensure_cleanup(Arc::clone(&self.children), Arc::clone(&self.listeners))
+            .is_err()
+        {
             return false;
         }
         let _gate = self.lifecycle_lock.lock().unwrap();
-        if self.lifecycle.is_stopping() { return false; }
+        if self.lifecycle.is_stopping() {
+            return false;
+        }
         self.crash_history.lock().unwrap().remove(&index);
         self.hibernated.lock().unwrap().remove(&index);
         self.pending_restarts.lock().unwrap().remove(&index);
@@ -1416,7 +1615,9 @@ impl GridProcessManager {
         if let Some(owner) = removed {
             self.lifecycle.retire(index, owner);
             true
-        } else { false }
+        } else {
+            false
+        }
     }
 
     #[allow(dead_code)]
@@ -1434,9 +1635,13 @@ impl GridProcessManager {
     #[allow(dead_code)]
     pub fn check_exited(&self, index: u32) -> Option<i32> {
         let _operation = self.lifecycle.enter().ok()?;
-        self.lifecycle.ensure_cleanup(Arc::clone(&self.children), Arc::clone(&self.listeners)).ok()?;
+        self.lifecycle
+            .ensure_cleanup(Arc::clone(&self.children), Arc::clone(&self.listeners))
+            .ok()?;
         let _gate = self.lifecycle_lock.lock().unwrap();
-        if self.lifecycle.is_stopping() { return None; }
+        if self.lifecycle.is_stopping() {
+            return None;
+        }
         let mut children = self.children.lock().unwrap();
         let code = peek_grid_exit(&children.get(&index)?.child).ok()??;
         let owner = children.remove(&index)?;
@@ -1468,13 +1673,13 @@ impl GridProcessManager {
             .collect()
     }
 
-
     /// Ordinary close_grid is reversible and never closes application admission.
     /// All cells share this one bounded foreground wait; pending owners remain
     /// with the cleanup service and block only reuse of their own indices.
     pub fn shutdown_all(&self) -> Result<(), String> {
         let _operation = self.lifecycle.enter()?;
-        self.lifecycle.ensure_cleanup(Arc::clone(&self.children), Arc::clone(&self.listeners))?;
+        self.lifecycle
+            .ensure_cleanup(Arc::clone(&self.children), Arc::clone(&self.listeners))?;
         {
             let _gate = self.lifecycle_lock.lock().unwrap();
             self.lifecycle.check()?;
@@ -1482,19 +1687,24 @@ impl GridProcessManager {
             self.hibernated.lock().unwrap().clear();
             self.pending_restarts.lock().unwrap().clear();
             let mut children = self.children.lock().unwrap();
-            for (index, owner) in children.drain() { self.lifecycle.retire(index, owner); }
+            for (index, owner) in children.drain() {
+                self.lifecycle.retire(index, owner);
+            }
         }
-        self.lifecycle.wait_retired_until(
-            std::time::Instant::now() + std::time::Duration::from_millis(750),
-        )
+        self.lifecycle
+            .wait_retired_until(std::time::Instant::now() + std::time::Duration::from_millis(750))
     }
 
     /// Irreversible application admission, distinct from closing a Grid view.
-    pub fn request_shutdown(&self) { self.lifecycle.request_shutdown(); }
+    pub fn request_shutdown(&self) {
+        self.lifecycle.request_shutdown();
+    }
 
     pub fn shutdown_until(&self, deadline: std::time::Instant) -> Result<(), String> {
         self.lifecycle.shutdown_until(
-            Arc::clone(&self.children), Arc::clone(&self.listeners), deadline,
+            Arc::clone(&self.children),
+            Arc::clone(&self.listeners),
+            deadline,
         )
     }
 }
@@ -1572,15 +1782,22 @@ mod grid_process_termination_tests {
 
     fn owner(child: Child) -> GridChildHandle {
         GridChildHandle {
-            child, last_url: None, last_rect: None, hidden: false,
-            blur_hidden: false, hidden_since: None,
+            child,
+            last_url: None,
+            last_rect: None,
+            hidden: false,
+            blur_hidden: false,
+            hidden_since: None,
         }
     }
 
     #[test]
     fn killing_a_grid_child_has_a_bounded_foreground_wait() {
-        let child = Command::new("/usr/bin/sleep").arg("10")
-            .process_group(0).spawn().unwrap();
+        let child = Command::new("/usr/bin/sleep")
+            .arg("10")
+            .process_group(0)
+            .spawn()
+            .unwrap();
         let mut retirement = GridRetirement::new(1, owner(child));
         let started = Instant::now();
         let mut complete = retirement.poll().unwrap();
@@ -1596,16 +1813,24 @@ mod grid_process_termination_tests {
 
     #[test]
     fn linux_grid_exit_observation_keeps_leader_waitable_until_retirement() {
-        let child = Command::new("/usr/bin/true").process_group(0).spawn().unwrap();
+        let child = Command::new("/usr/bin/true")
+            .process_group(0)
+            .spawn()
+            .unwrap();
         let deadline = Instant::now() + Duration::from_secs(3);
         loop {
-            if peek_grid_exit(&child).unwrap().is_some() { break; }
+            if peek_grid_exit(&child).unwrap().is_some() {
+                break;
+            }
             assert!(Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(10));
         }
         assert_eq!(peek_grid_exit(&child).unwrap(), Some(0));
-        assert_eq!(peek_grid_exit(&child).unwrap(), Some(0),
-            "monitoring must not consume wait status or release the PID");
+        assert_eq!(
+            peek_grid_exit(&child).unwrap(),
+            Some(0),
+            "monitoring must not consume wait status or release the PID"
+        );
         let mut retirement = GridRetirement::new(7, owner(child));
         assert!(retirement.poll().unwrap());
         assert!(retirement.child.is_none());
@@ -1613,17 +1838,28 @@ mod grid_process_termination_tests {
 
     #[test]
     fn linux_grid_retirement_after_reap_only_observes_group() {
-        let mut leader = Command::new("/usr/bin/sleep").arg("10")
-            .process_group(0).spawn().unwrap();
-        let mut member = Command::new("/usr/bin/sleep").arg("10")
-            .process_group(leader.id() as i32).spawn().unwrap();
+        let mut leader = Command::new("/usr/bin/sleep")
+            .arg("10")
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let mut member = Command::new("/usr/bin/sleep")
+            .arg("10")
+            .process_group(leader.id() as i32)
+            .spawn()
+            .unwrap();
         leader.kill().unwrap();
         leader.wait().unwrap();
         let mut retirement = GridRetirement::new(8, owner(leader));
         retirement.identity_consumed = true;
-        assert!(!retirement.poll().unwrap(), "a live group cannot be reported complete");
-        assert!(member.try_wait().unwrap().is_none(),
-            "after consuming identity, cleanup must never signal numeric PGID");
+        assert!(
+            !retirement.poll().unwrap(),
+            "a live group cannot be reported complete"
+        );
+        assert!(
+            member.try_wait().unwrap().is_none(),
+            "after consuming identity, cleanup must never signal numeric PGID"
+        );
         member.kill().unwrap();
         member.wait().unwrap();
         assert!(retirement.poll().unwrap());
@@ -1631,7 +1867,10 @@ mod grid_process_termination_tests {
 
     #[test]
     fn linux_grid_proc_group_parser_handles_non_utf8_and_parentheses() {
-        assert_eq!(proc_stat_group(b"123 (name ) with\xff bytes) S 7 456 8 0 0"), Some(456));
+        assert_eq!(
+            proc_stat_group(b"123 (name ) with\xff bytes) S 7 456 8 0 0"),
+            Some(456)
+        );
         assert_eq!(proc_stat_group(b"123 broken"), None);
     }
 
@@ -1642,7 +1881,9 @@ mod grid_process_termination_tests {
         assert!(manager.lifecycle.check().is_ok());
         manager.request_shutdown();
         assert!(manager.get_or_spawn(1).is_err());
-        manager.shutdown_until(Instant::now() + Duration::from_secs(3)).unwrap();
+        manager
+            .shutdown_until(Instant::now() + Duration::from_secs(3))
+            .unwrap();
         assert!(manager.lifecycle.check().is_err());
     }
 }
@@ -1694,7 +1935,9 @@ mod grid_connection_generation_tests {
             started.send(()).unwrap();
             let mut byte = [0u8; 1];
             let result = reader.read(&mut byte);
-            finished.send(result.map(|count| count == 0).unwrap_or(true)).unwrap();
+            finished
+                .send(result.map(|count| count == 0).unwrap_or(true))
+                .unwrap();
         });
         ready.recv_timeout(Duration::from_secs(1)).unwrap();
         let writer = comms.writer.lock().unwrap();
@@ -1706,7 +1949,6 @@ mod grid_connection_generation_tests {
         assert!(comms.attach(late).is_err());
         assert!(!comms.is_connected());
     }
-
 }
 
 #[cfg(test)]

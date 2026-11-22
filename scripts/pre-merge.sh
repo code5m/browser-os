@@ -185,6 +185,7 @@ run_pre_merge() {
   pm_log "WBS 模型路由标签…"
   python3 "$SCRIPT_DIR/check-local-ai-secrets.py" || pm_fail "local AI secret safety"
   python3 "$SCRIPT_DIR/../tests/check-local-ai-import.py" || pm_fail "local AI import regressions"
+  python3 "$SCRIPT_DIR/../tests/check-ai-native-import.py" || pm_fail "native AI import protocol regressions"
   python3 "$SCRIPT_DIR/check-plan-routing.py" --self-test >/dev/null 2>&1 || pm_fail "check-plan-routing.py --self-test"
   python3 "$SCRIPT_DIR/check-plan-routing.py" || pm_fail "check-plan-routing.py"
 

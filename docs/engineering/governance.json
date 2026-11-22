@@ -31,7 +31,7 @@
       "id": "windows-linux-v2-experimental",
       "path": ".github/workflows/windows-linux-v2-experimental.yml",
       "role": "experimental_platform_feedback",
-      "scope": "reusable workflow_call only; registered Developer Feedback dispatch on explicit selected ref with matching source_sha; manifest-required test names must enumerate and pass individually; every native process uses atomic Job supervision and verified empty accounting; all execution in this repair NOT_RUN"
+      "scope": "reusable workflow_call only; registered Developer Feedback dispatch on explicit selected ref with matching source_sha; host binary, host core and Agent Foundation production features checked on Windows/Linux; manifest-required names must enumerate and pass individually; Windows execution uses atomic Job supervision and verified empty accounting; source wiring alone is NOT_RUN"
     },
     {
       "id": "ui-safety",
@@ -43,7 +43,7 @@
       "id": "full-validation",
       "path": ".github/workflows/capability-v2-validation.yml",
       "role": "blocking_quality_gate",
-      "scope": "master and ready-PR fast/static validation; optional rust-tests/packaged-gui/packaged-resource by manual dispatch, PR label or repository variable; no native compile by default"
+      "scope": "master and ready-PR fast/static validation, including complete managed workbench UI; optional rust-tests/packaged-gui/packaged-resource by manual dispatch, PR label or repository variable; SHA-bound Debian artifact from the selected package build; no native compile by default"
     },
     {
       "id": "developer-feedback",
@@ -330,7 +330,8 @@
         "scripts/windows-native-test-runner.ps1",
         "scripts/windows-native-test-supervisor.cs",
         "scripts/windows-native-required-tests.json",
-        "tests/check-windows-linux-v2-source-contract.mjs"
+        "tests/check-windows-linux-v2-source-contract.mjs",
+        "scripts/check-native-required-results.py"
       ]
     }
   ],
@@ -520,7 +521,7 @@
   ],
   "nativeSemantics": {
     "status": "ACTIVE_BLOCKING",
-    "expectedRegisteredCommands": 203,
+    "expectedRegisteredCommands": 208,
     "expectedAppStateFields": 27,
     "authority": "docs/architecture/native-boundary/native-commands.yaml",
     "checker": "scripts/check-native-semantic-closure.mjs",

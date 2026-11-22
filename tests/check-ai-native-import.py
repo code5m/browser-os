@@ -1,6 +1,5 @@
 """Behavior regression definitions for the read-only native import discoverer.
 
-These definitions are committed without execution at the user's request.
 They use synthetic credentials and temporary source files only.
 """
 import contextlib
@@ -17,7 +16,7 @@ SPEC = importlib.util.spec_from_file_location("browseros_import_local_ai", SOURC
 IMPORTER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(IMPORTER)
 
-TOKEN = "sk-live-1234567890ABCDEFGHIJKLMNOP"
+TOKEN = "synthetic-native-credential-1234567890"
 REQUEST_ID = "a" * 32
 
 
@@ -54,7 +53,7 @@ class NativeImportDiscoveryTests(unittest.TestCase):
             IMPORTER.discover(self.home)
 
     def test_plugin_metadata_rejects_bare_token_from_authorization(self):
-        self.model(secret="sk-local-0987654321ZYXWVUTSRQPONMLK")
+        self.model(secret="synthetic-plugin-credential-0987654321")
         plugin = self.home / ".codebuddy" / "mcp.json"
         plugin.write_text(json.dumps({"mcpServers": {
             TOKEN: {"type": "stdio", "env": {"Authorization": "Bearer " + TOKEN}}

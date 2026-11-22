@@ -823,7 +823,11 @@ mod script_persistence_tests {
     #[test]
     fn empty_library_is_empty() {
         let root = temp_root("empty");
-        assert!(crate::workspace::load_scripts_at(&root.join("scripts.json")).unwrap().is_empty());
+        assert!(
+            crate::workspace::load_scripts_at(&root.join("scripts.json"))
+                .unwrap()
+                .is_empty()
+        );
         let _ = fs::remove_dir_all(&root);
     }
 

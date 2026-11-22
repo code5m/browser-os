@@ -546,29 +546,41 @@ pub fn register_shutdown_tasks(app: &AppHandle) -> Result<(), String> {
 
     {
         let app = app.clone();
-        coordinator.register_with_deadline("kill-terminals", &["stop-background-workers"], move |deadline| {
-            let sessions: Vec<(String, TerminalSession)> = {
-                let state = app.state::<AppState>();
-                let mut terminals = state.terminals.lock().unwrap_or_else(|e| e.into_inner());
-                for session in terminals.values_mut() { session.request_close(); }
-                terminals.drain().collect()
-            };
-            // request_close transferred every resource to its cleanup owner.
-            // Dropping these empty session facades does not wait four seconds
-            // per terminal. Pending IPC closes and in-flight spawns are covered
-            // by the same native admission/cleanup registry.
-            drop(sessions);
-            terminal::shutdown_until(deadline)
-        })?;
+        coordinator.register_with_deadline(
+            "kill-terminals",
+            &["stop-background-workers"],
+            move |deadline| {
+                let sessions: Vec<(String, TerminalSession)> = {
+                    let state = app.state::<AppState>();
+                    let mut terminals = state.terminals.lock().unwrap_or_else(|e| e.into_inner());
+                    for session in terminals.values_mut() {
+                        session.request_close();
+                    }
+                    terminals.drain().collect()
+                };
+                // request_close transferred every resource to its cleanup owner.
+                // Dropping these empty session facades does not wait four seconds
+                // per terminal. Pending IPC closes and in-flight spawns are covered
+                // by the same native admission/cleanup registry.
+                drop(sessions);
+                terminal::shutdown_until(deadline)
+            },
+        )?;
     }
 
     {
-        coordinator.register_with_deadline("shutdown-agent-lsp", &["stop-background-workers"], move |deadline| {
-            crate::capabilities::agent::public_api::shutdown_lsp_until(deadline)
-        })?;
-        coordinator.register_with_deadline("shutdown-agent-sandbox", &["stop-background-workers"], move |deadline| {
-            crate::capabilities::agent::public_api::shutdown_sandbox_until(deadline)
-        })?;
+        coordinator.register_with_deadline(
+            "shutdown-agent-lsp",
+            &["stop-background-workers"],
+            move |deadline| crate::capabilities::agent::public_api::shutdown_lsp_until(deadline),
+        )?;
+        coordinator.register_with_deadline(
+            "shutdown-agent-sandbox",
+            &["stop-background-workers"],
+            move |deadline| {
+                crate::capabilities::agent::public_api::shutdown_sandbox_until(deadline)
+            },
+        )?;
     }
 
     {
@@ -588,12 +600,16 @@ pub fn register_shutdown_tasks(app: &AppHandle) -> Result<(), String> {
 
     {
         let app = app.clone();
-        coordinator.register_with_deadline("kill-running-scripts", &["stop-scheduler"], move |_deadline| {
-            let killed =
-                crate::script_runner::kill_all_running(&app.state::<AppState>().script_runs);
-            eprintln!("[shutdown] kill-running-scripts killed={killed}");
-            Ok(())
-        })?;
+        coordinator.register_with_deadline(
+            "kill-running-scripts",
+            &["stop-scheduler"],
+            move |_deadline| {
+                let killed =
+                    crate::script_runner::kill_all_running(&app.state::<AppState>().script_runs);
+                eprintln!("[shutdown] kill-running-scripts killed={killed}");
+                Ok(())
+            },
+        )?;
     }
 
     Ok(())

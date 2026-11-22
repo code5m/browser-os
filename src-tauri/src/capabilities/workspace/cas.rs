@@ -26,16 +26,19 @@ pub async fn write_file_cas(
     sp::check_text_field("content", &content, MAX_EDITOR_BYTES).map_err(|e| e.to_string())?;
     sp::check_text_field("expected_content", &expected_content, MAX_EDITOR_BYTES)
         .map_err(|e| e.to_string())?;
-    super::FILESYSTEM_IO.run(move || {
-        let roots = crate::workspace::allowed_roots(&app);
-        let canonical = sp::check_path_within_roots(&path, &roots).map_err(|e| e.to_string())?;
-        save_if_unchanged(
-            &canonical,
-            &roots,
-            expected_content.as_bytes(),
-            content.as_bytes(),
-        )
-    }).await
+    super::FILESYSTEM_IO
+        .run(move || {
+            let roots = crate::workspace::allowed_roots(&app);
+            let canonical =
+                sp::check_path_within_roots(&path, &roots).map_err(|e| e.to_string())?;
+            save_if_unchanged(
+                &canonical,
+                &roots,
+                expected_content.as_bytes(),
+                content.as_bytes(),
+            )
+        })
+        .await
 }
 
 fn save_if_unchanged(
@@ -86,12 +89,10 @@ mod tests {
             Err("FILE_CONFLICT".into())
         );
         assert_eq!(fs::read_to_string(&file).unwrap(), "someone else's update");
-        assert!(
-            !fs::read_dir(&dir)
+        assert!(!fs::read_dir(&dir)
             .unwrap()
             .flatten()
-                .any(|entry| entry.file_name().to_string_lossy().ends_with(".tmp"))
-        );
+            .any(|entry| entry.file_name().to_string_lossy().ends_with(".tmp")));
         fs::remove_dir_all(dir).unwrap();
     }
 

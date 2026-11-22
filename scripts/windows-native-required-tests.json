@@ -902,6 +902,47 @@
       "allow_ignored": true,
       "timeout_seconds": 900,
       "role": "full-suite"
+    },
+    {
+      "id": "host-core",
+      "package": "mvp-browser-os",
+      "filter": "",
+      "required_count": 2,
+      "required_names": [
+        "progress_sink_is_object_safe",
+        "path_and_roots_seams_are_usable"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 120,
+      "role": "full-suite"
+    },
+    {
+      "id": "agent-foundation-production",
+      "package": "browseros-agent-foundation",
+      "filter": "",
+      "required_count": 15,
+      "required_names": [
+        "stale_generation_cannot_finish_or_record_progress_after_resume",
+        "pause_resume_race_keeps_current_cancellation_signal_consistent",
+        "retirement_keeps_recent_terminal_replay_but_bounds_history",
+        "approval_is_one_shot_and_task_scoped",
+        "task_execution_lease_is_exclusive_and_raii",
+        "recover_never_replays_pending_effects",
+        "terminal_retention_is_globally_bounded_and_recent_events_replay",
+        "monotonic_and_gap_detected",
+        "tampering_expiration_and_replay_are_rejected",
+        "mismatched_key_or_workspace_is_denied",
+        "approved_call_succeeds_and_unapproved_cannot_run",
+        "cancellation_blocks_a_previously_approved_call",
+        "oversized_completion_cannot_commit_success",
+        "stale_tool_result_cannot_resume_a_new_task_generation",
+        "two_model_turns_with_real_rig_state_and_signed_host_approval"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 300,
+      "role": "required"
     }
   ]
 }

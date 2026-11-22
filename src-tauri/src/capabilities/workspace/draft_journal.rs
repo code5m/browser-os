@@ -41,9 +41,13 @@ fn valid_session(id: &str) -> bool {
 fn path_identity(path: &Path) -> String {
     let value = path.to_string_lossy().replace('/', "\\");
     #[cfg(windows)]
-    { value.to_lowercase() }
+    {
+        value.to_lowercase()
+    }
     #[cfg(not(windows))]
-    { value }
+    {
+        value
+    }
 }
 fn path_hash(path: &Path) -> String {
     format!("{:x}", Sha256::digest(path_identity(path).as_bytes()))
@@ -94,8 +98,16 @@ fn raw_key(create: bool, dir: &Path) -> Result<Option<[u8; 32]>, String> {
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
-        if !guard.metadata().map_err(|_| "DRAFT_KEY_LOCK_FAILED")?.is_file()
-            || guard.metadata().map_err(|_| "DRAFT_KEY_LOCK_FAILED")?.file_attributes() & 0x0000_0400 != 0
+        if !guard
+            .metadata()
+            .map_err(|_| "DRAFT_KEY_LOCK_FAILED")?
+            .is_file()
+            || guard
+                .metadata()
+                .map_err(|_| "DRAFT_KEY_LOCK_FAILED")?
+                .file_attributes()
+                & 0x0000_0400
+                != 0
         {
             return Err("DRAFT_KEY_LOCK_FAILED".into());
         }
@@ -183,11 +195,20 @@ fn write_journal(
     // and replace a journal between recovery's version check and deletion.
     let roots = [dir.to_path_buf()];
     let expected = crate::capabilities::workspace::safe_paths::read_versioned(
-        &final_path, &roots, MAX_JOURNAL as usize,
-    ).map_err(|_| "DRAFT_READ_FAILED")?;
+        &final_path,
+        &roots,
+        MAX_JOURNAL as usize,
+    )
+    .map_err(|_| "DRAFT_READ_FAILED")?;
     crate::capabilities::workspace::safe_paths::write_versioned(
-        &final_path, &roots, expected.as_ref(), &encrypted, MAX_JOURNAL as usize, |_| Ok(()),
-    ).map_err(|error| match error.as_str() {
+        &final_path,
+        &roots,
+        expected.as_ref(),
+        &encrypted,
+        MAX_JOURNAL as usize,
+        |_| Ok(()),
+    )
+    .map_err(|error| match error.as_str() {
         "FILE_CONFLICT" => "DRAFT_JOURNAL_CONFLICT".to_string(),
         "FILE_DURABILITY_UNCERTAIN" => "DRAFT_DURABILITY_UNCERTAIN".to_string(),
         _ => "DRAFT_WRITE_FAILED".to_string(),
@@ -210,8 +231,11 @@ fn read_journals(dir: &Path, target: &Path, key: &[u8; 32]) -> Result<Vec<DraftS
             return Err("DRAFT_JOURNAL_INVALID".into());
         }
         let bytes = crate::capabilities::workspace::safe_paths::read_regular(
-            &entry.path(), &[dir.to_path_buf()], MAX_JOURNAL as usize,
-        ).map_err(|_| "DRAFT_READ_FAILED")?;
+            &entry.path(),
+            &[dir.to_path_buf()],
+            MAX_JOURNAL as usize,
+        )
+        .map_err(|_| "DRAFT_READ_FAILED")?;
         let text = decrypt(key, &bytes)?;
         let snap: DraftSnapshot =
             serde_json::from_slice(&text).map_err(|_| "DRAFT_JOURNAL_INVALID")?;
@@ -228,8 +252,11 @@ fn read_journals(dir: &Path, target: &Path, key: &[u8; 32]) -> Result<Vec<DraftS
 }
 fn resolve(app: &AppHandle, path: &str) -> Result<PathBuf, String> {
     let target = PathBuf::from(path);
-    if path.len() > 16 * 1024 || !target.is_absolute()
-        || target.components().any(|part| matches!(part, std::path::Component::ParentDir))
+    if path.len() > 16 * 1024
+        || !target.is_absolute()
+        || target
+            .components()
+            .any(|part| matches!(part, std::path::Component::ParentDir))
     {
         return Err("DRAFT_PATH_DENIED".into());
     }
@@ -254,13 +281,17 @@ fn resolve(app: &AppHandle, path: &str) -> Result<PathBuf, String> {
             Err(_) => return Err("DRAFT_PATH_DENIED".into()),
         }
     }
-    if suffix.is_empty() { return Err("DRAFT_PATH_DENIED".into()); }
-    let mut canonical = sp::check_path_within_roots(
-        ancestor.to_str().ok_or("DRAFT_PATH_DENIED")?, &roots,
-    ).map_err(|_| "DRAFT_PATH_DENIED")?;
+    if suffix.is_empty() {
+        return Err("DRAFT_PATH_DENIED".into());
+    }
+    let mut canonical =
+        sp::check_path_within_roots(ancestor.to_str().ok_or("DRAFT_PATH_DENIED")?, &roots)
+            .map_err(|_| "DRAFT_PATH_DENIED")?;
     crate::capabilities::workspace::safe_paths::directory_identity(&canonical)
         .map_err(|_| "DRAFT_PATH_DENIED")?;
-    for name in suffix.into_iter().rev() { canonical.push(name); }
+    for name in suffix.into_iter().rev() {
+        canonical.push(name);
+    }
     Ok(canonical)
 }
 
@@ -273,35 +304,37 @@ pub async fn editor_draft_save(
     baseline: String,
     content: String,
 ) -> Result<(), String> {
-    if webview.label() != "main" { return Err("DRAFT_SOURCE_DENIED".into()); }
+    if webview.label() != "main" {
+        return Err("DRAFT_SOURCE_DENIED".into());
+    }
     check_invocation_source(&webview, "editor_draft_save", None, &app)?;
     if !valid_session(&session_id) || content.len() > MAX_FILE || baseline.len() > MAX_FILE {
         return Err("DRAFT_INPUT_INVALID".into());
     }
-    DRAFT_IO.run(move || {
-        let target = resolve(&app, &path)?;
-        let dir = private_dir(&app)?;
-        let key = raw_key(true, &dir)?.ok_or("DRAFT_KEY_UNAVAILABLE")?;
-        let updated_at_ms = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64;
-        write_journal(
-            &dir,
-            &target,
-            &DraftSnapshot {
-                session_id,
-                path: path_identity(&target),
-                source_path: target.to_string_lossy().into_owned(),
-                baseline,
-                content,
-                updated_at_ms,
-            },
-            &key,
-        )
-    })
-    .await
-
+    DRAFT_IO
+        .run(move || {
+            let target = resolve(&app, &path)?;
+            let dir = private_dir(&app)?;
+            let key = raw_key(true, &dir)?.ok_or("DRAFT_KEY_UNAVAILABLE")?;
+            let updated_at_ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+            write_journal(
+                &dir,
+                &target,
+                &DraftSnapshot {
+                    session_id,
+                    path: path_identity(&target),
+                    source_path: target.to_string_lossy().into_owned(),
+                    baseline,
+                    content,
+                    updated_at_ms,
+                },
+                &key,
+            )
+        })
+        .await
 }
 #[tauri::command]
 pub async fn editor_draft_list(
@@ -309,30 +342,32 @@ pub async fn editor_draft_list(
     webview: tauri::Webview,
     path: String,
 ) -> Result<Vec<DraftSnapshot>, String> {
-    if webview.label() != "main" { return Err("DRAFT_SOURCE_DENIED".into()); }
+    if webview.label() != "main" {
+        return Err("DRAFT_SOURCE_DENIED".into());
+    }
     check_invocation_source(&webview, "editor_draft_list", None, &app)?;
-    DRAFT_IO.run(move || {
-        let target = resolve(&app, &path)?;
-        let dir = private_dir(&app)?;
-        let key = raw_key(false, &dir)?;
-        match key {
-            Some(key) => read_journals(&dir, &target, &key),
-            None => {
-                let prefix = format!("{}-", path_hash(&target));
-                let existing = fs::read_dir(&dir)
-                    .map_err(|_| "DRAFT_READ_FAILED")?
-                    .filter_map(Result::ok)
-                    .any(|entry| entry.file_name().to_string_lossy().starts_with(&prefix));
-                if existing {
-                    Err("DRAFT_KEY_MISSING_RECOVERY_BLOCKED".into())
-                } else {
-                    Ok(Vec::new())
+    DRAFT_IO
+        .run(move || {
+            let target = resolve(&app, &path)?;
+            let dir = private_dir(&app)?;
+            let key = raw_key(false, &dir)?;
+            match key {
+                Some(key) => read_journals(&dir, &target, &key),
+                None => {
+                    let prefix = format!("{}-", path_hash(&target));
+                    let existing = fs::read_dir(&dir)
+                        .map_err(|_| "DRAFT_READ_FAILED")?
+                        .filter_map(Result::ok)
+                        .any(|entry| entry.file_name().to_string_lossy().starts_with(&prefix));
+                    if existing {
+                        Err("DRAFT_KEY_MISSING_RECOVERY_BLOCKED".into())
+                    } else {
+                        Ok(Vec::new())
+                    }
                 }
             }
-        }
-    })
-    .await
-
+        })
+        .await
 }
 #[tauri::command]
 pub async fn editor_draft_clear(
@@ -341,31 +376,42 @@ pub async fn editor_draft_clear(
     path: String,
     session_id: String,
 ) -> Result<(), String> {
-    if webview.label() != "main" { return Err("DRAFT_SOURCE_DENIED".into()); }
+    if webview.label() != "main" {
+        return Err("DRAFT_SOURCE_DENIED".into());
+    }
     check_invocation_source(&webview, "editor_draft_clear", None, &app)?;
     if !valid_session(&session_id) {
         return Err("DRAFT_INPUT_INVALID".into());
     }
-    DRAFT_IO.run(move || {
-        let target = resolve(&app, &path)?;
-        let dir = private_dir(&app)?;
-        let journal = journal_path(&dir, &target, &session_id);
-        let roots = [dir];
-        let Some(expected) = crate::capabilities::workspace::safe_paths::read_versioned(
-            &journal, &roots, MAX_JOURNAL as usize,
-        ).map_err(|_| "DRAFT_CLEAR_FAILED")? else { return Ok(()); };
-        crate::capabilities::workspace::safe_paths::remove_if_unchanged(
-            &journal, &roots, &expected, MAX_JOURNAL as usize,
-        ).map_err(|error| match error.as_str() {
-            "FILE_CONFLICT" => "DRAFT_CLEAR_CONFLICT".to_string(),
-            "FILE_DURABILITY_UNCERTAIN" => "DRAFT_CLEAR_DURABILITY_UNCERTAIN".to_string(),
-            _ => "DRAFT_CLEAR_FAILED".to_string(),
+    DRAFT_IO
+        .run(move || {
+            let target = resolve(&app, &path)?;
+            let dir = private_dir(&app)?;
+            let journal = journal_path(&dir, &target, &session_id);
+            let roots = [dir];
+            let Some(expected) = crate::capabilities::workspace::safe_paths::read_versioned(
+                &journal,
+                &roots,
+                MAX_JOURNAL as usize,
+            )
+            .map_err(|_| "DRAFT_CLEAR_FAILED")?
+            else {
+                return Ok(());
+            };
+            crate::capabilities::workspace::safe_paths::remove_if_unchanged(
+                &journal,
+                &roots,
+                &expected,
+                MAX_JOURNAL as usize,
+            )
+            .map_err(|error| match error.as_str() {
+                "FILE_CONFLICT" => "DRAFT_CLEAR_CONFLICT".to_string(),
+                "FILE_DURABILITY_UNCERTAIN" => "DRAFT_CLEAR_DURABILITY_UNCERTAIN".to_string(),
+                _ => "DRAFT_CLEAR_FAILED".to_string(),
+            })
         })
-    })
-    .await
-
+        .await
 }
-
 
 #[derive(Serialize)]
 pub struct DraftCatalogItem {
@@ -394,12 +440,19 @@ pub struct RecoveredDraft {
     pub updated_at_ms: u64,
 }
 #[derive(Serialize)]
-pub struct DraftRevision { pub revision: String }
+pub struct DraftRevision {
+    pub revision: String,
+}
 #[derive(Serialize)]
-pub struct DraftCopy { pub path: String, pub content: String }
+pub struct DraftCopy {
+    pub path: String,
+    pub content: String,
+}
 
 fn valid_recovery_id(id: &str) -> bool {
-    id.len() == 101 && id.as_bytes()[64] == b'-' && id.ends_with(".bin")
+    id.len() == 101
+        && id.as_bytes()[64] == b'-'
+        && id.ends_with(".bin")
         && id[..64].bytes().all(|byte| byte.is_ascii_hexdigit())
         && valid_session(&id[65..97])
 }
@@ -408,51 +461,93 @@ fn native_source_path(snapshot: &DraftSnapshot) -> Result<PathBuf, String> {
         snapshot.source_path.clone()
     } else {
         #[cfg(windows)]
-        { snapshot.path.clone() }
+        {
+            snapshot.path.clone()
+        }
         #[cfg(not(windows))]
-        { snapshot.path.replace('\\', "/") }
+        {
+            snapshot.path.replace('\\', "/")
+        }
     };
     let path = PathBuf::from(value);
-    if !path.is_absolute() || path_identity(&path) != snapshot.path
-        || path.components().any(|part| matches!(part, std::path::Component::ParentDir))
-    { return Err("DRAFT_JOURNAL_INVALID".into()); }
+    if !path.is_absolute()
+        || path_identity(&path) != snapshot.path
+        || path
+            .components()
+            .any(|part| matches!(part, std::path::Component::ParentDir))
+    {
+        return Err("DRAFT_JOURNAL_INVALID".into());
+    }
     Ok(path)
 }
 fn record_id(snapshot: &DraftSnapshot) -> String {
-    format!("{:x}-{}.bin", Sha256::digest(snapshot.path.as_bytes()), snapshot.session_id)
+    format!(
+        "{:x}-{}.bin",
+        Sha256::digest(snapshot.path.as_bytes()),
+        snapshot.session_id
+    )
 }
 fn record_revision(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 fn read_record(
-    dir: &Path, recovery_id: &str, key: &[u8; 32],
-) -> Result<(crate::capabilities::workspace::safe_paths::FileSnapshot, DraftSnapshot), String> {
-    if !valid_recovery_id(recovery_id) { return Err("DRAFT_RECOVERY_ID_INVALID".into()); }
+    dir: &Path,
+    recovery_id: &str,
+    key: &[u8; 32],
+) -> Result<
+    (
+        crate::capabilities::workspace::safe_paths::FileSnapshot,
+        DraftSnapshot,
+    ),
+    String,
+> {
+    if !valid_recovery_id(recovery_id) {
+        return Err("DRAFT_RECOVERY_ID_INVALID".into());
+    }
     let file = crate::capabilities::workspace::safe_paths::read_versioned(
-        &dir.join(recovery_id), &[dir.to_path_buf()], MAX_JOURNAL as usize,
-    )?.ok_or("DRAFT_RECOVERY_NOT_FOUND")?;
-    let snapshot: DraftSnapshot = serde_json::from_slice(&decrypt(key, &file.bytes)?)
-        .map_err(|_| "DRAFT_JOURNAL_INVALID")?;
-    if !valid_session(&snapshot.session_id) || record_id(&snapshot) != recovery_id
-        || snapshot.content.len() > MAX_FILE || snapshot.baseline.len() > MAX_FILE
-        || snapshot.path.len() > 16 * 1024 || snapshot.source_path.len() > 16 * 1024
-    { return Err("DRAFT_JOURNAL_INVALID".into()); }
+        &dir.join(recovery_id),
+        &[dir.to_path_buf()],
+        MAX_JOURNAL as usize,
+    )?
+    .ok_or("DRAFT_RECOVERY_NOT_FOUND")?;
+    let snapshot: DraftSnapshot =
+        serde_json::from_slice(&decrypt(key, &file.bytes)?).map_err(|_| "DRAFT_JOURNAL_INVALID")?;
+    if !valid_session(&snapshot.session_id)
+        || record_id(&snapshot) != recovery_id
+        || snapshot.content.len() > MAX_FILE
+        || snapshot.baseline.len() > MAX_FILE
+        || snapshot.path.len() > 16 * 1024
+        || snapshot.source_path.len() > 16 * 1024
+    {
+        return Err("DRAFT_JOURNAL_INVALID".into());
+    }
     native_source_path(&snapshot)?;
     Ok((file, snapshot))
 }
-fn recovered_view(recovery_id: String, file: &crate::capabilities::workspace::safe_paths::FileSnapshot, snapshot: DraftSnapshot) -> Result<RecoveredDraft, String> {
-    let path = native_source_path(&snapshot)?.to_string_lossy().into_owned();
+fn recovered_view(
+    recovery_id: String,
+    file: &crate::capabilities::workspace::safe_paths::FileSnapshot,
+    snapshot: DraftSnapshot,
+) -> Result<RecoveredDraft, String> {
+    let path = native_source_path(&snapshot)?
+        .to_string_lossy()
+        .into_owned();
     Ok(RecoveredDraft {
-        recovery_id, revision: record_revision(&file.bytes), path,
-        session_id: snapshot.session_id, baseline: snapshot.baseline,
-        content: snapshot.content, updated_at_ms: snapshot.updated_at_ms,
+        recovery_id,
+        revision: record_revision(&file.bytes),
+        path,
+        session_id: snapshot.session_id,
+        baseline: snapshot.baseline,
+        content: snapshot.content,
+        updated_at_ms: snapshot.updated_at_ms,
     })
 }
 fn recovery_key(dir: &Path) -> Result<[u8; 32], String> {
     raw_key(false, dir)?.ok_or_else(|| "DRAFT_KEY_MISSING_RECOVERY_BLOCKED".into())
 }
 fn require_record_revision(
-    file: &crate::capabilities::workspace::safe_paths::FileSnapshot, revision: &str,
+    file: &crate::capabilities::workspace::safe_paths::FileSnapshot,
+    revision: &str,
 ) -> Result<(), String> {
     if revision.len() != 64 || record_revision(&file.bytes) != revision {
         return Err("DRAFT_RECOVERY_CONFLICT".into());
@@ -463,10 +558,16 @@ fn catalog_names(dir: &Path, after: Option<&str>) -> Result<Vec<String>, String>
     let mut names = std::collections::BTreeSet::new();
     for entry in fs::read_dir(dir).map_err(|_| "DRAFT_READ_FAILED")? {
         let entry = entry.map_err(|_| "DRAFT_READ_FAILED")?;
-        let Some(name) = entry.file_name().to_str().map(str::to_owned) else { continue; };
-        if !valid_recovery_id(&name) || after.is_some_and(|cursor| name.as_str() <= cursor) { continue; }
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        if !valid_recovery_id(&name) || after.is_some_and(|cursor| name.as_str() <= cursor) {
+            continue;
+        }
         names.insert(name);
-        if names.len() > CATALOG_PAGE_SIZE + 1 { names.pop_last(); }
+        if names.len() > CATALOG_PAGE_SIZE + 1 {
+            names.pop_last();
+        }
     }
     Ok(names.into_iter().collect())
 }
@@ -474,160 +575,284 @@ fn catalog_names(dir: &Path, after: Option<&str>) -> Result<Vec<String>, String>
 /// Enumerate authenticated private records independently of source-file existence.
 #[tauri::command]
 pub async fn editor_draft_catalog(
-    app: AppHandle, webview: tauri::Webview, cursor: Option<String>,
+    app: AppHandle,
+    webview: tauri::Webview,
+    cursor: Option<String>,
 ) -> Result<DraftCatalog, String> {
-    if webview.label() != "main" { return Err("DRAFT_SOURCE_DENIED".into()); }
+    if webview.label() != "main" {
+        return Err("DRAFT_SOURCE_DENIED".into());
+    }
     check_invocation_source(&webview, "editor_draft_catalog", None, &app)?;
     if cursor.as_deref().is_some_and(|id| !valid_recovery_id(id)) {
         return Err("DRAFT_CATALOG_CURSOR_INVALID".into());
     }
-    DRAFT_IO.run(move || {
-        let dir = private_dir(&app)?;
-        let names = catalog_names(&dir, cursor.as_deref())?;
-        if names.is_empty() { return Ok(DraftCatalog { items: Vec::new(), next_cursor: None }); }
-        let key = raw_key(false, &dir);
-        let next_cursor = if names.len() > CATALOG_PAGE_SIZE {
-            names.get(CATALOG_PAGE_SIZE - 1).cloned()
-        } else { None };
-        let mut items = Vec::new();
-        for id in names.into_iter().take(CATALOG_PAGE_SIZE) {
-            let decoded = match &key {
-                Ok(Some(key)) => read_record(&dir, &id, key),
-                Ok(None) => Err("DRAFT_KEY_MISSING_RECOVERY_BLOCKED".into()),
-                Err(error) => Err(error.clone()),
+    DRAFT_IO
+        .run(move || {
+            let dir = private_dir(&app)?;
+            let names = catalog_names(&dir, cursor.as_deref())?;
+            if names.is_empty() {
+                return Ok(DraftCatalog {
+                    items: Vec::new(),
+                    next_cursor: None,
+                });
+            }
+            let key = raw_key(false, &dir);
+            let next_cursor = if names.len() > CATALOG_PAGE_SIZE {
+                names.get(CATALOG_PAGE_SIZE - 1).cloned()
+            } else {
+                None
             };
-            let item = match decoded {
-                Ok((file, snapshot)) => DraftCatalogItem {
-                    revision: Some(record_revision(&file.bytes)),
-                    recovery_id: id, path: native_source_path(&snapshot)?.to_string_lossy().into_owned(),
-                    session_id: snapshot.session_id, updated_at_ms: snapshot.updated_at_ms, error: None,
-                },
-                Err(error) => {
-                    let revision = crate::capabilities::workspace::safe_paths::read_versioned(
-                        &dir.join(&id), &[dir.clone()], MAX_JOURNAL as usize,
-                    ).ok().flatten().map(|file| record_revision(&file.bytes));
-                    DraftCatalogItem {
-                        recovery_id: id, revision, path: String::new(), session_id: String::new(),
-                        updated_at_ms: 0, error: Some(error),
+            let mut items = Vec::new();
+            for id in names.into_iter().take(CATALOG_PAGE_SIZE) {
+                let decoded = match &key {
+                    Ok(Some(key)) => read_record(&dir, &id, key),
+                    Ok(None) => Err("DRAFT_KEY_MISSING_RECOVERY_BLOCKED".into()),
+                    Err(error) => Err(error.clone()),
+                };
+                let item = match decoded {
+                    Ok((file, snapshot)) => DraftCatalogItem {
+                        revision: Some(record_revision(&file.bytes)),
+                        recovery_id: id,
+                        path: native_source_path(&snapshot)?
+                            .to_string_lossy()
+                            .into_owned(),
+                        session_id: snapshot.session_id,
+                        updated_at_ms: snapshot.updated_at_ms,
+                        error: None,
+                    },
+                    Err(error) => {
+                        let revision = crate::capabilities::workspace::safe_paths::read_versioned(
+                            &dir.join(&id),
+                            &[dir.clone()],
+                            MAX_JOURNAL as usize,
+                        )
+                        .ok()
+                        .flatten()
+                        .map(|file| record_revision(&file.bytes));
+                        DraftCatalogItem {
+                            recovery_id: id,
+                            revision,
+                            path: String::new(),
+                            session_id: String::new(),
+                            updated_at_ms: 0,
+                            error: Some(error),
+                        }
                     }
-                },
-            };
-            items.push(item);
-        }
-        Ok(DraftCatalog { items, next_cursor })
-    }).await
+                };
+                items.push(item);
+            }
+            Ok(DraftCatalog { items, next_cursor })
+        })
+        .await
 }
 
 /// Opening a recovery editor forks a unique journal; another live process keeps
 /// its original journal and cannot overwrite the recovered editor's autosaves.
 #[tauri::command]
 pub async fn editor_draft_read(
-    app: AppHandle, webview: tauri::Webview, recovery_id: String, fork: Option<bool>,
+    app: AppHandle,
+    webview: tauri::Webview,
+    recovery_id: String,
+    fork: Option<bool>,
 ) -> Result<RecoveredDraft, String> {
-    if webview.label() != "main" { return Err("DRAFT_SOURCE_DENIED".into()); }
+    if webview.label() != "main" {
+        return Err("DRAFT_SOURCE_DENIED".into());
+    }
     check_invocation_source(&webview, "editor_draft_read", None, &app)?;
-    DRAFT_IO.run(move || {
-        let dir = private_dir(&app)?;
-        let key = recovery_key(&dir)?;
-        let (file, mut snapshot) = read_record(&dir, &recovery_id, &key)?;
-        if !fork.unwrap_or(false) { return recovered_view(recovery_id, &file, snapshot); }
-        let source = native_source_path(&snapshot)?;
-        snapshot.source_path = source.to_string_lossy().into_owned();
-        snapshot.session_id = uuid::Uuid::new_v4().simple().to_string();
-        let id = record_id(&snapshot);
-        let encoded = serde_json::to_vec(&snapshot).map_err(|_| "DRAFT_SERIALIZE_FAILED")?;
-        let encrypted = encrypt(&key, &encoded)?;
-        if encrypted.len() > MAX_JOURNAL as usize { return Err("DRAFT_TOO_LARGE".into()); }
-        crate::capabilities::workspace::safe_paths::write_versioned(
-            &dir.join(&id), &[dir.clone()], None, &encrypted, MAX_JOURNAL as usize, |_| Ok(()),
-        )?;
-        let (file, snapshot) = read_record(&dir, &id, &key)?;
-        recovered_view(id, &file, snapshot)
-    }).await
+    DRAFT_IO
+        .run(move || {
+            let dir = private_dir(&app)?;
+            let key = recovery_key(&dir)?;
+            let (file, mut snapshot) = read_record(&dir, &recovery_id, &key)?;
+            if !fork.unwrap_or(false) {
+                return recovered_view(recovery_id, &file, snapshot);
+            }
+            let source = native_source_path(&snapshot)?;
+            snapshot.source_path = source.to_string_lossy().into_owned();
+            snapshot.session_id = uuid::Uuid::new_v4().simple().to_string();
+            let id = record_id(&snapshot);
+            let encoded = serde_json::to_vec(&snapshot).map_err(|_| "DRAFT_SERIALIZE_FAILED")?;
+            let encrypted = encrypt(&key, &encoded)?;
+            if encrypted.len() > MAX_JOURNAL as usize {
+                return Err("DRAFT_TOO_LARGE".into());
+            }
+            crate::capabilities::workspace::safe_paths::write_versioned(
+                &dir.join(&id),
+                &[dir.clone()],
+                None,
+                &encrypted,
+                MAX_JOURNAL as usize,
+                |_| Ok(()),
+            )?;
+            let (file, snapshot) = read_record(&dir, &id, &key)?;
+            recovered_view(id, &file, snapshot)
+        })
+        .await
 }
 
 #[tauri::command]
 pub async fn editor_draft_update_recovered(
-    app: AppHandle, webview: tauri::Webview, recovery_id: String,
-    revision: String, content: String,
+    app: AppHandle,
+    webview: tauri::Webview,
+    recovery_id: String,
+    revision: String,
+    content: String,
 ) -> Result<DraftRevision, String> {
-    if webview.label() != "main" { return Err("DRAFT_SOURCE_DENIED".into()); }
+    if webview.label() != "main" {
+        return Err("DRAFT_SOURCE_DENIED".into());
+    }
     check_invocation_source(&webview, "editor_draft_update_recovered", None, &app)?;
-    if content.len() > MAX_FILE { return Err("DRAFT_TOO_LARGE".into()); }
-    DRAFT_IO.run(move || {
-        let dir = private_dir(&app)?;
-        let key = recovery_key(&dir)?;
-        let (file, mut snapshot) = read_record(&dir, &recovery_id, &key)?;
-        require_record_revision(&file, &revision)?;
-        snapshot.content = content;
-        snapshot.updated_at_ms = SystemTime::now().duration_since(UNIX_EPOCH)
-            .unwrap_or_default().as_millis().min(u64::MAX as u128) as u64;
-        let encoded = serde_json::to_vec(&snapshot).map_err(|_| "DRAFT_SERIALIZE_FAILED")?;
-        let encrypted = encrypt(&key, &encoded)?;
-        if encrypted.len() > MAX_JOURNAL as usize { return Err("DRAFT_TOO_LARGE".into()); }
-        crate::capabilities::workspace::safe_paths::write_versioned(
-            &dir.join(&recovery_id), &[dir.clone()], Some(&file), &encrypted,
-            MAX_JOURNAL as usize, |_| Ok(()),
-        ).map_err(|error| if error == "FILE_CONFLICT" { "DRAFT_RECOVERY_CONFLICT".to_string() } else { error })?;
-        Ok(DraftRevision { revision: record_revision(&encrypted) })
-    }).await
+    if content.len() > MAX_FILE {
+        return Err("DRAFT_TOO_LARGE".into());
+    }
+    DRAFT_IO
+        .run(move || {
+            let dir = private_dir(&app)?;
+            let key = recovery_key(&dir)?;
+            let (file, mut snapshot) = read_record(&dir, &recovery_id, &key)?;
+            require_record_revision(&file, &revision)?;
+            snapshot.content = content;
+            snapshot.updated_at_ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis()
+                .min(u64::MAX as u128) as u64;
+            let encoded = serde_json::to_vec(&snapshot).map_err(|_| "DRAFT_SERIALIZE_FAILED")?;
+            let encrypted = encrypt(&key, &encoded)?;
+            if encrypted.len() > MAX_JOURNAL as usize {
+                return Err("DRAFT_TOO_LARGE".into());
+            }
+            crate::capabilities::workspace::safe_paths::write_versioned(
+                &dir.join(&recovery_id),
+                &[dir.clone()],
+                Some(&file),
+                &encrypted,
+                MAX_JOURNAL as usize,
+                |_| Ok(()),
+            )
+            .map_err(|error| {
+                if error == "FILE_CONFLICT" {
+                    "DRAFT_RECOVERY_CONFLICT".to_string()
+                } else {
+                    error
+                }
+            })?;
+            Ok(DraftRevision {
+                revision: record_revision(&encrypted),
+            })
+        })
+        .await
 }
 
 #[tauri::command]
 pub async fn editor_draft_remove(
-    app: AppHandle, webview: tauri::Webview, recovery_id: String, revision: String,
+    app: AppHandle,
+    webview: tauri::Webview,
+    recovery_id: String,
+    revision: String,
 ) -> Result<(), String> {
-    if webview.label() != "main" { return Err("DRAFT_SOURCE_DENIED".into()); }
+    if webview.label() != "main" {
+        return Err("DRAFT_SOURCE_DENIED".into());
+    }
     check_invocation_source(&webview, "editor_draft_remove", None, &app)?;
-    DRAFT_IO.run(move || {
-        let dir = private_dir(&app)?;
-        if !valid_recovery_id(&recovery_id) { return Err("DRAFT_RECOVERY_ID_INVALID".into()); }
-        // Explicit discard may remove a corrupt encrypted record, but only the
-        // exact private object/version the user selected, never an arbitrary path.
-        let file = crate::capabilities::workspace::safe_paths::read_versioned(
-            &dir.join(&recovery_id), &[dir.clone()], MAX_JOURNAL as usize,
-        )?.ok_or("DRAFT_RECOVERY_NOT_FOUND")?;
-        require_record_revision(&file, &revision)?;
-        crate::capabilities::workspace::safe_paths::remove_if_unchanged(
-            &dir.join(&recovery_id), &[dir.clone()], &file, MAX_JOURNAL as usize,
-        ).map_err(|error| if error == "FILE_CONFLICT" { "DRAFT_RECOVERY_CONFLICT".to_string() } else { error })
-    }).await
+    DRAFT_IO
+        .run(move || {
+            let dir = private_dir(&app)?;
+            if !valid_recovery_id(&recovery_id) {
+                return Err("DRAFT_RECOVERY_ID_INVALID".into());
+            }
+            // Explicit discard may remove a corrupt encrypted record, but only the
+            // exact private object/version the user selected, never an arbitrary path.
+            let file = crate::capabilities::workspace::safe_paths::read_versioned(
+                &dir.join(&recovery_id),
+                &[dir.clone()],
+                MAX_JOURNAL as usize,
+            )?
+            .ok_or("DRAFT_RECOVERY_NOT_FOUND")?;
+            require_record_revision(&file, &revision)?;
+            crate::capabilities::workspace::safe_paths::remove_if_unchanged(
+                &dir.join(&recovery_id),
+                &[dir.clone()],
+                &file,
+                MAX_JOURNAL as usize,
+            )
+            .map_err(|error| {
+                if error == "FILE_CONFLICT" {
+                    "DRAFT_RECOVERY_CONFLICT".to_string()
+                } else {
+                    error
+                }
+            })
+        })
+        .await
 }
 
 fn copy_recovered_record(
-    dir: &Path, recovery_id: &str, key: &[u8; 32], target_path: String,
-    roots: &[PathBuf], content: String,
+    dir: &Path,
+    recovery_id: &str,
+    key: &[u8; 32],
+    target_path: String,
+    roots: &[PathBuf],
+    content: String,
 ) -> Result<DraftCopy, String> {
-    if content.len() > MAX_FILE || target_path.len() > 16 * 1024 { return Err("DRAFT_INPUT_INVALID".into()); }
+    if content.len() > MAX_FILE || target_path.len() > 16 * 1024 {
+        return Err("DRAFT_INPUT_INVALID".into());
+    }
     read_record(dir, recovery_id, key)?;
     let target = PathBuf::from(&target_path);
-    if !target.is_absolute() || target.file_name().is_none()
-        || target.components().any(|part| matches!(part, std::path::Component::ParentDir))
-    { return Err("DRAFT_PATH_DENIED".into()); }
+    if !target.is_absolute()
+        || target.file_name().is_none()
+        || target
+            .components()
+            .any(|part| matches!(part, std::path::Component::ParentDir))
+    {
+        return Err("DRAFT_PATH_DENIED".into());
+    }
     // Explicit Save As creates a new file only. Native pinned-root and
     // no-replace CAS remain authoritative; the source journal is retained.
     crate::capabilities::workspace::safe_paths::write_versioned(
-        &target, roots, None, content.as_bytes(), MAX_FILE, |_| Ok(()),
+        &target,
+        roots,
+        None,
+        content.as_bytes(),
+        MAX_FILE,
+        |_| Ok(()),
     )?;
-    Ok(DraftCopy { path: target_path, content })
+    Ok(DraftCopy {
+        path: target_path,
+        content,
+    })
 }
 
 #[tauri::command]
 pub async fn editor_draft_save_as(
-    app: AppHandle, webview: tauri::Webview, recovery_id: String,
-    target_path: String, content: String,
+    app: AppHandle,
+    webview: tauri::Webview,
+    recovery_id: String,
+    target_path: String,
+    content: String,
 ) -> Result<DraftCopy, String> {
-    if webview.label() != "main" { return Err("DRAFT_SOURCE_DENIED".into()); }
+    if webview.label() != "main" {
+        return Err("DRAFT_SOURCE_DENIED".into());
+    }
     check_invocation_source(&webview, "editor_draft_save_as", None, &app)?;
-    if content.len() > MAX_FILE || target_path.len() > 16 * 1024 { return Err("DRAFT_INPUT_INVALID".into()); }
-    DRAFT_IO.run(move || {
-        let dir = private_dir(&app)?;
-        let key = recovery_key(&dir)?;
-        copy_recovered_record(
-            &dir, &recovery_id, &key, target_path,
-            &crate::workspace::allowed_roots(&app), content,
-        )
-    }).await
+    if content.len() > MAX_FILE || target_path.len() > 16 * 1024 {
+        return Err("DRAFT_INPUT_INVALID".into());
+    }
+    DRAFT_IO
+        .run(move || {
+            let dir = private_dir(&app)?;
+            let key = recovery_key(&dir)?;
+            copy_recovered_record(
+                &dir,
+                &recovery_id,
+                &key,
+                target_path,
+                &crate::workspace::allowed_roots(&app),
+                content,
+            )
+        })
+        .await
 }
 
 #[cfg(test)]
@@ -659,7 +884,8 @@ mod tests {
     #[test]
     fn journal_rejects_wrong_workspace_identity_before_writing() {
         let dir = std::env::temp_dir().join(format!(
-            "browseros-journal-wrong-root-{}", uuid::Uuid::new_v4()
+            "browseros-journal-wrong-root-{}",
+            uuid::Uuid::new_v4()
         ));
         fs::create_dir_all(&dir).unwrap();
         let target = dir.join("target.md");
@@ -710,15 +936,20 @@ mod tests {
     }
     #[test]
     fn orphan_recovery_preserves_source_and_save_as_never_replaces() {
-        let directory = std::env::temp_dir().canonicalize().unwrap()
-            .join(format!("browseros-orphan-recovery-{}", uuid::Uuid::new_v4()));
+        let directory = std::env::temp_dir().canonicalize().unwrap().join(format!(
+            "browseros-orphan-recovery-{}",
+            uuid::Uuid::new_v4()
+        ));
         fs::create_dir(&directory).unwrap();
         let source = directory.join("gone.md");
         fs::write(&source, "disk baseline").unwrap();
         let snapshot = DraftSnapshot {
             session_id: uuid::Uuid::new_v4().simple().to_string(),
-            path: path_identity(&source), source_path: source.to_string_lossy().into_owned(),
-            baseline: "disk baseline".into(), content: "unsaved draft".into(), updated_at_ms: 1,
+            path: path_identity(&source),
+            source_path: source.to_string_lossy().into_owned(),
+            baseline: "disk baseline".into(),
+            content: "unsaved draft".into(),
+            updated_at_ms: 1,
         };
         let key = [23u8; 32];
         write_journal(&directory, &source, &snapshot, &key).unwrap();
@@ -731,15 +962,25 @@ mod tests {
         let destination = directory.join("copy.md");
         fs::write(&destination, "keep this file").unwrap();
         assert!(copy_recovered_record(
-            &directory, &id, &key, destination.to_string_lossy().into_owned(),
-            &[directory.clone()], "edited recovery".into(),
-        ).is_err());
+            &directory,
+            &id,
+            &key,
+            destination.to_string_lossy().into_owned(),
+            &[directory.clone()],
+            "edited recovery".into(),
+        )
+        .is_err());
         assert_eq!(fs::read_to_string(&destination).unwrap(), "keep this file");
         fs::remove_file(&destination).unwrap();
         copy_recovered_record(
-            &directory, &id, &key, destination.to_string_lossy().into_owned(),
-            &[directory.clone()], "edited recovery".into(),
-        ).unwrap();
+            &directory,
+            &id,
+            &key,
+            destination.to_string_lossy().into_owned(),
+            &[directory.clone()],
+            "edited recovery".into(),
+        )
+        .unwrap();
         assert_eq!(fs::read_to_string(&destination).unwrap(), "edited recovery");
         assert!(directory.join(&id).exists());
         assert!(!source.exists());
@@ -748,14 +989,19 @@ mod tests {
 
     #[test]
     fn recovery_delete_rejects_a_newer_encrypted_record() {
-        let directory = std::env::temp_dir().canonicalize().unwrap()
-            .join(format!("browseros-recovery-conflict-{}", uuid::Uuid::new_v4()));
+        let directory = std::env::temp_dir().canonicalize().unwrap().join(format!(
+            "browseros-recovery-conflict-{}",
+            uuid::Uuid::new_v4()
+        ));
         fs::create_dir(&directory).unwrap();
         let source = directory.join("missing.md");
         let mut snapshot = DraftSnapshot {
             session_id: uuid::Uuid::new_v4().simple().to_string(),
-            path: path_identity(&source), source_path: source.to_string_lossy().into_owned(),
-            baseline: String::new(), content: "first".into(), updated_at_ms: 1,
+            path: path_identity(&source),
+            source_path: source.to_string_lossy().into_owned(),
+            baseline: String::new(),
+            content: "first".into(),
+            updated_at_ms: 1,
         };
         let key = [25u8; 32];
         write_journal(&directory, &source, &snapshot, &key).unwrap();
@@ -763,19 +1009,33 @@ mod tests {
         let (old, _) = read_record(&directory, &id, &key).unwrap();
         snapshot.content = "newer edits".into();
         write_journal(&directory, &source, &snapshot, &key).unwrap();
-        assert!(crate::capabilities::workspace::safe_paths::remove_if_unchanged(
-            &directory.join(&id), &[directory.clone()], &old, MAX_JOURNAL as usize,
-        ).is_err());
-        assert_eq!(read_record(&directory, &id, &key).unwrap().1.content, "newer edits");
+        assert!(
+            crate::capabilities::workspace::safe_paths::remove_if_unchanged(
+                &directory.join(&id),
+                &[directory.clone()],
+                &old,
+                MAX_JOURNAL as usize,
+            )
+            .is_err()
+        );
+        assert_eq!(
+            read_record(&directory, &id, &key).unwrap().1.content,
+            "newer edits"
+        );
         fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
     fn recovery_catalog_pages_without_omitting_remaining_records() {
-        let directory = std::env::temp_dir().join(format!("browseros-catalog-{}", uuid::Uuid::new_v4()));
+        let directory =
+            std::env::temp_dir().join(format!("browseros-catalog-{}", uuid::Uuid::new_v4()));
         fs::create_dir(&directory).unwrap();
         for number in 0..40 {
-            fs::write(directory.join(format!("{number:064x}-{:032x}.bin", 1)), b"encrypted").unwrap();
+            fs::write(
+                directory.join(format!("{number:064x}-{:032x}.bin", 1)),
+                b"encrypted",
+            )
+            .unwrap();
         }
         fs::write(directory.join("not-a-record.bin"), b"ignored").unwrap();
         let first = catalog_names(&directory, None).unwrap();
@@ -786,5 +1046,4 @@ mod tests {
         assert!(!valid_recovery_id(&"界".repeat(34)));
         fs::remove_dir_all(directory).unwrap();
     }
-
 }

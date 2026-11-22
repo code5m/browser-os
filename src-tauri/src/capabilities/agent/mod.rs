@@ -15,7 +15,6 @@ pub mod agent;
 pub mod agent_memory;
 
 pub mod coding;
-pub(crate) mod mcp_review;
 #[cfg(target_os = "linux")]
 pub mod coding_context;
 #[cfg(target_os = "windows")]
@@ -35,6 +34,7 @@ pub mod coding_lsp;
 #[cfg(target_os = "windows")]
 pub mod coding_mcp_windows;
 pub mod local_provider;
+pub(crate) mod mcp_review;
 #[cfg(target_os = "windows")]
 pub mod windows_sandbox;
 

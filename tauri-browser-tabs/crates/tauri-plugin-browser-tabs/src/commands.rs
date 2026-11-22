@@ -8,11 +8,11 @@ use std::collections::HashMap;
 use std::os::unix::fs::PermissionsExt;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 use std::path::{Path, PathBuf};
-#[cfg(not(target_os = "linux"))]
-use tauri::webview::PageLoadEvent;
 use std::sync::{Arc, Mutex};
 #[cfg(target_os = "windows")]
 use std::time::Duration;
+#[cfg(not(target_os = "linux"))]
+use tauri::webview::PageLoadEvent;
 use tauri::{
     webview::NewWindowResponse, AppHandle, Emitter, Manager, State, Webview, WebviewBuilder,
     WebviewUrl, Window, Wry,
@@ -85,17 +85,23 @@ fn secure_windows_browser_profile(
     profile: &Path,
 ) -> Result<browseros_platform_security::windows::PrivateTreeReport> {
     browseros_platform_security::windows::ensure_private_directory(
-        profile, &browser_profile_security_options(),
-    ).map_err(|error| BrowserTabError::Platform(format!("BROWSER_PROFILE_ACL_MIGRATION: {error}")))
+        profile,
+        &browser_profile_security_options(),
+    )
+    .map_err(|error| BrowserTabError::Platform(format!("BROWSER_PROFILE_ACL_MIGRATION: {error}")))
 }
 
 #[cfg(all(test, target_os = "windows"))]
 fn audit_windows_profile_acl(
-    profile: &Path, deep: bool,
+    profile: &Path,
+    deep: bool,
 ) -> Result<browseros_platform_security::windows::PrivateTreeReport> {
     browseros_platform_security::windows::audit_private_directory(
-        profile, deep, &browser_profile_security_options(),
-    ).map_err(|error| BrowserTabError::Platform(format!("BROWSER_PROFILE_ACL_AUDIT: {error}")))
+        profile,
+        deep,
+        &browser_profile_security_options(),
+    )
+    .map_err(|error| BrowserTabError::Platform(format!("BROWSER_PROFILE_ACL_AUDIT: {error}")))
 }
 
 #[cfg(all(test, any(target_os = "linux", target_os = "windows")))]
@@ -108,7 +114,10 @@ mod browser_profile_tests {
         let dir = std::env::temp_dir().join(format!(
             "browseros-webview-acl-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         ));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("profile.dat"), b"fixture").unwrap();
@@ -116,7 +125,12 @@ mod browser_profile_tests {
         let audited = audit_windows_profile_acl(&dir, true).expect("native ACE identity audit");
         assert_eq!(audited.checked_objects, 2);
         assert_eq!(secured.root_identity, audited.root_identity);
-        assert_eq!(secure_windows_browser_profile(&dir).unwrap().repaired_objects, 0);
+        assert_eq!(
+            secure_windows_browser_profile(&dir)
+                .unwrap()
+                .repaired_objects,
+            0
+        );
         assert_eq!(std::fs::read(dir.join("profile.dat")).unwrap(), b"fixture");
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -166,18 +180,34 @@ impl TabManager {
         #[cfg(target_os = "windows")]
         {
             let mut slot = self.profile.write();
-            if slot.is_some() { return Ok(()); }
-            let base = self.app.path().app_data_dir()
-                .map_err(|_| BrowserTabError::Platform("BROWSER_PROFILE_LOCATION_UNAVAILABLE".into()))?;
+            if slot.is_some() {
+                return Ok(());
+            }
+            let base = self.app.path().app_data_dir().map_err(|_| {
+                BrowserTabError::Platform("BROWSER_PROFILE_LOCATION_UNAVAILABLE".into())
+            })?;
             browseros_platform_security::windows::ensure_private_directory_root(
-                &base, &browser_profile_security_options(),
-            ).map_err(|error| BrowserTabError::Platform(format!("BROWSER_PROFILE_PARENT_ACL: {error}")))?;
+                &base,
+                &browser_profile_security_options(),
+            )
+            .map_err(|error| {
+                BrowserTabError::Platform(format!("BROWSER_PROFILE_PARENT_ACL: {error}"))
+            })?;
             let prepared = browseros_platform_security::windows::PreparedPrivateDirectory::prepare(
-                &browser_profile_path(&base), &browser_profile_security_options(),
-            ).map_err(|error| BrowserTabError::Platform(format!("BROWSER_PROFILE_PREPARATION: {error}")))?;
+                &browser_profile_path(&base),
+                &browser_profile_security_options(),
+            )
+            .map_err(|error| {
+                BrowserTabError::Platform(format!("BROWSER_PROFILE_PREPARATION: {error}"))
+            })?;
             let report = prepared.report();
-            eprintln!("BROWSER_PROFILE_ACL_READY reused={} checked={} repaired={} elapsed_ms={}",
-                prepared.reused_preparation(), report.checked_objects, report.repaired_objects, report.elapsed_ms);
+            eprintln!(
+                "BROWSER_PROFILE_ACL_READY reused={} checked={} repaired={} elapsed_ms={}",
+                prepared.reused_preparation(),
+                report.checked_objects,
+                report.repaired_objects,
+                report.elapsed_ms
+            );
             *slot = Some(Arc::new(prepared));
         }
         Ok(())
@@ -185,9 +215,14 @@ impl TabManager {
 
     #[cfg(target_os = "windows")]
     fn prepared_browser_profile(&self) -> Result<PathBuf> {
-        let prepared = self.profile.read().as_ref().cloned()
+        let prepared = self
+            .profile
+            .read()
+            .as_ref()
+            .cloned()
             .ok_or_else(|| BrowserTabError::Platform("BROWSER_PROFILE_NOT_PREPARED".into()))?;
-        prepared.check_root()
+        prepared
+            .check_root()
             .map_err(|error| BrowserTabError::Platform(format!("BROWSER_PROFILE_ROOT: {error}")))?;
         Ok(prepared.path().to_path_buf())
     }
@@ -393,7 +428,8 @@ impl TabManager {
                 gtk_wv.connect_load_failed(move |_wv, _event, uri, error| {
                     eprintln!(
                         "[browser-tabs] loadFailed id={} uri_bytes={}",
-                        id1, uri.len()
+                        id1,
+                        uri.len()
                     );
                     let _ = app1.emit(
                         "browser-tabs://event",
@@ -408,7 +444,11 @@ impl TabManager {
                 let id2 = id_lf.clone();
                 let app2 = app_lf.clone();
                 gtk_wv.connect_load_failed_with_tls_errors(move |_wv, uri, _cert, _errors| {
-                    eprintln!("[browser-tabs] loadFailedTLS id={} uri_bytes={}", id2, uri.len());
+                    eprintln!(
+                        "[browser-tabs] loadFailedTLS id={} uri_bytes={}",
+                        id2,
+                        uri.len()
+                    );
                     let _ = app2.emit(
                         "browser-tabs://event",
                         BrowserTabEvent::LoadFailed {
@@ -541,7 +581,9 @@ impl TabManager {
         let mut tabs = self.tabs.write();
         // A successful native close may outlive its IPC reply. Retrying an
         // already-closed or hibernated tab is successful and creates no resource.
-        let Some(webview) = tabs.get(id) else { return Ok(()); };
+        let Some(webview) = tabs.get(id) else {
+            return Ok(());
+        };
         // Retain native ownership if close fails, so deactivation can retry.
         webview.close()?;
         tabs.remove(id);
@@ -670,13 +712,19 @@ mod native_eval_result_tests {
             Ok(r#"{"safe":true,"url":"about:blank"}"#.to_string())
         );
         assert_eq!(decode_native_eval_result("42"), Ok("42".into()));
-        assert_eq!(decode_native_eval_result("null"), Err("GRID_NO_RESULT".into()));
+        assert_eq!(
+            decode_native_eval_result("null"),
+            Err("GRID_NO_RESULT".into())
+        );
     }
 
     #[test]
     fn script_result_is_bounded_before_decoding() {
         let long = format!("\"{}\"", "x".repeat(512 * 1024 + 1));
-        assert_eq!(decode_native_eval_result(&long), Err("GRID_RESULT_LIMIT".into()));
+        assert_eq!(
+            decode_native_eval_result(&long),
+            Err("GRID_RESULT_LIMIT".into())
+        );
     }
 }
 

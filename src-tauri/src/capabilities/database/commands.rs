@@ -61,7 +61,10 @@ pub(crate) fn ensure_profiles_loaded(app: &AppHandle) -> Result<(), String> {
     let file = profiles::path_for(app)?;
     let records = profiles::read_records(&file)?;
     let mut configs = reg.configs.lock().map_err(|_| "DB_REGISTRY_LOCK_FAILED")?;
-    let mut refs = reg.credential_refs.lock().map_err(|_| "DB_REGISTRY_LOCK_FAILED")?;
+    let mut refs = reg
+        .credential_refs
+        .lock()
+        .map_err(|_| "DB_REGISTRY_LOCK_FAILED")?;
     for record in records {
         refs.insert(record.config.id.clone(), record.reference()?);
         configs.insert(record.config.id.clone(), record.config);
@@ -74,20 +77,34 @@ fn persist_snapshot(
     map: &HashMap<String, DbConnectionConfig>,
     refs: &HashMap<String, String>,
 ) -> Result<(), String> {
-    let mut records = map.values().map(|cfg| profiles::StoredProfile {
-        config: cfg.clone(), credential_ref: refs.get(&cfg.id).cloned().unwrap_or_default(),
-    }).collect::<Vec<_>>();
+    let mut records = map
+        .values()
+        .map(|cfg| profiles::StoredProfile {
+            config: cfg.clone(),
+            credential_ref: refs.get(&cfg.id).cloned().unwrap_or_default(),
+        })
+        .collect::<Vec<_>>();
     records.sort_by(|a, b| a.config.id.cmp(&b.config.id));
     profiles::write_records(&profiles::path_for(app)?, &records)
 }
 fn reconcile_credentials(app: &AppHandle) -> Result<(), String> {
     let path = profiles::path_for(app)?;
-    let live = profiles::read_records(&path)?.iter().filter(|record| record.config.kind != SupportedDb::Sqlite).map(|record| record.reference())
+    let live = profiles::read_records(&path)?
+        .iter()
+        .filter(|record| record.config.kind != SupportedDb::Sqlite)
+        .map(|record| record.reference())
         .collect::<Result<HashSet<_>, _>>()?;
     crate::shared::credential_versions::reconcile(&path, "db", &live)
 }
 fn destination(cfg: &DbConnectionConfig) -> serde_json::Value {
-    serde_json::json!([cfg.kind, cfg.host, cfg.port, cfg.database, cfg.username, cfg.ssl_mode])
+    serde_json::json!([
+        cfg.kind,
+        cfg.host,
+        cfg.port,
+        cfg.database,
+        cfg.username,
+        cfg.ssl_mode
+    ])
 }
 
 // A session retains secret bytes only in native memory. The revision includes
@@ -102,20 +119,42 @@ fn profile_revision(cfg: &DbConnectionConfig, reference: &str) -> Result<String,
     let bytes = serde_json::to_vec(&(cfg, reference)).map_err(|_| "DB_PROFILE_ENCODE_FAILED")?;
     Ok(format!("{:x}", Sha256::digest(bytes)))
 }
-fn read_connection_snapshot(app: &AppHandle, id: &str, include_secret: bool) -> Result<ConnectionSnapshot, String> {
+fn read_connection_snapshot(
+    app: &AppHandle,
+    id: &str,
+    include_secret: bool,
+) -> Result<ConnectionSnapshot, String> {
     ensure_profiles_loaded(app)?;
     let registry = app.state::<DbConnectionRegistry>();
-    let configs = registry.configs.lock().map_err(|_| "DB_REGISTRY_LOCK_FAILED")?;
-    let config = configs.get(id).filter(|cfg| cfg.enabled).cloned()
+    let configs = registry
+        .configs
+        .lock()
+        .map_err(|_| "DB_REGISTRY_LOCK_FAILED")?;
+    let config = configs
+        .get(id)
+        .filter(|cfg| cfg.enabled)
+        .cloned()
         .ok_or("DB_SESSION_SOURCE_DISABLED_OR_REMOVED")?;
-    let refs = registry.credential_refs.lock().map_err(|_| "DB_REGISTRY_LOCK_FAILED")?;
-    let reference = if config.kind == SupportedDb::Sqlite { String::new() }
-        else { refs.get(id).cloned().unwrap_or_else(|| credential_key(id)) };
+    let refs = registry
+        .credential_refs
+        .lock()
+        .map_err(|_| "DB_REGISTRY_LOCK_FAILED")?;
+    let reference = if config.kind == SupportedDb::Sqlite {
+        String::new()
+    } else {
+        refs.get(id).cloned().unwrap_or_else(|| credential_key(id))
+    };
     let password = if include_secret && config.kind != SupportedDb::Sqlite {
         Some(KeyringStore::get_token(&reference).map_err(|_| "DB_CREDENTIAL_UNAVAILABLE")?)
-    } else { None };
+    } else {
+        None
+    };
     let revision = profile_revision(&config, &reference)?;
-    Ok(ConnectionSnapshot { config, password, revision })
+    Ok(ConnectionSnapshot {
+        config,
+        password,
+        revision,
+    })
 }
 pub(super) fn connection_snapshot(app: &AppHandle, id: &str) -> Result<ConnectionSnapshot, String> {
     read_connection_snapshot(app, id, true)
@@ -179,7 +218,10 @@ pub fn db_import_profiles(
     let roots = allowed_roots(&app);
     let reg = app.state::<DbConnectionRegistry>();
     let mut guard = reg.configs.lock().map_err(|_| "DB_REGISTRY_LOCK_FAILED")?;
-    let refs = reg.credential_refs.lock().map_err(|_| "DB_REGISTRY_LOCK_FAILED")?;
+    let refs = reg
+        .credential_refs
+        .lock()
+        .map_err(|_| "DB_REGISTRY_LOCK_FAILED")?;
     let mut updated = guard.clone();
     let mut imported = 0;
     let mut duplicates = 0;
@@ -319,24 +361,52 @@ fn db_connect_blocking(
     let reg = app.state::<DbConnectionRegistry>();
     let (before, previous_ref, secret) = {
         let configs = reg.configs.lock().map_err(|_| "DB_REGISTRY_LOCK_FAILED")?;
-        if configs.len() >= 64 && !configs.contains_key(&conn_id) { return Err("DB_CONNECTION_LIMIT".into()); }
-        if super::studio::profile_in_use(&app, &conn_id)? { return Err("DB_SESSION_BUSY".into()); }
-        if reg.queries.lock().map_err(|_| "DB_REGISTRY_LOCK_FAILED")?
-            .values().any(|(id, _)| id == &conn_id) { return Err("DB_QUERY_BUSY".into()); }
+        if configs.len() >= 64 && !configs.contains_key(&conn_id) {
+            return Err("DB_CONNECTION_LIMIT".into());
+        }
+        if super::studio::profile_in_use(&app, &conn_id)? {
+            return Err("DB_SESSION_BUSY".into());
+        }
+        if reg
+            .queries
+            .lock()
+            .map_err(|_| "DB_REGISTRY_LOCK_FAILED")?
+            .values()
+            .any(|(id, _)| id == &conn_id)
+        {
+            return Err("DB_QUERY_BUSY".into());
+        }
         let old = configs.get(&conn_id).cloned();
-        let refs = reg.credential_refs.lock().map_err(|_| "DB_REGISTRY_LOCK_FAILED")?;
-        let previous_ref = old.as_ref().map(|_| refs.get(&conn_id).cloned()
-            .unwrap_or_else(|| credential_key(&conn_id)));
-        let secret = if cfg.kind == SupportedDb::Sqlite { None }
-            else if let Some(secret) = &supplied { Some(secret.clone()) }
-            else {
-                let old = old.as_ref().ok_or("DB_CREDENTIAL_REQUIRED")?;
-                if destination(old) != destination(&cfg) { return Err("DB_ENDPOINT_CHANGE_REQUIRES_CREDENTIAL".into()); }
-                Some(KeyringStore::get_token(previous_ref.as_deref().ok_or("DB_CREDENTIAL_REQUIRED")?)
-                    .map_err(|_| "DB_CREDENTIAL_UNAVAILABLE")?)
-            };
-        (old.map(|cfg| serde_json::to_value(cfg)).transpose().map_err(|_| "DB_PROFILE_ENCODE_FAILED")?,
-            previous_ref, secret)
+        let refs = reg
+            .credential_refs
+            .lock()
+            .map_err(|_| "DB_REGISTRY_LOCK_FAILED")?;
+        let previous_ref = old.as_ref().map(|_| {
+            refs.get(&conn_id)
+                .cloned()
+                .unwrap_or_else(|| credential_key(&conn_id))
+        });
+        let secret = if cfg.kind == SupportedDb::Sqlite {
+            None
+        } else if let Some(secret) = &supplied {
+            Some(secret.clone())
+        } else {
+            let old = old.as_ref().ok_or("DB_CREDENTIAL_REQUIRED")?;
+            if destination(old) != destination(&cfg) {
+                return Err("DB_ENDPOINT_CHANGE_REQUIRES_CREDENTIAL".into());
+            }
+            Some(
+                KeyringStore::get_token(previous_ref.as_deref().ok_or("DB_CREDENTIAL_REQUIRED")?)
+                    .map_err(|_| "DB_CREDENTIAL_UNAVAILABLE")?,
+            )
+        };
+        (
+            old.map(|cfg| serde_json::to_value(cfg))
+                .transpose()
+                .map_err(|_| "DB_PROFILE_ENCODE_FAILED")?,
+            previous_ref,
+            secret,
+        )
     };
     let roots = allowed_roots(&app);
     let kind = cfg.kind;
@@ -344,17 +414,41 @@ fn db_connect_blocking(
         .map_err(|e| format!("{}: {}", e.code_str(), e.message))?;
     // Publish only if the configuration reviewed before the probe is still current.
     let mut configs = reg.configs.lock().map_err(|_| "DB_REGISTRY_LOCK_FAILED")?;
-    let current = configs.get(&conn_id).map(serde_json::to_value).transpose()
+    let current = configs
+        .get(&conn_id)
+        .map(serde_json::to_value)
+        .transpose()
         .map_err(|_| "DB_PROFILE_ENCODE_FAILED")?;
-    if current != before { return Err("DB_PROFILE_CONFLICT".into()); }
-    if super::studio::profile_in_use(&app, &conn_id)? { return Err("DB_SESSION_BUSY".into()); }
-    if reg.queries.lock().map_err(|_| "DB_REGISTRY_LOCK_FAILED")?
-        .values().any(|(id, _)| id == &conn_id) { return Err("DB_QUERY_BUSY".into()); }
-    let mut refs = reg.credential_refs.lock().map_err(|_| "DB_REGISTRY_LOCK_FAILED")?;
-    let current_ref = configs.get(&conn_id).map(|_| refs.get(&conn_id).cloned()
-        .unwrap_or_else(|| credential_key(&conn_id)));
-    if current_ref != previous_ref { return Err("DB_PROFILE_CONFLICT".into()); }
-    if configs.len() >= 64 && !configs.contains_key(&conn_id) { return Err("DB_CONNECTION_LIMIT".into()); }
+    if current != before {
+        return Err("DB_PROFILE_CONFLICT".into());
+    }
+    if super::studio::profile_in_use(&app, &conn_id)? {
+        return Err("DB_SESSION_BUSY".into());
+    }
+    if reg
+        .queries
+        .lock()
+        .map_err(|_| "DB_REGISTRY_LOCK_FAILED")?
+        .values()
+        .any(|(id, _)| id == &conn_id)
+    {
+        return Err("DB_QUERY_BUSY".into());
+    }
+    let mut refs = reg
+        .credential_refs
+        .lock()
+        .map_err(|_| "DB_REGISTRY_LOCK_FAILED")?;
+    let current_ref = configs.get(&conn_id).map(|_| {
+        refs.get(&conn_id)
+            .cloned()
+            .unwrap_or_else(|| credential_key(&conn_id))
+    });
+    if current_ref != previous_ref {
+        return Err("DB_PROFILE_CONFLICT".into());
+    }
+    if configs.len() >= 64 && !configs.contains_key(&conn_id) {
+        return Err("DB_CONNECTION_LIMIT".into());
+    }
     reconcile_credentials(&app)?;
     let path = profiles::path_for(&app)?;
     let retired = previous_ref.clone().into_iter().collect::<Vec<_>>();
@@ -363,16 +457,22 @@ fn db_connect_blocking(
         String::new()
     } else if let Some(secret) = supplied.as_deref() {
         crate::shared::credential_versions::stage(&path, "db", &conn_id, secret, &retired)?
-    } else { previous_ref.ok_or("DB_CREDENTIAL_REQUIRED")? };
+    } else {
+        previous_ref.ok_or("DB_CREDENTIAL_REQUIRED")?
+    };
     let mut updated = configs.clone();
     let mut updated_refs = refs.clone();
     updated.insert(conn_id.clone(), cfg);
-    if reference.is_empty() { updated_refs.remove(&conn_id); }
-    else { updated_refs.insert(conn_id.clone(), reference); }
+    if reference.is_empty() {
+        updated_refs.remove(&conn_id);
+    } else {
+        updated_refs.insert(conn_id.clone(), reference);
+    }
     if let Err(error) = persist_snapshot(&app, &updated, &updated_refs) {
         // Reload published state if rename succeeded but directory sync failed.
         if let Ok(records) = profiles::read_records(&path) {
-            configs.clear(); refs.clear();
+            configs.clear();
+            refs.clear();
             for record in records {
                 refs.insert(record.config.id.clone(), record.reference()?);
                 configs.insert(record.config.id.clone(), record.config);
@@ -384,18 +484,32 @@ fn db_connect_blocking(
     *configs = updated;
     *refs = updated_refs;
     let credential_cleanup_pending = reconcile_credentials(&app).is_err();
-    drop(refs); drop(configs);
-    log_audit(&app, "db.connect", format!("conn_id={} kind={:?}", conn_id, kind));
-    Ok(DbConnectResult { conn_id, kind, credential_cleanup_pending })
+    drop(refs);
+    drop(configs);
+    log_audit(
+        &app,
+        "db.connect",
+        format!("conn_id={} kind={:?}", conn_id, kind),
+    );
+    Ok(DbConnectResult {
+        conn_id,
+        kind,
+        credential_cleanup_pending,
+    })
 }
 
 // The actual worker owns its admission, including when the invoking future is
 // dropped. A queued or still-running query cannot release its budget early.
-struct QueryRegistration { app: AppHandle, id: String }
+struct QueryRegistration {
+    app: AppHandle,
+    id: String,
+}
 impl Drop for QueryRegistration {
     fn drop(&mut self) {
         let registry = self.app.state::<DbConnectionRegistry>();
-        if let Ok(mut queries) = registry.queries.lock() { queries.remove(&self.id); };
+        if let Ok(mut queries) = registry.queries.lock() {
+            queries.remove(&self.id);
+        };
     }
 }
 #[tauri::command]
@@ -416,29 +530,52 @@ pub async fn db_query(
     // the same four-worker budget. No disk or Keyring work runs on this task.
     {
         let registry = app.state::<DbConnectionRegistry>();
-        let mut queries = registry.queries.lock().map_err(|_| "DB_REGISTRY_LOCK_FAILED")?;
-        if queries.len() >= 4 || queries.contains_key(&query_id) { return Err("DB_QUERY_BUSY".into()); }
+        let mut queries = registry
+            .queries
+            .lock()
+            .map_err(|_| "DB_REGISTRY_LOCK_FAILED")?;
+        if queries.len() >= 4 || queries.contains_key(&query_id) {
+            return Err("DB_QUERY_BUSY".into());
+        }
         queries.insert(query_id.clone(), (conn_id.clone(), cancel.clone()));
     }
-    let registration = QueryRegistration { app: app.clone(), id: query_id.clone() };
+    let registration = QueryRegistration {
+        app: app.clone(),
+        id: query_id.clone(),
+    };
     tauri::async_runtime::spawn_blocking(move || {
         let _registration = registration;
-        if cancel.is_cancelled() { return Err("DB_CANCELLED".into()); }
+        if cancel.is_cancelled() {
+            return Err("DB_CANCELLED".into());
+        }
         ensure_profiles_loaded(&app)?;
         // Snapshot configuration AND credential bytes under one Owner lock.
         // Neither endpoint nor credential is re-read after the snapshot.
         let (cfg, password) = {
             let registry = app.state::<DbConnectionRegistry>();
-            let configs = registry.configs.lock().map_err(|_| "DB_REGISTRY_LOCK_FAILED")?;
+            let configs = registry
+                .configs
+                .lock()
+                .map_err(|_| "DB_REGISTRY_LOCK_FAILED")?;
             let cfg = configs.get(&conn_id).cloned().ok_or("DB_NOT_CONNECTED")?;
-            let refs = registry.credential_refs.lock().map_err(|_| "DB_REGISTRY_LOCK_FAILED")?;
-            let password = if cfg.kind == SupportedDb::Sqlite { None } else {
-                let reference = refs.get(&conn_id).cloned().unwrap_or_else(|| credential_key(&conn_id));
+            let refs = registry
+                .credential_refs
+                .lock()
+                .map_err(|_| "DB_REGISTRY_LOCK_FAILED")?;
+            let password = if cfg.kind == SupportedDb::Sqlite {
+                None
+            } else {
+                let reference = refs
+                    .get(&conn_id)
+                    .cloned()
+                    .unwrap_or_else(|| credential_key(&conn_id));
                 Some(KeyringStore::get_token(&reference).map_err(|_| "DB_CREDENTIAL_UNAVAILABLE")?)
             };
             (cfg, password)
         };
-        if cancel.is_cancelled() { return Err("DB_CANCELLED".into()); }
+        if cancel.is_cancelled() {
+            return Err("DB_CANCELLED".into());
+        }
         let roots = allowed_roots(&app);
         let mut pool = DbPool::connect(&cfg, password.as_deref(), &roots)
             .map_err(|e| format!("{}: {}", e.code_str(), e.message))?;
@@ -453,8 +590,10 @@ pub async fn db_query(
         log_audit(
             &app,
             "db.query",
-            format!("conn_id={} rows={} truncated={} field_truncated={}",
-                conn_id, result.row_count, result.truncated, result.field_truncated),
+            format!(
+                "conn_id={} rows={} truncated={} field_truncated={}",
+                conn_id, result.row_count, result.truncated, result.field_truncated
+            ),
         );
         Ok(result)
     })
@@ -472,13 +611,30 @@ pub fn db_disconnect(
     ensure_profiles_loaded(&app)?;
     let reg = app.state::<DbConnectionRegistry>();
     let mut configs = reg.configs.lock().map_err(|_| "DB_REGISTRY_LOCK_FAILED")?;
-    if super::studio::profile_in_use(&app, &conn_id)? { return Err("DB_SESSION_BUSY".into()); }
-    if reg.queries.lock().map_err(|_| "DB_REGISTRY_LOCK_FAILED")?
-        .values().any(|(id, _)| id == &conn_id) { return Err("DB_QUERY_BUSY".into()); }
-    if !configs.contains_key(&conn_id) { return Err("DB_NOT_CONNECTED".into()); }
-    let mut refs = reg.credential_refs.lock().map_err(|_| "DB_REGISTRY_LOCK_FAILED")?;
+    if super::studio::profile_in_use(&app, &conn_id)? {
+        return Err("DB_SESSION_BUSY".into());
+    }
+    if reg
+        .queries
+        .lock()
+        .map_err(|_| "DB_REGISTRY_LOCK_FAILED")?
+        .values()
+        .any(|(id, _)| id == &conn_id)
+    {
+        return Err("DB_QUERY_BUSY".into());
+    }
+    if !configs.contains_key(&conn_id) {
+        return Err("DB_NOT_CONNECTED".into());
+    }
+    let mut refs = reg
+        .credential_refs
+        .lock()
+        .map_err(|_| "DB_REGISTRY_LOCK_FAILED")?;
     reconcile_credentials(&app)?;
-    let reference = refs.get(&conn_id).cloned().unwrap_or_else(|| credential_key(&conn_id));
+    let reference = refs
+        .get(&conn_id)
+        .cloned()
+        .unwrap_or_else(|| credential_key(&conn_id));
     let path = profiles::path_for(&app)?;
     crate::shared::credential_versions::record_retirement(&path, "db", &[reference])?;
     let mut updated = configs.clone();
@@ -487,7 +643,8 @@ pub fn db_disconnect(
     updated_refs.remove(&conn_id);
     if let Err(error) = persist_snapshot(&app, &updated, &updated_refs) {
         if let Ok(records) = profiles::read_records(&path) {
-            configs.clear(); refs.clear();
+            configs.clear();
+            refs.clear();
             for record in records {
                 refs.insert(record.config.id.clone(), record.reference()?);
                 configs.insert(record.config.id.clone(), record.config);
@@ -496,10 +653,16 @@ pub fn db_disconnect(
         }
         return Err(error);
     }
-    *configs = updated; *refs = updated_refs;
+    *configs = updated;
+    *refs = updated_refs;
     let cleanup = reconcile_credentials(&app);
-    drop(refs); drop(configs);
-    log_audit(&app, "db.disconnect", format!("conn_id={} removed=true", conn_id));
+    drop(refs);
+    drop(configs);
+    log_audit(
+        &app,
+        "db.disconnect",
+        format!("conn_id={} removed=true", conn_id),
+    );
     cleanup.map_err(|_| "DB_DISCONNECTED_CREDENTIAL_CLEANUP_PENDING".to_string())
 }
 
@@ -513,12 +676,19 @@ mod credential_revision_tests {
             "port":3306,"database":"fixture","username":"reader","ssl_mode":"require",
             "allow_write":false,"production_hint":true,"enabled":true,
             "created_at":"2026-11-22T00:00:00Z","updated_at":"2026-11-22T00:00:00Z"
-        })).unwrap();
+        }))
+        .unwrap();
         let first = profile_revision(&cfg, "db:fixture:version-one").unwrap();
-        assert_ne!(first, profile_revision(&cfg, "db:fixture:version-two").unwrap());
+        assert_ne!(
+            first,
+            profile_revision(&cfg, "db:fixture:version-two").unwrap()
+        );
         let original_destination = destination(&cfg);
         cfg.host = Some("two.invalid".into());
         assert_ne!(original_destination, destination(&cfg));
-        assert_ne!(first, profile_revision(&cfg, "db:fixture:version-one").unwrap());
+        assert_ne!(
+            first,
+            profile_revision(&cfg, "db:fixture:version-one").unwrap()
+        );
     }
 }

@@ -1,7 +1,7 @@
+use chrono::Utc;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use chrono::Utc;
 #[path = "audit_lock.rs"]
 mod audit_lock;
 use tauri::{AppHandle, Manager};
@@ -28,42 +28,60 @@ pub fn prepare_data_dir(app: &AppHandle) -> std::io::Result<()> {
     if app.try_state::<PreparedDataDirectory>().is_some() {
         return Ok(());
     }
-    let base = app.path()
+    let base = app
+        .path()
         .app_data_dir()
         .map_err(|_| std::io::Error::other("PRIVATE_DATA_DIR_LOCATION_UNAVAILABLE"))?;
     #[cfg(target_os = "windows")]
     browseros_platform_security::windows::ensure_private_directory_root(
         &base,
         &browseros_platform_security::windows::PrivateTreeOptions::default(),
-    ).map_err(|error| std::io::Error::new(
-        error.kind(),
-        format!("PRIVATE_DATA_DIR_PARENT_PREPARATION_FAILED: {error}"),
-    ))?;
+    )
+    .map_err(|error| {
+        std::io::Error::new(
+            error.kind(),
+            format!("PRIVATE_DATA_DIR_PARENT_PREPARATION_FAILED: {error}"),
+        )
+    })?;
     #[cfg(target_os = "windows")]
     let preparation = browseros_platform_security::windows::PreparedPrivateDirectory::prepare(
         &base.join("mvp-browser-os"),
         &browseros_platform_security::windows::PrivateTreeOptions::default(),
-    ).map_err(|error| std::io::Error::new(
-        error.kind(), format!("PRIVATE_DATA_DIR_PREPARATION_FAILED: {error}"),
-    ))?;
+    )
+    .map_err(|error| {
+        std::io::Error::new(
+            error.kind(),
+            format!("PRIVATE_DATA_DIR_PREPARATION_FAILED: {error}"),
+        )
+    })?;
     #[cfg(target_os = "windows")]
     let dir = {
         let report = preparation.report();
-        eprintln!("PRIVATE_DATA_DIR_READY reused={} checked={} repaired={} elapsed_ms={}",
-            preparation.reused_preparation(), report.checked_objects, report.repaired_objects, report.elapsed_ms);
+        eprintln!(
+            "PRIVATE_DATA_DIR_READY reused={} checked={} repaired={} elapsed_ms={}",
+            preparation.reused_preparation(),
+            report.checked_objects,
+            report.repaired_objects,
+            report.elapsed_ms
+        );
         preparation.path().to_path_buf()
     };
     #[cfg(not(target_os = "windows"))]
     let dir = crate::capabilities::workspace::safe_paths::prepare_application_data_directory(&base)
-        .map_err(|error| std::io::Error::new(
-            error.kind(), format!("PRIVATE_DATA_DIR_PREPARATION_FAILED: {error}"),
-        ))?;
+        .map_err(|error| {
+            std::io::Error::new(
+                error.kind(),
+                format!("PRIVATE_DATA_DIR_PREPARATION_FAILED: {error}"),
+            )
+        })?;
     if !app.manage(PreparedDataDirectory {
         path: dir,
         #[cfg(target_os = "windows")]
         _preparation: preparation,
     }) {
-        return Err(std::io::Error::other("PRIVATE_DATA_DIR_ALREADY_INITIALIZED"));
+        return Err(std::io::Error::other(
+            "PRIVATE_DATA_DIR_ALREADY_INITIALIZED",
+        ));
     }
     Ok(())
 }
@@ -134,8 +152,8 @@ fn preserve_corrupt_store(path: &Path, bytes: &[u8]) -> Result<PathBuf, String> 
             }
         }
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-            let metadata = fs::symlink_metadata(&backup)
-                .map_err(|_| "WORKSPACE_STORE_BACKUP_FAILED")?;
+            let metadata =
+                fs::symlink_metadata(&backup).map_err(|_| "WORKSPACE_STORE_BACKUP_FAILED")?;
             if !metadata.is_file() || metadata.file_type().is_symlink() {
                 return Err("WORKSPACE_STORE_BACKUP_FAILED".into());
             }
@@ -147,16 +165,21 @@ fn preserve_corrupt_store(path: &Path, bytes: &[u8]) -> Result<PathBuf, String> 
                 }
             }
             let mut existing = Vec::new();
-            fs::File::open(&backup).map_err(|_| "WORKSPACE_STORE_BACKUP_FAILED")?
-                .take(MAX_LIST_STORE_BYTES + 1).read_to_end(&mut existing)
+            fs::File::open(&backup)
+                .map_err(|_| "WORKSPACE_STORE_BACKUP_FAILED")?
+                .take(MAX_LIST_STORE_BYTES + 1)
+                .read_to_end(&mut existing)
                 .map_err(|_| "WORKSPACE_STORE_BACKUP_FAILED")?;
-            if existing != bytes { return Err("WORKSPACE_STORE_BACKUP_FAILED".into()); }
+            if existing != bytes {
+                return Err("WORKSPACE_STORE_BACKUP_FAILED".into());
+            }
         }
         Err(_) => return Err("WORKSPACE_STORE_BACKUP_FAILED".into()),
     }
     #[cfg(unix)]
     if let Some(parent) = path.parent() {
-        fs::File::open(parent).and_then(|dir| dir.sync_all())
+        fs::File::open(parent)
+            .and_then(|dir| dir.sync_all())
             .map_err(|_| "WORKSPACE_STORE_BACKUP_FAILED")?;
     }
     Ok(backup)
@@ -173,7 +196,8 @@ pub fn load_json_list_at<T: serde::de::DeserializeOwned>(
         Err(_) => return Err(format!("WORKSPACE_STORE_READ_FAILED: {tag}")),
     };
     let mut bytes = Vec::new();
-    file.take(MAX_LIST_STORE_BYTES + 1).read_to_end(&mut bytes)
+    file.take(MAX_LIST_STORE_BYTES + 1)
+        .read_to_end(&mut bytes)
         .map_err(|_| format!("WORKSPACE_STORE_READ_FAILED: {tag}"))?;
     if bytes.len() as u64 > MAX_LIST_STORE_BYTES {
         return Err(format!("WORKSPACE_STORE_SIZE_LIMIT: {tag}"));
@@ -186,7 +210,10 @@ pub fn load_json_list_at<T: serde::de::DeserializeOwned>(
             // while repeated reads of the same bad file do not consume more disk.
             let backup = preserve_corrupt_store(path, &bytes)
                 .map_err(|_| format!("WORKSPACE_STORE_CORRUPT_BACKUP_FAILED: {tag}"))?;
-            Err(format!("WORKSPACE_STORE_CORRUPT: {tag}; backup={}", backup.display()))
+            Err(format!(
+                "WORKSPACE_STORE_CORRUPT: {tag}; backup={}",
+                backup.display()
+            ))
         }
     }
 }
@@ -501,10 +528,7 @@ pub fn script_body_path(app: &AppHandle, file_name: &str) -> Result<PathBuf, Str
 
 /// 正文原子写（tmp + rename；失败清理临时文件，不留残留）
 fn atomic_write_body(target: &Path, body: &str) -> Result<(), String> {
-    let tmp = target.with_file_name(format!(
-        ".browseros-script-{}.tmp",
-        uuid::Uuid::new_v4()
-    ));
+    let tmp = target.with_file_name(format!(".browseros-script-{}.tmp", uuid::Uuid::new_v4()));
     if let Err(e) = fs::write(&tmp, body) {
         let _ = fs::remove_file(&tmp);
         return Err(format!("写脚本临时文件失败: {e}"));
@@ -565,54 +589,82 @@ pub fn repos_file(app: &AppHandle) -> PathBuf {
 }
 fn repo_key(record: &StoredRepoConfig) -> Result<String, String> {
     let id = &record.config.id;
-    if id.is_empty() || id.len() > 128
-        || !id.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
-    { return Err("REPO_ID_INVALID".into()); }
+    if id.is_empty()
+        || id.len() > 128
+        || !id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+    {
+        return Err("REPO_ID_INVALID".into());
+    }
     match &record.credential_ref {
         None => Ok(id.clone()),
         Some(reference) if reference == id => Ok(reference.clone()),
         Some(reference) => {
             let prefix = format!("git:{id}:");
-            if reference.strip_prefix(&prefix).is_some_and(|version| uuid::Uuid::parse_str(version).is_ok()) {
+            if reference
+                .strip_prefix(&prefix)
+                .is_some_and(|version| uuid::Uuid::parse_str(version).is_ok())
+            {
                 Ok(reference.clone())
-            } else { Err("REPO_CREDENTIAL_REF_INVALID".into()) }
+            } else {
+                Err("REPO_CREDENTIAL_REF_INVALID".into())
+            }
         }
     }
 }
-fn repo_live_keys(records: &[StoredRepoConfig]) -> Result<std::collections::HashSet<String>, String> {
+fn repo_live_keys(
+    records: &[StoredRepoConfig],
+) -> Result<std::collections::HashSet<String>, String> {
     records.iter().map(repo_key).collect()
 }
 fn load_stored_repos(path: &Path) -> Result<Vec<StoredRepoConfig>, String> {
     load_json_list_at(path, "仓库配置")
 }
 pub fn load_repos_at(path: &Path) -> Result<Vec<RepoConfig>, String> {
-    Ok(load_stored_repos(path)?.into_iter().map(|record| record.config).collect())
+    Ok(load_stored_repos(path)?
+        .into_iter()
+        .map(|record| record.config)
+        .collect())
 }
 /// Metadata-only updates retain each existing reference, including legacy records.
 pub fn save_repos_at(path: &Path, repos: &[RepoConfig]) -> Result<(), String> {
     let existing = load_stored_repos(path)?;
-    let records: Vec<_> = repos.iter().map(|config| StoredRepoConfig {
-        config: config.clone(),
-        credential_ref: existing.iter().find(|record| record.config.id == config.id)
-            .and_then(|record| record.credential_ref.clone()),
-    }).collect();
+    let records: Vec<_> = repos
+        .iter()
+        .map(|config| StoredRepoConfig {
+            config: config.clone(),
+            credential_ref: existing
+                .iter()
+                .find(|record| record.config.id == config.id)
+                .and_then(|record| record.credential_ref.clone()),
+        })
+        .collect();
     save_json_list_at(path, &records, "仓库配置")
 }
 pub fn load_repos(app: &AppHandle) -> Result<Vec<RepoConfig>, String> {
-    let _guard = REPO_CONFIG_LOCK.lock().map_err(|_| "REPO_CONFIG_LOCK_FAILED")?;
+    let _guard = REPO_CONFIG_LOCK
+        .lock()
+        .map_err(|_| "REPO_CONFIG_LOCK_FAILED")?;
     load_repos_at(&repos_file(app))
 }
 pub fn save_repos(app: &AppHandle, repos: &[RepoConfig]) -> Result<(), String> {
-    let _guard = REPO_CONFIG_LOCK.lock().map_err(|_| "REPO_CONFIG_LOCK_FAILED")?;
+    let _guard = REPO_CONFIG_LOCK
+        .lock()
+        .map_err(|_| "REPO_CONFIG_LOCK_FAILED")?;
     save_repos_at(&repos_file(app), repos)
 }
 
 /// Capture the endpoint and secret in one short native-owner critical section.
 /// No lock or mutable Keyring name is carried into a queued/network operation.
 pub fn repo_execution_snapshot(app: &AppHandle, id: &str) -> Result<(RepoConfig, String), String> {
-    let _guard = REPO_CONFIG_LOCK.lock().map_err(|_| "REPO_CONFIG_LOCK_FAILED")?;
+    let _guard = REPO_CONFIG_LOCK
+        .lock()
+        .map_err(|_| "REPO_CONFIG_LOCK_FAILED")?;
     let records = load_stored_repos(&repos_file(app))?;
-    let record = records.into_iter().find(|record| record.config.id == id)
+    let record = records
+        .into_iter()
+        .find(|record| record.config.id == id)
         .ok_or("仓库未配置")?;
     let reference = repo_key(&record)?;
     let token = crate::keyring_store::KeyringStore::get_token(&reference)
@@ -620,17 +672,29 @@ pub fn repo_execution_snapshot(app: &AppHandle, id: &str) -> Result<(RepoConfig,
     Ok((record.config, token))
 }
 
-pub fn configure_repo_credentials(app: &AppHandle, config: RepoConfig, token: &str) -> Result<(), String> {
+pub fn configure_repo_credentials(
+    app: &AppHandle,
+    config: RepoConfig,
+    token: &str,
+) -> Result<(), String> {
     use crate::shared::credential_versions;
-    let _guard = REPO_CONFIG_LOCK.lock().map_err(|_| "REPO_CONFIG_LOCK_FAILED")?;
+    let _guard = REPO_CONFIG_LOCK
+        .lock()
+        .map_err(|_| "REPO_CONFIG_LOCK_FAILED")?;
     let path = repos_file(app);
     let mut records = load_stored_repos(&path)?;
-    let proposed = StoredRepoConfig { config: config.clone(), credential_ref: None };
+    let proposed = StoredRepoConfig {
+        config: config.clone(),
+        credential_ref: None,
+    };
     repo_key(&proposed)?;
     let endpoint = url::Url::parse(&config.remote_url).map_err(|_| "REPO_ENDPOINT_INVALID")?;
-    if !matches!(endpoint.scheme(), "https" | "http") || endpoint.host_str().is_none()
+    if !matches!(endpoint.scheme(), "https" | "http")
+        || endpoint.host_str().is_none()
         || endpoint.password().is_some()
-    { return Err("REPO_ENDPOINT_INVALID".into()); }
+    {
+        return Err("REPO_ENDPOINT_INVALID".into());
+    }
     if token.trim().is_empty() || token.len() > 16 * 1024 || token.contains(['\r', '\n', '\0']) {
         return Err("REPO_CREDENTIAL_INVALID".into());
     }
@@ -639,11 +703,17 @@ pub fn configure_repo_credentials(app: &AppHandle, config: RepoConfig, token: &s
     }
     let live = repo_live_keys(&records)?;
     let _ = credential_versions::reconcile(&path, "git", &live);
-    let retired: Vec<String> = records.iter().filter(|record| record.config.id == config.id)
-        .map(repo_key).collect::<Result<_, _>>()?;
+    let retired: Vec<String> = records
+        .iter()
+        .filter(|record| record.config.id == config.id)
+        .map(repo_key)
+        .collect::<Result<_, _>>()?;
     let reference = credential_versions::stage(&path, "git", &config.id, token, &retired)?;
     records.retain(|record| record.config.id != config.id);
-    records.push(StoredRepoConfig { config, credential_ref: Some(reference) });
+    records.push(StoredRepoConfig {
+        config,
+        credential_ref: Some(reference),
+    });
     let saved = save_json_list_at(&path, &records, "仓库配置");
     // An atomic replacement can publish before a durability error. Reconcile
     // against the persisted file even on Err; never guess which key is live.
@@ -662,9 +732,14 @@ pub fn audit_file(app: &AppHandle) -> PathBuf {
     data_dir(app).join("audit.json")
 }
 pub fn log_audit(app: &AppHandle, action: &str, detail: String) {
-    if let Err(error) = append_audit_at(&audit_file(app), AuditEntry {
-        at: Utc::now(), action: action.into(), detail,
-    }) {
+    if let Err(error) = append_audit_at(
+        &audit_file(app),
+        AuditEntry {
+            at: Utc::now(),
+            action: action.into(),
+            detail,
+        },
+    ) {
         // Do not echo an audit detail or filesystem error containing user data.
         eprintln!("[workspace] audit append failed: {error}");
     }
@@ -677,9 +752,10 @@ pub fn append_audit_at(path: &Path, entry: AuditEntry) -> Result<(), String> {
         .map_err(|error| format!("AUDIT_LOCK_FAILED:{:?}", error.kind()))?;
     let mut list = load_audit_unlocked(path)?;
     list.push(entry);
-    if list.len() > 1000 { list.drain(0..list.len() - 1000); }
-    save_json_list_at(path, &list, "审计日志")
-        .map_err(|_| "AUDIT_ATOMIC_WRITE_FAILED".to_string())
+    if list.len() > 1000 {
+        list.drain(0..list.len() - 1000);
+    }
+    save_json_list_at(path, &list, "审计日志").map_err(|_| "AUDIT_ATOMIC_WRITE_FAILED".to_string())
 }
 
 fn load_audit_unlocked(path: &Path) -> Result<Vec<AuditEntry>, String> {
@@ -711,7 +787,10 @@ pub fn load_audit_at(path: &Path) -> Vec<AuditEntry> {
     match audit_lock::AuditLock::acquire(path) {
         Ok(_guard) => match load_audit_unlocked(path) {
             Ok(entries) => entries,
-            Err(code) => { eprintln!("[workspace] audit read unavailable: {code}"); Vec::new() }
+            Err(code) => {
+                eprintln!("[workspace] audit read unavailable: {code}");
+                Vec::new()
+            }
         },
         Err(error) => {
             eprintln!("[workspace] audit read unavailable: {:?}", error.kind());
@@ -722,8 +801,7 @@ pub fn load_audit_at(path: &Path) -> Vec<AuditEntry> {
 pub fn save_audit_at(path: &Path, list: &[AuditEntry]) -> Result<(), String> {
     let _guard = audit_lock::AuditLock::acquire(path)
         .map_err(|error| format!("AUDIT_LOCK_FAILED:{:?}", error.kind()))?;
-    save_json_list_at(path, list, "审计日志")
-        .map_err(|_| "AUDIT_ATOMIC_WRITE_FAILED".to_string())
+    save_json_list_at(path, list, "审计日志").map_err(|_| "AUDIT_ATOMIC_WRITE_FAILED".to_string())
 }
 pub fn load_audit(app: &AppHandle) -> Vec<AuditEntry> {
     load_audit_at(&audit_file(app))
@@ -742,28 +820,40 @@ mod audit_concurrency_tests {
     use super::*;
     #[test]
     fn concurrent_audit_appends_keep_every_entry() {
-        let root = std::env::temp_dir().canonicalize().unwrap()
+        let root = std::env::temp_dir()
+            .canonicalize()
+            .unwrap()
             .join(format!("browseros-audit-{}", uuid::Uuid::new_v4()));
         crate::capabilities::workspace::safe_paths::ensure_private_directory(&root).unwrap();
         let path = root.join("audit.json");
         let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
-        let workers: Vec<_> = (0..8).map(|writer| {
-            let path = path.clone();
-            let barrier = barrier.clone();
-            std::thread::spawn(move || {
-                barrier.wait();
-                for index in 0..8 {
-                    append_audit_at(&path, AuditEntry {
-                        at: Utc::now(), action: "concurrent".into(),
-                        detail: format!("{writer}:{index}"),
-                    }).unwrap();
-                }
+        let workers: Vec<_> = (0..8)
+            .map(|writer| {
+                let path = path.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    for index in 0..8 {
+                        append_audit_at(
+                            &path,
+                            AuditEntry {
+                                at: Utc::now(),
+                                action: "concurrent".into(),
+                                detail: format!("{writer}:{index}"),
+                            },
+                        )
+                        .unwrap();
+                    }
+                })
             })
-        }).collect();
-        for worker in workers { worker.join().unwrap(); }
+            .collect();
+        for worker in workers {
+            worker.join().unwrap();
+        }
         let entries = load_audit_at(&path);
         assert_eq!(entries.len(), 64);
-        let details: std::collections::HashSet<_> = entries.iter().map(|entry| &entry.detail).collect();
+        let details: std::collections::HashSet<_> =
+            entries.iter().map(|entry| &entry.detail).collect();
         assert_eq!(details.len(), 64);
         fs::remove_dir_all(root).unwrap();
     }
@@ -920,12 +1010,13 @@ mod snippet_persistence_tests {
         fs::write(&path, bytes).unwrap();
         let backup = corrupt_store_backup_path(&path, bytes);
         fs::create_dir(&backup).unwrap();
-        assert!(load_snippets_at(&path).unwrap_err().contains("BACKUP_FAILED"));
+        assert!(load_snippets_at(&path)
+            .unwrap_err()
+            .contains("BACKUP_FAILED"));
         assert_eq!(fs::read(&path).unwrap(), bytes);
         fs::remove_dir(backup).unwrap();
         fs::remove_file(path).unwrap();
     }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -1005,7 +1096,9 @@ mod b4_atomic_persistence_tests {
 
     #[test]
     fn audit_roundtrip_is_atomic_without_tmp_leftover() {
-        let directory = std::env::temp_dir().canonicalize().unwrap()
+        let directory = std::env::temp_dir()
+            .canonicalize()
+            .unwrap()
             .join(format!("browseros-audit-{}", uuid::Uuid::new_v4()));
         crate::capabilities::workspace::safe_paths::ensure_private_directory(&directory).unwrap();
         let path = directory.join("audit.json");
@@ -1034,7 +1127,9 @@ mod b4_atomic_persistence_tests {
 
     #[test]
     fn corrupt_audit_is_backed_up_and_survives_next_save() {
-        let directory = std::env::temp_dir().canonicalize().unwrap()
+        let directory = std::env::temp_dir()
+            .canonicalize()
+            .unwrap()
             .join(format!("browseros-corrupt-audit-{}", uuid::Uuid::new_v4()));
         crate::capabilities::workspace::safe_paths::ensure_private_directory(&directory).unwrap();
         let path = directory.join("audit.json");

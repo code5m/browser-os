@@ -38,15 +38,22 @@ pub async fn term_spawn_channel(
 ) -> Result<TermInfo, String> {
     reject_terminal_during_shutdown(&app)?;
     let measure = term_measure_mode(&app);
-    TERMINAL_STARTS.run(move || {
-        reject_terminal_during_shutdown(&app)?;
-        let (info, session) = terminal::spawn_terminal(Arc::new(ChannelSink(channel)), measure)?;
-        publish_terminal(&app, info, session)
-    }).await
+    TERMINAL_STARTS
+        .run(move || {
+            reject_terminal_during_shutdown(&app)?;
+            let (info, session) =
+                terminal::spawn_terminal(Arc::new(ChannelSink(channel)), measure)?;
+            publish_terminal(&app, info, session)
+        })
+        .await
 }
 
 fn reject_terminal_during_shutdown(app: &AppHandle) -> Result<(), String> {
-    if app.state::<AppState>().shutdown_requested.load(Ordering::Acquire) {
+    if app
+        .state::<AppState>()
+        .shutdown_requested
+        .load(Ordering::Acquire)
+    {
         return Err("TERM_APPLICATION_SHUTTING_DOWN".into());
     }
     Ok(())
@@ -54,7 +61,11 @@ fn reject_terminal_during_shutdown(app: &AppHandle) -> Result<(), String> {
 
 /// Linearize publication with the shutdown drain. Native creation may have
 /// started before exit was requested; it must never repopulate the drained map.
-fn publish_terminal(app: &AppHandle, info: TermInfo, mut session: TerminalSession) -> Result<TermInfo, String> {
+fn publish_terminal(
+    app: &AppHandle,
+    info: TermInfo,
+    mut session: TerminalSession,
+) -> Result<TermInfo, String> {
     let state = app.state::<AppState>();
     let mut terminals = state.terminals.lock().unwrap_or_else(|e| e.into_inner());
     if state.shutdown_requested.load(Ordering::Acquire) {
@@ -87,12 +98,19 @@ pub async fn term_resize(app: AppHandle, id: String, cols: u16, rows: u16) -> Re
         let terms = state.terminals.lock().unwrap_or_else(|e| e.into_inner());
         terms.get(&id).ok_or("终端不存在")?.control()
     };
-    control.enqueue_resize(cols, rows)?.await
+    control
+        .enqueue_resize(cols, rows)?
+        .await
         .map_err(|_| "TERM_RESIZE_WORKER_FAILED".to_string())?
 }
 
 /// Rust-internal callers already running off the UI thread use this helper.
-pub(crate) fn term_resize_sync(app: AppHandle, id: String, cols: u16, rows: u16) -> Result<(), String> {
+pub(crate) fn term_resize_sync(
+    app: AppHandle,
+    id: String,
+    cols: u16,
+    rows: u16,
+) -> Result<(), String> {
     let state = app.state::<AppState>();
     let control = {
         let terms = state.terminals.lock().unwrap();
@@ -114,7 +132,8 @@ pub(crate) fn term_resize_sync(app: AppHandle, id: String, cols: u16, rows: u16)
 #[tauri::command]
 pub async fn term_kill(app: AppHandle, id: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || term_kill_sync(app, id))
-        .await.map_err(|error| format!("TERM_CLOSE_WORKER_FAILED: {error}"))?
+        .await
+        .map_err(|error| format!("TERM_CLOSE_WORKER_FAILED: {error}"))?
 }
 
 /// Keep the bounded cleanup wait away from GTK/WebView event callbacks.

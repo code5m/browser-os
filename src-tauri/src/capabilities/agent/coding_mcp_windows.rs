@@ -70,8 +70,10 @@ fn scrub(value: &mut Value, secrets: &[String]) {
             let previous = std::mem::take(items);
             for (index, (name, mut item)) in previous.into_iter().enumerate() {
                 scrub(&mut item, secrets);
-                let sensitive_name = sensitive(&name) || secrets.iter()
-                    .any(|secret| !secret.is_empty() && name.contains(secret));
+                let sensitive_name = sensitive(&name)
+                    || secrets
+                        .iter()
+                        .any(|secret| !secret.is_empty() && name.contains(secret));
                 let safe_name = if sensitive_name {
                     format!("[redacted-key-{index}]")
                 } else {
@@ -176,7 +178,9 @@ fn resolved_config(root: &Path, storage: &Path, request: &Value) -> Result<Value
             .into_iter()
             .find(|server| server.0 == id)
             .ok_or("MCP_SERVER_NOT_FOUND")?;
-        if !item.is_object() { return Err("MCP_CONFIG_INVALID".into()); }
+        if !item.is_object() {
+            return Err("MCP_CONFIG_INVALID".into());
+        }
         if item.get("url").is_some() {
             return Err("MCP_HTTP_NOT_IMPLEMENTED".into());
         }
@@ -197,7 +201,9 @@ fn resolved_config(root: &Path, storage: &Path, request: &Value) -> Result<Value
         Ok(item)
     } else {
         let mut item = request["server"].clone();
-        if !item.is_object() { return Err("MCP_CONFIG_INVALID".into()); }
+        if !item.is_object() {
+            return Err("MCP_CONFIG_INVALID".into());
+        }
         if item.get("env").is_some() || item.get("environment").is_some() {
             return Err("MCP_PLAINTEXT_ENV_REJECTED".into());
         }
@@ -229,7 +235,9 @@ impl Session {
         Self::start_with_credentials(root, config, seconds, std::collections::BTreeMap::new())
     }
     fn start_with_credentials(
-        root: &Path, config: &Value, seconds: u64,
+        root: &Path,
+        config: &Value,
+        seconds: u64,
         mut credentials: std::collections::BTreeMap<String, String>,
     ) -> Result<Self, String> {
         let command = config["command"].as_str().ok_or("MCP_COMMAND_REQUIRED")?;
@@ -239,12 +247,17 @@ impl Session {
         if crate::security_policy::is_blocked_executable_path(&executable) {
             return Err("MCP_SHELL_COMMAND_REJECTED".into());
         }
-        let resolved = executable.canonicalize().map_err(|_| "MCP_EXECUTABLE_NOT_FOUND")?;
+        let resolved = executable
+            .canonicalize()
+            .map_err(|_| "MCP_EXECUTABLE_NOT_FOUND")?;
         if crate::security_policy::is_blocked_executable_path(&resolved) {
             return Err("MCP_SHELL_COMMAND_REJECTED".into());
         }
-        let stem = resolved.file_stem().and_then(|name| name.to_str())
-            .ok_or("MCP_EXECUTABLE_NOT_FOUND")?.to_ascii_lowercase();
+        let stem = resolved
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .ok_or("MCP_EXECUTABLE_NOT_FOUND")?
+            .to_ascii_lowercase();
         let raw_args = config["args"].as_array().cloned().unwrap_or_default();
         if raw_args.len() > 64
             || raw_args.iter().any(|value| {
@@ -348,7 +361,12 @@ impl Session {
         let child = profile
             .spawn(&executable, &args, &environment, &state)
             .map_err(|error| {
-                if matches!(error.as_str(), "SANDBOX_CAPACITY_BUSY" | "SANDBOX_ADMISSION_CLOSED") { return admission_error(error); }
+                if matches!(
+                    error.as_str(),
+                    "SANDBOX_CAPACITY_BUSY" | "SANDBOX_ADMISSION_CLOSED"
+                ) {
+                    return admission_error(error);
+                }
                 // Native test panics include the concrete Win32 operation and
                 // code; production retains an opaque error with no file paths,
                 // credential contents, or process-internal diagnostics.
@@ -370,52 +388,58 @@ impl Session {
         let (writer, write_rx) = mpsc::sync_channel::<Vec<u8>>(4);
         let (write_tx, write_result) = mpsc::channel();
         let write_owner = process.hold_io_owner()?;
-        thread::Builder::new().name("mcp-stdin".into()).spawn(move || {
-            let _owner = write_owner;
-            let mut input = std::io::BufWriter::new(stdin);
-            while let Ok(bytes) = write_rx.recv() {
-                let result = input
-                    .write_all(&bytes)
-                    .and_then(|_| input.flush())
-                    .map_err(|_| "MCP_WRITE_FAILED".to_string());
-                let failed = result.is_err();
-                if write_tx.send(result).is_err() || failed {
-                    break;
+        thread::Builder::new()
+            .name("mcp-stdin".into())
+            .spawn(move || {
+                let _owner = write_owner;
+                let mut input = std::io::BufWriter::new(stdin);
+                while let Ok(bytes) = write_rx.recv() {
+                    let result = input
+                        .write_all(&bytes)
+                        .and_then(|_| input.flush())
+                        .map_err(|_| "MCP_WRITE_FAILED".to_string());
+                    let failed = result.is_err();
+                    if write_tx.send(result).is_err() || failed {
+                        break;
+                    }
                 }
-            }
-        }).map_err(|_| "MCP_STDIN_THREAD_START")?;
+            })
+            .map_err(|_| "MCP_STDIN_THREAD_START")?;
         let (reader_tx, reader) = mpsc::sync_channel(32);
         let reader_fault = Arc::new(Mutex::new(None));
         let on_read_failure = Arc::clone(&reader_fault);
         let read_owner = process.hold_io_owner()?;
-        thread::Builder::new().name("mcp-stdout".into()).spawn(move || {
-            let _owner = read_owner;
-            let mut reader = BufReader::new(stdout);
-            loop {
-                let mut bytes = Vec::new();
-                let (value, fatal) = match reader
-                    .by_ref()
-                    .take(LIMIT + 1)
-                    .read_until(b'\n', &mut bytes)
-                {
-                    Ok(0) => break,
-                    Ok(_) if bytes.len() as u64 <= LIMIT => (
-                        serde_json::from_slice(&bytes).map_err(|_| "MCP_INVALID_FRAME".into()),
-                        false,
-                    ),
-                    Ok(_) => (Err("MCP_FRAME_LIMIT".into()), true),
-                    Err(_) => (Err("MCP_FRAME_READ".into()), true),
-                };
-                if send_bounded(&reader_tx, value, Duration::from_secs(2)).is_err() {
-                    *on_read_failure.lock().unwrap_or_else(|p| p.into_inner()) =
-                        Some("MCP_OUTPUT_BACKPRESSURE".into());
-                    break;
+        thread::Builder::new()
+            .name("mcp-stdout".into())
+            .spawn(move || {
+                let _owner = read_owner;
+                let mut reader = BufReader::new(stdout);
+                loop {
+                    let mut bytes = Vec::new();
+                    let (value, fatal) = match reader
+                        .by_ref()
+                        .take(LIMIT + 1)
+                        .read_until(b'\n', &mut bytes)
+                    {
+                        Ok(0) => break,
+                        Ok(_) if bytes.len() as u64 <= LIMIT => (
+                            serde_json::from_slice(&bytes).map_err(|_| "MCP_INVALID_FRAME".into()),
+                            false,
+                        ),
+                        Ok(_) => (Err("MCP_FRAME_LIMIT".into()), true),
+                        Err(_) => (Err("MCP_FRAME_READ".into()), true),
+                    };
+                    if send_bounded(&reader_tx, value, Duration::from_secs(2)).is_err() {
+                        *on_read_failure.lock().unwrap_or_else(|p| p.into_inner()) =
+                            Some("MCP_OUTPUT_BACKPRESSURE".into());
+                        break;
+                    }
+                    if fatal {
+                        break;
+                    }
                 }
-                if fatal {
-                    break;
-                }
-            }
-        }).map_err(|_| "MCP_STDOUT_THREAD_START")?;
+            })
+            .map_err(|_| "MCP_STDOUT_THREAD_START")?;
         Ok(Self {
             process,
             writer,
@@ -528,7 +552,10 @@ pub fn execute(root: &Path, storage: &Path, request: Value) -> Result<Value, Str
     let config = resolved_config(&root, storage, &request)?;
     let prepared = super::mcp_review::prepare(&root, storage, &request, config)?;
     super::mcp_review::authorize(&prepared, &request)?;
-    let credentials = crate::framework::ai::mcp_credential_snapshot(storage, prepared.config["env_refs"].as_object())?;
+    let credentials = crate::framework::ai::mcp_credential_snapshot(
+        storage,
+        prepared.config["env_refs"].as_object(),
+    )?;
     let mut session = Session::start_with_credentials(
         &root,
         &prepared.config,
@@ -574,7 +601,8 @@ mod tests {
     // Exercise the same read-only review and exact grant round trip as the UI.
     fn execute_reviewed(root: &Path, storage: &Path, mut request: Value) -> Result<Value, String> {
         if request["approved"] == true
-            && matches!(request["action"].as_str(), Some("mcp_tools" | "mcp_call")) {
+            && matches!(request["action"].as_str(), Some("mcp_tools" | "mcp_call"))
+        {
             let mut review_request = request.clone();
             review_request["review_action"] = request["action"].clone();
             review_request["action"] = json!("mcp_review");
@@ -586,23 +614,38 @@ mod tests {
         super::execute(root, storage, request)
     }
 
-
     #[test]
     fn changing_saved_config_after_review_is_rejected_before_start() {
-        let root = std::env::temp_dir().join(format!("browseros-mcp-review-root-{}", uuid::Uuid::new_v4()));
-        let storage = std::env::temp_dir().join(format!("browseros-mcp-review-store-{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(&root).unwrap(); fs::create_dir_all(&storage).unwrap();
+        let root = std::env::temp_dir().join(format!(
+            "browseros-mcp-review-root-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let storage = std::env::temp_dir().join(format!(
+            "browseros-mcp-review-store-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&storage).unwrap();
         let file = storage.join("coding-mcp.json");
         let server = json!({"command":std::env::current_exe().unwrap(),"args":["old"]});
         fs::write(&file, json!({"servers":{"fixture":server}}).to_string()).unwrap();
         let id = discover(&root, &storage)["servers"][0]["id"].clone();
-        let review = super::execute(&root, &storage, json!({"action":"mcp_review","review_action":"mcp_tools","server_id":id})).unwrap();
+        let review = super::execute(
+            &root,
+            &storage,
+            json!({"action":"mcp_review","review_action":"mcp_tools","server_id":id}),
+        )
+        .unwrap();
         let request = json!({"action":"mcp_tools","server_id":id,"approved":true,
             "review_revision":review["revision"],"approved_credential_refs":review["credential_refs"],
             "approved_environment_names":review["environment_names"]});
         fs::write(&file, json!({"servers":{"fixture":{"command":std::env::current_exe().unwrap(),"args":["new"]}}}).to_string()).unwrap();
-        assert_eq!(super::execute(&root, &storage, request).unwrap_err(), "MCP_REVIEW_CHANGED");
-        fs::remove_dir_all(root).unwrap(); fs::remove_dir_all(storage).unwrap();
+        assert_eq!(
+            super::execute(&root, &storage, request).unwrap_err(),
+            "MCP_REVIEW_CHANGED"
+        );
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(storage).unwrap();
     }
     fn root() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -673,8 +716,10 @@ mod tests {
         for program in ["rundll32.exe", "regsvr32.exe", "mshta.exe", "wscript.exe"] {
             let path = Path::new(r"C:\Windows\System32").join(program);
             let result = Session::start(&root, &json!({"command":path}), 1);
-            assert!(matches!(result, Err(ref message) if message == "MCP_SHELL_COMMAND_REJECTED"),
-                "{program} must not create an AppContainer process");
+            assert!(
+                matches!(result, Err(ref message) if message == "MCP_SHELL_COMMAND_REJECTED"),
+                "{program} must not create an AppContainer process"
+            );
         }
     }
 

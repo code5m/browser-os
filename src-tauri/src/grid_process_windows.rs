@@ -12,10 +12,10 @@
 //!   主进程 app.emit（tab-navigated / new-tab-request / open-terminal 等）。
 //! - socket 路径带主进程 pid，避免跨次运行撞名。
 
-use std::collections::{HashMap, VecDeque};
-use std::io::BufReader;
 use crate::windows_pipe::{WindowsPipeListener as UnixListener, WindowsPipeStream as UnixStream};
 use crate::windows_process::JobObject;
+use std::collections::{HashMap, VecDeque};
+use std::io::BufReader;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -80,17 +80,23 @@ impl ChildComms {
         self.closing.store(true, Ordering::SeqCst);
         self.connected.store(false, Ordering::SeqCst);
         if let Ok(listener) = self.listener.try_lock() {
-            if let Some(listener) = listener.as_ref() { listener.cancel(); }
+            if let Some(listener) = listener.as_ref() {
+                listener.cancel();
+            }
         }
         if let Ok(control) = self.cancellation.try_lock() {
-            if let Some(control) = control.as_ref() { let _ = control.cancel_io(); }
+            if let Some(control) = control.as_ref() {
+                let _ = control.cancel_io();
+            }
         }
         if let Ok(mut pending) = self.pending.try_lock() {
             for (_, tx) in pending.drain() {
                 let _ = tx.send(Err("GRID_SHUTDOWN_IN_PROGRESS".into()));
             }
         }
-        if let Ok(mut writer) = self.writer.try_lock() { writer.take(); }
+        if let Ok(mut writer) = self.writer.try_lock() {
+            writer.take();
+        }
     }
 
     fn fail_pending(&self, reason: &str) {
@@ -208,12 +214,11 @@ pub struct GridProcessManager {
 
 impl GridProcessManager {
     fn ensure_cleanup(&self) -> Result<(), String> {
-        self.lifecycle.ensure_cleanup(Arc::clone(&self.children), Arc::clone(&self.listeners))
+        self.lifecycle
+            .ensure_cleanup(Arc::clone(&self.children), Arc::clone(&self.listeners))
     }
 
-    fn spawn_worker(
-        &self, name: &str, work: impl FnOnce() + Send + 'static,
-    ) -> Result<(), String> {
+    fn spawn_worker(&self, name: &str, work: impl FnOnce() + Send + 'static) -> Result<(), String> {
         self.ensure_cleanup()?;
         self.lifecycle.spawn(name, work)
     }
@@ -225,7 +230,9 @@ impl GridProcessManager {
 
     pub fn shutdown_until(&self, deadline: std::time::Instant) -> Result<(), String> {
         self.lifecycle.shutdown_until(
-            Arc::clone(&self.children), Arc::clone(&self.listeners), deadline,
+            Arc::clone(&self.children),
+            Arc::clone(&self.listeners),
+            deadline,
         )
     }
 
@@ -243,8 +250,12 @@ impl GridProcessManager {
         // a kernel-verified client PID prevent cross-process command forgery.
         static INSTANCE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
         let instance = INSTANCE.get_or_init(|| uuid::Uuid::new_v4().simple().to_string());
-        PathBuf::from(format!(r"\\.\pipe\BrowserOS-grid-{}-{}-{}",
-            std::process::id(), instance, index))
+        PathBuf::from(format!(
+            r"\\.\pipe\BrowserOS-grid-{}-{}-{}",
+            std::process::id(),
+            instance,
+            index
+        ))
     }
 
     /// 确保该 index 的 UDS listener 已绑定且 accept 循环线程在跑（幂等）。
@@ -258,8 +269,10 @@ impl GridProcessManager {
             return Ok(c.clone());
         }
         let path = Self::socket_path(index);
-        let listener = Arc::new(UnixListener::bind(&path)
-            .map_err(|e| format!("绑定 UDS {} 失败: {e}", path.display()))?);
+        let listener = Arc::new(
+            UnixListener::bind(&path)
+                .map_err(|e| format!("绑定 UDS {} 失败: {e}", path.display()))?,
+        );
         let comms = Arc::new(ChildComms::new());
         *comms.listener.lock().unwrap() = Some(Arc::clone(&listener));
         listeners.insert(index, comms.clone());
@@ -270,10 +283,16 @@ impl GridProcessManager {
         let app = self.app();
         let accept_lifecycle = Arc::clone(&self.lifecycle);
         let result = self.spawn_worker("grid-accept", move || loop {
-            if accept_lifecycle.is_stopping() { listener.cancel(); break; }
+            if accept_lifecycle.is_stopping() {
+                listener.cancel();
+                break;
+            }
             match listener.accept() {
                 Ok((stream, _)) => {
-                    if accept_lifecycle.is_stopping() { let _ = stream.cancel_io(); break; }
+                    if accept_lifecycle.is_stopping() {
+                        let _ = stream.cancel_io();
+                        break;
+                    }
                     // Reject any same-user process other than the child we
                     // actually spawned; named-pipe ACL alone is not identity.
                     let peer = stream.peer_pid().ok();
@@ -286,10 +305,15 @@ impl GridProcessManager {
                         loop {
                             let expected = app.as_ref().and_then(|app| {
                                 app.state::<crate::bridge::AppState>()
-                                    .grid_manager.pid_of(index)
+                                    .grid_manager
+                                    .pid_of(index)
                             });
-                            if accept_lifecycle.is_stopping() { break false; }
-                            if expected == Some(pid) { break true; }
+                            if accept_lifecycle.is_stopping() {
+                                break false;
+                            }
+                            if expected == Some(pid) {
+                                break true;
+                            }
                             if start.elapsed() >= std::time::Duration::from_millis(500) {
                                 break false;
                             }
@@ -320,7 +344,10 @@ impl GridProcessManager {
                         let mut r = BufReader::new(reader);
                         loop {
                             if reader_lifecycle.is_stopping()
-                                || !comms_reader.is_current(generation) { break; }
+                                || !comms_reader.is_current(generation)
+                            {
+                                break;
+                            }
                             let frame = crate::grid_ipc::read_wire(&mut r);
                             // 旧连接仍有缓冲帧时，不允许覆盖新连接的响应/焦点状态。
                             if !comms_reader.is_current(generation) {
@@ -400,9 +427,13 @@ impl GridProcessManager {
                     }
                 }
                 Err(e) => {
-                    if accept_lifecycle.is_stopping() { break; }
+                    if accept_lifecycle.is_stopping() {
+                        break;
+                    }
                     eprintln!("[grid-manager] grid-child-{} accept 失败: {e}", index);
-                    if accept_lifecycle.wait_or_stop(std::time::Duration::from_millis(200)) { break; }
+                    if accept_lifecycle.wait_or_stop(std::time::Duration::from_millis(200)) {
+                        break;
+                    }
                 }
             }
         });
@@ -427,7 +458,11 @@ impl GridProcessManager {
         self.spawn_with_state_locked(index, saved)
     }
 
-    fn spawn_with_state_locked(&self, index: u32, saved: Option<SavedChildState>) -> Result<(), String> {
+    fn spawn_with_state_locked(
+        &self,
+        index: u32,
+        saved: Option<SavedChildState>,
+    ) -> Result<(), String> {
         let _operation = self.lifecycle.enter()?;
         self.ensure_cleanup()?;
         if self.lifecycle.is_retiring(index) {
@@ -462,13 +497,15 @@ impl GridProcessManager {
         // suspended Child and its partially assigned Job for actual cleanup.
         let job = JobObject::create_for_spawn()?;
         self.lifecycle.check()?;
-        let child = command.spawn()
+        let child = command
+            .spawn()
             .map_err(|e| format!("spawn 宫格子进程 grid-{index} 失败: {e}"))?;
         let pid = child.id();
         let assigned = job.assign_suspended_pid(pid);
         let saved = saved.unwrap_or_default();
         let owner = GridChildHandle {
-            child, job,
+            child,
+            job,
             last_url: saved.last_url,
             last_rect: saved.last_rect,
             hidden: saved.hidden,
@@ -506,8 +543,13 @@ impl GridProcessManager {
         if self.lifecycle.is_retiring(index) {
             return Err(format!("GRID_CHILD_CLEANUP_PENDING:{index}"));
         }
-        let saved = self.hibernated.lock().unwrap().remove(&index)
-            .or_else(|| self.pending_restarts.lock().unwrap().remove(&index).map(|(_, saved)| saved));
+        let saved = self.hibernated.lock().unwrap().remove(&index).or_else(|| {
+            self.pending_restarts
+                .lock()
+                .unwrap()
+                .remove(&index)
+                .map(|(_, saved)| saved)
+        });
         if let Err(error) = self.spawn_with_state_locked(index, saved.clone()) {
             if let Some(saved) = saved {
                 self.hibernated.lock().unwrap().insert(index, saved);
@@ -526,7 +568,9 @@ impl GridProcessManager {
     /// Preserve child metadata while releasing its process. Used to roll back
     /// a failed resume without losing the URL/layout that existed pre-resume.
     pub fn hibernate_child(&self, index: u32) -> bool {
-        let Ok(_operation) = self.lifecycle.enter() else { return false; };
+        let Ok(_operation) = self.lifecycle.enter() else {
+            return false;
+        };
         // Keep get_or_spawn from reporting an existing child while this
         // operation is closing and removing it. Pipe write timeouts terminate
         // the Job directly and do not re-enter the lifecycle lock.
@@ -571,7 +615,10 @@ impl GridProcessManager {
             if start.elapsed().as_millis() as u64 > timeout_ms {
                 return Err(format!("等待 grid-child-{index} UDS 连接超时"));
             }
-            if self.lifecycle.wait_or_stop(std::time::Duration::from_millis(50)) {
+            if self
+                .lifecycle
+                .wait_or_stop(std::time::Duration::from_millis(50))
+            {
                 return Err("GRID_SHUTDOWN_IN_PROGRESS".into());
             }
         }
@@ -593,14 +640,16 @@ impl GridProcessManager {
                     index, first
                 );
                 let comms = self.wait_connected(index, 8000)?;
-                self.request_once_with(index, comms, &cmd, timeout_ms).map(|_| ())
+                self.request_once_with(index, comms, &cmd, timeout_ms)
+                    .map(|_| ())
             }
         }
     }
 
     fn request_once(&self, index: u32, cmd: &GridCmd, timeout_ms: u64) -> Result<(), String> {
         let comms = self.wait_connected(index, 15000)?;
-        self.request_once_with(index, comms, cmd, timeout_ms).map(|_| ())
+        self.request_once_with(index, comms, cmd, timeout_ms)
+            .map(|_| ())
     }
 
     /// Fail-closed native probe of the actual Grid page. Stored last_url is
@@ -681,8 +730,7 @@ impl GridProcessManager {
             }
             return Err(format!("写 NamedPipe 失败: {e}"));
         }
-        let deadline = std::time::Instant::now()
-            + std::time::Duration::from_millis(timeout_ms);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
         loop {
             if let Err(error) = self.lifecycle.check() {
                 comms.pending.lock().unwrap().remove(&seq);
@@ -706,13 +754,17 @@ impl GridProcessManager {
 
     /// 发后即忘（高频定位/显隐），错误只记日志。
     pub fn send(&self, index: u32, cmd: GridCmd) {
-        let Ok(_operation) = self.lifecycle.enter() else { return; };
+        let Ok(_operation) = self.lifecycle.enter() else {
+            return;
+        };
         let comms = match self.listeners.lock().unwrap().get(&index).cloned() {
             Some(c) => c,
             None => return,
         };
         let mut guard = comms.writer.lock().unwrap();
-        if self.lifecycle.is_stopping() { return; }
+        if self.lifecycle.is_stopping() {
+            return;
+        }
         let timed_out = if let Some(w) = guard.as_mut() {
             let seq = comms.seq.fetch_add(1, Ordering::SeqCst);
             match crate::grid_ipc::write_wire(w, &Wire::Request { seq, cmd }) {
@@ -722,7 +774,9 @@ impl GridProcessManager {
                     error.kind() == std::io::ErrorKind::TimedOut
                 }
             }
-        } else { false };
+        } else {
+            false
+        };
         drop(guard);
         if timed_out {
             self.terminate_child_job(index);
@@ -774,9 +828,13 @@ impl GridProcessManager {
         idle_for: std::time::Duration,
         max_children: usize,
     ) -> Vec<u32> {
-        let Ok(_operation) = self.lifecycle.enter() else { return Vec::new(); };
+        let Ok(_operation) = self.lifecycle.enter() else {
+            return Vec::new();
+        };
         let _lifecycle = self.lifecycle_lock.lock().unwrap();
-        if self.lifecycle.is_stopping() { return Vec::new(); }
+        if self.lifecycle.is_stopping() {
+            return Vec::new();
+        }
         if max_children == 0 {
             return Vec::new();
         }
@@ -944,8 +1002,12 @@ impl GridProcessManager {
     }
 
     fn request_visibility(&self, mode: VisibilityMode, delay: std::time::Duration) {
-        if self.lifecycle.is_stopping() { return; }
-        if self.visibility.request(mode, delay) { self.start_visibility_worker(); }
+        if self.lifecycle.is_stopping() {
+            return;
+        }
+        if self.visibility.request(mode, delay) {
+            self.start_visibility_worker();
+        }
     }
 
     fn retry_visibility_worker(&self) {
@@ -967,14 +1029,19 @@ impl GridProcessManager {
                     {
                         // Relocation also sends UpdateRect (which shows the
                         // native window), so it shares this publication order.
-                        let _dispatch = manager.visibility_dispatch.lock().unwrap_or_else(|p| p.into_inner());
+                        let _dispatch = manager
+                            .visibility_dispatch
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner());
                         match intent.mode {
                             VisibilityMode::Show => manager.apply_show_for_focus(),
                             VisibilityMode::Blur => manager.apply_hide_for_blur_if_no_child_focus(),
                             VisibilityMode::Minimized => manager.apply_hide_for_blur(),
                         }
                     }
-                    if !manager.visibility.finish(intent.revision) { break; }
+                    if !manager.visibility.finish(intent.revision) {
+                        break;
+                    }
                 }
             }));
             if let Err(panic) = outcome {
@@ -992,7 +1059,9 @@ impl GridProcessManager {
     }
 
     pub fn request_reposition_async(&self) {
-        if self.lifecycle.is_stopping() { return; }
+        if self.lifecycle.is_stopping() {
+            return;
+        }
         self.reposition_pending.fetch_add(1, Ordering::AcqRel);
         if self.reposition_running.swap(true, Ordering::AcqRel) {
             return;
@@ -1049,7 +1118,10 @@ impl GridProcessManager {
     /// Worker thread only: recompute latest CSS→screen rectangles and emit UDS
     /// writes in sequence. Visibility checks remain the source of truth.
     pub fn reposition_visible(&self) {
-        let _dispatch = self.visibility_dispatch.lock().unwrap_or_else(|p| p.into_inner());
+        let _dispatch = self
+            .visibility_dispatch
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         let items: Vec<(u32, (f64, f64, f64, f64))> = self
             .children
             .lock()
@@ -1373,7 +1445,10 @@ impl GridProcessManager {
         let removed = self.children.lock().unwrap().remove(&index);
         if let Some(h) = removed {
             self.lifecycle.retire(index, h);
-            eprintln!("[grid-manager] retirement requested for grid-child-{}", index);
+            eprintln!(
+                "[grid-manager] retirement requested for grid-child-{}",
+                index
+            );
             true
         } else {
             false
@@ -1381,7 +1456,9 @@ impl GridProcessManager {
     }
 
     pub fn kill_child(&self, index: u32) -> bool {
-        let Ok(_operation) = self.lifecycle.enter() else { return false; };
+        let Ok(_operation) = self.lifecycle.enter() else {
+            return false;
+        };
         let _lifecycle = self.lifecycle_lock.lock().unwrap();
         self.kill_child_locked(index)
     }
@@ -1393,7 +1470,9 @@ impl GridProcessManager {
         let _lifecycle = self.lifecycle_lock.lock().unwrap();
         self.lifecycle.check()?;
         self.kill_child_locked(index);
-        self.lifecycle.wait_retired_until(std::time::Instant::now() + std::time::Duration::from_millis(750))?;
+        self.lifecycle.wait_retired_until(
+            std::time::Instant::now() + std::time::Duration::from_millis(750),
+        )?;
         self.spawn_with_state_locked(index, None)?;
         eprintln!("[grid-manager] restarted grid-child-{}", index);
         Ok(())
@@ -1459,7 +1538,9 @@ impl GridProcessManager {
             self.hibernated.lock().unwrap().clear();
             self.pending_restarts.lock().unwrap().clear();
             let mut children = self.children.lock().unwrap();
-            for (index, child) in children.drain() { self.lifecycle.retire(index, child); }
+            for (index, child) in children.drain() {
+                self.lifecycle.retire(index, child);
+            }
         }
         self.lifecycle.wait_retired_until(deadline)
     }
@@ -1474,19 +1555,31 @@ struct GridRetirement {
 }
 impl GridRetirement {
     fn new(index: u32, owner: GridChildHandle) -> Self {
-        Self { index, owner, root_reaped: false }
+        Self {
+            index,
+            owner,
+            root_reaped: false,
+        }
     }
-    fn index(&self) -> u32 { self.index }
+    fn index(&self) -> u32 {
+        self.index
+    }
     fn poll(&mut self) -> Result<bool, String> {
         let job_empty = self.owner.job.is_empty()?;
-        let termination = if job_empty { Ok(()) } else { self.owner.job.terminate() };
+        let termination = if job_empty {
+            Ok(())
+        } else {
+            self.owner.job.terminate()
+        };
         if !self.root_reaped {
             match self.owner.child.try_wait() {
                 Ok(Some(_)) => self.root_reaped = true,
                 Ok(None) => {
                     // Also covers an assignment error that left the original
                     // process suspended but outside the otherwise empty Job.
-                    self.owner.child.kill()
+                    self.owner
+                        .child
+                        .kill()
                         .map_err(|error| format!("GRID_CHILD_TERMINATE_FAILED:{error}"))?;
                 }
                 Err(error) => return Err(format!("GRID_CHILD_WAIT_FAILED:{error}")),
@@ -1518,14 +1611,20 @@ mod windows_grid_tests {
     #[test]
     fn pipe_name_is_private_unique_and_stable_per_index() {
         let first = GridProcessManager::socket_path(0);
-        assert!(first.to_string_lossy().starts_with(r"\\.\pipe\BrowserOS-grid-"));
+        assert!(first
+            .to_string_lossy()
+            .starts_with(r"\\.\pipe\BrowserOS-grid-"));
         assert_eq!(first, GridProcessManager::socket_path(0));
         assert_ne!(first, GridProcessManager::socket_path(1));
     }
     #[test]
     fn grid_hibernation_requires_a_live_blank_page_proof() {
-        assert!(grid_hibernation_probe_safe(r#"{"safe":true,"url":"about:blank"}"#));
-        assert!(!grid_hibernation_probe_safe(r#"{"safe":true,"url":"https://bilibili.com"}"#));
+        assert!(grid_hibernation_probe_safe(
+            r#"{"safe":true,"url":"about:blank"}"#
+        ));
+        assert!(!grid_hibernation_probe_safe(
+            r#"{"safe":true,"url":"https://bilibili.com"}"#
+        ));
         assert!(!grid_hibernation_probe_safe("invalid json"));
     }
     #[test]
@@ -1537,7 +1636,10 @@ mod windows_grid_tests {
         assert!(result.is_ok(), "{result:?}");
         assert!(started.elapsed() < std::time::Duration::from_secs(2));
         drop(ordinary_close);
-        assert!(manager.get_or_spawn(0).unwrap_err().contains("GRID_SHUTDOWN_IN_PROGRESS"));
+        assert!(manager
+            .get_or_spawn(0)
+            .unwrap_err()
+            .contains("GRID_SHUTDOWN_IN_PROGRESS"));
     }
 
     #[test]
@@ -1545,27 +1647,36 @@ mod windows_grid_tests {
         let manager = GridProcessManager::default();
         manager.shutdown_all().unwrap();
         assert!(manager.lifecycle.enter().is_ok());
-        manager.shutdown_until(std::time::Instant::now() + std::time::Duration::from_secs(5)).unwrap();
+        manager
+            .shutdown_until(std::time::Instant::now() + std::time::Duration::from_secs(5))
+            .unwrap();
     }
 
     #[test]
     fn grid_retirement_waits_for_job_descendants_after_root_exit() {
         use std::os::windows::process::CommandExt;
         use std::time::{Duration, Instant};
-        let marker = std::env::temp_dir().join(format!("browseros-grid-job-{}.pid", uuid::Uuid::new_v4()));
+        let marker =
+            std::env::temp_dir().join(format!("browseros-grid-job-{}.pid", uuid::Uuid::new_v4()));
         let quoted = marker.to_string_lossy().replace('\'', "''");
         let script = format!(
             "$p=Start-Process -FilePath $env:ComSpec -ArgumentList @('/c','ping -n 60 127.0.0.1 > NUL') -PassThru; Set-Content -LiteralPath '{quoted}' -Value $p.Id"
         );
         let job = JobObject::create_for_spawn().unwrap();
         let mut command = Command::new("powershell.exe");
-        command.args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        command
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
             .creation_flags(crate::windows_process::CREATE_SUSPENDED);
         let child = command.spawn().unwrap();
         let assignment = job.assign_suspended_pid(child.id());
         let owner = GridChildHandle {
-            child, job, last_url: None, last_rect: None,
-            hidden: false, blur_hidden: false, hidden_since: None,
+            child,
+            job,
+            last_url: None,
+            last_rect: None,
+            hidden: false,
+            blur_hidden: false,
+            hidden_since: None,
         };
         let mut retired = GridRetirement::new(0, owner);
         if let Err(error) = assignment {
@@ -1577,20 +1688,37 @@ mod windows_grid_tests {
         }
         let ready_deadline = Instant::now() + Duration::from_secs(30);
         loop {
-            if retired.owner.child.try_wait().unwrap().is_some() { break; }
-            assert!(Instant::now() < ready_deadline, "fixture parent did not exit");
+            if retired.owner.child.try_wait().unwrap().is_some() {
+                break;
+            }
+            assert!(
+                Instant::now() < ready_deadline,
+                "fixture parent did not exit"
+            );
             std::thread::sleep(Duration::from_millis(10));
         }
-        assert!(std::fs::read_to_string(&marker).unwrap().trim().parse::<u32>().is_ok());
-        assert!(!retired.owner.job.is_empty().unwrap(), "descendant must outlive the parent fixture");
+        assert!(std::fs::read_to_string(&marker)
+            .unwrap()
+            .trim()
+            .parse::<u32>()
+            .is_ok());
+        assert!(
+            !retired.owner.job.is_empty().unwrap(),
+            "descendant must outlive the parent fixture"
+        );
         let cleanup_deadline = Instant::now() + Duration::from_secs(8);
         while !retired.poll().unwrap() {
-            assert!(Instant::now() < cleanup_deadline, "native Job cleanup did not finish");
+            assert!(
+                Instant::now() < cleanup_deadline,
+                "native Job cleanup did not finish"
+            );
             std::thread::sleep(Duration::from_millis(10));
         }
-        assert!(retired.owner.job.is_empty().unwrap(), "cleanup requires actual Job accounting");
+        assert!(
+            retired.owner.job.is_empty().unwrap(),
+            "cleanup requires actual Job accounting"
+        );
         assert!(retired.root_reaped);
         let _ = std::fs::remove_file(marker);
     }
-
 }

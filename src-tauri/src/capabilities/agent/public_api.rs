@@ -91,7 +91,15 @@ pub(crate) fn dispatch_coding_request(
     if matches!(action, "sandbox_recovery_status" | "sandbox_recovery_retry") {
         return sandbox_recovery_request(action, request["approved"] == true);
     }
-    if ["lsp_status", "lsp_start", "lsp_request", "lsp_diagnostics", "lsp_close"].contains(&action) {
+    if [
+        "lsp_status",
+        "lsp_start",
+        "lsp_request",
+        "lsp_diagnostics",
+        "lsp_close",
+    ]
+    .contains(&action)
+    {
         return super::coding_lsp::execute(root, request);
     }
     if [
@@ -180,16 +188,26 @@ pub(crate) fn request_native_shutdown() {
 /// must not postpone the Sandbox owner's completion report until time runs out.
 pub(crate) fn shutdown_lsp_until(deadline: std::time::Instant) -> Result<(), String> {
     #[cfg(target_os = "windows")]
-    { super::coding_lsp::shutdown_until(deadline) }
+    {
+        super::coding_lsp::shutdown_until(deadline)
+    }
     #[cfg(not(target_os = "windows"))]
-    { let _ = deadline; Ok(()) }
+    {
+        let _ = deadline;
+        Ok(())
+    }
 }
 
 pub(crate) fn shutdown_sandbox_until(deadline: std::time::Instant) -> Result<(), String> {
     #[cfg(target_os = "windows")]
-    { super::windows_sandbox::shutdown_until(deadline) }
+    {
+        super::windows_sandbox::shutdown_until(deadline)
+    }
     #[cfg(not(target_os = "windows"))]
-    { let _ = deadline; Ok(()) }
+    {
+        let _ = deadline;
+        Ok(())
+    }
 }
 
 /// Uses only the recovery store installed at trusted application startup.
@@ -202,11 +220,11 @@ fn sandbox_recovery_request(action: &str, approved: bool) -> Result<Value, Strin
     {
         let status = if action == "sandbox_recovery_retry" {
             super::windows_sandbox::retry_recovery(
-                std::time::Instant::now() + std::time::Duration::from_secs(10)
+                std::time::Instant::now() + std::time::Duration::from_secs(10),
             )
         } else {
             super::windows_sandbox::recovery_status(
-                std::time::Instant::now() + std::time::Duration::from_millis(750)
+                std::time::Instant::now() + std::time::Duration::from_millis(750),
             )
         }?;
         serde_json::to_value(status).map_err(|_| "SANDBOX_RECOVERY_STATUS_INVALID".into())

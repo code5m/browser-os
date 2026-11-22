@@ -30,7 +30,10 @@ use crate::domain::{
 pub fn atomic_replace_file(source: &Path, target: &Path) -> std::io::Result<()> {
     use std::io::{Error, ErrorKind};
     if source.parent() != target.parent() {
-        return Err(Error::new(ErrorKind::InvalidInput, "ATOMIC_REPLACE_REQUIRES_SAME_DIRECTORY"));
+        return Err(Error::new(
+            ErrorKind::InvalidInput,
+            "ATOMIC_REPLACE_REQUIRES_SAME_DIRECTORY",
+        ));
     }
     #[cfg(windows)]
     {
@@ -38,8 +41,16 @@ pub fn atomic_replace_file(source: &Path, target: &Path) -> std::io::Result<()> 
         use windows_sys::Win32::Storage::FileSystem::MoveFileExW;
         const MOVEFILE_REPLACE_EXISTING: u32 = 0x0000_0001;
         const MOVEFILE_WRITE_THROUGH: u32 = 0x0000_0008;
-        let from: Vec<u16> = source.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
-        let to: Vec<u16> = target.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+        let from: Vec<u16> = source
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let to: Vec<u16> = target
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
         // MoveFileExW(REPLACE_EXISTING) can sporadically fail with ERROR_ACCESS_DENIED (5)
         // on Windows when another handle briefly holds the destination (e.g. an antivirus
         // or indexer scanning the freshly written file). Retry a bounded number of times
@@ -49,7 +60,11 @@ pub fn atomic_replace_file(source: &Path, target: &Path) -> std::io::Result<()> 
         let mut last_error = Error::last_os_error();
         for attempt in 0..8u32 {
             if unsafe {
-                MoveFileExW(from.as_ptr(), to.as_ptr(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)
+                MoveFileExW(
+                    from.as_ptr(),
+                    to.as_ptr(),
+                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+                )
             } != 0
             {
                 return Ok(());
@@ -94,7 +109,8 @@ pub fn atomic_write(path: &Path, content: &str) -> Result<(), String> {
             use std::os::unix::fs::OpenOptionsExt;
             options.mode(0o600);
         }
-        let mut file = options.open(&tmp)
+        let mut file = options
+            .open(&tmp)
             .map_err(|e| format!("创建临时文件失败: {e}"))?;
         file.write_all(content.as_bytes())
             .map_err(|e| format!("写临时文件失败: {e}"))?;
@@ -104,7 +120,8 @@ pub fn atomic_write(path: &Path, content: &str) -> Result<(), String> {
         atomic_replace_file(&tmp, path).map_err(|e| format!("会话落盘 replace 失败: {e}"))?;
         #[cfg(unix)]
         if let Some(parent) = path.parent() {
-            fs::File::open(parent).and_then(|directory| directory.sync_all())
+            fs::File::open(parent)
+                .and_then(|directory| directory.sync_all())
                 .map_err(|e| format!("会话目录同步失败: {e}"))?;
         }
         Ok(())

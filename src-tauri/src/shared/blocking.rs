@@ -32,7 +32,11 @@ impl BlockingLane {
     pub(crate) fn reserve(&'static self) -> Result<BlockingPermit, String> {
         self.active
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |active| {
-                if active < self.limit { Some(active + 1) } else { None }
+                if active < self.limit {
+                    Some(active + 1)
+                } else {
+                    None
+                }
             })
             .map_err(|_| self.busy_error.to_string())?;
         Ok(BlockingPermit { lane: self })
@@ -86,11 +90,15 @@ mod tests {
         let (release_tx, release_rx) = mpsc::sync_channel(1);
         let waiter = tokio::spawn(async move {
             LANE.run(move || {
-                started_tx.send(()).map_err(|_| "START_SIGNAL_FAILED".to_string())?;
-                release_rx.recv_timeout(Duration::from_secs(5))
+                started_tx
+                    .send(())
+                    .map_err(|_| "START_SIGNAL_FAILED".to_string())?;
+                release_rx
+                    .recv_timeout(Duration::from_secs(5))
                     .map_err(|_| "RELEASE_SIGNAL_FAILED".to_string())?;
                 Ok(())
-            }).await
+            })
+            .await
         });
         started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
         waiter.abort();
@@ -103,7 +111,10 @@ mod tests {
                 drop(permit);
                 break;
             }
-            assert!(Instant::now() < deadline, "native worker retained its permit");
+            assert!(
+                Instant::now() < deadline,
+                "native worker retained its permit"
+            );
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
     }
@@ -111,7 +122,9 @@ mod tests {
     #[tokio::test]
     async fn worker_failure_releases_capacity_and_does_not_become_success() {
         static LANE: BlockingLane = BlockingLane::new(1, "OWNER_BUSY", "OWNER_WORKER_FAILED");
-        let result = LANE.run(|| -> Result<(), String> { panic!("native worker fixture") }).await;
+        let result = LANE
+            .run(|| -> Result<(), String> { panic!("native worker fixture") })
+            .await;
         assert_eq!(result, Err("OWNER_WORKER_FAILED".to_string()));
         assert_eq!(LANE.run(|| Ok(7)).await, Ok(7));
     }

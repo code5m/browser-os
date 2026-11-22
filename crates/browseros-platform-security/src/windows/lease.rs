@@ -47,30 +47,41 @@ unsafe impl Sync for SharedHandle {}
 struct MutexGuard<'a>(&'a NativeHandle);
 impl Drop for MutexGuard<'_> {
     fn drop(&mut self) {
-        unsafe { ReleaseMutex(self.0.0); }
+        unsafe {
+            ReleaseMutex(self.0 .0);
+        }
     }
 }
 
 fn kernel_descriptor(policy: &Policy, access: u32) -> io::Result<Descriptor> {
-    let bytes = size_of::<ACL>() + 2 * offset_of!(ACCESS_ALLOWED_ACE, SidStart)
-        + policy.owner.bytes as usize + policy.system.bytes as usize;
+    let bytes = size_of::<ACL>()
+        + 2 * offset_of!(ACCESS_ALLOWED_ACE, SidStart)
+        + policy.owner.bytes as usize
+        + policy.system.bytes as usize;
     let mut storage = vec![0u32; (bytes + 3) / 4];
     let acl = storage.as_mut_ptr() as *mut ACL;
     if unsafe { InitializeAcl(acl, (storage.len() * 4) as u32, ACL_REVISION) } == 0
-        || unsafe { AddAccessAllowedAceEx(acl, ACL_REVISION, 0, access, policy.owner.as_ptr()) } == 0
+        || unsafe { AddAccessAllowedAceEx(acl, ACL_REVISION, 0, access, policy.owner.as_ptr()) }
+            == 0
     {
         return Err(last_failure("EPOCH_ACL"));
     }
     if !policy.owner_is_system()
-        && unsafe { AddAccessAllowedAceEx(acl, ACL_REVISION, 0, access, policy.system.as_ptr()) } == 0
+        && unsafe { AddAccessAllowedAceEx(acl, ACL_REVISION, 0, access, policy.system.as_ptr()) }
+            == 0
     {
         return Err(last_failure("EPOCH_SYSTEM_ACE"));
     }
-    let mut descriptor = Descriptor { value: unsafe { std::mem::zeroed() }, _acl: storage };
+    let mut descriptor = Descriptor {
+        value: unsafe { std::mem::zeroed() },
+        _acl: storage,
+    };
     if unsafe { InitializeSecurityDescriptor(descriptor.as_ptr(), 1) } == 0
         || unsafe { SetSecurityDescriptorOwner(descriptor.as_ptr(), policy.owner.as_ptr(), 0) } == 0
         || unsafe { SetSecurityDescriptorDacl(descriptor.as_ptr(), 1, acl, 0) } == 0
-        || unsafe { SetSecurityDescriptorControl(descriptor.as_ptr(), SE_DACL_PROTECTED, SE_DACL_PROTECTED) } == 0
+        || unsafe {
+            SetSecurityDescriptorControl(descriptor.as_ptr(), SE_DACL_PROTECTED, SE_DACL_PROTECTED)
+        } == 0
     {
         return Err(last_failure("EPOCH_DESCRIPTOR"));
     }
@@ -84,14 +95,26 @@ fn audit_kernel_object(handle: HANDLE, policy: &Policy, access: u32) -> io::Resu
     let mut acl = ptr::null_mut();
     let mut raw = ptr::null_mut();
     let result = unsafe {
-        GetSecurityInfo(handle, SE_KERNEL_OBJECT, OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
-            &mut owner, ptr::null_mut(), &mut acl, ptr::null_mut(), &mut raw)
+        GetSecurityInfo(
+            handle,
+            SE_KERNEL_OBJECT,
+            OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+            &mut owner,
+            ptr::null_mut(),
+            &mut acl,
+            ptr::null_mut(),
+            &mut raw,
+        )
     };
     let _allocation = NativeAllocation(raw);
-    if result != 0 { return Err(failure("EPOCH_READ_DESCRIPTOR", result)); }
-    if owner.is_null() || unsafe { IsValidSid(owner) } == 0
+    if result != 0 {
+        return Err(failure("EPOCH_READ_DESCRIPTOR", result));
+    }
+    if owner.is_null()
+        || unsafe { IsValidSid(owner) } == 0
         || unsafe { EqualSid(owner, policy.owner.as_ptr()) } == 0
-        || acl.is_null() || unsafe { IsValidAcl(acl) } == 0
+        || acl.is_null()
+        || unsafe { IsValidAcl(acl) } == 0
     {
         return Err(failure("EPOCH_UNTRUSTED_OWNER_OR_DACL", 0));
     }
@@ -106,9 +129,12 @@ fn audit_kernel_object(handle: HANDLE, policy: &Policy, access: u32) -> io::Resu
         if unsafe { GetAce(acl, index, &mut raw_ace) } == 0 {
             return Err(last_failure("EPOCH_READ_ACE"));
         }
-        if raw_ace.is_null() { return Err(failure("EPOCH_NULL_ACE", 0)); }
+        if raw_ace.is_null() {
+            return Err(failure("EPOCH_NULL_ACE", 0));
+        }
         let header = unsafe { &*(raw_ace as *const ACE_HEADER) };
-        if header.AceType != ACCESS_ALLOWED_TYPE || header.AceFlags != 0
+        if header.AceType != ACCESS_ALLOWED_TYPE
+            || header.AceFlags != 0
             || (header.AceSize as usize) < offset_of!(ACCESS_ALLOWED_ACE, SidStart) + 8
         {
             return Err(failure("EPOCH_UNEXPECTED_ACE", 0));
@@ -116,8 +142,10 @@ fn audit_kernel_object(handle: HANDLE, policy: &Policy, access: u32) -> io::Resu
         let ace = unsafe { &*(raw_ace as *const ACCESS_ALLOWED_ACE) };
         let sid = (&ace.SidStart as *const u32) as PSID;
         let sid_bytes = 8 + 4 * unsafe { *((sid as *const u8).add(1)) } as usize;
-        if sid_bytes > 68 || offset_of!(ACCESS_ALLOWED_ACE, SidStart) + sid_bytes != header.AceSize as usize
-            || ace.Mask != access || unsafe { IsValidSid(sid) } == 0
+        if sid_bytes > 68
+            || offset_of!(ACCESS_ALLOWED_ACE, SidStart) + sid_bytes != header.AceSize as usize
+            || ace.Mask != access
+            || unsafe { IsValidSid(sid) } == 0
             || unsafe { GetLengthSid(sid) } as usize != sid_bytes
         {
             return Err(failure("EPOCH_UNEXPECTED_ACE_ACCESS", 0));
@@ -125,7 +153,8 @@ fn audit_kernel_object(handle: HANDLE, policy: &Policy, access: u32) -> io::Resu
         if unsafe { EqualSid(sid, policy.owner.as_ptr()) } != 0 && !owner_seen {
             owner_seen = true;
         } else if !policy.owner_is_system()
-            && unsafe { EqualSid(sid, policy.system.as_ptr()) } != 0 && !system_seen
+            && unsafe { EqualSid(sid, policy.system.as_ptr()) } != 0
+            && !system_seen
         {
             system_seen = true;
         } else {
@@ -143,10 +172,16 @@ fn volume_namespace(file: &File) -> io::Result<String> {
     // kernel evidence to the OS volume GUID as well as the per-volume file ID.
     let mut buffer = vec![0u16; 32768];
     let used = unsafe {
-        GetFinalPathNameByHandleW(file.as_raw_handle() as _, buffer.as_mut_ptr(),
-            buffer.len() as u32, 1 /* VOLUME_NAME_GUID */)
+        GetFinalPathNameByHandleW(
+            file.as_raw_handle() as _,
+            buffer.as_mut_ptr(),
+            buffer.len() as u32,
+            1, /* VOLUME_NAME_GUID */
+        )
     } as usize;
-    if used == 0 || used >= buffer.len() { return Err(last_failure("EPOCH_VOLUME_NAME")); }
+    if used == 0 || used >= buffer.len() {
+        return Err(last_failure("EPOCH_VOLUME_NAME"));
+    }
     let prefix: Vec<u16> = r"\\?\Volume{".encode_utf16().collect();
     if !buffer[..used].starts_with(&prefix) {
         return Err(failure("EPOCH_VOLUME_NAMESPACE", 0));
@@ -164,21 +199,31 @@ fn volume_namespace(file: &File) -> io::Result<String> {
             return Err(failure("EPOCH_VOLUME_GUID", 0));
         }
     }
-    Ok(String::from_utf16(guid).map_err(|_| failure("EPOCH_VOLUME_GUID", 0))?
+    Ok(String::from_utf16(guid)
+        .map_err(|_| failure("EPOCH_VOLUME_GUID", 0))?
         .to_ascii_lowercase())
 }
 
 fn name(volume: &str, identity: FileIdentity, suffix: &str) -> Vec<u16> {
-    format!(r"Global\BrowserOS.Private.v{EPOCH_VERSION}.{volume}.{:08x}.{:016x}.{suffix}",
-        identity.volume_serial, identity.file_index)
-        .encode_utf16().chain(std::iter::once(0)).collect()
+    format!(
+        r"Global\BrowserOS.Private.v{EPOCH_VERSION}.{volume}.{:08x}.{:016x}.{suffix}",
+        identity.volume_serial, identity.file_index
+    )
+    .encode_utf16()
+    .chain(std::iter::once(0))
+    .collect()
 }
 
 fn remaining(options: &PrivateTreeOptions, started: Instant) -> io::Result<PrivateTreeOptions> {
-    let max_duration = options.max_duration.checked_sub(started.elapsed())
+    let max_duration = options
+        .max_duration
+        .checked_sub(started.elapsed())
         .filter(|duration| !duration.is_zero())
         .ok_or_else(|| failure("EPOCH_BUDGET_EXCEEDED", 0))?;
-    Ok(PrivateTreeOptions { max_duration, ..*options })
+    Ok(PrivateTreeOptions {
+        max_duration,
+        ..*options
+    })
 }
 
 /// Must be retained until every storage consumer in this process has stopped.
@@ -199,7 +244,12 @@ impl PreparedPrivateDirectory {
         // Identity discovery shares DELETE so it cannot conflict with the
         // first participant's MAXIMUM_ALLOWED migration handles. The lasting
         // no-delete pin is acquired only after the cold migration completes.
-        let observed = open_path(path, None, false, READ_CONTROL | FILE_READ_ATTRIBUTES | SYNCHRONIZE)?;
+        let observed = open_path(
+            path,
+            None,
+            false,
+            READ_CONTROL | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+        )?;
         if !private_object(observed.target())?
             || file_identity(observed.target())? != root_report.root_identity
         {
@@ -215,11 +265,19 @@ impl PreparedPrivateDirectory {
             bInheritHandle: 0,
         };
         let mutex = NativeHandle(unsafe {
-            CreateMutexW(&mutex_attributes, 0, name(&volume, identity, "prepare").as_ptr())
+            CreateMutexW(
+                &mutex_attributes,
+                0,
+                name(&volume, identity, "prepare").as_ptr(),
+            )
         });
-        if mutex.0.is_null() { return Err(last_failure("EPOCH_MUTEX_CREATE")); }
+        if mutex.0.is_null() {
+            return Err(last_failure("EPOCH_MUTEX_CREATE"));
+        }
         audit_kernel_object(mutex.0, &policy, MUTEX_ACCESS)?;
-        let wait_ms = remaining(options, started)?.max_duration.as_millis()
+        let wait_ms = remaining(options, started)?
+            .max_duration
+            .as_millis()
             .min((u32::MAX - 1) as u128) as u32;
         match unsafe { WaitForSingleObject(mutex.0, wait_ms) } {
             WAIT_OBJECT_0 | WAIT_ABANDONED => {}
@@ -234,9 +292,16 @@ impl PreparedPrivateDirectory {
             bInheritHandle: 0,
         };
         let ready = NativeHandle(unsafe {
-            CreateEventW(&event_attributes, 1, 0, name(&volume, identity, "ready").as_ptr())
+            CreateEventW(
+                &event_attributes,
+                1,
+                0,
+                name(&volume, identity, "ready").as_ptr(),
+            )
         });
-        if ready.0.is_null() { return Err(last_failure("EPOCH_EVENT_CREATE")); }
+        if ready.0.is_null() {
+            return Err(last_failure("EPOCH_EVENT_CREATE"));
+        }
         audit_kernel_object(ready.0, &policy, EVENT_ACCESS)?;
         let reused = match unsafe { WaitForSingleObject(ready.0, 0) } {
             WAIT_OBJECT_0 => true,
@@ -248,8 +313,14 @@ impl PreparedPrivateDirectory {
         } else {
             ensure_private_directory(path, &remaining(options, started)?)?
         };
-        let pin = open_path(path, None, true, READ_CONTROL | FILE_READ_ATTRIBUTES | SYNCHRONIZE)?;
-        if report.root_identity != identity || file_identity(pin.target())? != identity
+        let pin = open_path(
+            path,
+            None,
+            true,
+            READ_CONTROL | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+        )?;
+        if report.root_identity != identity
+            || file_identity(pin.target())? != identity
             || !descriptor_is_private(pin.target(), &policy, true, true)?
             || !path_matches_handle(path, pin.target())?
         {
@@ -262,14 +333,24 @@ impl PreparedPrivateDirectory {
         report.elapsed_ms = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
         drop(guard);
         Ok(Self {
-            path: path.to_path_buf(), pin, _ready: SharedHandle(ready),
-            identity, report, reused,
+            path: path.to_path_buf(),
+            pin,
+            _ready: SharedHandle(ready),
+            identity,
+            report,
+            reused,
         })
     }
 
-    pub fn path(&self) -> &Path { &self.path }
-    pub fn report(&self) -> PrivateTreeReport { self.report }
-    pub fn reused_preparation(&self) -> bool { self.reused }
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+    pub fn report(&self) -> PrivateTreeReport {
+        self.report
+    }
+    pub fn reused_preparation(&self) -> bool {
+        self.reused
+    }
 
     /// Constant-work, read-only check of the held root, with no cache traversal.
     pub fn check_root(&self) -> io::Result<()> {
@@ -290,9 +371,14 @@ mod tests {
     use super::*;
 
     fn fixture() -> PathBuf {
-        let path = std::env::temp_dir().join(format!("browseros-private-epoch-{}-{}",
+        let path = std::env::temp_dir().join(format!(
+            "browseros-private-epoch-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
         std::fs::create_dir(&path).unwrap();
         path
     }
@@ -301,9 +387,14 @@ mod tests {
     fn consumers_share_preparation_and_cold_restart_reaudits() {
         let path = fixture();
         std::fs::write(path.join("initial"), b"retained").unwrap();
-        let first = PreparedPrivateDirectory::prepare(&path, &PrivateTreeOptions::default()).unwrap();
+        let first =
+            PreparedPrivateDirectory::prepare(&path, &PrivateTreeOptions::default()).unwrap();
         assert!(!first.reused_preparation());
-        let tiny = PrivateTreeOptions { max_objects: 1, max_repairs: 1, ..PrivateTreeOptions::default() };
+        let tiny = PrivateTreeOptions {
+            max_objects: 1,
+            max_repairs: 1,
+            ..PrivateTreeOptions::default()
+        };
         let second = PreparedPrivateDirectory::prepare(&path, &tiny).unwrap();
         assert!(second.reused_preparation());
         assert_eq!(second.report().checked_objects, 1);
@@ -312,7 +403,8 @@ mod tests {
         drop(second);
         // No consumer remains, so native readiness evidence no longer exists.
         assert!(PreparedPrivateDirectory::prepare(&path, &tiny).is_err());
-        let restarted = PreparedPrivateDirectory::prepare(&path, &PrivateTreeOptions::default()).unwrap();
+        let restarted =
+            PreparedPrivateDirectory::prepare(&path, &PrivateTreeOptions::default()).unwrap();
         assert!(!restarted.reused_preparation());
         drop(restarted);
         std::fs::remove_dir_all(path).unwrap();
@@ -321,7 +413,8 @@ mod tests {
     #[test]
     fn active_cache_churn_does_not_enter_a_deep_audit() {
         let path = fixture();
-        let prepared = PreparedPrivateDirectory::prepare(&path, &PrivateTreeOptions::default()).unwrap();
+        let prepared =
+            PreparedPrivateDirectory::prepare(&path, &PrivateTreeOptions::default()).unwrap();
         let child_path = path.clone();
         let writer = std::thread::spawn(move || {
             for index in 0..256 {
@@ -331,9 +424,15 @@ mod tests {
             }
         });
         for _ in 0..16 {
-            let joined = PreparedPrivateDirectory::prepare(&path, &PrivateTreeOptions {
-                max_objects: 1, max_repairs: 1, ..PrivateTreeOptions::default()
-            }).unwrap();
+            let joined = PreparedPrivateDirectory::prepare(
+                &path,
+                &PrivateTreeOptions {
+                    max_objects: 1,
+                    max_repairs: 1,
+                    ..PrivateTreeOptions::default()
+                },
+            )
+            .unwrap();
             assert!(joined.reused_preparation());
             joined.check_root().unwrap();
         }
@@ -350,7 +449,8 @@ mod tests {
         // exact event policy. CreateEvent alone cannot validate this.
         let attributes = SECURITY_ATTRIBUTES {
             nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
-            lpSecurityDescriptor: descriptor.as_ptr(), bInheritHandle: 0,
+            lpSecurityDescriptor: descriptor.as_ptr(),
+            bInheritHandle: 0,
         };
         let event = NativeHandle(unsafe { CreateEventW(&attributes, 1, 1, ptr::null()) });
         assert!(!event.0.is_null());

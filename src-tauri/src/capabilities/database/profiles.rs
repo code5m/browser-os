@@ -21,8 +21,12 @@ pub(crate) struct StoredProfile {
 impl StoredProfile {
     pub fn reference(&self) -> Result<String, String> {
         let legacy = crate::database::credential_key(&self.config.id);
-        if self.credential_ref.is_empty() || self.credential_ref == legacy { return Ok(legacy); }
-        let version = self.credential_ref.strip_prefix(&format!("{legacy}:"))
+        if self.credential_ref.is_empty() || self.credential_ref == legacy {
+            return Ok(legacy);
+        }
+        let version = self
+            .credential_ref
+            .strip_prefix(&format!("{legacy}:"))
             .ok_or("DB_CREDENTIAL_REF_INVALID")?;
         uuid::Uuid::parse_str(version).map_err(|_| "DB_CREDENTIAL_REF_INVALID")?;
         Ok(self.credential_ref.clone())
@@ -61,7 +65,9 @@ pub(crate) fn read_records(path: &Path) -> Result<Vec<StoredProfile>, String> {
     if configs.len() > MAX_COUNT {
         return Err("DB_PROFILE_OVER_LIMIT".into());
     }
-    for profile in &configs { profile.reference()?; }
+    for profile in &configs {
+        profile.reference()?;
+    }
     Ok(configs)
 }
 pub(crate) fn write_records(path: &Path, configs: &[StoredProfile]) -> Result<(), String> {
@@ -93,10 +99,10 @@ pub(crate) fn write_records(path: &Path, configs: &[StoredProfile]) -> Result<()
         let mut f = opts.open(&temp).map_err(|_| "DB_PROFILE_TMP_FAILED")?;
         f.write_all(&bytes).map_err(|_| "DB_PROFILE_WRITE_FAILED")?;
         f.sync_all().map_err(|_| "DB_PROFILE_SYNC_FAILED")?;
-        crate::session::atomic_replace_file(&temp, path)
-            .map_err(|_| "DB_PROFILE_RENAME_FAILED")?;
+        crate::session::atomic_replace_file(&temp, path).map_err(|_| "DB_PROFILE_RENAME_FAILED")?;
         #[cfg(unix)]
-        fs::File::open(dir).and_then(|directory| directory.sync_all())
+        fs::File::open(dir)
+            .and_then(|directory| directory.sync_all())
             .map_err(|_| "DB_PROFILE_SYNC_FAILED")?;
         Ok::<(), String>(())
     })();
@@ -107,16 +113,25 @@ pub(crate) fn write_records(path: &Path, configs: &[StoredProfile]) -> Result<()
 }
 #[cfg(test)]
 pub(crate) fn read_file(path: &Path) -> Result<Vec<DbConnectionConfig>, String> {
-    Ok(read_records(path)?.into_iter().map(|record| record.config).collect())
+    Ok(read_records(path)?
+        .into_iter()
+        .map(|record| record.config)
+        .collect())
 }
 #[cfg(test)]
 pub(crate) fn write_file(path: &Path, configs: &[DbConnectionConfig]) -> Result<(), String> {
     let previous = read_records(path)?;
-    let records = configs.iter().map(|config| StoredProfile {
-        config: config.clone(),
-        credential_ref: previous.iter().find(|p| p.config.id == config.id)
-            .map(|p| p.credential_ref.clone()).unwrap_or_default(),
-    }).collect::<Vec<_>>();
+    let records = configs
+        .iter()
+        .map(|config| StoredProfile {
+            config: config.clone(),
+            credential_ref: previous
+                .iter()
+                .find(|p| p.config.id == config.id)
+                .map(|p| p.credential_ref.clone())
+                .unwrap_or_default(),
+        })
+        .collect::<Vec<_>>();
     write_records(path, &records)
 }
 #[cfg(test)]
@@ -130,7 +145,8 @@ mod tests {
             "production_hint":true,"enabled":true,"created_at":"2026-11-22T00:00:00Z","updated_at":"2026-11-22T00:00:00Z"});
         let mut record: StoredProfile = serde_json::from_value(value).unwrap();
         assert_eq!(record.reference().unwrap(), format!("db:{id}"));
-        let root = std::env::temp_dir().join(format!("browseros-db-version-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("browseros-db-version-{}", uuid::Uuid::new_v4()));
         let path = root.join("profiles.json");
         record.credential_ref = format!("db:{id}:{}", uuid::Uuid::new_v4());
         write_records(&path, &[record.clone()]).unwrap();

@@ -90,6 +90,7 @@ DDD 边界 → Capability → TS Public Contract → Native Contract → Rust Mo
 | `scripts.rs` | CAPABILITY_NATIVE | 脚本领域纯函数（校验/脱敏，无执行） | 不含执行内核 | `useScriptStore` | script | `src-tauri/src/capabilities/script/` | `src-tauri/src/capabilities/script/` | 无（纯） | `domain` | 低 | 高（bridge.rs 多 `crate::scripts::` 调用） |
 | `snippets.rs` | CAPABILITY_NATIVE | 命令片段纯函数（校验） | 不含执行 | `useScriptStore` | script | `src-tauri/src/capabilities/script/` | `src-tauri/src/capabilities/script/` | 无（纯） | `domain`/`scripts` | 低 | 高（bridge.rs 多 `crate::snippets::` 调用） |
 | `workspace.rs` | CAPABILITY_NATIVE | 应用数据目录持久化原语（artifacts/repos/bookmarks/audit/scripts/snippets/tasks JSON + 原子写） | 不含业务能力语义 | `useWorkspaceStore` | workspace | `src-tauri/src/capabilities/workspace/` | `src-tauri/src/capabilities/workspace/` | 文件系统（JSON 持久化） | `domain`；内联 `crate::session::atomic_write` | 中 | 高 |
+| `draft_journal.rs` | CAPABILITY_NATIVE | 私有加密编辑器草稿目录、恢复分支、版本更新、明确丢弃与另存新文件 | 不授予任意源路径权限、不覆写另存目标 | `useFileStore` | workspace | `src-tauri/src/capabilities/workspace/` | 保持 Capability Owner | 私有 journal、OS keyring、native CAS、4 槽后台 DRAFT_IO | `safe_paths`、workspace allowed roots、keyring | 中（版本冲突须保留恢复副本） | 已有 Owner，复用现有安全文件原语 |
 | `fs_cmds.rs` | CAPABILITY_NATIVE(workspace) | 文件系统命令（独立于 bridge IPC 危险区） | 不含全能力文件语义 | `useWorkspaceStore` | workspace | `src-tauri/src/` | `src-tauri/src/capabilities/workspace/` | 文件系统；系统文件管理器（`open::that`） | `security_policy`（as sp）；`crate::bridge::allowed_roots` | 中（引用 bridge hub allowed_roots） | 高（仅 2 命令 reveal_path/move_path） |
 | `tools.rs` | CAPABILITY_NATIVE | 工具清单与打包（内嵌 5 内置 HTML，list/open） | 不含执行能力 | `useToolsStore` | tools | `src-tauri/src/` | `src-tauri/src/capabilities/tools/` | 文件系统（读用户 tools/*.html）、`tool://` 协议、隔离 WebviewWindow | `domain`/`workspace` | 中（2 命令 + tool_html） | 高 |
 
@@ -160,7 +161,9 @@ DDD 边界 → Capability → TS Public Contract → Native Contract → Rust Mo
 > - AppState `resource_buffer`/`resource_capture`：semantic owner = browser（资源命令消费者），physical = bridge.rs AppState；bridge 仅做 close_tab/shutdown 生命周期清理，非第二 owner；字段下沉标记 PHYSICAL_DEBT（待后续能力化）。
 > - 全部 99 个残留 bridge.rs 命令均有 SECOND_TRUTH owner（UNKNOWN_OWNER=0）；re-export shim 均有真实调用点（UNJUSTIFIED_SHIM=0，SHIM_HIDES_LEGACY_ARCHITECTURE=0）。
 
-## 3. 命令级矩阵（144 个 `bridge::` + 2 `fs_cmds::` + 2 `tools::` = 148）
+## 3. 命令级矩阵（历史冻结 148；当前增量以注册表和补录为准）
+
+> 2026-11-22 草稿恢复补录：当前 `main.rs::generate_handler!` 有 208 个唯一命令；新增 `editor_draft_catalog/read/update_recovered/remove/save_as` 已逐项与 Rust 定义、`src/bridge.ts` 和 `permissions/default-commands.toml` 对齐，并补入 `native-commands.yaml`。下方历史注册位置和冻结计数保留为迁移记录，当前机器计数以注册表及 `governance.json` 为准。此次补录不增加 AppState 字段；命令和运行测试仍须由同 SHA 的门禁证明。
 
 > 注册位置：主进程 `main.rs:1402-1553`（`generate_handler!`）；grid 子进程 `main.rs:116-122`（5 命令）。
 > Callers：全部由前端 `bridge.ts`（`invoke`）调用；grid 子进程命令由 `collect.js` 调用。
@@ -186,6 +189,7 @@ DDD 边界 → Capability → TS Public Contract → Native Contract → Rust Mo
 | Capability | Commands | 目标 Module | Resource Owner | Lifecycle | Persistence | 风险 |
 |---|---|---|---|---|---|---|
 | workspace | `browse_workspace` `list_dir` `read_file` `read_image_data_url` `write_file` `get_start_dirs` `reveal_artifact` `open_source` `create_file` `create_dir` `delete_path` `rename_path` `configure_repo` `list_repos` `fs_cmds::reveal_path` `fs_cmds::move_path` `workspace_images_dir`（PHASE A 裁决：owner 和解至 workspace，`allowed_callers=[browser]` 单向只读） | `capabilities/workspace/` | 文件系统；系统文件管理器 | 瞬时/文件 IO | 应用数据 JSON（workspace.rs 原语） | 中 |
+| workspace（加密编辑器恢复） | `editor_draft_save` `editor_draft_list` `editor_draft_clear` `editor_draft_catalog` `editor_draft_read` `editor_draft_update_recovered` `editor_draft_remove` `editor_draft_save_as` | `capabilities/workspace/draft_journal.rs` | 私有加密 journal、OS keyring；Save As 目标由 Workspace allowed roots 授权 | main-only；4 槽 DRAFT_IO；分页目录 16 项；操作按原生对象和密文 revision 校验 | 原生 CAS 更新/删除 journal；fork 保留原副本；Save As 只创建新文件，保留恢复记录 | 中（拒绝越界、旧 revision、覆盖现有另存目标） |
 | resource_collection | `collect_selection` `list_artifacts` `read_artifact` `update_artifact` `delete_artifact` `save_note` `save_image` `list_artifact_images` | `capabilities/resource/`（仅残余采集命令；采集设置/标签页资源命令已于 PHASE A 迁移至 browser） | 文件系统（artifact/images） | 瞬时/采集 | 应用数据 JSON | 中（能力实质解散，孤儿保留：被 `dependencies.yaml`/`profiles.yaml`/`resources.yaml` 引用，不得删除） |
 | bookmark | `add_bookmark` `list_bookmarks` `remove_bookmark` | `capabilities/bookmark/` | 无 | 随 bookmark 生命周期 | 书签 JSON | 低 |
 | git | `git_status` `git_diff` `git_branch_list` `request_git_write` `confirm_git_write` `git_log` `git_commit_diff` `request_sync` `confirm_sync` | `capabilities/git/` | git2 子进程 / OS keyring（token） | 随 git 生命周期 | git repo dir、凭据 keyring | 中（spawn git） |

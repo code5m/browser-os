@@ -91,11 +91,14 @@ fn read_history(path: &str, roots: &[PathBuf], page: u32) -> Result<LocalGitHist
         return Err("GIT_LOCAL_PAGE_LIMIT".into());
     }
     let (repo, root, relative) = authorized_repo(path, roots)?;
-    let branch = repo
-        .head()
-        .ok()
-        .and_then(|h| h.shorthand().map(str::to_owned))
-        .unwrap_or_else(|| "HEAD (detached)".to_string());
+    let branch = match repo.head() {
+        Ok(head) => head
+            .shorthand()
+            .map_err(|_| "GIT_LOCAL_HEAD_INVALID")?
+            .to_owned(),
+        Err(error) if error.code() == git2::ErrorCode::UnbornBranch => "HEAD (detached)".to_owned(),
+        Err(_) => return Err("GIT_LOCAL_HEAD_FAILED".into()),
+    };
     let mut entries = Vec::new();
     let mut has_more = false;
     let mut scan_limited = false;
@@ -132,11 +135,17 @@ fn read_history(path: &str, roots: &[PathBuf], page: u32) -> Result<LocalGitHist
             entries.push(GitLogEntry {
                 oid: commit.id().to_string(),
                 parents: commit.parent_ids().map(|p| p.to_string()).collect(),
-                summary: commit.summary().unwrap_or("").chars().take(1024).collect(),
+                summary: commit
+                    .summary()
+                    .map_err(|_| "GIT_LOCAL_LOG_FAILED")?
+                    .unwrap_or("")
+                    .chars()
+                    .take(1024)
+                    .collect(),
                 author: commit
                     .author()
                     .name()
-                    .unwrap_or("")
+                    .map_err(|_| "GIT_LOCAL_LOG_FAILED")?
                     .chars()
                     .take(128)
                     .collect(),

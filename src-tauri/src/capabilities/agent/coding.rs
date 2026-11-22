@@ -1,13 +1,16 @@
 //! Confined coding workspace and review-before-write agent runtime.
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     fs,
     io::{Read, Write},
     path::{Component, Path, PathBuf},
-    sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex, OnceLock, Weak},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex, OnceLock, Weak,
+    },
 };
 
 const MAX_FILE: usize = 256 * 1024;
@@ -27,19 +30,30 @@ fn run_requests() -> &'static Mutex<HashMap<uuid::Uuid, RunRequestSlot>> {
 }
 fn run_id(value: &str) -> Result<uuid::Uuid, String> {
     let id = uuid::Uuid::parse_str(value).map_err(|_| "AGENT_RUN_ID_INVALID")?;
-    if id.get_version_num() != 4 { return Err("AGENT_RUN_ID_INVALID".into()); }
+    if id.get_version_num() != 4 {
+        return Err("AGENT_RUN_ID_INVALID".into());
+    }
     Ok(id)
 }
 fn prune_run_requests(slots: &mut HashMap<uuid::Uuid, RunRequestSlot>) {
-    slots.retain(|_, slot| slot.registered || slot.created.elapsed() < std::time::Duration::from_secs(60));
+    slots.retain(|_, slot| {
+        slot.registered || slot.created.elapsed() < std::time::Duration::from_secs(60)
+    });
 }
-pub(crate) struct RunRequestGuard { id: uuid::Uuid, signal: Arc<AtomicBool> }
+pub(crate) struct RunRequestGuard {
+    id: uuid::Uuid,
+    signal: Arc<AtomicBool>,
+}
 impl RunRequestGuard {
-    pub(crate) fn cancelled(&self) -> bool { self.signal.load(Ordering::SeqCst) }
+    pub(crate) fn cancelled(&self) -> bool {
+        self.signal.load(Ordering::SeqCst)
+    }
 }
 impl Drop for RunRequestGuard {
     fn drop(&mut self) {
-        if let Ok(mut slots) = run_requests().lock() { slots.remove(&self.id); }
+        if let Ok(mut slots) = run_requests().lock() {
+            slots.remove(&self.id);
+        }
     }
 }
 pub(crate) fn register_run_request(value: &str) -> Result<RunRequestGuard, String> {
@@ -47,13 +61,27 @@ pub(crate) fn register_run_request(value: &str) -> Result<RunRequestGuard, Strin
     let mut slots = run_requests().lock().map_err(|_| "AGENT_BUSY")?;
     prune_run_requests(&mut slots);
     if let Some(slot) = slots.get_mut(&id) {
-        if slot.registered { return Err("AGENT_RUN_ALREADY_REGISTERED".into()); }
+        if slot.registered {
+            return Err("AGENT_RUN_ALREADY_REGISTERED".into());
+        }
         slot.registered = true;
-        return Ok(RunRequestGuard { id, signal: slot.signal.clone() });
+        return Ok(RunRequestGuard {
+            id,
+            signal: slot.signal.clone(),
+        });
     }
-    if slots.len() >= 64 { return Err("AGENT_RUN_CAPACITY".into()); }
+    if slots.len() >= 64 {
+        return Err("AGENT_RUN_CAPACITY".into());
+    }
     let signal = Arc::new(AtomicBool::new(false));
-    slots.insert(id, RunRequestSlot { signal: signal.clone(), registered: true, created: std::time::Instant::now() });
+    slots.insert(
+        id,
+        RunRequestSlot {
+            signal: signal.clone(),
+            registered: true,
+            created: std::time::Instant::now(),
+        },
+    );
     Ok(RunRequestGuard { id, signal })
 }
 pub(crate) fn cancel_run_request(value: &str) -> Result<bool, String> {
@@ -63,9 +91,17 @@ pub(crate) fn cancel_run_request(value: &str) -> Result<bool, String> {
     if let Some(slot) = slots.get(&id) {
         slot.signal.store(true, Ordering::SeqCst);
     } else {
-        if slots.len() >= 64 { return Err("AGENT_RUN_CAPACITY".into()); }
-        slots.insert(id, RunRequestSlot { signal: Arc::new(AtomicBool::new(true)),
-            registered: false, created: std::time::Instant::now() });
+        if slots.len() >= 64 {
+            return Err("AGENT_RUN_CAPACITY".into());
+        }
+        slots.insert(
+            id,
+            RunRequestSlot {
+                signal: Arc::new(AtomicBool::new(true)),
+                registered: false,
+                created: std::time::Instant::now(),
+            },
+        );
     }
     Ok(true)
 }
@@ -74,19 +110,27 @@ fn request_signal(request: &Value) -> Result<Arc<AtomicBool>, String> {
         None | Some("") => Ok(Arc::new(AtomicBool::new(false))), // Rust-internal legacy callers.
         Some(value) => {
             let id = run_id(value)?;
-            run_requests().lock().map_err(|_| "AGENT_BUSY")?.get(&id)
-                .filter(|slot| slot.registered).map(|slot| slot.signal.clone())
+            run_requests()
+                .lock()
+                .map_err(|_| "AGENT_BUSY")?
+                .get(&id)
+                .filter(|slot| slot.registered)
+                .map(|slot| slot.signal.clone())
                 .ok_or_else(|| "AGENT_RUN_NOT_REGISTERED".into())
         }
     }
 }
 
 fn session_lock(root: &Path, id: &str) -> Arc<Mutex<()>> {
-    let mut locks = SESSION_LOCKS.get_or_init(|| Mutex::new(HashMap::new()))
-        .lock().unwrap_or_else(|e| e.into_inner());
+    let mut locks = SESSION_LOCKS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     locks.retain(|_, lock| lock.strong_count() > 0);
     let key = (root.to_path_buf(), id.to_owned());
-    if let Some(lock) = locks.get(&key).and_then(Weak::upgrade) { return lock; }
+    if let Some(lock) = locks.get(&key).and_then(Weak::upgrade) {
+        return lock;
+    }
     let lock = Arc::new(Mutex::new(()));
     locks.insert(key, Arc::downgrade(&lock));
     lock
@@ -124,7 +168,9 @@ impl Drop for RunningGuard {
 }
 pub(crate) fn cancelled(root: &Path, id: &str) -> bool {
     running_map().lock().map_or(true, |running| {
-        running.get(&(root.to_path_buf(), id.to_owned())).is_some_and(|signal| signal.load(Ordering::SeqCst))
+        running
+            .get(&(root.to_path_buf(), id.to_owned()))
+            .is_some_and(|signal| signal.load(Ordering::SeqCst))
     })
 }
 
@@ -137,17 +183,34 @@ struct Change {
     target_proof: Option<ChangeTargetProof>,
 }
 #[derive(Clone, Serialize, Deserialize)]
-struct ChangeTargetProof { ancestor: String, suffix: Vec<String> }
+struct ChangeTargetProof {
+    ancestor: String,
+    suffix: Vec<String>,
+}
 impl ChangeTargetProof {
     fn capture(target: &Path) -> Result<Self, String> {
         let key = apply_target_key(target, "")?;
-        Ok(Self { ancestor: key.ancestor, suffix: key.suffix.iter()
-            .map(|part| part.to_str().map(str::to_owned).ok_or_else(|| "AGENT_PATH_DENIED".to_string()))
-            .collect::<Result<Vec<_>, _>>()? })
+        Ok(Self {
+            ancestor: key.ancestor,
+            suffix: key
+                .suffix
+                .iter()
+                .map(|part| {
+                    part.to_str()
+                        .map(str::to_owned)
+                        .ok_or_else(|| "AGENT_PATH_DENIED".to_string())
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        })
     }
     fn matches(&self, key: &ApplyTargetKey) -> bool {
-        same_apply_target(key, &ApplyTargetKey { ancestor: self.ancestor.clone(),
-            suffix: self.suffix.iter().map(std::ffi::OsString::from).collect() })
+        same_apply_target(
+            key,
+            &ApplyTargetKey {
+                ancestor: self.ancestor.clone(),
+                suffix: self.suffix.iter().map(std::ffi::OsString::from).collect(),
+            },
+        )
     }
 }
 #[derive(Serialize, Deserialize)]
@@ -356,7 +419,7 @@ fn read_file(root: &Path, path: &str) -> Result<Value, String> {
     let root = root.canonicalize().map_err(|_| "AGENT_ROOT_INVALID")?;
     let bytes =
         crate::capabilities::workspace::safe_paths::read_regular(&resolved, &[root], MAX_FILE)
-    .map_err(|_| "AGENT_READ_FAILED")?;
+            .map_err(|_| "AGENT_READ_FAILED")?;
     let content = String::from_utf8(bytes).map_err(|_| "AGENT_TEXT_ONLY")?;
     if secret(&content) {
         return Err("AGENT_SECRET_CONTENT_DENIED".into());
@@ -648,63 +711,64 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     }
     #[cfg(not(target_os = "windows"))]
     {
-    let parent = path.parent().ok_or("AGENT_PATH_DENIED")?;
-    // Walk directory creation explicitly: create_dir_all follows existing symlinks.
-    let mut checked = PathBuf::new();
-    for component in parent.components() {
-        checked.push(component);
-        if !checked.exists() {
-            fs::create_dir(&checked).map_err(|_| "AGENT_WRITE_FAILED")?;
-        }
-        let metadata = fs::symlink_metadata(&checked).map_err(|_| "AGENT_WRITE_FAILED")?;
-        if metadata.file_type().is_symlink() || !metadata.is_dir() {
-            return Err("AGENT_SYMLINK_DENIED".into());
-        }
-    }
-    let temp = parent.join(format!(".browseros-agent-{}", uuid::Uuid::new_v4()));
-    let result: Result<(), String> = (|| {
-        let mut options = fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options.open(&temp).map_err(|_| "AGENT_WRITE_FAILED")?;
-        file.write_all(bytes)
-            .and_then(|_| file.sync_all())
-            .map_err(|_| "AGENT_WRITE_FAILED")?;
-        if let Ok(meta) = fs::symlink_metadata(path) {
-            if !meta.is_file() || meta.file_type().is_symlink() {
-                return Err("AGENT_SYMLINK_DENIED".into());
+        let parent = path.parent().ok_or("AGENT_PATH_DENIED")?;
+        // Walk directory creation explicitly: create_dir_all follows existing symlinks.
+        let mut checked = PathBuf::new();
+        for component in parent.components() {
+            checked.push(component);
+            if !checked.exists() {
+                fs::create_dir(&checked).map_err(|_| "AGENT_WRITE_FAILED")?;
             }
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                fs::set_permissions(
-                    &temp,
-                    fs::Permissions::from_mode(meta.permissions().mode() & 0o777),
-                )
-                .map_err(|_| "AGENT_WRITE_FAILED")?;
-            }
-        }
-        for directory in parent.ancestors() {
-            if directory.as_os_str().is_empty() {
-                continue;
-            }
-            let metadata = fs::symlink_metadata(directory).map_err(|_| "AGENT_WRITE_FAILED")?;
+            let metadata = fs::symlink_metadata(&checked).map_err(|_| "AGENT_WRITE_FAILED")?;
             if metadata.file_type().is_symlink() || !metadata.is_dir() {
                 return Err("AGENT_SYMLINK_DENIED".into());
             }
         }
-        fs::rename(&temp, path).map_err(|_| "AGENT_WRITE_FAILED".to_string())?;
-        fs::File::open(parent).and_then(|directory| directory.sync_all())
-            .map_err(|_| "AGENT_DURABILITY_UNCERTAIN".to_string())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(temp);
-    }
-    result
+        let temp = parent.join(format!(".browseros-agent-{}", uuid::Uuid::new_v4()));
+        let result: Result<(), String> = (|| {
+            let mut options = fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            let mut file = options.open(&temp).map_err(|_| "AGENT_WRITE_FAILED")?;
+            file.write_all(bytes)
+                .and_then(|_| file.sync_all())
+                .map_err(|_| "AGENT_WRITE_FAILED")?;
+            if let Ok(meta) = fs::symlink_metadata(path) {
+                if !meta.is_file() || meta.file_type().is_symlink() {
+                    return Err("AGENT_SYMLINK_DENIED".into());
+                }
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    fs::set_permissions(
+                        &temp,
+                        fs::Permissions::from_mode(meta.permissions().mode() & 0o777),
+                    )
+                    .map_err(|_| "AGENT_WRITE_FAILED")?;
+                }
+            }
+            for directory in parent.ancestors() {
+                if directory.as_os_str().is_empty() {
+                    continue;
+                }
+                let metadata = fs::symlink_metadata(directory).map_err(|_| "AGENT_WRITE_FAILED")?;
+                if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                    return Err("AGENT_SYMLINK_DENIED".into());
+                }
+            }
+            fs::rename(&temp, path).map_err(|_| "AGENT_WRITE_FAILED".to_string())?;
+            fs::File::open(parent)
+                .and_then(|directory| directory.sync_all())
+                .map_err(|_| "AGENT_DURABILITY_UNCERTAIN".to_string())
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(temp);
+        }
+        result
     }
 }
 fn stage(root: &Path, session: &mut Session, request: &Value) -> Result<Value, String> {
@@ -866,14 +930,27 @@ struct ApplyJournal {
 }
 fn apply_journal_path(storage: &Path, id: &str) -> Result<PathBuf, String> {
     session_path(storage, id)?;
-    Ok(storage.join("coding-backups").join(id).join("apply-transaction.json"))
+    Ok(storage
+        .join("coding-backups")
+        .join(id)
+        .join("apply-transaction.json"))
 }
 fn persist_journal(path: &Path, journal: &ApplyJournal) -> Result<(), String> {
-    atomic_write(path, &serde_json::to_vec(journal).map_err(|_| "AGENT_BACKUP_FAILED")?)
+    atomic_write(
+        path,
+        &serde_json::to_vec(journal).map_err(|_| "AGENT_BACKUP_FAILED")?,
+    )
 }
-fn snapshot(root: &Path, target: &Path) -> Result<Option<crate::capabilities::workspace::safe_paths::FileSnapshot>, String> {
-    crate::capabilities::workspace::safe_paths::read_versioned(target, &[root.to_path_buf()], MAX_FILE)
-        .map_err(|_| "AGENT_RECOVERY_CONFLICT".into())
+fn snapshot(
+    root: &Path,
+    target: &Path,
+) -> Result<Option<crate::capabilities::workspace::safe_paths::FileSnapshot>, String> {
+    crate::capabilities::workspace::safe_paths::read_versioned(
+        target,
+        &[root.to_path_buf()],
+        MAX_FILE,
+    )
+    .map_err(|_| "AGENT_RECOVERY_CONFLICT".into())
 }
 fn present_hash(root: &Path, target: &Path) -> Result<Option<String>, String> {
     Ok(snapshot(root, target)?.map(|snapshot| hash(&snapshot.bytes)))
@@ -903,32 +980,49 @@ fn read_recovery_file(path: &Path, limit: usize, error: &str) -> Result<Vec<u8>,
             return Err(error.to_string());
         }
         let mut bytes = Vec::new();
-        file.take(limit as u64 + 1).read_to_end(&mut bytes).map_err(|_| error)?;
-        if bytes.len() > limit { return Err(error.to_string()); }
+        file.take(limit as u64 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| error)?;
+        if bytes.len() > limit {
+            return Err(error.to_string());
+        }
         Ok(bytes)
     }
 }
-fn backup_bytes(storage: &Path, journal: &ApplyJournal, entry: &ApplyBackup) -> Result<Option<Vec<u8>>, String> {
+fn backup_bytes(
+    storage: &Path,
+    journal: &ApplyJournal,
+    entry: &ApplyBackup,
+) -> Result<Option<Vec<u8>>, String> {
     match (&entry.backup, &entry.before_hash) {
         (None, None) if entry.before_identity.is_none() => Ok(None),
         (Some(backup), Some(expected)) if entry.before_identity.is_some() => {
             let directory = apply_journal_path(storage, &journal.session_id)?
-                .parent().ok_or("AGENT_RECOVERY_BACKUP_INVALID")?.to_path_buf();
+                .parent()
+                .ok_or("AGENT_RECOVERY_BACKUP_INVALID")?
+                .to_path_buf();
             // A persisted record does not authorize an arbitrary backup path.
             if backup.parent() != Some(directory.as_path())
-                || backup.file_name().and_then(|name| name.to_str())
+                || backup
+                    .file_name()
+                    .and_then(|name| name.to_str())
                     .is_none_or(|name| uuid::Uuid::parse_str(name).is_err())
             {
                 return Err("AGENT_RECOVERY_BACKUP_INVALID".into());
             }
             let bytes = read_recovery_file(backup, MAX_FILE, "AGENT_RECOVERY_BACKUP_MISSING")?;
-            if hash(&bytes) != *expected { return Err("AGENT_RECOVERY_BACKUP_INVALID".into()); }
+            if hash(&bytes) != *expected {
+                return Err("AGENT_RECOVERY_BACKUP_INVALID".into());
+            }
             Ok(Some(bytes))
         }
         _ => Err("AGENT_RECOVERY_BACKUP_INVALID".into()),
     }
 }
-fn was_restored(entry: &ApplyBackup, current: Option<&crate::capabilities::workspace::safe_paths::FileSnapshot>) -> bool {
+fn was_restored(
+    entry: &ApplyBackup,
+    current: Option<&crate::capabilities::workspace::safe_paths::FileSnapshot>,
+) -> bool {
     match current {
         None => entry.before_hash.is_none(),
         Some(current) => {
@@ -938,11 +1032,19 @@ fn was_restored(entry: &ApplyBackup, current: Option<&crate::capabilities::works
         }
     }
 }
-fn owned_write(entry: &ApplyBackup, current: &crate::capabilities::workspace::safe_paths::FileSnapshot) -> bool {
+fn owned_write(
+    entry: &ApplyBackup,
+    current: &crate::capabilities::workspace::safe_paths::FileSnapshot,
+) -> bool {
     entry.written_identity.as_deref() == Some(current.identity.as_str())
         && hash(&current.bytes) == entry.after_hash
 }
-fn apply_journal_restore(root: &Path, storage: &Path, journal_path: &Path, journal: &mut ApplyJournal) -> Result<(), String> {
+fn apply_journal_restore(
+    root: &Path,
+    storage: &Path,
+    journal_path: &Path,
+    journal: &mut ApplyJournal,
+) -> Result<(), String> {
     let storage_identity = crate::capabilities::workspace::safe_paths::directory_identity(storage)
         .map_err(|_| "AGENT_STORAGE_UNAVAILABLE")?;
     // Preflight every attempted write before changing any file. Recheck inside the native
@@ -950,37 +1052,59 @@ fn apply_journal_restore(root: &Path, storage: &Path, journal_path: &Path, journ
     for entry in &journal.entries {
         // No durable stage receipt means publication was never permitted.
         // Leave an unattempted/external file alone while undoing our own writes.
-        if entry.written_identity.is_none() { continue; }
+        if entry.written_identity.is_none() {
+            continue;
+        }
         let target = resolve(root, &entry.path, true)?;
         apply_target_key(&target, &storage_identity)?;
         let current = snapshot(root, &target)?;
-        if was_restored(entry, current.as_ref()) { continue; }
-        if current.as_ref().is_none_or(|current| !owned_write(entry, current)) {
+        if was_restored(entry, current.as_ref()) {
+            continue;
+        }
+        if current
+            .as_ref()
+            .is_none_or(|current| !owned_write(entry, current))
+        {
             return Err("AGENT_RECOVERY_CONFLICT".into());
         }
         backup_bytes(storage, journal, entry)?;
     }
     for index in (0..journal.entries.len()).rev() {
         let entry = journal.entries[index].clone();
-        if entry.written_identity.is_none() { continue; }
+        if entry.written_identity.is_none() {
+            continue;
+        }
         let target = resolve(root, &entry.path, true)?;
         apply_target_key(&target, &storage_identity)?;
         let current = snapshot(root, &target)?;
-        if was_restored(&entry, current.as_ref()) { continue; }
+        if was_restored(&entry, current.as_ref()) {
+            continue;
+        }
         let current = current.ok_or("AGENT_RECOVERY_CONFLICT")?;
-        if !owned_write(&entry, &current) { return Err("AGENT_RECOVERY_CONFLICT".into()); }
+        if !owned_write(&entry, &current) {
+            return Err("AGENT_RECOVERY_CONFLICT".into());
+        }
         if let Some(bytes) = backup_bytes(storage, journal, &entry)? {
             crate::capabilities::workspace::safe_paths::write_versioned(
-                &target, &[root.to_path_buf()], Some(&current), &bytes, MAX_FILE,
+                &target,
+                &[root.to_path_buf()],
+                Some(&current),
+                &bytes,
+                MAX_FILE,
                 |identity| {
                     journal.entries[index].restored_identity = Some(identity.into());
                     persist_journal(journal_path, journal)
                 },
-            ).map_err(|_| "AGENT_RECOVERY_CONFLICT")?;
+            )
+            .map_err(|_| "AGENT_RECOVERY_CONFLICT")?;
         } else {
             crate::capabilities::workspace::safe_paths::remove_if_unchanged(
-                &target, &[root.to_path_buf()], &current, MAX_FILE,
-            ).map_err(|_| "AGENT_RECOVERY_CONFLICT")?;
+                &target,
+                &[root.to_path_buf()],
+                &current,
+                MAX_FILE,
+            )
+            .map_err(|_| "AGENT_RECOVERY_CONFLICT")?;
         }
     }
     Ok(())
@@ -989,18 +1113,27 @@ fn recover_pending_apply(root: &Path, storage: &Path, session: &mut Session) -> 
     let path = apply_journal_path(storage, &session.session_id)?;
     match fs::symlink_metadata(&path) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Ok(meta) if meta.is_file() && !meta.file_type().is_symlink() && meta.len() <= MAX_SESSION as u64 => {}
+        Ok(meta)
+            if meta.is_file()
+                && !meta.file_type().is_symlink()
+                && meta.len() <= MAX_SESSION as u64 => {}
         _ => return Err("AGENT_RECOVERY_JOURNAL_INVALID".into()),
     }
     let mut journal: ApplyJournal = serde_json::from_slice(&read_recovery_file(
-        &path, MAX_SESSION, "AGENT_RECOVERY_JOURNAL_INVALID",
-    )?).map_err(|_| "AGENT_RECOVERY_JOURNAL_INVALID")?;
+        &path,
+        MAX_SESSION,
+        "AGENT_RECOVERY_JOURNAL_INVALID",
+    )?)
+    .map_err(|_| "AGENT_RECOVERY_JOURNAL_INVALID")?;
     if journal.session_id != session.session_id || journal.entries.len() > 32 {
         return Err("AGENT_RECOVERY_JOURNAL_INVALID".into());
     }
     // Older journals have no object ownership receipts. Preserve them and all
     // proposals; never infer write ownership from an equal after_hash.
-    if journal.operation_id.as_deref().is_none_or(|id| uuid::Uuid::parse_str(id).is_err())
+    if journal
+        .operation_id
+        .as_deref()
+        .is_none_or(|id| uuid::Uuid::parse_str(id).is_err())
         || journal.operation_id != session.apply_operation_id
     {
         session.status = "recovery_conflict".into();
@@ -1024,7 +1157,10 @@ fn recover_pending_apply(root: &Path, storage: &Path, session: &mut Session) -> 
 fn ensure_target_parent(root: &Path, target: &Path) -> Result<(), String> {
     let parent = target.parent().ok_or("AGENT_PATH_DENIED")?;
     if !parent.exists() {
-        match crate::capabilities::workspace::safe_paths::create_directory_all(parent, &[root.to_path_buf()]) {
+        match crate::capabilities::workspace::safe_paths::create_directory_all(
+            parent,
+            &[root.to_path_buf()],
+        ) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(_) => return Err("AGENT_WRITE_FAILED".into()),
@@ -1041,7 +1177,10 @@ struct ApplyTargetKey {
     suffix: Vec<std::ffi::OsString>,
 }
 fn apply_target_key(target: &Path, storage_identity: &str) -> Result<ApplyTargetKey, String> {
-    let mut suffix = vec![target.file_name().ok_or("AGENT_PATH_DENIED")?.to_os_string()];
+    let mut suffix = vec![target
+        .file_name()
+        .ok_or("AGENT_PATH_DENIED")?
+        .to_os_string()];
     let mut cursor = target.parent().ok_or("AGENT_PATH_DENIED")?;
     let mut key = None;
     loop {
@@ -1053,11 +1192,19 @@ fn apply_target_key(target: &Path, storage_identity: &str) -> Result<ApplyTarget
                 if key.is_none() {
                     let mut components = suffix.clone();
                     components.reverse();
-                    key = Some(ApplyTargetKey { ancestor: identity, suffix: components });
+                    key = Some(ApplyTargetKey {
+                        ancestor: identity,
+                        suffix: components,
+                    });
                 }
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound && key.is_none() => {
-                suffix.push(cursor.file_name().ok_or("AGENT_PATH_DENIED")?.to_os_string());
+                suffix.push(
+                    cursor
+                        .file_name()
+                        .ok_or("AGENT_PATH_DENIED")?
+                        .to_os_string(),
+                );
             }
             Err(_) => return Err("AGENT_PATH_UNAVAILABLE".into()),
         }
@@ -1067,12 +1214,17 @@ fn apply_target_key(target: &Path, storage_identity: &str) -> Result<ApplyTarget
     key.ok_or_else(|| "AGENT_PATH_DENIED".into())
 }
 fn same_apply_target(a: &ApplyTargetKey, b: &ApplyTargetKey) -> bool {
-    a.ancestor == b.ancestor && a.suffix.len() == b.suffix.len()
+    a.ancestor == b.ancestor
+        && a.suffix.len() == b.suffix.len()
         && a.suffix.iter().zip(&b.suffix).all(|(left, right)| {
             #[cfg(windows)]
-            { browseros_platform_security::windows::same_path_component(left, right) }
+            {
+                browseros_platform_security::windows::same_path_component(left, right)
+            }
             #[cfg(not(windows))]
-            { left == right }
+            {
+                left == right
+            }
         })
 }
 
@@ -1100,8 +1252,13 @@ fn apply_changes_transactional(
         }
         let target = resolve(root, &change.path, true)?;
         let key = apply_target_key(&target, &storage_identity)?;
-        let proof = change.target_proof.as_ref().ok_or("AGENT_CHANGE_REVIEW_REQUIRED")?;
-        if !proof.matches(&key) { return Err("AGENT_CHANGE_PATH_CHANGED".into()); }
+        let proof = change
+            .target_proof
+            .as_ref()
+            .ok_or("AGENT_CHANGE_REVIEW_REQUIRED")?;
+        if !proof.matches(&key) {
+            return Err("AGENT_CHANGE_PATH_CHANGED".into());
+        }
         if keys.iter().any(|other| same_apply_target(&key, other)) {
             return Err("AGENT_DUPLICATE_FILE".into());
         }
@@ -1110,7 +1267,10 @@ fn apply_changes_transactional(
         if original.as_ref().map(|s| hash(&s.bytes)) != change.expected_hash {
             return Err("AGENT_FILE_CONFLICT".into());
         }
-        if original.as_ref().is_some_and(|s| !identities.insert(s.identity.clone())) {
+        if original
+            .as_ref()
+            .is_some_and(|s| !identities.insert(s.identity.clone()))
+        {
             return Err("AGENT_DUPLICATE_FILE".into());
         }
         originals.push(original);
@@ -1121,12 +1281,16 @@ fn apply_changes_transactional(
     let mut entries = Vec::new();
     for (change, original) in session.changes.iter().zip(&originals) {
         let backup = if let Some(original) = original {
-            let path = storage.join("coding-backups").join(&session.session_id)
+            let path = storage
+                .join("coding-backups")
+                .join(&session.session_id)
                 .join(uuid::Uuid::new_v4().to_string());
             // Back up the SAME bounded snapshot whose hash was accepted.
             atomic_write(&path, &original.bytes)?;
             Some(path)
-        } else { None };
+        } else {
+            None
+        };
         entries.push(ApplyBackup {
             path: change.path.clone(),
             before_hash: change.expected_hash.clone(),
@@ -1145,12 +1309,20 @@ fn apply_changes_transactional(
     };
     let journal_path = apply_journal_path(storage, &session.session_id)?;
     // The manifest and prepared session are durable before any target changes.
-    let manifest: Vec<Value> = journal.entries.iter().map(|entry| json!({
-        "path":entry.path,"backup":entry.backup,"expected_hash":entry.before_hash,
-        "operation_id":operation_id,
-    })).collect();
-    atomic_write(&journal_path.with_file_name("manifest.json"),
-        &serde_json::to_vec(&manifest).map_err(|_| "AGENT_BACKUP_FAILED")?)?;
+    let manifest: Vec<Value> = journal
+        .entries
+        .iter()
+        .map(|entry| {
+            json!({
+                "path":entry.path,"backup":entry.backup,"expected_hash":entry.before_hash,
+                "operation_id":operation_id,
+            })
+        })
+        .collect();
+    atomic_write(
+        &journal_path.with_file_name("manifest.json"),
+        &serde_json::to_vec(&manifest).map_err(|_| "AGENT_BACKUP_FAILED")?,
+    )?;
     session.status = "apply_prepared".into();
     session.apply_operation_id = Some(operation_id);
     save(storage, session)?;
@@ -1158,19 +1330,30 @@ fn apply_changes_transactional(
     let result: Result<Vec<String>, String> = (|| {
         let mut applied = Vec::new();
         for (index, change) in session.changes.iter().enumerate() {
-            if fault_at == Some(index) { return Err("AGENT_INJECTED_WRITE_FAILURE".into()); }
+            if fault_at == Some(index) {
+                return Err("AGENT_INJECTED_WRITE_FAILURE".into());
+            }
             let target = resolve(root, &change.path, true)?;
             apply_target_key(&target, &storage_identity)?;
             ensure_target_parent(root, &target)?;
             crate::capabilities::workspace::safe_paths::write_versioned(
-                &target, &[root.to_path_buf()], originals[index].as_ref(),
-                change.content.as_bytes(), MAX_FILE, |identity| {
+                &target,
+                &[root.to_path_buf()],
+                originals[index].as_ref(),
+                change.content.as_bytes(),
+                MAX_FILE,
+                |identity| {
                     journal.entries[index].written_identity = Some(identity.into());
                     persist_journal(&journal_path, &journal)
                 },
-            ).map_err(|error| if error == "FILE_CONFLICT" {
-                "AGENT_FILE_CONFLICT".to_string()
-            } else { error })?;
+            )
+            .map_err(|error| {
+                if error == "FILE_CONFLICT" {
+                    "AGENT_FILE_CONFLICT".to_string()
+                } else {
+                    error
+                }
+            })?;
             applied.push(change.path.clone());
         }
         Ok(applied)
@@ -1218,7 +1401,7 @@ fn load_without_recovery(root: &Path, storage: &Path, id: Option<&str>) -> Resul
             MAX_SESSION,
             "AGENT_SESSION_READ_FAILED",
         )?)
-                .map_err(|_| "AGENT_SESSION_INVALID")?;
+        .map_err(|_| "AGENT_SESSION_INVALID")?;
         if session.root != root.to_string_lossy() {
             return Err("AGENT_SESSION_ROOT_MISMATCH".into());
         }
@@ -1361,7 +1544,9 @@ pub fn execute(
     if supplied_id.is_some_and(|id| uuid::Uuid::parse_str(id).is_err()) {
         return Err("AGENT_SESSION_INVALID".into());
     }
-    let session_id = supplied_id.map(str::to_owned).unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let session_id = supplied_id
+        .map(str::to_owned)
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let session_mutex = session_lock(&root, &session_id);
     // Do not queue a stale apply/discard behind a long model turn. The user can
     // retry after this same session completes; other sessions stay independent.
@@ -1371,7 +1556,9 @@ pub fn execute(
         return Err("AGENT_PLAN_READ_ONLY".into());
     }
     let mut session = load(&root, storage, supplied_id)?;
-    if supplied_id.is_none() { session.session_id = session_id; }
+    if supplied_id.is_none() {
+        session.session_id = session_id;
+    }
     match action {
         "session" => {}
         "claim_operation" => {
@@ -1448,10 +1635,10 @@ pub fn execute(
                 .messages
                 .push(json!({"role":"user","content":prompt}));
             session.status = "running".into();
-            running_map()
-                .lock()
-                .map_err(|_| "AGENT_BUSY")?
-                .insert((root.clone(), session.session_id.clone()), request_signal(&request)?);
+            running_map().lock().map_err(|_| "AGENT_BUSY")?.insert(
+                (root.clone(), session.session_id.clone()),
+                request_signal(&request)?,
+            );
             let _running_guard = RunningGuard {
                 root: root.clone(),
                 session_id: session.session_id.clone(),
@@ -1648,22 +1835,18 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0]["path"], "nested/visible.rs");
         for offset in [1, 499, 501, 20001] {
-            assert!(
-                run(
+            assert!(run(
                 &f,
                 json!({"action":"tree_page","path":"nested","offset":offset})
             )
-                .is_err()
-            );
+            .is_err());
         }
         assert!(run(&f, json!({"action":"tree_page","path":"../","offset":0})).is_err());
-        assert!(
-            run(
+        assert!(run(
             &f,
             json!({"action":"tree_page","path":"nested/link","offset":0})
         )
-            .is_err()
-        );
+        .is_err());
     }
     #[test]
     fn directory_and_search_report_truncated_scan_even_when_entries_are_filtered() {
@@ -1766,7 +1949,8 @@ mod tests {
         .unwrap();
         assert_eq!(claimed["operations"][0]["status"], "executing");
         assert_eq!(
-            run(&f, json!({"action":"session","session_id":id})).unwrap()["operations"][0]["status"],
+            run(&f, json!({"action":"session","session_id":id})).unwrap()["operations"][0]
+                ["status"],
             "executing"
         );
         assert_eq!(
@@ -1871,9 +2055,13 @@ mod tests {
         assert!(cancel_run_request(&id).unwrap());
         let guard = register_run_request(&id).unwrap();
         assert!(guard.cancelled());
-        let response = execute(&f.0, &f.0.join("state"),
+        let response = execute(
+            &f.0,
+            &f.0.join("state"),
             json!({"action":"chat","run_id":id,"message":"must not call model"}),
-            |_, _| panic!("pre-cancelled run reached provider")).unwrap();
+            |_, _| panic!("pre-cancelled run reached provider"),
+        )
+        .unwrap();
         assert_eq!(response["status"], "cancelled");
         assert!(response["changes"].as_array().unwrap().is_empty());
         drop(guard);
@@ -2001,13 +2189,11 @@ mod tests {
             "AGENT_FILE_CONFLICT"
         );
         assert!(run(&f, json!({"action":"propose","path":"a.rs","content":"edit","expected_content":"externally changed"})).is_ok());
-        assert!(
-            run(
+        assert!(run(
             &f,
             json!({"action":"propose","path":"new.rs","content":"new","expected_content":null})
         )
-            .is_ok()
-        );
+        .is_ok());
     }
     #[test]
     fn model_writes_cannot_adopt_a_changed_disk_snapshot_implicitly() {
@@ -2037,16 +2223,14 @@ mod tests {
             } else {
                 "AGENT_SOURCE_HASH_REQUIRED"
             };
-            assert!(
-                result["messages"]
+            assert!(result["messages"]
                 .as_array()
                 .unwrap()
                 .iter()
                 .any(|message| message["role"] == "tool"
                     && message["content"]
                         .as_str()
-                            .is_some_and(|text| text.contains(expected)))
-            );
+                        .is_some_and(|text| text.contains(expected))));
         }
     }
     #[test]
@@ -2219,34 +2403,50 @@ mod tests {
     fn interrupted_apply(f: &Fixture) -> (String, PathBuf) {
         let storage = f.0.join("state");
         fs::write(f.0.join("first.txt"), "original").unwrap();
-        let first = run(f, json!({"action":"propose","path":"first.txt","content":"proposed"})).unwrap();
+        let first = run(
+            f,
+            json!({"action":"propose","path":"first.txt","content":"proposed"}),
+        )
+        .unwrap();
         let id = first["session_id"].as_str().unwrap().to_owned();
         let mut session = load(&f.0, &storage, Some(&id)).unwrap();
         let original = snapshot(&f.0, &f.0.join("first.txt")).unwrap().unwrap();
-        let backup = storage.join("coding-backups").join(&id).join(uuid::Uuid::new_v4().to_string());
+        let backup = storage
+            .join("coding-backups")
+            .join(&id)
+            .join(uuid::Uuid::new_v4().to_string());
         atomic_write(&backup, &original.bytes).unwrap();
         let operation_id = uuid::Uuid::new_v4().to_string();
         session.status = "apply_prepared".into();
         session.apply_operation_id = Some(operation_id.clone());
         save(&storage, &session).unwrap();
         let mut journal = ApplyJournal {
-            session_id: id.clone(), operation_id: Some(operation_id),
+            session_id: id.clone(),
+            operation_id: Some(operation_id),
             entries: vec![ApplyBackup {
-                path: "first.txt".into(), before_hash: Some(hash(b"original")),
-                after_hash: hash(b"proposed"), backup: Some(backup),
+                path: "first.txt".into(),
+                before_hash: Some(hash(b"original")),
+                after_hash: hash(b"proposed"),
+                backup: Some(backup),
                 before_identity: Some(original.identity.clone()),
-                written_identity: None, restored_identity: None,
+                written_identity: None,
+                restored_identity: None,
             }],
         };
         let journal_path = apply_journal_path(&storage, &id).unwrap();
         persist_journal(&journal_path, &journal).unwrap();
         crate::capabilities::workspace::safe_paths::write_versioned(
-            &f.0.join("first.txt"), &[f.0.clone()], Some(&original), b"proposed", MAX_FILE,
+            &f.0.join("first.txt"),
+            &[f.0.clone()],
+            Some(&original),
+            b"proposed",
+            MAX_FILE,
             |identity| {
                 journal.entries[0].written_identity = Some(identity.into());
                 persist_journal(&journal_path, &journal)
             },
-        ).unwrap();
+        )
+        .unwrap();
         (id, journal_path)
     }
 
@@ -2256,7 +2456,10 @@ mod tests {
         let (id, journal_path) = interrupted_apply(&f);
         let result = run(&f, json!({"action":"session","session_id":id})).unwrap();
         assert_eq!(result["status"], "review");
-        assert_eq!(fs::read_to_string(f.0.join("first.txt")).unwrap(), "original");
+        assert_eq!(
+            fs::read_to_string(f.0.join("first.txt")).unwrap(),
+            "original"
+        );
         assert!(!journal_path.exists());
     }
 
@@ -2269,7 +2472,10 @@ mod tests {
             run(&f, json!({"action":"session","session_id":id})).unwrap_err(),
             "AGENT_RECOVERY_CONFLICT"
         );
-        assert_eq!(fs::read_to_string(f.0.join("first.txt")).unwrap(), "another editor's update");
+        assert_eq!(
+            fs::read_to_string(f.0.join("first.txt")).unwrap(),
+            "another editor's update"
+        );
         assert!(journal_path.exists());
     }
 
@@ -2292,17 +2498,25 @@ mod tests {
     fn unattempted_file_never_blocks_compensation_or_loses_external_content() {
         let f = Fixture::new();
         let (id, journal_path) = interrupted_apply(&f);
-        let mut journal: ApplyJournal = serde_json::from_slice(&fs::read(&journal_path).unwrap()).unwrap();
+        let mut journal: ApplyJournal =
+            serde_json::from_slice(&fs::read(&journal_path).unwrap()).unwrap();
         journal.entries.push(ApplyBackup {
-            path: "not-attempted.txt".into(), before_hash: None,
-            after_hash: hash(b"planned"), backup: None, before_identity: None,
-            written_identity: None, restored_identity: None,
+            path: "not-attempted.txt".into(),
+            before_hash: None,
+            after_hash: hash(b"planned"),
+            backup: None,
+            before_identity: None,
+            written_identity: None,
+            restored_identity: None,
         });
         persist_journal(&journal_path, &journal).unwrap();
         fs::write(f.0.join("not-attempted.txt"), b"external creation").unwrap();
         run(&f, json!({"action":"session","session_id":id})).unwrap();
         assert_eq!(fs::read(f.0.join("first.txt")).unwrap(), b"original");
-        assert_eq!(fs::read(f.0.join("not-attempted.txt")).unwrap(), b"external creation");
+        assert_eq!(
+            fs::read(f.0.join("not-attempted.txt")).unwrap(),
+            b"external creation"
+        );
         assert!(!journal_path.exists());
     }
 
@@ -2352,7 +2566,11 @@ mod tests {
             },
         ).unwrap();
         assert_eq!(response["status"], "cancelled");
-        assert_eq!(run(&f, json!({"action":"session","session_id":second_id})).unwrap()["changes"][0]["content"], "second");
+        assert_eq!(
+            run(&f, json!({"action":"session","session_id":second_id})).unwrap()["changes"][0]
+                ["content"],
+            "second"
+        );
     }
     #[test]
     fn applies_atomically_and_keeps_backup() {
@@ -2593,7 +2811,6 @@ mod windows_safe_boundary_tests {
     }
 }
 
-
 #[cfg(test)]
 mod lsp_checkpoint_tests {
     use super::*;
@@ -2601,14 +2818,20 @@ mod lsp_checkpoint_tests {
 
     #[test]
     fn lsp_module_scan_observes_cancellation_before_reading_sources() {
-        let fixture = std::env::temp_dir().join(format!("lsp-scan-checkpoint-{}", uuid::Uuid::new_v4()));
+        let fixture =
+            std::env::temp_dir().join(format!("lsp-scan-checkpoint-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(fixture.join("src")).unwrap();
         fs::write(fixture.join("src/lib.rs"), "fn fixture() {}").unwrap();
         let calls = Cell::new(0usize);
         let error = lsp_module_sources_with_checkpoint(&fixture, "src/lib.rs", || {
             calls.set(calls.get() + 1);
-            if calls.get() >= 4 { Err("TEST_CANCELLED".into()) } else { Ok(()) }
-        }).unwrap_err();
+            if calls.get() >= 4 {
+                Err("TEST_CANCELLED".into())
+            } else {
+                Ok(())
+            }
+        })
+        .unwrap_err();
         assert_eq!(error, "TEST_CANCELLED");
         assert_eq!(calls.get(), 4);
         fs::remove_dir_all(fixture).unwrap();
@@ -2619,56 +2842,102 @@ mod lsp_checkpoint_tests {
 mod apply_preflight_tests {
     use super::*;
 
-    struct Fixture { root: PathBuf, storage: PathBuf }
+    struct Fixture {
+        root: PathBuf,
+        storage: PathBuf,
+    }
     impl Fixture {
         fn new() -> Self {
-            let path = std::env::temp_dir().join(format!("browseros-apply-preflight-{}", uuid::Uuid::new_v4()));
+            let path = std::env::temp_dir().join(format!(
+                "browseros-apply-preflight-{}",
+                uuid::Uuid::new_v4()
+            ));
             fs::create_dir_all(&path).unwrap();
             let root = path.canonicalize().unwrap();
             let storage = root.join("state");
             Self { root, storage }
         }
         fn run(&self, request: Value) -> Result<Value, String> {
-            execute(&self.root, &self.storage, request, |_, _| unreachable!("no model call"))
+            execute(&self.root, &self.storage, request, |_, _| {
+                unreachable!("no model call")
+            })
         }
     }
     impl Drop for Fixture {
-        fn drop(&mut self) { let _ = fs::remove_dir_all(&self.root); }
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.root);
+        }
     }
 
     #[test]
     fn persisted_new_file_proposal_cannot_resurrect_a_renamed_parent() {
         let fixture = Fixture::new();
         fs::create_dir(fixture.root.join("original")).unwrap();
-        let first = fixture.run(json!({"action":"propose","path":"original/new.txt","content":"reviewed"})).unwrap();
+        let first = fixture
+            .run(json!({"action":"propose","path":"original/new.txt","content":"reviewed"}))
+            .unwrap();
         let id = first["session_id"].as_str().unwrap();
         fs::rename(fixture.root.join("original"), fixture.root.join("moved")).unwrap();
-        assert_eq!(fixture.run(json!({"action":"apply","session_id":id})).unwrap_err(), "AGENT_CHANGE_PATH_CHANGED");
+        assert_eq!(
+            fixture
+                .run(json!({"action":"apply","session_id":id}))
+                .unwrap_err(),
+            "AGENT_CHANGE_PATH_CHANGED"
+        );
         assert!(!fixture.root.join("original").exists());
         assert!(!fixture.root.join("moved/new.txt").exists());
-        assert_eq!(fixture.run(json!({"action":"session","session_id":id})).unwrap()["changes"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            fixture
+                .run(json!({"action":"session","session_id":id}))
+                .unwrap()["changes"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
     }
     #[test]
     fn legacy_proposal_requires_review_and_reproposal_rebinds_target() {
         let fixture = Fixture::new();
-        let first = fixture.run(json!({"action":"propose","path":"new.txt","content":"reviewed"})).unwrap();
+        let first = fixture
+            .run(json!({"action":"propose","path":"new.txt","content":"reviewed"}))
+            .unwrap();
         let id = first["session_id"].as_str().unwrap();
         let mut session = load(&fixture.root, &fixture.storage, Some(id)).unwrap();
         session.changes[0].target_proof = None;
         save(&fixture.storage, &session).unwrap();
-        assert_eq!(fixture.run(json!({"action":"apply","session_id":id})).unwrap_err(), "AGENT_CHANGE_REVIEW_REQUIRED");
+        assert_eq!(
+            fixture
+                .run(json!({"action":"apply","session_id":id}))
+                .unwrap_err(),
+            "AGENT_CHANGE_REVIEW_REQUIRED"
+        );
         assert!(!fixture.root.join("new.txt").exists());
         fixture.run(json!({"action":"propose","session_id":id,"path":"new.txt","content":"reviewed again","expected_hash":null})).unwrap();
-        fixture.run(json!({"action":"apply","session_id":id})).unwrap();
-        assert_eq!(fs::read_to_string(fixture.root.join("new.txt")).unwrap(), "reviewed again");
+        fixture
+            .run(json!({"action":"apply","session_id":id}))
+            .unwrap();
+        assert_eq!(
+            fs::read_to_string(fixture.root.join("new.txt")).unwrap(),
+            "reviewed again"
+        );
     }
     #[test]
     fn duplicate_new_paths_fail_before_any_project_write() {
         let fixture = Fixture::new();
-        let first = fixture.run(json!({"action":"propose","path":"new.txt","content":"first"})).unwrap();
+        let first = fixture
+            .run(json!({"action":"propose","path":"new.txt","content":"first"}))
+            .unwrap();
         let id = first["session_id"].as_str().unwrap();
-        fixture.run(json!({"action":"propose","session_id":id,"path":"./new.txt","content":"second"})).unwrap();
-        assert_eq!(fixture.run(json!({"action":"apply","session_id":id})).unwrap_err(), "AGENT_DUPLICATE_FILE");
+        fixture
+            .run(json!({"action":"propose","session_id":id,"path":"./new.txt","content":"second"}))
+            .unwrap();
+        assert_eq!(
+            fixture
+                .run(json!({"action":"apply","session_id":id}))
+                .unwrap_err(),
+            "AGENT_DUPLICATE_FILE"
+        );
         assert!(!fixture.root.join("new.txt").exists());
         assert!(!apply_journal_path(&fixture.storage, id).unwrap().exists());
     }
@@ -2677,10 +2946,19 @@ mod apply_preflight_tests {
     #[test]
     fn new_unicode_case_aliases_are_rejected_as_duplicate_targets() {
         let fixture = Fixture::new();
-        let first = fixture.run(json!({"action":"propose","path":"Ä.txt","content":"first"})).unwrap();
+        let first = fixture
+            .run(json!({"action":"propose","path":"Ä.txt","content":"first"}))
+            .unwrap();
         let id = first["session_id"].as_str().unwrap();
-        fixture.run(json!({"action":"propose","session_id":id,"path":"ä.txt","content":"second"})).unwrap();
-        assert_eq!(fixture.run(json!({"action":"apply","session_id":id})).unwrap_err(), "AGENT_DUPLICATE_FILE");
+        fixture
+            .run(json!({"action":"propose","session_id":id,"path":"ä.txt","content":"second"}))
+            .unwrap();
+        assert_eq!(
+            fixture
+                .run(json!({"action":"apply","session_id":id}))
+                .unwrap_err(),
+            "AGENT_DUPLICATE_FILE"
+        );
         assert!(!fixture.root.join("Ä.txt").exists());
     }
 
@@ -2691,8 +2969,24 @@ mod apply_preflight_tests {
             "action":"propose","path":"state/coding-backups/replacement.txt","content":"replacement"
         })).unwrap();
         let id = first["session_id"].as_str().unwrap();
-        assert_eq!(fixture.run(json!({"action":"apply","session_id":id})).unwrap_err(), "AGENT_OWNER_STORAGE_DENIED");
-        assert!(!fixture.storage.join("coding-backups/replacement.txt").exists());
-        assert_eq!(fixture.run(json!({"action":"session","session_id":id})).unwrap()["changes"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            fixture
+                .run(json!({"action":"apply","session_id":id}))
+                .unwrap_err(),
+            "AGENT_OWNER_STORAGE_DENIED"
+        );
+        assert!(!fixture
+            .storage
+            .join("coding-backups/replacement.txt")
+            .exists());
+        assert_eq!(
+            fixture
+                .run(json!({"action":"session","session_id":id}))
+                .unwrap()["changes"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
     }
 }

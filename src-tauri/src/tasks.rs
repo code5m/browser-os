@@ -917,7 +917,10 @@ mod task_domain_tests {
         let dir = temp_dir("corrupt");
         let path = dir.join("tasks.json");
         fs::write(&path, "{ this is not json").expect("写入损坏文件");
-        assert!(load_tasks_at(&path).is_err(), "损坏文件不得伪装成空任务列表");
+        assert!(
+            load_tasks_at(&path).is_err(),
+            "损坏文件不得伪装成空任务列表"
+        );
         assert_eq!(fs::read(&path).unwrap(), b"{ this is not json");
         let _ = fs::remove_dir_all(&dir);
     }
@@ -981,10 +984,16 @@ mod task_domain_tests {
         fs::write(&path, original).unwrap();
         let now = Utc::now();
         let record = TaskRunRecord {
-            task_id: "task".into(), run_id: "run".into(),
-            trigger: TaskRunTrigger::Manual, scheduled_at: now,
-            attempt: 1, started_at: now, finished_at: Some(now),
-            status: RunStatus::Succeeded, exit_code: Some(0), error_code: None,
+            task_id: "task".into(),
+            run_id: "run".into(),
+            trigger: TaskRunTrigger::Manual,
+            scheduled_at: now,
+            attempt: 1,
+            started_at: now,
+            finished_at: Some(now),
+            status: RunStatus::Succeeded,
+            exit_code: Some(0),
+            error_code: None,
         };
         assert!(append_task_run(&path, &record).is_err());
         assert_eq!(fs::read(&path).unwrap(), original);
@@ -996,5 +1005,4 @@ mod task_domain_tests {
         assert_eq!(history[0].run_id, "run");
         let _ = fs::remove_dir_all(dir);
     }
-
 }

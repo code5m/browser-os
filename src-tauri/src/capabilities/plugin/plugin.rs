@@ -978,7 +978,10 @@ mod tests {
     fn corrupt_registry_is_preserved_and_blocks_mutations() {
         let path = temp_path("corrupt");
         std::fs::write(&path, "{ not json").unwrap();
-        assert!(load_plugins_at(&path).is_err(), "损坏登记簿不得被伪装成空列表");
+        assert!(
+            load_plugins_at(&path).is_err(),
+            "损坏登记簿不得被伪装成空列表"
+        );
         assert!(load_trusted_keys_at(&path).is_err());
         assert_eq!(std::fs::read(&path).unwrap(), b"{ not json");
         std::fs::write(&path, [0xff, 0xfe]).unwrap();

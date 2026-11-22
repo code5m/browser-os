@@ -63,28 +63,48 @@ function Set-NativeCleanupQuarantine {
 function Get-NativeRustTestBinary {
     param(
         [Parameter(Mandatory = $true)][string]$Manifest,
-        [Parameter(Mandatory = $true)][string]$Package
+        [Parameter(Mandatory = $true)][string]$Package,
+        [string]$TargetName = '',
+        [string]$HostPackage = '',
+        [string[]]$Features = @()
     )
     if ($env:BROWSEROS_NATIVE_CLEANUP_BLOCKED -eq '1') {
         throw 'NATIVE_JOB_CLEANUP_UNCONFIRMED: runner is quarantined'
     }
-    $output = @(& cargo test --manifest-path $Manifest --locked -p $Package --lib --no-run --message-format=json 2>&1)
+    # Path-dependency features are requested through an explicitly selected
+    # host package and its committed lockfile, not an independent dependency lock.
+    $additionalArguments = @()
+    if (-not [string]::IsNullOrWhiteSpace($HostPackage)) {
+        $additionalArguments += @('-p', $HostPackage)
+    }
+    if ($Features.Count -gt 0) {
+        $qualifiedFeatures = @($Features | ForEach-Object { "$Package/$_" })
+        $additionalArguments += @('--features', ($qualifiedFeatures -join ','))
+    }
+    $output = @(& cargo test --manifest-path $Manifest --locked -p $Package --lib --no-run --message-format=json @additionalArguments 2>&1)
     if ($LASTEXITCODE -ne 0) {
         $output | Select-Object -Last 45 | Write-Host
         throw "NATIVE_TEST_COMPILATION_FAILED:$Package"
     }
-    $targetName = $Package.Replace('-', '_')
+    $expectedTargetName = if ([string]::IsNullOrWhiteSpace($TargetName)) {
+        $Package.Replace('-', '_')
+    } else { $TargetName }
     $artifacts = @($output | ForEach-Object {
         try { $_ | ConvertFrom-Json -ErrorAction Stop } catch { $null }
     } | Where-Object {
         $null -ne $_ -and $_.PSObject.Properties.Name -contains 'reason' -and
         $_.reason -eq 'compiler-artifact' -and
-        $_.target.name -eq $targetName -and
+        $_.target.name -eq $expectedTargetName -and
         ($_.target.kind -contains 'lib') -and
         $_.profile.test -eq $true -and $_.executable
     })
     if ($artifacts.Count -ne 1 -or -not (Test-Path -LiteralPath $artifacts[0].executable -PathType Leaf)) {
         throw "NATIVE_TEST_BINARY_NOT_UNIQUE:$Package"
+    }
+    foreach ($feature in $Features) {
+        if ($artifacts[0].features -cnotcontains $feature) {
+            throw "NATIVE_TEST_FEATURE_NOT_ENABLED:$($Package):$feature"
+        }
     }
     return [string]$artifacts[0].executable
 }

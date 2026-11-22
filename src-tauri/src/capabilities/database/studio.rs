@@ -4,7 +4,7 @@
 use super::table_data::{self, TableRequest, TableState};
 // DEVELOPER_STUDIO_TABLE_ACTOR
 use super::{
-    commands::{connection_snapshot, connection_revision},
+    commands::{connection_revision, connection_snapshot},
     database::{DbError, DbPool, DbQueryResult as DriverQueryResult, QueryCancel},
 };
 use crate::{
@@ -91,8 +91,13 @@ fn digest(cfg: &DbConnectionConfig) -> Result<String, String> {
 }
 pub(super) fn profile_in_use(app: &AppHandle, id: &str) -> Result<bool, String> {
     let runtime = app.state::<DatabaseStudioRuntime>();
-    let sessions = runtime.sessions.lock().map_err(|_| "DB_SESSION_LOCK_FAILED")?;
-    Ok(sessions.values().any(|handle| handle.conn_id == id && !handle.closed.load(Ordering::Acquire)))
+    let sessions = runtime
+        .sessions
+        .lock()
+        .map_err(|_| "DB_SESSION_LOCK_FAILED")?;
+    Ok(sessions
+        .values()
+        .any(|handle| handle.conn_id == id && !handle.closed.load(Ordering::Acquire)))
 }
 fn verify_config(app: &AppHandle, handle: &SessionHandle) -> Result<(), String> {
     if connection_revision(app, &handle.conn_id)? != handle.config_digest {

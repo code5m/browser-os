@@ -66,6 +66,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - run: python3 scripts/check-native-required-results.py --self-test
       - run: node tests/check-windows-linux-v2-source-contract.mjs
       - run: node tests/check-bfc-native-contract.mjs
       - run: node tests/check-browser-navigation-and-hang-diagnostics.mjs
@@ -245,6 +246,13 @@ jobs:
           $config = Get-Content src-tauri/tauri.windows.conf.json -Raw | ConvertFrom-Json
           if ($config.bundle.targets[0] -ne 'nsis' -or $config.bundle.windows.nsis.installMode -ne 'currentUser') { throw 'NSIS config invalid' }
           node tests/check-windows-linux-v2-source-contract.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Windows source contract failed' }
+          python tests/check-local-ai-import.py
+          if ($LASTEXITCODE -ne 0) { throw 'Windows local AI import regression failed' }
+          python tests/check-ai-native-import.py
+          if ($LASTEXITCODE -ne 0) { throw 'Windows native AI import regression failed' }
+          python scripts/check-local-ai-secrets.py
+          if ($LASTEXITCODE -ne 0) { throw 'Windows AI secret safety regression failed' }
       - name: 'Windows native compile (experimental: do not hide failure)'
         id: windows_native_compile
         shell: pwsh
@@ -332,6 +340,21 @@ jobs:
             if ($null -ne $fullSuiteFailure) { Write-Host "::error::$fullSuiteFailure" }
             throw "Windows native acceptance incomplete: $($failedSelections.Count) failed selections; full suite $fullSuiteStatus"
           }
+      - name: Windows host core library regression
+        if: ${{ always() && !cancelled() && steps.windows_native_compile.outcome == 'success' && env.BROWSEROS_NATIVE_CLEANUP_BLOCKED != '1' }}
+        shell: pwsh
+        run: |
+          . ./scripts/windows-native-test-runner.ps1
+          $testExe = Get-NativeRustTestBinary -Manifest 'src-tauri/Cargo.toml' -Package 'mvp-browser-os' -TargetName 'mvp_core'
+          Invoke-NativeRustHarness -Executable $testExe -SelectionId 'host-core'
+      - name: Windows Agent Foundation production feature regression
+        if: ${{ always() && !cancelled() && steps.windows_native_compile.outcome == 'success' && env.BROWSEROS_NATIVE_CLEANUP_BLOCKED != '1' }}
+        shell: pwsh
+        run: |
+          . ./scripts/windows-native-test-runner.ps1
+          $testExe = Get-NativeRustTestBinary -Manifest 'src-tauri/Cargo.toml' -Package 'browseros-agent-foundation' `
+            -HostPackage 'mvp-browser-os' -Features @('adapter-rig', 'experimental-rig-run')
+          Invoke-NativeRustHarness -Executable $testExe -SelectionId 'agent-foundation-production'
       - name: Shared Windows SID and DACL regression
         if: ${{ always() && !cancelled() && steps.windows_native_compile.outcome == 'success' && env.BROWSEROS_NATIVE_CLEANUP_BLOCKED != '1' }}
         shell: pwsh
@@ -444,55 +467,30 @@ jobs:
           set -o pipefail
           cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os framing_tests -- --list --format terse --color never 2>&1 | tee "$RUNNER_TEMP/linux-framing-list.log"
           cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os framing_tests -- --test-threads=1 --show-output --color never 2>&1 | tee "$RUNNER_TEMP/linux-framing.log"
-          python3 - <<'PY'
-          import json, os, pathlib, re
-          def blocked(reason):
-              raise SystemExit("LINUX_REQUIRED_FRAMING_NOT_EXECUTED:" + reason)
-          temporary = pathlib.Path(os.environ["RUNNER_TEMP"])
-          manifest = json.loads(pathlib.Path("scripts/windows-native-required-tests.json").read_text())
-          selection = next(item for item in manifest["selections"] if item["id"] == "grid-framing")
-          required = selection["required_names"]
-          if selection["required_count"] != len(required) or not required or len(set(required)) != len(required):
-              blocked("invalid_required_name_count")
-          listing = (temporary / "linux-framing-list.log").read_text(errors="replace")
-          enumerated = re.findall(r"^([^\r\n]+): test\r?$", listing, re.M)
-          if not enumerated or len(set(enumerated)) != len(enumerated):
-              blocked("empty_or_duplicate_enumeration")
-          resolved = []
-          for expected in required:
-              matches = [name for name in enumerated if name == expected or name.endswith("::" + expected)]
-              if len(matches) != 1 or matches[0] in resolved:
-                  blocked("missing_or_ambiguous_required_name:" + expected)
-              resolved.append(matches[0])
-          additional = sorted(set(enumerated) - set(resolved))
-          if additional and not selection["allow_additional_tests"]:
-              blocked("unreviewed_additional_names")
-          text = (temporary / "linux-framing.log").read_text(errors="replace")
-          actual = re.findall(r"^test ([^\r\n]+?)(?: - (?:should panic|compile fail|compile))? \.\.\. (ok|FAILED|ignored)(?:, [^\r\n]*)?\r?$", text, re.M)
-          executed = dict(actual)
-          if len(executed) != len(actual) or set(executed) != set(enumerated):
-              blocked("enumeration_execution_mismatch")
-          if any(executed.get(name) != "ok" for name in resolved):
-              blocked("required_name_did_not_pass")
-          rows = re.findall(r"^test result: (ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored;", text, re.M)
-          counts = [sum(status == expected for status in executed.values()) for expected in ("ok", "FAILED", "ignored")]
-          if len(rows) != 1 or rows[0][0] != "ok" or [int(value) for value in rows[0][1:]] != counts:
-              blocked("result_count_mismatch")
-          if counts[1] or counts[2] or re.search(r"^\s*\[?SKIP(?:PED)?\b", text, re.M | re.I):
-              blocked("failed_ignored_or_skip")
-          evidence = {
-              "source_sha": os.environ["BROWSEROS_SOURCE_SHA"],
-              "selection": "grid-framing", "status": "PASS",
-              "required_count": len(resolved), "required_names": resolved,
-              "enumerated_names": enumerated, "executed_tests": executed,
-              "additional_tests_allowed": selection["allow_additional_tests"],
-              "additional_tests": additional,
-              "passed": counts[0], "failed": counts[1], "ignored": counts[2],
-          }
-          (temporary / "linux-framing-required-results.json").write_text(json.dumps(evidence, indent=2) + "\n")
-          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
-              summary.write(f"Linux framing source={evidence['source_sha']}; required={len(resolved)}; enumerated={len(enumerated)}; additional={len(additional)}; status=PASS\n")
-          PY
+          python3 scripts/check-native-required-results.py \
+            --selection grid-framing \
+            --listing "$RUNNER_TEMP/linux-framing-list.log" \
+            --output "$RUNNER_TEMP/linux-framing.log" \
+            --evidence "$RUNNER_TEMP/linux-framing-required-results.json" \
+            --failure-prefix LINUX_REQUIRED_FRAMING_NOT_EXECUTED
+      - name: Linux core and Agent Foundation production feature regression
+        timeout-minutes: 20
+        shell: bash
+        env:
+          BROWSEROS_SOURCE_SHA: ${{ needs.source.outputs.sha }}
+        run: |
+          set -o pipefail
+          # Select the host to enable its path dependency's exact production
+          # features through the host lockfile. No optional adapters are added.
+          library_args=(--manifest-path src-tauri/Cargo.toml --locked -p mvp-browser-os -p browseros-agent-foundation --lib
+            --features browseros-agent-foundation/adapter-rig,browseros-agent-foundation/experimental-rig-run)
+          cargo test "${library_args[@]}" -- --list --format terse --color never 2>&1 | tee "$RUNNER_TEMP/linux-libraries-list.log"
+          cargo test "${library_args[@]}" -- --test-threads=1 --show-output --color never 2>&1 | tee "$RUNNER_TEMP/linux-libraries.log"
+          python3 scripts/check-native-required-results.py \
+            --selection host-core --selection agent-foundation-production --harness-count 2 \
+            --listing "$RUNNER_TEMP/linux-libraries-list.log" \
+            --output "$RUNNER_TEMP/linux-libraries.log" \
+            --evidence "$RUNNER_TEMP/linux-libraries-required-results.json"
       - name: Linux complete native regression (GUI remains NOT_RUN)
         timeout-minutes: 40
         shell: bash
@@ -524,5 +522,8 @@ jobs:
             ${{ runner.temp }}/linux-framing.log
             ${{ runner.temp }}/linux-framing-list.log
             ${{ runner.temp }}/linux-framing-required-results.json
+            ${{ runner.temp }}/linux-libraries.log
+            ${{ runner.temp }}/linux-libraries-list.log
+            ${{ runner.temp }}/linux-libraries-required-results.json
           if-no-files-found: warn
           retention-days: 7

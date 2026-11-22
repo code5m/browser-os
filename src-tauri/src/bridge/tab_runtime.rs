@@ -39,7 +39,11 @@ pub fn tab_open(
     crate::shared::native_legacy_policy::require_main(&webview, "tab_open")?;
     crate::shared::native_legacy_policy::bound_text("tab_open", "id", &id)?;
     crate::shared::native_legacy_policy::bound_text("tab_open", "url", &url)?;
-    if app.state::<AppState>().shutdown_requested.load(Ordering::Acquire) {
+    if app
+        .state::<AppState>()
+        .shutdown_requested
+        .load(Ordering::Acquire)
+    {
         return Err("TAB_APPLICATION_SHUTTING_DOWN".into());
     }
 
@@ -243,8 +247,8 @@ fn read_proc_table() -> HashMap<u32, (u32, String, u64)> {
 fn read_proc_table() -> HashMap<u32, (u32, String, u64)> {
     use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
-        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW,
-        PROCESSENTRY32W, TH32CS_SNAPPROCESS,
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
     };
     use windows_sys::Win32::System::ProcessStatus::{
         GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
@@ -255,34 +259,42 @@ fn read_proc_table() -> HashMap<u32, (u32, String, u64)> {
 
     let mut procs = HashMap::new();
     let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
-    if snapshot == INVALID_HANDLE_VALUE { return procs; }
+    if snapshot == INVALID_HANDLE_VALUE {
+        return procs;
+    }
     let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
     entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
     let mut has_entry = unsafe { Process32FirstW(snapshot, &mut entry) } != 0;
     while has_entry {
         let pid = entry.th32ProcessID;
         let parent = entry.th32ParentProcessID;
-        let len = entry.szExeFile.iter().position(|value| *value == 0)
+        let len = entry
+            .szExeFile
+            .iter()
+            .position(|value| *value == 0)
             .unwrap_or(entry.szExeFile.len());
         let name = String::from_utf16_lossy(&entry.szExeFile[..len]);
         let mut rss_kb = 0u64;
-        let handle = unsafe {
-            OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, 0, pid)
-        };
+        let handle =
+            unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, 0, pid) };
         if !handle.is_null() {
             let mut mem: PROCESS_MEMORY_COUNTERS = unsafe { std::mem::zeroed() };
             mem.cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
             if unsafe {
                 GetProcessMemoryInfo(
-                    handle, &mut mem,
+                    handle,
+                    &mut mem,
                     std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32,
                 )
-            } != 0 {
+            } != 0
+            {
                 rss_kb = mem.WorkingSetSize as u64 / 1024;
             }
             unsafe { CloseHandle(handle) };
         }
-        if pid != 0 { procs.insert(pid, (parent, name, rss_kb)); }
+        if pid != 0 {
+            procs.insert(pid, (parent, name, rss_kb));
+        }
         has_entry = unsafe { Process32NextW(snapshot, &mut entry) } != 0;
     }
     unsafe { CloseHandle(snapshot) };
@@ -840,7 +852,9 @@ pub async fn eval_in_tab(
     crate::shared::native_legacy_policy::require_main(&webview, "eval_in_tab")?;
     crate::shared::native_legacy_policy::bound_text("eval_in_tab", "id", &id)?;
     crate::shared::native_legacy_policy::bound_text("eval_in_tab", "js", &js)?;
-    TAB_EVAL_WORKERS.run(move || eval_in_tab_blocking(app, id, js)).await
+    TAB_EVAL_WORKERS
+        .run(move || eval_in_tab_blocking(app, id, js))
+        .await
 }
 
 /// Native-only callers already executing on their own worker retain the exact

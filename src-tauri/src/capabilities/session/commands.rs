@@ -89,15 +89,18 @@ impl SessionFlushOutcomeReport {
     }
 
     pub fn failed_count(&self) -> usize {
-        self.outcomes.iter().filter(|entry| {
-            matches!(&entry.outcome, SessionFlushOutcome::Failed { .. })
-        }).count() + usize::from(self.operation_error.is_some())
+        self.outcomes
+            .iter()
+            .filter(|entry| matches!(&entry.outcome, SessionFlushOutcome::Failed { .. }))
+            .count()
+            + usize::from(self.operation_error.is_some())
     }
 
     pub fn skipped_count(&self) -> usize {
-        self.outcomes.iter().filter(|entry| {
-            matches!(&entry.outcome, SessionFlushOutcome::Skipped { .. })
-        }).count()
+        self.outcomes
+            .iter()
+            .filter(|entry| matches!(&entry.outcome, SessionFlushOutcome::Skipped { .. }))
+            .count()
     }
 
     pub fn changed_count(&self) -> usize {
@@ -186,9 +189,7 @@ fn build_session_snapshot(
         _ => (&tab.url, &tab.title),
     };
     SessionSaveSnapshot {
-        session: crate::session::build_session(
-            &tab.id, url, title, preview, records, reason,
-        ),
+        session: crate::session::build_session(&tab.id, url, title, preview, records, reason),
         draft: draft.cloned(),
     }
 }
@@ -208,7 +209,13 @@ fn build_session_for_tab(
         (tabs.get(tab_id)?.clone(), drafts.get(tab_id).cloned())
     };
     let records = state.resource_buffer.lock().unwrap().records(tab_id);
-    Some(build_session_snapshot(&tab, draft.as_ref(), preview, reason, &records))
+    Some(build_session_snapshot(
+        &tab,
+        draft.as_ref(),
+        preview,
+        reason,
+        &records,
+    ))
 }
 
 /// Caller holds SESSION_WRITES. Report the actual capacity pruning count.
@@ -266,15 +273,14 @@ fn skip_snapshot_drafts(
     ids.dedup();
     let mut current = drafts.lock().unwrap();
     for tab_id in ids {
-        let draft_removed = match remove_matching_draft(
-            &mut current, &tab_id, snapshot_drafts.get(&tab_id),
-        ) {
-            Ok(removed) => removed,
-            Err(()) => {
-                report.changed(&tab_id);
-                false
-            }
-        };
+        let draft_removed =
+            match remove_matching_draft(&mut current, &tab_id, snapshot_drafts.get(&tab_id)) {
+                Ok(removed) => removed,
+                Err(()) => {
+                    report.changed(&tab_id);
+                    false
+                }
+            };
         report.summary.drafts_dropped += usize::from(draft_removed);
         report.outcomes.push(SessionFlushEntry {
             tab_id,
@@ -333,34 +339,44 @@ pub async fn session_save(
 
     check_invocation_source(&webview, "session_save", None, &app)?;
     check_tab_id(&tab_id)?;
-    SESSION_IO.run(move || {
-        let _write = session_write_guard().map_err(str::to_string)?;
-        if app.state::<crate::AppState>().shutdown_requested.load(Ordering::Acquire) {
-            return Err("SESSION_EXIT_ALREADY_ACCEPTED".to_string());
-        }
-        let text = preview.unwrap_or_default();
-        let snapshot = build_session_for_tab(&app, &tab_id, &text, CLOSE_REASON_SAVED)
-            .ok_or_else(|| "页签不存在".to_string())?;
-        let session = &snapshot.session;
-        persist_session(&app, session)?;
-        // Explicit save is a point-in-time snapshot. A newer draft remains available.
-        let _ = remove_matching_draft(
-            &mut app.state::<crate::AppState>().session_drafts.lock().unwrap(),
-            &tab_id,
-            snapshot.draft.as_ref(),
-        );
-        workspace::log_audit(
-            &app,
-            "session_save",
-            format!(
-                "tab_id={} resources={} preview_bytes={}",
-                tab_id,
-                session.resource_count,
-                session.preview.len()
-            ),
-        );
-        Ok(crate::session::summarize(session))
-    }).await
+    SESSION_IO
+        .run(move || {
+            let _write = session_write_guard().map_err(str::to_string)?;
+            if app
+                .state::<crate::AppState>()
+                .shutdown_requested
+                .load(Ordering::Acquire)
+            {
+                return Err("SESSION_EXIT_ALREADY_ACCEPTED".to_string());
+            }
+            let text = preview.unwrap_or_default();
+            let snapshot = build_session_for_tab(&app, &tab_id, &text, CLOSE_REASON_SAVED)
+                .ok_or_else(|| "页签不存在".to_string())?;
+            let session = &snapshot.session;
+            persist_session(&app, session)?;
+            // Explicit save is a point-in-time snapshot. A newer draft remains available.
+            let _ = remove_matching_draft(
+                &mut app
+                    .state::<crate::AppState>()
+                    .session_drafts
+                    .lock()
+                    .unwrap(),
+                &tab_id,
+                snapshot.draft.as_ref(),
+            );
+            workspace::log_audit(
+                &app,
+                "session_save",
+                format!(
+                    "tab_id={} resources={} preview_bytes={}",
+                    tab_id,
+                    session.resource_count,
+                    session.preview.len()
+                ),
+            );
+            Ok(crate::session::summarize(session))
+        })
+        .await
 }
 
 /// 显式丢弃内存草稿：不落盘。普通 Tab 关闭不调用保存或确认协议。
@@ -375,21 +391,23 @@ pub async fn session_discard(
 
     check_invocation_source(&webview, "session_discard", None, &app)?;
     check_tab_id(&tab_id)?;
-    SESSION_IO.run(move || {
-        let existed = app
-            .state::<crate::AppState>()
-            .session_drafts
-            .lock()
-            .unwrap()
-            .remove(&tab_id)
-            .is_some();
-        workspace::log_audit(
-            &app,
-            "session_discard",
-            format!("tab_id={tab_id} draft_existed={existed}"),
-        );
-        Ok(())
-    }).await
+    SESSION_IO
+        .run(move || {
+            let existed = app
+                .state::<crate::AppState>()
+                .session_drafts
+                .lock()
+                .unwrap()
+                .remove(&tab_id)
+                .is_some();
+            workspace::log_audit(
+                &app,
+                "session_discard",
+                format!("tab_id={tab_id} draft_existed={existed}"),
+            );
+            Ok(())
+        })
+        .await
 }
 
 /// 列出本地会话存档（按 updated_at 倒序；损坏文件跳过）。
@@ -401,11 +419,13 @@ pub async fn session_list(
     crate::shared::native_legacy_policy::require_main(&webview, "session_list")?;
 
     check_invocation_source(&webview, "session_list", None, &app)?;
-    SESSION_IO.run(move || {
-        Ok(crate::session::list_sessions(&workspace::sessions_dir(
-            &app,
-        )))
-    }).await
+    SESSION_IO
+        .run(move || {
+            Ok(crate::session::list_sessions(&workspace::sessions_dir(
+                &app,
+            )))
+        })
+        .await
 }
 
 /// 读取单个会话详情（含已脱敏资源列表）。
@@ -420,9 +440,9 @@ pub async fn session_get(
 
     check_invocation_source(&webview, "session_get", None, &app)?;
     crate::images::check_id(&id, "会话 id")?;
-    SESSION_IO.run(move || {
-        crate::session::load_session(&workspace::sessions_dir(&app), &id)
-    }).await
+    SESSION_IO
+        .run(move || crate::session::load_session(&workspace::sessions_dir(&app), &id))
+        .await
 }
 
 /// 删除会话存档（幂等）。删除的是存档，不影响仍打开的同名页签。
@@ -438,23 +458,29 @@ pub async fn session_delete(
 
     check_invocation_source(&webview, "session_delete", None, &app)?;
     crate::images::check_id(&id, "会话 id")?;
-    SESSION_IO.run(move || {
-        let _write = session_write_guard().map_err(str::to_string)?;
-        if app.state::<crate::AppState>().shutdown_requested.load(Ordering::Acquire) {
-            return Err("SESSION_EXIT_ALREADY_ACCEPTED".to_string());
-        }
-        app.state::<crate::security_policy::IntentRegistry>()
-            .consume(
-                &format!("session_delete:{id}"),
-                intent
-                    .as_deref()
-                    .ok_or("NATIVE_USER_CONFIRMATION_REQUIRED")?,
-            )
-            .map_err(|_| "NATIVE_USER_CONFIRMATION_DENIED")?;
-        let removed = crate::session::delete_session(&workspace::sessions_dir(&app), &id)?;
-        workspace::log_audit(&app, "session_delete", format!("id={id} removed={removed}"));
-        Ok(removed)
-    }).await
+    SESSION_IO
+        .run(move || {
+            let _write = session_write_guard().map_err(str::to_string)?;
+            if app
+                .state::<crate::AppState>()
+                .shutdown_requested
+                .load(Ordering::Acquire)
+            {
+                return Err("SESSION_EXIT_ALREADY_ACCEPTED".to_string());
+            }
+            app.state::<crate::security_policy::IntentRegistry>()
+                .consume(
+                    &format!("session_delete:{id}"),
+                    intent
+                        .as_deref()
+                        .ok_or("NATIVE_USER_CONFIRMATION_REQUIRED")?,
+                )
+                .map_err(|_| "NATIVE_USER_CONFIRMATION_DENIED")?;
+            let removed = crate::session::delete_session(&workspace::sessions_dir(&app), &id)?;
+            workspace::log_audit(&app, "session_delete", format!("id={id} removed={removed}"));
+            Ok(removed)
+        })
+        .await
 }
 
 /// 导出会话为脱敏 JSON 文本（**不写磁盘**：不引入新的路径写入面，
@@ -470,16 +496,18 @@ pub async fn session_export(
 
     check_invocation_source(&webview, "session_export", None, &app)?;
     crate::images::check_id(&id, "会话 id")?;
-    SESSION_IO.run(move || {
-        let session = crate::session::load_session(&workspace::sessions_dir(&app), &id)?;
-        let json = serde_json::to_string_pretty(&session).map_err(|e| e.to_string())?;
-        workspace::log_audit(
-            &app,
-            "session_export",
-            format!("id={id} bytes={}", json.len()),
-        );
-        Ok(json)
-    }).await
+    SESSION_IO
+        .run(move || {
+            let session = crate::session::load_session(&workspace::sessions_dir(&app), &id)?;
+            let json = serde_json::to_string_pretty(&session).map_err(|e| e.to_string())?;
+            workspace::log_audit(
+                &app,
+                "session_export",
+                format!("id={id} bytes={}", json.len()),
+            );
+            Ok(json)
+        })
+        .await
 }
 
 /// 用会话中**已脱敏**的 URL 新建页签（重启/回看场景）。
@@ -498,22 +526,28 @@ pub async fn session_restore(
     crate::images::check_id(&id, "会话 id")?;
     // Disk access and audit remain in the bounded owner. Native creation retains
     // the original main-thread boundary; no session/tab mutex crosses the wait.
-    SESSION_IO.run(move || {
-        let session = crate::session::load_session(&workspace::sessions_dir(&app), &id)?;
-        let url = session.url.clone();
-        let native_app = app.clone();
-        let (send, receive) = std::sync::mpsc::sync_channel(1);
-        app.run_on_main_thread(move || {
-            let _ = send.send(create_tab(native_app, &url));
-        }).map_err(|_| "SESSION_RESTORE_DISPATCH_FAILED")?;
-        let tab = receive.recv().map_err(|_| "SESSION_RESTORE_REPLY_LOST")??;
-        workspace::log_audit(
-            &app,
-            "session_restore",
-            format!("id={id} tab_id={} resources={}", tab.id, session.resource_count),
-        );
-        Ok(tab)
-    }).await
+    SESSION_IO
+        .run(move || {
+            let session = crate::session::load_session(&workspace::sessions_dir(&app), &id)?;
+            let url = session.url.clone();
+            let native_app = app.clone();
+            let (send, receive) = std::sync::mpsc::sync_channel(1);
+            app.run_on_main_thread(move || {
+                let _ = send.send(create_tab(native_app, &url));
+            })
+            .map_err(|_| "SESSION_RESTORE_DISPATCH_FAILED")?;
+            let tab = receive.recv().map_err(|_| "SESSION_RESTORE_REPLY_LOST")??;
+            workspace::log_audit(
+                &app,
+                "session_restore",
+                format!(
+                    "id={id} tab_id={} resources={}",
+                    tab.id, session.resource_count
+                ),
+            );
+            Ok(tab)
+        })
+        .await
 }
 
 /// Explicit flush keeps the existing Tauri result shape. A partial save or a
@@ -526,9 +560,9 @@ pub async fn flush_sessions(
     crate::shared::native_legacy_policy::require_main(&webview, "flush_sessions")?;
 
     check_invocation_source(&webview, "flush_sessions", None, &app)?;
-    SESSION_IO.run(move || {
-        flush_sessions_inner(&app).into_public_report()
-    }).await
+    SESSION_IO
+        .run(move || flush_sessions_inner(&app).into_public_report())
+        .await
 }
 
 /// Ordinary flush only reports persistence; it never accepts application exit.
@@ -543,10 +577,7 @@ pub(crate) fn prepare_exit_sessions(app: &AppHandle) -> SessionFlushOutcomeRepor
     flush_sessions_with_intent(app, true)
 }
 
-fn flush_sessions_with_intent(
-    app: &AppHandle,
-    accept_exit: bool,
-) -> SessionFlushOutcomeReport {
+fn flush_sessions_with_intent(app: &AppHandle, accept_exit: bool) -> SessionFlushOutcomeReport {
     let state = app.state::<crate::AppState>();
     let accepted_report = || {
         let mut report = SessionFlushOutcomeReport::empty();
@@ -586,12 +617,19 @@ fn flush_sessions_with_intent(
     if auto_save {
         let mut ids: Vec<&String> = tabs.keys().collect();
         ids.sort();
-        let snapshots: Vec<SessionSaveSnapshot> = ids.into_iter().map(|id| {
-            let records = state.resource_buffer.lock().unwrap().records(id);
-            build_session_snapshot(
-                &tabs[id], snapshot_drafts.get(id), "", CLOSE_REASON_SHUTDOWN, &records,
-            )
-        }).collect();
+        let snapshots: Vec<SessionSaveSnapshot> = ids
+            .into_iter()
+            .map(|id| {
+                let records = state.resource_buffer.lock().unwrap().records(id);
+                build_session_snapshot(
+                    &tabs[id],
+                    snapshot_drafts.get(id),
+                    "",
+                    CLOSE_REASON_SHUTDOWN,
+                    &records,
+                )
+            })
+            .collect();
         persist_snapshots(&snapshots, &state.session_drafts, &mut report, |session| {
             persist_session(app, session)
         });
@@ -631,13 +669,10 @@ fn flush_sessions_with_intent(
     {
         let drafts = state.session_drafts.lock().unwrap();
         let current_tabs = state.tabs.lock().unwrap();
-        reconcile_snapshot_changes(
-            &tabs, &snapshot_drafts, &current_tabs, &drafts, &mut report,
-        );
+        reconcile_snapshot_changes(&tabs, &snapshot_drafts, &current_tabs, &drafts, &mut report);
         // set_session_policy shares SESSION_WRITES, so it cannot change the
         // policy between this check and acceptance of the same snapshot.
-        report.policy_changed =
-            auto_save != state.session_auto_save_on_exit.load(Ordering::SeqCst);
+        report.policy_changed = auto_save != state.session_auto_save_on_exit.load(Ordering::SeqCst);
         if accept_exit && report.can_exit() {
             state.shutdown_requested.store(true, Ordering::Release);
         }
@@ -674,32 +709,34 @@ pub async fn set_session_policy(
     crate::shared::native_legacy_policy::require_main(&webview, "set_session_policy")?;
 
     check_invocation_source(&webview, "set_session_policy", None, &app)?;
-    SESSION_IO.run(move || {
-        let _write = session_write_guard().map_err(str::to_string)?;
-        let state = app.state::<crate::AppState>();
-        if state.shutdown_requested.load(Ordering::Acquire) {
-            return Err("SESSION_EXIT_ALREADY_ACCEPTED".to_string());
-        }
-        if let Some(v) = close_prompt {
-            state.session_close_prompt.store(v, Ordering::SeqCst);
-        }
-        if let Some(v) = auto_save_on_exit {
-            state.session_auto_save_on_exit.store(v, Ordering::SeqCst);
-        }
-        let policy = SessionPolicy {
-            close_prompt: state.session_close_prompt.load(Ordering::SeqCst),
-            auto_save_on_exit: state.session_auto_save_on_exit.load(Ordering::SeqCst),
-        };
-        workspace::log_audit(
-            &app,
-            "session_policy",
-            format!(
-                "close_prompt={} auto_save_on_exit={}",
-                policy.close_prompt, policy.auto_save_on_exit
-            ),
-        );
-        Ok(policy)
-    }).await
+    SESSION_IO
+        .run(move || {
+            let _write = session_write_guard().map_err(str::to_string)?;
+            let state = app.state::<crate::AppState>();
+            if state.shutdown_requested.load(Ordering::Acquire) {
+                return Err("SESSION_EXIT_ALREADY_ACCEPTED".to_string());
+            }
+            if let Some(v) = close_prompt {
+                state.session_close_prompt.store(v, Ordering::SeqCst);
+            }
+            if let Some(v) = auto_save_on_exit {
+                state.session_auto_save_on_exit.store(v, Ordering::SeqCst);
+            }
+            let policy = SessionPolicy {
+                close_prompt: state.session_close_prompt.load(Ordering::SeqCst),
+                auto_save_on_exit: state.session_auto_save_on_exit.load(Ordering::SeqCst),
+            };
+            workspace::log_audit(
+                &app,
+                "session_policy",
+                format!(
+                    "close_prompt={} auto_save_on_exit={}",
+                    policy.close_prompt, policy.auto_save_on_exit
+                ),
+            );
+            Ok(policy)
+        })
+        .await
 }
 
 #[cfg(test)]
@@ -712,9 +749,8 @@ mod flush_tests {
 
     impl SessionFixture {
         fn new() -> Self {
-            let path = std::env::temp_dir().join(format!(
-                "browseros-session-flush-{}", uuid::Uuid::new_v4(),
-            ));
+            let path = std::env::temp_dir()
+                .join(format!("browseros-session-flush-{}", uuid::Uuid::new_v4(),));
             fs::create_dir_all(&path).expect("create session fixture");
             Self(path)
         }
@@ -785,12 +821,17 @@ mod flush_tests {
         assert!(!drafts.lock().unwrap().contains_key(&first.id));
         assert!(drafts.lock().unwrap().contains_key(&second.id));
         assert_eq!(report.outcomes[1].tab_id, second.id);
-        assert_eq!(report.outcomes[1].session_id.as_deref(), Some(snapshots[1].session.id.as_str()));
+        assert_eq!(
+            report.outcomes[1].session_id.as_deref(),
+            Some(snapshots[1].session.id.as_str())
+        );
         assert!(matches!(&report.outcomes[1].outcome,
             SessionFlushOutcome::Failed { error } if !error.is_empty()));
         let saved = crate::session::load_session(
-            &fixture.directory().join("sessions"), &snapshots[0].session.id,
-        ).expect("successful sibling is actually persisted");
+            &fixture.directory().join("sessions"),
+            &snapshots[0].session.id,
+        )
+        .expect("successful sibling is actually persisted");
         assert_eq!(saved.tab_id, first.id);
         assert!(!saved.url.contains("private-value"));
         assert!(report.into_public_report().is_err());
@@ -802,7 +843,11 @@ mod flush_tests {
         let original = tab("tab-3");
         let original_draft = draft(&original);
         let snapshot = build_session_snapshot(
-            &original, Some(&original_draft), "", CLOSE_REASON_SHUTDOWN, &[],
+            &original,
+            Some(&original_draft),
+            "",
+            CLOSE_REASON_SHUTDOWN,
+            &[],
         );
         let drafts = Mutex::new(HashMap::from([(original.id.clone(), original_draft)]));
         let mut newer = draft(&original);
@@ -810,7 +855,10 @@ mod flush_tests {
         let mut report = SessionFlushOutcomeReport::empty();
         persist_snapshots(&[snapshot], &drafts, &mut report, |session| {
             let result = fixture.persist(session)?;
-            drafts.lock().unwrap().insert(original.id.clone(), newer.clone());
+            drafts
+                .lock()
+                .unwrap()
+                .insert(original.id.clone(), newer.clone());
             Ok(result)
         });
 
@@ -826,14 +874,15 @@ mod flush_tests {
     fn exit_flush_keeps_a_draft_created_after_snapshot() {
         let fixture = SessionFixture::new();
         let original = tab("tab-4");
-        let snapshot = build_session_snapshot(
-            &original, None, "", CLOSE_REASON_SHUTDOWN, &[],
-        );
+        let snapshot = build_session_snapshot(&original, None, "", CLOSE_REASON_SHUTDOWN, &[]);
         let drafts = Mutex::new(HashMap::new());
         let mut report = SessionFlushOutcomeReport::empty();
         persist_snapshots(&[snapshot], &drafts, &mut report, |session| {
             let result = fixture.persist(session)?;
-            drafts.lock().unwrap().insert(original.id.clone(), draft(&original));
+            drafts
+                .lock()
+                .unwrap()
+                .insert(original.id.clone(), draft(&original));
             Ok(result)
         });
 
@@ -850,16 +899,19 @@ mod flush_tests {
         let second = tab("tab-6");
         let third = tab("tab-7");
         let before = HashMap::from([
-            (first.id.clone(), first.clone()), (second.id.clone(), second),
+            (first.id.clone(), first.clone()),
+            (second.id.clone(), second),
         ]);
         let mut navigated = first;
         navigated.url = "https://example.invalid/changed".to_string();
-        let current = HashMap::from([
-            (navigated.id.clone(), navigated), (third.id.clone(), third),
-        ]);
+        let current = HashMap::from([(navigated.id.clone(), navigated), (third.id.clone(), third)]);
         let mut report = SessionFlushOutcomeReport::empty();
         reconcile_snapshot_changes(
-            &before, &HashMap::new(), &current, &HashMap::new(), &mut report,
+            &before,
+            &HashMap::new(),
+            &current,
+            &HashMap::new(),
+            &mut report,
         );
 
         assert_eq!(report.changed_tabs, vec!["tab-5", "tab-6", "tab-7"]);
@@ -885,28 +937,45 @@ mod flush_tests {
         assert_eq!(report.summary.drafts_dropped, 0);
         assert_eq!(report.skipped_count(), 1);
         assert_eq!(report.outcomes[0].session_id, None);
-        assert!(matches!(&report.outcomes[0].outcome,
-            SessionFlushOutcome::Skipped { reason: SessionFlushSkipReason::AutoSaveDisabled }));
+        assert!(matches!(
+            &report.outcomes[0].outcome,
+            SessionFlushOutcome::Skipped {
+                reason: SessionFlushSkipReason::AutoSaveDisabled
+            }
+        ));
         assert_eq!(drafts.lock().unwrap()[&original.id].title, newer.title);
         assert!(!report.can_exit());
     }
 
     #[test]
     fn exit_flush_public_result_preserves_shape_and_redacts_failure_details() {
-        let public = SessionFlushOutcomeReport::empty().into_public_report().unwrap();
+        let public = SessionFlushOutcomeReport::empty()
+            .into_public_report()
+            .unwrap();
         let value = serde_json::to_value(public).expect("serialize legacy DTO");
-        let keys: std::collections::BTreeSet<_> =
-            value.as_object().unwrap().keys().map(String::as_str).collect();
-        assert_eq!(keys, std::collections::BTreeSet::from([
-            "persisted", "drafts_dropped", "tmp_removed", "capacity_removed",
-        ]));
+        let keys: std::collections::BTreeSet<_> = value
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            keys,
+            std::collections::BTreeSet::from([
+                "persisted",
+                "drafts_dropped",
+                "tmp_removed",
+                "capacity_removed",
+            ])
+        );
 
         let mut report = SessionFlushOutcomeReport::empty();
         report.outcomes.push(SessionFlushEntry {
             tab_id: "tab-9".to_string(),
             session_id: Some("session-id".to_string()),
             outcome: SessionFlushOutcome::Failed {
-                error: "native detail with https://example.invalid/?token=private-value".to_string(),
+                error: "native detail with https://example.invalid/?token=private-value"
+                    .to_string(),
             },
             draft_removed: false,
         });

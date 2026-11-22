@@ -13,5 +13,8 @@ pub fn execute(_root: &Path, _storage: &Path, request: Value) -> Result<Value, S
             "reason": "CONTEXT_PLATFORM_UNSUPPORTED"
         }));
     }
-    Err(format!("CONTEXT_PLATFORM_UNSUPPORTED:{}", std::env::consts::OS))
+    Err(format!(
+        "CONTEXT_PLATFORM_UNSUPPORTED:{}",
+        std::env::consts::OS
+    ))
 }

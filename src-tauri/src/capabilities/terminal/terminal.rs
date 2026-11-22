@@ -84,7 +84,9 @@ fn terminal_admission() -> &'static Arc<TerminalAdmission> {
 }
 
 #[derive(Clone)]
-struct TerminalPermit { _lease: Arc<TerminalPermitLease> }
+struct TerminalPermit {
+    _lease: Arc<TerminalPermitLease>,
+}
 struct TerminalPermitLease {
     admission: Arc<TerminalAdmission>,
     stop: Arc<AtomicBool>,
@@ -93,13 +95,16 @@ struct TerminalPermitLease {
 impl TerminalAdmission {
     fn acquire(self: &Arc<Self>) -> Result<TerminalPermit, String> {
         let mut leases = self.leases.lock().unwrap_or_else(|e| e.into_inner());
-        if self.closed.load(Ordering::Acquire) { return Err("TERM_SHUTTING_DOWN".into()); }
+        if self.closed.load(Ordering::Acquire) {
+            return Err("TERM_SHUTTING_DOWN".into());
+        }
         leases.retain(|lease| lease.strong_count() != 0);
         if self.active.load(Ordering::Acquire) >= MAX_TERMINAL_SESSIONS {
             return Err("TERM_SESSION_LIMIT".into());
         }
         let lease = Arc::new(TerminalPermitLease {
-            admission: Arc::clone(self), stop: Arc::new(AtomicBool::new(false)),
+            admission: Arc::clone(self),
+            stop: Arc::new(AtomicBool::new(false)),
         });
         self.active.fetch_add(1, Ordering::AcqRel);
         leases.push(Arc::downgrade(&lease));
@@ -114,14 +119,20 @@ impl TerminalAdmission {
         };
         // Do not perform PTY I/O or wait under the admission/table lock.
         // Reserved spawns see this same stop token after any in-flight OS call.
-        for lease in leases { lease.stop.store(true, Ordering::Release); }
+        for lease in leases {
+            lease.stop.store(true, Ordering::Release);
+        }
         self.changed.notify_all();
     }
 }
 
 impl TerminalPermit {
-    fn acquire() -> Result<Self, String> { terminal_admission().acquire() }
-    fn stop(&self) -> Arc<AtomicBool> { Arc::clone(&self._lease.stop) }
+    fn acquire() -> Result<Self, String> {
+        terminal_admission().acquire()
+    }
+    fn stop(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self._lease.stop)
+    }
 }
 
 impl Drop for TerminalPermitLease {
@@ -204,7 +215,9 @@ impl TermExitReason {
         match self {
             TermExitReason::Eof => "\r\n[终端已退出]\r\n",
             TermExitReason::ChannelDead => "\r\n[输出通道已断开，终端已终止]\r\n",
-            TermExitReason::InputFailed => "\r\n[输入传输失败，终端已停止；部分输入可能未发送，请核对后再重试]\r\n",
+            TermExitReason::InputFailed => {
+                "\r\n[输入传输失败，终端已停止；部分输入可能未发送，请核对后再重试]\r\n"
+            }
         }
     }
 }
@@ -317,12 +330,28 @@ pub struct TerminalHandles {
 }
 
 pub fn start_pipeline(
-    reader: Box<dyn Read + Send>, out: Arc<dyn TermOutput>, id: String,
-    stop: Arc<AtomicBool>, capacity: usize, flush_interval_ms: u64, lossy: bool,
-    on_channel_dead: Option<Arc<dyn Fn() + Send + Sync>>, probe: Arc<TermProbe>,
+    reader: Box<dyn Read + Send>,
+    out: Arc<dyn TermOutput>,
+    id: String,
+    stop: Arc<AtomicBool>,
+    capacity: usize,
+    flush_interval_ms: u64,
+    lossy: bool,
+    on_channel_dead: Option<Arc<dyn Fn() + Send + Sync>>,
+    probe: Arc<TermProbe>,
 ) -> TerminalHandles {
-    start_pipeline_with_failure(reader, out, id, stop, capacity, flush_interval_ms,
-        lossy, on_channel_dead, probe, Arc::new(AtomicBool::new(false)))
+    start_pipeline_with_failure(
+        reader,
+        out,
+        id,
+        stop,
+        capacity,
+        flush_interval_ms,
+        lossy,
+        on_channel_dead,
+        probe,
+        Arc::new(AtomicBool::new(false)),
+    )
 }
 
 /// 启动输出管道。参数化队列容量 / 聚合窗口 / 是否可丢弃，便于测量模式切换与单测。
@@ -402,7 +431,9 @@ fn start_pipeline_with_failure(
                         // but a full queue must not prevent shutdown/draining.
                         let mut pending = chunk;
                         loop {
-                            if w_stop.load(Ordering::Acquire) { break; }
+                            if w_stop.load(Ordering::Acquire) {
+                                break;
+                            }
                             match w_tx.try_send(pending) {
                                 Ok(()) => {
                                     if probe_on {
@@ -415,7 +446,10 @@ fn start_pipeline_with_failure(
                                 }
                                 Err(TrySendError::Full(chunk)) => {
                                     pending = chunk;
-                                    if !wait_while_running(&w_stop, Duration::from_millis(TERM_CANCEL_POLL_MS)) {
+                                    if !wait_while_running(
+                                        &w_stop,
+                                        Duration::from_millis(TERM_CANCEL_POLL_MS),
+                                    ) {
                                         break;
                                     }
                                 }
@@ -428,7 +462,9 @@ fn start_pipeline_with_failure(
                     }
                 }
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => {
-                    if w_stop.load(Ordering::Acquire) { break; }
+                    if w_stop.load(Ordering::Acquire) {
+                        break;
+                    }
                 }
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                     if !wait_while_running(&w_stop, Duration::from_millis(TERM_CANCEL_POLL_MS)) {
@@ -523,7 +559,11 @@ impl Utf8StreamDecoder {
         let truncated_tail_bytes = self.tail.len();
         self.tail.clear();
         DecodedChunk {
-            text: if truncated_tail_bytes == 0 { String::new() } else { "\u{FFFD}".into() },
+            text: if truncated_tail_bytes == 0 {
+                String::new()
+            } else {
+                "\u{FFFD}".into()
+            },
             invalid_sequences: 0,
             truncated_tail_bytes,
         }
@@ -558,7 +598,9 @@ fn run_pump(
     let probe_on = probe_enabled();
 
     loop {
-        if stop.load(Ordering::Acquire) { break; }
+        if stop.load(Ordering::Acquire) {
+            break;
+        }
         match rx.recv_timeout(wait) {
             Ok(chunk) => {
                 if probe_on {
@@ -567,7 +609,16 @@ fn run_pump(
                 batch.extend_from_slice(&chunk);
                 let elapsed = last_flush.elapsed().as_millis() as u64;
                 if should_flush(batch.len(), elapsed, flush_interval_ms) {
-                    if !flush_batch(&out, &id, &mut batch, &mut last_flush, &probe, &stop, &mut decoder, false) {
+                    if !flush_batch(
+                        &out,
+                        &id,
+                        &mut batch,
+                        &mut last_flush,
+                        &probe,
+                        &stop,
+                        &mut decoder,
+                        false,
+                    ) {
                         ok = false;
                         break;
                     }
@@ -576,14 +627,25 @@ fn run_pump(
             Err(RecvTimeoutError::Timeout) => {
                 // 窗口到点：先排空队列，再冲刷残余，避免小块滞留。
                 while batch.len() < TERM_BATCH_MAX_BYTES && !stop.load(Ordering::Acquire) {
-                    let Ok(chunk) = rx.try_recv() else { break; };
+                    let Ok(chunk) = rx.try_recv() else {
+                        break;
+                    };
                     if probe_on {
                         probe.gauge.fetch_sub(1, Ordering::Relaxed);
                     }
                     batch.extend_from_slice(&chunk);
                 }
                 notify_drops(&out, &id, &drops, &stop);
-                if !flush_batch(&out, &id, &mut batch, &mut last_flush, &probe, &stop, &mut decoder, false) {
+                if !flush_batch(
+                    &out,
+                    &id,
+                    &mut batch,
+                    &mut last_flush,
+                    &probe,
+                    &stop,
+                    &mut decoder,
+                    false,
+                ) {
                     ok = false;
                     break;
                 }
@@ -593,7 +655,16 @@ fn run_pump(
             }
             Err(RecvTimeoutError::Disconnected) => {
                 notify_drops(&out, &id, &drops, &stop);
-                if !flush_batch(&out, &id, &mut batch, &mut last_flush, &probe, &stop, &mut decoder, true) {
+                if !flush_batch(
+                    &out,
+                    &id,
+                    &mut batch,
+                    &mut last_flush,
+                    &probe,
+                    &stop,
+                    &mut decoder,
+                    true,
+                ) {
                     ok = false;
                 }
                 break;
@@ -662,7 +733,9 @@ fn flush_batch(
         decoder.cancel();
         return false;
     }
-    if batch.is_empty() && !eof { return true; }
+    if batch.is_empty() && !eof {
+        return true;
+    }
     let probe_on = probe_enabled();
     let raw_len = batch.len();
     let mut decoded = decoder.push(batch);
@@ -675,7 +748,10 @@ fn flush_batch(
     *last_flush = Instant::now();
     if probe_on {
         let seq = probe.flush_seq.fetch_add(1, Ordering::Relaxed) + 1;
-        let cum = probe.flush_bytes.fetch_add(raw_len as u64, Ordering::Relaxed) + raw_len as u64;
+        let cum = probe
+            .flush_bytes
+            .fetch_add(raw_len as u64, Ordering::Relaxed)
+            + raw_len as u64;
         let invalid_sequences = decoded.invalid_sequences;
         let truncated_tail_bytes = decoded.truncated_tail_bytes;
         let pending_tail_bytes = decoder.tail.len();
@@ -685,14 +761,21 @@ fn flush_batch(
         );
     }
     // An incomplete suffix alone is not an empty output frame or an error.
-    if decoded.text.is_empty() { return true; }
+    if decoded.text.is_empty() {
+        return true;
+    }
     send_with_backoff(out, id, TermMessage::Data(decoded.text), probe, stop)
 }
 
 fn notify_drops(
-    out: &Arc<dyn TermOutput>, id: &str, drops: &Arc<Mutex<DropCounter>>, stop: &AtomicBool,
+    out: &Arc<dyn TermOutput>,
+    id: &str,
+    drops: &Arc<Mutex<DropCounter>>,
+    stop: &AtomicBool,
 ) {
-    if stop.load(Ordering::Acquire) { return; }
+    if stop.load(Ordering::Acquire) {
+        return;
+    }
     let (chunks, bytes) = {
         let mut guard = match drops.lock() {
             Ok(guard) => guard,
@@ -732,7 +815,9 @@ fn send_with_backoff(
     let started = Instant::now();
     let probe_on = probe_enabled();
     loop {
-        if stop.load(Ordering::Acquire) { return false; }
+        if stop.load(Ordering::Acquire) {
+            return false;
+        }
         match out.send(&value) {
             Ok(()) => {
                 if probe_on {
@@ -774,9 +859,13 @@ fn send_with_backoff(
 fn wait_while_running(stop: &AtomicBool, duration: Duration) -> bool {
     let deadline = Instant::now() + duration;
     loop {
-        if stop.load(Ordering::Acquire) { return false; }
+        if stop.load(Ordering::Acquire) {
+            return false;
+        }
         let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() { return true; }
+        if remaining.is_zero() {
+            return true;
+        }
         thread::sleep(remaining.min(Duration::from_millis(TERM_CANCEL_POLL_MS)));
     }
 }
@@ -801,16 +890,25 @@ pub struct TerminalInput {
 
 impl TerminalInput {
     pub fn enqueue(&self, bytes: &[u8]) -> Result<(), String> {
-        if let Some(error) = self.failure.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+        if let Some(error) = self
+            .failure
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+        {
             return Err(error.clone());
         }
         if self.stop.load(Ordering::Acquire) {
             return Err("TERM_INPUT_CLOSED".into());
         }
         if bytes.len() > TERM_INPUT_MAX_BYTES {
-            return Err(format!("TERM_INPUT_TOO_LARGE: limit={TERM_INPUT_MAX_BYTES}"));
+            return Err(format!(
+                "TERM_INPUT_TOO_LARGE: limit={TERM_INPUT_MAX_BYTES}"
+            ));
         }
-        if bytes.is_empty() { return Ok(()); }
+        if bytes.is_empty() {
+            return Ok(());
+        }
         match self.tx.try_send(bytes.to_vec()) {
             Ok(()) => Ok(()),
             Err(TrySendError::Full(_)) => Err("TERM_INPUT_QUEUE_FULL".into()),
@@ -845,24 +943,51 @@ impl TerminalControl {
     /// Bound async resize by the existing native session admission. Replies
     /// for replaced pending sizes finish immediately, so callers cannot form
     /// another unbounded wait queue behind a blocked ConPTY call.
-    pub fn enqueue_resize(&self, cols: u16, rows: u16)
-        -> Result<tokio::sync::oneshot::Receiver<Result<(), String>>, String>
-    {
-        if cols == 0 || rows == 0 { return Err("TERM_SIZE_INVALID".into()); }
-        if self.stop.load(Ordering::Acquire) { return Err("TERM_CLOSED".into()); }
-        let mut worker = self.resize_owner.worker.lock().unwrap_or_else(|e| e.into_inner());
+    pub fn enqueue_resize(
+        &self,
+        cols: u16,
+        rows: u16,
+    ) -> Result<tokio::sync::oneshot::Receiver<Result<(), String>>, String> {
+        if cols == 0 || rows == 0 {
+            return Err("TERM_SIZE_INVALID".into());
+        }
+        if self.stop.load(Ordering::Acquire) {
+            return Err("TERM_CLOSED".into());
+        }
+        let mut worker = self
+            .resize_owner
+            .worker
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         if worker.as_ref().is_some_and(|handle| handle.is_finished()) {
-            if worker.take().expect("finished resize owner").join().is_err() {
+            if worker
+                .take()
+                .expect("finished resize owner")
+                .join()
+                .is_err()
+            {
                 self.stop_resize();
                 return Err("TERM_RESIZE_WORKER_PANICKED".into());
             }
         }
         let (reply, receiver) = tokio::sync::oneshot::channel();
         {
-            let mut pending = self.resize_owner.pending.lock().unwrap_or_else(|e| e.into_inner());
-            if self.stop.load(Ordering::Acquire) { return Err("TERM_CLOSED".into()); }
+            let mut pending = self
+                .resize_owner
+                .pending
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if self.stop.load(Ordering::Acquire) {
+                return Err("TERM_CLOSED".into());
+            }
             if let Some(previous) = pending.replace(ResizeRequest {
-                size: PtySize { rows, cols, pixel_width: 0, pixel_height: 0 }, reply,
+                size: PtySize {
+                    rows,
+                    cols,
+                    pixel_width: 0,
+                    pixel_height: 0,
+                },
+                reply,
             }) {
                 let _ = previous.reply.send(Err("TERM_RESIZE_SUPERSEDED".into()));
             }
@@ -870,18 +995,31 @@ impl TerminalControl {
         if worker.is_none() {
             let lease = match self.admission.upgrade() {
                 Some(lease) => lease,
-                None => { self.stop_resize(); return Err("TERM_CLOSED".into()); }
+                None => {
+                    self.stop_resize();
+                    return Err("TERM_CLOSED".into());
+                }
             };
             let control = self.clone();
-            match thread::Builder::new().name("terminal-resize".into()).spawn(move || {
-                // This lease survives the IPC future and covers real native I/O.
-                let _permit = TerminalPermit { _lease: lease };
-                control.run_resize_owner();
-            }) {
+            match thread::Builder::new()
+                .name("terminal-resize".into())
+                .spawn(move || {
+                    // This lease survives the IPC future and covers real native I/O.
+                    let _permit = TerminalPermit { _lease: lease };
+                    control.run_resize_owner();
+                }) {
                 Ok(handle) => *worker = Some(handle),
                 Err(_) => {
-                    if let Some(pending) = self.resize_owner.pending.lock().unwrap_or_else(|e| e.into_inner()).take() {
-                        let _ = pending.reply.send(Err("TERM_RESIZE_WORKER_START_FAILED".into()));
+                    if let Some(pending) = self
+                        .resize_owner
+                        .pending
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .take()
+                    {
+                        let _ = pending
+                            .reply
+                            .send(Err("TERM_RESIZE_WORKER_START_FAILED".into()));
                     }
                     return Err("TERM_RESIZE_WORKER_START_FAILED".into());
                 }
@@ -894,11 +1032,18 @@ impl TerminalControl {
     fn run_resize_owner(&self) {
         loop {
             let request = {
-                let mut pending = self.resize_owner.pending.lock().unwrap_or_else(|e| e.into_inner());
+                let mut pending = self
+                    .resize_owner
+                    .pending
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
                 while pending.is_none() && !self.stop.load(Ordering::Acquire) {
-                    pending = self.resize_owner.wake.wait_timeout(
-                        pending, Duration::from_millis(TERM_CANCEL_POLL_MS),
-                    ).unwrap_or_else(|e| e.into_inner()).0;
+                    pending = self
+                        .resize_owner
+                        .wake
+                        .wait_timeout(pending, Duration::from_millis(TERM_CANCEL_POLL_MS))
+                        .unwrap_or_else(|e| e.into_inner())
+                        .0;
                 }
                 if self.stop.load(Ordering::Acquire) {
                     if let Some(request) = pending.take() {
@@ -915,7 +1060,13 @@ impl TerminalControl {
 
     fn stop_resize(&self) {
         self.stop.store(true, Ordering::Release);
-        if let Some(request) = self.resize_owner.pending.lock().unwrap_or_else(|e| e.into_inner()).take() {
+        if let Some(request) = self
+            .resize_owner
+            .pending
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+        {
             let _ = request.reply.send(Err("TERM_CLOSED".into()));
         }
         self.resize_owner.wake.notify_all();
@@ -923,8 +1074,14 @@ impl TerminalControl {
 
     fn reap_resize(&self) -> Result<bool, String> {
         let handle = {
-            let mut worker = self.resize_owner.worker.lock().unwrap_or_else(|e| e.into_inner());
-            if worker.as_ref().is_some_and(|handle| !handle.is_finished()) { return Ok(false); }
+            let mut worker = self
+                .resize_owner
+                .worker
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if worker.as_ref().is_some_and(|handle| !handle.is_finished()) {
+                return Ok(false);
+            }
             worker.take()
         };
         if handle.is_some_and(|handle| handle.join().is_err()) {
@@ -934,18 +1091,34 @@ impl TerminalControl {
     }
 
     pub fn resize(&self, cols: u16, rows: u16) -> Result<(), String> {
-        if self.stop.load(Ordering::Acquire) { return Err("TERM_CLOSED".into()); }
+        if self.stop.load(Ordering::Acquire) {
+            return Err("TERM_CLOSED".into());
+        }
         let guard = self.master.lock().unwrap_or_else(|e| e.into_inner());
-        if self.stop.load(Ordering::Acquire) { return Err("TERM_CLOSED".into()); }
-        guard.as_ref().ok_or("TERM_CLOSED")?
-            .resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
+        if self.stop.load(Ordering::Acquire) {
+            return Err("TERM_CLOSED".into());
+        }
+        guard
+            .as_ref()
+            .ok_or("TERM_CLOSED")?
+            .resize(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
             .map_err(|e| format!("resize 失败: {e}"))
     }
 
     #[cfg(test)]
     fn size(&self) -> Result<PtySize, String> {
-        self.master.lock().unwrap_or_else(|e| e.into_inner())
-            .as_ref().ok_or("TERM_CLOSED")?.get_size().map_err(|e| e.to_string())
+        self.master
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .ok_or("TERM_CLOSED")?
+            .get_size()
+            .map_err(|e| e.to_string())
     }
 }
 
@@ -973,11 +1146,19 @@ fn start_input_writer(
                     // potentially entering a new WriteFile after cancellation.
                     let end = (offset + TERM_READ_BUF_BYTES).min(bytes.len());
                     match writer.write(&bytes[offset..end]) {
-                        Ok(0) => return Err(io::Error::new(io::ErrorKind::WriteZero, "PTY input closed")),
+                        Ok(0) => {
+                            return Err(io::Error::new(
+                                io::ErrorKind::WriteZero,
+                                "PTY input closed",
+                            ))
+                        }
                         Ok(n) => offset += n,
                         Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
                         Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                            wait_while_running(&worker_stop, Duration::from_millis(TERM_CANCEL_POLL_MS));
+                            wait_while_running(
+                                &worker_stop,
+                                Duration::from_millis(TERM_CANCEL_POLL_MS),
+                            );
                         }
                         Err(error) => return Err(error),
                     }
@@ -991,13 +1172,17 @@ fn start_input_writer(
         // Closing the writer happens in this worker, never while holding the
         // global terminals table. A requested cancellation is not an I/O fault.
         drop(writer);
-        if worker_stop.load(Ordering::Acquire) { return Ok(()); }
+        if worker_stop.load(Ordering::Acquire) {
+            return Ok(());
+        }
         result.map_err(|error| {
             let error = format!("TERM_INPUT_WRITE_FAILED: {error}");
             *worker_failure.lock().unwrap_or_else(|e| e.into_inner()) = Some(error.clone());
             input_failed.store(true, Ordering::Release);
             worker_stop.store(true, Ordering::Release);
-            if let Some(kill) = on_failure { kill(); }
+            if let Some(kill) = on_failure {
+                kill();
+            }
             error
         })
     });
@@ -1016,20 +1201,31 @@ pub struct TerminalSession {
 }
 
 impl TerminalSession {
-    pub fn input(&self) -> TerminalInput { self.input.clone() }
-    pub fn control(&self) -> TerminalControl { self.control.clone() }
+    pub fn input(&self) -> TerminalInput {
+        self.input.clone()
+    }
+    pub fn control(&self) -> TerminalControl {
+        self.control.clone()
+    }
 
     /// Register close before removing this session from the shared table.
     /// Registration performs no PTY I/O or join; callers wait after unlocking.
-    pub fn request_close(&mut self) { self.begin_cleanup(); }
+    pub fn request_close(&mut self) {
+        self.begin_cleanup();
+    }
 
     #[cfg(test)]
     pub(crate) fn process_id(&self) -> Option<u32> {
-        self.resources.as_ref().and_then(|r| r.child.as_ref()).and_then(|child| child.process_id())
+        self.resources
+            .as_ref()
+            .and_then(|r| r.child.as_ref())
+            .and_then(|child| child.process_id())
     }
 
     fn begin_cleanup(&mut self) -> Arc<CleanupCompletion> {
-        if let Some(completion) = &self.cleanup { return Arc::clone(completion); }
+        if let Some(completion) = &self.cleanup {
+            return Arc::clone(completion);
+        }
         self.control.stop_resize();
         let completion = Arc::new(CleanupCompletion::new(self.id.clone()));
         if let Some(resources) = self.resources.take() {
@@ -1046,7 +1242,9 @@ impl Drop for TerminalSession {
     fn drop(&mut self) {
         // Never block a caller (or the terminals mutex) in ClosePseudoConsole.
         // The registry retains every resource even if its worker cannot start.
-        if self.resources.is_some() { self.begin_cleanup(); }
+        if self.resources.is_some() {
+            self.begin_cleanup();
+        }
     }
 }
 
@@ -1059,7 +1257,8 @@ pub fn spawn_terminal(
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
     #[cfg(windows)]
     let shell = std::env::var("BROWSEROS_WINDOWS_SHELL")
-        .ok().filter(|value| !value.trim().is_empty())
+        .ok()
+        .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| "powershell.exe".to_string());
     let mut cmd = CommandBuilder::new(shell);
     #[cfg(windows)]
@@ -1087,18 +1286,29 @@ pub(crate) fn spawn_terminal_with_command(
     let stop = permit.stop();
     let id = format!("term-{}", uuid::Uuid::new_v4());
     #[cfg(windows)]
-    let job = Arc::new(crate::windows_process::JobObject::create_for_spawn()
-        .map_err(|e| format!("WINDOWS_TERMINAL_JOB_FAILED: {e}"))?);
-    if stop.load(Ordering::Acquire) { return Err("TERM_SHUTTING_DOWN".into()); }
+    let job = Arc::new(
+        crate::windows_process::JobObject::create_for_spawn()
+            .map_err(|e| format!("WINDOWS_TERMINAL_JOB_FAILED: {e}"))?,
+    );
+    if stop.load(Ordering::Acquire) {
+        return Err("TERM_SHUTTING_DOWN".into());
+    }
     if probe_enabled() {
         eprintln!("[TERM_PROBE] {id} pty.openpty cols=100 rows=24");
     }
-    let pair = native_pty_system().openpty(PtySize {
-        rows: 24, cols: 100, pixel_width: 0, pixel_height: 0,
-    }).map_err(|e| format!("无法创建 PTY: {e}"))?;
+    let pair = native_pty_system()
+        .openpty(PtySize {
+            rows: 24,
+            cols: 100,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .map_err(|e| format!("无法创建 PTY: {e}"))?;
     let control = TerminalControl {
-        master: Arc::new(Mutex::new(Some(pair.master))), stop: Arc::clone(&stop),
-        resize_owner: Arc::new(ResizeOwner::default()), admission: Arc::downgrade(&permit._lease),
+        master: Arc::new(Mutex::new(Some(pair.master))),
+        stop: Arc::clone(&stop),
+        resize_owner: Arc::new(ResizeOwner::default()),
+        admission: Arc::downgrade(&permit._lease),
     };
     // From this point every early return, including a spawn failure, hands
     // native close to the same retained cleanup owner. No foreground error
@@ -1106,14 +1316,20 @@ pub(crate) fn spawn_terminal_with_command(
     let mut spawn_owner = SpawnCleanupGuard {
         id: id.clone(),
         resources: Some(CleanupResources {
-            control: control.clone(), child: None, pgid: None,
+            control: control.clone(),
+            child: None,
+            pgid: None,
             slave: Some(pair.slave),
             #[cfg(windows)]
             job: Some(Arc::clone(&job)),
-            writer: None, handles: None, _permit: permit,
+            writer: None,
+            handles: None,
+            _permit: permit,
         }),
     };
-    if stop.load(Ordering::Acquire) { return Err("TERM_SHUTTING_DOWN".into()); }
+    if stop.load(Ordering::Acquire) {
+        return Err("TERM_SHUTTING_DOWN".into());
+    }
     // Obtain fallible endpoints before starting a child. A failure drops only
     // independent pipe descriptors here; the master/slave belong to the guard.
     let (reader, writer) = {
@@ -1121,19 +1337,33 @@ pub(crate) fn spawn_terminal_with_command(
         let master = slot.as_ref().ok_or("TERM_MASTER_MISSING")?;
         #[cfg(unix)]
         make_terminal_nonblocking(&**master)?;
-        let reader = master.try_clone_reader().map_err(|e| format!("reader: {e}"))?;
+        let reader = master
+            .try_clone_reader()
+            .map_err(|e| format!("reader: {e}"))?;
         let writer = master.take_writer().map_err(|e| format!("writer: {e}"))?;
         (reader, writer)
     };
-    let resources = spawn_owner.resources.as_mut().ok_or("TERM_SPAWN_OWNER_MISSING")?;
-    if stop.load(Ordering::Acquire) { return Err("TERM_SHUTTING_DOWN".into()); }
+    let resources = spawn_owner
+        .resources
+        .as_mut()
+        .ok_or("TERM_SPAWN_OWNER_MISSING")?;
+    if stop.load(Ordering::Acquire) {
+        return Err("TERM_SHUTTING_DOWN".into());
+    }
     #[cfg(windows)]
-    let child = resources.slave.as_ref().ok_or("TERM_SLAVE_MISSING")?
+    let child = resources
+        .slave
+        .as_ref()
+        .ok_or("TERM_SLAVE_MISSING")?
         .spawn_command_in_job(cmd, job.as_raw_handle())
         .map_err(|e| format!("WINDOWS_TERMINAL_JOB_FAILED: {e}"))?;
     #[cfg(not(windows))]
-    let child = resources.slave.as_ref().ok_or("TERM_SLAVE_MISSING")?
-        .spawn_command(cmd).map_err(|e| format!("无法启动 shell: {e}"))?;
+    let child = resources
+        .slave
+        .as_ref()
+        .ok_or("TERM_SLAVE_MISSING")?
+        .spawn_command(cmd)
+        .map_err(|e| format!("无法启动 shell: {e}"))?;
     let pgid = pgid_of(&child);
     resources.child = Some(child);
     resources.pgid = pgid;
@@ -1149,27 +1379,51 @@ pub(crate) fn spawn_terminal_with_command(
     #[cfg(windows)]
     let on_dead: Option<Arc<dyn Fn() + Send + Sync>> = {
         let job = Arc::clone(&job);
-        Some(Arc::new(move || { let _ = job.terminate(); }))
+        Some(Arc::new(move || {
+            let _ = job.terminate();
+        }))
     };
     #[cfg(all(not(unix), not(windows)))]
     let on_dead: Option<Arc<dyn Fn() + Send + Sync>> = None;
     let input_failed = Arc::new(AtomicBool::new(false));
     let handles = start_pipeline_with_failure(
-        reader, out, id.clone(), Arc::clone(&stop),
-        if measure { TERM_QUEUE_CAPACITY_MEASURE } else { TERM_QUEUE_CAPACITY },
+        reader,
+        out,
+        id.clone(),
+        Arc::clone(&stop),
+        if measure {
+            TERM_QUEUE_CAPACITY_MEASURE
+        } else {
+            TERM_QUEUE_CAPACITY
+        },
         if measure { 0 } else { TERM_FLUSH_INTERVAL_MS },
-        !measure, on_dead.clone(), Arc::new(TermProbe::default()), Arc::clone(&input_failed),
+        !measure,
+        on_dead.clone(),
+        Arc::new(TermProbe::default()),
+        Arc::clone(&input_failed),
     );
     resources.handles = Some(handles);
     let (input, writer) = start_input_writer(writer, Arc::clone(&stop), input_failed, on_dead);
     resources.writer = Some(writer);
     let session = TerminalSession {
-        id: id.clone(), input, control, stop,
-        resources: spawn_owner.resources.take(), cleanup: None,
+        id: id.clone(),
+        input,
+        control,
+        stop,
+        resources: spawn_owner.resources.take(),
+        cleanup: None,
     };
-    if session.stop.load(Ordering::Acquire) { return Err("TERM_SHUTTING_DOWN".into()); }
+    if session.stop.load(Ordering::Acquire) {
+        return Err("TERM_SHUTTING_DOWN".into());
+    }
     session.input.enqueue(b"\n")?;
-    Ok((TermInfo { id, probe: probe_enabled() }, session))
+    Ok((
+        TermInfo {
+            id,
+            probe: probe_enabled(),
+        },
+        session,
+    ))
 }
 
 /// This guard exists before the first fallible endpoint or process operation.
@@ -1181,8 +1435,11 @@ impl Drop for SpawnCleanupGuard {
     fn drop(&mut self) {
         if let Some(resources) = self.resources.take() {
             resources.control.stop.store(true, Ordering::Release);
-            cleanup_registry().register(self.id.clone(), resources,
-                Arc::new(CleanupCompletion::new(self.id.clone())));
+            cleanup_registry().register(
+                self.id.clone(),
+                resources,
+                Arc::new(CleanupCompletion::new(self.id.clone())),
+            );
         }
     }
 }
@@ -1192,7 +1449,10 @@ fn make_terminal_nonblocking(master: &dyn MasterPty) -> Result<(), String> {
     let fd = master.as_raw_fd().ok_or("TERM_NATIVE_PTY_FD_MISSING")?;
     let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
     if flags == -1 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } == -1 {
-        return Err(format!("TERM_NONBLOCKING_FAILED: {}", io::Error::last_os_error()));
+        return Err(format!(
+            "TERM_NONBLOCKING_FAILED: {}",
+            io::Error::last_os_error()
+        ));
     }
     Ok(())
 }
@@ -1206,7 +1466,9 @@ pub fn resize(session: &mut TerminalSession, cols: u16, rows: u16) -> Result<(),
 /// The foreground wait is bounded. A timeout explicitly means cleanup is
 /// still owned/running; retry_cleanup(id) waits for that same task.
 pub fn terminate_session(session: &mut TerminalSession) -> Result<(), String> {
-    session.begin_cleanup().wait(TERM_GROUP_GRACE_MS + TERM_THREAD_JOIN_GRACE_MS)
+    session
+        .begin_cleanup()
+        .wait(TERM_GROUP_GRACE_MS + TERM_THREAD_JOIN_GRACE_MS)
 }
 
 pub fn retry_cleanup(id: &str) -> Result<(), String> {
@@ -1218,9 +1480,18 @@ pub(crate) fn wait_for_cleanup(id: &str, grace_ms: u64) -> Result<(), String> {
     registry.ensure_worker();
     let completion = {
         let state = registry.state.lock().unwrap_or_else(|e| e.into_inner());
-        state.tasks.iter().find(|task| task.id == id).map(|task| Arc::clone(&task.completion))
-            .or_else(|| state.completed.iter().find(|(name, _)| name == id)
-                .map(|(_, completion)| Arc::clone(completion)))
+        state
+            .tasks
+            .iter()
+            .find(|task| task.id == id)
+            .map(|task| Arc::clone(&task.completion))
+            .or_else(|| {
+                state
+                    .completed
+                    .iter()
+                    .find(|(name, _)| name == id)
+                    .map(|(_, completion)| Arc::clone(completion))
+            })
     };
     completion.map_or(Ok(()), |completion| completion.wait(grace_ms))
 }
@@ -1242,7 +1513,10 @@ pub fn shutdown_until(deadline: Instant) -> Result<(), String> {
     shutdown_registry_until(cleanup_registry(), deadline)
 }
 
-fn shutdown_registry_until(registry: &Arc<CleanupRegistry>, deadline: Instant) -> Result<(), String> {
+fn shutdown_registry_until(
+    registry: &Arc<CleanupRegistry>,
+    deadline: Instant,
+) -> Result<(), String> {
     let admission = &registry.admission;
     admission.request_shutdown();
     registry.changed.notify_all();
@@ -1257,7 +1531,11 @@ fn shutdown_registry_until(registry: &Arc<CleanupRegistry>, deadline: Instant) -
             // ensure_worker joins only a finished service; the run loop exits
             // only after the admission gate is closed and every lease is gone.
             let mut worker = registry.worker.lock().unwrap_or_else(|e| e.into_inner());
-            if worker.as_ref().map(|handle| handle.is_finished()).unwrap_or(false) {
+            if worker
+                .as_ref()
+                .map(|handle| handle.is_finished())
+                .unwrap_or(false)
+            {
                 if let Some(handle) = worker.take() {
                     if handle.join().is_err() {
                         return Err("TERM_SHUTDOWN_REAPER_FAILED".into());
@@ -1265,22 +1543,35 @@ fn shutdown_registry_until(registry: &Arc<CleanupRegistry>, deadline: Instant) -
                 }
             }
             if worker.is_none() {
-                return if errors.is_empty() { Ok(()) }
-                    else { Err(format!("TERM_SHUTDOWN_COMPLETED_WITH_ERRORS: {}", errors.join("; "))) };
+                return if errors.is_empty() {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "TERM_SHUTDOWN_COMPLETED_WITH_ERRORS: {}",
+                        errors.join("; ")
+                    ))
+                };
             }
         }
         let now = Instant::now();
         if now >= deadline {
-            return Err(format!("TERM_CLEANUP_PENDING: active={active}; tasks={pending}"));
+            return Err(format!(
+                "TERM_CLEANUP_PENDING: active={active}; tasks={pending}"
+            ));
         }
         registry.changed.notify_all();
         // A bounded wait also covers an in-flight spawn that has not registered
         // cleanup yet. Never restart a per-session grace period.
         let guard = admission.leases.lock().unwrap_or_else(|e| e.into_inner());
-        let _wait = admission.changed.wait_timeout(
-            guard, deadline.saturating_duration_since(now)
-                .min(Duration::from_millis(TERM_CANCEL_POLL_MS)),
-        ).unwrap_or_else(|e| e.into_inner());
+        let _wait = admission
+            .changed
+            .wait_timeout(
+                guard,
+                deadline
+                    .saturating_duration_since(now)
+                    .min(Duration::from_millis(TERM_CANCEL_POLL_MS)),
+            )
+            .unwrap_or_else(|e| e.into_inner());
     }
 }
 
@@ -1297,7 +1588,11 @@ enum CleanupStatus {
 
 impl CleanupCompletion {
     fn new(id: String) -> Self {
-        Self { id, state: Mutex::new(CleanupStatus::Pending(None)), changed: Condvar::new() }
+        Self {
+            id,
+            state: Mutex::new(CleanupStatus::Pending(None)),
+            changed: Condvar::new(),
+        }
     }
 
     fn pending_error(&self, error: String) {
@@ -1319,14 +1614,20 @@ impl CleanupCompletion {
             match &*state {
                 CleanupStatus::Finished(result) => return result.clone(),
                 CleanupStatus::Pending(error) if Instant::now() >= deadline => {
-                    return Err(format!("TERM_CLEANUP_PENDING: {}{}", self.id,
-                        error.as_ref().map(|e| format!("; {e}")).unwrap_or_default()));
+                    return Err(format!(
+                        "TERM_CLEANUP_PENDING: {}{}",
+                        self.id,
+                        error.as_ref().map(|e| format!("; {e}")).unwrap_or_default()
+                    ));
                 }
                 CleanupStatus::Pending(_) => {}
             }
             let remaining = deadline.saturating_duration_since(Instant::now());
-            state = self.changed.wait_timeout(state, remaining)
-                .unwrap_or_else(|e| e.into_inner()).0;
+            state = self
+                .changed
+                .wait_timeout(state, remaining)
+                .unwrap_or_else(|e| e.into_inner())
+                .0;
         }
     }
 }
@@ -1368,17 +1669,32 @@ fn cleanup_registry() -> &'static Arc<CleanupRegistry> {
 impl CleanupRegistry {
     fn new(admission: Arc<TerminalAdmission>) -> Self {
         Self {
-            admission, state: Mutex::new(CleanupRegistryState::default()),
-            changed: Condvar::new(), worker: Mutex::new(None),
+            admission,
+            state: Mutex::new(CleanupRegistryState::default()),
+            changed: Condvar::new(),
+            worker: Mutex::new(None),
         }
     }
 
-    fn register(self: &Arc<Self>, id: String, resources: CleanupResources, completion: Arc<CleanupCompletion>) {
+    fn register(
+        self: &Arc<Self>,
+        id: String,
+        resources: CleanupResources,
+        completion: Arc<CleanupCompletion>,
+    ) {
         let permit = resources._permit.clone();
-        self.state.lock().unwrap_or_else(|e| e.into_inner()).tasks.push(CleanupTask {
-            id, resources: Arc::new(Mutex::new(Some(resources))), runner: None, completion,
-            uncertain: false, _permit: permit,
-        });
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .tasks
+            .push(CleanupTask {
+                id,
+                resources: Arc::new(Mutex::new(Some(resources))),
+                runner: None,
+                completion,
+                uncertain: false,
+                _permit: permit,
+            });
         self.ensure_worker();
         self.changed.notify_one();
     }
@@ -1390,27 +1706,38 @@ impl CleanupRegistry {
                 if finished.join().is_err() {
                     let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
                     state.service_failed = true;
-                    state.shutdown_errors.push("TERM_SHUTDOWN_REAPER_FAILED".into());
+                    state
+                        .shutdown_errors
+                        .push("TERM_SHUTDOWN_REAPER_FAILED".into());
                 }
             }
         }
-        if worker.is_some() { return; }
+        if worker.is_some() {
+            return;
+        }
         {
             let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-            if state.service_failed { return; }
+            if state.service_failed {
+                return;
+            }
             if self.admission.closed.load(Ordering::Acquire)
                 && self.admission.active.load(Ordering::Acquire) == 0
-                && state.tasks.is_empty() { return; }
+                && state.tasks.is_empty()
+            {
+                return;
+            }
         }
         let registry = Arc::clone(self);
-        match thread::Builder::new().name("terminal-cleanup-reaper".into())
+        match thread::Builder::new()
+            .name("terminal-cleanup-reaper".into())
             .spawn(move || registry.run())
         {
             Ok(handle) => *worker = Some(handle),
             Err(error) => {
                 let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
                 for task in &state.tasks {
-                    task.completion.pending_error(format!("TERM_REAPER_START_FAILED: {error}"));
+                    task.completion
+                        .pending_error(format!("TERM_REAPER_START_FAILED: {error}"));
                 }
                 // Tasks remain registered; the next close/retry starts it again.
             }
@@ -1426,16 +1753,28 @@ impl CleanupRegistry {
                 if task.runner.is_none() && !task.uncertain {
                     let resources = Arc::clone(&task.resources);
                     let completion = Arc::clone(&task.completion);
-                    match thread::Builder::new().name(format!("cleanup-{}", task.id)).spawn(move || {
-                        let resources = resources.lock().unwrap_or_else(|e| e.into_inner())
-                            .take().ok_or("TERM_CLEANUP_OWNER_MISSING")?;
-                        resources.run(&completion)
-                    }) {
+                    match thread::Builder::new()
+                        .name(format!("cleanup-{}", task.id))
+                        .spawn(move || {
+                            let resources = resources
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .take()
+                                .ok_or("TERM_CLEANUP_OWNER_MISSING")?;
+                            resources.run(&completion)
+                        }) {
                         Ok(handle) => task.runner = Some(handle),
-                        Err(error) => task.completion.pending_error(format!("TERM_CLEANUP_START_FAILED: {error}")),
+                        Err(error) => task
+                            .completion
+                            .pending_error(format!("TERM_CLEANUP_START_FAILED: {error}")),
                     }
                 }
-                if task.runner.as_ref().map(|handle| handle.is_finished()).unwrap_or(false) {
+                if task
+                    .runner
+                    .as_ref()
+                    .map(|handle| handle.is_finished())
+                    .unwrap_or(false)
+                {
                     let joined = task.runner.take().expect("finished cleanup runner").join();
                     match joined {
                         Ok(result) => {
@@ -1447,16 +1786,24 @@ impl CleanupRegistry {
                                 }
                             }
                             finished.completion.finish(result);
-                            state.completed.push_back((finished.id, finished.completion));
-                            while state.completed.len() > TERM_RECENT_CLEANUP_RESULTS { state.completed.pop_front(); }
+                            state
+                                .completed
+                                .push_back((finished.id, finished.completion));
+                            while state.completed.len() > TERM_RECENT_CLEANUP_RESULTS {
+                                state.completed.pop_front();
+                            }
                         }
                         Err(_) => {
                             // The runner may have unwound through unknown
                             // native state. Keep its task and resource permit;
                             // never retry an empty owner as if cleanup succeeded.
                             task.uncertain = true;
-                            task.completion.pending_error("TERM_CLEANUP_PANICKED".into());
-                            eprintln!("[terminal] {} cleanup owner panicked; cleanup remains pending", task.id);
+                            task.completion
+                                .pending_error("TERM_CLEANUP_PANICKED".into());
+                            eprintln!(
+                                "[terminal] {} cleanup owner panicked; cleanup remains pending",
+                                task.id
+                            );
                             index += 1;
                         }
                     }
@@ -1466,14 +1813,18 @@ impl CleanupRegistry {
             }
             // The service's own JoinHandle stays in the static registry.
             // Only finished task handles are ever removed/joined.
-            if state.tasks.is_empty() && self.admission.closed.load(Ordering::Acquire)
-                && self.admission.active.load(Ordering::Acquire) == 0 {
+            if state.tasks.is_empty()
+                && self.admission.closed.load(Ordering::Acquire)
+                && self.admission.active.load(Ordering::Acquire) == 0
+            {
                 return;
             }
             if state.tasks.is_empty() && !self.admission.closed.load(Ordering::Acquire) {
                 let _guard = self.changed.wait(state).unwrap_or_else(|e| e.into_inner());
             } else {
-                let _guard = self.changed.wait_timeout(state, Duration::from_millis(TERM_CANCEL_POLL_MS))
+                let _guard = self
+                    .changed
+                    .wait_timeout(state, Duration::from_millis(TERM_CANCEL_POLL_MS))
                     .unwrap_or_else(|e| e.into_inner());
             }
         }
@@ -1493,7 +1844,9 @@ struct CleanupResources {
 }
 
 fn record_cleanup_error(errors: &mut Vec<String>, error: String) {
-    if !errors.contains(&error) { errors.push(error); }
+    if !errors.contains(&error) {
+        errors.push(error);
+    }
 }
 
 impl CleanupResources {
@@ -1502,7 +1855,9 @@ impl CleanupResources {
         let mut errors = Vec::new();
         #[cfg(windows)]
         if let Some(job) = &self.job {
-            if let Err(error) = job.terminate() { record_cleanup_error(&mut errors, error); }
+            if let Err(error) = job.terminate() {
+                record_cleanup_error(&mut errors, error);
+            }
         }
         #[cfg(windows)]
         if let Some(writer) = &self.writer {
@@ -1515,7 +1870,10 @@ impl CleanupResources {
         let mut child_reaped = match self.child.as_mut() {
             Some(child) => match terminate_group(child, self.pgid, TERM_GROUP_GRACE_MS) {
                 Ok(()) => true,
-                Err(error) => { record_cleanup_error(&mut errors, error); false }
+                Err(error) => {
+                    record_cleanup_error(&mut errors, error);
+                    false
+                }
             },
             None => true,
         };
@@ -1529,19 +1887,31 @@ impl CleanupResources {
         let mut closer: Option<JoinHandle<()>> = None;
         let mut master_closed = false;
         let mut close_uncertain = false;
-        let mut worker = self.handles.take().map(|handles| (Some(handles.worker), Some(handles.pump)));
+        let mut worker = self
+            .handles
+            .take()
+            .map(|handles| (Some(handles.worker), Some(handles.pump)));
         let mut last_kill = Instant::now();
         loop {
             if closer.is_none() && !master_closed && !close_uncertain {
                 let control = self.control.clone();
-                match thread::Builder::new().name("terminal-pty-close".into()).spawn(move || {
-                    let master = control.master.lock().unwrap_or_else(|e| e.into_inner()).take();
-                    // The slot lock is released before the native destructor.
-                    // All surviving control clones now see None, not an HPCON.
-                    drop(master);
-                }) {
+                match thread::Builder::new()
+                    .name("terminal-pty-close".into())
+                    .spawn(move || {
+                        let master = control
+                            .master
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .take();
+                        // The slot lock is released before the native destructor.
+                        // All surviving control clones now see None, not an HPCON.
+                        drop(master);
+                    }) {
                     Ok(handle) => closer = Some(handle),
-                    Err(error) => record_cleanup_error(&mut errors, format!("TERM_PTY_CLOSE_START_FAILED: {error}")),
+                    Err(error) => record_cleanup_error(
+                        &mut errors,
+                        format!("TERM_PTY_CLOSE_START_FAILED: {error}"),
+                    ),
                 }
             }
 
@@ -1553,7 +1923,12 @@ impl CleanupResources {
                     }
                 }
             }
-            if self.writer.as_ref().map(|h| h.is_finished()).unwrap_or(false) {
+            if self
+                .writer
+                .as_ref()
+                .map(|h| h.is_finished())
+                .unwrap_or(false)
+            {
                 match self.writer.take().expect("finished input writer").join() {
                     Ok(Ok(())) => {}
                     Ok(Err(error)) => {
@@ -1599,10 +1974,16 @@ impl CleanupResources {
                 match child.try_wait() {
                     Ok(Some(_)) => match child.wait() {
                         Ok(_) => child_reaped = true,
-                        Err(error) => record_cleanup_error(&mut errors, format!("TERM_CHILD_REAP_FAILED: {error}")),
+                        Err(error) => record_cleanup_error(
+                            &mut errors,
+                            format!("TERM_CHILD_REAP_FAILED: {error}"),
+                        ),
                     },
                     Ok(None) => {}
-                    Err(error) => record_cleanup_error(&mut errors, format!("TERM_CHILD_STATUS_FAILED: {error}")),
+                    Err(error) => record_cleanup_error(
+                        &mut errors,
+                        format!("TERM_CHILD_STATUS_FAILED: {error}"),
+                    ),
                 }
             }
             #[cfg(windows)]
@@ -1623,30 +2004,53 @@ impl CleanupResources {
             if (!child_reaped || !job_empty) && last_kill.elapsed() >= Duration::from_secs(1) {
                 #[cfg(windows)]
                 if let Some(job) = &self.job {
-                    if let Err(error) = job.terminate() { record_cleanup_error(&mut errors, error); }
+                    if let Err(error) = job.terminate() {
+                        record_cleanup_error(&mut errors, error);
+                    }
                 }
                 #[cfg(unix)]
                 if !child_reaped {
-                    if let Some(pgid) = self.pgid { kill_group(pgid, libc::SIGKILL); }
+                    if let Some(pgid) = self.pgid {
+                        kill_group(pgid, libc::SIGKILL);
+                    }
                 }
                 if let Some(child) = self.child.as_mut().filter(|_| !child_reaped) {
                     if let Err(error) = child.kill() {
-                        record_cleanup_error(&mut errors, format!("TERM_CHILD_KILL_FAILED: {error}"));
+                        record_cleanup_error(
+                            &mut errors,
+                            format!("TERM_CHILD_KILL_FAILED: {error}"),
+                        );
                     }
                 }
                 last_kill = Instant::now();
             }
-            let output_reaped = worker.as_ref()
-                .map(|(reader, pump)| reader.is_none() && pump.is_none()).unwrap_or(true);
+            let output_reaped = worker
+                .as_ref()
+                .map(|(reader, pump)| reader.is_none() && pump.is_none())
+                .unwrap_or(true);
             let resize_reaped = match self.control.reap_resize() {
                 Ok(done) => done,
-                Err(error) => { record_cleanup_error(&mut errors, error); true }
+                Err(error) => {
+                    record_cleanup_error(&mut errors, error);
+                    true
+                }
             };
-            if master_closed && resize_reaped && self.writer.is_none() && output_reaped && child_reaped && job_empty {
-                return if errors.is_empty() { Ok(()) } else {
+            if master_closed
+                && resize_reaped
+                && self.writer.is_none()
+                && output_reaped
+                && child_reaped
+                && job_empty
+            {
+                return if errors.is_empty() {
+                    Ok(())
+                } else {
                     // Every owned resource is now reaped, but preserve the
                     // diagnostic outcome separately from pending/uncertain.
-                    Err(format!("TERM_CLEANUP_COMPLETED_WITH_ERRORS: {}", errors.join("; ")))
+                    Err(format!(
+                        "TERM_CLEANUP_COMPLETED_WITH_ERRORS: {}",
+                        errors.join("; ")
+                    ))
                 };
             }
             thread::sleep(Duration::from_millis(TERM_CANCEL_POLL_MS));
@@ -1654,9 +2058,18 @@ impl CleanupResources {
     }
 }
 
-fn join_finished(handle: &mut Option<JoinHandle<()>>, panic_message: &str, errors: &mut Vec<String>) {
+fn join_finished(
+    handle: &mut Option<JoinHandle<()>>,
+    panic_message: &str,
+    errors: &mut Vec<String>,
+) {
     if handle.as_ref().map(|h| h.is_finished()).unwrap_or(false) {
-        if handle.take().expect("finished output thread").join().is_err() {
+        if handle
+            .take()
+            .expect("finished output thread")
+            .join()
+            .is_err()
+        {
             record_cleanup_error(errors, panic_message.into());
         }
     }
@@ -1696,9 +2109,16 @@ pub fn terminate_group(
     // wait() is only used after the kernel-backed try_wait reports exit.
     let deadline = Instant::now() + Duration::from_millis(grace_ms.max(2000));
     loop {
-        match child.try_wait().map_err(|error| format!("TERM_CHILD_STATUS_FAILED: {error}"))? {
-            Some(_) => return child.wait().map(|_| ())
-                .map_err(|error| format!("TERM_CHILD_REAP_FAILED: {error}")),
+        match child
+            .try_wait()
+            .map_err(|error| format!("TERM_CHILD_STATUS_FAILED: {error}"))?
+        {
+            Some(_) => {
+                return child
+                    .wait()
+                    .map(|_| ())
+                    .map_err(|error| format!("TERM_CHILD_REAP_FAILED: {error}"))
+            }
             None if Instant::now() >= deadline => {
                 return Err(match kill_error {
                     Some(error) => format!("TERM_CHILD_KILL_FAILED: {error}"),
@@ -1743,9 +2163,16 @@ mod tests {
         // works without creating a pseudoconsole or requiring a console host.
         let system = native_pty_system();
         for (rows, cols) in [(0, 80), (24, 0), (u16::MAX, 80), (24, u16::MAX)] {
-            let size = PtySize { rows, cols, pixel_width: 0, pixel_height: 0 };
-            assert!(system.openpty(size).is_err(),
-                "ConPTY accepted invalid size {rows}x{cols}");
+            let size = PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            };
+            assert!(
+                system.openpty(size).is_err(),
+                "ConPTY accepted invalid size {rows}x{cols}"
+            );
         }
     }
 
@@ -1789,7 +2216,6 @@ mod tests {
         assert!(sink.send(&json!({"kind":"data"})).is_ok());
     }
 
-
     #[test]
     fn utf8_decoder_preserves_every_split_of_multibyte_output() {
         // Includes a literal replacement character: valid U+FFFD is data,
@@ -1805,7 +2231,11 @@ mod tests {
             assert_eq!(second.invalid_sequences, 0, "split={split}");
             let eof = decoder.finish();
             assert_eq!(eof.truncated_tail_bytes, 0, "split={split}");
-            assert_eq!(first.text + &second.text + &eof.text, expected, "split={split}");
+            assert_eq!(
+                first.text + &second.text + &eof.text,
+                expected,
+                "split={split}"
+            );
         }
         let mut decoder = Utf8StreamDecoder::default();
         let mut received = String::new();
@@ -1833,13 +2263,20 @@ mod tests {
         assert_eq!(eof.text, "\u{FFFD}");
         assert_eq!(eof.invalid_sequences, 0);
         assert_eq!(eof.truncated_tail_bytes, 2);
-        assert_eq!(decoder.finish(), DecodedChunk::default(), "EOF is idempotent");
+        assert_eq!(
+            decoder.finish(),
+            DecodedChunk::default(),
+            "EOF is idempotent"
+        );
 
         let mut decoder = Utf8StreamDecoder::default();
         assert_eq!(decoder.push(&[0xe4]).text, "");
         let broken = decoder.push(b"x");
         assert_eq!(broken.text, "\u{FFFD}x");
-        assert_eq!(broken.invalid_sequences, 1, "a completed invalid prefix is not an EOF tail");
+        assert_eq!(
+            broken.invalid_sequences, 1,
+            "a completed invalid prefix is not an EOF tail"
+        );
     }
 
     #[test]
@@ -1854,7 +2291,9 @@ mod tests {
     struct ChunkReader(VecDeque<Vec<u8>>);
     impl Read for ChunkReader {
         fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-            let Some(chunk) = self.0.pop_front() else { return Ok(0); };
+            let Some(chunk) = self.0.pop_front() else {
+                return Ok(0);
+            };
             assert!(chunk.len() <= buf.len());
             buf[..chunk.len()].copy_from_slice(&chunk);
             Ok(chunk.len())
@@ -1866,26 +2305,45 @@ mod tests {
     #[test]
     fn pipeline_preserves_split_utf8_across_flushes() {
         let chunks = VecDeque::from([
-            vec![b'A', 0xe4], vec![0xb8], vec![0xad, 0xf0, 0x9f],
-            vec![0x99, 0x82], vec![0xe6], vec![0x96, 0x87, b'Z'],
+            vec![b'A', 0xe4],
+            vec![0xb8],
+            vec![0xad, 0xf0, 0x9f],
+            vec![0x99, 0x82],
+            vec![0xe6],
+            vec![0x96, 0x87, b'Z'],
         ]);
         let (tx, rx) = mpsc::channel();
         let handles = start_pipeline(
-            Box::new(ChunkReader(chunks)), Arc::new(CollectSink { tx: Mutex::new(tx) }),
-            "utf8-split".into(), Arc::new(AtomicBool::new(false)),
-            8, 0, false, None, Arc::new(TermProbe::default()),
+            Box::new(ChunkReader(chunks)),
+            Arc::new(CollectSink { tx: Mutex::new(tx) }),
+            "utf8-split".into(),
+            Arc::new(AtomicBool::new(false)),
+            8,
+            0,
+            false,
+            None,
+            Arc::new(TermProbe::default()),
         );
         let mut received = String::new();
         let mut data_frames = 0;
         loop {
-            let (kind, data) = rx.recv_timeout(Duration::from_secs(3))
+            let (kind, data) = rx
+                .recv_timeout(Duration::from_secs(3))
                 .expect("pipeline must deliver output and EOF");
-            if kind == "exit" { break; }
-            if kind == "data" { data_frames += 1; received.push_str(&data); }
+            if kind == "exit" {
+                break;
+            }
+            if kind == "data" {
+                data_frames += 1;
+                received.push_str(&data);
+            }
         }
         handles.worker.join().unwrap();
         handles.pump.join().unwrap();
-        assert!(data_frames > 1, "fixture must exercise multiple independent flushes");
+        assert!(
+            data_frames > 1,
+            "fixture must exercise multiple independent flushes"
+        );
         assert_eq!(received, "A中🙂文Z");
     }
 
@@ -1901,17 +2359,27 @@ mod tests {
         let active_stop = active.stop();
         assert_eq!(admission.active.load(Ordering::Acquire), 2);
         admission.request_shutdown();
-        assert!(reserved_stop.load(Ordering::Acquire), "spawn not yet published must stop");
+        assert!(
+            reserved_stop.load(Ordering::Acquire),
+            "spawn not yet published must stop"
+        );
         assert!(active_stop.load(Ordering::Acquire));
         assert!(matches!(admission.acquire(), Err(error) if error == "TERM_SHUTTING_DOWN"));
         drop(active);
-        assert_eq!(admission.active.load(Ordering::Acquire), 2, "pending cleanup retains its slot");
+        assert_eq!(
+            admission.active.load(Ordering::Acquire),
+            2,
+            "pending cleanup retains its slot"
+        );
         drop(cleanup_owner);
         assert_eq!(admission.active.load(Ordering::Acquire), 1);
         drop(reserved);
         assert_eq!(admission.active.load(Ordering::Acquire), 0);
         admission.request_shutdown();
-        assert!(admission.closed.load(Ordering::Acquire), "shutdown is monotonic");
+        assert!(
+            admission.closed.load(Ordering::Acquire),
+            "shutdown is monotonic"
+        );
     }
 
     /// T1：合并策略（F3）。
@@ -1967,29 +2435,42 @@ mod tests {
         #[cfg(windows)]
         let cmd = {
             let mut cmd = CommandBuilder::new(
-                std::env::var_os("ComSpec").unwrap_or_else(|| "cmd.exe".into())
+                std::env::var_os("ComSpec").unwrap_or_else(|| "cmd.exe".into()),
             );
             cmd.args(["/D", "/Q"]);
             cmd
         };
         let (tx, rx) = mpsc::channel();
-        let (info, mut session) = spawn_terminal_with_command(
-            cmd, Arc::new(CollectSink { tx: Mutex::new(tx) }), false,
-        ).expect("spawn native production terminal");
+        let (info, mut session) =
+            spawn_terminal_with_command(cmd, Arc::new(CollectSink { tx: Mutex::new(tx) }), false)
+                .expect("spawn native production terminal");
         #[cfg(unix)]
-        session.input().enqueue(b"printf '__T_%s__\\n' OK\n").expect("queue Unix input");
+        session
+            .input()
+            .enqueue(b"printf '__T_%s__\\n' OK\n")
+            .expect("queue Unix input");
         #[cfg(windows)]
-        session.input().enqueue(b"echo __T_^O^K__\r\n").expect("queue ConPTY input");
+        session
+            .input()
+            .enqueue(b"echo __T_^O^K__\r\n")
+            .expect("queue ConPTY input");
         let deadline = Instant::now() + Duration::from_secs(5);
         let mut seen = String::new();
         while Instant::now() < deadline {
             while let Ok((kind, data)) = rx.try_recv() {
-                if kind == "data" { seen.push_str(&data); }
+                if kind == "data" {
+                    seen.push_str(&data);
+                }
             }
-            if seen.contains("__T_OK__") { break; }
+            if seen.contains("__T_OK__") {
+                break;
+            }
             thread::sleep(Duration::from_millis(20));
         }
-        assert!(seen.contains("__T_OK__"), "shell-generated output must reach sink: {seen:?}");
+        assert!(
+            seen.contains("__T_OK__"),
+            "shell-generated output must reach sink: {seen:?}"
+        );
         let first = terminate_session(&mut session);
         if let Err(error) = first {
             assert!(error.starts_with("TERM_CLEANUP_PENDING:"), "{error}");
@@ -2002,9 +2483,9 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn resize_changes_real_pty_size() {
-        let (info, mut session) = spawn_terminal_with_command(
-            CommandBuilder::new("/bin/sh"), Arc::new(NoopSink), false,
-        ).expect("spawn sh");
+        let (info, mut session) =
+            spawn_terminal_with_command(CommandBuilder::new("/bin/sh"), Arc::new(NoopSink), false)
+                .expect("spawn sh");
         // This endpoint can outlive the session without retaining the master.
         let control = session.control();
         control.resize(120, 40).expect("real native resize");
@@ -2016,7 +2497,10 @@ mod tests {
             assert!(error.starts_with("TERM_CLEANUP_PENDING:"), "{error}");
         }
         wait_for_cleanup(&info.id, 8_000).expect("reap resized terminal");
-        assert!(control.size().is_err(), "control clones must not retain a closed master");
+        assert!(
+            control.size().is_err(),
+            "control clones must not retain a closed master"
+        );
     }
 
     #[derive(Default)]
@@ -2028,7 +2512,9 @@ mod tests {
     impl Gate {
         fn wait(&self) {
             let mut open = self.open.lock().unwrap();
-            while !*open { open = self.changed.wait(open).unwrap(); }
+            while !*open {
+                open = self.changed.wait(open).unwrap();
+            }
         }
         fn release(&self) {
             *self.open.lock().unwrap() = true;
@@ -2038,7 +2524,9 @@ mod tests {
 
     struct ReleaseGate(Arc<Gate>);
     impl Drop for ReleaseGate {
-        fn drop(&mut self) { self.0.release(); }
+        fn drop(&mut self) {
+            self.0.release();
+        }
     }
 
     struct BlockedWriter {
@@ -2053,10 +2541,14 @@ mod tests {
             self.gate.wait();
             Ok(bytes.len())
         }
-        fn flush(&mut self) -> io::Result<()> { Ok(()) }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
     }
     impl Drop for BlockedWriter {
-        fn drop(&mut self) { self.closed.store(true, Ordering::Release); }
+        fn drop(&mut self) {
+            self.closed.store(true, Ordering::Release);
+        }
     }
 
     struct BlockedReader {
@@ -2072,7 +2564,9 @@ mod tests {
         }
     }
     impl Drop for BlockedReader {
-        fn drop(&mut self) { self.closed.store(true, Ordering::Release); }
+        fn drop(&mut self) {
+            self.closed.store(true, Ordering::Release);
+        }
     }
 
     fn wait_flag(flag: &AtomicBool) {
@@ -2080,7 +2574,10 @@ mod tests {
         while !flag.load(Ordering::Acquire) && Instant::now() < deadline {
             thread::sleep(Duration::from_millis(1));
         }
-        assert!(flag.load(Ordering::Acquire), "worker did not enter fixture I/O");
+        assert!(
+            flag.load(Ordering::Acquire),
+            "worker did not enter fixture I/O"
+        );
     }
 
     #[test]
@@ -2090,17 +2587,34 @@ mod tests {
         let entered = Arc::new(AtomicBool::new(false));
         let closed = Arc::new(AtomicBool::new(false));
         let stop = Arc::new(AtomicBool::new(false));
-        let (input, handle) = start_input_writer(Box::new(BlockedWriter {
-            gate: Arc::clone(&gate), entered: Arc::clone(&entered), closed: Arc::clone(&closed),
-        }), Arc::clone(&stop), Arc::new(AtomicBool::new(false)), None);
+        let (input, handle) = start_input_writer(
+            Box::new(BlockedWriter {
+                gate: Arc::clone(&gate),
+                entered: Arc::clone(&entered),
+                closed: Arc::clone(&closed),
+            }),
+            Arc::clone(&stop),
+            Arc::new(AtomicBool::new(false)),
+            None,
+        );
         input.enqueue(b"blocked").unwrap();
         wait_flag(&entered);
-        for _ in 0..TERM_INPUT_QUEUE_CAPACITY { input.enqueue(b"queued").unwrap(); }
-        assert_eq!(input.enqueue(b"overflow").unwrap_err(), "TERM_INPUT_QUEUE_FULL");
-        assert!(input.enqueue(&vec![0; TERM_INPUT_MAX_BYTES + 1]).unwrap_err()
+        for _ in 0..TERM_INPUT_QUEUE_CAPACITY {
+            input.enqueue(b"queued").unwrap();
+        }
+        assert_eq!(
+            input.enqueue(b"overflow").unwrap_err(),
+            "TERM_INPUT_QUEUE_FULL"
+        );
+        assert!(input
+            .enqueue(&vec![0; TERM_INPUT_MAX_BYTES + 1])
+            .unwrap_err()
             .starts_with("TERM_INPUT_TOO_LARGE"));
         stop.store(true, Ordering::Release);
-        assert_eq!(input.enqueue(b"after close").unwrap_err(), "TERM_INPUT_CLOSED");
+        assert_eq!(
+            input.enqueue(b"after close").unwrap_err(),
+            "TERM_INPUT_CLOSED"
+        );
         gate.release();
         handle.join().unwrap().unwrap();
         assert!(closed.load(Ordering::Acquire));
@@ -2109,7 +2623,9 @@ mod tests {
     #[derive(Debug, Clone)]
     struct ExitedChild;
     impl portable_pty::ChildKiller for ExitedChild {
-        fn kill(&mut self) -> io::Result<()> { Ok(()) }
+        fn kill(&mut self) -> io::Result<()> {
+            Ok(())
+        }
         fn clone_killer(&self) -> Box<dyn portable_pty::ChildKiller + Send + Sync> {
             Box::new(self.clone())
         }
@@ -2121,9 +2637,13 @@ mod tests {
         fn wait(&mut self) -> io::Result<portable_pty::ExitStatus> {
             Ok(portable_pty::ExitStatus::with_exit_code(0))
         }
-        fn process_id(&self) -> Option<u32> { None }
+        fn process_id(&self) -> Option<u32> {
+            None
+        }
         #[cfg(windows)]
-        fn as_raw_handle(&self) -> Option<std::os::windows::io::RawHandle> { None }
+        fn as_raw_handle(&self) -> Option<std::os::windows::io::RawHandle> {
+            None
+        }
     }
 
     struct DelayedCloseMaster {
@@ -2132,8 +2652,12 @@ mod tests {
         closed: Arc<AtomicBool>,
     }
     impl MasterPty for DelayedCloseMaster {
-        fn resize(&self, _: PtySize) -> Result<(), portable_pty::Error> { Ok(()) }
-        fn get_size(&self) -> Result<PtySize, portable_pty::Error> { Ok(PtySize::default()) }
+        fn resize(&self, _: PtySize) -> Result<(), portable_pty::Error> {
+            Ok(())
+        }
+        fn get_size(&self) -> Result<PtySize, portable_pty::Error> {
+            Ok(PtySize::default())
+        }
         fn try_clone_reader(&self) -> Result<Box<dyn Read + Send>, portable_pty::Error> {
             Ok(Box::new(io::empty()))
         }
@@ -2141,11 +2665,17 @@ mod tests {
             Ok(Box::new(io::sink()))
         }
         #[cfg(unix)]
-        fn process_group_leader(&self) -> Option<libc::pid_t> { None }
+        fn process_group_leader(&self) -> Option<libc::pid_t> {
+            None
+        }
         #[cfg(unix)]
-        fn as_raw_fd(&self) -> Option<portable_pty::unix::RawFd> { None }
+        fn as_raw_fd(&self) -> Option<portable_pty::unix::RawFd> {
+            None
+        }
         #[cfg(unix)]
-        fn tty_name(&self) -> Option<std::path::PathBuf> { None }
+        fn tty_name(&self) -> Option<std::path::PathBuf> {
+            None
+        }
     }
     impl Drop for DelayedCloseMaster {
         fn drop(&mut self) {
@@ -2167,15 +2697,27 @@ mod tests {
             self.sizes.lock().unwrap().push((size.cols, size.rows));
             Ok(())
         }
-        fn get_size(&self) -> Result<PtySize, portable_pty::Error> { Ok(PtySize::default()) }
-        fn try_clone_reader(&self) -> Result<Box<dyn Read + Send>, portable_pty::Error> { Ok(Box::new(io::empty())) }
-        fn take_writer(&self) -> Result<Box<dyn Write + Send>, portable_pty::Error> { Ok(Box::new(io::sink())) }
+        fn get_size(&self) -> Result<PtySize, portable_pty::Error> {
+            Ok(PtySize::default())
+        }
+        fn try_clone_reader(&self) -> Result<Box<dyn Read + Send>, portable_pty::Error> {
+            Ok(Box::new(io::empty()))
+        }
+        fn take_writer(&self) -> Result<Box<dyn Write + Send>, portable_pty::Error> {
+            Ok(Box::new(io::sink()))
+        }
         #[cfg(unix)]
-        fn process_group_leader(&self) -> Option<libc::pid_t> { None }
+        fn process_group_leader(&self) -> Option<libc::pid_t> {
+            None
+        }
         #[cfg(unix)]
-        fn as_raw_fd(&self) -> Option<portable_pty::unix::RawFd> { None }
+        fn as_raw_fd(&self) -> Option<portable_pty::unix::RawFd> {
+            None
+        }
         #[cfg(unix)]
-        fn tty_name(&self) -> Option<std::path::PathBuf> { None }
+        fn tty_name(&self) -> Option<std::path::PathBuf> {
+            None
+        }
     }
 
     #[test]
@@ -2188,16 +2730,22 @@ mod tests {
         let sizes = Arc::new(Mutex::new(Vec::new()));
         let control = TerminalControl {
             master: Arc::new(Mutex::new(Some(Box::new(BlockedResizeMaster {
-                gate: Arc::clone(&gate), entered: Arc::clone(&entered), sizes: Arc::clone(&sizes),
+                gate: Arc::clone(&gate),
+                entered: Arc::clone(&entered),
+                sizes: Arc::clone(&sizes),
             })))),
-            stop: permit.stop(), resize_owner: Arc::new(ResizeOwner::default()),
+            stop: permit.stop(),
+            resize_owner: Arc::new(ResizeOwner::default()),
             admission: Arc::downgrade(&permit._lease),
         };
         let first = control.enqueue_resize(80, 24).unwrap();
         wait_flag(&entered);
         let obsolete = control.enqueue_resize(90, 25).unwrap();
         let latest = control.enqueue_resize(120, 40).unwrap();
-        assert_eq!(obsolete.blocking_recv().unwrap().unwrap_err(), "TERM_RESIZE_SUPERSEDED");
+        assert_eq!(
+            obsolete.blocking_recv().unwrap().unwrap_err(),
+            "TERM_RESIZE_SUPERSEDED"
+        );
         gate.release();
         first.blocking_recv().unwrap().unwrap();
         latest.blocking_recv().unwrap().unwrap();
@@ -2217,9 +2765,12 @@ mod tests {
         let entered = Arc::new(AtomicBool::new(false));
         let control = TerminalControl {
             master: Arc::new(Mutex::new(Some(Box::new(BlockedResizeMaster {
-                gate: Arc::clone(&gate), entered: Arc::clone(&entered), sizes: Arc::new(Mutex::new(Vec::new())),
+                gate: Arc::clone(&gate),
+                entered: Arc::clone(&entered),
+                sizes: Arc::new(Mutex::new(Vec::new())),
             })))),
-            stop: permit.stop(), resize_owner: Arc::new(ResizeOwner::default()),
+            stop: permit.stop(),
+            resize_owner: Arc::new(ResizeOwner::default()),
             admission: Arc::downgrade(&permit._lease),
         };
         let request = control.enqueue_resize(80, 24).unwrap();
@@ -2248,25 +2799,39 @@ mod tests {
             let control = TerminalControl {
                 master: Arc::new(Mutex::new(Some(Box::new(DelayedCloseMaster {
                     close_gate: Arc::clone(&close_gate),
-                    io_gate: Arc::new(Gate::default()), closed: flag,
+                    io_gate: Arc::new(Gate::default()),
+                    closed: flag,
                 })))),
                 stop: permit.stop(),
-                resize_owner: Arc::new(ResizeOwner::default()), admission: Arc::downgrade(&permit._lease),
+                resize_owner: Arc::new(ResizeOwner::default()),
+                admission: Arc::downgrade(&permit._lease),
             };
             let id = format!("local-shutdown-{index}");
-            registry.register(id.clone(), CleanupResources {
-                control, child: Some(Box::new(ExitedChild)), pgid: None, slave: None,
-                #[cfg(windows)]
-                job: None,
-                writer: None, handles: None, _permit: permit,
-            }, Arc::new(CleanupCompletion::new(id)));
+            registry.register(
+                id.clone(),
+                CleanupResources {
+                    control,
+                    child: Some(Box::new(ExitedChild)),
+                    pgid: None,
+                    slave: None,
+                    #[cfg(windows)]
+                    job: None,
+                    writer: None,
+                    handles: None,
+                    _permit: permit,
+                },
+                Arc::new(CleanupCompletion::new(id)),
+            );
         }
         let deadline = Instant::now() + Duration::from_millis(40);
         let result = shutdown_registry_until(&registry, deadline);
         assert!(matches!(result, Err(error) if error.starts_with("TERM_CLEANUP_PENDING:")));
         assert_eq!(admission.active.load(Ordering::Acquire), 2);
         assert_eq!(registry.state.lock().unwrap().tasks.len(), 2);
-        assert!(registry.worker.lock().unwrap().is_some(), "pending service handle stays owned");
+        assert!(
+            registry.worker.lock().unwrap().is_some(),
+            "pending service handle stays owned"
+        );
         assert!(closed.iter().all(|flag| !flag.load(Ordering::Acquire)));
         close_gate.release();
         shutdown_registry_until(&registry, Instant::now() + Duration::from_secs(3))
@@ -2274,7 +2839,10 @@ mod tests {
         assert!(closed.iter().all(|flag| flag.load(Ordering::Acquire)));
         assert_eq!(admission.active.load(Ordering::Acquire), 0);
         assert!(registry.state.lock().unwrap().tasks.is_empty());
-        assert!(registry.worker.lock().unwrap().is_none(), "completed service is joined too");
+        assert!(
+            registry.worker.lock().unwrap().is_none(),
+            "completed service is joined too"
+        );
     }
 
     /// A deterministic ownership/order regression, not native ConPTY proof.
@@ -2294,38 +2862,69 @@ mod tests {
         let id = format!("cleanup-regression-{}", uuid::Uuid::new_v4());
         let control = TerminalControl {
             master: Arc::new(Mutex::new(Some(Box::new(DelayedCloseMaster {
-                close_gate: Arc::clone(&close_gate), io_gate: Arc::clone(&io_gate),
+                close_gate: Arc::clone(&close_gate),
+                io_gate: Arc::clone(&io_gate),
                 closed: Arc::clone(&master_closed),
             })))),
             stop: Arc::clone(&stop),
-            resize_owner: Arc::new(ResizeOwner::default()), admission: Weak::new(),
+            resize_owner: Arc::new(ResizeOwner::default()),
+            admission: Weak::new(),
         };
-        let handles = start_pipeline(Box::new(BlockedReader {
-            gate: Arc::clone(&io_gate), entered: Arc::clone(&reader_entered),
-            closed: Arc::clone(&reader_closed),
-        }), Arc::new(NoopSink), id.clone(), Arc::clone(&stop), 1, 1, false, None,
-            Arc::new(TermProbe::default()));
-        let (input, writer) = start_input_writer(Box::new(BlockedWriter {
-            gate: Arc::clone(&io_gate), entered: Arc::clone(&writer_entered),
-            closed: Arc::clone(&writer_closed),
-        }), Arc::clone(&stop), Arc::new(AtomicBool::new(false)), None);
+        let handles = start_pipeline(
+            Box::new(BlockedReader {
+                gate: Arc::clone(&io_gate),
+                entered: Arc::clone(&reader_entered),
+                closed: Arc::clone(&reader_closed),
+            }),
+            Arc::new(NoopSink),
+            id.clone(),
+            Arc::clone(&stop),
+            1,
+            1,
+            false,
+            None,
+            Arc::new(TermProbe::default()),
+        );
+        let (input, writer) = start_input_writer(
+            Box::new(BlockedWriter {
+                gate: Arc::clone(&io_gate),
+                entered: Arc::clone(&writer_entered),
+                closed: Arc::clone(&writer_closed),
+            }),
+            Arc::clone(&stop),
+            Arc::new(AtomicBool::new(false)),
+            None,
+        );
         input.enqueue(b"blocked input").unwrap();
         wait_flag(&reader_entered);
         wait_flag(&writer_entered);
         let mut session = TerminalSession {
-            id: id.clone(), input, control: control.clone(), stop,
+            id: id.clone(),
+            input,
+            control: control.clone(),
+            stop,
             resources: Some(CleanupResources {
-                control: control.clone(), child: Some(Box::new(ExitedChild)), pgid: None, slave: None,
+                control: control.clone(),
+                child: Some(Box::new(ExitedChild)),
+                pgid: None,
+                slave: None,
                 #[cfg(windows)]
                 job: None,
-                writer: Some(writer), handles: Some(handles), _permit: TerminalPermit::acquire().unwrap(),
+                writer: Some(writer),
+                handles: Some(handles),
+                _permit: TerminalPermit::acquire().unwrap(),
             }),
             cleanup: None,
         };
         let completion = session.begin_cleanup();
-        assert!(completion.wait(40).unwrap_err().starts_with("TERM_CLEANUP_PENDING:"));
+        assert!(completion
+            .wait(40)
+            .unwrap_err()
+            .starts_with("TERM_CLEANUP_PENDING:"));
         drop(session);
-        assert!(wait_for_cleanup(&id, 0).unwrap_err().starts_with("TERM_CLEANUP_PENDING:"));
+        assert!(wait_for_cleanup(&id, 0)
+            .unwrap_err()
+            .starts_with("TERM_CLEANUP_PENDING:"));
         assert!(!master_closed.load(Ordering::Acquire));
         assert!(!reader_closed.load(Ordering::Acquire));
         assert!(control.resize(80, 24).is_err());
@@ -2334,7 +2933,10 @@ mod tests {
         assert!(master_closed.load(Ordering::Acquire));
         assert!(writer_closed.load(Ordering::Acquire));
         assert!(reader_closed.load(Ordering::Acquire));
-        assert!(control.size().is_err(), "surviving control clone must hold no master");
+        assert!(
+            control.size().is_err(),
+            "surviving control clone must hold no master"
+        );
     }
 
     #[test]
@@ -2345,25 +2947,37 @@ mod tests {
         let id = format!("spawn-cleanup-regression-{}", uuid::Uuid::new_v4());
         let control = TerminalControl {
             master: Arc::new(Mutex::new(Some(Box::new(DelayedCloseMaster {
-                close_gate: Arc::clone(&close_gate), io_gate: Arc::new(Gate::default()),
+                close_gate: Arc::clone(&close_gate),
+                io_gate: Arc::new(Gate::default()),
                 closed: Arc::clone(&closed),
             })))),
             stop: Arc::new(AtomicBool::new(false)),
-            resize_owner: Arc::new(ResizeOwner::default()), admission: Weak::new(),
+            resize_owner: Arc::new(ResizeOwner::default()),
+            admission: Weak::new(),
         };
         let owner = SpawnCleanupGuard {
             id: id.clone(),
             resources: Some(CleanupResources {
-                control: control.clone(), child: None, pgid: None, slave: None,
+                control: control.clone(),
+                child: None,
+                pgid: None,
+                slave: None,
                 #[cfg(windows)]
                 job: None,
-                writer: None, handles: None, _permit: TerminalPermit::acquire().unwrap(),
+                writer: None,
+                handles: None,
+                _permit: TerminalPermit::acquire().unwrap(),
             }),
         };
         let before = Instant::now();
         drop(owner);
-        assert!(before.elapsed() < Duration::from_secs(1), "spawn errors must not block in native close");
-        assert!(wait_for_cleanup(&id, 40).unwrap_err().starts_with("TERM_CLEANUP_PENDING:"));
+        assert!(
+            before.elapsed() < Duration::from_secs(1),
+            "spawn errors must not block in native close"
+        );
+        assert!(wait_for_cleanup(&id, 40)
+            .unwrap_err()
+            .starts_with("TERM_CLEANUP_PENDING:"));
         assert!(!closed.load(Ordering::Acquire));
         close_gate.release();
         wait_for_cleanup(&id, 2_000).expect("spawn-error owner must eventually reap native close");
@@ -2373,9 +2987,14 @@ mod tests {
     struct FailingInput;
     impl Write for FailingInput {
         fn write(&mut self, _: &[u8]) -> io::Result<usize> {
-            Err(io::Error::new(io::ErrorKind::BrokenPipe, "sensitive-fixture-detail"))
+            Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "sensitive-fixture-detail",
+            ))
         }
-        fn flush(&mut self) -> io::Result<()> { Ok(()) }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
     }
 
     #[test]
@@ -2386,16 +3005,28 @@ mod tests {
         let stop = Arc::new(AtomicBool::new(false));
         let failed = Arc::new(AtomicBool::new(false));
         let (tx, rx) = mpsc::channel();
-        let handles = start_pipeline_with_failure(Box::new(BlockedReader {
-            gate: Arc::clone(&gate), entered: Arc::clone(&entered),
-            closed: Arc::new(AtomicBool::new(false)),
-        }), Arc::new(CollectSink { tx: Mutex::new(tx) }), "input-failure".into(),
-            Arc::clone(&stop), 1, 1, true, None, Arc::new(TermProbe::default()), Arc::clone(&failed));
+        let handles = start_pipeline_with_failure(
+            Box::new(BlockedReader {
+                gate: Arc::clone(&gate),
+                entered: Arc::clone(&entered),
+                closed: Arc::new(AtomicBool::new(false)),
+            }),
+            Arc::new(CollectSink { tx: Mutex::new(tx) }),
+            "input-failure".into(),
+            Arc::clone(&stop),
+            1,
+            1,
+            true,
+            None,
+            Arc::new(TermProbe::default()),
+            Arc::clone(&failed),
+        );
         wait_flag(&entered);
-        let (input, writer) = start_input_writer(Box::new(FailingInput),
-            Arc::clone(&stop), failed, None);
+        let (input, writer) =
+            start_input_writer(Box::new(FailingInput), Arc::clone(&stop), failed, None);
         input.enqueue(b"accepted before native failure").unwrap();
-        let (kind, text) = rx.recv_timeout(Duration::from_secs(2))
+        let (kind, text) = rx
+            .recv_timeout(Duration::from_secs(2))
             .expect("fixed failure frame must not wait for another input request");
         assert_eq!(kind, "exit");
         assert!(text.contains("输入传输失败"));
@@ -2414,13 +3045,19 @@ mod tests {
         let (entered_tx, entered_rx) = mpsc::channel();
         let waiter = thread::spawn(move || {
             entered_tx.send(()).unwrap();
-            wait_while_running(&worker_stop, Duration::from_millis(TERM_RETRY_MAX_BACKOFF_MS))
+            wait_while_running(
+                &worker_stop,
+                Duration::from_millis(TERM_RETRY_MAX_BACKOFF_MS),
+            )
         });
         entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
         let started = Instant::now();
         stop.store(true, Ordering::Release);
         assert!(!waiter.join().unwrap());
-        assert!(started.elapsed() < Duration::from_secs(1), "stop must not wait a 30-second backoff");
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "stop must not wait a 30-second backoff"
+        );
     }
 
     /// T3：进程组回收 —— `sleep 300` 随 shell 一起被杀，不留孤儿（F6）。

@@ -275,15 +275,24 @@ fn validate(profile: &AiProfile) -> Result<(), String> {
     Ok(())
 }
 // No Debug/Serialize: a request owns this native-only credential snapshot.
-struct ProviderProfile { profile: AiProfile, credential: String }
+struct ProviderProfile {
+    profile: AiProfile,
+    credential: String,
+}
 impl std::ops::Deref for ProviderProfile {
     type Target = AiProfile;
-    fn deref(&self) -> &AiProfile { &self.profile }
+    fn deref(&self) -> &AiProfile {
+        &self.profile
+    }
 }
 fn credential_reference(profile: &AiProfile) -> Result<String, String> {
     let legacy = format!("ai:{}", profile.id);
-    if profile.credential_ref.is_empty() || profile.credential_ref == legacy { return Ok(legacy); }
-    let version = profile.credential_ref.strip_prefix(&format!("{legacy}:"))
+    if profile.credential_ref.is_empty() || profile.credential_ref == legacy {
+        return Ok(legacy);
+    }
+    let version = profile
+        .credential_ref
+        .strip_prefix(&format!("{legacy}:"))
         .ok_or("AI_CREDENTIAL_REF_INVALID")?;
     uuid::Uuid::parse_str(version).map_err(|_| "AI_CREDENTIAL_REF_INVALID")?;
     Ok(profile.credential_ref.clone())
@@ -299,24 +308,35 @@ fn model_credential(value: &str) -> Result<&str, String> {
 }
 fn execution_profile(profile: &AiProfile) -> Result<ProviderProfile, String> {
     validate(profile)?;
-    if profile.kind != "chat" { return Err("AI_MODEL_NOT_CHAT".into()); }
+    if profile.kind != "chat" {
+        return Err("AI_MODEL_NOT_CHAT".into());
+    }
     let credential = KeyringStore::get_token(&credential_reference(profile)?)
         .map_err(|_| "AI_CREDENTIAL_UNAVAILABLE")?;
     let credential = model_credential(&credential)?.to_owned();
-    Ok(ProviderProfile { profile: profile.clone(), credential })
+    Ok(ProviderProfile {
+        profile: profile.clone(),
+        credential,
+    })
 }
 fn live_credentials(config: &AiConfig) -> Result<HashSet<String>, String> {
     config.profiles.iter().map(credential_reference).collect()
 }
 fn plugin_credential_alias(reference: &str) -> Result<String, String> {
-    let rest = reference.strip_prefix("ai-plugin:").ok_or("AI_PLUGIN_CREDENTIAL_REF_INVALID")?;
+    let rest = reference
+        .strip_prefix("ai-plugin:")
+        .ok_or("AI_PLUGIN_CREDENTIAL_REF_INVALID")?;
     let mut parts = rest.split(':');
     let id = parts.next().ok_or("AI_PLUGIN_CREDENTIAL_REF_INVALID")?;
-    if !valid_id(id) { return Err("AI_PLUGIN_CREDENTIAL_REF_INVALID".into()); }
+    if !valid_id(id) {
+        return Err("AI_PLUGIN_CREDENTIAL_REF_INVALID".into());
+    }
     if let Some(version) = parts.next() {
         uuid::Uuid::parse_str(version).map_err(|_| "AI_PLUGIN_CREDENTIAL_REF_INVALID")?;
     }
-    if parts.next().is_some() { return Err("AI_PLUGIN_CREDENTIAL_REF_INVALID".into()); }
+    if parts.next().is_some() {
+        return Err("AI_PLUGIN_CREDENTIAL_REF_INVALID".into());
+    }
     Ok(format!("ai-plugin:{id}"))
 }
 fn reconcile_credentials(path: &Path) -> Result<(), String> {
@@ -338,11 +358,23 @@ fn reconcile_credentials(path: &Path) -> Result<(), String> {
 // MCP resolves a profile alias to the immutable key currently bound by its Owner.
 // Review never reads the secret; execution captures all granted secrets under
 // the same publication lock, then retains bytes until the process completes.
-fn mcp_profile_for_reference<'a>(config: &'a AiConfig, reference: &str) -> Result<&'a AiProfile, String> {
-    let id = reference.strip_prefix("ai:").ok_or("MCP_CREDENTIAL_REF_INVALID")?
-        .split(':').next().ok_or("MCP_CREDENTIAL_REF_INVALID")?;
-    if !valid_id(id) { return Err("MCP_CREDENTIAL_REF_INVALID".into()); }
-    let profile = config.profiles.iter().find(|profile| profile.id == id)
+fn mcp_profile_for_reference<'a>(
+    config: &'a AiConfig,
+    reference: &str,
+) -> Result<&'a AiProfile, String> {
+    let id = reference
+        .strip_prefix("ai:")
+        .ok_or("MCP_CREDENTIAL_REF_INVALID")?
+        .split(':')
+        .next()
+        .ok_or("MCP_CREDENTIAL_REF_INVALID")?;
+    if !valid_id(id) {
+        return Err("MCP_CREDENTIAL_REF_INVALID".into());
+    }
+    let profile = config
+        .profiles
+        .iter()
+        .find(|profile| profile.id == id)
         .ok_or("MCP_CREDENTIAL_PROFILE_UNAVAILABLE")?;
     let current = credential_reference(profile)?;
     if reference != format!("ai:{id}") && reference != current {
@@ -354,20 +386,29 @@ pub(crate) fn mcp_credential_info(storage: &Path, reference: &str) -> Result<Val
     let _guard = CONFIG_LOCK.lock().map_err(|_| "AI_CONFIG_BUSY")?;
     let config = read(&storage.join("ai-profiles.json"))?;
     let profile = mcp_profile_for_reference(&config, reference)?;
-    Ok(json!({"reference":credential_reference(profile)?,"profile_id":profile.id,"name":profile.name,"endpoint":profile.base_url}))
+    Ok(
+        json!({"reference":credential_reference(profile)?,"profile_id":profile.id,"name":profile.name,"endpoint":profile.base_url}),
+    )
 }
 pub(crate) fn mcp_credential_snapshot(
-    storage: &Path, refs: Option<&serde_json::Map<String, Value>>,
+    storage: &Path,
+    refs: Option<&serde_json::Map<String, Value>>,
 ) -> Result<BTreeMap<String, String>, String> {
     let mut snapshot = BTreeMap::new();
-    let Some(refs) = refs.filter(|refs| !refs.is_empty()) else { return Ok(snapshot); };
-    if refs.len() > 64 { return Err("MCP_ENV_LIMIT".into()); }
+    let Some(refs) = refs.filter(|refs| !refs.is_empty()) else {
+        return Ok(snapshot);
+    };
+    if refs.len() > 64 {
+        return Err("MCP_ENV_LIMIT".into());
+    }
     let _guard = CONFIG_LOCK.lock().map_err(|_| "AI_CONFIG_BUSY")?;
     let config = read(&storage.join("ai-profiles.json"))?;
     for (name, reference) in refs {
         let reference = reference.as_str().ok_or("MCP_CREDENTIAL_REF_INVALID")?;
         let profile = mcp_profile_for_reference(&config, reference)?;
-        if credential_reference(profile)? != reference { return Err("MCP_CREDENTIAL_REVISION_CHANGED".into()); }
+        if credential_reference(profile)? != reference {
+            return Err("MCP_CREDENTIAL_REVISION_CHANGED".into());
+        }
         let secret = KeyringStore::get_token(reference).map_err(|_| "MCP_CREDENTIAL_MISSING")?;
         if secret.is_empty() || secret.len() > 16384 || secret.contains(['\r', '\n', '\0']) {
             return Err("MCP_CREDENTIAL_INVALID".into());
@@ -379,7 +420,9 @@ pub(crate) fn mcp_credential_snapshot(
 fn read(path: &Path) -> Result<AiConfig, String> {
     let m = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(AiConfig::default()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(AiConfig::default())
+        }
         Err(_) => return Err("AI_CONFIG_READ_FAILED".into()),
     };
     if !m.is_file() || m.len() > MAX_BYTES {
@@ -395,7 +438,9 @@ fn read(path: &Path) -> Result<AiConfig, String> {
     for profile in &config.profiles {
         validate(profile)?;
         credential_reference(profile)?;
-        if !ids.insert(&profile.id) { return Err("AI_CONFIG_DUPLICATE_PROFILE".into()); }
+        if !ids.insert(&profile.id) {
+            return Err("AI_CONFIG_DUPLICATE_PROFILE".into());
+        }
     }
     Ok(config)
 }
@@ -419,10 +464,10 @@ fn save(path: &Path, config: &AiConfig) -> Result<(), String> {
         file.write_all(&bytes)
             .and_then(|_| file.sync_all())
             .map_err(|_| "AI_CONFIG_WRITE_FAILED")?;
-        crate::session::atomic_replace_file(&tmp, path)
-            .map_err(|_| "AI_CONFIG_WRITE_FAILED")?;
+        crate::session::atomic_replace_file(&tmp, path).map_err(|_| "AI_CONFIG_WRITE_FAILED")?;
         #[cfg(unix)]
-        fs::File::open(dir).and_then(|directory| directory.sync_all())
+        fs::File::open(dir)
+            .and_then(|directory| directory.sync_all())
             .map_err(|_| "AI_CONFIG_WRITE_FAILED")?;
         Ok::<(), &str>(())
     })();
@@ -453,19 +498,41 @@ fn import_text(value: &str, limit: usize) -> bool {
     !value.is_empty() && value.len() <= limit && !value.chars().any(char::is_control)
 }
 fn import_secret(value: &str) -> bool {
-    if !(16..=4096).contains(&value.len()) { return false; }
+    if !(16..=4096).contains(&value.len()) {
+        return false;
+    }
     let token = value.strip_prefix("Bearer ").unwrap_or(value);
-    !token.is_empty() && token.bytes().all(|byte|
-        byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b':' | b'+' | b'/' | b'=' | b'@' | b'!' | b'#' | b'-'))
+    !token.is_empty()
+        && token.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric()
+                || matches!(
+                    byte,
+                    b'_' | b'.' | b':' | b'+' | b'/' | b'=' | b'@' | b'!' | b'#' | b'-'
+                )
+        })
 }
 fn parse_import(bytes: &[u8], request_id: &str) -> Result<AiImportEnvelope, String> {
-    if bytes.len() > AI_IMPORT_MAX_OUTPUT { return Err("AI_IMPORT_LIMIT".into()); }
-    let import: AiImportEnvelope = serde_json::from_slice(bytes).map_err(|_| "AI_IMPORT_RESPONSE_INVALID")?;
-    if import.protocol != AI_IMPORT_PROTOCOL || import.request_id != request_id
-        || import.profiles.len() > 256 || import.plugins.len() > 256
-        || import.credentials.len() > 512 || import.sources.len() > 512 || import.skipped.len() > 512
-        || import.sources.iter().any(|source| !import_text(source, 1024))
-        || import.skipped.iter().any(|reason| !import_text(reason, 1200)) {
+    if bytes.len() > AI_IMPORT_MAX_OUTPUT {
+        return Err("AI_IMPORT_LIMIT".into());
+    }
+    let import: AiImportEnvelope =
+        serde_json::from_slice(bytes).map_err(|_| "AI_IMPORT_RESPONSE_INVALID")?;
+    if import.protocol != AI_IMPORT_PROTOCOL
+        || import.request_id != request_id
+        || import.profiles.len() > 256
+        || import.plugins.len() > 256
+        || import.credentials.len() > 512
+        || import.sources.len() > 512
+        || import.skipped.len() > 512
+        || import
+            .sources
+            .iter()
+            .any(|source| !import_text(source, 1024))
+        || import
+            .skipped
+            .iter()
+            .any(|reason| !import_text(reason, 1200))
+    {
         return Err("AI_IMPORT_RESPONSE_INVALID".into());
     }
     let mut ids = HashSet::new();
@@ -473,9 +540,13 @@ fn parse_import(bytes: &[u8], request_id: &str) -> Result<AiImportEnvelope, Stri
     for profile in &import.profiles {
         validate(profile).map_err(|_| "AI_IMPORT_PROFILE_INVALID")?;
         let reference = format!("ai:{}", profile.id);
-        if !ids.insert(profile.id.clone()) || profile.credential_ref != reference
-            || !import_text(&profile.source, 1024) || !import_text(&profile.base_url, 2048)
-            || !import_text(&profile.name, 120) || !import_text(&profile.model, 160) {
+        if !ids.insert(profile.id.clone())
+            || profile.credential_ref != reference
+            || !import_text(&profile.source, 1024)
+            || !import_text(&profile.base_url, 2048)
+            || !import_text(&profile.name, 120)
+            || !import_text(&profile.model, 160)
+        {
             return Err("AI_IMPORT_PROFILE_INVALID".into());
         }
         references.insert(reference);
@@ -484,27 +555,41 @@ fn parse_import(bytes: &[u8], request_id: &str) -> Result<AiImportEnvelope, Stri
     let mut plugin_references = HashSet::new();
     for plugin in &import.plugins {
         if !plugin_ids.insert((plugin.source.clone(), plugin.name.clone()))
-            || !import_text(&plugin.name, 120) || !import_text(&plugin.source, 1024)
-            || !import_text(&plugin.transport, 32) || plugin.status != "catalogued"
-            || plugin.credential_refs.len() > 64 {
+            || !import_text(&plugin.name, 120)
+            || !import_text(&plugin.source, 1024)
+            || !import_text(&plugin.transport, 32)
+            || plugin.status != "catalogued"
+            || plugin.credential_refs.len() > 64
+        {
             return Err("AI_IMPORT_PLUGIN_INVALID".into());
         }
         let mut unique = HashSet::new();
         for reference in &plugin.credential_refs {
-            if plugin_credential_alias(reference)?.as_str() != reference.as_str() || !unique.insert(reference) {
+            if plugin_credential_alias(reference)?.as_str() != reference.as_str()
+                || !unique.insert(reference)
+            {
                 return Err("AI_IMPORT_PLUGIN_INVALID".into());
             }
             plugin_references.insert(reference.clone());
             references.insert(reference.clone());
         }
     }
-    if plugin_references.len() > 256 || references.len() != import.credentials.len()
-        || import.credentials.iter().any(|(reference, secret)|
-            !references.contains(reference) || !import_secret(secret)) {
+    if plugin_references.len() > 256
+        || references.len() != import.credentials.len()
+        || import
+            .credentials
+            .iter()
+            .any(|(reference, secret)| !references.contains(reference) || !import_secret(secret))
+    {
         return Err("AI_IMPORT_CREDENTIAL_INVALID".into());
     }
-    let metadata = serde_json::to_string(&(&import.profiles, &import.plugins, &import.sources, &import.skipped))
-        .map_err(|_| "AI_IMPORT_RESPONSE_INVALID")?;
+    let metadata = serde_json::to_string(&(
+        &import.profiles,
+        &import.plugins,
+        &import.sources,
+        &import.skipped,
+    ))
+    .map_err(|_| "AI_IMPORT_RESPONSE_INVALID")?;
     if import.credentials.values().any(|secret| {
         let token = secret.strip_prefix("Bearer ").unwrap_or(secret);
         metadata.contains(secret.as_str()) || (!token.is_empty() && metadata.contains(token))
@@ -516,26 +601,35 @@ fn parse_import(bytes: &[u8], request_id: &str) -> Result<AiImportEnvelope, Stri
 fn discover_local_ai() -> Result<AiImportEnvelope, String> {
     #[cfg(windows)]
     let python = std::env::var("BROWSEROS_PYTHON")
-        .ok().filter(|path| !path.trim().is_empty())
+        .ok()
+        .filter(|path| !path.trim().is_empty())
         .unwrap_or_else(|| "python.exe".to_string());
     #[cfg(not(windows))]
     let python = "/usr/bin/python3".to_string();
     let request_id = uuid::Uuid::new_v4().simple().to_string();
-    let request = serde_json::to_vec(&json!({"protocol":AI_IMPORT_PROTOCOL,"request_id":request_id}))
-        .map_err(|_| "AI_IMPORT_REQUEST_INVALID")?;
-    let child = Command::new(&python).args(["-I", "-c", IMPORTER, "--native-export"])
-        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
-        .spawn().map_err(|_| "AI_IMPORT_UNAVAILABLE")?;
+    let request =
+        serde_json::to_vec(&json!({"protocol":AI_IMPORT_PROTOCOL,"request_id":request_id}))
+            .map_err(|_| "AI_IMPORT_REQUEST_INVALID")?;
+    let child = Command::new(&python)
+        .args(["-I", "-c", IMPORTER, "--native-export"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| "AI_IMPORT_UNAVAILABLE")?;
     let started = std::time::Instant::now();
     // Reuse the provider's bounded pipe owner and kill/wait cancellation path.
     // No payload is included in errors, logs, argv, files or the UI response.
-    let (bytes, status) = read_provider_process(child, &request, &|| started.elapsed() >= AI_IMPORT_TIMEOUT)
-        .map_err(|error| match error.as_str() {
-            "AI_PROVIDER_CANCELLED" => "AI_IMPORT_TIMEOUT",
-            "AI_RESPONSE_LIMIT" => "AI_IMPORT_LIMIT",
-            _ => "AI_IMPORT_FAILED",
-        })?;
-    if !status.success() { return Err("AI_IMPORT_FAILED".into()); }
+    let (bytes, status) =
+        read_provider_process(child, &request, &|| started.elapsed() >= AI_IMPORT_TIMEOUT)
+            .map_err(|error| match error.as_str() {
+                "AI_PROVIDER_CANCELLED" => "AI_IMPORT_TIMEOUT",
+                "AI_RESPONSE_LIMIT" => "AI_IMPORT_LIMIT",
+                _ => "AI_IMPORT_FAILED",
+            })?;
+    if !status.success() {
+        return Err("AI_IMPORT_FAILED".into());
+    }
     parse_import(&bytes, &request_id)
 }
 fn import_placeholder(reference: &str) -> String {
@@ -552,15 +646,28 @@ struct AiImportPlan {
 }
 fn prepare_import(config: &AiConfig, import: AiImportEnvelope) -> Result<AiImportPlan, String> {
     let mut next = config.clone();
-    let known: HashSet<_> = next.profiles.iter().map(|profile| profile.id.clone()).collect();
+    let known: HashSet<_> = next
+        .profiles
+        .iter()
+        .map(|profile| profile.id.clone())
+        .collect();
     let mut staged = BTreeMap::new();
     let mut imported = 0;
     for mut profile in import.profiles {
-        if known.contains(&profile.id) { continue; }
+        if known.contains(&profile.id) {
+            continue;
+        }
         let alias = profile.credential_ref.clone();
-        let secret = import.credentials.get(&alias).ok_or("AI_IMPORT_CREDENTIAL_INVALID")?;
-        staged.insert(alias.clone(), model_credential(secret)
-            .map_err(|_| "AI_IMPORT_CREDENTIAL_INVALID")?.to_owned());
+        let secret = import
+            .credentials
+            .get(&alias)
+            .ok_or("AI_IMPORT_CREDENTIAL_INVALID")?;
+        staged.insert(
+            alias.clone(),
+            model_credential(secret)
+                .map_err(|_| "AI_IMPORT_CREDENTIAL_INVALID")?
+                .to_owned(),
+        );
         profile.credential_ref = import_placeholder(&alias);
         next.profiles.push(profile);
         imported += 1;
@@ -568,18 +675,31 @@ fn prepare_import(config: &AiConfig, import: AiImportEnvelope) -> Result<AiImpor
     let mut plugin_bindings = BTreeMap::new();
     for plugin in &next.plugins {
         for reference in &plugin.credential_refs {
-            plugin_bindings.entry(plugin_credential_alias(reference)?).or_insert_with(|| reference.clone());
+            plugin_bindings
+                .entry(plugin_credential_alias(reference)?)
+                .or_insert_with(|| reference.clone());
         }
     }
     let discovered_plugins = import.plugins.len();
-    let plugin_credentials = import.credentials.keys().filter(|key| key.starts_with("ai-plugin:")).count();
+    let plugin_credentials = import
+        .credentials
+        .keys()
+        .filter(|key| key.starts_with("ai-plugin:"))
+        .count();
     for incoming in import.plugins {
         let mut references = Vec::new();
         for alias in &incoming.credential_refs {
             let reference = match plugin_bindings.get(alias) {
                 Some(reference) => reference.clone(),
                 None => {
-                    staged.insert(alias.clone(), import.credentials.get(alias).ok_or("AI_IMPORT_CREDENTIAL_INVALID")?.clone());
+                    staged.insert(
+                        alias.clone(),
+                        import
+                            .credentials
+                            .get(alias)
+                            .ok_or("AI_IMPORT_CREDENTIAL_INVALID")?
+                            .clone(),
+                    );
                     let reference = import_placeholder(alias);
                     plugin_bindings.insert(alias.clone(), reference.clone());
                     reference
@@ -587,12 +707,18 @@ fn prepare_import(config: &AiConfig, import: AiImportEnvelope) -> Result<AiImpor
             };
             references.push(reference);
         }
-        if let Some(existing) = next.plugins.iter_mut().find(|plugin|
-            plugin.source == incoming.source && plugin.name == incoming.name) {
+        if let Some(existing) = next
+            .plugins
+            .iter_mut()
+            .find(|plugin| plugin.source == incoming.source && plugin.name == incoming.name)
+        {
             // Preserve old versions and metadata. Only append newly discovered
             // aliases; re-importing never rotates another owner's active key.
-            let aliases: HashSet<_> = existing.credential_refs.iter()
-                .map(|reference| plugin_credential_alias(reference)).collect::<Result<_, _>>()?;
+            let aliases: HashSet<_> = existing
+                .credential_refs
+                .iter()
+                .map(|reference| plugin_credential_alias(reference))
+                .collect::<Result<_, _>>()?;
             for reference in references {
                 if !aliases.contains(&plugin_credential_alias(&reference)?) {
                     existing.credential_refs.push(reference);
@@ -605,23 +731,50 @@ fn prepare_import(config: &AiConfig, import: AiImportEnvelope) -> Result<AiImpor
         }
     }
     for source in &import.sources {
-        if !next.import_sources.contains(source) { next.import_sources.push(source.clone()); }
+        if !next.import_sources.contains(source) {
+            next.import_sources.push(source.clone());
+        }
     }
-    if !next.bindings.get("default").is_some_and(|id| !id.is_empty()) {
-        let chosen = next.profiles.iter().find(|profile| profile.kind == "chat" && profile.model == "agnes-3.0-flash")
+    if !next
+        .bindings
+        .get("default")
+        .is_some_and(|id| !id.is_empty())
+    {
+        let chosen = next
+            .profiles
+            .iter()
+            .find(|profile| profile.kind == "chat" && profile.model == "agnes-3.0-flash")
             .or_else(|| next.profiles.iter().find(|profile| profile.kind == "chat"))
             .map(|profile| profile.id.clone());
-        if let Some(id) = chosen { next.bindings.insert("default".into(), id); }
+        if let Some(id) = chosen {
+            next.bindings.insert("default".into(), id);
+        }
     }
-    if next.profiles.len() > 256 || next.plugins.len() > 256 || next.import_sources.len() > 512
-        || next.plugins.iter().any(|plugin| plugin.credential_refs.len() > 64)
-        || serde_json::to_vec_pretty(&next).map_err(|_| "AI_CONFIG_ENCODE_FAILED")?.len() as u64 > MAX_BYTES {
+    if next.profiles.len() > 256
+        || next.plugins.len() > 256
+        || next.import_sources.len() > 512
+        || next
+            .plugins
+            .iter()
+            .any(|plugin| plugin.credential_refs.len() > 64)
+        || serde_json::to_vec_pretty(&next)
+            .map_err(|_| "AI_CONFIG_ENCODE_FAILED")?
+            .len() as u64
+            > MAX_BYTES
+    {
         return Err("AI_CONFIG_LIMIT".into());
     }
     // Placeholder refs have exactly the same byte size as the immutable refs
     // stage() will return. Every limit is decided before the first Keyring write.
-    Ok(AiImportPlan { config:next, credentials:staged, imported, plugin_credentials,
-        discovered_plugins, sources:import.sources, skipped:import.skipped })
+    Ok(AiImportPlan {
+        config: next,
+        credentials: staged,
+        imported,
+        plugin_credentials,
+        discovered_plugins,
+        sources: import.sources,
+        skipped: import.skipped,
+    })
 }
 fn publish_import(
     mut plan: AiImportPlan,
@@ -632,15 +785,21 @@ fn publish_import(
     reconcile()?;
     let result = (|| {
         for (alias, secret) in &plan.credentials {
-            let (namespace, id) = alias.split_once(':').ok_or("AI_IMPORT_CREDENTIAL_INVALID")?;
+            let (namespace, id) = alias
+                .split_once(':')
+                .ok_or("AI_IMPORT_CREDENTIAL_INVALID")?;
             let reference = stage(namespace, id, secret)?;
             let placeholder = import_placeholder(alias);
             for profile in &mut plan.config.profiles {
-                if profile.credential_ref == placeholder { profile.credential_ref = reference.clone(); }
+                if profile.credential_ref == placeholder {
+                    profile.credential_ref = reference.clone();
+                }
             }
             for plugin in &mut plan.config.plugins {
                 for target in &mut plugin.credential_refs {
-                    if *target == placeholder { *target = reference.clone(); }
+                    if *target == placeholder {
+                        *target = reference.clone();
+                    }
                 }
             }
         }
@@ -653,10 +812,12 @@ fn publish_import(
         return Err(error);
     }
     let cleanup_pending = reconcile().is_err();
-    Ok(json!({"imported":plan.imported,"total":plan.config.profiles.len(),
+    Ok(
+        json!({"imported":plan.imported,"total":plan.config.profiles.len(),
         "plugin_credentials":plan.plugin_credentials,"plugins":plan.discovered_plugins,
         "total_plugins":plan.config.plugins.len(),"sources":plan.sources,"skipped":plan.skipped,
-        "credential_cleanup_pending":cleanup_pending}))
+        "credential_cleanup_pending":cleanup_pending}),
+    )
 }
 
 // Windows 11 ships curl.exe in the trusted system directory. Do not
@@ -672,13 +833,17 @@ fn ai_curl_binary() -> Result<std::path::PathBuf, String> {
     }
     let base = std::ffi::OsString::from_wide(&chars[..used as usize]);
     let path = std::path::PathBuf::from(base).join("curl.exe");
-    if !path.is_file() { return Err("AI_HTTP_CLIENT_UNAVAILABLE".into()); }
+    if !path.is_file() {
+        return Err("AI_HTTP_CLIENT_UNAVAILABLE".into());
+    }
     Ok(path)
 }
 #[cfg(not(windows))]
 fn ai_curl_binary() -> Result<std::path::PathBuf, String> {
     let path = std::path::PathBuf::from("/usr/bin/curl");
-    if !path.is_file() { return Err("AI_HTTP_CLIENT_UNAVAILABLE".into()); }
+    if !path.is_file() {
+        return Err("AI_HTTP_CLIENT_UNAVAILABLE".into());
+    }
     Ok(path)
 }
 
@@ -1393,16 +1558,19 @@ pub fn execute(path: &Path, request: AiRequest) -> Result<Value, String> {
     match request.action.as_str() {
         "list" => {
             let cleanup_pending = reconcile_credentials(path).is_err();
-            let mut response = serde_json::to_value(config).map_err(|_| "AI_CONFIG_ENCODE_FAILED")?;
+            let mut response =
+                serde_json::to_value(config).map_err(|_| "AI_CONFIG_ENCODE_FAILED")?;
             response["credential_cleanup_pending"] = json!(cleanup_pending);
             Ok(response)
-        },
+        }
         "import" => {
             let import = discover_local_ai()?;
             let plan = prepare_import(&config, import)?;
             publish_import(
                 plan,
-                |namespace, id, secret| crate::shared::credential_versions::stage(path, namespace, id, secret, &[]),
+                |namespace, id, secret| {
+                    crate::shared::credential_versions::stage(path, namespace, id, secret, &[])
+                },
                 |config| save(path, config),
                 || reconcile_credentials(path),
             )
@@ -1421,8 +1589,12 @@ pub fn execute(path: &Path, request: AiRequest) -> Result<Value, String> {
             validate(&profile)?;
             reconcile_credentials(path)?;
             let old = config.profiles.iter().position(|p| p.id == profile.id);
-            if old.is_none() && config.profiles.len() >= 256 { return Err("AI_CONFIG_LIMIT".into()); }
-            let previous = old.map(|i| credential_reference(&config.profiles[i])).transpose()?;
+            if old.is_none() && config.profiles.len() >= 256 {
+                return Err("AI_CONFIG_LIMIT".into());
+            }
+            let previous = old
+                .map(|i| credential_reference(&config.profiles[i]))
+                .transpose()?;
             if request.credential.is_empty() {
                 let existing = old.ok_or("AI_CREDENTIAL_REQUIRED")?;
                 if config.profiles[existing].base_url != profile.base_url {
@@ -1430,17 +1602,25 @@ pub fn execute(path: &Path, request: AiRequest) -> Result<Value, String> {
                 }
                 profile.credential_ref = previous.clone().ok_or("AI_CREDENTIAL_REQUIRED")?;
             } else {
-                if request.credential.len() > 4096 || request.credential.contains(['\r', '\n', '\0']) {
+                if request.credential.len() > 4096
+                    || request.credential.contains(['\r', '\n', '\0'])
+                {
                     return Err("AI_CREDENTIAL_INVALID".into());
                 }
                 profile.credential_ref = crate::shared::credential_versions::stage(
-                    path, "ai", &profile.id, &request.credential,
+                    path,
+                    "ai",
+                    &profile.id,
+                    &request.credential,
                     &previous.into_iter().collect::<Vec<_>>(),
                 )?;
             }
             profile.source = "manual".into();
-            if let Some(i) = old { config.profiles[i] = profile; }
-            else { config.profiles.push(profile); }
+            if let Some(i) = old {
+                config.profiles[i] = profile;
+            } else {
+                config.profiles.push(profile);
+            }
             if let Err(error) = save(path, &config) {
                 // A rename may have succeeded before fsync failed: reconcile
                 // from persisted metadata, never blindly delete the staged key.
@@ -1472,8 +1652,12 @@ pub fn execute(path: &Path, request: AiRequest) -> Result<Value, String> {
                 return Err("AI_PROFILE_INVALID".into());
             }
             reconcile_credentials(path)?;
-            let retired = config.profiles.iter().filter(|p| p.id == request.id)
-                .map(credential_reference).collect::<Result<Vec<_>, _>>()?;
+            let retired = config
+                .profiles
+                .iter()
+                .filter(|p| p.id == request.id)
+                .map(credential_reference)
+                .collect::<Result<Vec<_>, _>>()?;
             crate::shared::credential_versions::record_retirement(path, "ai", &retired)?;
             config.profiles.retain(|p| p.id != request.id);
             config.bindings.retain(|_, v| v != &request.id);
@@ -1642,7 +1826,9 @@ pub async fn coding_service(
     crate::shared::invocation::check_invocation_source(&webview, "coding_service", None, &app)?;
     if request["action"] == "cancel" {
         if let Some(run_id) = request["run_id"].as_str().filter(|id| !id.is_empty()) {
-            return Ok(json!({"cancel_requested":crate::capabilities::agent::public_api::cancel_coding_run(run_id)?}));
+            return Ok(
+                json!({"cancel_requested":crate::capabilities::agent::public_api::cancel_coding_run(run_id)?}),
+            );
         }
     }
     // Register before entering the blocking queue, while the run ID is already
@@ -1651,7 +1837,9 @@ pub async fn coding_service(
         Some(crate::capabilities::agent::public_api::register_coding_run(
             request["run_id"].as_str().ok_or("AGENT_RUN_ID_REQUIRED")?,
         )?)
-    } else { None };
+    } else {
+        None
+    };
     let storage = app
         .path()
         .app_data_dir()
@@ -1702,13 +1890,21 @@ pub async fn coding_service(
                     &id,
                     messages,
                     tools,
-                    &|| crate::capabilities::agent::public_api::coding_cancelled(&cancel_root, &cancel_session),
+                    &|| {
+                        crate::capabilities::agent::public_api::coding_cancelled(
+                            &cancel_root,
+                            &cancel_session,
+                        )
+                    },
                     &mut emit_delta,
                 )
             },
         );
         if _run_guard.as_ref().is_some_and(|guard| guard.cancelled())
-            || response.as_ref().is_ok_and(|value| value["status"] == "cancelled") {
+            || response
+                .as_ref()
+                .is_ok_and(|value| value["status"] == "cancelled")
+        {
             execution.cancel()?;
         } else {
             execution.finish(response.is_ok())?;
@@ -1733,18 +1929,41 @@ mod tests {
     #[test]
     fn credentials_keep_legacy_profiles_compatible_and_reject_foreign_versions() {
         let id = "a".repeat(24);
-        let mut profile = super::AiProfile { id:id.clone(),name:"fixture".into(),model:"fixture".into(),
-            base_url:"https://example.invalid/v1".into(),kind:"chat".into(),source:"manual".into(),credential_ref:String::new() };
-        assert_eq!(super::credential_reference(&profile).unwrap(), format!("ai:{id}"));
-        let legacy = super::AiConfig { profiles:vec![profile.clone()],..Default::default() };
+        let mut profile = super::AiProfile {
+            id: id.clone(),
+            name: "fixture".into(),
+            model: "fixture".into(),
+            base_url: "https://example.invalid/v1".into(),
+            kind: "chat".into(),
+            source: "manual".into(),
+            credential_ref: String::new(),
+        };
+        assert_eq!(
+            super::credential_reference(&profile).unwrap(),
+            format!("ai:{id}")
+        );
+        let legacy = super::AiConfig {
+            profiles: vec![profile.clone()],
+            ..Default::default()
+        };
         assert!(super::mcp_profile_for_reference(&legacy, &format!("ai:{id}")).is_ok());
         let version = format!("ai:{id}:{}", uuid::Uuid::new_v4());
         profile.credential_ref = version.clone();
-        let current = super::AiConfig { profiles:vec![profile.clone()],..Default::default() };
+        let current = super::AiConfig {
+            profiles: vec![profile.clone()],
+            ..Default::default()
+        };
         assert_eq!(super::credential_reference(&profile).unwrap(), version);
         assert!(super::mcp_profile_for_reference(&current, &format!("ai:{id}")).is_ok());
-        assert!(super::mcp_profile_for_reference(&current, &format!("ai:{id}:{}", uuid::Uuid::new_v4())).is_err());
-        let captured = super::ProviderProfile { profile:profile.clone(),credential:"old-request-secret".into() };
+        assert!(super::mcp_profile_for_reference(
+            &current,
+            &format!("ai:{id}:{}", uuid::Uuid::new_v4())
+        )
+        .is_err());
+        let captured = super::ProviderProfile {
+            profile: profile.clone(),
+            credential: "old-request-secret".into(),
+        };
         profile.base_url = "https://other.invalid/v1".into();
         profile.credential_ref = format!("ai:{}:{}", "b".repeat(24), uuid::Uuid::new_v4());
         assert!(super::credential_reference(&profile).is_err());
@@ -1755,26 +1974,31 @@ mod tests {
     #[cfg(windows)]
     fn fixture_powershell(script: &str) -> std::process::Child {
         let root = std::env::var_os("SystemRoot").expect("Windows SystemRoot");
-        let exe = std::path::PathBuf::from(root)
-            .join("System32/WindowsPowerShell/v1.0/powershell.exe");
+        let exe =
+            std::path::PathBuf::from(root).join("System32/WindowsPowerShell/v1.0/powershell.exe");
         std::process::Command::new(exe)
             .args(["-NoProfile", "-NonInteractive", "-Command", script])
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            .spawn().expect("Windows native AI fixture")
+            .spawn()
+            .expect("Windows native AI fixture")
     }
     #[cfg(windows)]
     fn fixture_output(text: &str) -> std::process::Child {
-        fixture_powershell(&format!("[Console]::Out.Write('{}')",
-            text.replace('\'', "''")))
+        fixture_powershell(&format!(
+            "[Console]::Out.Write('{}')",
+            text.replace('\'', "''")
+        ))
     }
     #[cfg(unix)]
     fn fixture_output(text: &str) -> std::process::Child {
         std::process::Command::new("/usr/bin/printf")
-            .arg("%s").arg(text)
+            .arg("%s")
+            .arg(text)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            .spawn().expect("Unix output fixture")
+            .spawn()
+            .expect("Unix output fixture")
     }
     #[cfg(windows)]
     fn fixture_sleep() -> std::process::Child {
@@ -1782,10 +2006,12 @@ mod tests {
     }
     #[cfg(unix)]
     fn fixture_sleep() -> std::process::Child {
-        std::process::Command::new("/usr/bin/sleep").arg("10")
+        std::process::Command::new("/usr/bin/sleep")
+            .arg("10")
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            .spawn().expect("Unix sleep fixture")
+            .spawn()
+            .expect("Unix sleep fixture")
     }
     #[cfg(windows)]
     fn fixture_large_output() -> std::process::Child {
@@ -1797,7 +2023,8 @@ mod tests {
             .args(["-c", "262145", "/dev/zero"])
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            .spawn().expect("Unix large output fixture")
+            .spawn()
+            .expect("Unix large output fixture")
     }
 
     #[test]
@@ -2056,8 +2283,10 @@ mod tests {
         });
         assert!(started.elapsed() < Duration::from_secs(3));
         #[cfg(unix)]
-        assert!(!std::path::Path::new(&format!("/proc/{pid}")).exists(),
-            "streaming child should be reaped after cancellation");
+        assert!(
+            !std::path::Path::new(&format!("/proc/{pid}")).exists(),
+            "streaming child should be reaped after cancellation"
+        );
         #[cfg(windows)]
         assert!(pid > 0);
     }
@@ -2104,8 +2333,10 @@ mod tests {
             });
             assert!(started.elapsed() < Duration::from_secs(3));
             #[cfg(unix)]
-            assert!(!std::path::Path::new(&format!("/proc/{pid}")).exists(),
-                "child should be reaped");
+            assert!(
+                !std::path::Path::new(&format!("/proc/{pid}")).exists(),
+                "child should be reaped"
+            );
             #[cfg(windows)]
             assert!(pid > 0);
         }
@@ -2183,9 +2414,13 @@ mod tests {
         // status; Windows consumes the native process exit code unshifted.
         let exit_status = |code: i32| -> std::process::ExitStatus {
             #[cfg(unix)]
-            { std::process::ExitStatus::from_raw(code << 8) }
+            {
+                std::process::ExitStatus::from_raw(code << 8)
+            }
             #[cfg(windows)]
-            { std::process::ExitStatus::from_raw(code as u32) }
+            {
+                std::process::ExitStatus::from_raw(code as u32)
+            }
         };
         let mut successful = b"{\"fixture\":123}200".to_vec();
         assert_eq!(split_http_status(&mut successful), Some(200));
@@ -2193,14 +2428,8 @@ mod tests {
         let mut malformed = b"bad".to_vec();
         assert_eq!(split_http_status(&mut malformed), None);
         assert_eq!(malformed, b"bad");
-        assert_eq!(
-            curl_failure(exit_status(28)),
-            "AI_PROVIDER_TIMEOUT"
-        );
-        assert_eq!(
-            curl_failure(exit_status(22)),
-            "AI_PROVIDER_HTTP_ERROR"
-        );
+        assert_eq!(curl_failure(exit_status(28)), "AI_PROVIDER_TIMEOUT");
+        assert_eq!(curl_failure(exit_status(22)), "AI_PROVIDER_HTTP_ERROR");
         let http_failure = exit_status(22);
         for (status, expected) in [
             (401, "AI_PROVIDER_AUTH_FAILED"),
@@ -2219,10 +2448,7 @@ mod tests {
             (60, "AI_PROVIDER_TLS_FAILED"),
             (99, "AI_PROVIDER_REQUEST_FAILED"),
         ] {
-            assert_eq!(
-                curl_failure(exit_status(code)),
-                expected
-            );
+            assert_eq!(curl_failure(exit_status(code)), expected);
         }
     }
     #[test]
@@ -2289,7 +2515,8 @@ mod tests {
         validate(profile).expect("profile validation");
         assert_eq!(profile.kind, "chat");
         let credential =
-            KeyringStore::get_token(&credential_reference(profile).expect("credential reference")).expect("credential unavailable");
+            KeyringStore::get_token(&credential_reference(profile).expect("credential reference"))
+                .expect("credential unavailable");
         let body = json!({"model":profile.model,"messages":[{"role":"user","content":"Reply with OK only."}],"stream":false,"max_tokens":4096,"tools":[{"type":"function","function":{"name":"fixture","description":"Synthetic test","parameters":{"type":"object","properties":{}}}}]}).to_string();
         assert!(!credential.is_empty() && !body.contains(&credential));
         let input = format!(
@@ -2752,7 +2979,6 @@ mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod import_publication_tests {
     use super::*;
@@ -2796,45 +3022,92 @@ mod import_publication_tests {
 
     #[test]
     fn import_protocol_rejects_foreign_references_and_bad_envelopes() {
-        assert_eq!(parse_import(b"not json", REQUEST).err().as_deref(), Some("AI_IMPORT_RESPONSE_INVALID"));
+        assert_eq!(
+            parse_import(b"not json", REQUEST).err().as_deref(),
+            Some("AI_IMPORT_RESPONSE_INVALID")
+        );
         let mut wrong = envelope_value();
         wrong["request_id"] = json!("ffffffffffffffffffffffffffffffff");
-        assert_eq!(parse_error(&wrong).as_deref(), Some("AI_IMPORT_RESPONSE_INVALID"));
+        assert_eq!(
+            parse_error(&wrong).as_deref(),
+            Some("AI_IMPORT_RESPONSE_INVALID")
+        );
         let mut wrong = envelope_value();
         wrong["unexpected"] = json!("field");
-        assert_eq!(parse_error(&wrong).as_deref(), Some("AI_IMPORT_RESPONSE_INVALID"));
+        assert_eq!(
+            parse_error(&wrong).as_deref(),
+            Some("AI_IMPORT_RESPONSE_INVALID")
+        );
         let mut wrong = envelope_value();
         wrong["profiles"][0]["credential_ref"] = json!("db:00000000-0000-4000-8000-000000000123");
-        assert_eq!(parse_error(&wrong).as_deref(), Some("AI_IMPORT_PROFILE_INVALID"));
+        assert_eq!(
+            parse_error(&wrong).as_deref(),
+            Some("AI_IMPORT_PROFILE_INVALID")
+        );
         let mut wrong = envelope_value();
         wrong["credentials"]["browser:unrelated"] = json!("fixture_unrelated_secret_9876");
-        assert_eq!(parse_error(&wrong).as_deref(), Some("AI_IMPORT_CREDENTIAL_INVALID"));
+        assert_eq!(
+            parse_error(&wrong).as_deref(),
+            Some("AI_IMPORT_CREDENTIAL_INVALID")
+        );
     }
 
     #[test]
     fn import_metadata_rejects_both_authorization_and_bare_tokens() {
-        for secret in [MODEL_SECRET, MODEL_SECRET.strip_prefix("Bearer ").unwrap(),
-            PLUGIN_SECRET, PLUGIN_SECRET.strip_prefix("Bearer ").unwrap()] {
+        for secret in [
+            MODEL_SECRET,
+            MODEL_SECRET.strip_prefix("Bearer ").unwrap(),
+            PLUGIN_SECRET,
+            PLUGIN_SECRET.strip_prefix("Bearer ").unwrap(),
+        ] {
             let mut value = envelope_value();
             value["profiles"][0]["name"] = json!(secret);
-            assert_eq!(parse_error(&value).as_deref(), Some("AI_IMPORT_METADATA_SECRET"));
+            assert_eq!(
+                parse_error(&value).as_deref(),
+                Some("AI_IMPORT_METADATA_SECRET")
+            );
         }
     }
 
     #[test]
     fn model_authentication_normalizes_one_prefix_without_changing_plugin_values() {
-        assert_eq!(model_credential("plain_token_123456").unwrap(), "plain_token_123456");
-        assert_eq!(model_credential(MODEL_SECRET).unwrap(), "fixture_model_secret_123456");
-        for value in ["", "Bearer ", "Bearer bad\nvalue", "bad\rvalue", "bad\0value"] {
-            assert_eq!(model_credential(value).err().as_deref(), Some("AI_CREDENTIAL_INVALID"));
+        assert_eq!(
+            model_credential("plain_token_123456").unwrap(),
+            "plain_token_123456"
+        );
+        assert_eq!(
+            model_credential(MODEL_SECRET).unwrap(),
+            "fixture_model_secret_123456"
+        );
+        for value in [
+            "",
+            "Bearer ",
+            "Bearer bad\nvalue",
+            "bad\rvalue",
+            "bad\0value",
+        ] {
+            assert_eq!(
+                model_credential(value).err().as_deref(),
+                Some("AI_CREDENTIAL_INVALID")
+            );
         }
         let plan = prepare_import(&AiConfig::default(), envelope()).unwrap();
-        assert_eq!(plan.credentials[&format!("ai:{MODEL_ID}")], "fixture_model_secret_123456");
-        assert_eq!(plan.credentials[&format!("ai-plugin:{PLUGIN_ID}")], PLUGIN_SECRET);
+        assert_eq!(
+            plan.credentials[&format!("ai:{MODEL_ID}")],
+            "fixture_model_secret_123456"
+        );
+        assert_eq!(
+            plan.credentials[&format!("ai-plugin:{PLUGIN_ID}")],
+            PLUGIN_SECRET
+        );
     }
 
     #[derive(Clone, Copy)]
-    enum SaveMode { Success, BeforePublish, AfterPublish }
+    enum SaveMode {
+        Success,
+        BeforePublish,
+        AfterPublish,
+    }
     struct Store {
         config: AiConfig,
         keys: BTreeMap<String, String>,
@@ -2846,8 +3119,15 @@ mod import_publication_tests {
     }
     impl Default for Store {
         fn default() -> Self {
-            Self { config:AiConfig::default(), keys:BTreeMap::new(), intents:HashSet::new(),
-                stage_calls:0, fail_stage_at:None, mode:SaveMode::Success, fail_cleanup:false }
+            Self {
+                config: AiConfig::default(),
+                keys: BTreeMap::new(),
+                intents: HashSet::new(),
+                stage_calls: 0,
+                fail_stage_at: None,
+                mode: SaveMode::Success,
+                fail_cleanup: false,
+            }
         }
     }
     impl Store {
@@ -2858,38 +3138,53 @@ mod import_publication_tests {
             // after a value exists: recovery must already have an intent.
             self.intents.insert(reference.clone());
             self.keys.insert(reference.clone(), secret.to_owned());
-            if self.fail_stage_at == Some(self.stage_calls) { return Err("CREDENTIAL_SAVE_FAILED".into()); }
+            if self.fail_stage_at == Some(self.stage_calls) {
+                return Err("CREDENTIAL_SAVE_FAILED".into());
+            }
             Ok(reference)
         }
         fn persist(&mut self, config: &AiConfig) -> Result<(), String> {
-            if matches!(self.mode, SaveMode::BeforePublish) { return Err("SAVE_FAILED".into()); }
+            if matches!(self.mode, SaveMode::BeforePublish) {
+                return Err("SAVE_FAILED".into());
+            }
             self.config = config.clone();
-            if matches!(self.mode, SaveMode::AfterPublish) { return Err("SAVE_SYNC_FAILED".into()); }
+            if matches!(self.mode, SaveMode::AfterPublish) {
+                return Err("SAVE_SYNC_FAILED".into());
+            }
             Ok(())
         }
         fn reconcile(&mut self) -> Result<(), String> {
-            if self.fail_cleanup && self.stage_calls > 0 { return Err("CREDENTIAL_CLEANUP_PENDING".into()); }
+            if self.fail_cleanup && self.stage_calls > 0 {
+                return Err("CREDENTIAL_CLEANUP_PENDING".into());
+            }
             let mut live = live_credentials(&self.config)?;
             for plugin in &self.config.plugins {
                 live.extend(plugin.credential_refs.iter().cloned());
             }
             for reference in std::mem::take(&mut self.intents) {
-                if !live.contains(&reference) { self.keys.remove(&reference); }
+                if !live.contains(&reference) {
+                    self.keys.remove(&reference);
+                }
             }
             Ok(())
         }
     }
     fn publish(store: &RefCell<Store>) -> Result<Value, String> {
         let plan = prepare_import(&store.borrow().config, envelope())?;
-        publish_import(plan,
+        publish_import(
+            plan,
             |namespace, id, secret| store.borrow_mut().stage(namespace, id, secret),
             |config| store.borrow_mut().persist(config),
-            || store.borrow_mut().reconcile())
+            || store.borrow_mut().reconcile(),
+        )
     }
 
     #[test]
     fn failed_stage_reconciles_all_created_keys_without_publishing() {
-        let store = RefCell::new(Store { fail_stage_at:Some(2), ..Store::default() });
+        let store = RefCell::new(Store {
+            fail_stage_at: Some(2),
+            ..Store::default()
+        });
         assert_eq!(publish(&store).unwrap_err(), "CREDENTIAL_SAVE_FAILED");
         let store = store.borrow();
         assert!(store.config.profiles.is_empty());
@@ -2901,7 +3196,10 @@ mod import_publication_tests {
     #[test]
     fn failed_save_uses_the_actual_persisted_state() {
         for mode in [SaveMode::BeforePublish, SaveMode::AfterPublish] {
-            let store = RefCell::new(Store { mode, ..Store::default() });
+            let store = RefCell::new(Store {
+                mode,
+                ..Store::default()
+            });
             let error = publish(&store).unwrap_err();
             let store = store.borrow();
             match mode {
@@ -2914,9 +3212,15 @@ mod import_publication_tests {
                     assert_eq!(error, "SAVE_SYNC_FAILED");
                     assert_eq!(store.config.profiles.len(), 1);
                     let model_ref = credential_reference(&store.config.profiles[0]).unwrap();
-                    assert_eq!(store.keys.get(&model_ref).map(String::as_str), Some("fixture_model_secret_123456"));
+                    assert_eq!(
+                        store.keys.get(&model_ref).map(String::as_str),
+                        Some("fixture_model_secret_123456")
+                    );
                     let plugin_ref = &store.config.plugins[0].credential_refs[0];
-                    assert_eq!(store.keys.get(plugin_ref).map(String::as_str), Some(PLUGIN_SECRET));
+                    assert_eq!(
+                        store.keys.get(plugin_ref).map(String::as_str),
+                        Some(PLUGIN_SECRET)
+                    );
                 }
                 SaveMode::Success => unreachable!(),
             }
@@ -2940,18 +3244,29 @@ mod import_publication_tests {
         assert_eq!(response["imported"], 0);
         assert_eq!(store.stage_calls, 2);
         assert_eq!(store.config.profiles[0].name, "Existing customized name");
-        assert_eq!(store.config.profiles[0].base_url, "https://existing.example/v1");
+        assert_eq!(
+            store.config.profiles[0].base_url,
+            "https://existing.example/v1"
+        );
         assert_eq!(store.config.profiles[0].credential_ref, expected_model);
         assert_eq!(store.config.plugins[0].credential_refs[0], expected_plugin);
     }
 
     #[test]
     fn successful_import_returns_no_credentials_and_retains_retryable_cleanup() {
-        let store = RefCell::new(Store { fail_cleanup:true, ..Store::default() });
+        let store = RefCell::new(Store {
+            fail_cleanup: true,
+            ..Store::default()
+        });
         let response = publish(&store).unwrap();
         assert_eq!(response["credential_cleanup_pending"], true);
         let encoded = response.to_string();
-        for secret in [MODEL_SECRET, "fixture_model_secret_123456", PLUGIN_SECRET, "fixture_plugin_secret_654321"] {
+        for secret in [
+            MODEL_SECRET,
+            "fixture_model_secret_123456",
+            PLUGIN_SECRET,
+            "fixture_plugin_secret_654321",
+        ] {
             assert!(!encoded.contains(secret));
         }
         assert!(!store.borrow().intents.is_empty());
@@ -2971,6 +3286,9 @@ mod import_publication_tests {
             profile.credential_ref = format!("ai:{}", profile.id);
             config.profiles.push(profile);
         }
-        assert_eq!(prepare_import(&config, envelope()).err().as_deref(), Some("AI_CONFIG_LIMIT"));
+        assert_eq!(
+            prepare_import(&config, envelope()).err().as_deref(),
+            Some("AI_CONFIG_LIMIT")
+        );
     }
 }

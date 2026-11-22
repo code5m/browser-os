@@ -76,11 +76,16 @@ pub fn discover_allowed(
     if relative.components().any(|part| part.as_os_str() == ".git") {
         return Err("GIT_LOCAL_INTERNAL_PATH_DENIED".into());
     }
-    let branch = repo
-        .head()
-        .ok()
-        .and_then(|h| h.shorthand().map(str::to_owned))
-        .unwrap_or_else(|| "(detached / unborn HEAD)".to_string());
+    let branch = match repo.head() {
+        Ok(head) => head
+            .shorthand()
+            .map_err(|_| "GIT_LOCAL_HEAD_INVALID")?
+            .to_owned(),
+        Err(error) if error.code() == git2::ErrorCode::UnbornBranch => {
+            "(detached / unborn HEAD)".to_owned()
+        }
+        Err(_) => return Err("GIT_LOCAL_HEAD_FAILED".into()),
+    };
     let context = LocalGitContext {
         root: root.to_string_lossy().into_owned(),
         relative_path: relative.to_string_lossy().into_owned(),
@@ -177,11 +182,17 @@ pub fn log_page(
         commits.push(LocalLogEntry {
             oid: commit.id().to_string(),
             parents: commit.parent_ids().map(|id| id.to_string()).collect(),
-            summary: commit.summary().unwrap_or("").chars().take(500).collect(),
+            summary: commit
+                .summary()
+                .map_err(|_| "GIT_LOCAL_LOG_FAILED")?
+                .unwrap_or("")
+                .chars()
+                .take(500)
+                .collect(),
             author: commit
                 .author()
                 .name()
-                .unwrap_or("")
+                .map_err(|_| "GIT_LOCAL_LOG_FAILED")?
                 .chars()
                 .take(100)
                 .collect(),

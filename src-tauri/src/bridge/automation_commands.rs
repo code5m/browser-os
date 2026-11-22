@@ -184,11 +184,13 @@ pub struct ReviewedSnippet {
 }
 fn snippet_revision(snippet: &CommandSnippet) -> Result<String, String> {
     use sha2::{Digest, Sha256};
-    let mut descriptor = serde_json::to_value(snippet).map_err(|_| "SNIPPET_REVIEW_ENCODE_FAILED")?;
+    let mut descriptor =
+        serde_json::to_value(snippet).map_err(|_| "SNIPPET_REVIEW_ENCODE_FAILED")?;
     // Built-in catalog timestamps are synthesized on every read. Bind all
     // definition fields, excluding only these non-execution timestamps.
     if let Some(object) = descriptor.as_object_mut() {
-        object.remove("created_at"); object.remove("updated_at");
+        object.remove("created_at");
+        object.remove("updated_at");
     }
     let bytes = serde_json::to_vec(&descriptor).map_err(|_| "SNIPPET_REVIEW_ENCODE_FAILED")?;
     Ok(format!("{:x}", Sha256::digest(bytes)))
@@ -202,10 +204,12 @@ pub fn snippet_list(
     crate::shared::native_legacy_policy::require_main(&webview, "snippet_list")?;
     check_invocation_source(&webview, "snippet_list", None, &app)?;
     crate::snippets::merge_builtin_snippets(workspace::load_snippets(&app)?)
-        .into_iter().map(|snippet| {
+        .into_iter()
+        .map(|snippet| {
             let revision = snippet_revision(&snippet)?;
             Ok(ReviewedSnippet { snippet, revision })
-        }).collect()
+        })
+        .collect()
 }
 
 /// 新增命令片段。
@@ -445,10 +449,16 @@ pub fn run_command(
     check_invocation_source(&webview, "run_command", None, &app)?;
     crate::images::check_id(&id, "命令片段 id")?;
     let snippet = get_enabled_snippet(&app, &id)?;
-    if expected_revision.len() != 64 || !expected_revision.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+    if expected_revision.len() != 64
+        || !expected_revision
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+    {
         return Err("SNIPPET_REVIEW_REQUIRED".into());
     }
-    if expected_revision != snippet_revision(&snippet)? { return Err("SNIPPET_REVIEW_CHANGED".into()); }
+    if expected_revision != snippet_revision(&snippet)? {
+        return Err("SNIPPET_REVIEW_CHANGED".into());
+    }
     let count = snippet.params.len();
     let roots = crate::workspace::allowed_roots(&app);
     let home = app.path().home_dir().map_err(|e| e.to_string())?;

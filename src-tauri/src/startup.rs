@@ -45,10 +45,13 @@ pub fn dispatch_open_url(app: &AppHandle, url: &str) {
 }
 
 fn release_pending_open_urls(app: &AppHandle) -> io::Result<()> {
-    let queue = app.try_state::<PendingOpenUrls>()
+    let queue = app
+        .try_state::<PendingOpenUrls>()
         .ok_or_else(|| io::Error::other("STARTUP_QUEUE_UNAVAILABLE"))?;
     let pending = {
-        let mut state = queue.0.lock()
+        let mut state = queue
+            .0
+            .lock()
             .map_err(|_| io::Error::other("STARTUP_QUEUE_POISONED"))?;
         // Publish readiness and detach the bounded queue atomically. A concurrent
         // callback either queues before this point or routes after it; no URL
@@ -68,7 +71,10 @@ pub fn prepare_workspace(app: &AppHandle) -> io::Result<()> {
     #[cfg(not(target_os = "linux"))]
     if let Err(error) = crate::crashlog::use_private_directory(&crate::workspace::data_dir(app)) {
         // Diagnostics are optional. Never fall back to a public temporary file.
-        eprintln!("[startup] private diagnostic log unavailable: {:?}", error.kind());
+        eprintln!(
+            "[startup] private diagnostic log unavailable: {:?}",
+            error.kind()
+        );
     }
     #[cfg(target_os = "windows")]
     {
@@ -81,13 +87,17 @@ pub fn prepare_workspace(app: &AppHandle) -> io::Result<()> {
             &crate::workspace::data_dir(app),
             recover_abandoned,
             std::time::Instant::now() + std::time::Duration::from_secs(2),
-        ).is_err() {
+        )
+        .is_err()
+        {
             eprintln!("[startup] native sandbox preparation: SANDBOX_RECOVERY_BLOCKED");
         }
     }
-    let tabs = app.try_state::<tauri_plugin_browser_tabs::TabManagerState>()
+    let tabs = app
+        .try_state::<tauri_plugin_browser_tabs::TabManagerState>()
         .ok_or_else(|| io::Error::other("BROWSER_PROFILE_MANAGER_UNAVAILABLE"))?;
-    tabs.prepare_storage().map_err(|error| io::Error::other(error.to_string()))?;
+    tabs.prepare_storage()
+        .map_err(|error| io::Error::other(error.to_string()))?;
     release_pending_open_urls(app)
 }
 
@@ -111,7 +121,10 @@ pub fn report_failure(error: &dyn std::fmt::Display) {
             "BrowserOS 初始化失败，程序已安全退出。\n\n错误代码：STARTUP_INITIALIZATION_FAILED\n\n请查看应用诊断日志后重试。".to_string()
         };
         let text: Vec<u16> = message.encode_utf16().chain(std::iter::once(0)).collect();
-        let title: Vec<u16> = "BrowserOS 启动失败".encode_utf16().chain(std::iter::once(0)).collect();
+        let title: Vec<u16> = "BrowserOS 启动失败"
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
         unsafe {
             MessageBoxW(
                 std::ptr::null_mut(),

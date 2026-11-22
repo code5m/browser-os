@@ -39,7 +39,10 @@ mod native {
             return Err(invalid("PRIVATE_DIRECTORY_PATH_INVALID"));
         }
         let mut names = Vec::new();
-        for part in bytes.split(|byte| *byte == b'/').filter(|part| !part.is_empty()) {
+        for part in bytes
+            .split(|byte| *byte == b'/')
+            .filter(|part| !part.is_empty())
+        {
             if part == b"." || part == b".." || names.len() == MAX_COMPONENTS {
                 return Err(invalid("PRIVATE_DIRECTORY_COMPONENT_INVALID"));
             }
@@ -88,7 +91,8 @@ mod native {
             let next = match open_child(current.as_raw_fd(), name) {
                 Ok(next) => next,
                 Err(error) if create && error.raw_os_error() == Some(libc::ENOENT) => {
-                    let result = unsafe { libc::mkdirat(current.as_raw_fd(), name.as_ptr(), 0o700) };
+                    let result =
+                        unsafe { libc::mkdirat(current.as_raw_fd(), name.as_ptr(), 0o700) };
                     if result != 0 {
                         let error = io::Error::last_os_error();
                         if error.raw_os_error() != Some(libc::EEXIST) {
@@ -188,7 +192,9 @@ mod native {
     /// application-owned leaf. This supports an intentional XDG base symlink
     /// and macOS system aliases without allowing symlinks inside our root.
     /// Publish the resolved path, never return to the mutable alias afterwards.
-    pub(super) fn prepare_application_data_directory(base: &Path) -> io::Result<std::path::PathBuf> {
+    pub(super) fn prepare_application_data_directory(
+        base: &Path,
+    ) -> io::Result<std::path::PathBuf> {
         components(base)?;
         let mut existing = base.to_path_buf();
         let mut missing = Vec::new();
@@ -196,7 +202,8 @@ mod native {
             match std::fs::canonicalize(&existing) {
                 Ok(path) => break path,
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                    let name = existing.file_name()
+                    let name = existing
+                        .file_name()
                         .ok_or_else(|| invalid("PRIVATE_DIRECTORY_BASE_UNRESOLVED"))?
                         .to_os_string();
                     missing.push(name);
@@ -204,10 +211,17 @@ mod native {
                         return Err(invalid("PRIVATE_DIRECTORY_BASE_DEPTH"));
                     }
                 }
-                Err(error) => return Err(io::Error::new(error.kind(), "PRIVATE_DIRECTORY_BASE_UNAVAILABLE")),
+                Err(error) => {
+                    return Err(io::Error::new(
+                        error.kind(),
+                        "PRIVATE_DIRECTORY_BASE_UNAVAILABLE",
+                    ))
+                }
             }
         };
-        for name in missing.into_iter().rev() { resolved.push(name); }
+        for name in missing.into_iter().rev() {
+            resolved.push(name);
+        }
         resolved.push("mvp-browser-os");
         // The app-owned leaf and every unresolved component still pass the
         // original O_NOFOLLOW/openat + effective UID + 0700/ACL policy. A
@@ -233,13 +247,19 @@ mod native {
             fn acl_valid(acl: Acl) -> libc::c_int;
             fn acl_get_fd_np(fd: libc::c_int, kind: libc::c_int) -> Acl;
             fn acl_set_fd_np(fd: libc::c_int, acl: Acl, kind: libc::c_int) -> libc::c_int;
-            fn acl_get_entry(acl: Acl, entry_id: libc::c_int, entry: *mut *mut c_void) -> libc::c_int;
+            fn acl_get_entry(
+                acl: Acl,
+                entry_id: libc::c_int,
+                entry: *mut *mut c_void,
+            ) -> libc::c_int;
         }
 
         struct OwnedAcl(Acl);
         impl Drop for OwnedAcl {
             fn drop(&mut self) {
-                unsafe { acl_free(self.0); }
+                unsafe {
+                    acl_free(self.0);
+                }
             }
         }
 
@@ -262,7 +282,9 @@ mod native {
         pub(super) fn require_empty(fd: RawFd) -> io::Result<()> {
             // A null result without a fresh errno must never be accepted based
             // on an unrelated earlier ENOENT.
-            unsafe { *libc::__error() = 0; }
+            unsafe {
+                *libc::__error() = 0;
+            }
             let raw = unsafe { acl_get_fd_np(fd, ACL_TYPE_EXTENDED) };
             if raw.is_null() {
                 let error = io::Error::last_os_error();
@@ -303,11 +325,16 @@ mod native {
                 fn acl_create_entry(acl: *mut Acl, entry: *mut *mut c_void) -> libc::c_int;
                 fn acl_set_tag_type(entry: *mut c_void, tag: libc::c_int) -> libc::c_int;
                 fn acl_set_qualifier(entry: *mut c_void, qualifier: *const c_void) -> libc::c_int;
-                fn acl_get_permset(entry: *mut c_void, permissions: *mut *mut c_void) -> libc::c_int;
+                fn acl_get_permset(
+                    entry: *mut c_void,
+                    permissions: *mut *mut c_void,
+                ) -> libc::c_int;
                 fn acl_add_perm(permissions: *mut c_void, permission: libc::c_int) -> libc::c_int;
             }
             let raw = unsafe { acl_init(1) };
-            if raw.is_null() { return Err(os_error("TEST_ACL_ALLOCATE")); }
+            if raw.is_null() {
+                return Err(os_error("TEST_ACL_ALLOCATE"));
+            }
             let mut acl = OwnedAcl(raw);
             let mut entry = ptr::null_mut();
             let mut permissions = ptr::null_mut();
@@ -344,7 +371,9 @@ mod native {
             }
         }
         impl Drop for Fixture {
-            fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); }
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
         }
 
         #[test]
@@ -363,8 +392,14 @@ mod native {
             let metadata = fs::metadata(&private).unwrap();
             assert_eq!(metadata.uid(), unsafe { libc::geteuid() });
             assert_eq!(metadata.permissions().mode() & 0o7777, 0o700);
-            assert_eq!(fs::metadata(&parent).unwrap().permissions().mode() & 0o7777, 0o750);
-            assert_eq!(fs::metadata(&child).unwrap().permissions().mode() & 0o7777, 0o640);
+            assert_eq!(
+                fs::metadata(&parent).unwrap().permissions().mode() & 0o7777,
+                0o750
+            );
+            assert_eq!(
+                fs::metadata(&child).unwrap().permissions().mode() & 0o7777,
+                0o640
+            );
         }
 
         #[test]
@@ -387,7 +422,10 @@ mod native {
             assert!(ensure(&link).is_err());
             assert!(ensure(&link.join("must-not-exist")).is_err());
             assert!(!target.0.join("must-not-exist").exists());
-            assert_eq!(fs::metadata(&target.0).unwrap().permissions().mode() & 0o7777, 0o755);
+            assert_eq!(
+                fs::metadata(&target.0).unwrap().permissions().mode() & 0o7777,
+                0o755
+            );
         }
 
         #[test]
@@ -396,7 +434,11 @@ mod native {
             let file = fixture.0.join("file");
             fs::write(&file, b"unchanged").unwrap();
             assert!(ensure(&file).is_err());
-            for path in [Path::new("/"), Path::new("relative"), Path::new("/tmp/../app")] {
+            for path in [
+                Path::new("/"),
+                Path::new("relative"),
+                Path::new("/tmp/../app"),
+            ] {
                 assert!(components(path).is_err());
             }
             let too_deep = format!("/{}", vec!["segment"; MAX_COMPONENTS + 1].join("/"));
@@ -439,7 +481,10 @@ mod native {
             let fixture = Fixture::new();
             let private = fixture.0.join(OsString::from_vec(vec![b'a', 0xff]));
             ensure(&private).unwrap();
-            assert_eq!(fs::metadata(private).unwrap().permissions().mode() & 0o7777, 0o700);
+            assert_eq!(
+                fs::metadata(private).unwrap().permissions().mode() & 0o7777,
+                0o700
+            );
         }
 
         #[cfg(target_os = "macos")]
@@ -478,10 +523,15 @@ pub(super) fn ensure_private_directory(path: &Path) -> io::Result<()> {
 /// is resolved. General private-directory callers remain strictly no-symlink.
 pub(super) fn prepare_application_data_directory(base: &Path) -> io::Result<std::path::PathBuf> {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    { native::prepare_application_data_directory(base) }
+    {
+        native::prepare_application_data_directory(base)
+    }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         let _ = base;
-        Err(io::Error::new(io::ErrorKind::Unsupported, "PRIVATE_DIRECTORY_PLATFORM_UNSUPPORTED"))
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "PRIVATE_DIRECTORY_PLATFORM_UNSUPPORTED",
+        ))
     }
 }

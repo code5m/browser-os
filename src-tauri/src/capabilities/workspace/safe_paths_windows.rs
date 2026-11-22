@@ -37,7 +37,9 @@ fn reject_reparse_ancestors(path: &Path) -> io::Result<()> {
     let mut current = PathBuf::new();
     for component in path.components() {
         current.push(component.as_os_str());
-        if matches!(component, Component::Prefix(_)) || !current.has_root() { continue; } // Skip drive-only C: prefix.
+        if matches!(component, Component::Prefix(_)) || !current.has_root() {
+            continue;
+        } // Skip drive-only C: prefix.
         match std::fs::symlink_metadata(&current) {
             Ok(metadata) if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 => {
                 return Err(denied());
@@ -145,7 +147,9 @@ fn final_path(file: &File) -> io::Result<String> {
 fn open_authorized_root(path: &Path, roots: &[PathBuf]) -> io::Result<File> {
     let candidate = open(path, true)?;
     for root in roots {
-        let Ok(trusted) = open(root, true) else { continue; };
+        let Ok(trusted) = open(root, true) else {
+            continue;
+        };
         if browseros_platform_security::windows::handle_is_within_root(&candidate, &trusted)? {
             return Ok(trusted);
         }
@@ -167,7 +171,10 @@ pub(super) fn move_no_replace(src: &Path, dest_dir: &Path, roots: &[PathBuf]) ->
     rename_no_replace(src, dest_dir, filename, roots)
 }
 pub(super) fn rename_no_replace(
-    src: &Path, dest_dir: &Path, new_name: &std::ffi::OsStr, roots: &[PathBuf],
+    src: &Path,
+    dest_dir: &Path,
+    new_name: &std::ffi::OsStr,
+    roots: &[PathBuf],
 ) -> io::Result<()> {
     use std::ffi::c_void;
     use std::os::windows::{ffi::OsStrExt, io::AsRawHandle};
@@ -273,26 +280,25 @@ pub(super) fn rename_no_replace(
 /// New-file creation uses NtCreateFile(FILE_CREATE) under a pinned parent,
 /// then renames the fully flushed stage without replacing existing entries.
 /// Never fall back to a raw path-based std::fs::write after authorization.
-pub(super) fn create_new_file(
-    path: &Path, roots: &[PathBuf], content: &[u8],
-) -> io::Result<()> {
+pub(super) fn create_new_file(path: &Path, roots: &[PathBuf], content: &[u8]) -> io::Result<()> {
     use std::io::Write;
     use windows_sys::Wdk::Storage::FileSystem::FILE_CREATE;
     const DELETE: u32 = 0x0001_0000;
     const FILE_WRITE_DATA: u32 = 0x0000_0002;
     const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
-    if !path.is_absolute() { return Err(denied()); }
+    if !path.is_absolute() {
+        return Err(denied());
+    }
     let parent_path = path.parent().ok_or_else(denied)?;
     let filename = path.file_name().ok_or_else(denied)?;
     let root = open_authorized_root(parent_path, roots)?;
     let parent = open_destination_directory(parent_path)?;
     authorize_with_root(&parent, &root)?;
-    let temp = std::ffi::OsString::from(format!(
-        ".browseros-create-{}.tmp", uuid::Uuid::new_v4()
-    ));
+    let temp = std::ffi::OsString::from(format!(".browseros-create-{}.tmp", uuid::Uuid::new_v4()));
     let result = (|| {
         let mut stage = open_child_at(
-            &parent, &temp,
+            &parent,
+            &temp,
             DELETE | FILE_WRITE_DATA | FILE_READ_ATTRIBUTES,
             FILE_SHARE_READ_WRITE_DELETE,
             FILE_CREATE,
@@ -302,7 +308,9 @@ pub(super) fn create_new_file(
         drop(stage);
         rename_no_replace(&parent_path.join(&temp), parent_path, filename, roots)
     })();
-    if result.is_err() { let _ = remove_regular_at(&parent, &temp); }
+    if result.is_err() {
+        let _ = remove_regular_at(&parent, &temp);
+    }
     result
 }
 
@@ -312,17 +320,21 @@ pub(super) fn create_new_directory(path: &Path, roots: &[PathBuf]) -> io::Result
     use windows_sys::Wdk::Storage::FileSystem::FILE_CREATE;
     const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
     const FILE_LIST_DIRECTORY: u32 = 0x0000_0001;
-    if !path.is_absolute() { return Err(denied()); }
+    if !path.is_absolute() {
+        return Err(denied());
+    }
     let parent_path = path.parent().ok_or_else(denied)?;
     let filename = path.file_name().ok_or_else(denied)?;
     let root = open_authorized_root(parent_path, roots)?;
     let parent = open_destination_directory(parent_path)?;
     authorize_with_root(&parent, &root)?;
     let _created = open_object_at(
-        &parent, filename,
+        &parent,
+        filename,
         FILE_READ_ATTRIBUTES | FILE_LIST_DIRECTORY,
         FILE_SHARE_READ_WRITE_DELETE,
-        FILE_CREATE, true,
+        FILE_CREATE,
+        true,
     )?;
     Ok(())
 }
@@ -337,7 +349,9 @@ pub(super) fn create_directory_all(path: &Path, roots: &[PathBuf]) -> io::Result
     const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
     const FILE_LIST_DIRECTORY: u32 = 0x0000_0001;
     const FILE_TRAVERSE: u32 = 0x0000_0020;
-    if !path.is_absolute() { return Err(denied()); }
+    if !path.is_absolute() {
+        return Err(denied());
+    }
     let mut ancestor = path.parent().ok_or_else(denied)?;
     let mut missing = Vec::<std::ffi::OsString>::new();
     while !ancestor.exists() {
@@ -349,20 +363,27 @@ pub(super) fn create_directory_all(path: &Path, roots: &[PathBuf]) -> io::Result
     authorize_with_root(&parent, &root)?;
     for name in missing.iter().rev() {
         parent = open_object_at(
-            &parent, name,
-            FILE_READ_ATTRIBUTES | FILE_LIST_DIRECTORY
-                | FILE_ADD_FILE | FILE_ADD_SUBDIRECTORY | FILE_TRAVERSE,
+            &parent,
+            name,
+            FILE_READ_ATTRIBUTES
+                | FILE_LIST_DIRECTORY
+                | FILE_ADD_FILE
+                | FILE_ADD_SUBDIRECTORY
+                | FILE_TRAVERSE,
             FILE_SHARE_READ_WRITE_DELETE,
-            FILE_OPEN_IF, true,
+            FILE_OPEN_IF,
+            true,
         )?;
         authorize_with_root(&parent, &root)?;
     }
     let filename = path.file_name().ok_or_else(denied)?;
     let _created = open_object_at(
-        &parent, filename,
+        &parent,
+        filename,
         FILE_READ_ATTRIBUTES | FILE_LIST_DIRECTORY,
         FILE_SHARE_READ_WRITE_DELETE,
-        FILE_CREATE, true,
+        FILE_CREATE,
+        true,
     )?;
     Ok(())
 }
@@ -408,8 +429,13 @@ fn open_object_at(
     directory: bool,
 ) -> io::Result<File> {
     open_object_with_security_at(
-        parent, filename, desired_access, share_access, create_disposition,
-        directory, std::ptr::null_mut(),
+        parent,
+        filename,
+        desired_access,
+        share_access,
+        create_disposition,
+        directory,
+        std::ptr::null_mut(),
     )
 }
 
@@ -514,7 +540,9 @@ fn open_object_with_security_at(
     if let Err(error) = authorized {
         // A newly created stage has not reached its scoped owner yet. Delete
         // it by this handle on admission failure; never retry via a pathname.
-        if !descriptor.is_null() && create_disposition == windows_sys::Wdk::Storage::FileSystem::FILE_CREATE {
+        if !descriptor.is_null()
+            && create_disposition == windows_sys::Wdk::Storage::FileSystem::FILE_CREATE
+        {
             delete_on_close(&file);
         }
         return Err(error);
@@ -589,7 +617,10 @@ fn identity(file: &File) -> io::Result<FileIdentity> {
     };
     let index = ((info.nFileIndexHigh as u64) << 32) | info.nFileIndexLow as u64;
     if index == 0 {
-        return Err(io::Error::new(io::ErrorKind::Unsupported, "WINDOWS_FILE_IDENTITY_UNAVAILABLE"));
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "WINDOWS_FILE_IDENTITY_UNAVAILABLE",
+        ));
     }
     Ok(FileIdentity {
         volume: info.dwVolumeSerialNumber,
@@ -619,7 +650,9 @@ fn read_snapshot(file: &mut File, limit: usize) -> Result<(FileIdentity, Vec<u8>
         return Err("FILE_SAVE_TOO_LARGE".into());
     }
     let identity = identity(file).map_err(|_| "FILE_IDENTITY_UNAVAILABLE")?;
-    if before != identity { return Err("FILE_CONFLICT".into()); }
+    if before != identity {
+        return Err("FILE_CONFLICT".into());
+    }
     Ok((identity, bytes))
 }
 
@@ -631,7 +664,9 @@ struct FileDacl {
 impl Drop for FileDacl {
     fn drop(&mut self) {
         if !self.descriptor.is_null() {
-            unsafe { windows_sys::Win32::Foundation::LocalFree(self.descriptor as _); }
+            unsafe {
+                windows_sys::Win32::Foundation::LocalFree(self.descriptor as _);
+            }
         }
     }
 }
@@ -641,53 +676,95 @@ impl FileDacl {
             Authorization::{GetSecurityInfo, SE_FILE_OBJECT},
             GetSecurityDescriptorControl, IsValidAcl, DACL_SECURITY_INFORMATION, SE_DACL_PROTECTED,
         };
-        let mut value = Self { descriptor: std::ptr::null_mut(), dacl: std::ptr::null_mut(), protected: false };
-        let status = unsafe {
-            GetSecurityInfo(file.as_raw_handle() as _, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION,
-                std::ptr::null_mut(), std::ptr::null_mut(), &mut value.dacl,
-                std::ptr::null_mut(), &mut value.descriptor)
+        let mut value = Self {
+            descriptor: std::ptr::null_mut(),
+            dacl: std::ptr::null_mut(),
+            protected: false,
         };
-        if status != 0 || value.descriptor.is_null() { return Err("FILE_ACL_READ_FAILED".into()); }
+        let status = unsafe {
+            GetSecurityInfo(
+                file.as_raw_handle() as _,
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &mut value.dacl,
+                std::ptr::null_mut(),
+                &mut value.descriptor,
+            )
+        };
+        if status != 0 || value.descriptor.is_null() {
+            return Err("FILE_ACL_READ_FAILED".into());
+        }
         let mut control = 0u16;
         let mut revision = 0u32;
-        if unsafe { GetSecurityDescriptorControl(value.descriptor, &mut control, &mut revision) } == 0
+        if unsafe { GetSecurityDescriptorControl(value.descriptor, &mut control, &mut revision) }
+            == 0
             || (!value.dacl.is_null() && unsafe { IsValidAcl(value.dacl) } == 0)
-        { return Err("FILE_ACL_INVALID".into()); }
+        {
+            return Err("FILE_ACL_INVALID".into());
+        }
         value.protected = control & SE_DACL_PROTECTED != 0;
         Ok(value)
     }
     fn same_policy(&self, other: &Self) -> bool {
         use windows_sys::Win32::Security::{GetAce, ACE_HEADER};
-        if self.protected != other.protected { return false; }
-        if self.dacl.is_null() || other.dacl.is_null() { return self.dacl.is_null() && other.dacl.is_null(); }
+        if self.protected != other.protected {
+            return false;
+        }
+        if self.dacl.is_null() || other.dacl.is_null() {
+            return self.dacl.is_null() && other.dacl.is_null();
+        }
         let count = unsafe { (*self.dacl).AceCount };
-        if count != unsafe { (*other.dacl).AceCount } { return false; }
+        if count != unsafe { (*other.dacl).AceCount } {
+            return false;
+        }
         for index in 0..u32::from(count) {
             let mut left = std::ptr::null_mut();
             let mut right = std::ptr::null_mut();
             if unsafe { GetAce(self.dacl, index, &mut left) } == 0
                 || unsafe { GetAce(other.dacl, index, &mut right) } == 0
-                || left.is_null() || right.is_null()
-            { return false; }
-            let left_size = unsafe { std::ptr::read_unaligned(left as *const ACE_HEADER).AceSize } as usize;
-            let right_size = unsafe { std::ptr::read_unaligned(right as *const ACE_HEADER).AceSize } as usize;
-            if left_size < std::mem::size_of::<ACE_HEADER>() || left_size != right_size { return false; }
+                || left.is_null()
+                || right.is_null()
+            {
+                return false;
+            }
+            let left_size =
+                unsafe { std::ptr::read_unaligned(left as *const ACE_HEADER).AceSize } as usize;
+            let right_size =
+                unsafe { std::ptr::read_unaligned(right as *const ACE_HEADER).AceSize } as usize;
+            if left_size < std::mem::size_of::<ACE_HEADER>() || left_size != right_size {
+                return false;
+            }
             if unsafe { std::slice::from_raw_parts(left.cast::<u8>(), left_size) }
                 != unsafe { std::slice::from_raw_parts(right.cast::<u8>(), right_size) }
-            { return false; }
+            {
+                return false;
+            }
         }
         true
     }
     fn apply(&self, file: &File) -> Result<(), String> {
         use windows_sys::Win32::Security::{
-            Authorization::{SetSecurityInfo, SE_FILE_OBJECT}, DACL_SECURITY_INFORMATION,
-            PROTECTED_DACL_SECURITY_INFORMATION, UNPROTECTED_DACL_SECURITY_INFORMATION,
+            Authorization::{SetSecurityInfo, SE_FILE_OBJECT},
+            DACL_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION,
+            UNPROTECTED_DACL_SECURITY_INFORMATION,
         };
-        let inheritance = if self.protected { PROTECTED_DACL_SECURITY_INFORMATION }
-            else { UNPROTECTED_DACL_SECURITY_INFORMATION };
+        let inheritance = if self.protected {
+            PROTECTED_DACL_SECURITY_INFORMATION
+        } else {
+            UNPROTECTED_DACL_SECURITY_INFORMATION
+        };
         let status = unsafe {
-            SetSecurityInfo(file.as_raw_handle() as _, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION | inheritance,
-                std::ptr::null_mut(), std::ptr::null_mut(), self.dacl, std::ptr::null_mut())
+            SetSecurityInfo(
+                file.as_raw_handle() as _,
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION | inheritance,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                self.dacl,
+                std::ptr::null_mut(),
+            )
         };
         if status != 0 || !self.same_policy(&Self::read(file)?) {
             return Err("FILE_ACL_PRESERVE_FAILED".into());
@@ -704,7 +781,12 @@ fn rename_replace_at(source: &File, parent: &File, target: &std::ffi::OsStr) -> 
     rename_at(source, parent, target, true)
 }
 
-fn rename_at(source: &File, parent: &File, target: &std::ffi::OsStr, replace: bool) -> io::Result<()> {
+fn rename_at(
+    source: &File,
+    parent: &File,
+    target: &std::ffi::OsStr,
+    replace: bool,
+) -> io::Result<()> {
     use std::ffi::c_void;
     use std::os::windows::{ffi::OsStrExt, io::AsRawHandle};
     use windows_sys::Wdk::Storage::FileSystem::{
@@ -768,14 +850,20 @@ struct StagedWrite {
 }
 impl std::ops::Deref for StagedWrite {
     type Target = File;
-    fn deref(&self) -> &File { &self.file }
+    fn deref(&self) -> &File {
+        &self.file
+    }
 }
 impl std::ops::DerefMut for StagedWrite {
-    fn deref_mut(&mut self) -> &mut File { &mut self.file }
+    fn deref_mut(&mut self) -> &mut File {
+        &mut self.file
+    }
 }
 impl Drop for StagedWrite {
     fn drop(&mut self) {
-        if !self.published { delete_on_close(&self.file); }
+        if !self.published {
+            delete_on_close(&self.file);
+        }
     }
 }
 impl StagedWrite {
@@ -785,7 +873,8 @@ impl StagedWrite {
     fn prepare_publish(&self) -> Result<(), String> {
         // FILE_FLAG_DELETE_ON_CLOSE cannot be undone. Stages deliberately use
         // the reversible FileDispositionInfo state, after writes have finished.
-        set_delete_disposition(&self.file, false).map_err(|_| "FILE_STAGE_PUBLISH_PREPARE_FAILED".into())
+        set_delete_disposition(&self.file, false)
+            .map_err(|_| "FILE_STAGE_PUBLISH_PREPARE_FAILED".into())
     }
 }
 
@@ -794,9 +883,18 @@ fn open_stage_at(parent: &File, filename: &std::ffi::OsStr) -> io::Result<Staged
     const ACCESS: u32 = 0x0001_0000 | 0x0000_0002 | 0x0000_0080 | 0x0002_0000 | 0x0004_0000;
     let mut security = browseros_platform_security::windows::PrivateFileSecurity::new()?;
     let file = open_object_with_security_at(
-        parent, filename, ACCESS, 0, FILE_CREATE, false, security.as_ptr(),
+        parent,
+        filename,
+        ACCESS,
+        0,
+        FILE_CREATE,
+        false,
+        security.as_ptr(),
     )?;
-    let stage = StagedWrite { file, published: false };
+    let stage = StagedWrite {
+        file,
+        published: false,
+    };
     browseros_platform_security::windows::audit_private_file(&stage.file)?;
     Ok(stage)
 }
@@ -807,9 +905,16 @@ fn set_delete_disposition(file: &File, delete: bool) -> io::Result<()> {
     };
     let disposition = FILE_DISPOSITION_INFO { DeleteFile: delete };
     if unsafe {
-        SetFileInformationByHandle(file.as_raw_handle() as _, FileDispositionInfo,
-            &disposition as *const _ as _, std::mem::size_of::<FILE_DISPOSITION_INFO>() as u32)
-    } == 0 { return Err(io::Error::last_os_error()); }
+        SetFileInformationByHandle(
+            file.as_raw_handle() as _,
+            FileDispositionInfo,
+            &disposition as *const _ as _,
+            std::mem::size_of::<FILE_DISPOSITION_INFO>() as u32,
+        )
+    } == 0
+    {
+        return Err(io::Error::last_os_error());
+    }
     Ok(())
 }
 
@@ -875,7 +980,8 @@ fn mark_object_deleted(object: &File) -> io::Result<()> {
             &disposition as *const _ as *const c_void,
             std::mem::size_of::<FILE_DISPOSITION_INFO>() as u32,
         )
-    } == 0 {
+    } == 0
+    {
         return Err(io::Error::last_os_error());
     }
     Ok(())
@@ -896,8 +1002,12 @@ fn names_of_pinned_directory(dir: &File) -> io::Result<Vec<(std::ffi::OsString, 
     for entry in std::fs::read_dir(&named)? {
         let entry = entry?;
         let kind = entry.file_type()?;
-        if !kind.is_dir() && !kind.is_file() { return Err(denied()); }
-        if entries.len() >= 50_000 { return Err(denied()); }
+        if !kind.is_dir() && !kind.is_file() {
+            return Err(denied());
+        }
+        if entries.len() >= 50_000 {
+            return Err(denied());
+        }
         entries.push((entry.file_name(), kind.is_dir()));
     }
     // A rename while enumerating cannot redirect any of the eventual NT
@@ -915,11 +1025,14 @@ fn names_of_pinned_directory(dir: &File) -> io::Result<Vec<(std::ffi::OsString, 
 /// pinned handle may be enumerated; child metadata uses NtCreateFile relative
 /// to that handle, never a second mutable host path.
 pub(super) fn list_directory(
-    path: &Path, roots: &[PathBuf],
+    path: &Path,
+    roots: &[PathBuf],
 ) -> io::Result<Vec<(std::ffi::OsString, bool, u64)>> {
     use windows_sys::Wdk::Storage::FileSystem::FILE_OPEN;
     const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
-    if !path.is_absolute() { return Err(denied()); }
+    if !path.is_absolute() {
+        return Err(denied());
+    }
     let root = open_authorized_root(path, roots)?;
     let directory = open(path, true)?;
     authorize_with_root(&directory, &root)?;
@@ -936,27 +1049,46 @@ pub(super) fn list_directory(
     check_pinned()?;
     let mut entries = Vec::new();
     for entry in std::fs::read_dir(&named)? {
-        let Ok(entry) = entry else { continue; };
-        if entries.len() >= 50_000 { return Err(denied()); }
+        let Ok(entry) = entry else {
+            continue;
+        };
+        if entries.len() >= 50_000 {
+            return Err(denied());
+        }
         let filename = entry.file_name();
-        let Ok(kind) = entry.file_type() else { continue; };
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
         if kind.is_symlink() || (!kind.is_dir() && !kind.is_file()) {
             entries.push((filename, false, 0));
             continue;
         }
         let Ok(child) = open_object_at(
-            &directory, &filename, FILE_READ_ATTRIBUTES,
-            FILE_SHARE_READ_WRITE_DELETE, FILE_OPEN, kind.is_dir(),
-        ) else { continue; };
-        let Ok(metadata) = child.metadata() else { continue; };
+            &directory,
+            &filename,
+            FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ_WRITE_DELETE,
+            FILE_OPEN,
+            kind.is_dir(),
+        ) else {
+            continue;
+        };
+        let Ok(metadata) = child.metadata() else {
+            continue;
+        };
         if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
             entries.push((filename, false, 0));
             continue;
         }
         authorize_with_root(&child, &root)?;
         entries.push((
-            filename, metadata.is_dir(),
-            if metadata.is_file() { metadata.len() } else { 0 },
+            filename,
+            metadata.is_dir(),
+            if metadata.is_file() {
+                metadata.len()
+            } else {
+                0
+            },
         ));
     }
     check_pinned()?;
@@ -964,23 +1096,33 @@ pub(super) fn list_directory(
 }
 
 fn remove_directory_contents(
-    directory: &File, authorized_root: &File, depth: usize, remaining: &mut usize,
+    directory: &File,
+    authorized_root: &File,
+    depth: usize,
+    remaining: &mut usize,
 ) -> io::Result<()> {
     use windows_sys::Wdk::Storage::FileSystem::FILE_OPEN;
     const DELETE: u32 = 0x0001_0000;
     const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
     const FILE_LIST_DIRECTORY: u32 = 0x0000_0001;
     const FILE_TRAVERSE: u32 = 0x0000_0020;
-    if depth > 64 { return Err(denied()); }
+    if depth > 64 {
+        return Err(denied());
+    }
     authorize_with_root(directory, authorized_root)?;
     for (name, is_dir) in names_of_pinned_directory(directory)? {
-        if *remaining == 0 { return Err(denied()); }
+        if *remaining == 0 {
+            return Err(denied());
+        }
         *remaining -= 1;
         if is_dir {
             let nested = open_object_at(
-                directory, &name,
+                directory,
+                &name,
                 DELETE | FILE_READ_ATTRIBUTES | FILE_LIST_DIRECTORY | FILE_TRAVERSE,
-                FILE_SHARE_READ_WRITE_DELETE, FILE_OPEN, true,
+                FILE_SHARE_READ_WRITE_DELETE,
+                FILE_OPEN,
+                true,
             )?;
             authorize_with_root(&nested, authorized_root)?;
             remove_directory_contents(&nested, authorized_root, depth + 1, remaining)?;
@@ -988,9 +1130,11 @@ fn remove_directory_contents(
             drop(nested);
         } else {
             let child = open_child_at(
-                directory, &name,
+                directory,
+                &name,
                 DELETE | FILE_READ_ATTRIBUTES,
-                FILE_SHARE_READ_WRITE_DELETE, FILE_OPEN,
+                FILE_SHARE_READ_WRITE_DELETE,
+                FILE_OPEN,
             )?;
             authorize_with_root(&child, authorized_root)?;
             mark_object_deleted(&child)?;
@@ -1006,7 +1150,9 @@ pub(super) fn remove_tree(path: &Path, roots: &[PathBuf]) -> io::Result<()> {
     const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
     const FILE_LIST_DIRECTORY: u32 = 0x0000_0001;
     const FILE_TRAVERSE: u32 = 0x0000_0020;
-    if !path.is_absolute() { return Err(denied()); }
+    if !path.is_absolute() {
+        return Err(denied());
+    }
     reject_reparse_ancestors(path)?;
     let parent_path = path.parent().ok_or_else(denied)?;
     let target_name = path.file_name().ok_or_else(denied)?;
@@ -1014,9 +1160,12 @@ pub(super) fn remove_tree(path: &Path, roots: &[PathBuf]) -> io::Result<()> {
     let parent = open_destination_directory(parent_path)?;
     authorize_with_root(&parent, &root)?;
     let target = open_object_at(
-        &parent, target_name,
+        &parent,
+        target_name,
         DELETE | FILE_READ_ATTRIBUTES | FILE_LIST_DIRECTORY | FILE_TRAVERSE,
-        FILE_SHARE_READ_WRITE_DELETE, FILE_OPEN, true,
+        FILE_SHARE_READ_WRITE_DELETE,
+        FILE_OPEN,
+        true,
     )?;
     authorize_with_root(&target, &root)?;
     let mut remaining = 50_000usize;
@@ -1052,10 +1201,15 @@ pub(super) fn directory_identity(path: &Path) -> io::Result<String> {
         .share_mode(FILE_SHARE_READ_WRITE_DELETE)
         .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS)
         .open(path)?;
-    if !directory.metadata()?.is_dir() { return Err(denied()); }
+    if !directory.metadata()?.is_dir() {
+        return Err(denied());
+    }
     verify_path_handle(path, &directory)?;
     let id = browseros_platform_security::windows::file_identity(&directory)?;
-    Ok(format!("windows:{:x}:{:x}", id.volume_serial, id.file_index))
+    Ok(format!(
+        "windows:{:x}:{:x}",
+        id.volume_serial, id.file_index
+    ))
 }
 
 fn cas_lock(parent: &File, filename: &std::ffi::OsStr) -> Result<(File, File), String> {
@@ -1069,33 +1223,45 @@ fn cas_lock(parent: &File, filename: &std::ffi::OsStr) -> Result<(File, File), S
     // Unicode spelling or 8.3 alias. Do not invent Windows casing rules here.
     // Deny delete sharing so a held sidecar cannot be removed and recreated.
     let directory_lock = open_child_at(
-        parent, std::ffi::OsStr::new(".browseros-cas-directory.lock"),
+        parent,
+        std::ffi::OsStr::new(".browseros-cas-directory.lock"),
         FILE_READ_DATA | FILE_WRITE_DATA | FILE_READ_ATTRIBUTES,
-        FILE_SHARE_READ_WRITE, FILE_OPEN_IF,
-    ).map_err(|_| "FILE_LOCK_UNAVAILABLE")?;
+        FILE_SHARE_READ_WRITE,
+        FILE_OPEN_IF,
+    )
+    .map_err(|_| "FILE_LOCK_UNAVAILABLE")?;
     directory_lock.lock().map_err(|_| "FILE_LOCK_UNAVAILABLE")?;
     // Keep the original exact-name sidecar as well, for older cooperating
     // callers using this spelling. Only upgraded callers share alias safety.
     let digest = format!("{:x}", sha2::Sha256::digest(filename.as_encoded_bytes()));
     let lock_name = std::ffi::OsString::from(format!(".browseros-cas-{digest}.lock"));
     let legacy_lock = open_child_at(
-        parent, &lock_name, FILE_READ_DATA | FILE_WRITE_DATA | FILE_READ_ATTRIBUTES,
-        FILE_SHARE_READ_WRITE, FILE_OPEN_IF,
-    ).map_err(|_| "FILE_LOCK_UNAVAILABLE")?;
+        parent,
+        &lock_name,
+        FILE_READ_DATA | FILE_WRITE_DATA | FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ_WRITE,
+        FILE_OPEN_IF,
+    )
+    .map_err(|_| "FILE_LOCK_UNAVAILABLE")?;
     legacy_lock.lock().map_err(|_| "FILE_LOCK_UNAVAILABLE")?;
     Ok((directory_lock, legacy_lock))
 }
 
 fn snapshot_at(
-    parent: &File, filename: &std::ffi::OsStr, limit: usize,
+    parent: &File,
+    filename: &std::ffi::OsStr,
+    limit: usize,
 ) -> Result<Option<(File, FileIdentity, Vec<u8>)>, String> {
     use windows_sys::Wdk::Storage::FileSystem::FILE_OPEN;
     const FILE_READ_DATA: u32 = 0x0000_0001;
     const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
     const READ_CONTROL: u32 = 0x0002_0000;
     let mut file = match open_child_at(
-        parent, filename, FILE_READ_DATA | FILE_READ_ATTRIBUTES | READ_CONTROL,
-        FILE_SHARE_READ_WRITE_DELETE, FILE_OPEN,
+        parent,
+        filename,
+        FILE_READ_DATA | FILE_READ_ATTRIBUTES | READ_CONTROL,
+        FILE_SHARE_READ_WRITE_DELETE,
+        FILE_OPEN,
     ) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -1106,8 +1272,12 @@ fn snapshot_at(
 }
 
 fn write_versioned_at(
-    parent: &File, filename: &std::ffi::OsStr, expected: Option<&[u8]>,
-    expected_identity: Option<&str>, content: &[u8], limit: usize,
+    parent: &File,
+    filename: &std::ffi::OsStr,
+    expected: Option<&[u8]>,
+    expected_identity: Option<&str>,
+    content: &[u8],
+    limit: usize,
     prepare: impl FnOnce(&str) -> Result<(), String>,
 ) -> Result<(), String> {
     if limit == 0 || expected.is_some_and(|b| b.len() > limit) || content.len() > limit {
@@ -1121,22 +1291,32 @@ fn write_versioned_at(
     }
     if initial.as_ref().map(|(_, _, bytes)| bytes.as_slice()) != expected
         || expected_identity.is_some_and(|id| {
-            initial.as_ref().is_none_or(|(_, identity, _)| object_identity(identity) != id)
+            initial
+                .as_ref()
+                .is_none_or(|(_, identity, _)| object_identity(identity) != id)
         })
     {
         return Err("FILE_CONFLICT".into());
     }
     let original_identity = initial.as_ref().map(|(_, id, _)| FileIdentity {
-        volume: id.volume, index: id.index, size: id.size, modified: id.modified,
+        volume: id.volume,
+        index: id.index,
+        size: id.size,
+        modified: id.modified,
     });
-    let candidate = std::ffi::OsString::from(format!(".browseros-cas-{}.tmp", uuid::Uuid::new_v4()));
+    let candidate =
+        std::ffi::OsString::from(format!(".browseros-cas-{}.tmp", uuid::Uuid::new_v4()));
     let mut stage = open_stage_at(parent, &candidate).map_err(|_| "FILE_STAGE_CREATE_FAILED")?;
     let result = (|| {
         use std::io::Write;
         // Preserve the target policy before the first content byte is written.
-        if let Some((file, _, _)) = &initial { copy_dacl(file, &stage)?; }
+        if let Some((file, _, _)) = &initial {
+            copy_dacl(file, &stage)?;
+        }
         drop(initial);
-        stage.write_all(content).map_err(|_| "FILE_STAGE_WRITE_FAILED")?;
+        stage
+            .write_all(content)
+            .map_err(|_| "FILE_STAGE_WRITE_FAILED")?;
         stage.sync_all().map_err(|_| "FILE_STAGE_SYNC_FAILED")?;
         let receipt = object_identity(&identity(&stage).map_err(|_| "FILE_IDENTITY_UNAVAILABLE")?);
         // A journal callback / commit lock can take time. Native close on
@@ -1153,12 +1333,17 @@ fn write_versioned_at(
             return Err("FILE_CONFLICT".into());
         }
         stage.prepare_publish()?;
-        if let Some((file, _, _)) = &latest { copy_dacl(file, &stage)?; }
+        if let Some((file, _, _)) = &latest {
+            copy_dacl(file, &stage)?;
+        }
         drop(latest);
-        rename_at(&stage, parent, filename, expected.is_some())
-            .map_err(|e| if e.kind() == io::ErrorKind::AlreadyExists {
+        rename_at(&stage, parent, filename, expected.is_some()).map_err(|e| {
+            if e.kind() == io::ErrorKind::AlreadyExists {
                 "FILE_CONFLICT"
-            } else { "FILE_REPLACE_FAILED" })?;
+            } else {
+                "FILE_REPLACE_FAILED"
+            }
+        })?;
         stage.published = true;
         let _ = parent.sync_all();
         Ok(())
@@ -1167,22 +1352,42 @@ fn write_versioned_at(
 }
 
 fn save_if_unchanged_at(
-    parent: &File, filename: &std::ffi::OsStr, expected: &[u8], content: &[u8], limit: usize,
+    parent: &File,
+    filename: &std::ffi::OsStr,
+    expected: &[u8],
+    content: &[u8],
+    limit: usize,
 ) -> Result<(), String> {
-    write_versioned_at(parent, filename, Some(expected), None, content, limit, |_| Ok(()))
+    write_versioned_at(
+        parent,
+        filename,
+        Some(expected),
+        None,
+        content,
+        limit,
+        |_| Ok(()),
+    )
 }
 
 fn authorized_parent(path: &Path, roots: &[PathBuf]) -> Result<File, String> {
-    if !path.is_absolute() { return Err("FILE_PARENT_NOT_AUTHORIZED".into()); }
+    if !path.is_absolute() {
+        return Err("FILE_PARENT_NOT_AUTHORIZED".into());
+    }
     let parent_path = path.parent().ok_or("FILE_PARENT_INVALID")?;
-    let root = open_authorized_root(parent_path, roots).map_err(|_| "FILE_PARENT_NOT_AUTHORIZED")?;
-    let parent = open_destination_directory(parent_path).map_err(|_| "FILE_PARENT_NOT_AUTHORIZED")?;
+    let root =
+        open_authorized_root(parent_path, roots).map_err(|_| "FILE_PARENT_NOT_AUTHORIZED")?;
+    let parent =
+        open_destination_directory(parent_path).map_err(|_| "FILE_PARENT_NOT_AUTHORIZED")?;
     authorize_with_root(&parent, &root).map_err(|_| "FILE_PARENT_NOT_AUTHORIZED")?;
     Ok(parent)
 }
 
 pub(super) fn save_if_unchanged(
-    path: &Path, roots: &[PathBuf], expected: &[u8], content: &[u8], limit: usize,
+    path: &Path,
+    roots: &[PathBuf],
+    expected: &[u8],
+    content: &[u8],
+    limit: usize,
 ) -> Result<(), String> {
     let parent = authorized_parent(path, roots)?;
     let filename = path.file_name().ok_or("FILE_NAME_INVALID")?;
@@ -1190,9 +1395,13 @@ pub(super) fn save_if_unchanged(
 }
 
 pub(super) fn read_versioned(
-    path: &Path, roots: &[PathBuf], limit: usize,
+    path: &Path,
+    roots: &[PathBuf],
+    limit: usize,
 ) -> Result<Option<FileSnapshot>, String> {
-    if !path.is_absolute() { return Err("FILE_PARENT_NOT_AUTHORIZED".into()); }
+    if !path.is_absolute() {
+        return Err("FILE_PARENT_NOT_AUTHORIZED".into());
+    }
     let parent_path = path.parent().ok_or("FILE_PARENT_INVALID")?;
     let filename = path.file_name().ok_or("FILE_NAME_INVALID")?;
     let root = match open_authorized_root(parent_path, roots) {
@@ -1218,25 +1427,40 @@ pub(super) fn read_versioned(
         Err(_) => return Err("FILE_PARENT_NOT_AUTHORIZED".into()),
     };
     authorize_with_root(&parent, &root).map_err(|_| "FILE_PARENT_NOT_AUTHORIZED")?;
-    Ok(snapshot_at(&parent, filename, limit)?.map(|(_, identity, bytes)| FileSnapshot {
-        identity: object_identity(&identity), bytes,
-    }))
+    Ok(
+        snapshot_at(&parent, filename, limit)?.map(|(_, identity, bytes)| FileSnapshot {
+            identity: object_identity(&identity),
+            bytes,
+        }),
+    )
 }
 
 pub(super) fn write_versioned(
-    path: &Path, roots: &[PathBuf], expected: Option<&FileSnapshot>,
-    content: &[u8], limit: usize, prepare: impl FnOnce(&str) -> Result<(), String>,
+    path: &Path,
+    roots: &[PathBuf],
+    expected: Option<&FileSnapshot>,
+    content: &[u8],
+    limit: usize,
+    prepare: impl FnOnce(&str) -> Result<(), String>,
 ) -> Result<(), String> {
     let parent = authorized_parent(path, roots)?;
     let filename = path.file_name().ok_or("FILE_NAME_INVALID")?;
     write_versioned_at(
-        &parent, filename, expected.map(|s| s.bytes.as_slice()),
-        expected.map(|s| s.identity.as_str()), content, limit, prepare,
+        &parent,
+        filename,
+        expected.map(|s| s.bytes.as_slice()),
+        expected.map(|s| s.identity.as_str()),
+        content,
+        limit,
+        prepare,
     )
 }
 
 pub(super) fn remove_if_unchanged(
-    path: &Path, roots: &[PathBuf], expected: &FileSnapshot, limit: usize,
+    path: &Path,
+    roots: &[PathBuf],
+    expected: &FileSnapshot,
+    limit: usize,
 ) -> Result<(), String> {
     use windows_sys::Wdk::Storage::FileSystem::FILE_OPEN;
     const DELETE: u32 = 0x0001_0000;
@@ -1249,9 +1473,13 @@ pub(super) fn remove_if_unchanged(
     // No write/delete sharing: the same handle is checked and marked deleted.
     // Existing incompatible external writers make this operation fail closed.
     let mut target = open_child_at(
-        &parent, filename, DELETE | FILE_READ_DATA | FILE_READ_ATTRIBUTES,
-        FILE_SHARE_READ, FILE_OPEN,
-    ).map_err(|_| "FILE_CONFLICT")?;
+        &parent,
+        filename,
+        DELETE | FILE_READ_DATA | FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ,
+        FILE_OPEN,
+    )
+    .map_err(|_| "FILE_CONFLICT")?;
     let (identity, bytes) = read_snapshot(&mut target, limit)?;
     if object_identity(&identity) != expected.identity || bytes != expected.bytes {
         return Err("FILE_CONFLICT".into());
@@ -1318,7 +1546,8 @@ mod tests {
     #[test]
     fn windows_stage_is_private_before_content_and_unpublished_drop_removes_it() {
         use std::io::Write;
-        let root = std::env::temp_dir().join(format!("browseros-stage-private-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("browseros-stage-private-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         let parent = open_parent_tree(&root).unwrap();
         let name = std::ffi::OsStr::new("private-stage.tmp");
@@ -1336,19 +1565,29 @@ mod tests {
 
     #[test]
     fn windows_journal_prepare_failure_keeps_original_and_removes_stage() {
-        let root = std::env::temp_dir().join(format!("browseros-stage-prepare-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("browseros-stage-prepare-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         let target = root.join("entry.txt");
         std::fs::write(&target, b"before").unwrap();
         let parent = open_parent_tree(&root).unwrap();
         let result = write_versioned_at(
-            &parent, std::ffi::OsStr::new("entry.txt"), Some(b"before"), None, b"after", 1024,
+            &parent,
+            std::ffi::OsStr::new("entry.txt"),
+            Some(b"before"),
+            None,
+            b"after",
+            1024,
             |_| Err("INJECTED_JOURNAL_PREPARE_FAILURE".into()),
         );
         assert_eq!(result.unwrap_err(), "INJECTED_JOURNAL_PREPARE_FAILURE");
         assert_eq!(std::fs::read(&target).unwrap(), b"before");
         assert!(!std::fs::read_dir(&root).unwrap().any(|entry| {
-            entry.unwrap().file_name().to_string_lossy().starts_with(".browseros-cas-")
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".browseros-cas-")
         }));
         drop(parent);
         std::fs::remove_dir_all(root).unwrap();
@@ -1357,7 +1596,10 @@ mod tests {
     #[test]
     fn windows_cas_preserves_protected_dacl_and_published_file_survives_close() {
         use std::io::Write;
-        let root = std::env::temp_dir().join(format!("browseros-stage-protected-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!(
+            "browseros-stage-protected-{}",
+            uuid::Uuid::new_v4()
+        ));
         std::fs::create_dir_all(&root).unwrap();
         let parent = open_parent_tree(&root).unwrap();
         let target = root.join("entry.txt");
@@ -1379,7 +1621,10 @@ mod tests {
 
     #[test]
     fn windows_cas_preserves_unprotected_dacl_inheritance_state() {
-        let root = std::env::temp_dir().join(format!("browseros-stage-inheritance-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!(
+            "browseros-stage-inheritance-{}",
+            uuid::Uuid::new_v4()
+        ));
         std::fs::create_dir_all(&root).unwrap();
         let target = root.join("entry.txt");
         std::fs::write(&target, b"before").unwrap();
@@ -1392,7 +1637,6 @@ mod tests {
         drop(file);
         std::fs::remove_dir_all(root).unwrap();
     }
-
 
     #[test]
     fn authorized_windows_read_returns_bytes_and_denies_external_files() {
@@ -1471,23 +1715,46 @@ mod tests {
     #[test]
     fn windows_case_alias_writers_share_the_same_commit_lock() {
         use std::sync::{Arc, Barrier};
-        let root = std::env::temp_dir().join(format!("browseros-wincas-alias-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("browseros-wincas-alias-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         let root = root.canonicalize().unwrap();
         std::fs::write(root.join("Entry.txt"), b"before").unwrap();
         let gate = Arc::new(Barrier::new(3));
-        let workers: Vec<_> = ["Entry.txt", "entry.txt"].into_iter().enumerate().map(|(index, name)| {
-            let root = root.clone();
-            let gate = Arc::clone(&gate);
-            std::thread::spawn(move || {
-                gate.wait();
-                save_if_unchanged(&root.join(name), &[root.clone()], b"before", format!("writer-{index}").as_bytes(), 1024)
+        let workers: Vec<_> = ["Entry.txt", "entry.txt"]
+            .into_iter()
+            .enumerate()
+            .map(|(index, name)| {
+                let root = root.clone();
+                let gate = Arc::clone(&gate);
+                std::thread::spawn(move || {
+                    gate.wait();
+                    save_if_unchanged(
+                        &root.join(name),
+                        &[root.clone()],
+                        b"before",
+                        format!("writer-{index}").as_bytes(),
+                        1024,
+                    )
+                })
             })
-        }).collect();
+            .collect();
         gate.wait();
-        let results: Vec<_> = workers.into_iter().map(|worker| worker.join().unwrap()).collect();
+        let results: Vec<_> = workers
+            .into_iter()
+            .map(|worker| worker.join().unwrap())
+            .collect();
         assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
-        assert_eq!(results.iter().filter(|result| result.as_ref().err().is_some_and(|error| error == "FILE_CONFLICT")).count(), 1);
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| result
+                    .as_ref()
+                    .err()
+                    .is_some_and(|error| error == "FILE_CONFLICT"))
+                .count(),
+            1
+        );
         let content = std::fs::read(root.join("Entry.txt")).unwrap();
         assert!(content == b"writer-0" || content == b"writer-1");
         std::fs::remove_dir_all(root).unwrap();
@@ -1495,20 +1762,32 @@ mod tests {
 
     #[test]
     fn receipt_persistence_in_the_same_parent_does_not_reenter_the_commit_lock() {
-        let root = std::env::temp_dir().join(format!("browseros-wincas-receipt-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("browseros-wincas-receipt-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         let root = root.canonicalize().unwrap();
         let target = root.join("entry.txt");
         std::fs::write(&target, b"before").unwrap();
-        let expected = read_versioned(&target, &[root.clone()], 1024).unwrap().unwrap();
+        let expected = read_versioned(&target, &[root.clone()], 1024)
+            .unwrap()
+            .unwrap();
         let receipt = root.join("owner-receipt.json");
-        write_versioned(&target, &[root.clone()], Some(&expected), b"after", 1024, |identity| {
-            atomic_write(&receipt, identity.as_bytes(), 1024)
-        }).unwrap();
+        write_versioned(
+            &target,
+            &[root.clone()],
+            Some(&expected),
+            b"after",
+            1024,
+            |identity| atomic_write(&receipt, identity.as_bytes(), 1024),
+        )
+        .unwrap();
         assert_eq!(std::fs::read(&target).unwrap(), b"after");
         assert_eq!(
             std::fs::read_to_string(&receipt).unwrap(),
-            read_versioned(&target, &[root.clone()], 1024).unwrap().unwrap().identity,
+            read_versioned(&target, &[root.clone()], 1024)
+                .unwrap()
+                .unwrap()
+                .identity,
         );
         std::fs::remove_dir_all(root).unwrap();
     }

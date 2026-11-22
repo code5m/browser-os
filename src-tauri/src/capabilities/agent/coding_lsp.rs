@@ -638,7 +638,10 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
         // Busy sessions cannot be attributed to roots without their mutexes.
         let candidates: Vec<(String, Arc<Mutex<CachedSession>>)> = {
             let cache = session_cache().lock().unwrap_or_else(|e| e.into_inner());
-            cache.iter().map(|(key, value)| (key.clone(), value.clone())).collect()
+            cache
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect()
         };
         let mut owned = Vec::new();
         let mut busy_candidates = 0usize;
@@ -648,18 +651,28 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
                     session.closed = true;
                     true
                 }
-                Err(_) => { busy_candidates += 1; false }
+                Err(_) => {
+                    busy_candidates += 1;
+                    false
+                }
                 _ => false,
             };
-            if mine { owned.push((key, entry)); }
+            if mine {
+                owned.push((key, entry));
+            }
         }
         let retired = {
             let mut cache = session_cache().lock().unwrap_or_else(|e| e.into_inner());
-            owned.iter().filter_map(|(key, entry)| {
-                if cache.get(key).is_some_and(|old| Arc::ptr_eq(old, entry)) {
-                    cache.remove(key)
-                } else { None }
-            }).collect::<Vec<_>>()
+            owned
+                .iter()
+                .filter_map(|(key, entry)| {
+                    if cache.get(key).is_some_and(|old| Arc::ptr_eq(old, entry)) {
+                        cache.remove(key)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
         };
         let count = retired.len();
         drop(owned);
@@ -701,11 +714,15 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
     super::coding::validate_lsp_document(&root, path, content)?;
     let symbol_only = method == "textDocument/documentSymbol";
     let line = request["line"]
-        .as_u64().or_else(|| symbol_only.then_some(0))
-        .filter(|n| *n < 100000).ok_or("LSP_POSITION_INVALID")?;
+        .as_u64()
+        .or_else(|| symbol_only.then_some(0))
+        .filter(|n| *n < 100000)
+        .ok_or("LSP_POSITION_INVALID")?;
     let character = request["character"]
-        .as_u64().or_else(|| symbol_only.then_some(0))
-        .filter(|n| *n <= 262144).ok_or("LSP_POSITION_INVALID")?;
+        .as_u64()
+        .or_else(|| symbol_only.then_some(0))
+        .filter(|n| *n <= 262144)
+        .ok_or("LSP_POSITION_INVALID")?;
     let text_line = content
         .split('\n')
         .nth(line as usize)
@@ -875,7 +892,9 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
     };
 
     let mut managed = cached.lock().map_err(|_| "LSP_SESSION_UNAVAILABLE")?;
-    if managed.closed { return Err("LSP_SESSION_CLOSED".into()); }
+    if managed.closed {
+        return Err("LSP_SESSION_CLOSED".into());
+    }
     if managed.graph_fingerprint != graph || !managed.session.is_alive() {
         drop(managed);
         remove_cached_session(&key, &cached);

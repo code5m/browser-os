@@ -7,7 +7,7 @@ M1-6.b 落地 Git 写后端核心（双阶段闸门 + 六个白名单写操作�
 
   - 写原语必须各自带校验器调用（先校验后执行）
   - 写段不得出现黑名单 API / 联网 / shell 调 git
-  - push 敏感 API（.push(/find_remote(/cred_cb/token）只允许出现在 write_push 体内；
+  - push 敏感 API（.push(/find_remote(/cred_cb/token）只允许出现在 write_push_bound 体内；
     KeyringStore 在写段全面禁止（凭据只能在 bridge 层推送瞬间读取）
   - push 禁止 force refspec / 前导冒号（删除远端分支）/ 任意 refspec 参数注入，
     且只允许推送 origin
@@ -37,7 +37,7 @@ WRITE_PRIMITIVES: dict[str, str] = {
     "write_commit": "validate_commit_message",
     "write_create_branch": "validate_branch_name",
     "write_checkout_branch": "validate_branch_name",
-    "write_push": "build_push_refspec",
+    "write_push_bound": "build_push_refspec",
 }
 
 # Git 写白名单：枚举变体 → 序列化名（M1-6.b 六项 + M1-6.d push）
@@ -63,7 +63,7 @@ FORBIDDEN_IN_WRITE_SECTION: tuple[tuple[str, str], ...] = (
     (r"Command::new\(\s*\"sh\"\s*\)\s*[\s\S]{0,120}?\.arg\(\s*\"-c\"", "GIT_WRITE_SHELL_GIT"),
 )
 
-# push 敏感 API：只允许出现在 write_push 函数体内
+# push 敏感 API：只允许出现在 write_push_bound 函数体内
 SENSITIVE_PUSH_APIS: tuple[str, ...] = (
     r"\.push\(",
     r"find_remote\(",
@@ -76,7 +76,10 @@ GATE_COMMANDS = ("request_git_write", "confirm_git_write")
 AUDIT_FORBIDDEN_PARAMS = ("paths", "diff", "content", "credential", "token", "secret")
 
 # 既有 push_artifacts 行为锚点（M1-6.d 不得改变其链路）
-PUSH_ARTIFACTS_ANCHORS = ("pull(", "commit(", "push(", "KeyringStore::get_token")
+PUSH_ARTIFACTS_ANCHORS = (
+    "pull(", "commit(", "push(", "workspace::repo_execution_snapshot",
+    "&repo.remote_url", "scrub_sensitive_error",
+)
 
 
 def function_span(source: str, name: str) -> tuple[int, int] | None:
@@ -131,12 +134,13 @@ def strip_comments(source: str) -> str:
 
 
 def write_section(sync_source: str) -> str:
-    """取 M1-6.b 写原语段（到下一个 `#[cfg(test)]` 为止）。"""
+    """Read production primitives up to the first test module, not a test helper."""
     start = sync_source.find(WRITE_SECTION_MARKER)
     if start < 0:
         return ""
-    end = sync_source.find("#[cfg(test)]", start)
-    return sync_source[start : end if end > 0 else len(sync_source)]
+    test_module = re.search(r"#\[cfg\(test\)\]\s*mod\s+\w+\s*\{", sync_source[start:])
+    end = start + test_module.start() if test_module else len(sync_source)
+    return sync_source[start:end]
 
 
 def check_write_primitives(section: str) -> list[str]:
@@ -161,14 +165,14 @@ def check_forbidden_api(section: str) -> list[str]:
 
 
 def check_push_primitive(section: str) -> list[str]:
-    """push 不变量：敏感 API 只在 write_push/scrub_sensitive_error 体内；
+    """push 不变量：敏感 API 只在 write_push_bound/scrub_sensitive_error 体内；
     禁 force/删除 refspec 字面量；禁任意 refspec 参数注入；只允许 origin；
     KeyringStore 在写段全面禁止。"""
     code = strip_comments(section)
-    push_span = function_span(code, "write_push")
+    push_span = function_span(code, "write_push_bound")
     if push_span is None:
         return ["GIT_WRITE_PUSH_PRIMITIVE_MISSING"]
-    # token 处理合法存在于 write_push（凭据回调）与 scrub_sensitive_error（错误脱敏）
+    # token 处理合法存在于 write_push_bound（凭据回调）与 scrub_sensitive_error（错误脱敏）
     allowed_spans = [
         span
         for span in (push_span, function_span(code, "scrub_sensitive_error"))
@@ -186,8 +190,19 @@ def check_push_primitive(section: str) -> list[str]:
     signature = body[: body.find("{")]
     if "refspec" in signature:
         violations.append("GIT_WRITE_PUSH_REFSPEC_INJECTABLE")
-    if "GIT_PUSH_REMOTE" not in body:
+    if not re.search(r"\.find_remote\(\s*GIT_PUSH_REMOTE\s*\)", body):
         violations.append("GIT_WRITE_PUSH_UNSAFE_REMOTE")
+    pin = re.search(
+        r"require_remote_endpoint\(\s*&remote\s*,\s*endpoint\s*,\s*true\s*,?\s*\)\s*\?",
+        body,
+    )
+    push = re.search(r"\.push\(", body)
+    callback = re.search(
+        r"cred_cb\(\s*username\.to_string\(\)\s*,\s*token\.to_string\(\)\s*,"
+        r"\s*endpoint\.to_string\(\)\s*,?\s*\)", body,
+    )
+    if not pin or not push or pin.start() > push.start() or not callback:
+        violations.append("GIT_WRITE_PUSH_ENDPOINT_NOT_PINNED")
     # force（"+refs/..."）/删除（":refs/..."）refspec 字面量：整个写段都不允许出现
     if re.search(r'"\+\s*refs/', code) or re.search(r'":\s*refs/', code):
         violations.append("GIT_WRITE_PUSH_FORCE_OR_DELETE")
@@ -254,8 +269,15 @@ def check_gate(bridge_source: str) -> list[str]:
         violations.append("GIT_WRITE_GATE_WITHOUT_EXPIRY")
 
     execute = function_body(bridge_source, "execute_git_write")
-    if "write_push" not in execute:
+    dispatch = re.search(
+        r"sync::write_push_bound\(\s*&repo\s*,\s*&cfg\.username\s*,\s*&token\s*,"
+        r"\s*&cfg\.remote_url\s*,?\s*\)", execute,
+    )
+    if not dispatch:
         violations.append("GIT_WRITE_PUSH_GATE_MISSING")
+    snapshot = re.search(r"workspace::repo_execution_snapshot\(", execute)
+    if not snapshot or (dispatch and snapshot.start() > dispatch.start()):
+        violations.append("GIT_WRITE_PUSH_WITHOUT_EXECUTION_SNAPSHOT")
 
     # 只看函数签名（到第一个 `{` 为止），函数体内的字段名不算
     signature_start = bridge_source.find("fn git_write_audit_detail")
@@ -280,6 +302,18 @@ def check_registration(main_source: str, acl_source: str) -> list[str]:
     return violations
 
 
+def check_credential_endpoint_callback(sync_source: str) -> list[str]:
+    body = strip_comments(function_body(sync_source, "cred_cb"))
+    guard = re.search(
+        r"if\s+!credential_endpoint_matches\(\s*&endpoint\s*,\s*actual\s*\)\s*\{\s*return\s+Err\(",
+        body,
+    )
+    credential = body.find("Cred::userpass_plaintext(")
+    if not guard or credential < 0 or guard.start() > credential:
+        return ["GIT_WRITE_CREDENTIAL_CALLBACK_NOT_PINNED"]
+    return []
+
+
 def check_push_artifacts_untouched(sync_source: str) -> list[str]:
     body = function_body(sync_source, "push_artifacts")
     if not all(anchor in body for anchor in PUSH_ARTIFACTS_ANCHORS):
@@ -302,6 +336,7 @@ def detect_violations(
             check_write_primitives(section)
             + check_forbidden_api(section)
             + check_push_primitive(section)
+            + check_credential_endpoint_callback(sync_source)
             + check_op_whitelist(domain_source)
             + check_gate(bridge_source)
             + check_registration(main_source, acl_source)
@@ -329,11 +364,25 @@ def scan_repository(root: Path) -> list[str]:
 
 GOOD_SYNC = """
 pub fn push_artifacts(app: &AppHandle, job: &SyncJob) -> Result<(), String> {
-    let token = KeyringStore::get_token(&repo.id)?;
-    pull(&repository, &repo.branch, &repo.username, &token)?;
-    commit(&repository, "msg")?;
-    push(&repository, &repo.branch, &repo.username, &token)?;
-    Ok(())
+    let (repo, token) = workspace::repo_execution_snapshot(app, &job.repo_id)?;
+    let result = (|| {
+        pull(&repository, &repo.branch, &repo.username, &token, &repo.remote_url)?;
+        commit(&repository, "msg")?;
+        push(&repository, &repo.branch, &repo.username, &token, &repo.remote_url)?;
+        Ok(())
+    })();
+    result.map_err(|error| scrub_sensitive_error(&error, &token))
+}
+
+fn cred_cb(username: String, token: String, endpoint: String) -> RemoteCallbacks<'static> {
+    let mut cb = RemoteCallbacks::new();
+    cb.credentials(move |actual, _user, _allowed| {
+        if !credential_endpoint_matches(&endpoint, actual) {
+            return Err(git2::Error::from_str("REPO_CREDENTIAL_ENDPOINT_MISMATCH"));
+        }
+        Cred::userpass_plaintext(&username, &token)
+    });
+    cb
 }
 
 // M1-6.b Git 写原语（stage / unstage / ...）
@@ -371,12 +420,13 @@ pub fn write_checkout_branch(repo: &Repository, name: &str) -> Result<String, St
     validate_branch_name(name)?;
     Ok(name.into())
 }
-pub fn write_push(repo: &Repository, username: &str, token: &str) -> Result<String, String> {
+pub fn write_push_bound(repo: &Repository, username: &str, token: &str, endpoint: &str) -> Result<String, String> {
     let branch = head.shorthand().unwrap().to_string();
     let refspec = build_push_refspec(&branch)?;
     let mut remote = repo.find_remote(GIT_PUSH_REMOTE).map_err(|e| e.to_string())?;
+    require_remote_endpoint(&remote, endpoint, true)?;
     let mut po = PushOptions::new();
-    po.remote_callbacks(cred_cb(username.to_string(), token.to_string()));
+    po.remote_callbacks(cred_cb(username.to_string(), token.to_string(), endpoint.to_string()));
     remote.push(&[refspec.as_str()], Some(&mut po)).map_err(|e| e.to_string())?;
     Ok(branch)
 }
@@ -435,8 +485,8 @@ pub(crate) fn take_confirmable_git_job(jobs: &mut HashMap<String, GitWriteJob>, 
     Ok(job)
 }
 fn execute_git_write(app: &AppHandle, job: &GitWriteJob) -> Result<usize, String> {
-    let token = KeyringStore::get_token(&cfg.id)?;
-    sync::write_push(&repo, &cfg.username, &token).map(|_| 0)
+    let (cfg, token) = workspace::repo_execution_snapshot(app, &job.repo_id)?;
+    sync::write_push_bound(&repo, &cfg.username, &token, &cfg.remote_url).map(|_| 0)
 }
 pub(crate) fn git_write_audit_detail(op: GitWriteOp, repo_id: &str, job_id: &str, path_count: usize, confirmed: bool, branch: Option<&str>, remote_name: Option<&str>, extra: &str) -> String {
     let payload = serde_json::json!({ "op": op.as_str(), "path_count": path_count, "branch": branch, "remote_name": remote_name });
@@ -460,19 +510,67 @@ def run_self_test() -> int:
     if not check_registration(migrated_main.replace("::git::", "::unknown::"), GOOD_ACL):
         failures.append("unrecognized command owner must be rejected")
 
+    interleaved = GOOD_SYNC.replace(
+        "pub fn write_push_bound(",
+        "#[cfg(test)]\nfn harmless_helper() {}\npub fn write_push_bound(",
+    )
+    if detect_violations(interleaved, GOOD_DOMAIN, GOOD_BRIDGE, GOOD_MAIN, GOOD_ACL):
+        failures.append("test helper must not truncate production primitive checks")
+
     cases: list[tuple[str, dict[str, str], str]] = [
+        (
+            "interleaved test helper cannot hide later unsafe production",
+            {"sync": interleaved.replace(
+                "let refspec = build_push_refspec(&branch)?;",
+                "let refspec = build_push_refspec(&branch)?; remote.fetch(&[], None, None)?;",
+            )},
+            "GIT_WRITE_FETCH_API",
+        ),
+        (
+            "push must validate the actual remote before network use",
+            {"sync": GOOD_SYNC.replace("require_remote_endpoint(&remote, endpoint, true)?;", "")},
+            "GIT_WRITE_PUSH_ENDPOINT_NOT_PINNED",
+        ),
+        (
+            "callback must receive the same captured endpoint",
+            {"sync": GOOD_SYNC.replace(
+                "cred_cb(username.to_string(), token.to_string(), endpoint.to_string())",
+                "cred_cb(username.to_string(), token.to_string(), String::new())",
+            )},
+            "GIT_WRITE_PUSH_ENDPOINT_NOT_PINNED",
+        ),
+        (
+            "credential callback cannot skip endpoint comparison",
+            {"sync": GOOD_SYNC.replace(
+                "!credential_endpoint_matches(&endpoint, actual)", "false",
+            )},
+            "GIT_WRITE_CREDENTIAL_CALLBACK_NOT_PINNED",
+        ),
+        (
+            "execution snapshot must be captured by the owner",
+            {"bridge": GOOD_BRIDGE.replace(
+                "workspace::repo_execution_snapshot(app, &job.repo_id)?",
+                "read_unbound_credentials()?",
+            )},
+            "GIT_WRITE_PUSH_WITHOUT_EXECUTION_SNAPSHOT",
+        ),
+        (
+            "push dispatch must carry the captured repository URL",
+            {"bridge": GOOD_BRIDGE.replace("&cfg.remote_url", "&uncaptured_url")},
+            "GIT_WRITE_PUSH_GATE_MISSING",
+        ),
         (
             "无校验直写",
             {"sync": GOOD_SYNC.replace("validate_repo_paths(paths)?;", "", 1)},
             "GIT_WRITE_PRIMITIVE_WITHOUT_VALIDATION",
         ),
         (
-            "write_push 缺失",
-            {"sync": GOOD_SYNC.replace("fn write_push", "fn write_push_removed")},
+            "write_push_bound 缺失",
+            {"sync": GOOD_SYNC.replace("fn write_push_bound", "fn write_push_bound_removed")},
             "GIT_WRITE_PUSH_PRIMITIVE_MISSING",
         ),
         (
-            "push API 出现在 write_push 之外",
+            "push API 出现在 write_push_bound 之外",
             {"sync": GOOD_SYNC.replace("index.write()?;", "remote.push(&[\"x\"], None)?;", 1)},
             "GIT_WRITE_SENSITIVE_API_OUTSIDE_PUSH_PRIMITIVE",
         ),
@@ -503,7 +601,7 @@ def run_self_test() -> int:
         ),
         (
             "refspec 参数注入",
-            {"sync": GOOD_SYNC.replace("pub fn write_push(repo: &Repository, username: &str, token: &str)", "pub fn write_push(repo: &Repository, username: &str, token: &str, refspec: &str)")},
+            {"sync": GOOD_SYNC.replace("pub fn write_push_bound(repo: &Repository, username: &str, token: &str, endpoint: &str)", "pub fn write_push_bound(repo: &Repository, username: &str, token: &str, endpoint: &str, refspec: &str)")},
             "GIT_WRITE_PUSH_REFSPEC_INJECTABLE",
         ),
         (
@@ -543,7 +641,7 @@ def run_self_test() -> int:
         ),
         (
             "闸门缺 push 映射",
-            {"bridge": GOOD_BRIDGE.replace("sync::write_push(&repo, &cfg.username, &token)", "sync::write_stage(&repo, &job.paths)")},
+            {"bridge": GOOD_BRIDGE.replace("sync::write_push_bound(&repo, &cfg.username, &token, &cfg.remote_url)", "sync::write_stage(&repo, &job.paths)")},
             "GIT_WRITE_PUSH_GATE_MISSING",
         ),
         (
@@ -568,7 +666,7 @@ def run_self_test() -> int:
         ),
         (
             "push_artifacts 行为被破坏",
-            {"sync": GOOD_SYNC.replace("pull(&repository, &repo.branch, &repo.username, &token)?;", "")},
+            {"sync": GOOD_SYNC.replace("pull(&repository, &repo.branch, &repo.username, &token, &repo.remote_url)?;", "")},
             "GIT_WRITE_PUSH_ARTIFACTS_BROKEN",
         ),
     ]

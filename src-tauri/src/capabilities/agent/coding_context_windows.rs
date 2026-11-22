@@ -2,7 +2,7 @@
 //! untrusted code execution before a Windows restricted-token/AppContainer
 //! sandbox passes the required security review.
 #![cfg(windows)]
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::fs;
 use std::os::windows::fs::MetadataExt;
 use std::path::{Path, PathBuf};
@@ -50,15 +50,21 @@ fn read(path: &Path, allowed: &Path) -> Result<String, String> {
 }
 fn no_reparse_path(path: &Path) -> bool {
     use std::path::{Component, Prefix};
-    if !path.is_absolute() || !matches!(
-        path.components().next(),
-        Some(Component::Prefix(prefix))
-            if matches!(prefix.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_))
-    ) { return false; }
+    if !path.is_absolute()
+        || !matches!(
+            path.components().next(),
+            Some(Component::Prefix(prefix))
+                if matches!(prefix.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_))
+        )
+    {
+        return false;
+    }
     let mut current = PathBuf::new();
     for component in path.components() {
         current.push(component.as_os_str());
-        if matches!(component, Component::Prefix(_)) || !current.has_root() { continue; }
+        if matches!(component, Component::Prefix(_)) || !current.has_root() {
+            continue;
+        }
         match fs::symlink_metadata(&current) {
             Ok(metadata) if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 => {
                 return false;
@@ -76,44 +82,72 @@ fn roots(workspace: &Path) -> Vec<PathBuf> {
         workspace.join(".opencode/skills"),
     ];
     if let Some(home) = std::env::var_os("USERPROFILE") {
-        for suffix in [".agents/skills", ".codex/skills",
-            ".codebuddy/skills", ".workbuddy/skills"] {
+        for suffix in [
+            ".agents/skills",
+            ".codex/skills",
+            ".codebuddy/skills",
+            ".workbuddy/skills",
+        ] {
             roots.push(PathBuf::from(&home).join(suffix));
         }
     }
-    roots.into_iter()
+    roots
+        .into_iter()
         .filter(|path| no_reparse_path(path))
         .filter_map(|path| path.canonicalize().ok())
         .filter(|path| path.is_dir())
         .collect()
 }
 fn scan(
-    dir: &Path, base: &Path, depth: usize, budget: &mut usize,
-    files: &mut Vec<PathBuf>, only_skills: bool,
+    dir: &Path,
+    base: &Path,
+    depth: usize,
+    budget: &mut usize,
+    files: &mut Vec<PathBuf>,
+    only_skills: bool,
 ) -> bool {
-    if depth > 6 || *budget == 0 { return true; }
-    let Ok(entries) = fs::read_dir(dir) else { return true };
+    if depth > 6 || *budget == 0 {
+        return true;
+    }
+    let Ok(entries) = fs::read_dir(dir) else {
+        return true;
+    };
     let mut limited = false;
     for entry in entries {
-        if *budget == 0 { limited = true; break; }
+        if *budget == 0 {
+            limited = true;
+            break;
+        }
         *budget -= 1;
-        let Ok(entry) = entry else { limited = true; continue };
+        let Ok(entry) = entry else {
+            limited = true;
+            continue;
+        };
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
-        if name.starts_with('.') || ["node_modules", "target", "dist", "vendor"].contains(&name.as_str()) {
+        if name.starts_with('.')
+            || ["node_modules", "target", "dist", "vendor"].contains(&name.as_str())
+        {
             continue;
         }
-        let Ok(meta) = fs::symlink_metadata(&path) else { limited = true; continue };
+        let Ok(meta) = fs::symlink_metadata(&path) else {
+            limited = true;
+            continue;
+        };
         // On Windows a directory junction is a reparse point, not necessarily
         // FileType::is_symlink(). Never recurse through junction/mount points.
-        if meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 { continue; }
+        if meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            continue;
+        }
         if meta.is_dir() {
-            limited |= scan(&path, base, depth+1, budget, files, only_skills);
-        } else if meta.is_file() && path.starts_with(base)
-            && ((only_skills && name == "SKILL.md") ||
-                (!only_skills && ["md", "txt", "rst"].contains(
-                    &path.extension().and_then(|e| e.to_str()).unwrap_or("")
-                ))) {
+            limited |= scan(&path, base, depth + 1, budget, files, only_skills);
+        } else if meta.is_file()
+            && path.starts_with(base)
+            && ((only_skills && name == "SKILL.md")
+                || (!only_skills
+                    && ["md", "txt", "rst"]
+                        .contains(&path.extension().and_then(|e| e.to_str()).unwrap_or(""))))
+        {
             files.push(path);
         }
     }
@@ -193,32 +227,34 @@ pub fn execute(root: &Path, storage: &Path, request: Value) -> Result<Value, Str
             }
             let mut files = Vec::new();
             let mut budget = 3000;
-            let mut incomplete = scan(&base,&base,0,&mut budget,&mut files,false);
+            let mut incomplete = scan(&base, &base, 0, &mut budget, &mut files, false);
             let mut hits = Vec::new();
             for file in files {
                 match read(&file, &base) {
                     Ok(text) => {
                         for (line, content) in text.lines().enumerate() {
-                        if !sensitive(content) && content.to_lowercase().contains(&query) {
-                            hits.push(json!({"path":file,"line":line+1,
+                            if !sensitive(content) && content.to_lowercase().contains(&query) {
+                                hits.push(json!({"path":file,"line":line+1,
                                 "text":content.chars().take(400).collect::<String>()}));
-                            if hits.len() >= 40 {
+                                if hits.len() >= 40 {
                                     return Ok(
                                         json!({"hits":hits,"limited":true,"read_only":true}),
                                     );
                                 }
                             }
                         }
-                            }
+                    }
                     Err(_) => {
                         incomplete = true;
-                        }
+                    }
                 }
             }
             Ok(json!({"hits":hits,"limited":incomplete,"read_only":true}))
         }
         "mcp_list" => Ok(super::coding_mcp_windows::discover(&root, storage)),
-        "mcp_review" | "mcp_tools" | "mcp_call" => super::coding_mcp_windows::execute(&root, storage, request),
+        "mcp_review" | "mcp_tools" | "mcp_call" => {
+            super::coding_mcp_windows::execute(&root, storage, request)
+        }
         _ => Err("CONTEXT_ACTION_UNKNOWN".into()),
     }
 }
@@ -228,25 +264,43 @@ mod tests {
     use super::*;
     #[test]
     fn process_execution_requires_explicit_approval_and_rejects_shell_actions() {
-        let base=std::env::temp_dir().join(format!("ctx-{}",uuid::Uuid::new_v4()));
+        let base = std::env::temp_dir().join(format!("ctx-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&base).unwrap();
-        for action in ["mcp_call","mcp_tools"] {
-            assert_eq!(execute(&base,&base,json!({"action":action})),
-                Err("MCP_EXPLICIT_APPROVAL_REQUIRED".into()));
+        for action in ["mcp_call", "mcp_tools"] {
+            assert_eq!(
+                execute(&base, &base, json!({"action":action})),
+                Err("MCP_EXPLICIT_APPROVAL_REQUIRED".into())
+            );
         }
-        assert_eq!(execute(&base,&base,json!({"action":"shell_exec","approved":true})),
-            Err("CONTEXT_ACTION_UNKNOWN".into()));
+        assert_eq!(
+            execute(&base, &base, json!({"action":"shell_exec","approved":true})),
+            Err("CONTEXT_ACTION_UNKNOWN".into())
+        );
         std::fs::remove_dir_all(base).unwrap();
     }
     #[test]
     fn knowledge_search_redacts_sensitive_lines() {
-        let base=std::env::temp_dir().join(format!("ctx-{}",uuid::Uuid::new_v4()));
+        let base = std::env::temp_dir().join(format!("ctx-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(base.join("docs")).unwrap();
-        std::fs::write(base.join("docs/note.md"),"a public architecture note\npassword: should-not-leak\n").unwrap();
-        let result=execute(&base,&base,json!({"action":"knowledge_search","query":"architecture"})).unwrap();
-        assert_eq!(result["hits"].as_array().unwrap().len(),1);
-        let sensitive=execute(&base,&base,json!({"action":"knowledge_search","query":"should-not-leak"})).unwrap();
-        assert_eq!(sensitive["hits"].as_array().unwrap().len(),0);
+        std::fs::write(
+            base.join("docs/note.md"),
+            "a public architecture note\npassword: should-not-leak\n",
+        )
+        .unwrap();
+        let result = execute(
+            &base,
+            &base,
+            json!({"action":"knowledge_search","query":"architecture"}),
+        )
+        .unwrap();
+        assert_eq!(result["hits"].as_array().unwrap().len(), 1);
+        let sensitive = execute(
+            &base,
+            &base,
+            json!({"action":"knowledge_search","query":"should-not-leak"}),
+        )
+        .unwrap();
+        assert_eq!(sensitive["hits"].as_array().unwrap().len(), 0);
         std::fs::remove_dir_all(base).unwrap();
     }
 }

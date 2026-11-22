@@ -218,7 +218,9 @@ pub fn parse_command_line(line: &str) -> Result<(String, Vec<String>), PolicyErr
         }
     }
     if in_quotes {
-        return Err(PolicyError::BlockedLaunchProgram("unbalanced command quotes".into()));
+        return Err(PolicyError::BlockedLaunchProgram(
+            "unbalanced command quotes".into(),
+        ));
     }
     if !current.is_empty() {
         parts.push(current);
@@ -272,19 +274,21 @@ fn launch_basename_raw(program: &str) -> String {
 
 /// shell 实现名与执行包装器（第二者放行即等于重新开放 `sh -c`）。
 fn is_blocked_launch_name(name: &str) -> bool {
-    if BLOCKED_LAUNCH_PROGRAMS.contains(&name)
-        || BLOCKED_LAUNCH_WRAPPERS.contains(&name)
-    { return true; }
+    if BLOCKED_LAUNCH_PROGRAMS.contains(&name) || BLOCKED_LAUNCH_WRAPPERS.contains(&name) {
+        return true;
+    }
     #[cfg(windows)]
     {
         // Windows built-in LOLBins can execute commands/scripts through
         // ordinary non-shell command-line arguments. They are not appropriate
         // app-launcher targets even when their .exe is signed by Microsoft.
         const WINDOWS_EXEC_WRAPPERS: &[&str] = &[
-            "rundll32", "regsvr32", "mshta", "wscript", "cscript",
-            "wsl", "wmic", "schtasks", "msiexec", "explorer",
+            "rundll32", "regsvr32", "mshta", "wscript", "cscript", "wsl", "wmic", "schtasks",
+            "msiexec", "explorer",
         ];
-        if WINDOWS_EXEC_WRAPPERS.contains(&name) { return true; }
+        if WINDOWS_EXEC_WRAPPERS.contains(&name) {
+            return true;
+        }
     }
     false
 }
@@ -292,7 +296,9 @@ fn is_blocked_launch_name(name: &str) -> bool {
 /// Shared executable identity gate for launchers and Windows MCP.
 /// Refuse undecodable paths instead of using lossy security comparisons.
 pub(crate) fn is_blocked_executable_path(path: &std::path::Path) -> bool {
-    let Some(path) = path.to_str() else { return true; };
+    let Some(path) = path.to_str() else {
+        return true;
+    };
     is_blocked_launch_name(&launch_basename(path))
         || is_blocked_launch_name(&launch_basename_raw(path))
 }
@@ -334,19 +340,31 @@ fn resolve_program_file(program: &str) -> Option<PathBuf> {
                     break;
                 }
             }
-            if found.is_some() { break; }
+            if found.is_some() {
+                break;
+            }
         }
         found?
     };
     let canonical = std::fs::canonicalize(&candidate).ok()?;
-    if !canonical.is_file() { return None; }
+    if !canonical.is_file() {
+        return None;
+    }
     #[cfg(windows)]
     {
-        if !canonical.extension().is_some_and(|ext| ext.to_string_lossy().eq_ignore_ascii_case("exe")) {
+        if !canonical
+            .extension()
+            .is_some_and(|ext| ext.to_string_lossy().eq_ignore_ascii_case("exe"))
+        {
             return None; // No .cmd/.bat/.com, which Windows may run via cmd.
         }
         use std::os::windows::fs::MetadataExt;
-        if std::fs::symlink_metadata(&canonical).ok()?.file_attributes() & 0x400 != 0 {
+        if std::fs::symlink_metadata(&canonical)
+            .ok()?
+            .file_attributes()
+            & 0x400
+            != 0
+        {
             return None; // Reparse-point executable changes must fail closed.
         }
     }
@@ -452,25 +470,27 @@ pub(crate) fn within_root(path: &std::path::Path, root: &std::path::Path) -> boo
     #[cfg(not(windows))]
     {
         let path = strip_verbatim(path);
-            let root = strip_verbatim(root);
-            if !path.is_absolute() || !root.is_absolute() {
-                return false;
+        let root = strip_verbatim(root);
+        if !path.is_absolute() || !root.is_absolute() {
+            return false;
+        }
+        if path
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+            || root
+                .components()
+                .any(|component| matches!(component, std::path::Component::ParentDir))
+        {
+            return false;
+        }
+        let mut remaining = path.components();
+        for expected in root.components() {
+            match remaining.next() {
+                Some(actual) if same_component(actual.as_os_str(), expected.as_os_str()) => {}
+                _ => return false,
             }
-            if path.components().any(|component|
-                matches!(component, std::path::Component::ParentDir)
-            ) || root.components().any(|component|
-                matches!(component, std::path::Component::ParentDir)
-            ) {
-                return false;
-            }
-            let mut remaining = path.components();
-            for expected in root.components() {
-                match remaining.next() {
-                    Some(actual) if same_component(actual.as_os_str(), expected.as_os_str()) => {}
-                    _ => return false,
-                }
-            }
-            true
+        }
+        true
     }
 }
 
@@ -505,7 +525,9 @@ pub fn check_path_within_roots(path: &str, roots: &[PathBuf]) -> Result<PathBuf,
                 let resolved = target
                     .canonicalize()
                     .unwrap_or_else(|_| ancestor.to_path_buf());
-                if !roots.iter().any(|root| canonical_root(root).is_ok_and(|trusted| within_root(&resolved, &trusted))) {
+                if !roots.iter().any(|root| {
+                    canonical_root(root).is_ok_and(|trusted| within_root(&resolved, &trusted))
+                }) {
                     return Err(PolicyError::SymlinkEscape {
                         path: path.to_string(),
                         target: resolved.display().to_string(),
@@ -515,9 +537,9 @@ pub fn check_path_within_roots(path: &str, roots: &[PathBuf]) -> Result<PathBuf,
         }
     }
 
-    let in_roots = roots.iter().any(|root|
-        canonical_root(root).is_ok_and(|trusted| within_root(&canonical, &trusted))
-    );
+    let in_roots = roots
+        .iter()
+        .any(|root| canonical_root(root).is_ok_and(|trusted| within_root(&canonical, &trusted)));
     if in_roots {
         Ok(canonical)
     } else {
@@ -530,9 +552,9 @@ pub fn check_path_within_roots(path: &str, roots: &[PathBuf]) -> Result<PathBuf,
 
 /// 判断规范化后的路径是否落在允许根目录内（供调用方在已有 canonical 路径时复用）。
 pub fn is_within_roots(canonical: &std::path::Path, roots: &[PathBuf]) -> bool {
-    roots.iter().any(|root|
-        canonical_root(root).is_ok_and(|trusted| within_root(canonical, &trusted))
-    )
+    roots
+        .iter()
+        .any(|root| canonical_root(root).is_ok_and(|trusted| within_root(canonical, &trusted)))
 }
 
 /// 校验单个路径分量（文件名/新名称）：拒绝 `.`/`..`、分隔符与 NUL。
@@ -559,8 +581,7 @@ pub fn check_delete_target(path: &str, roots: &[PathBuf]) -> Result<PathBuf, Pol
     let canonical = check_path_within_roots(path, roots)?;
     if roots
         .iter()
-        .any(|root| canonical_root(root)
-            .is_ok_and(|trusted| same_path(&canonical, &trusted)))
+        .any(|root| canonical_root(root).is_ok_and(|trusted| same_path(&canonical, &trusted)))
     {
         return Err(PolicyError::RefuseToDeleteRoot {
             path: canonical.display().to_string(),
@@ -1520,7 +1541,11 @@ mod security_policy_tests {
     #[test]
     fn linux_differently_cased_sibling_never_inherits_workspace_access() {
         let root = temp_root("case-sensitive-root");
-        let sibling_name = root.file_name().unwrap().to_string_lossy().to_ascii_uppercase();
+        let sibling_name = root
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_ascii_uppercase();
         let sibling = root.with_file_name(sibling_name);
         assert_ne!(root, sibling);
         fs::create_dir_all(&sibling).unwrap();
@@ -1547,9 +1572,7 @@ mod security_policy_tests {
         fs::write(&file, "x").unwrap();
         assert!(canonical_root(&missing).is_err());
         assert!(!is_within_roots(&file, &[missing.clone()]));
-        assert!(check_path_within_roots(
-            file.to_str().unwrap(), &[missing]
-        ).is_err());
+        assert!(check_path_within_roots(file.to_str().unwrap(), &[missing]).is_err());
         fs::remove_dir_all(base).unwrap();
     }
 
@@ -1884,12 +1907,17 @@ mod security_policy_tests {
             r"C:\Windows\System32\cmd.exe",
             r"C:\Windows\System32\powershell.exe",
             r"C:\Windows\System32\pwsh.exe",
-            "cmd.exe", "powershell.exe", "bash.exe",
+            "cmd.exe",
+            "powershell.exe",
+            "bash.exe",
         ] {
-            assert!(matches!(
-                check_launch_target(name),
-                Err(PolicyError::BlockedLaunchProgram(_))
-            ), "{name} was not blocked");
+            assert!(
+                matches!(
+                    check_launch_target(name),
+                    Err(PolicyError::BlockedLaunchProgram(_))
+                ),
+                "{name} was not blocked"
+            );
         }
     }
 
@@ -1901,21 +1929,34 @@ mod security_policy_tests {
     #[cfg(windows)]
     #[test]
     fn windows_lolbins_and_script_hosts_are_rejected() {
-        for name in ["rundll32.exe", "regsvr32.exe", "mshta.exe", "wscript.exe",
-            "cscript.exe", "wsl.exe", "schtasks.exe", "explorer.exe"] {
-            assert!(matches!(
-                check_launch_target(name),
-                Err(PolicyError::BlockedLaunchProgram(_))
-            ), "{name} must not be used as an executable wrapper");
+        for name in [
+            "rundll32.exe",
+            "regsvr32.exe",
+            "mshta.exe",
+            "wscript.exe",
+            "cscript.exe",
+            "wsl.exe",
+            "schtasks.exe",
+            "explorer.exe",
+        ] {
+            assert!(
+                matches!(
+                    check_launch_target(name),
+                    Err(PolicyError::BlockedLaunchProgram(_))
+                ),
+                "{name} must not be used as an executable wrapper"
+            );
         }
     }
 
     #[cfg(windows)]
     #[test]
     fn windows_paths_and_exec_extensions_follow_native_rules() {
-        let exe = std::env::var("WINDIR").map(std::path::PathBuf::from)
+        let exe = std::env::var("WINDIR")
+            .map(std::path::PathBuf::from)
             .unwrap_or_else(|_| std::path::PathBuf::from(r"C:\Windows"))
-            .join("System32").join("notepad.exe");
+            .join("System32")
+            .join("notepad.exe");
         let line = format!("\"{}\" --new-window", exe.display());
         let (resolved, args) = check_launch_target(&line).unwrap();
         assert!(resolved.to_ascii_lowercase().ends_with("notepad.exe"));
@@ -1954,7 +1995,9 @@ mod security_policy_tests {
         for blocked in ["rundll32.exe", "regsvr32.exe", "cmd.exe", "powershell.exe"] {
             assert!(is_blocked_executable_path(std::path::Path::new(blocked)));
         }
-        assert!(!is_blocked_executable_path(std::path::Path::new("node.exe")));
+        assert!(!is_blocked_executable_path(std::path::Path::new(
+            "node.exe"
+        )));
     }
 
     #[test]

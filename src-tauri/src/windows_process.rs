@@ -4,18 +4,18 @@
 #![cfg(windows)]
 use std::ptr;
 use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, HANDLE, INVALID_HANDLE_VALUE};
-use windows_sys::Win32::System::JobObjects::{
-    AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-    SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-    QueryInformationJobObject, JobObjectBasicAccountingInformation, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
-    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-};
 use windows_sys::Win32::System::Diagnostics::ToolHelp::{
-    CreateToolhelp32Snapshot, Thread32First, Thread32Next, THREADENTRY32, TH32CS_SNAPTHREAD,
+    CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
+};
+use windows_sys::Win32::System::JobObjects::{
+    AssignProcessToJobObject, CreateJobObjectW, JobObjectBasicAccountingInformation,
+    JobObjectExtendedLimitInformation, QueryInformationJobObject, SetInformationJobObject,
+    TerminateJobObject, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
 };
 use windows_sys::Win32::System::Threading::{
-    GetProcessIdOfThread, OpenProcess, OpenThread, ResumeThread,
-    PROCESS_SET_QUOTA, PROCESS_TERMINATE,
+    GetProcessIdOfThread, OpenProcess, OpenThread, ResumeThread, PROCESS_SET_QUOTA,
+    PROCESS_TERMINATE,
 };
 
 pub const CREATE_SUSPENDED: u32 = 0x0000_0004;
@@ -47,7 +47,10 @@ impl JobObject {
         unsafe {
             let job = CreateJobObjectW(ptr::null(), ptr::null());
             if job.is_null() {
-                return Err(format!("WINDOWS_JOB_CREATE: {}", std::io::Error::last_os_error()));
+                return Err(format!(
+                    "WINDOWS_JOB_CREATE: {}",
+                    std::io::Error::last_os_error()
+                ));
             }
             let owner = Self(job);
             let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
@@ -57,8 +60,12 @@ impl JobObject {
                 JobObjectExtendedLimitInformation,
                 &limits as *const _ as *const std::ffi::c_void,
                 std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-            ) == 0 {
-                return Err(format!("WINDOWS_JOB_LIMITS: {}", std::io::Error::last_os_error()));
+            ) == 0
+            {
+                return Err(format!(
+                    "WINDOWS_JOB_LIMITS: {}",
+                    std::io::Error::last_os_error()
+                ));
             }
             Ok(owner)
         }
@@ -69,18 +76,30 @@ impl JobObject {
     #[cfg(test)]
     pub fn attach_pid(pid: u32) -> Result<Self, String> {
         let owner = Self::create()?;
-        if pid == 0 { return Err("WINDOWS_JOB_INVALID_PID".into()); }
+        if pid == 0 {
+            return Err("WINDOWS_JOB_INVALID_PID".into());
+        }
         unsafe {
             let process = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, pid);
             if process.is_null() {
-                return Err(format!("WINDOWS_PROCESS_OPEN: {}", std::io::Error::last_os_error()));
+                return Err(format!(
+                    "WINDOWS_PROCESS_OPEN: {}",
+                    std::io::Error::last_os_error()
+                ));
             }
             let assigned = AssignProcessToJobObject(owner.0, process);
             let error = if assigned == 0 {
-                Some(format!("WINDOWS_JOB_ASSIGN: {}", std::io::Error::last_os_error()))
-            } else { None };
+                Some(format!(
+                    "WINDOWS_JOB_ASSIGN: {}",
+                    std::io::Error::last_os_error()
+                ))
+            } else {
+                None
+            };
             CloseHandle(process);
-            if let Some(error) = error { return Err(error); }
+            if let Some(error) = error {
+                return Err(error);
+            }
         }
         Ok(owner)
     }
@@ -102,14 +121,20 @@ impl JobObject {
     /// Borrow an already-owned Job so callers can retain the Job and the
     /// suspended Child together if assignment/resumption fails part way.
     pub fn assign_suspended_pid(&self, pid: u32) -> Result<(), String> {
-        if pid == 0 { return Err("WINDOWS_JOB_INVALID_PID".into()); }
+        if pid == 0 {
+            return Err("WINDOWS_JOB_INVALID_PID".into());
+        }
         unsafe {
             let process = OpenProcess(
                 PROCESS_SET_QUOTA | PROCESS_TERMINATE | PROCESS_SUSPEND_RESUME,
-                0, pid,
+                0,
+                pid,
             );
             if process.is_null() {
-                return Err(format!("WINDOWS_PROCESS_OPEN: {}", std::io::Error::last_os_error()));
+                return Err(format!(
+                    "WINDOWS_PROCESS_OPEN: {}",
+                    std::io::Error::last_os_error()
+                ));
             }
             let assigned = AssignProcessToJobObject(self.0, process);
             if assigned == 0 {
@@ -140,7 +165,9 @@ impl JobObject {
             if thread_count != 1 {
                 CloseHandle(process);
                 let _ = self.terminate();
-                return Err(format!("WINDOWS_SUSPENDED_PROCESS_THREAD_COUNT:{thread_count}"));
+                return Err(format!(
+                    "WINDOWS_SUSPENDED_PROCESS_THREAD_COUNT:{thread_count}"
+                ));
             }
             let thread = OpenThread(
                 THREAD_SUSPEND_RESUME | THREAD_QUERY_LIMITED_INFORMATION,
@@ -170,7 +197,10 @@ impl JobObject {
                 // was already running; >1 means another actor changed state.
                 let _ = self.terminate();
                 return Err(if previous == u32::MAX {
-                    format!("WINDOWS_PRIMARY_THREAD_RESUME: {}", std::io::Error::last_os_error())
+                    format!(
+                        "WINDOWS_PRIMARY_THREAD_RESUME: {}",
+                        std::io::Error::last_os_error()
+                    )
                 } else {
                     format!("WINDOWS_PRIMARY_THREAD_SUSPEND_COUNT:{previous}")
                 });
@@ -186,12 +216,17 @@ impl JobObject {
         unsafe {
             let mut accounting: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = std::mem::zeroed();
             if QueryInformationJobObject(
-                self.0, JobObjectBasicAccountingInformation,
+                self.0,
+                JobObjectBasicAccountingInformation,
                 &mut accounting as *mut _ as *mut std::ffi::c_void,
                 std::mem::size_of::<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>() as u32,
                 std::ptr::null_mut(),
-            ) == 0 {
-                return Err(format!("WINDOWS_JOB_ACCOUNTING: {}", std::io::Error::last_os_error()));
+            ) == 0
+            {
+                return Err(format!(
+                    "WINDOWS_JOB_ACCOUNTING: {}",
+                    std::io::Error::last_os_error()
+                ));
             }
             Ok(accounting.ActiveProcesses)
         }
@@ -204,14 +239,21 @@ impl JobObject {
     pub fn terminate(&self) -> Result<(), String> {
         unsafe {
             if TerminateJobObject(self.0, 1) == 0 {
-                return Err(format!("WINDOWS_JOB_TERMINATE: {}", std::io::Error::last_os_error()));
+                return Err(format!(
+                    "WINDOWS_JOB_TERMINATE: {}",
+                    std::io::Error::last_os_error()
+                ));
             }
         }
         Ok(())
     }
 }
 impl Drop for JobObject {
-    fn drop(&mut self) { unsafe { CloseHandle(self.0); } }
+    fn drop(&mut self) {
+        unsafe {
+            CloseHandle(self.0);
+        }
+    }
 }
 
 /// Cancel synchronous I/O using a live, owned thread handle. This never
@@ -226,7 +268,10 @@ pub(crate) fn cancel_thread_io<T>(thread: &std::thread::JoinHandle<T>) -> Result
         if CancelSynchronousIo(thread.as_raw_handle() as HANDLE) == 0 {
             let error = GetLastError();
             if error != ERROR_NOT_FOUND {
-                return Err(format!("WINDOWS_THREAD_IO_CANCEL: {}", std::io::Error::from_raw_os_error(error as i32)));
+                return Err(format!(
+                    "WINDOWS_THREAD_IO_CANCEL: {}",
+                    std::io::Error::from_raw_os_error(error as i32)
+                ));
             }
         }
     }
@@ -237,7 +282,11 @@ pub(crate) fn cancel_thread_io<T>(thread: &std::thread::JoinHandle<T>) -> Result
 mod tests {
     use super::*;
     use std::os::windows::process::CommandExt;
-    use std::{process::Command, thread, time::{Duration, Instant}};
+    use std::{
+        process::Command,
+        thread,
+        time::{Duration, Instant},
+    };
 
     fn wait_pid_exit(pid: u32, timeout: Duration) -> bool {
         unsafe {
@@ -248,7 +297,8 @@ mod tests {
                 return GetLastError() == 87;
             }
             let result = windows_sys::Win32::System::Threading::WaitForSingleObject(
-                process, timeout.as_millis().min(u32::MAX as u128) as u32,
+                process,
+                timeout.as_millis().min(u32::MAX as u128) as u32,
             );
             CloseHandle(process);
             result == WAIT_OBJECT_0
@@ -257,8 +307,8 @@ mod tests {
 
     #[test]
     fn suspended_spawn_assigns_job_before_immediate_grandchild_can_run() {
-        let marker = std::env::temp_dir()
-            .join(format!("browseros-grandchild-{}.pid", uuid::Uuid::new_v4()));
+        let marker =
+            std::env::temp_dir().join(format!("browseros-grandchild-{}.pid", uuid::Uuid::new_v4()));
         let marker_text = marker.to_string_lossy().replace('\'', "''");
         let script = format!(
             "$p=Start-Process -FilePath $env:ComSpec -ArgumentList @('/c','ping -n 60 127.0.0.1 > NUL') -PassThru; Set-Content -LiteralPath '{marker_text}' -Value $p.Id; Start-Sleep -Seconds 60"
@@ -267,30 +317,45 @@ mod tests {
         command.args(["-NoProfile", "-NonInteractive", "-Command", &script]);
         command.creation_flags(CREATE_SUSPENDED);
         let mut child = command.spawn().expect("create suspended PowerShell");
-        assert!(!marker.exists(), "primary thread must not execute before Job assignment");
+        assert!(
+            !marker.exists(),
+            "primary thread must not execute before Job assignment"
+        );
         let job = JobObject::attach_suspended_pid(child.id()).expect("assign Job then resume");
 
         let deadline = Instant::now() + Duration::from_secs(30);
         let grandchild_pid = loop {
             if let Ok(text) = std::fs::read_to_string(&marker) {
-                if let Ok(pid) = text.trim().parse::<u32>() { break pid; }
+                if let Ok(pid) = text.trim().parse::<u32>() {
+                    break pid;
+                }
             }
-            assert!(Instant::now() < deadline, "PowerShell did not create its immediate grandchild; exited={:?}", child.try_wait());
+            assert!(
+                Instant::now() < deadline,
+                "PowerShell did not create its immediate grandchild; exited={:?}",
+                child.try_wait()
+            );
             thread::sleep(Duration::from_millis(25));
         };
-        assert!(job.active_processes().expect("native Job accounting") >= 2,
-            "the parent and immediate grandchild must both be accounted in the Job");
+        assert!(
+            job.active_processes().expect("native Job accounting") >= 2,
+            "the parent and immediate grandchild must both be accounted in the Job"
+        );
         job.terminate().expect("terminate entire Job");
         let _ = child.wait();
-        assert!(wait_pid_exit(grandchild_pid, Duration::from_secs(8)),
-            "grandchild PID {grandchild_pid} escaped the Job Object");
+        assert!(
+            wait_pid_exit(grandchild_pid, Duration::from_secs(8)),
+            "grandchild PID {grandchild_pid} escaped the Job Object"
+        );
         let _ = std::fs::remove_file(marker);
     }
 
     #[test]
     fn dropping_job_after_parent_crash_kills_grandchild() {
-        let marker = std::env::temp_dir()
-            .join(format!("browseros-crash-grandchild-{}.pid", uuid::Uuid::new_v4()));
+        let marker = std::env::temp_dir().join(format!(
+            "browseros-crash-grandchild-{}.pid",
+            uuid::Uuid::new_v4()
+        ));
         let marker_text = marker.to_string_lossy().replace('\'', "''");
         let script = format!(
             "$p=Start-Process -FilePath $env:ComSpec -ArgumentList @('/c','ping -n 60 127.0.0.1 > NUL') -PassThru; Set-Content -LiteralPath '{marker_text}' -Value $p.Id; Start-Sleep -Seconds 60"
@@ -303,9 +368,14 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(30);
         let grandchild_pid = loop {
             if let Ok(text) = std::fs::read_to_string(&marker) {
-                if let Ok(pid) = text.trim().parse::<u32>() { break pid; }
+                if let Ok(pid) = text.trim().parse::<u32>() {
+                    break pid;
+                }
             }
-            assert!(Instant::now() < deadline, "PowerShell did not create grandchild");
+            assert!(
+                Instant::now() < deadline,
+                "PowerShell did not create grandchild"
+            );
             thread::sleep(Duration::from_millis(25));
         };
         // Simulate the parent process crashing: terminate only the direct
@@ -313,8 +383,10 @@ mod tests {
         let _ = child.kill();
         let _ = child.wait();
         drop(job);
-        assert!(wait_pid_exit(grandchild_pid, Duration::from_secs(8)),
-            "grandchild PID {grandchild_pid} survived parent crash cleanup");
+        assert!(
+            wait_pid_exit(grandchild_pid, Duration::from_secs(8)),
+            "grandchild PID {grandchild_pid} survived parent crash cleanup"
+        );
         let _ = std::fs::remove_file(marker);
     }
 
@@ -338,13 +410,18 @@ mod tests {
                     let excess = captured.len() - 8192;
                     captured.drain(..excess);
                 }
-                if self.fail_data { return Err("intentional native-fixture sink failure".into()); }
+                if self.fail_data {
+                    return Err("intentional native-fixture sink failure".into());
+                }
             }
             Ok(())
         }
     }
 
-    fn finish_production_terminal(info: &crate::terminal::TermInfo, session: &mut crate::terminal::TerminalSession) {
+    fn finish_production_terminal(
+        info: &crate::terminal::TermInfo,
+        session: &mut crate::terminal::TerminalSession,
+    ) {
         if let Err(error) = crate::terminal::terminate_session(session) {
             assert!(error.starts_with("TERM_CLEANUP_PENDING:"), "{error}");
         }
@@ -356,8 +433,8 @@ mod tests {
     fn conpty_terminal_uses_atomic_job_list_and_reaps_immediate_grandchild() {
         use portable_pty::CommandBuilder;
         use std::sync::{Arc, Mutex};
-        let dir = std::env::temp_dir()
-            .join(format!("browseros-conpty-job-{}", uuid::Uuid::new_v4()));
+        let dir =
+            std::env::temp_dir().join(format!("browseros-conpty-job-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let marker = dir.join("grandchild.pid");
         let primary = dir.join("primary.txt");
@@ -366,23 +443,38 @@ mod tests {
         let script = format!(
             "Set-Content -LiteralPath '{primary_text}' -Value 'started'; $psi=New-Object System.Diagnostics.ProcessStartInfo; $psi.FileName=$env:ComSpec; $psi.Arguments='/c ping -n 60 127.0.0.1 > NUL'; $psi.UseShellExecute=$false; $p=[System.Diagnostics.Process]::Start($psi); Set-Content -LiteralPath '{marker_text}' -Value $p.Id; Start-Sleep -Seconds 60"
         );
-        let sink = Arc::new(NativeTerminalSink { captured: Mutex::new(Vec::new()), fail_data: false });
+        let sink = Arc::new(NativeTerminalSink {
+            captured: Mutex::new(Vec::new()),
+            fail_data: false,
+        });
         let mut command = CommandBuilder::new("powershell.exe");
-        command.args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script.as_str()]);
-        let (info, mut session) = crate::terminal::spawn_terminal_with_command(command, sink.clone(), false)
-            .expect("production ConPTY spawn must assign Job atomically");
+        command.args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            script.as_str(),
+        ]);
+        let (info, mut session) =
+            crate::terminal::spawn_terminal_with_command(command, sink.clone(), false)
+                .expect("production ConPTY spawn must assign Job atomically");
         let pid = session.process_id().expect("ConPTY child PID");
         let input = session.input();
         let control = session.control();
         let deadline = Instant::now() + Duration::from_secs(30);
         let grandchild_pid = loop {
             if let Ok(text) = std::fs::read_to_string(&marker) {
-                if let Ok(pid) = text.trim().parse::<u32>() { break pid; }
+                if let Ok(pid) = text.trim().parse::<u32>() {
+                    break pid;
+                }
             }
             if Instant::now() >= deadline {
                 let output = String::from_utf8_lossy(&sink.captured.lock().unwrap()).into_owned();
-                panic!("ConPTY did not create grandchild; primary={:?} marker={:?} output={output:?}",
-                    std::fs::read_to_string(&primary).ok(), std::fs::read_to_string(&marker).ok());
+                panic!(
+                    "ConPTY did not create grandchild; primary={:?} marker={:?} output={output:?}",
+                    std::fs::read_to_string(&primary).ok(),
+                    std::fs::read_to_string(&marker).ok()
+                );
             }
             thread::sleep(Duration::from_millis(25));
         };
@@ -390,11 +482,19 @@ mod tests {
         // This is the same owner called by term_kill and application shutdown.
         // In particular, no fixture-only drop(writer)/drop(pair) unlocks EOF.
         finish_production_terminal(&info, &mut session);
-        assert!(wait_pid_exit(pid, Duration::from_secs(8)), "ConPTY shell did not exit");
-        assert!(wait_pid_exit(grandchild_pid, Duration::from_secs(8)),
-            "ConPTY grandchild PID {grandchild_pid} escaped the Job Object");
+        assert!(
+            wait_pid_exit(pid, Duration::from_secs(8)),
+            "ConPTY shell did not exit"
+        );
+        assert!(
+            wait_pid_exit(grandchild_pid, Duration::from_secs(8)),
+            "ConPTY grandchild PID {grandchild_pid} escaped the Job Object"
+        );
         assert!(input.enqueue(b"late").is_err());
-        assert!(control.resize(80, 24).is_err(), "control clones must not keep HPCON alive");
+        assert!(
+            control.resize(80, 24).is_err(),
+            "control clones must not keep HPCON alive"
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -402,17 +502,31 @@ mod tests {
     fn conpty_production_close_reaps_queued_input_during_output_backoff() {
         use portable_pty::CommandBuilder;
         use std::sync::{Arc, Mutex};
-        let sink = Arc::new(NativeTerminalSink { captured: Mutex::new(Vec::new()), fail_data: true });
+        let sink = Arc::new(NativeTerminalSink {
+            captured: Mutex::new(Vec::new()),
+            fail_data: true,
+        });
         let mut command = CommandBuilder::new("powershell.exe");
-        command.args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
-            "[Console]::WriteLine('__PTY_READY__'); Start-Sleep -Seconds 60"]);
-        let (info, mut session) = crate::terminal::spawn_terminal_with_command(command, sink.clone(), false)
-            .expect("native ConPTY must be available; missing prerequisites are a failure");
+        command.args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "[Console]::WriteLine('__PTY_READY__'); Start-Sleep -Seconds 60",
+        ]);
+        let (info, mut session) =
+            crate::terminal::spawn_terminal_with_command(command, sink.clone(), false)
+                .expect("native ConPTY must be available; missing prerequisites are a failure");
         let pid = session.process_id().expect("native child PID");
         let deadline = Instant::now() + Duration::from_secs(30);
         loop {
-            if String::from_utf8_lossy(&sink.captured.lock().unwrap()).contains("__PTY_READY__") { break; }
-            assert!(Instant::now() < deadline, "native child did not reach non-reading state");
+            if String::from_utf8_lossy(&sink.captured.lock().unwrap()).contains("__PTY_READY__") {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "native child did not reach non-reading state"
+            );
             thread::sleep(Duration::from_millis(10));
         }
         let input = session.input();
@@ -427,7 +541,10 @@ mod tests {
         }
         assert!(accepted > 0, "fixture must exercise the real input writer");
         finish_production_terminal(&info, &mut session);
-        assert!(wait_pid_exit(pid, Duration::from_secs(8)), "native blocked-input child survived close");
+        assert!(
+            wait_pid_exit(pid, Duration::from_secs(8)),
+            "native blocked-input child survived close"
+        );
         assert!(input.enqueue(b"after close").is_err());
     }
 
@@ -441,8 +558,12 @@ mod tests {
         use windows_sys::Win32::System::Pipes::CreatePipe;
         let mut read = std::ptr::null_mut();
         let mut write = std::ptr::null_mut();
-        assert_ne!(unsafe { CreatePipe(&mut read, &mut write, std::ptr::null(), 4096) }, 0,
-            "create native synchronous pipe: {}", std::io::Error::last_os_error());
+        assert_ne!(
+            unsafe { CreatePipe(&mut read, &mut write, std::ptr::null(), 4096) },
+            0,
+            "create native synchronous pipe: {}",
+            std::io::Error::last_os_error()
+        );
         let reader = unsafe { std::fs::File::from_raw_handle(read as _) };
         let mut writer = unsafe { std::fs::File::from_raw_handle(write as _) };
         let (entered_tx, entered_rx) = mpsc::channel();
@@ -466,34 +587,54 @@ mod tests {
         drop(reader);
         let result = worker.join().expect("join synchronous pipe input");
         assert!(cancellation_error.is_none(), "{cancellation_error:?}");
-        assert!(cancelled, "CancelSynchronousIo did not finish the owned input thread");
-        assert!(result.map(|written| written < 1024 * 1024).unwrap_or(true),
-            "a full, unread pipe must not accept the entire payload");
+        assert!(
+            cancelled,
+            "CancelSynchronousIo did not finish the owned input thread"
+        );
+        assert!(
+            result.map(|written| written < 1024 * 1024).unwrap_or(true),
+            "a full, unread pipe must not accept the entire payload"
+        );
     }
 
     #[test]
     fn conpty_child_exit_code_259_is_terminal_and_kill_is_idempotent() {
         use portable_pty::{native_pty_system, CommandBuilder, PtySize, PtySystem};
-        let pair = native_pty_system().openpty(
-            PtySize { rows: 24, cols: 80, pixel_width: 0, pixel_height: 0 }
-        ).expect("open ConPTY");
+        let pair = native_pty_system()
+            .openpty(PtySize {
+                rows: 24,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .expect("open ConPTY");
         let job = JobObject::create_for_spawn().expect("create Job");
         let mut command = CommandBuilder::new("cmd.exe");
         command.args(["/C", "exit /B 259"]);
-        let mut child = pair.slave.spawn_command_in_job(command, job.as_raw_handle())
+        let mut child = pair
+            .slave
+            .spawn_command_in_job(command, job.as_raw_handle())
             .expect("spawn exit-code fixture in ConPTY Job");
         let pid = child.process_id().expect("native exit fixture PID");
-        assert!(wait_pid_exit(pid, Duration::from_secs(8)), "ConPTY exit fixture timed out");
+        assert!(
+            wait_pid_exit(pid, Duration::from_secs(8)),
+            "ConPTY exit fixture timed out"
+        );
         let status = child.wait().expect("reap signaled process");
         assert_eq!(status.exit_code(), 259, "exit code 259 is not STILL_ACTIVE");
         assert_eq!(child.try_wait().unwrap().unwrap().exit_code(), 259);
-        child.kill().expect("terminating an already-exited child is idempotent");
+        child
+            .kill()
+            .expect("terminating an already-exited child is idempotent");
         drop(pair);
     }
 
     #[test]
     fn a_running_process_can_be_adopted_but_is_not_used_for_spawn_paths() {
-        let mut child = Command::new("cmd.exe").args(["/C", "ping -n 60 127.0.0.1 > NUL"]).spawn().unwrap();
+        let mut child = Command::new("cmd.exe")
+            .args(["/C", "ping -n 60 127.0.0.1 > NUL"])
+            .spawn()
+            .unwrap();
         let job = JobObject::attach_pid(child.id()).expect("legacy adoption");
         job.terminate().expect("terminate");
         let status = child.wait().expect("wait");

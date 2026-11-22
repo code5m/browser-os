@@ -44,15 +44,21 @@ pub struct GitLogEntry {
 /// 只读：工作区/索引脏文件清单（git status 等价）。
 #[tauri::command]
 pub async fn git_status(
-    app: AppHandle, webview: tauri::Webview, repo_id: String,
+    app: AppHandle,
+    webview: tauri::Webview,
+    repo_id: String,
 ) -> Result<Vec<GitFileStatus>, String> {
     check_invocation_source(&webview, "git_status", None, &app)?;
-    GIT_READ_WORKERS.run(move || git_status_blocking(app, repo_id)).await
+    GIT_READ_WORKERS
+        .run(move || git_status_blocking(app, repo_id))
+        .await
 }
 
 /// Owner facade callers already execute inside their Agent blocking worker.
 pub(super) fn git_status_sync(
-    app: AppHandle, webview: tauri::Webview, repo_id: String,
+    app: AppHandle,
+    webview: tauri::Webview,
+    repo_id: String,
 ) -> Result<Vec<GitFileStatus>, String> {
     check_invocation_source(&webview, "git_status", None, &app)?;
     git_status_blocking(app, repo_id)
@@ -68,21 +74,36 @@ fn git_status_blocking(app: AppHandle, repo_id: String) -> Result<Vec<GitFileSta
 /// 服务端硬上限 256KB），超限截断并标 `truncated`，总量触顶标 `more`。
 #[tauri::command]
 pub async fn git_diff(
-    app: AppHandle, webview: tauri::Webview, repo_id: String, path: Option<String>, max_bytes: Option<u32>,
+    app: AppHandle,
+    webview: tauri::Webview,
+    repo_id: String,
+    path: Option<String>,
+    max_bytes: Option<u32>,
 ) -> Result<GitDiffResult, String> {
     check_invocation_source(&webview, "git_diff", None, &app)?;
-    GIT_READ_WORKERS.run(move || git_diff_blocking(app, repo_id, path, max_bytes)).await
+    GIT_READ_WORKERS
+        .run(move || git_diff_blocking(app, repo_id, path, max_bytes))
+        .await
 }
 
 /// Owner facade callers already execute inside their Agent blocking worker.
 pub(super) fn git_diff_sync(
-    app: AppHandle, webview: tauri::Webview, repo_id: String, path: Option<String>, max_bytes: Option<u32>,
+    app: AppHandle,
+    webview: tauri::Webview,
+    repo_id: String,
+    path: Option<String>,
+    max_bytes: Option<u32>,
 ) -> Result<GitDiffResult, String> {
     check_invocation_source(&webview, "git_diff", None, &app)?;
     git_diff_blocking(app, repo_id, path, max_bytes)
 }
 
-fn git_diff_blocking(app: AppHandle, repo_id: String, path: Option<String>, max_bytes: Option<u32>) -> Result<GitDiffResult, String> {
+fn git_diff_blocking(
+    app: AppHandle,
+    repo_id: String,
+    path: Option<String>,
+    max_bytes: Option<u32>,
+) -> Result<GitDiffResult, String> {
     let repo = sync::open_readonly(&app, &repo_id)?;
     let cap = max_bytes
         .map(|v| v as usize)
@@ -93,10 +114,14 @@ fn git_diff_blocking(app: AppHandle, repo_id: String, path: Option<String>, max_
 /// 只读：本地 + 远程跟踪分支清单（git branch -a 等价）。
 #[tauri::command]
 pub async fn git_branch_list(
-    app: AppHandle, webview: tauri::Webview, repo_id: String,
+    app: AppHandle,
+    webview: tauri::Webview,
+    repo_id: String,
 ) -> Result<Vec<GitBranch>, String> {
     check_invocation_source(&webview, "git_branch_list", None, &app)?;
-    GIT_READ_WORKERS.run(move || git_branch_list_blocking(app, repo_id)).await
+    GIT_READ_WORKERS
+        .run(move || git_branch_list_blocking(app, repo_id))
+        .await
 }
 
 fn git_branch_list_blocking(app: AppHandle, repo_id: String) -> Result<Vec<GitBranch>, String> {
@@ -299,7 +324,7 @@ fn precheck_git_write(
             }
             let name = head
                 .shorthand()
-                .ok_or_else(|| "无法解析当前分支名".to_string())?
+                .map_err(|_| "无法解析当前分支名".to_string())?
                 .to_string();
             sync::validate_branch_name(&name)?;
             if repo.find_remote(sync::GIT_PUSH_REMOTE).is_err() {
@@ -566,11 +591,15 @@ pub async fn request_sync(
     artifact_ids: Vec<String>,
     repo_id: String,
 ) -> Result<SyncPreview, String> {
-    GIT_READ_WORKERS.run(move || request_sync_blocking(app, artifact_ids, repo_id)).await
+    GIT_READ_WORKERS
+        .run(move || request_sync_blocking(app, artifact_ids, repo_id))
+        .await
 }
 
 fn request_sync_blocking(
-    app: AppHandle, artifact_ids: Vec<String>, repo_id: String,
+    app: AppHandle,
+    artifact_ids: Vec<String>,
+    repo_id: String,
 ) -> Result<SyncPreview, String> {
     // Snapshot only for preview validation; execution captures its own immutable
     // endpoint/credential pair under the native repository owner.
@@ -671,10 +700,14 @@ pub fn confirm_sync(app: AppHandle, job_id: String) -> Result<SyncJob, String> {
 
 #[tauri::command]
 pub async fn git_log(
-    app: AppHandle, webview: tauri::Webview, repo_id: String,
+    app: AppHandle,
+    webview: tauri::Webview,
+    repo_id: String,
 ) -> Result<Vec<GitLogEntry>, String> {
     check_invocation_source(&webview, "git_log", None, &app)?;
-    GIT_READ_WORKERS.run(move || git_log_blocking(app, repo_id)).await
+    GIT_READ_WORKERS
+        .run(move || git_log_blocking(app, repo_id))
+        .await
 }
 
 fn git_log_blocking(app: AppHandle, repo_id: String) -> Result<Vec<GitLogEntry>, String> {
@@ -694,14 +727,20 @@ fn git_log_blocking(app: AppHandle, repo_id: String) -> Result<Vec<GitLogEntry>,
             let author = commit
                 .author()
                 .name()
-                .unwrap_or("")
+                .map_err(|_| "GIT_LOG_FAILED")?
                 .chars()
                 .take(128)
                 .collect();
             Ok(GitLogEntry {
                 oid: commit.id().to_string(),
                 parents: commit.parent_ids().map(|id| id.to_string()).collect(),
-                summary: commit.summary().unwrap_or("").chars().take(1024).collect(),
+                summary: commit
+                    .summary()
+                    .map_err(|_| "GIT_LOG_FAILED")?
+                    .unwrap_or("")
+                    .chars()
+                    .take(1024)
+                    .collect(),
                 author,
                 time: commit.time().seconds(),
             })
@@ -711,13 +750,22 @@ fn git_log_blocking(app: AppHandle, repo_id: String) -> Result<Vec<GitLogEntry>,
 
 #[tauri::command]
 pub async fn git_commit_diff(
-    app: AppHandle, webview: tauri::Webview, repo_id: String, oid: String,
+    app: AppHandle,
+    webview: tauri::Webview,
+    repo_id: String,
+    oid: String,
 ) -> Result<String, String> {
     check_invocation_source(&webview, "git_commit_diff", None, &app)?;
-    GIT_READ_WORKERS.run(move || git_commit_diff_blocking(app, repo_id, oid)).await
+    GIT_READ_WORKERS
+        .run(move || git_commit_diff_blocking(app, repo_id, oid))
+        .await
 }
 
-fn git_commit_diff_blocking(app: AppHandle, repo_id: String, oid: String) -> Result<String, String> {
+fn git_commit_diff_blocking(
+    app: AppHandle,
+    repo_id: String,
+    oid: String,
+) -> Result<String, String> {
     let repo = sync::open_readonly(&app, &repo_id)?;
     let oid = git2::Oid::from_str(&oid).map_err(|_| "GIT_INVALID_OID")?;
     let commit = repo.find_commit(oid).map_err(|_| "GIT_COMMIT_MISSING")?;
@@ -763,13 +811,20 @@ fn git_commit_diff_blocking(app: AppHandle, repo_id: String, oid: String) -> Res
 // These commands are deliberately READ ONLY, including in detached worktrees.
 #[tauri::command]
 pub async fn git_local_context(
-    app: AppHandle, webview: tauri::Webview, path: String,
+    app: AppHandle,
+    webview: tauri::Webview,
+    path: String,
 ) -> Result<super::local_readonly::LocalGitContext, String> {
     check_invocation_source(&webview, "git_local_context", None, &app)?;
-    GIT_READ_WORKERS.run(move || git_local_context_blocking(app, path)).await
+    GIT_READ_WORKERS
+        .run(move || git_local_context_blocking(app, path))
+        .await
 }
 
-fn git_local_context_blocking(app: AppHandle, path: String) -> Result<super::local_readonly::LocalGitContext, String> {
+fn git_local_context_blocking(
+    app: AppHandle,
+    path: String,
+) -> Result<super::local_readonly::LocalGitContext, String> {
     let roots = workspace::allowed_roots(&app);
     let (_, ctx) = super::local_readonly::discover_allowed(&path, &roots)?;
     Ok(ctx)
@@ -783,11 +838,13 @@ pub async fn git_local_log(
     limit: u32,
 ) -> Result<super::local_readonly::LocalLogPage, String> {
     check_invocation_source(&webview, "git_local_log", None, &app)?;
-    GIT_READ_WORKERS.run(move || {
-        let roots = workspace::allowed_roots(&app);
-        let (repo, ctx) = super::local_readonly::discover_allowed(&path, &roots)?;
-        super::local_readonly::log_page(&repo, &ctx, offset, limit)
-    }).await
+    GIT_READ_WORKERS
+        .run(move || {
+            let roots = workspace::allowed_roots(&app);
+            let (repo, ctx) = super::local_readonly::discover_allowed(&path, &roots)?;
+            super::local_readonly::log_page(&repo, &ctx, offset, limit)
+        })
+        .await
 }
 #[tauri::command]
 pub async fn git_local_diff(
@@ -796,11 +853,13 @@ pub async fn git_local_diff(
     path: String,
 ) -> Result<super::local_readonly::LocalPatch, String> {
     check_invocation_source(&webview, "git_local_diff", None, &app)?;
-    GIT_READ_WORKERS.run(move || {
-        let roots = workspace::allowed_roots(&app);
-        let (repo, ctx) = super::local_readonly::discover_allowed(&path, &roots)?;
-        super::local_readonly::working_diff(&repo, &ctx)
-    }).await
+    GIT_READ_WORKERS
+        .run(move || {
+            let roots = workspace::allowed_roots(&app);
+            let (repo, ctx) = super::local_readonly::discover_allowed(&path, &roots)?;
+            super::local_readonly::working_diff(&repo, &ctx)
+        })
+        .await
 }
 #[tauri::command]
 pub async fn git_local_commit_diff(
@@ -810,11 +869,13 @@ pub async fn git_local_commit_diff(
     oid: String,
 ) -> Result<super::local_readonly::LocalPatch, String> {
     check_invocation_source(&webview, "git_local_commit_diff", None, &app)?;
-    GIT_READ_WORKERS.run(move || {
-        let roots = workspace::allowed_roots(&app);
-        let (repo, ctx) = super::local_readonly::discover_allowed(&path, &roots)?;
-        super::local_readonly::commit_diff(&repo, &ctx, &oid)
-    }).await
+    GIT_READ_WORKERS
+        .run(move || {
+            let roots = workspace::allowed_roots(&app);
+            let (repo, ctx) = super::local_readonly::discover_allowed(&path, &roots)?;
+            super::local_readonly::commit_diff(&repo, &ctx, &oid)
+        })
+        .await
 }
 
 #[cfg(test)]

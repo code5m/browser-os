@@ -68,8 +68,10 @@ fn scrub(value: &mut Value, secrets: &[String]) {
             let previous = std::mem::take(items);
             for (index, (name, mut item)) in previous.into_iter().enumerate() {
                 scrub(&mut item, secrets);
-                let sensitive_name = sensitive(&name) || secrets.iter()
-                    .any(|secret| !secret.is_empty() && name.contains(secret));
+                let sensitive_name = sensitive(&name)
+                    || secrets
+                        .iter()
+                        .any(|secret| !secret.is_empty() && name.contains(secret));
                 let safe_name = if sensitive_name {
                     format!("[redacted-key-{index}]")
                 } else {
@@ -208,7 +210,9 @@ fn resolved_config(root: &Path, storage: &Path, request: &Value) -> Result<Value
             .into_iter()
             .find(|s| s.0 == id)
             .ok_or("MCP_SERVER_NOT_FOUND")?;
-        if !item.is_object() { return Err("MCP_CONFIG_INVALID".into()); }
+        if !item.is_object() {
+            return Err("MCP_CONFIG_INVALID".into());
+        }
         if item.get("url").is_some() {
             return Err("MCP_HTTP_NOT_IMPLEMENTED".into());
         }
@@ -239,7 +243,9 @@ fn resolved_config(root: &Path, storage: &Path, request: &Value) -> Result<Value
         Ok(item)
     } else {
         let mut item = request["server"].clone();
-        if !item.is_object() { return Err("MCP_CONFIG_INVALID".into()); }
+        if !item.is_object() {
+            return Err("MCP_CONFIG_INVALID".into());
+        }
         if item.get("env").is_some() || item.get("environment").is_some() {
             return Err("MCP_PLAINTEXT_ENV_REJECTED".into());
         }
@@ -270,7 +276,9 @@ impl Session {
         Self::start_with_credentials(root, config, seconds, std::collections::BTreeMap::new())
     }
     fn start_with_credentials(
-        root: &Path, config: &Value, seconds: u64,
+        root: &Path,
+        config: &Value,
+        seconds: u64,
         mut credentials: std::collections::BTreeMap<String, String>,
     ) -> Result<Self, String> {
         let command = config["command"].as_str().ok_or("MCP_COMMAND_REQUIRED")?;
@@ -513,7 +521,10 @@ pub fn execute(root: &Path, storage: &Path, request: Value) -> Result<Value, Str
             let config = resolved_config(&root, storage, &request)?;
             let prepared = super::mcp_review::prepare(&root, storage, &request, config)?;
             super::mcp_review::authorize(&prepared, &request)?;
-            let credentials = crate::framework::ai::mcp_credential_snapshot(storage, prepared.config["env_refs"].as_object())?;
+            let credentials = crate::framework::ai::mcp_credential_snapshot(
+                storage,
+                prepared.config["env_refs"].as_object(),
+            )?;
             let mut session = Session::start_with_credentials(
                 &root,
                 &prepared.config,
@@ -546,7 +557,8 @@ mod tests {
     // Exercise the same read-only review and exact grant round trip as the UI.
     fn execute_reviewed(root: &Path, storage: &Path, mut request: Value) -> Result<Value, String> {
         if request["approved"] == true
-            && matches!(request["action"].as_str(), Some("mcp_tools" | "mcp_call")) {
+            && matches!(request["action"].as_str(), Some("mcp_tools" | "mcp_call"))
+        {
             let mut review_request = request.clone();
             review_request["review_action"] = request["action"].clone();
             review_request["action"] = json!("mcp_review");
@@ -560,24 +572,41 @@ mod tests {
 
     #[test]
     fn changing_saved_config_after_review_is_rejected_before_start() {
-        let root = std::env::temp_dir().join(format!("browseros-mcp-review-root-{}", uuid::Uuid::new_v4()));
-        let storage = std::env::temp_dir().join(format!("browseros-mcp-review-store-{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(&root).unwrap(); fs::create_dir_all(&storage).unwrap();
+        let root = std::env::temp_dir().join(format!(
+            "browseros-mcp-review-root-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let storage = std::env::temp_dir().join(format!(
+            "browseros-mcp-review-store-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&storage).unwrap();
         let file = storage.join("coding-mcp.json");
         let server = json!({"command":std::env::current_exe().unwrap(),"args":["old"]});
         fs::write(&file, json!({"servers":{"fixture":server}}).to_string()).unwrap();
         let id = discover(&root, &storage)["servers"][0]["id"].clone();
-        let review = super::execute(&root, &storage, json!({"action":"mcp_review","review_action":"mcp_tools","server_id":id})).unwrap();
+        let review = super::execute(
+            &root,
+            &storage,
+            json!({"action":"mcp_review","review_action":"mcp_tools","server_id":id}),
+        )
+        .unwrap();
         let request = json!({"action":"mcp_tools","server_id":id,"approved":true,
             "review_revision":review["revision"],"approved_credential_refs":review["credential_refs"],
             "approved_environment_names":review["environment_names"]});
         fs::write(&file, json!({"servers":{"fixture":{"command":std::env::current_exe().unwrap(),"args":["new"]}}}).to_string()).unwrap();
-        assert_eq!(super::execute(&root, &storage, request).unwrap_err(), "MCP_REVIEW_CHANGED");
-        fs::remove_dir_all(root).unwrap(); fs::remove_dir_all(storage).unwrap();
+        assert_eq!(
+            super::execute(&root, &storage, request).unwrap_err(),
+            "MCP_REVIEW_CHANGED"
+        );
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(storage).unwrap();
     }
     #[test]
     fn credential_property_names_are_scrubbed_recursively() {
-        let mut response = json!({"nested":{"fixture-opaque-secret":"value"},"text":"fixture-opaque-secret"});
+        let mut response =
+            json!({"nested":{"fixture-opaque-secret":"value"},"text":"fixture-opaque-secret"});
         scrub(&mut response, &["fixture-opaque-secret".into()]);
         assert!(!response.to_string().contains("fixture-opaque-secret"));
     }
@@ -704,7 +733,8 @@ mod tests {
     fn approval_paths_and_secret_filters() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         assert_eq!(
-            execute_reviewed(root, root, json!({"action":"mcp_tools","server":config()})).unwrap_err(),
+            execute_reviewed(root, root, json!({"action":"mcp_tools","server":config()}))
+                .unwrap_err(),
             "MCP_EXPLICIT_APPROVAL_REQUIRED"
         );
         assert!(execute_reviewed(

@@ -124,6 +124,8 @@ jobs:
           npm ci
           npm run build
           test -s dist/index.html
+          test -s src/generated/native-contracts.ts
+          test -s artifacts/native-contracts/generated-crosslayer-contracts.json
           git rev-parse HEAD > browseros-ci-source-sha.txt
       - name: Upload checksum-bound frontend build
         uses: actions/upload-artifact@v4
@@ -132,6 +134,8 @@ jobs:
           path: |
             dist/
             browseros-ci-source-sha.txt
+            src/generated/native-contracts.ts
+            artifacts/native-contracts/generated-crosslayer-contracts.json
           if-no-files-found: error
           retention-days: 3
           compression-level: 1
@@ -182,8 +186,22 @@ jobs:
         if: needs.impact.outputs.mode != 'docs'
         run: npm ci
       - name: Capability, architecture and engineering governance checks
+        id: app_checks
         if: needs.impact.outputs.mode != 'docs'
         run: npm run check
+      - name: Collect independent check failures after the original gate fails
+        id: app_check_diagnostics
+        if: failure() && needs.impact.outputs.mode != 'docs' && steps.app_checks.outcome == 'failure'
+        timeout-minutes: 15
+        run: node scripts/collect-check-diagnostics.mjs
+      - name: Preserve independent check failure summary
+        if: always() && steps.app_checks.outcome == 'failure' && steps.app_check_diagnostics.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: browseros-check-diagnostics-${{ github.run_id }}
+          path: ${{ runner.temp }}/browseros-check-diagnostics.json
+          if-no-files-found: error
+          retention-days: 7
       - name: Rust runtime semantic negative fixtures
         if: needs.impact.outputs.mode == 'full'
         run: node scripts/check-rust-runtime-semantics.mjs --self-test
@@ -203,6 +221,9 @@ jobs:
       - name: Runtime startup checks
         if: needs.impact.outputs.mode == 'full'
         run: npm run check:runtime
+      - name: Coding and workbench managed UI regressions
+        if: needs.impact.outputs.mode == 'full'
+        run: npm run check:coding-ui:managed
       - name: Download one SHA-bound frontend build
         if: needs.impact.outputs.mode != 'docs'
         uses: actions/download-artifact@v4
@@ -391,9 +412,43 @@ jobs:
           test -s dist/index.html
           test "$(cat browseros-ci-source-sha.txt)" = "$(git rev-parse HEAD)"
       - name: Check Rust formatting (no compilation)
+        id: rust_format
         run: |
           cargo fmt --manifest-path src-tauri/Cargo.toml --all --check
           cargo fmt --manifest-path tauri-browser-tabs/Cargo.toml --all --check
+      - name: Capture the exact formatter patch after a formatting failure
+        id: formatter_patch
+        if: failure() && steps.rust_format.outcome == 'failure'
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -uo pipefail
+          evidence="$RUNNER_TEMP/browseros-rustfmt"
+          mkdir -p "$evidence"
+          git rev-parse HEAD > "$evidence/SOURCE_COMMIT"
+          if ! git diff --quiet HEAD -- ':(glob)**/*.rs'; then
+            echo 'RUSTFMT_PATCH_SOURCE_DIRTY' > "$evidence/formatter-status.txt"
+            exit 1
+          fi
+          # Only this disposable checkout is formatted. The failed check above
+          # remains red, and no source or branch is automatically published.
+          set +e
+          cargo fmt --manifest-path src-tauri/Cargo.toml --all > "$evidence/main.log" 2>&1
+          main_status=$?
+          cargo fmt --manifest-path tauri-browser-tabs/Cargo.toml --all > "$evidence/plugin.log" 2>&1
+          plugin_status=$?
+          set -e
+          git diff --binary HEAD -- ':(glob)**/*.rs' > "$evidence/formatter.patch"
+          printf 'main_formatter_exit=%s\nplugin_formatter_exit=%s\noriginal_format_check=FAILED\n' "$main_status" "$plugin_status" > "$evidence/formatter-status.txt"
+          test "$main_status" -eq 0 && test "$plugin_status" -eq 0
+      - name: Preserve formatter patch and source identity
+        if: always() && steps.rust_format.outcome == 'failure' && steps.formatter_patch.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: browseros-rustfmt-${{ github.sha }}
+          path: ${{ runner.temp }}/browseros-rustfmt/
+          if-no-files-found: error
+          retention-days: 7
       - name: Compile and test Rust once (rust-tests mode)
         if: needs.impact.outputs.native_mode == 'rust-tests'
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml
@@ -409,6 +464,17 @@ jobs:
           test -f src-tauri/target/release/bundle/deb/mvp-browser-os_0.1.0_amd64.deb
           git rev-parse HEAD > /tmp/browseros-native-source-sha
           sha256sum src-tauri/target/release/bundle/deb/mvp-browser-os_0.1.0_amd64.deb > /tmp/browseros-native-package-sha256
+      - name: Upload the verified release Debian package
+        if: needs.impact.outputs.native_mode == 'packaged-gui' || needs.impact.outputs.native_mode == 'packaged-resource'
+        uses: actions/upload-artifact@v4
+        with:
+          name: browseros-linux-deb-${{ github.sha }}
+          path: |
+            src-tauri/target/release/bundle/deb/*.deb
+            /tmp/browseros-native-source-sha
+            /tmp/browseros-native-package-sha256
+          if-no-files-found: error
+          retention-days: 7
       - name: Tauri GUI regression with the SAME compiled Release
         if: needs.impact.outputs.native_mode == 'packaged-gui' || needs.impact.outputs.native_mode == 'packaged-resource'
         shell: bash

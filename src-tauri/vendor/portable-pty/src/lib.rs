@@ -7,8 +7,7 @@
 //!
 //! ```no_run
 //! use portable_pty::{CommandBuilder, PtySize, native_pty_system, PtySystem};
-//! /// Error type used by PTY backend implementations and lifecycle fixtures.
-pub use anyhow::Error;
+//! use anyhow::Error;
 //!
 //! // Use the native pty implementation for the system
 //! let pty_system = native_pty_system();
@@ -38,7 +37,8 @@ pub use anyhow::Error;
 //! # Ok::<(), Error>(())
 //! ```
 //!
-use anyhow::Error;
+/// Error type used by PTY backend implementations and lifecycle fixtures.
+pub use anyhow::Error;
 use downcast_rs::{impl_downcast, Downcast};
 #[cfg(unix)]
 use libc;

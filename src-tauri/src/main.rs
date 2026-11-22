@@ -10,11 +10,11 @@ mod crashlog;
 mod domain;
 mod grid_ipc;
 #[cfg(target_os = "windows")]
-mod windows_process;
-#[cfg(target_os = "windows")]
 mod windows_apps;
 #[cfg(target_os = "windows")]
 mod windows_pipe;
+#[cfg(target_os = "windows")]
+mod windows_process;
 #[cfg(target_os = "linux")]
 type GridStream = std::os::unix::net::UnixStream;
 #[cfg(target_os = "windows")]
@@ -34,9 +34,9 @@ mod hang_diagnostics;
 #[path = "hang_diagnostics_windows.rs"]
 mod hang_diagnostics;
 mod shared {
-    pub(crate) mod credential_versions;
     pub mod blocking;
     pub mod clipboard;
+    pub(crate) mod credential_versions;
     pub mod images;
     pub mod invocation;
     pub mod native_legacy_policy;
@@ -208,7 +208,9 @@ impl ExitLifecycleState {
             let mut worker = self.worker.lock().unwrap_or_else(|e| e.into_inner());
             if worker.as_ref().is_some_and(|worker| worker.is_finished()) {
                 worker.take()
-            } else { None }
+            } else {
+                None
+            }
         };
         if let Some(worker) = finished {
             if worker.join().is_err() {
@@ -236,9 +238,16 @@ fn publish_exit_status(app: &tauri::AppHandle, phase: &str, code: &str) {
     use tauri::Emitter;
     // Fixed phase/code/counts only: never send URLs, page text or filesystem
     // error strings into a global event or diagnostic log.
-    if app.emit_to("main", "app://exit-status", serde_json::json!({
-        "phase": phase, "code": code
-    })).is_err() {
+    if app
+        .emit_to(
+            "main",
+            "app://exit-status",
+            serde_json::json!({
+                "phase": phase, "code": code
+            }),
+        )
+        .is_err()
+    {
         eprintln!("[shutdown] EXIT_STATUS_DELIVERY_FAILED");
     }
 }
@@ -246,7 +255,8 @@ fn publish_exit_status(app: &tauri::AppHandle, phase: &str, code: &str) {
 fn cancel_graceful_shutdown(app: &tauri::AppHandle, code: &str) {
     // Called only before the coordinator/native shutdown latches are entered.
     app.state::<ExitLifecycleState>()
-        .started.store(false, std::sync::atomic::Ordering::Release);
+        .started
+        .store(false, std::sync::atomic::Ordering::Release);
     eprintln!("[shutdown] exit_cancelled {code}");
     publish_exit_status(app, "blocked", code);
 }
@@ -468,9 +478,8 @@ fn run_grid_child(index: u32) {
 
 /// 子进程全局 UDS 写端（connect 成功后设置；窗口事件回调里取用）。
 #[cfg(any(target_os = "linux", target_os = "windows"))]
-static CHILD_WRITER: std::sync::OnceLock<
-    std::sync::Arc<std::sync::Mutex<GridStream>>,
-> = std::sync::OnceLock::new();
+static CHILD_WRITER: std::sync::OnceLock<std::sync::Arc<std::sync::Mutex<GridStream>>> =
+    std::sync::OnceLock::new();
 
 /// 子进程 → 主进程 发异步事件（焦点上报 / 导航 / 新窗口 / 桥命令事件转发）。
 #[cfg(any(target_os = "linux", target_os = "windows"))]
@@ -512,7 +521,8 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
         #[cfg(windows)]
         {
             let expected_parent = std::env::var("GRID_PARENT_PID")
-                .ok().and_then(|value| value.parse::<u32>().ok());
+                .ok()
+                .and_then(|value| value.parse::<u32>().ok());
             let actual_server = stream.server_pid().ok();
             if expected_parent.is_none() || actual_server != expected_parent {
                 eprintln!("[grid-child-{index}] refused unauthenticated named-pipe server");
@@ -814,9 +824,7 @@ fn dispatch_grid_cmd(
 
 /// Test-only force-exit for a Grid child owned by this BrowserOS process.
 /// The PID is verified against the active Grid manager before any OS call.
-fn force_exit_owned_grid_child(
-    app: &tauri::AppHandle, index: u32, pid: u32
-) -> Result<(), String> {
+fn force_exit_owned_grid_child(app: &tauri::AppHandle, index: u32, pid: u32) -> Result<(), String> {
     if app.state::<AppState>().grid_manager.pid_of(index) != Some(pid) {
         return Err("GRID_SELFTEST_CHILD_PID_MISMATCH".into());
     }
@@ -834,14 +842,26 @@ fn force_exit_owned_grid_child(
         };
         let process = unsafe { OpenProcess(PROCESS_TERMINATE, 0, pid) };
         if process.is_null() {
-            return Err(format!("GRID_SELFTEST_OPEN_PROCESS: {}", std::io::Error::last_os_error()));
+            return Err(format!(
+                "GRID_SELFTEST_OPEN_PROCESS: {}",
+                std::io::Error::last_os_error()
+            ));
         }
         let ok = unsafe { TerminateProcess(process, 139) };
         let error = if ok == 0 {
-            Some(format!("GRID_SELFTEST_TERMINATE: {}", std::io::Error::last_os_error()))
-        } else { None };
-        unsafe { CloseHandle(process); }
-        if let Some(error) = error { return Err(error); }
+            Some(format!(
+                "GRID_SELFTEST_TERMINATE: {}",
+                std::io::Error::last_os_error()
+            ))
+        } else {
+            None
+        };
+        unsafe {
+            CloseHandle(process);
+        }
+        if let Some(error) = error {
+            return Err(error);
+        }
     }
     Ok(())
 }
@@ -1028,9 +1048,12 @@ fn gui_mock_url(base: &str, case_id: &str, grid: usize) -> String {
 
 fn run_grid_gui_regression(app: tauri::AppHandle) {
     std::thread::spawn(move || {
-        let report_path = std::env::var("M0_GUI_REGRESSION_REPORT")
-            .unwrap_or_else(|_| std::env::temp_dir()
-                .join("m0-6c-gui-regression.json").to_string_lossy().to_string());
+        let report_path = std::env::var("M0_GUI_REGRESSION_REPORT").unwrap_or_else(|_| {
+            std::env::temp_dir()
+                .join("m0-6c-gui-regression.json")
+                .to_string_lossy()
+                .to_string()
+        });
         let mock_base = std::env::var("M0_GUI_MOCK_BASE").unwrap_or_default();
         let mut steps: Vec<GuiRegressionStep> = Vec::new();
         let mut fails: Vec<String> = Vec::new();
@@ -1323,11 +1346,12 @@ fn run_grid_gui_regression(app: tauri::AppHandle) {
 fn run_m0_driver(app: tauri::AppHandle, cfg: bridge::M0Config) {
     std::thread::spawn(move || {
         let log = |m: &str| eprintln!("[m0-driver {}] {}", cfg.driver, m);
-        let report_dir = cfg
-            .report_dir
-            .clone()
-            .unwrap_or_else(|| std::env::temp_dir()
-                .join("mvp-browser-os-m0").to_string_lossy().to_string());
+        let report_dir = cfg.report_dir.clone().unwrap_or_else(|| {
+            std::env::temp_dir()
+                .join("mvp-browser-os-m0")
+                .to_string_lossy()
+                .to_string()
+        });
         let _ = std::fs::create_dir_all(&report_dir);
         let result_file = format!("{report_dir}/{}.driver.result", cfg.driver);
         let start_file = format!("{report_dir}/{}.driver.start", cfg.driver);
@@ -2118,7 +2142,7 @@ mod graceful_exit_state_tests {
 
     #[test]
     fn rejected_exit_waits_for_owned_worker_before_retry() {
-        use std::sync::{Arc, mpsc};
+        use std::sync::{mpsc, Arc};
         use std::time::{Duration, Instant};
         let exit = Arc::new(ExitLifecycleState::default());
         assert!(exit.claim());
@@ -2126,23 +2150,35 @@ mod graceful_exit_state_tests {
         let (release_tx, release_rx) = mpsc::channel();
         let owner = Arc::clone(&exit);
         let worker = std::thread::spawn(move || {
-            owner.started.store(false, std::sync::atomic::Ordering::Release);
+            owner
+                .started
+                .store(false, std::sync::atomic::Ordering::Release);
             cancelled_tx.send(()).unwrap();
             release_rx.recv_timeout(Duration::from_secs(2)).unwrap();
         });
         *exit.worker.lock().unwrap() = Some(worker);
         cancelled_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-        assert!(!exit.claim(), "a cancelled but live worker still owns the exit attempt");
+        assert!(
+            !exit.claim(),
+            "a cancelled but live worker still owns the exit attempt"
+        );
         release_tx.send(()).unwrap();
         let deadline = Instant::now() + Duration::from_secs(2);
         loop {
             exit.reap_finished_worker();
-            if exit.worker.lock().unwrap().is_none() { break; }
-            assert!(Instant::now() < deadline, "worker must finish before a retry");
+            if exit.worker.lock().unwrap().is_none() {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "worker must finish before a retry"
+            );
             std::thread::sleep(Duration::from_millis(1));
         }
         assert!(!exit.completed());
-        assert!(exit.claim(), "failed saving must not permanently close the application");
+        assert!(
+            exit.claim(),
+            "failed saving must not permanently close the application"
+        );
     }
-
 }

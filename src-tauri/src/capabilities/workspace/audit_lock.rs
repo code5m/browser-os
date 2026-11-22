@@ -14,7 +14,8 @@ const LOCK_WAIT: Duration = Duration::from_secs(2);
 pub(super) struct AuditLock(File);
 impl AuditLock {
     pub(super) fn acquire(audit_path: &Path) -> io::Result<Self> {
-        let parent = audit_path.parent()
+        let parent = audit_path
+            .parent()
             .ok_or_else(|| io::Error::other("AUDIT_PARENT_UNAVAILABLE"))?;
         let lock_path = parent.join("audit-write.lock");
         let mut options = OpenOptions::new();
@@ -22,7 +23,9 @@ impl AuditLock {
         #[cfg(unix)]
         {
             use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600).custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+            options
+                .mode(0o600)
+                .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
         }
         #[cfg(target_os = "windows")]
         {
@@ -30,7 +33,8 @@ impl AuditLock {
             use windows_sys::Win32::Storage::FileSystem::{
                 FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ, FILE_SHARE_WRITE,
             };
-            options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            options
+                .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
                 .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE);
         }
         let file = options.open(lock_path)?;
@@ -42,7 +46,8 @@ impl AuditLock {
         {
             use std::os::unix::fs::MetadataExt;
             if metadata.uid() != unsafe { libc::geteuid() }
-                || metadata.nlink() != 1 || metadata.mode() & 0o077 != 0
+                || metadata.nlink() != 1
+                || metadata.mode() & 0o077 != 0
             {
                 return Err(io::Error::other("AUDIT_LOCK_NOT_PRIVATE"));
             }
@@ -56,7 +61,9 @@ impl AuditLock {
                 Ok(false) if started.elapsed() < LOCK_WAIT => {
                     std::thread::sleep(Duration::from_millis(5));
                 }
-                Ok(false) => return Err(io::Error::new(io::ErrorKind::TimedOut, "AUDIT_LOCK_BUSY")),
+                Ok(false) => {
+                    return Err(io::Error::new(io::ErrorKind::TimedOut, "AUDIT_LOCK_BUSY"))
+                }
                 Err(error) => return Err(error),
             }
         }
@@ -87,9 +94,16 @@ fn try_lock(file: &File) -> io::Result<bool> {
     use windows_sys::Win32::System::IO::OVERLAPPED;
     let mut position: OVERLAPPED = unsafe { std::mem::zeroed() };
     if unsafe {
-        LockFileEx(file.as_raw_handle() as _, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
-            0, 1, 0, &mut position)
-    } != 0 {
+        LockFileEx(
+            file.as_raw_handle() as _,
+            LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
+            0,
+            1,
+            0,
+            &mut position,
+        )
+    } != 0
+    {
         return Ok(true);
     }
     let error = io::Error::last_os_error();
@@ -102,7 +116,10 @@ fn try_lock(file: &File) -> io::Result<bool> {
 
 #[cfg(not(any(unix, target_os = "windows")))]
 fn try_lock(_file: &File) -> io::Result<bool> {
-    Err(io::Error::new(io::ErrorKind::Unsupported, "AUDIT_LOCK_PLATFORM_UNSUPPORTED"))
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "AUDIT_LOCK_PLATFORM_UNSUPPORTED",
+    ))
 }
 
 impl Drop for AuditLock {
@@ -110,7 +127,9 @@ impl Drop for AuditLock {
         #[cfg(unix)]
         {
             use std::os::fd::AsRawFd;
-            unsafe { libc::flock(self.0.as_raw_fd(), libc::LOCK_UN); }
+            unsafe {
+                libc::flock(self.0.as_raw_fd(), libc::LOCK_UN);
+            }
         }
         #[cfg(target_os = "windows")]
         {
@@ -118,7 +137,9 @@ impl Drop for AuditLock {
             use windows_sys::Win32::Storage::FileSystem::UnlockFileEx;
             use windows_sys::Win32::System::IO::OVERLAPPED;
             let mut position: OVERLAPPED = unsafe { std::mem::zeroed() };
-            unsafe { UnlockFileEx(self.0.as_raw_handle() as _, 0, 1, 0, &mut position); }
+            unsafe {
+                UnlockFileEx(self.0.as_raw_handle() as _, 0, 1, 0, &mut position);
+            }
         }
         // Closing the owned descriptor also releases OS locks after an error.
     }

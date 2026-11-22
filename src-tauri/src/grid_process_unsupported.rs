@@ -20,8 +20,12 @@ impl GridProcessManager {
         Err(unsupported())
     }
 
-    pub fn is_hibernated(&self, _index: u32) -> bool { false }
-    pub fn hibernate_child(&self, _index: u32) -> bool { false }
+    pub fn is_hibernated(&self, _index: u32) -> bool {
+        false
+    }
+    pub fn hibernate_child(&self, _index: u32) -> bool {
+        false
+    }
 
     pub fn request(&self, _index: u32, _cmd: GridCmd, _timeout_ms: u64) -> Result<(), String> {
         Err(unsupported())
@@ -35,7 +39,9 @@ impl GridProcessManager {
     // They neither create a process nor record a successful command response.
     pub fn send(&self, _index: u32, _cmd: GridCmd) {}
     pub fn record_url(&self, _index: u32, _url: &str) {}
-    pub fn last_url(&self, _index: u32) -> Option<String> { None }
+    pub fn last_url(&self, _index: u32) -> Option<String> {
+        None
+    }
     pub fn record_rect(&self, _index: u32, _rect: (f64, f64, f64, f64)) {}
     pub fn record_hidden(&self, _index: u32) {}
 
@@ -47,9 +53,15 @@ impl GridProcessManager {
         Vec::new()
     }
 
-    pub fn hibernated_count(&self) -> usize { 0 }
-    pub fn indices(&self) -> Vec<u32> { Vec::new() }
-    pub fn abs_rect(&self, _css: (f64, f64, f64, f64)) -> Option<IpcRect> { None }
+    pub fn hibernated_count(&self) -> usize {
+        0
+    }
+    pub fn indices(&self) -> Vec<u32> {
+        Vec::new()
+    }
+    pub fn abs_rect(&self, _css: (f64, f64, f64, f64)) -> Option<IpcRect> {
+        None
+    }
     pub fn request_hide_for_blur_async(&self) {}
     pub fn request_show_for_focus_async(&self) {}
     pub fn request_reposition_async(&self) {}
@@ -58,17 +70,31 @@ impl GridProcessManager {
     pub fn hide_for_blur_if_no_child_focus(&self) {}
     pub fn hide_for_blur(&self) {}
     pub fn show_for_focus(&self) {}
-    pub fn kill_child(&self, _index: u32) -> bool { false }
+    pub fn kill_child(&self, _index: u32) -> bool {
+        false
+    }
 
     pub fn restart(&self, _index: u32) -> Result<(), String> {
         Err(unsupported())
     }
 
-    pub fn check_exited(&self, _index: u32) -> Option<i32> { None }
-    pub fn count(&self) -> usize { 0 }
-    pub fn pid_of(&self, _index: u32) -> Option<u32> { None }
-    pub fn pids(&self) -> Vec<(u32, u32)> { Vec::new() }
+    pub fn check_exited(&self, _index: u32) -> Option<i32> {
+        None
+    }
+    pub fn count(&self) -> usize {
+        0
+    }
+    pub fn pid_of(&self, _index: u32) -> Option<u32> {
+        None
+    }
+    pub fn pids(&self) -> Vec<(u32, u32)> {
+        Vec::new()
+    }
     pub fn request_shutdown(&self) {}
-    pub fn shutdown_until(&self, _deadline: std::time::Instant) -> Result<(), String> { Ok(()) }
-    pub fn shutdown_all(&self) -> Result<(), String> { Ok(()) }
+    pub fn shutdown_until(&self, _deadline: std::time::Instant) -> Result<(), String> {
+        Ok(())
+    }
+    pub fn shutdown_all(&self) -> Result<(), String> {
+        Ok(())
+    }
 }

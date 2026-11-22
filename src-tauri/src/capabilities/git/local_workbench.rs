@@ -129,7 +129,7 @@ fn scoped_status(
     let mut files = Vec::new();
     let mut truncated = false;
     for entry in all.iter() {
-        let Some(path) = entry.path() else { continue };
+        let path = entry.path().map_err(|_| "GIT_LOCAL_STATUS_PATH_INVALID")?;
         if !selected_scope(ctx, Path::new(path)) {
             continue;
         }
@@ -222,7 +222,7 @@ fn approved_remote(repo: &Repository) -> Result<git2::Remote<'_>, String> {
     let remote = repo
         .find_remote("origin")
         .map_err(|_| "GIT_LOCAL_ORIGIN_MISSING")?;
-    let raw = remote.url().ok_or("GIT_LOCAL_ORIGIN_URL_MISSING")?;
+    let raw = remote.url().map_err(|_| "GIT_LOCAL_ORIGIN_URL_MISSING")?;
     if raw.starts_with("https://") {
         let url = url::Url::parse(raw).map_err(|_| "GIT_LOCAL_ORIGIN_PROTOCOL_DENIED")?;
         if url.username() != "" || url.password().is_some() || url.fragment().is_some() {
@@ -246,6 +246,17 @@ fn index_snapshot(repo: &Repository) -> Result<String, String> {
         return Err("GIT_LOCAL_INDEX_TOO_LARGE".into());
     }
     Ok(format!("{:x}", Sha256::digest(&bytes)))
+}
+
+fn attached_branch(repo: &Repository) -> Result<String, String> {
+    let head = repo.head().map_err(|_| "GIT_LOCAL_HEAD_FAILED")?;
+    if !head.is_branch() {
+        return Err("GIT_LOCAL_DETACHED_HEAD_DENIED".into());
+    }
+    Ok(head
+        .shorthand()
+        .map_err(|_| "GIT_LOCAL_BRANCH_INVALID")?
+        .to_owned())
 }
 
 fn check_preconditions(
@@ -305,12 +316,14 @@ fn check_preconditions(
             if staged.is_empty() {
                 return Err("GIT_LOCAL_NOTHING_STAGED".into());
             }
-            if staged.len() > MAX_CHANGED
-                || staged
-                    .iter()
-                    .any(|x| !x.path().is_some_and(|p| selected_scope(ctx, Path::new(p))))
-            {
+            if staged.len() > MAX_CHANGED {
                 return Err("GIT_LOCAL_STAGED_OUTSIDE_SCOPE".into());
+            }
+            for entry in &staged {
+                let path = entry.path().map_err(|_| "GIT_LOCAL_STATUS_PATH_INVALID")?;
+                if !selected_scope(ctx, Path::new(path)) {
+                    return Err("GIT_LOCAL_STAGED_OUTSIDE_SCOPE".into());
+                }
             }
             repo.signature()
                 .map_err(|_| "GIT_LOCAL_CONFIGURE_AUTHOR_NAME_EMAIL")?;
@@ -338,14 +351,7 @@ fn check_preconditions(
         "pull" => {
             clean_worktree(repo)?;
             approved_remote(repo)?;
-            if repo
-                .head()
-                .ok()
-                .and_then(|h| h.shorthand().map(str::to_owned))
-                .is_none()
-            {
-                return Err("GIT_LOCAL_DETACHED_HEAD_DENIED".into());
-            }
+            attached_branch(repo)?;
             Ok("Fetch 后仅允许 fast-forward；分支分叉时拒绝自动合并或改写历史".into())
         }
         "stash" => {
@@ -445,7 +451,7 @@ fn checkout_safe(repo: &Repository, name: &str) -> Result<usize, String> {
     let reference = branch.into_reference();
     let refname = reference
         .name()
-        .ok_or("GIT_LOCAL_BRANCH_INVALID")?
+        .map_err(|_| "GIT_LOCAL_BRANCH_INVALID")?
         .to_string();
     let target = reference
         .peel_to_commit()
@@ -484,12 +490,7 @@ fn fetch_origin(repo: &Repository) -> Result<(), String> {
 }
 fn pull_ff_only(repo: &Repository) -> Result<usize, String> {
     clean_worktree(repo)?;
-    let branch = repo
-        .head()
-        .map_err(|_| "GIT_LOCAL_UNBORN_HEAD")?
-        .shorthand()
-        .ok_or("GIT_LOCAL_DETACHED_HEAD_DENIED")?
-        .to_string();
+    let branch = attached_branch(repo)?;
     fetch_origin(repo)?;
     let remote = repo
         .find_reference(&format!("refs/remotes/origin/{branch}"))
@@ -524,7 +525,7 @@ fn pull_ff_only(repo: &Repository) -> Result<usize, String> {
 }
 fn github_slug(repo: &Repository) -> Result<String, String> {
     let remote = approved_remote(repo)?;
-    let url = remote.url().ok_or("GITHUB_ORIGIN_MISSING")?;
+    let url = remote.url().map_err(|_| "GITHUB_ORIGIN_MISSING")?;
     let tail = if let Some(p) = url.strip_prefix("https://github.com/") {
         p
     } else if let Some(p) = url.strip_prefix("git@github.com:") {
@@ -649,12 +650,17 @@ fn perform(
                 return Err("GIT_LOCAL_SYMLINK_DENIED".into());
             }
             let roots = [Path::new(&ctx.root).to_path_buf()];
-            let before = crate::capabilities::workspace::safe_paths::read_regular(
-                &path, &roots, MAX_TEXT,
-            ).map_err(|_| "GIT_LOCAL_FILE_READ_FAILED")?;
+            let before =
+                crate::capabilities::workspace::safe_paths::read_regular(&path, &roots, MAX_TEXT)
+                    .map_err(|_| "GIT_LOCAL_FILE_READ_FAILED")?;
             crate::capabilities::workspace::safe_paths::save_if_unchanged(
-                &path, &roots, &before, contents.as_bytes(), MAX_TEXT,
-            ).map_err(|_| "GIT_LOCAL_RESOLVE_RENAME_FAILED")?;
+                &path,
+                &roots,
+                &before,
+                contents.as_bytes(),
+                MAX_TEXT,
+            )
+            .map_err(|_| "GIT_LOCAL_RESOLVE_RENAME_FAILED")?;
             let mut index = repo.index().map_err(|_| "GIT_LOCAL_INDEX_FAILED")?;
             index
                 .add_path(rel)
@@ -929,5 +935,40 @@ mod tests {
         };
         assert!(selected_scope(&ctx, Path::new("src/file.rs")));
         assert!(!selected_scope(&ctx, Path::new("src_bak/file.rs")));
+    }
+
+    #[test]
+    fn pull_preview_and_execution_reject_detached_head_before_fetch() {
+        let name = format!("browseros-local-pull-detached-{}", uuid::Uuid::new_v4());
+        let dir = std::env::temp_dir().join(name);
+        let repo = Repository::init(&dir).expect("init repository");
+        let oid = {
+            let tree_id = repo.index().expect("index").write_tree().expect("tree");
+            let tree = repo.find_tree(tree_id).expect("find tree");
+            let sig = git2::Signature::now("BrowserOS test", "test@example.invalid")
+                .expect("signature");
+            repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
+                .expect("commit")
+        };
+        repo.remote("origin", "https://example.invalid/team/repo.git")
+            .expect("origin");
+        repo.set_head_detached(oid).expect("detach HEAD");
+        let ctx = LocalGitContext {
+            root: dir.to_string_lossy().into_owned(),
+            relative_path: String::new(),
+            is_dir: true,
+            branch: "HEAD".into(),
+        };
+        let preview = check_preconditions(&repo, &ctx, "pull", None, None, None, None);
+        let execution = pull_ff_only(&repo);
+        let after = repo.head().expect("HEAD").target();
+        let fetched = repo.path().join("FETCH_HEAD").exists();
+        drop(repo);
+        std::fs::remove_dir_all(&dir).expect("remove repository");
+
+        assert_eq!(preview.unwrap_err(), "GIT_LOCAL_DETACHED_HEAD_DENIED");
+        assert_eq!(execution.unwrap_err(), "GIT_LOCAL_DETACHED_HEAD_DENIED");
+        assert_eq!(after, Some(oid));
+        assert!(!fetched);
     }
 }

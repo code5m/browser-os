@@ -4,9 +4,9 @@
 //! 仅做模块归属，不改任何行为；WebView/Grid 生命周期、active tab 权威、
 //! session persistence 派生（从 Browser 权威 tabs 表）等冻结语义均不变。
 use crate::domain::*;
+use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Emitter, Manager};
 use url::Url;
-use std::sync::atomic::Ordering;
 
 /// A non-tiny offscreen/hidden initial viewport avoids a 1x1 WebKitGTK
 /// relayout while the first navigation and native tab positioning race.
@@ -31,7 +31,11 @@ pub fn spawn_child_window(
     css_h: f64,
 ) -> Result<(), String> {
     use tauri_plugin_browser_tabs::{CreateTabOptions, LogicalRect, TabManagerState};
-    if app.state::<crate::AppState>().shutdown_requested.load(Ordering::Acquire) {
+    if app
+        .state::<crate::AppState>()
+        .shutdown_requested
+        .load(Ordering::Acquire)
+    {
         return Err("TAB_APPLICATION_SHUTTING_DOWN".into());
     }
     let init_script = include_str!("../../../injected/collect.js");
@@ -57,10 +61,15 @@ pub fn spawn_child_window(
             initialization_script: Some(init_script.to_string()),
         })
         .map_err(|e| format!("创建子 webview 失败: {e}"))?;
-    if app.state::<crate::AppState>().shutdown_requested.load(Ordering::Acquire) {
+    if app
+        .state::<crate::AppState>()
+        .shutdown_requested
+        .load(Ordering::Acquire)
+    {
         // The plugin remains the native owner; do not publish a late WebView
         // after the session snapshot was accepted for exit.
-        manager.close_tab(&label.to_string())
+        manager
+            .close_tab(&label.to_string())
             .map_err(|_| "TAB_CANCELLED_CLEANUP_FAILED".to_string())?;
         return Err("TAB_APPLICATION_SHUTTING_DOWN".into());
     }
@@ -141,7 +150,11 @@ pub fn hide_bounds(app: &AppHandle, id: &str) {
 }
 /// 创建一个浏览器页签（独立子窗口，方案 B），返回其信息并设为激活页签。
 pub fn create_tab(app: AppHandle, url: &str) -> Result<TabInfo, String> {
-    if app.state::<crate::AppState>().shutdown_requested.load(Ordering::Acquire) {
+    if app
+        .state::<crate::AppState>()
+        .shutdown_requested
+        .load(Ordering::Acquire)
+    {
         return Err("TAB_APPLICATION_SHUTTING_DOWN".into());
     }
     let target = normalize_url(url);
@@ -192,7 +205,8 @@ pub fn create_tab(app: AppHandle, url: &str) -> Result<TabInfo, String> {
     };
     if !published {
         use tauri_plugin_browser_tabs::TabManagerState;
-        app.state::<TabManagerState>().close_tab(&id)
+        app.state::<TabManagerState>()
+            .close_tab(&id)
             .map_err(|_| "TAB_CANCELLED_CLEANUP_FAILED".to_string())?;
         return Err("TAB_APPLICATION_SHUTTING_DOWN".into());
     }

@@ -28,7 +28,10 @@ pub fn read_vault(root: &Path) -> Result<VaultSnapshot, String> {
     }
     let roots = [root.clone()];
     let mut out = VaultSnapshot {
-        root: requested, notes: vec![], skipped: 0, truncated: false,
+        root: requested,
+        notes: vec![],
+        skipped: 0,
+        truncated: false,
     };
     let mut pending = vec![root.clone()];
     let mut bytes = 0usize;
@@ -36,8 +39,7 @@ pub fn read_vault(root: &Path) -> Result<VaultSnapshot, String> {
     while let Some(dir) = pending.pop() {
         // Enumerate and read relative to pinned authorized OS handles, not
         // read_dir(path) and File::open(path) after an unpinned path check.
-        let entries = safe_paths::list_directory(&dir, &roots)
-            .map_err(|_| "VAULT_READ_FAILED")?;
+        let entries = safe_paths::list_directory(&dir, &roots).map_err(|_| "VAULT_READ_FAILED")?;
         for (name, is_dir, len) in entries {
             visited += 1;
             if visited > 20_000 {
@@ -66,19 +68,24 @@ pub fn read_vault(root: &Path) -> Result<VaultSnapshot, String> {
             }
             let data = match safe_paths::read_regular(&path, &roots, MAX_NOTE_BYTES as usize) {
                 Ok(data) => data,
-                Err(_) => { out.skipped += 1; continue; }
+                Err(_) => {
+                    out.skipped += 1;
+                    continue;
+                }
             };
             let text = match String::from_utf8(data) {
                 Ok(text) => text,
-                Err(_) => { out.skipped += 1; continue; }
+                Err(_) => {
+                    out.skipped += 1;
+                    continue;
+                }
             };
             if bytes + text.len() > MAX_VAULT_BYTES {
                 out.truncated = true;
                 return Ok(out);
             }
             bytes += text.len();
-            let relative = path.strip_prefix(&root)
-                .map_err(|_| "VAULT_READ_FAILED")?;
+            let relative = path.strip_prefix(&root).map_err(|_| "VAULT_READ_FAILED")?;
             out.notes.push(VaultNote {
                 path: relative.to_string_lossy().into_owned(),
                 text,
@@ -128,18 +135,29 @@ pub fn save_vault_note(
     }
     let roots = [root.clone()];
     let actual = crate::capabilities::workspace::safe_paths::read_regular(
-        &canonical, &roots, MAX_NOTE_BYTES as usize
-    ).map_err(|_| "VAULT_EDIT_READ_FAILED")?;
+        &canonical,
+        &roots,
+        MAX_NOTE_BYTES as usize,
+    )
+    .map_err(|_| "VAULT_EDIT_READ_FAILED")?;
     if actual != expected_text.as_bytes() {
         return Err("VAULT_EDIT_CONFLICT".into());
     }
     // Preserve the read-check-write guarantee under a pinned parent; the
     // former atomic_write(path) did not compare against concurrent edits.
     crate::capabilities::workspace::safe_paths::save_if_unchanged(
-        &canonical, &roots, &actual, content.as_bytes(), MAX_NOTE_BYTES as usize
-    ).map_err(|error| {
-        if error == "FILE_CONFLICT" { "VAULT_EDIT_CONFLICT".into() }
-        else { "VAULT_EDIT_WRITE_FAILED".into() }
+        &canonical,
+        &roots,
+        &actual,
+        content.as_bytes(),
+        MAX_NOTE_BYTES as usize,
+    )
+    .map_err(|error| {
+        if error == "FILE_CONFLICT" {
+            "VAULT_EDIT_CONFLICT".into()
+        } else {
+            "VAULT_EDIT_WRITE_FAILED".into()
+        }
     })
 }
 

@@ -48,7 +48,10 @@ impl ShutdownReport {
         self.reports.iter().filter(|r| r.is_failure()).collect()
     }
     pub fn pending(&self) -> usize {
-        self.reports.iter().filter(|r| matches!(r.outcome, CleanupOutcome::Pending(_))).count()
+        self.reports
+            .iter()
+            .filter(|r| matches!(r.outcome, CleanupOutcome::Pending(_)))
+            .count()
     }
     /// Legacy accessor: number of task reports, including Pending. This is
     /// never evidence that pending cleanup actually completed.
@@ -86,41 +89,73 @@ pub struct ShutdownCoordinator {
     inner: Mutex<Inner>,
 }
 impl Default for ShutdownCoordinator {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 impl ShutdownCoordinator {
     pub fn new() -> Self {
-        Self { inner: Mutex::new(Inner {
-            tasks: Vec::new(), closed: false, execution: None, worker: None,
-        }) }
+        Self {
+            inner: Mutex::new(Inner {
+                tasks: Vec::new(),
+                closed: false,
+                execution: None,
+                worker: None,
+            }),
+        }
     }
 
     /// Preserve the historical registration order for ordinary tasks.
     pub fn register<F>(&self, name: impl Into<String>, task: F) -> Result<(), String>
-    where F: FnOnce() -> Result<(), String> + Send + 'static {
+    where
+        F: FnOnce() -> Result<(), String> + Send + 'static,
+    {
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        let after = inner.tasks.last().map(|t| vec![t.name.clone()]).unwrap_or_default();
+        let after = inner
+            .tasks
+            .last()
+            .map(|t| vec![t.name.clone()])
+            .unwrap_or_default();
         Self::insert(&mut inner, name.into(), after, Box::new(move |_| task()))
     }
 
     /// Independent resource owners share the SAME deadline. Dependencies only
     /// impose completion order; an error in one task does not suppress cleanup.
     pub fn register_with_deadline<F>(
-        &self, name: impl Into<String>, after: &[&str], task: F,
+        &self,
+        name: impl Into<String>,
+        after: &[&str],
+        task: F,
     ) -> Result<(), String>
-    where F: FnOnce(Instant) -> Result<(), String> + Send + 'static {
+    where
+        F: FnOnce(Instant) -> Result<(), String> + Send + 'static,
+    {
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        Self::insert(&mut inner, name.into(),
-            after.iter().map(|name| (*name).to_owned()).collect(), Box::new(task))
+        Self::insert(
+            &mut inner,
+            name.into(),
+            after.iter().map(|name| (*name).to_owned()).collect(),
+            Box::new(task),
+        )
     }
 
-    fn insert(inner: &mut Inner, name: String, after: Vec<String>, run: CleanupTask) -> Result<(), String> {
-        if inner.closed { return Err(format!("关闭已开始，拒绝注册清理任务：{name}")); }
+    fn insert(
+        inner: &mut Inner,
+        name: String,
+        after: Vec<String>,
+        run: CleanupTask,
+    ) -> Result<(), String> {
+        if inner.closed {
+            return Err(format!("关闭已开始，拒绝注册清理任务：{name}"));
+        }
         if inner.tasks.iter().any(|t| t.name == name) {
             return Err(format!("SHUTDOWN_DUPLICATE_TASK: {name}"));
         }
         // Depend only on already-registered tasks: cycles cannot be constructed.
-        if after.iter().any(|dependency| !inner.tasks.iter().any(|t| &t.name == dependency)) {
+        if after
+            .iter()
+            .any(|dependency| !inner.tasks.iter().any(|t| &t.name == dependency))
+        {
             return Err(format!("SHUTDOWN_UNKNOWN_DEPENDENCY: {name}"));
         }
         inner.tasks.push(RegisteredTask { name, after, run });
@@ -130,11 +165,18 @@ impl ShutdownCoordinator {
     #[allow(dead_code)]
     pub fn is_shutdown(&self) -> bool {
         let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        inner.execution.as_ref().map(|execution| {
-            let progress = execution.progress.lock().unwrap_or_else(|e| e.into_inner());
-            progress.finished && !progress.reports.iter()
-                .any(|report| matches!(report.outcome, CleanupOutcome::Pending(_)))
-        }).unwrap_or(false)
+        inner
+            .execution
+            .as_ref()
+            .map(|execution| {
+                let progress = execution.progress.lock().unwrap_or_else(|e| e.into_inner());
+                progress.finished
+                    && !progress
+                        .reports
+                        .iter()
+                        .any(|report| matches!(report.outcome, CleanupOutcome::Pending(_)))
+            })
+            .unwrap_or(false)
     }
 
     #[allow(dead_code)]
@@ -143,7 +185,8 @@ impl ShutdownCoordinator {
         inner.execution.as_ref().map(|execution| {
             let progress = execution.progress.lock().unwrap_or_else(|e| e.into_inner());
             Arc::new(ShutdownReport {
-                reports: progress.reports.clone(), already_shutdown: false,
+                reports: progress.reports.clone(),
+                already_shutdown: false,
                 owners_complete: progress.finished,
             })
         })
@@ -153,9 +196,17 @@ impl ShutdownCoordinator {
     pub fn pending_tasks(&self) -> usize {
         let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(execution) = &inner.execution {
-            execution.progress.lock().unwrap_or_else(|e| e.into_inner()).reports.iter()
-                .filter(|r| matches!(r.outcome, CleanupOutcome::Pending(_))).count()
-        } else { inner.tasks.len() }
+            execution
+                .progress
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .reports
+                .iter()
+                .filter(|r| matches!(r.outcome, CleanupOutcome::Pending(_)))
+                .count()
+        } else {
+            inner.tasks.len()
+        }
     }
 
     pub fn shutdown(&self) -> Arc<ShutdownReport> {
@@ -170,17 +221,24 @@ impl ShutdownCoordinator {
             let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             if inner.closed {
                 return Arc::new(ShutdownReport {
-                    reports: Vec::new(), already_shutdown: true, owners_complete: false,
+                    reports: Vec::new(),
+                    already_shutdown: true,
+                    owners_complete: false,
                 });
             }
             inner.closed = true;
             let tasks = std::mem::take(&mut inner.tasks);
             let execution = Arc::new(Execution {
                 progress: Mutex::new(Progress {
-                    reports: tasks.iter().map(|t| CleanupReport {
-                        name: t.name.clone(),
-                        outcome: CleanupOutcome::Pending("SHUTDOWN_WAITING_FOR_DEPENDENCY".into()),
-                    }).collect(),
+                    reports: tasks
+                        .iter()
+                        .map(|t| CleanupReport {
+                            name: t.name.clone(),
+                            outcome: CleanupOutcome::Pending(
+                                "SHUTDOWN_WAITING_FOR_DEPENDENCY".into(),
+                            ),
+                        })
+                        .collect(),
                     finished: tasks.is_empty(),
                 }),
                 changed: Condvar::new(),
@@ -188,16 +246,26 @@ impl ShutdownCoordinator {
                 retained_tasks: Mutex::new(Vec::new()),
             });
             inner.execution = Some(execution.clone());
-            let has_tasks = !execution.progress.lock().unwrap_or_else(|e| e.into_inner()).reports.is_empty();
+            let has_tasks = !execution
+                .progress
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .reports
+                .is_empty();
             if has_tasks {
                 let progress = execution.clone();
-                match std::thread::Builder::new().name("browseros-cleanup-owner".into())
-                    .spawn(move || run_tasks(deadline, progress)) {
+                match std::thread::Builder::new()
+                    .name("browseros-cleanup-owner".into())
+                    .spawn(move || run_tasks(deadline, progress))
+                {
                     Ok(worker) => inner.worker = Some(worker),
                     Err(error) => {
-                        let mut state = execution.progress.lock().unwrap_or_else(|e| e.into_inner());
+                        let mut state =
+                            execution.progress.lock().unwrap_or_else(|e| e.into_inner());
                         for report in &mut state.reports {
-                            report.outcome = CleanupOutcome::Pending(format!("SHUTDOWN_WORKER_START_FAILED: {error}"));
+                            report.outcome = CleanupOutcome::Pending(format!(
+                                "SHUTDOWN_WORKER_START_FAILED: {error}"
+                            ));
                         }
                         state.finished = true;
                     }
@@ -208,12 +276,18 @@ impl ShutdownCoordinator {
         let mut state = execution.progress.lock().unwrap_or_else(|e| e.into_inner());
         while !state.finished {
             let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() { break; }
-            state = execution.changed.wait_timeout(state, remaining)
-                .unwrap_or_else(|e| e.into_inner()).0;
+            if remaining.is_zero() {
+                break;
+            }
+            state = execution
+                .changed
+                .wait_timeout(state, remaining)
+                .unwrap_or_else(|e| e.into_inner())
+                .0;
         }
         let report = Arc::new(ShutdownReport {
-            reports: state.reports.clone(), already_shutdown: false,
+            reports: state.reports.clone(),
+            already_shutdown: false,
             owners_complete: state.finished,
         });
         drop(state);
@@ -221,18 +295,30 @@ impl ShutdownCoordinator {
         // thread remains owned, and is never mistaken for completed cleanup.
         let worker = {
             let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-            if inner.worker.as_ref().is_some_and(|worker| worker.is_finished()) {
+            if inner
+                .worker
+                .as_ref()
+                .is_some_and(|worker| worker.is_finished())
+            {
                 inner.worker.take()
-            } else { None }
+            } else {
+                None
+            }
         };
-        if let Some(worker) = worker { let _ = worker.join(); }
+        if let Some(worker) = worker {
+            let _ = worker.join();
+        }
         report
     }
 }
 
 fn run_tasks(deadline: Instant, execution: Arc<Execution>) {
-    let tasks = execution.scheduled.lock().unwrap_or_else(|e| e.into_inner())
-        .take().expect("scheduler owns the registered task list once");
+    let tasks = execution
+        .scheduled
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take()
+        .expect("scheduler owns the registered task list once");
     let names: Vec<String> = tasks.iter().map(|task| task.name.clone()).collect();
     let mut waiting: Vec<Option<RegisteredTask>> = tasks.into_iter().map(Some).collect();
     let mut finished = vec![false; waiting.len()];
@@ -242,25 +328,39 @@ fn run_tasks(deadline: Instant, execution: Arc<Execution>) {
     let mut completed = 0;
     while completed < waiting.len() {
         for index in 0..waiting.len() {
-            let eligible = waiting[index].as_ref().is_some_and(|task|
-                task.after.iter().all(|dependency|
-                    names.iter().position(|name| name == dependency).is_some_and(|i| finished[i])
-                )
-            );
-            if !eligible { continue; }
+            let eligible = waiting[index].as_ref().is_some_and(|task| {
+                task.after.iter().all(|dependency| {
+                    names
+                        .iter()
+                        .position(|name| name == dependency)
+                        .is_some_and(|i| finished[i])
+                })
+            });
+            if !eligible {
+                continue;
+            }
             let task = waiting[index].take().expect("eligible task");
             {
                 let mut state = execution.progress.lock().unwrap_or_else(|e| e.into_inner());
-                state.reports[index].outcome = CleanupOutcome::Pending("SHUTDOWN_CLEANUP_IN_PROGRESS".into());
+                state.reports[index].outcome =
+                    CleanupOutcome::Pending("SHUTDOWN_CLEANUP_IN_PROGRESS".into());
             }
             let sender = sender.clone();
             let name = task.name;
             let retained = Arc::new(Mutex::new(Some(task.run)));
-            execution.retained_tasks.lock().unwrap_or_else(|e| e.into_inner()).push(retained.clone());
-            match std::thread::Builder::new().name(format!("cleanup-{name}"))
+            execution
+                .retained_tasks
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(retained.clone());
+            match std::thread::Builder::new()
+                .name(format!("cleanup-{name}"))
                 .spawn(move || {
-                    let task = retained.lock().unwrap_or_else(|e| e.into_inner())
-                        .take().expect("cleanup task is owned once");
+                    let task = retained
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .take()
+                        .expect("cleanup task is owned once");
                     let outcome = match catch_unwind(AssertUnwindSafe(|| task(deadline))) {
                         Ok(Ok(())) => CleanupOutcome::Ok,
                         Ok(Err(message)) => CleanupOutcome::Failed(message),
@@ -276,22 +376,37 @@ fn run_tasks(deadline: Instant, execution: Arc<Execution>) {
                     // The task never ran. Keep dependent resources pending;
                     // recording a spawn failure does not complete a dependency.
                     completed += 1;
-                    execution.progress.lock().unwrap_or_else(|e| e.into_inner()).reports[index].outcome =
+                    execution
+                        .progress
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .reports[index]
+                        .outcome =
                         CleanupOutcome::Pending(format!("SHUTDOWN_TASK_START_FAILED: {error}"));
                     execution.changed.notify_all();
                 }
             }
         }
-        if completed == waiting.len() { break; }
+        if completed == waiting.len() {
+            break;
+        }
         if !running.iter().any(|active| *active) {
             // Only dependencies of tasks that could not start remain. Retain
             // their captures too; never run them out of order, spin or wait on
             // a result that no worker can send.
             for (index, task) in waiting.iter_mut().enumerate() {
                 if let Some(task) = task.take() {
-                    execution.retained_tasks.lock().unwrap_or_else(|e| e.into_inner())
+                    execution
+                        .retained_tasks
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
                         .push(Arc::new(Mutex::new(Some(task.run))));
-                    execution.progress.lock().unwrap_or_else(|e| e.into_inner()).reports[index].outcome =
+                    execution
+                        .progress
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .reports[index]
+                        .outcome =
                         CleanupOutcome::Pending("SHUTDOWN_DEPENDENCY_NOT_EXECUTED".into());
                 }
             }
@@ -301,20 +416,35 @@ fn run_tasks(deadline: Instant, execution: Arc<Execution>) {
             running[index] = false;
             finished[index] = true;
             completed += 1;
-            execution.progress.lock().unwrap_or_else(|e| e.into_inner()).reports[index].outcome = outcome;
+            execution
+                .progress
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .reports[index]
+                .outcome = outcome;
             execution.changed.notify_all();
         }
     }
     // The application deadline is enforced by the caller, not by detaching
     // these owners. A blocked task and its resources stay in this owner thread.
-    for worker in workers { let _ = worker.join(); }
-    execution.progress.lock().unwrap_or_else(|e| e.into_inner()).finished = true;
+    for worker in workers {
+        let _ = worker.join();
+    }
+    execution
+        .progress
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .finished = true;
     execution.changed.notify_all();
 }
 
 fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
-    if let Some(message) = payload.downcast_ref::<&str>() { return (*message).to_owned(); }
-    if let Some(message) = payload.downcast_ref::<String>() { return message.clone(); }
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        return (*message).to_owned();
+    }
+    if let Some(message) = payload.downcast_ref::<String>() {
+        return message.clone();
+    }
     "未知 panic（无可读 payload）".to_owned()
 }
 
@@ -538,15 +668,21 @@ mod shutdown_tests {
         let coordinator = ShutdownCoordinator::new();
         let (release, blocked) = std::sync::mpsc::channel();
         let independent = Arc::new(AtomicUsize::new(0));
-        coordinator.register("blocked-profile-owner", move || {
-            blocked.recv().map_err(|_| "FIXTURE_RELEASE_FAILED".to_owned())?;
-            Ok(())
-        }).unwrap();
+        coordinator
+            .register("blocked-profile-owner", move || {
+                blocked
+                    .recv()
+                    .map_err(|_| "FIXTURE_RELEASE_FAILED".to_owned())?;
+                Ok(())
+            })
+            .unwrap();
         let hits = independent.clone();
-        coordinator.register_with_deadline("independent-job-owner", &[], move |_| {
-            hits.fetch_add(1, Ordering::SeqCst);
-            Ok(())
-        }).unwrap();
+        coordinator
+            .register_with_deadline("independent-job-owner", &[], move |_| {
+                hits.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            })
+            .unwrap();
         let deadline = Instant::now() + Duration::from_millis(100);
         let report = coordinator.shutdown_until(deadline);
         assert!(!report.ok(), "unreleased owner must not become a PASS");
@@ -558,7 +694,10 @@ mod shutdown_tests {
         while !coordinator.is_shutdown() && Instant::now() < until {
             std::thread::yield_now();
         }
-        assert!(coordinator.is_shutdown(), "timed-out owners must remain managed");
+        assert!(
+            coordinator.is_shutdown(),
+            "timed-out owners must remain managed"
+        );
         assert_eq!(independent.load(Ordering::SeqCst), 1);
         assert!(coordinator.last_report().unwrap().ok());
         assert!(coordinator.shutdown().already_shutdown);
@@ -570,10 +709,12 @@ mod shutdown_tests {
         let seen = Arc::new(Mutex::new(Vec::new()));
         for index in 0..32 {
             let seen = seen.clone();
-            coordinator.register_with_deadline(format!("resource-{index}"), &[], move |deadline| {
-                seen.lock().unwrap().push(deadline);
-                Ok(())
-            }).unwrap();
+            coordinator
+                .register_with_deadline(format!("resource-{index}"), &[], move |deadline| {
+                    seen.lock().unwrap().push(deadline);
+                    Ok(())
+                })
+                .unwrap();
         }
         let deadline = Instant::now() + Duration::from_secs(3);
         assert!(coordinator.shutdown_until(deadline).ok());
@@ -587,14 +728,18 @@ mod shutdown_tests {
         let coordinator = ShutdownCoordinator::new();
         let flushed = Arc::new(AtomicUsize::new(0));
         let marker = flushed.clone();
-        coordinator.register_with_deadline("flush", &[], move |_| {
-            marker.store(1, Ordering::SeqCst);
-            Err("FIXTURE_PERSIST_FAILURE".into())
-        }).unwrap();
-        coordinator.register_with_deadline("close", &["flush"], move |_| {
-            assert_eq!(flushed.load(Ordering::SeqCst), 1);
-            Ok(())
-        }).unwrap();
+        coordinator
+            .register_with_deadline("flush", &[], move |_| {
+                marker.store(1, Ordering::SeqCst);
+                Err("FIXTURE_PERSIST_FAILURE".into())
+            })
+            .unwrap();
+        coordinator
+            .register_with_deadline("close", &["flush"], move |_| {
+                assert_eq!(flushed.load(Ordering::SeqCst), 1);
+                Ok(())
+            })
+            .unwrap();
         let report = coordinator.shutdown();
         assert_eq!(report.failures().len(), 1);
         assert!(matches!(report.reports[1].outcome, CleanupOutcome::Ok));
