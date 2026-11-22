@@ -33,12 +33,12 @@ permissions:
 concurrency:
   # Lightweight pushes must not cancel a frozen native run on the same branch.
   # A new run still supersedes older work in its own branch and lane.
-  group: browseros-developer-feedback-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.windows_native == true && 'native' || 'quick' }}
+  group: browseros-developer-feedback-${{ github.ref }}-${{ ((github.event_name == 'workflow_dispatch' && inputs.windows_native == true) || (github.event_name == 'push' && github.ref != 'refs/heads/master' && contains(github.event.head_commit.message, '[run-windows-native]'))) && 'native' || 'quick' }}
   cancel-in-progress: true
 
 jobs:
   quick:
-    if: inputs.windows_native != true
+    if: ${{ !((github.event_name == 'workflow_dispatch' && inputs.windows_native == true) || (github.event_name == 'push' && github.ref != 'refs/heads/master' && contains(github.event.head_commit.message, '[run-windows-native]'))) }}
     name: Quick Gate
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -120,10 +120,19 @@ jobs:
   # The default-branch UI can expose a different input form. This source wiring
   # has not been dispatched or exercised and is not native acceptance evidence.
   windows-native:
-    if: github.event_name == 'workflow_dispatch' && inputs.windows_native == true
+    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.windows_native == true) || (github.event_name == 'push' && github.ref != 'refs/heads/master' && contains(github.event.head_commit.message, '[run-windows-native]')) }}
     uses: ./.github/workflows/windows-linux-v2-experimental.yml
     with:
-      source_sha: ${{ inputs.source_sha }}
-      build_installer: ${{ inputs.build_windows_installer }}
+      source_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.source_sha || github.sha }}
+      build_installer: ${{ (github.event_name == 'workflow_dispatch' && inputs.build_windows_installer == true) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[run-windows-native]')) }}
+    permissions:
+      contents: read
+
+  # Only explicit feature-branch commit markers opt in to costly native CI.
+  full-native-validation:
+    if: ${{ github.event_name == 'push' && github.ref != 'refs/heads/master' && contains(github.event.head_commit.message, '[run-full-validation]') }}
+    uses: ./.github/workflows/capability-v2-validation.yml
+    with:
+      native_mode: complete
     permissions:
       contents: read

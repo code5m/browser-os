@@ -16,6 +16,12 @@ on:
       - ready_for_review
       - labeled
       - unlabeled
+  workflow_call:
+    inputs:
+      native_mode:
+        description: "Explicitly selected reusable native mode; default remains off"
+        type: string
+        required: true
   workflow_dispatch:
     inputs:
       native_mode:
@@ -28,6 +34,7 @@ on:
           - "rust-tests"
           - "packaged-gui"
           - "packaged-resource"
+          - "complete"
 
 concurrency:
   group: browseros-full-validation-${{ github.ref }}-${{ inputs.native_mode || 'off' }}
@@ -94,6 +101,7 @@ jobs:
         name: Select optional native verification mode
         env:
           CI_NATIVE_MODE_INPUT: ${{ inputs.native_mode || '' }}
+          CI_NATIVE_MODE_EXPLICIT_PUSH: ${{ github.event_name == 'push' && github.ref != 'refs/heads/master' && contains(github.event.head_commit.message, '[run-full-validation]') }}
           CI_NATIVE_MODE_DEFAULT: ${{ vars.CI_NATIVE_MODE || 'off' }}
           CI_PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
         run: |
@@ -369,7 +377,7 @@ jobs:
               echo "Rust compilation/tests: SKIPPED (not PASS)."
               echo "Installed GUI and sustained resources: SKIPPED (not PASS)."
             else
-              echo "Rust/installed GUI evidence is produced by the optional native-regression job."
+              echo "Native acceptance is opt-in; examine native-regression job outcomes before assigning PASS."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -380,6 +388,11 @@ jobs:
   native-regression:
     needs: [impact, frontend-build]
     if: always() && needs.impact.result == 'success' && needs.frontend-build.result == 'success' && needs.impact.outputs.native_mode != 'off'
+    name: Native acceptance (${{ matrix.native_mode }})
+    strategy:
+      fail-fast: false
+      matrix:
+        native_mode: ${{ fromJSON(needs.impact.outputs.native_mode == 'complete' && '["rust-tests","packaged-resource"]' || format('["{0}"]', needs.impact.outputs.native_mode)) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
@@ -452,22 +465,31 @@ jobs:
         if: always() && steps.rust_format.outcome == 'failure' && steps.formatter_patch.outcome != 'skipped'
         uses: actions/upload-artifact@v4
         with:
-          name: browseros-rustfmt-${{ github.sha }}
+          name: browseros-rustfmt-${{ github.sha }}-${{ matrix.native_mode }}
           path: ${{ runner.temp }}/browseros-rustfmt/
           if-no-files-found: error
           retention-days: 7
       - name: Compile and test Rust once (rust-tests mode)
-        if: needs.impact.outputs.native_mode == 'rust-tests'
+        if: matrix.native_mode == 'rust-tests'
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml
       - name: Build/install/cold-start one Release (packaged-gui mode)
-        if: needs.impact.outputs.native_mode == 'packaged-gui'
+        if: matrix.native_mode == 'packaged-gui'
         run: dbus-run-session -- xvfb-run -a bash scripts/verify-installed-client.sh --install --prebuilt-frontend
       - name: Build/install/cold-start/sample one Release (packaged-resource mode)
-        if: needs.impact.outputs.native_mode == 'packaged-resource'
+        if: matrix.native_mode == 'packaged-resource'
         run: dbus-run-session -- xvfb-run -a bash scripts/verify-installed-client.sh --install --prebuilt-frontend --resource-minutes 5
+      - name: Require fresh installed resource evidence
+        if: matrix.native_mode == 'packaged-resource'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for report in /tmp/browseros-native-resource.json /tmp/browseros-installed-resource.json; do
+            test -s "$report" || { echo "::error::required resource evidence missing: $report"; exit 1; }
+            python3 -m json.tool "$report" >/dev/null
+          done
       - name: Verify GLib variant iteration in the same Release profile
         id: glib_release
-        if: needs.impact.outputs.native_mode == 'packaged-gui' || needs.impact.outputs.native_mode == 'packaged-resource'
+        if: matrix.native_mode == 'packaged-gui' || matrix.native_mode == 'packaged-resource'
         timeout-minutes: 20
         shell: bash
         run: |
@@ -488,14 +510,23 @@ jobs:
           if-no-files-found: error
           retention-days: 14
       - name: Verify installer provenance without recompilation
-        if: needs.impact.outputs.native_mode == 'packaged-gui' || needs.impact.outputs.native_mode == 'packaged-resource'
+        if: matrix.native_mode == 'packaged-gui' || matrix.native_mode == 'packaged-resource'
         run: |
-          test -f src-tauri/target/release/bundle/deb/mvp-browser-os_0.1.0_amd64.deb
+          set -euo pipefail
+          shopt -s nullglob
+          packages=(src-tauri/target/release/bundle/deb/mvp-browser-os_*.deb)
+          if [[ "${#packages[@]}" -ne 1 ]]; then
+            echo "::error::expected exactly one generated BrowserOS Debian package, found ${#packages[@]}"
+            exit 1
+          fi
+          deb="${packages[0]}"
+          test "$(dpkg-deb --field "$deb" Package)" = "mvp-browser-os"
           git rev-parse HEAD > /tmp/browseros-native-source-sha
-          sha256sum src-tauri/target/release/bundle/deb/mvp-browser-os_0.1.0_amd64.deb > /tmp/browseros-native-package-sha256
+          printf '%s\n' "$deb" > /tmp/browseros-native-package-path
+          sha256sum "$deb" > /tmp/browseros-native-package-sha256
           cat /tmp/browseros-native-package-sha256
       - name: Upload the verified release Debian package
-        if: needs.impact.outputs.native_mode == 'packaged-gui' || needs.impact.outputs.native_mode == 'packaged-resource'
+        if: matrix.native_mode == 'packaged-gui' || matrix.native_mode == 'packaged-resource'
         uses: actions/upload-artifact@v4
         with:
           name: browseros-linux-deb-${{ github.sha }}
@@ -503,10 +534,11 @@ jobs:
             src-tauri/target/release/bundle/deb/*.deb
             /tmp/browseros-native-source-sha
             /tmp/browseros-native-package-sha256
+            /tmp/browseros-native-package-path
           if-no-files-found: error
           retention-days: 7
       - name: Tauri GUI regression with the SAME compiled Release
-        if: needs.impact.outputs.native_mode == 'packaged-gui' || needs.impact.outputs.native_mode == 'packaged-resource'
+        if: matrix.native_mode == 'packaged-gui' || matrix.native_mode == 'packaged-resource'
         shell: bash
         run: |
           set +e
@@ -518,7 +550,7 @@ jobs:
           tail -n 120 /tmp/m0-6c-browseros/app.log 2>/dev/null || true
           exit "$status"
       - name: Native 58 side-effect review with the SAME installed Release
-        if: needs.impact.outputs.native_mode == 'packaged-gui' || needs.impact.outputs.native_mode == 'packaged-resource'
+        if: matrix.native_mode == 'packaged-gui' || matrix.native_mode == 'packaged-resource'
         shell: bash
         run: |
           set +e
@@ -529,8 +561,17 @@ jobs:
           echo "===== Native 58 app log tail ====="
           tail -n 110 /tmp/browseros-native-58-evidence/app.log 2>/dev/null || true
           exit "$status"
+      - name: Require installed GUI regression evidence
+        if: matrix.native_mode == 'packaged-gui' || matrix.native_mode == 'packaged-resource'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for report in /tmp/m0-6c-browseros/summary.json /tmp/browseros-native-58-evidence/summary.json; do
+            test -s "$report" || { echo "::error::required GUI evidence missing: $report"; exit 1; }
+            python3 -m json.tool "$report" >/dev/null
+          done
       - name: Upload opted-in GUI evidence
-        if: always() && (needs.impact.outputs.native_mode == 'packaged-gui' || needs.impact.outputs.native_mode == 'packaged-resource')
+        if: always() && (matrix.native_mode == 'packaged-gui' || matrix.native_mode == 'packaged-resource')
         uses: actions/upload-artifact@v4
         with:
           name: browseros-gui-evidence-${{ github.run_id }}
@@ -555,7 +596,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
       - name: Upload opted-in sustained resource evidence
-        if: always() && needs.impact.outputs.native_mode == 'packaged-resource'
+        if: always() && matrix.native_mode == 'packaged-resource'
         uses: actions/upload-artifact@v4
         with:
           name: browseros-installed-resource-${{ github.run_id }}
@@ -567,7 +608,7 @@ jobs:
       - name: Report selected native test coverage
         if: always()
         env:
-          NATIVE_MODE: ${{ needs.impact.outputs.native_mode }}
+          NATIVE_MODE: ${{ matrix.native_mode }}
         run: |
           echo "Optional native mode: $NATIVE_MODE" >> "$GITHUB_STEP_SUMMARY"
           echo "One application build path was selected; packaged modes also verify the GLib backport in optimized dependency tests." >> "$GITHUB_STEP_SUMMARY"

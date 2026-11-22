@@ -44,6 +44,16 @@ def check() -> None:
             "mode selection must be explicitly validated")
     require("needs.impact.outputs.native_mode != 'off'" in native,
             "native job not gated by explicit opt-in")
+    require("  workflow_call:\n" in text and 'native_mode: complete' in preview,
+            "full acceptance needs an explicit reusable complete-mode entry point")
+    require("CI_NATIVE_MODE_EXPLICIT_PUSH:" in text and "[run-full-validation]" in preview,
+            "reusable native execution is not gated by an explicit feature-branch push marker")
+    require('fail-fast: false' in native and 'matrix.native_mode:' in native and
+            '["rust-tests","packaged-resource"]' in native,
+            "complete native acceptance must run independent Rust and packaged resource jobs")
+    require("Require fresh installed resource evidence" in native and
+            "Require installed GUI regression evidence" in native,
+            "missing fail-closed installed resource and GUI evidence gates")
     require("needs.frontend-build.result == 'success'" in native,
             "native job must not use unverified frontend assets")
     require(frontend.count("npm run build") == 1, "frontend must build once per revision")
@@ -89,6 +99,10 @@ def check() -> None:
     require("browseros-ci-source-sha.txt" in installer and
             'beforeBuildCommand' in installer and '--prebuilt-frontend' in installer,
             "packager must refuse stale dist before overriding Tauri pre-build")
+    require("[run-windows-native]" in preview and
+            "build_installer:" in preview and
+            "source_sha:" in preview,
+            "explicit native+NSIS push entrypoint is missing")
     require("        default: false" in preview and
             "if: github.event_name == 'workflow_dispatch' && inputs.build_preview == true" in preview,
             "developer preview still compiles on routine pushes")

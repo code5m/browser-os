@@ -3,8 +3,8 @@ set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="mvp-browser-os"
-PACKAGE_NAME="mvp-browser-os_0.1.0_amd64.deb"
-DEB_PATH="$ROOT/src-tauri/target/release/bundle/deb/$PACKAGE_NAME"
+DEB_DIR="$ROOT/src-tauri/target/release/bundle/deb"
+DEB_PATH=""
 EXTRACT_DIR="${TMPDIR:-/tmp}/mvp-browser-os-verify-deb"
 LOG_FILE="${TMPDIR:-/tmp}/mvp-browser-os-verify-startup.log"
 EXTRACTED_BIN="$EXTRACT_DIR/usr/bin/$APP_NAME"
@@ -192,6 +192,27 @@ if [[ "$BUILD" -eq 1 ]]; then
   fi
 fi
 
+# Refuse stale or ambiguous package versions rather than silently choosing one.
+resolve_deb_path() {
+  local packages=()
+  shopt -s nullglob
+  packages=("$DEB_DIR"/mvp-browser-os_*.deb)
+  shopt -u nullglob
+  if [[ "${#packages[@]}" -ne 1 ]]; then
+    fail "Expected exactly one BrowserOS Debian package in $DEB_DIR; found ${#packages[@]}."
+    return 1
+  fi
+  if [[ "$(dpkg-deb --field "${packages[0]}" Package 2>/dev/null || true)" != "$APP_NAME" ]]; then
+    fail "Debian package identity does not match $APP_NAME."
+    return 1
+  fi
+  DEB_PATH="${packages[0]}"
+  ok "Selected unambiguous Debian package: $DEB_PATH"
+}
+if ! resolve_deb_path; then
+  exit 1
+fi
+
 stop_existing_instances() {
   local process_list
   process_list="$(pgrep -a -x "$APP_NAME" || true)"
@@ -338,7 +359,11 @@ if [[ "$START_CLIENT" -eq 1 ]]; then
     fail "Cold-start check skipped because an existing single-instance process is running."
     hint "Stop the listed process, install the new deb if needed, then rerun: bash scripts/verify-installed-client.sh"
   elif [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
-    warn "No DISPLAY/WAYLAND_DISPLAY is available; GUI cold-start check skipped."
+    if [[ "$RESOURCE_MINUTES" -gt 0 ]]; then
+      fail "Sustained-resource acceptance requires an actual GUI display and first paint."
+    else
+      warn "No DISPLAY/WAYLAND_DISPLAY is available; GUI cold-start check skipped."
+    fi
     hint "Run this on the desktop session, or use --no-start in CI/headless shells."
   elif [[ ! -x "$CLIENT_BIN" ]]; then
     fail "Cannot cold-start because packaged executable is missing."
@@ -363,13 +388,21 @@ if [[ "$START_CLIENT" -eq 1 ]]; then
       # Real process-tree one-shot evidence after first paint, no additional daemon.
       # Optional evidence must never turn a missing /proc permission into a fake zero.
       if command -v node >/dev/null 2>&1; then
-        node "$ROOT/scripts/measure-app-resources.mjs" --pid "$OWN_PID" --interval-ms 1000 > "${TMPDIR:-/tmp}/browseros-native-resource.json" || warn "原生资源指标不可用（不报告伪测量）"
+        if ! node "$ROOT/scripts/measure-app-resources.mjs" --pid "$OWN_PID" --interval-ms 1000 > "${TMPDIR:-/tmp}/browseros-native-resource.json"; then
+          if [[ "$RESOURCE_MINUTES" -gt 0 ]]; then
+            fail "Required native process-resource evidence could not be collected."
+          else
+            warn "原生资源指标不可用（不报告伪测量）"
+          fi
+        fi
         if [[ "$RESOURCE_MINUTES" -gt 0 ]]; then
           BROWSEROS_APP_SHA="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || printf 'unknown')" \
             node "$ROOT/scripts/benchmark-resource-scenarios.mjs" --pid "$OWN_PID" \
               --minutes "$RESOURCE_MINUTES" --interval-ms 1000 \
               --out "${TMPDIR:-/tmp}/browseros-installed-resource.json" || fail "Installed client sustained resource benchmark did not complete."
         fi
+      elif [[ "$RESOURCE_MINUTES" -gt 0 ]]; then
+        fail "Required resource measurement cannot proceed without Node.js."
       fi
       grep -E '\[main\] main window url=|\[FE\].*vue mounted|first-paint probe|\[M0\] m0_ready' "$LOG_FILE" | tail -n 8 | sed 's/^/       /'
       if [[ "$NATIVE_58_REVIEW" -eq 1 ]]; then

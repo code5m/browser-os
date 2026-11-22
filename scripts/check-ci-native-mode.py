@@ -12,7 +12,7 @@ import os
 import sys
 from pathlib import Path
 
-MODES = ("off", "rust-tests", "packaged-gui", "packaged-resource")
+MODES = ("off", "rust-tests", "packaged-gui", "packaged-resource", "complete")
 LABEL_MODES = {
     "ci:native-tests": "rust-tests",
     "ci:packaged-gui": "packaged-gui",
@@ -26,9 +26,13 @@ def validated(value: str, source: str) -> str:
     return value
 
 
-def select_mode(event: str, manual: str, default: str, labels_json: str) -> str:
+def select_mode(event: str, manual: str, default: str, labels_json: str, *, explicit_push: bool = False) -> str:
     if event == "workflow_dispatch":
         return validated(manual or "off", "manual input")
+    if event == "push" and manual:
+        if not explicit_push or manual != "complete":
+            raise ValueError("push native input requires the explicit complete-acceptance marker")
+        return validated(manual, "explicit push acceptance")
     fallback = validated(default or "off", "CI_NATIVE_MODE repository variable")
     if event != "pull_request":
         return fallback
@@ -54,12 +58,16 @@ def self_test() -> None:
     assert select_mode("pull_request", "", "rust-tests", '["ci:packaged-resource"]') == "packaged-resource"
     assert select_mode("workflow_dispatch", "packaged-resource", "rust-tests", '["ci:native-tests"]') == "packaged-resource"
     assert select_mode("workflow_dispatch", "", "", "[]") == "off"
+    assert select_mode("workflow_dispatch", "complete", "", "[]") == "complete"
+    assert select_mode("push", "complete", "", "[]", explicit_push=True) == "complete"
     for event, manual, default, labels in (
         ("pull_request", "", "", '["ci:native-tests","ci:packaged-gui"]'),
         ("pull_request", "", "", '{"not":"list"}'),
         ("pull_request", "", "", '["ci:native-tests",123]'),
         ("push", "", "maybe", "[]"),
         ("workflow_dispatch", "oops", "", "[]"),
+        ("push", "complete", "", "[]"),
+        ("push", "rust-tests", "", "[]"),
     ):
         try:
             select_mode(event, manual, default, labels)
@@ -83,6 +91,7 @@ def main() -> int:
             os.environ.get("CI_NATIVE_MODE_INPUT", ""),
             os.environ.get("CI_NATIVE_MODE_DEFAULT", ""),
             os.environ.get("CI_PR_LABELS", "[]"),
+            explicit_push=os.environ.get("CI_NATIVE_MODE_EXPLICIT_PUSH", "").lower() == "true",
         )
     except ValueError as exc:
         print(f"NATIVE_CI_MODE=ERROR: {exc}", file=sys.stderr)
