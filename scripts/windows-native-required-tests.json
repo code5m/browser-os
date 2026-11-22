@@ -793,6 +793,21 @@
       "role": "required"
     },
     {
+      "id": "windows-synthetic-keyring",
+      "package": "mvp-browser-os",
+      "filter": "bridge::credential_commands::browser_credential_tests::fictional_keyring_",
+      "required_count": 2,
+      "required_names": [
+        "bridge::credential_commands::browser_credential_tests::fictional_keyring_roundtrip_cleans_up",
+        "bridge::credential_commands::browser_credential_tests::fictional_keyring_chinese_username_roundtrip"
+      ],
+      "allow_additional_tests": false,
+      "allow_ignored": false,
+      "run_ignored_only": true,
+      "timeout_seconds": 120,
+      "role": "required"
+    },
+    {
       "id": "windows-full-suite",
       "package": "mvp-browser-os",
       "filter": "",

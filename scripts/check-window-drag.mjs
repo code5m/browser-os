@@ -8,6 +8,7 @@ import { runInNewContext } from "node:vm";
 import { parse, compileScript } from "@vue/compiler-sfc";
 import { baseParse } from "@vue/compiler-dom";
 import { transformSync } from "esbuild";
+import * as documentPaths from "../src/application/documentPaths.mjs";
 
 const root = new URL("../", import.meta.url);
 const read = (path) => readFileSync(new URL(path, root), "utf8");
@@ -50,8 +51,16 @@ runInNewContext(code, {
     if (id === "vue") return require("vue");
     if (id === "@lucide/vue") return { Globe: {}, Plus: {}, X: {} };
     if (id === "../../bridge") return { bridge: {} };
-    // New read-only tab projection is unrelated to window dragging.
-    if (id === "../../application/tabResourceProjection.mjs") return { projectTabResources: () => [] };
+    // Tab actions are unrelated to dragging; keep this boundary explicit.
+    if (id === "../../composables/useUnifiedTabs") return {
+      useUnifiedTabs: () => ({
+        projectedTabs: [],
+        activate() { throw new Error("Unexpected tab activation in drag fixture"); },
+        close() { throw new Error("Unexpected tab close in drag fixture"); },
+        closeOthers() { throw new Error("Unexpected tab close in drag fixture"); },
+      }),
+    };
+    if (id === "../../application/documentPaths.mjs") return documentPaths;
     if (id === "@tauri-apps/api/window") return {
       getCurrentWindow: () => ({
         toggleMaximize: async () => { maximizes++; },

@@ -611,7 +611,33 @@ assert.match(platformSecurity, /HARDLINK_DENIED/);
 assert.match(platformSecurity, /TREE_CHANGED_DURING_OPEN/);
 assert.match(platformSecurity, /FileIdentity/);
 assert.match(platformSecurity, /MAXIMUM_ALLOWED/);
-assert.match(platformSecurity, /ReOpenFile/);
+// Reacquire only the needed creation right through the pinned native parent.
+// ReOpenFile is not the directory-handle contract used by our NtCreateFile walk.
+const parentCreate = sourceRegion(platformSecurity, "fn reopen_directory(", "\n}\n\nfn open_path(");
+const assertPinnedParentCreate = (source) => {
+  assert.match(source, /if !private_object\(original\)\?/);
+  assert.match(source, /let parent = &self\.chain\[self\.chain\.len\(\) - 2\]/);
+  assert.match(source, /let name = path\s*\.file_name\(\)/);
+  assert.match(source, /open_relative\(\s*parent,\s*name,\s*access\s*\|\s*FILE_READ_ATTRIBUTES,\s*true,\s*false,\s*ptr::null_mut\(\),\s*true,\s*\)/);
+  assert.match(source, /\.share_mode\(share_mode\(true\)\)/);
+  assert.match(source, /!private_object\(&reopened\)\?\s*\|\|\s*file_identity\(original\)\?\s*!=\s*file_identity\(&reopened\)\?/);
+  assert.doesNotMatch(source, /\b(?:ReOpenFile|SetSecurityInfo|MAXIMUM_ALLOWED)\b/);
+};
+assertPinnedParentCreate(parentCreate);
+for (const [from, to] of [
+  [/file_identity\(original\)\?\s*!=/, 'file_identity(original)? =='],
+  [/access\s*\|\s*FILE_READ_ATTRIBUTES,/, 'MAXIMUM_ALLOWED,'],
+  ['share_mode(true)', 'share_mode(false)'],
+  ['let parent = &self.chain[self.chain.len() - 2]', 'let parent = original'],
+]) {
+  const unsafeParentCreate = parentCreate.replace(from, to);
+  assert.notEqual(unsafeParentCreate, parentCreate, 'parent creation negative fixture must mutate source');
+  assert.throws(() => assertPinnedParentCreate(unsafeParentCreate));
+}
+assert.match(platformSecurity, /result\s*\.reopen_directory\(\s*FILE_ADD_SUBDIRECTORY\s*,?\s*\)/);
+assert.match(packageAcl, /self\.opened\s*\.reopen_directory\(\s*FILE_ADD_SUBDIRECTORY\s*,?\s*\)/);
+assert.match(packageAcl, /self\.opened\s*\.reopen_directory\(\s*2\s*\/\* FILE_ADD_FILE \*\/\s*,?\s*\)/);
+assert.match(nativeRecovery, /self\.opened\s*\.reopen_directory\(\s*2\s*\/\* FILE_ADD_FILE \*\/\s*,?\s*\)/);
 const privateRepair = sourceRegion(platformSecurity, "fn repair_object(", "#[derive(Debug)]\nstruct DirectoryEntry");
 assert.ok(privateRepair.length > 0);
 assert.match(privateRepair, /let writable = file/);

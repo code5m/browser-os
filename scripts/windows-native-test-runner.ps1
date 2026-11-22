@@ -43,6 +43,17 @@ function Get-NativeSelectionManifest {
             $selection.filter.Contains([char]10) -or $selection.filter.Contains([char]13)) {
             throw "NATIVE_TEST_MANIFEST_FILTER:$($selection.id)"
         }
+        # Opt-in ignored tests must be a closed, reviewed set. They still have
+        # to execute and pass; allowing ignored results is a separate policy.
+        $ignoredOnlyProperty = $selection.PSObject.Properties['run_ignored_only']
+        if ($null -ne $ignoredOnlyProperty) {
+            if ($ignoredOnlyProperty.Value -isnot [bool] -or
+                ($ignoredOnlyProperty.Value -and
+                    ($selection.role -ne 'required' -or $selection.allow_ignored -or
+                        $selection.allow_additional_tests -or [string]::IsNullOrWhiteSpace($selection.filter)))) {
+                throw "NATIVE_TEST_MANIFEST_IGNORED_EXECUTION_POLICY:$($selection.id)"
+            }
+        }
     }
     return $manifest
 }
@@ -199,6 +210,7 @@ function Invoke-NativeRustHarness {
     if ($selectionsForId.Count -ne 1) { throw "NATIVE_TEST_SELECTION_NOT_UNIQUE:$SelectionId" }
     $selection = $selectionsForId[0]
     $filter = [string]$selection.filter
+    $runIgnoredOnly = $selection.PSObject.Properties.Name -contains 'run_ignored_only' -and $selection.run_ignored_only
     $temporaryDirectory = if ([string]::IsNullOrWhiteSpace($env:RUNNER_TEMP)) {
         [System.IO.Path]::GetTempPath()
     } else { $env:RUNNER_TEMP }
@@ -211,6 +223,7 @@ function Invoke-NativeRustHarness {
         package = $selection.package
         filter = $filter
         role = $selection.role
+        run_ignored_only = $runIgnoredOnly
         status = 'NOT_RUN'
         reason = $null
         passed = 0
@@ -233,6 +246,7 @@ function Invoke-NativeRustHarness {
     Write-Host "::group::native selection $SelectionId"
     try {
         $enumerationArguments = @('--list', '--format', 'terse', '--color', 'never')
+        if ($runIgnoredOnly) { $enumerationArguments += '--ignored' }
         if ($filter.Length -gt 0) { $enumerationArguments = @($filter) + $enumerationArguments }
         $enumeration = Invoke-SupervisedNativeProcess -Executable $Executable -Arguments $enumerationArguments -LogPrefix "$logPrefix.list" -TimeoutSeconds 60
         $result.enumeration_supervision = $enumeration.supervision
@@ -273,6 +287,7 @@ function Invoke-NativeRustHarness {
         # --show-output still exposes successful helpers' SKIP diagnostics without
         # --nocapture interleaving those messages into 'test NAME ... ok' rows.
         $executionArguments = @('--test-threads=1', '--show-output', '--format', 'pretty', '--color', 'never')
+        if ($runIgnoredOnly) { $executionArguments += '--ignored' }
         if ($filter.Length -gt 0) { $executionArguments = @($filter) + $executionArguments }
         $execution = Invoke-SupervisedNativeProcess -Executable $Executable -Arguments $executionArguments -LogPrefix "$logPrefix.run" -TimeoutSeconds $selection.timeout_seconds
         $result.execution_supervision = $execution.supervision

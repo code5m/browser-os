@@ -444,9 +444,11 @@ mod tests {
     #[test]
     fn preexisting_kernel_object_with_unexpected_access_is_not_trusted() {
         let policy = Policy::new().unwrap();
-        let mut descriptor = policy.descriptor(false).unwrap();
-        // A file-access mask, even with the right principals, is not the
-        // exact event policy. CreateEvent alone cannot validate this.
+        // Unsupported file-specific bits can be normalized away when Windows
+        // creates an event. Remove a valid event right instead, so the native
+        // object really has an incomplete policy (no EVENT_MODIFY_STATE).
+        let incomplete_access = EVENT_ACCESS & !0x0002;
+        let mut descriptor = kernel_descriptor(&policy, incomplete_access).unwrap();
         let attributes = SECURITY_ATTRIBUTES {
             nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
             lpSecurityDescriptor: descriptor.as_ptr(),
@@ -454,6 +456,9 @@ mod tests {
         };
         let event = NativeHandle(unsafe { CreateEventW(&attributes, 1, 1, ptr::null()) });
         assert!(!event.0.is_null());
-        assert!(audit_kernel_object(event.0, &policy, EVENT_ACCESS).is_err());
+        audit_kernel_object(event.0, &policy, incomplete_access)
+            .expect("the native event must retain the deliberately incomplete ACL");
+        let error = audit_kernel_object(event.0, &policy, EVENT_ACCESS).unwrap_err();
+        assert!(error.to_string().contains("EPOCH_UNEXPECTED_ACE_ACCESS"));
     }
 }

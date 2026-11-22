@@ -450,37 +450,31 @@ def detect_hits(files: dict) -> dict[str, list[str]]:
             elif "false" not in body or re.search(r"\btrue\b", body):
                 hit("SCHED_ENABLED_DEFAULT_TRUE", "default_task_enabled 未返回 false")
 
-    # ---- ACTIVE 10) 依赖形态：tokio 不得升为直接依赖（A2 M4-1.a §3 F-1 裁定 (b)）----
-    # 只扫 `Cargo.toml`（**直接依赖**）：`Cargo.lock` 中本来就有 tokio（tauri 传递依赖），
-    # 扫 lock 会得到恒真告警 —— A2 已明确「同步栈」的正确表述是「应用层不使用 async、
-    # 不自建 runtime、不新增 tokio 直接依赖」，而**不是**「依赖树里没有 tokio」。
-    if cargo.strip():
-        if TOKIO_DIRECT_RE.search(cargo):
-            hit(
-                "SCHED_TOKIO_PROMOTED",
-                "Cargo.toml 把 tokio 提升为直接依赖（F-1 裁定 (b)：应用层 std::thread + Condvar）",
-            )
-        if CRON_CRATE_RE.search(cargo):
-            hit(
-                "SCHED_TOKIO_CRON_DEP",
-                "Cargo.toml 引入 cron/tokio-cron-scheduler（契约 §4.4：5 段方言自研，零新依赖）",
-            )
+    # ---- ACTIVE 10) The scheduler remains std::thread + Condvar owned ----
+    # Other capabilities legitimately depend on tokio. A package dependency is
+    # not evidence of a second scheduler runtime; inspect this owner's code.
+    command_code = "\n".join(rust_fn_body(bridge, name) for name in TASK_COMMANDS)
+    for label, code in (("scheduler", sched_prod), ("tasks", tasks_prod),
+                        ("task commands", strip_comments(command_code))):
+        if re.search(r"\btokio(?:\s*::|\s+as\b)", code):
+            hit("SCHED_TOKIO_PROMOTED", f"{label}:调度Owner引入独立异步运行时")
+    if CRON_CRATE_RE.search(cargo):
+        hit("SCHED_TOKIO_CRON_DEP",
+            "Cargo.toml 引入 cron/tokio-cron-scheduler（5 段自研方言契约）")
 
-    # ---- ACTIVE 11/12) 退出收口（F7）：scheduler 存在即必须按序注册 ----
+    # ---- ACTIVE 11/12) Actual shutdown registrations and their dependency ----
     scheduler_exists = "mod scheduler" in main_rs or bool(sched.strip())
     if scheduler_exists:
-        if '"stop-scheduler"' not in bridge:
-            hit("SCHED_SHUTDOWN_NOT_REGISTERED", "scheduler 已存在但未注册 stop-scheduler")
-        else:
-            stop_idx = bridge.find('"stop-scheduler"')
-            kill_idx = bridge.find('"kill-running-scripts"')
-            if kill_idx < 0:
-                hit("SCHED_SHUTDOWN_ORDER", "bridge.rs 缺 kill-running-scripts 锚点")
-            elif stop_idx > kill_idx:
-                hit(
-                    "SCHED_SHUTDOWN_ORDER",
-                    "stop-scheduler 注册在 kill-running-scripts 之后（F7：须先停触发再杀运行）",
-                )
+        shutdown = rust_fn_body(strip_comments(bridge), "register_shutdown_tasks")
+        stop = re.search(r'coordinator\.register\(\s*"stop-scheduler"\s*,', shutdown)
+        kill = re.search(
+            r'coordinator\.register_with_deadline\(\s*"kill-running-scripts"\s*,'
+            r'\s*&\[\s*"stop-scheduler"\s*\]', shutdown,
+        )
+        if not stop or "crate::scheduler::request_stop()" not in shutdown:
+            hit("SCHED_SHUTDOWN_NOT_REGISTERED", "退出Owner未登记真实scheduler停止")
+        if not kill or (stop and stop.start() > kill.start()):
+            hit("SCHED_SHUTDOWN_ORDER", "脚本回收必须显式依赖先登记的stop-scheduler")
 
     # ---- ACTIVE 13) A10 R-1：每次执行的 start/finish 不得进 audit.json ----
     # 明细归 task-runs.json（见 scheduler.rs reap_finished append_task_run）。
@@ -781,8 +775,8 @@ pub fn task_run_now(app: AppHandle, webview: tauri::Webview, id: String) -> Resu
 pub fn register_shutdown_tasks(app: &AppHandle) -> Result<(), String> {
     let coordinator = app.state::<crate::shutdown::ShutdownCoordinator>();
     coordinator.register("stop-background-workers", move || Ok(()))?;
-    coordinator.register("stop-scheduler", move || Ok(()))?;
-    coordinator.register("kill-running-scripts", move || Ok(()))?;
+    coordinator.register("stop-scheduler", move || { crate::scheduler::request_stop(); Ok(()) })?;
+    coordinator.register_with_deadline("kill-running-scripts", &["stop-scheduler"], move |_deadline| Ok(()))?;
     Ok(())
 }
 '''
@@ -972,9 +966,9 @@ def build_real_mutations(repo: dict) -> list[tuple[str, dict, str]]:
 
     # ---- 依赖形态 ----
     add(
-        "Cargo.toml 把 tokio 提升为直接依赖",
-        "cargo_toml",
-        lambda s: s + '\ntokio = { version = "1", features = ["full"] }\n',
+        "scheduler 引入独立 tokio runtime",
+        "scheduler_rs",
+        lambda s: s + '\nuse tokio::runtime::Runtime;\n',
         "SCHED_TOKIO_PROMOTED",
     )
     add(
@@ -994,12 +988,8 @@ def build_real_mutations(repo: dict) -> list[tuple[str, dict, str]]:
 
     def _move_stop_after_kill(s: str) -> str:
         moved = s.replace('coordinator.register("stop-scheduler"', 'coordinator.register("stop-moved"', 1)
-        return moved.replace(
-            'coordinator.register("kill-running-scripts"',
-            'coordinator.register("kill-running-scripts", move || {});\n'
-            '        coordinator.register("stop-scheduler"',
-            1,
-        )
+        return inject_into_fn(moved, "register_shutdown_tasks",
+                              '    coordinator.register("stop-scheduler", move || { crate::scheduler::request_stop(); Ok(()) })?;')
 
     add(
         "stop-scheduler 排到 kill-running-scripts 之后",
@@ -1058,6 +1048,24 @@ def build_real_mutations(repo: dict) -> list[tuple[str, dict, str]]:
         "SCHED_OCCUPIED_NOT_SKIPPED",
     )
 
+    add(
+        "脚本回收删除scheduler依赖",
+        "bridge_rs",
+        lambda s: s.replace('&["stop-scheduler"]', '&["stop-background-workers"]', 1),
+        "SCHED_SHUTDOWN_ORDER",
+    )
+    add(
+        "停止注册保留但不再通知scheduler",
+        "bridge_rs",
+        lambda s: s.replace("crate::scheduler::request_stop();", "", 1),
+        "SCHED_SHUTDOWN_NOT_REGISTERED",
+    )
+    add(
+        "调度Owner通过别名引入tokio",
+        "tasks_rs",
+        lambda s: s + "\nuse tokio as hidden_runtime;\n",
+        "SCHED_TOKIO_PROMOTED",
+    )
     return samples
 
 
@@ -1076,6 +1084,12 @@ def run_self_test(root: Path) -> int:
     real = detect_hits(read_repo(root))
     if real:
         failures.append(f"真实仓库存在违规（应为空）：{sorted(real)}")
+
+    # A dependency belonging to another capability must not create a false hit.
+    foreign_runtime = dict(read_repo(root))
+    foreign_runtime["cargo_toml"] += '\n# unrelated capability\ntokio = "1"\n'
+    if "SCHED_TOKIO_PROMOTED" in detect_hits(foreign_runtime):
+        failures.append("其他Owner的tokio依赖被误报为scheduler runtime")
 
     # 2) 好样本 B：合成参考实现（产物齐备 → 仍必须零违规，证明无误报）
     good = reference_impl()
@@ -1178,9 +1192,9 @@ def run_self_test(root: Path) -> int:
     # ---- ACTIVE 坏样本（Batch Implementation Dispatch 追加 3 项）----
 
     add(
-        "tokio 升为直接依赖（违反 F-1 裁定 (b)）",
-        mutate(cargo_toml=good["cargo_toml"] + '\ntokio = { version = "1", features = ["full"] }\n'),
-        "cargo_toml",
+        "调度Owner引入独立tokio runtime",
+        mutate(scheduler_rs=good["scheduler_rs"] + '\nuse tokio::runtime::Runtime;\n'),
+        "scheduler_rs",
         "SCHED_TOKIO_PROMOTED",
     )
 
@@ -1226,7 +1240,7 @@ def run_self_test(root: Path) -> int:
     add(
         "scheduler 已存在但未注册 stop-scheduler",
         mutate(bridge_rs=good["bridge_rs"].replace(
-            '    coordinator.register("stop-scheduler", move || Ok(()))?;\n', "")),
+            '    coordinator.register("stop-scheduler", move || { crate::scheduler::request_stop(); Ok(()) })?;\n', "")),
         "bridge_rs",
         "SCHED_SHUTDOWN_NOT_REGISTERED",
     )
@@ -1234,10 +1248,10 @@ def run_self_test(root: Path) -> int:
     add(
         "stop-scheduler 排在 kill-running-scripts 之后",
         mutate(bridge_rs=good["bridge_rs"].replace(
-            '    coordinator.register("stop-scheduler", move || Ok(()))?;\n'
-            '    coordinator.register("kill-running-scripts", move || Ok(()))?;',
-            '    coordinator.register("kill-running-scripts", move || Ok(()))?;\n'
-            '    coordinator.register("stop-scheduler", move || Ok(()))?;')),
+            '    coordinator.register("stop-scheduler", move || { crate::scheduler::request_stop(); Ok(()) })?;\n'
+            '    coordinator.register_with_deadline("kill-running-scripts", &["stop-scheduler"], move |_deadline| Ok(()))?;',
+            '    coordinator.register_with_deadline("kill-running-scripts", &["stop-scheduler"], move |_deadline| Ok(()))?;\n'
+            '    coordinator.register("stop-scheduler", move || { crate::scheduler::request_stop(); Ok(()) })?;')),
         "bridge_rs",
         "SCHED_SHUTDOWN_ORDER",
     )

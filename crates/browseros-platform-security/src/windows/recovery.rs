@@ -496,21 +496,7 @@ impl PrivateRecordStore {
         }
         let policy = Policy::new()?;
         let mut descriptor = policy.descriptor(false)?;
-        let raw = unsafe {
-            ReOpenFile(
-                self.opened.target().as_raw_handle() as _,
-                2 | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
-                share_mode(true),
-                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
-            )
-        };
-        if raw == INVALID_HANDLE_VALUE || raw.is_null() {
-            return Err(last_failure("RECOVERY_RECORD_PARENT"));
-        }
-        let parent = unsafe { File::from_raw_handle(raw) };
-        if file_identity(&parent)? != file_identity(self.opened.target())? {
-            return Err(failure("RECOVERY_RECORD_PARENT_CHANGED", 0));
-        }
+        let parent = self.opened.reopen_directory(2 /* FILE_ADD_FILE */)?;
         let file = open_relative_with_share(
             &parent,
             name,

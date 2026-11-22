@@ -449,7 +449,7 @@ impl AppContainerDirectory {
         ) {
             Ok(child) => child,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                let parent = reopen_directory_for_creation(self.opened.target())?;
+                let parent = self.opened.reopen_directory(FILE_ADD_SUBDIRECTORY)?;
                 open_relative(
                     &parent,
                     name,
@@ -525,21 +525,7 @@ impl AppContainerDirectory {
     ) -> io::Result<File> {
         budget.check()?;
         let mut descriptor = policy.descriptor(false)?;
-        let raw = unsafe {
-            ReOpenFile(
-                self.opened.target().as_raw_handle() as _,
-                2 | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
-                share_mode(true),
-                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
-            )
-        };
-        if raw == INVALID_HANDLE_VALUE || raw.is_null() {
-            return Err(last_failure("PACKAGE_FILE_PARENT_OPEN"));
-        }
-        let parent = unsafe { File::from_raw_handle(raw) };
-        if file_identity(&parent)? != self.identity()? {
-            return Err(failure("PACKAGE_FILE_PARENT_CHANGED", 0));
-        }
+        let parent = self.opened.reopen_directory(2 /* FILE_ADD_FILE */)?;
         let file = open_relative(
             &parent,
             name,

@@ -1,4 +1,4 @@
-# M0-2 资源所有权表（V1.2）
+# M0-2 资源所有权表（V1.4）
 
 > 冻结时间：2026-08-30 ｜ 起始提交：`5872bc5` ｜ 契约：`logs/m0-baseline-contract-v1.md`
 > 范围：盘点**现状所有权与缺口**；核心实现属 M0-2.b，调用方迁移属 M0-2.c。
@@ -14,7 +14,9 @@
 >
 > **V1.2（M0-2.c）**：主窗口关闭与 `RunEvent::ExitRequested` 已迁移到 `ShutdownCoordinator`；
 > 已注册 stop-background-workers、close-tabs、kill-terminals、shutdown-grid 四类真实清理任务；
-> tab 关闭失败后仍清理元数据，PTY kill 后 wait，grid 创建失败回滚已创建子进程。
+> 当时的批量退出路径在 tab 关闭失败后继续清理并汇总错误，PTY kill 后 wait，grid 创建失败回滚已创建子进程。
+>
+> **V1.4（2026-11-22）**：区分可恢复的普通关闭与最终退出。普通 `close_tab` 只有原生关闭成功后才删除 Owner 元数据/草稿，失败保留记录供重试；最终 `close-tabs` task 继续尝试全部子 WebView 并汇总错误。静态扫描必须跟随物理 bridge Owner 与 async 的实际阻塞委派，不能因函数迁出 facade 而停止检查。
 > `scripts/check-lifecycle-contract.py` 默认模式现为 `EXIT=0`，机器可检缺口 **6 → 0**。
 
 ## 1. 所有权总表
@@ -22,8 +24,8 @@
 | # | 资源 | 创建点 | 当前所有者 | 正常清理路径 | 窗口关闭覆盖 | 系统退出覆盖 | 单资源失败降级 | 现状 GAP |
 |---|------|--------|-----------|-------------|-------------|-------------|---------------|---------|
 | R1 | 主窗口 / `AppHandle` | `main.rs` `tauri::Builder` | Tauri 运行时 | Tauri 自动销毁 | ✅ 走 `ShutdownCoordinator` | ✅ `RunEvent::ExitRequested` | — | 已关闭 |
-| R2 | tab 子 webview | `bridge.rs::tab_new`（插件 `TabManagerState`） | 插件 `TabManagerState` | `close_tab` / `close-tabs` task → `manager.close_tab()` | ✅ | ✅ | ✅ 失败仍继续元数据清理并汇总错误 | 已关闭 |
-| R3 | tab 元数据（`child_layouts`/`last_position_at`/`tab_idle_since`/`hibernated_tabs`/`tabs`/`active_tab`） | `AppState` 六个 `Mutex` | `AppState` | `close_tab` 与 `close-tabs` task 清理 | ✅ | ✅ | ✅ webview 关闭失败不阻断元数据清理 | 已关闭 |
+| R2 | tab 子 webview | Browser 创建入口与插件 `TabManagerState` | 插件 `TabManagerState` | 普通 `close_tab` 成功后提交清理；最终 `close-tabs` task 遍历真实插件 id | ✅ | ✅ | ✅ 普通失败保留 Owner 供重试；退出批量继续并汇总 | 已关闭 |
+| R3 | tab 元数据与会话草稿 | `AppState` 对应 Owner 集合 | `AppState` | 普通关闭仅在原生成功后删除；最终退出由统一 task 清理 | ✅ | ✅ | ✅ 普通失败不得先删元数据或草稿，避免失去仍存活 WebView 的跟踪 | 已关闭 |
 | R4 | grid 子进程 | `grid_manager.get_or_spawn()` | `GridManager.children` | `shutdown-grid` task → `shutdown_all()`：`kill()`+`wait()` | ✅ | ✅ | ✅ `shutdown_all` 继续处理全部 child | 已关闭 |
 | R5 | grid 部分创建残留 | `create_grid` 循环内 `get_or_spawn(i)` / `request(...)` | `GridManager.children` | 失败时反向 `kill_child` 回滚已创建子进程 | ✅ | ✅ | ✅ | 已关闭 |
 | R6 | grid 子 webview | 子进程内 `GridCmd::CreateTab` | 子进程 | `shutdown-grid` task → 进程销毁 | ✅ | ✅ | — | 已关闭 |
@@ -46,7 +48,7 @@
 | ~~`WINDOW_CLOSE_BYPASSES_UNIFIED_CORE`~~ | ~~窗口关闭直调 `grid_manager.shutdown_all()`~~ | ~~tab/PTY/线程不收；核心之外旁路~~ | ✅ **M0-2.c 已关闭** |
 | ~~`SYSTEM_EXIT_HOOK_MISSING`~~ | ~~主进程无 `RunEvent::ExitRequested` 闭包~~ | ~~系统退出不触发清理~~ | ✅ **M0-2.c 已关闭** |
 | ~~`GRID_PARTIAL_CREATE_ROLLBACK_MISSING`~~ | ~~`create_grid` 中 `get_or_spawn` / `request` 失败无回滚~~ | ~~部分子进程残留~~ | ✅ **M0-2.c 已关闭** |
-| ~~`TAB_CLOSE_FAILURE_SHORT_CIRCUITS_CLEANUP`~~ | ~~`close_tab` 的 `?` 短路早于元数据清理~~ | ~~webview 关闭失败导致元数据残留~~ | ✅ **M0-2.c 已关闭** |
+| ~~`TAB_CLOSE_FAILURE_SHORT_CIRCUITS_CLEANUP`~~ | 最终 `close-tabs` task 的错误提前返回 | 后续 WebView 未尝试关闭、批量清理中断 | ✅ V1.4 明确约束退出批次；普通关闭必须先传播原生失败以保留 Owner |
 | ~~`TERMINAL_KILL_NOT_WAITED`~~ | ~~`term_kill` kill 后不 wait~~ | ~~PTY 子进程可能僵尸~~ | ✅ **M0-2.c 已关闭** |
 | ~~`BACKGROUND_WORKERS_NOT_CANCELLABLE`~~ | ~~三个 `thread::spawn(move || loop)` 无取消信号~~ | ~~后台线程退出期继续触碰 AppState~~ | ✅ **M0-2.c 已关闭** |
 
@@ -77,3 +79,9 @@
 
 > 说明：静态夹具只能证源码形态，行为语义（重复退出只执行一次、失败不重试、panic 隔离）由 Rust 测试保证。
 > 二者互补，缺一不可——M0-2.b 曾出现「形态合规但语义错误」的 bug，只有行为测试能抓到。
+
+## 6. V1.4 回归边界
+
+`check-lifecycle-contract.py` 的当前 `EXPECTED_GAPS` 仍为空。它分别检查普通关闭的成功提交屏障与最终退出的错误汇总，不能把普通关闭失败后的状态保留当作应删除的残留。新增的反例包括忽略普通关闭错误、删除关闭 Owner/退出 task、任意单个后台线程缺取消信号，以及迁入 `grid_runtime.rs` 后阻塞实现重新出现无回滚的创建。
+
+扫描读取 `bridge.rs` 及 `grid_runtime`、`terminal_commands`、`browser_commands`、`resource_commands`、`tab_runtime` 五个实际 Owner；`create_grid`/`term_kill` 仅在 wrapper 真正调用时追踪 `_blocking`/`_sync`，缺失文件或实现不能被视为无缺陷。正例保留现有取消/失败重试/元数据提交时序。静态夹具是形态约束，原生进程回收、WebView 关闭和重入行为仍由相应 Rust 与安装版测试证明。

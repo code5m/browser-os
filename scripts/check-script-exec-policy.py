@@ -18,7 +18,7 @@
   --expect-pending 验证 PENDING 码位集合；M2-4.d 后应为空 → EXIT 0
   --self-test     好坏样本双向自检（含**变异防呆**：坏样本必须真的改动内容）
 
-关于「一次性定义码位」：沿用 M0-3.a 模式，23 个码位一次定义，
+关于「一次性定义码位」：沿用 M0-3.a 模式，24 个码位一次定义，
 默认门禁判定已落地的 b/c/d/e 卡职责。M2-4.d 后 pending 码位为空：
 `EXEC_SHUTDOWN_NOT_REGISTERED` / `EXEC_RUN_RECORD_MISSING` / `EXEC_NO_RING_CAP` /
 `EXEC_NO_OUTPUT_CAP` 已转入默认判定；M2-4.e 追加 shell spawn 开放面移除检查。
@@ -53,6 +53,7 @@ P0_CODES = ("EXEC_SH_C_PRESENT", "EXEC_STRING_INTERPOLATION")
 B_CARD_CODES = (
     "EXEC_NO_SETSID",
     "EXEC_NO_KILLPG",
+    "EXEC_WINDOWS_JOB_MISSING",
     "EXEC_TIMEOUT_NOT_LAYERED",
     "EXEC_NO_WAIT_REAP",
     "EXEC_ARG_QUOTED",
@@ -152,6 +153,60 @@ def rust_fn_body(source: str, name: str) -> str:
     return source[body_start:]
 
 
+def cfg_fn_body(source: str, name: str, predicate: str) -> str:
+    """Select the actual platform implementation, independent of source order."""
+    declaration = re.search(
+        r"#\[cfg\(" + re.escape(predicate) + r"\)\]\s*"
+        r"(?:pub\s+)?fn\s+" + re.escape(name) + r"\s*\(", source,
+    )
+    return rust_fn_body(source[declaration.start():], name) if declaration else ""
+
+
+def braced_after(source: str, pattern: str) -> tuple[str, int, int] | None:
+    """Return one named control-flow block and its offsets for source fixtures."""
+    match = re.search(pattern, source, re.S)
+    if not match:
+        return None
+    start = match.end() - 1
+    if source[start] != "{":
+        return None
+    depth = 1
+    for index in range(start + 1, len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start + 1:index], start + 1, index
+    return None
+
+
+WINDOWS_SUPERVISOR_BRANCHES = (
+    r"Ok\s*\(\s*Some\s*\(\s*exit\s*\)\s*\)\s*=>\s*\{",
+    r"if\s+cancel\.load\(Ordering::SeqCst\)\s*\{",
+    r"if\s+started\.elapsed\(\)\.as_secs\(\)\s*>=\s*timeout_secs\s+as\s+u64\s*\{",
+    r"Err\(e\)\s*=>\s*\{",
+)
+
+
+def windows_supervisor_cleans_every_exit(supervisor: str) -> bool:
+    for pattern in WINDOWS_SUPERVISOR_BRANCHES:
+        block = braced_after(supervisor, pattern)
+        if not block:
+            return False
+        body = block[0]
+        cleanup = list(re.finditer(
+            r"#\[cfg\(windows\)\]\s*let\s+_\s*=\s*job\.terminate\(\)\s*;", body,
+        ))
+        join = body.find("join_output_readers(")
+        wait = body.find("child.wait()")
+        if len(cleanup) != 1 or join < 0 or cleanup[0].end() > join:
+            return False
+        if wait >= 0 and cleanup[0].end() > wait:
+            return False
+    return True
+
+
 def detect(ctx: dict[str, str]) -> set[str]:
     """返回命中的违规码集合（ACTIVE 与 PENDING 一并检测，由调用方按模式过滤）。"""
     hits: set[str] = set()
@@ -177,13 +232,65 @@ def detect(ctx: dict[str, str]) -> set[str]:
             break
 
     # --- 进程组与回收（取 cfg(unix) 版函数体，避免被 non-unix 桩误导） ---
-    spawn_body = rust_fn_body(runner, "spawn_in_new_group")
+    spawn_body = cfg_fn_body(runner, "spawn_in_new_group", "unix")
     if not ("pre_exec" in spawn_body and "setsid" in spawn_body):
         hits.add("EXEC_NO_SETSID")
 
-    kill_body = rust_fn_body(runner, "kill_group")
-    if "killpg" not in kill_body or DIRECT_CHILD_KILL_PATTERN.search(runner):
+    kill_body = cfg_fn_body(runner, "kill_group", "unix")
+    windows_spawn = cfg_fn_body(runner, "spawn_in_new_group", "windows")
+    start_body = rust_fn_body(runner, "start_argv_run")
+    callers_use_owner = all(
+        re.search(r"\bstart_argv_run\s*\(", rust_fn_body(runner, name))
+        and ".spawn(" not in rust_fn_body(runner, name)
+        for name in ("start_run", "start_command")
+    )
+    spawn = re.search(
+        r"let\s+mut\s+child\s*=\s*match\s+spawn_in_new_group\s*\(\s*&mut\s+cmd\s*\)",
+        start_body,
+    )
+    attach = re.search(
+        r"#\[cfg\(windows\)\]\s*let job = match "
+        r"crate::windows_process::JobObject::attach_suspended_pid\(child\.id\(\)\)"
+        r"\s*\{.*?^    \};", start_body, re.S | re.M,
+    )
+    suspended_spawn = (
+        "cmd.creation_flags(crate::windows_process::CREATE_SUSPENDED)" in windows_spawn
+        and "cmd.spawn()" in windows_spawn
+        and windows_spawn.find("CREATE_SUSPENDED") < windows_spawn.find("cmd.spawn()")
+    )
+    owner_spawn = bool(callers_use_owner and spawn and attach and spawn.end() < attach.start())
+    handoff = re.search(
+        r"\bsupervise\s*\(\s*child\s*,\s*Some\(pgid\)\s*,"
+        r"\s*#\[cfg\(windows\)\]\s*job\s*,", start_body,
+    )
+
+    # The only direct-child cleanup exception is the exact attach-failure arm
+    # for a child that never resumed. Exclude just that kill statement, never
+    # the whole match: a rogue kill in Ok(job) must remain visible.
+    direct_kills = runner
+    cleanup = None
+    if attach and suspended_spawn and owner_spawn:
+        cleanup = re.search(
+            r"Err\(error\)\s*=>\s*\{\s*"
+            r"(?P<kill>let\s+_\s*=\s*child\.kill\(\)\s*;)\s*"
+            r"let\s+_\s*=\s*child\.wait\(\)\s*;\s*"
+            r"table\.lock_runs\(\)\.remove\(&run_id\)\s*;\s*"
+            r"return\s+Err\(RunError::SpawnFailed\(format!\(\s*"
+            r'"WINDOWS_SCRIPT_JOB_FAILED: \{error\}"\s*,?\s*\)\)\)\s*;\s*\}',
+            attach.group(0),
+        )
+        if cleanup and runner.count(start_body) == 1:
+            offset = runner.index(start_body) + attach.start()
+            first = offset + cleanup.start("kill")
+            last = offset + cleanup.end("kill")
+            direct_kills = runner[:first] + runner[last:]
+    if "killpg" not in kill_body or DIRECT_CHILD_KILL_PATTERN.search(direct_kills):
         hits.add("EXEC_NO_KILLPG")
+    supervisor = rust_fn_body(runner, "supervise")
+    if (not owner_spawn or not suspended_spawn or not cleanup or not handoff
+            or "#[cfg(windows)] job: crate::windows_process::JobObject" not in runner
+            or not windows_supervisor_cleans_every_exit(supervisor)):
+        hits.add("EXEC_WINDOWS_JOB_MISSING")
 
     # 必须存在 soft/hard 分层的**常量定义**：M5-1 切片 0b 后常量可收口到
     # `domain.rs`（pub const）或保留在 `script_runner.rs`（pub const / pub use re-export）。
@@ -205,7 +312,9 @@ def detect(ctx: dict[str, str]) -> set[str]:
     if ARG_QUOTED_PATTERN.search(runner):
         hits.add("EXEC_ARG_QUOTED")
 
-    if "#[cfg(not(unix))]" not in runner:
+    unsupported = cfg_fn_body(runner, "spawn_in_new_group", "all(not(unix), not(windows))")
+    if ("std::io::ErrorKind::Unsupported" not in unsupported
+            or '"UNSUPPORTED_PLATFORM"' not in unsupported or ".spawn(" in unsupported):
         hits.add("EXEC_PLATFORM_STUB_MISSING")
 
     # --- env / cwd / 解释器白名单 ---
@@ -228,7 +337,8 @@ def detect(ctx: dict[str, str]) -> set[str]:
             hits.add("EXEC_NO_SOURCE_CHECK")
             break
     shutdown_body = rust_fn_body(bridge, "register_shutdown_tasks")
-    if 'coordinator.register("kill-running-scripts"' not in shutdown_body or "kill_all_running" not in shutdown_body:
+    if (not re.search(r'coordinator\.register_with_deadline\(\s*"kill-running-scripts",\s*&\[\s*"stop-scheduler"\s*\]', shutdown_body)
+            or "crate::script_runner::kill_all_running(" not in shutdown_body):
         hits.add("EXEC_SHUTDOWN_NOT_REGISTERED")
     if not re.search(r"pub\s+struct\s+ScriptRunRecord\b", runner):
         hits.add("EXEC_RUN_RECORD_MISSING")
@@ -276,7 +386,7 @@ def strip_tests(source: str) -> str:
     # 只匹配「测试模块」`#[cfg(test)] mod ...`：**不能**用 `find("#[cfg(test)]")`，
     # 因为单个函数也可能带该属性（如本文件的 `process_group_id_of`），
     # 那样会把其后的生产代码一并切掉。
-    match = re.search(r"#\[cfg\(test\)\]\s*\n\s*mod\s", source)
+    match = re.search(r"#\[cfg\((?:test|all\(test\s*,[^\n]+\))\)\]\s*\n\s*mod\s", source)
     index = match.start() if match else -1
     return source if index < 0 else source[:index]
 
@@ -315,11 +425,19 @@ MUTATIONS: tuple[tuple[str, str, str, int], ...] = (
     ("EXEC_STRING_INTERPOLATION", "Command::new(program)", 'Command::new(format!("{}", program))', 1),
     ("EXEC_NO_SETSID", "            libc::setsid();", "            // removed", 1),
     ("EXEC_NO_KILLPG", "        libc::killpg(pgid, sig);", "        let _ = sig;", 1),
+    ("EXEC_WINDOWS_JOB_MISSING", "cmd.creation_flags(crate::windows_process::CREATE_SUSPENDED);", "cmd.creation_flags(0);", 1),
+    ("EXEC_WINDOWS_JOB_MISSING", "JobObject::attach_suspended_pid(child.id())", "JobObject::adopt_running_pid(child.id())", 1),
+    ("EXEC_WINDOWS_JOB_MISSING", "let _ = job.terminate();", "let _ = job;", 1),
+    ("EXEC_WINDOWS_JOB_MISSING", "let mut child = match spawn_in_new_group(&mut cmd)", "let mut child = match cmd.spawn()", 1),
+    ("EXEC_WINDOWS_JOB_MISSING", "    start_argv_run(\n", "    unowned_argv_run(\n", 1),
+    ("EXEC_NO_KILLPG", "        Ok(job) => job,", "        Ok(job) => { child.kill(); job },", 1),
+    ("EXEC_NO_KILLPG", "            let _ = child.wait();\n            table.lock_runs().remove(&run_id);", "            table.lock_runs().remove(&run_id);", 1),
+    ("EXEC_NO_KILLPG", "        libc::killpg(pgid, sig);", "        child.kill();", 1),
     ("EXEC_NO_WAIT_REAP", "        match child.try_wait() {", "        match child.id() {", 1),
     ("EXEC_ARG_QUOTED", "argv.push(value.to_string());", 'argv.push(format!("\'{}\'", value));', 1),
-    ("EXEC_PLATFORM_STUB_MISSING", "#[cfg(not(unix))]", "#[cfg(unix)]", -1),
-    ("EXEC_ENV_NOT_CLEARED", "        .env_clear()", "        // cleared", 1),
-    ("EXEC_CWD_NOT_LOCKED", "        .current_dir(&cwd)", "        // cwd", 1),
+    ("EXEC_PLATFORM_STUB_MISSING", "#[cfg(all(not(unix), not(windows)))]", "#[cfg(unix)]", 1),
+    ("EXEC_ENV_NOT_CLEARED", ".env_clear()", "", 1),
+    ("EXEC_CWD_NOT_LOCKED", ".current_dir(&cwd)", "", 1),
     ("EXEC_INTERPRETER_NOT_WHITELISTED", "    if let Some(bin) = interpreter.binary() {", '    if let Some(bin) = Some("bash") {', 1),
 )
 
@@ -329,7 +447,7 @@ BRIDGE_MUTATIONS: tuple[tuple[str, str, str, int], ...] = (
     ("EXEC_NO_SOURCE_CHECK", '    check_invocation_source(&webview, "run_script", None, &app)?;', '', 1),
     ("EXEC_VALIDATION_BYPASSED", "    crate::scripts::validate_meta(&script).map_err(|e| e.to_string())?;", "", 1),
     ("EXEC_AUDIT_LEAKS_VALUE", '"script.run.start",', '"script.run.start values",', 1),
-    ("EXEC_SHUTDOWN_NOT_REGISTERED", 'coordinator.register("kill-running-scripts"', 'coordinator.register("kill-scripts-missing"', 1),
+    ("EXEC_SHUTDOWN_NOT_REGISTERED", '"kill-running-scripts",', '"kill-scripts-missing",', 1),
 )
 
 D_MUTATIONS: tuple[tuple[str, str, str, int], ...] = (
@@ -429,6 +547,40 @@ def self_test() -> int:
         hits = detect(mutated)
         if code not in hits:
             failures.append(f"[{code}] 坏样本未被检出（实际命中：{sorted(hits & set(ACTIVE_CODES))}）")
+
+    # Platform-specific test modules must not masquerade as production, while
+    # a cfg(test) helper before real production functions must not truncate them.
+    test_suffix = '\n#[cfg(all(test, windows))]\nmod fixture { fn bad() { child.kill(); } }\n'
+    if strip_tests("fn production() {}\n" + test_suffix) != "fn production() {}\n\n":
+        failures.append("platform test module was not excluded")
+    helper = '#[cfg(test)]\nfn helper() {}\nfn production() { child.kill(); }\n'
+    if "child.kill()" not in strip_tests(helper):
+        failures.append("test helper hid subsequent production code")
+    direct_kill = dict(ctx)
+    direct_kill["runner"] += "\nfn rogue() { child.kill(); }\n"
+    if "EXEC_NO_KILLPG" not in detect(direct_kill):
+        failures.append("direct child kill outside suspended attach failure was accepted")
+
+    # Preserve four termination calls while moving the cancel cleanup into
+    # the success branch. A global count would pass this broken lifecycle.
+    supervisor = rust_fn_body(ctx["runner"], "supervise")
+    cancel = braced_after(supervisor, WINDOWS_SUPERVISOR_BRANCHES[1])
+    if not cancel or "let _ = job.terminate();" not in cancel[0]:
+        failures.append("cancel termination mutation anchor is missing")
+    else:
+        changed_cancel = cancel[0].replace("let _ = job.terminate();", "let _ = job;", 1)
+        moved = supervisor.replace(cancel[0], changed_cancel, 1).replace(
+            "Ok(Some(exit)) => {",
+            "Ok(Some(exit)) => {\n                #[cfg(windows)]\n                let _ = job.terminate();",
+            1,
+        )
+        if moved == supervisor or moved.count("job.terminate()") != supervisor.count("job.terminate()"):
+            failures.append("misplaced termination fixture did not preserve the count")
+        else:
+            misplaced = dict(ctx)
+            misplaced["runner"] = ctx["runner"].replace(supervisor, moved, 1)
+            if "EXEC_WINDOWS_JOB_MISSING" not in detect(misplaced):
+                failures.append("cancel termination moved into another branch was accepted")
 
     # 3) pending 码位完整性：默认模式不得误判 pending 为 active
     overlap = set(ACTIVE_CODES) & set(PENDING_CODES)

@@ -190,7 +190,6 @@ export const useFileStore = defineStore("files", () => {
       mdPreview.value = false;
       mdHtml.value = "";
       editingFile.value = true;
-      layout.fileEditorOpen = true;
       published = true;
       return true;
     } catch (error) {
@@ -1156,7 +1155,6 @@ export const useFileStore = defineStore("files", () => {
       mdHtml.value = markdown ? renderMd(fileContent.value) : "";
       mdPreview.value = markdown;
       editingFile.value = !markdown;
-      layout.fileEditorOpen = true;
       return true;
     } catch (error: any) {
       if (ownsRead()) layout.showToast("读取失败: " + (error?.message ?? error));

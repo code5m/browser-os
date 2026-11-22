@@ -276,7 +276,7 @@ mod process_wait_tests {
         let copied = unsafe {
             DuplicateHandle(
                 GetCurrentProcess(),
-                process.as_raw_handle() as _,
+                AsRawHandle::as_raw_handle(&process) as _,
                 GetCurrentProcess(),
                 &mut duplicated,
                 0,

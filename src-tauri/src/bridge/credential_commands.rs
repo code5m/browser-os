@@ -686,50 +686,71 @@ mod browser_credential_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    struct FictionalKeyringCleanup(Vec<String>);
+
+    impl FictionalKeyringCleanup {
+        fn verify_removed(&mut self) {
+            for key in &self.0 {
+                KeyringStore::delete_token(key).expect("remove synthetic keyring entry");
+                let removed = matches!(
+                    KeyringStore::get_token_result(key),
+                    Err(keyring::Error::NoEntry)
+                );
+                assert!(removed, "synthetic keyring entry must be absent after deletion");
+            }
+            self.0.clear();
+        }
+    }
+
+    impl Drop for FictionalKeyringCleanup {
+        fn drop(&mut self) {
+            // Retry only this run's synthetic entries if an assertion or backend call fails.
+            for key in &self.0 {
+                let _ = KeyringStore::delete_token(key);
+            }
+        }
+    }
+
     /// 虚构凭据端到端（**默认 ignore**，需显式运行）：
     /// `cargo test fictional_keyring_roundtrip_cleans_up -- --ignored`
     ///
-    /// 只触碰 `browser:https://example.com:test_user_001` 与
-    /// `browser:https://example.org:test_user_002` 两个明确的测试 key，
-    /// 写完后立即删除，**绝不读取/修改/删除任何真实凭据**。
+    /// 仅写入 example.com/example.org 下携带本次 UUID 的合成用户名，
+    /// 不覆盖固定或用户条目；成功时验证删除，断言失败也尝试清理。
     #[test]
     #[ignore = "需要真实 keyring 与解锁状态；显式运行并自带清理"]
     fn fictional_keyring_roundtrip_cleans_up() {
+        let run_id = uuid::Uuid::new_v4();
         let rows = vec![
             BrowserCredentialRow {
                 url: "https://example.com".into(),
-                username: "test_user_001".into(),
+                username: format!("test_user_001_{run_id}"),
                 password: "FakePassword_001".into(),
             },
             BrowserCredentialRow {
                 url: "https://example.org".into(),
-                username: "test_user_002".into(),
+                username: format!("test_user_002_{run_id}"),
                 password: "FakePassword_002".into(),
             },
         ];
+        let mut cleanup = FictionalKeyringCleanup(
+            rows.iter()
+                .map(|row| browser_credential_key(&row.url, &row.username))
+                .collect(),
+        );
         let out = import_browser_credentials_inner(&rows);
-        if out.saved == 0 {
-            // 先清理再跳过
-            for m in &out.metas {
-                let _ = KeyringStore::delete_token(&m.key);
-            }
-            eprintln!("[credential] 跳过 keyring 往返断言：当前环境无可用密钥库");
-            return;
-        }
-        assert_eq!(out.saved, 2, "两条虚构凭据都应写入 keyring");
+        assert_eq!(out.saved, 2, "真实密钥库不可用或写入失败；显式往返测试不得跳过");
+        assert_eq!(out.failed, 0, "两条虚构凭据都应写入 keyring");
         assert_eq!(out.metas.len(), 2, "每条成功凭据产生一条非敏感元数据");
-        for m in &out.metas {
+        for (m, row) in out.metas.iter().zip(&rows) {
+            assert_eq!(m.key, browser_credential_key(&row.url, &row.username));
+            assert_eq!(m.username, row.username);
             assert!(m.key.starts_with("browser:"), "须与 db:/git 命名空间隔离");
             assert!(!m.key.contains("FakePassword"), "元数据绝不含密码");
-            assert!(m.username.starts_with("test_user_"), "元数据只含用户名");
-            // 关键：必须能跨 Entry 实例读回，否则是 mock/密钥库未启用
+            // 必须能跨 Entry 实例读回，否则是 mock/密钥库未启用。
             let pwd = KeyringStore::get_token_result(&m.key).expect("刚写入的虚构凭据必须能读回");
-            assert!(pwd.starts_with("FakePassword_"), "读回内容应与写入一致");
+            assert!(pwd == row.password, "读回内容应与本条写入完全一致");
         }
-        // 断言通过后再清理，确保失败时还能人工核查
-        for m in &out.metas {
-            let _ = KeyringStore::delete_token(&m.key);
-        }
+        cleanup.verify_removed();
     }
 
     /// 回归：中文用户名 + https 尾斜杠 key 在真实 secret-service 上可往返。
@@ -737,17 +758,16 @@ mod browser_credential_tests {
     #[ignore = "需要真实 keyring 与解锁状态；显式运行并自带清理"]
     fn fictional_keyring_chinese_username_roundtrip() {
         let url = "https://sql.example.com/";
-        let username = "测试员";
-        let key = browser_credential_key(url, username);
-        assert_eq!(key, "browser:https://sql.example.com/:测试员");
-
+        assert_eq!(
+            browser_credential_key(url, "测试员"),
+            "browser:https://sql.example.com/:测试员"
+        );
+        let username = format!("测试员_{}", uuid::Uuid::new_v4());
+        let key = browser_credential_key(url, &username);
+        let mut cleanup = FictionalKeyringCleanup(vec![key.clone()]);
         KeyringStore::save_token(&key, "FakePassword_中文").expect("save 应成功");
-        let got = KeyringStore::get_token_result(&key);
-        let _ = KeyringStore::delete_token(&key);
-        match got {
-            Ok(p) => assert_eq!(p, "FakePassword_中文"),
-            Err(keyring::Error::NoEntry) => panic!("save 成功但 get 返回 NoEntry"),
-            Err(e) => panic!("get 失败: {e}"),
-        }
+        let got = KeyringStore::get_token_result(&key).expect("刚写入的中文虚构凭据必须能读回");
+        assert!(got == "FakePassword_中文", "中文虚构凭据应完整往返");
+        cleanup.verify_removed();
     }
 }

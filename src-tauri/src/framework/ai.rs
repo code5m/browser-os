@@ -2560,6 +2560,11 @@ mod tests {
             "SYNTHETIC_PROVIDER_HTTP_STATUS={code} CURL_EXIT={}",
             status.code().unwrap_or(-1)
         );
+        assert!(status.success(), "synthetic provider probe process failed");
+        assert!(
+            matches!(code.parse::<u16>(), Ok(200..=299)),
+            "synthetic provider probe requires HTTP 2xx"
+        );
     }
     #[test]
     #[ignore = "explicit provider context smoke; only disposable synthetic context is sent"]
@@ -2823,6 +2828,17 @@ mod tests {
             operation["input"],
             json!({"server_id":server_id,"tool":"echo","arguments":{"text":"violet"}})
         );
+        let mut review_request = mcp_request.clone();
+        review_request["review_action"] = mcp_request["action"].clone();
+        review_request["action"] = json!("mcp_review");
+        let review =
+            crate::capabilities::agent::coding_context::execute(&root, &storage, review_request)
+                .expect("review the synthetic MCP execution scope");
+        assert_eq!(review["action"], "mcp_call");
+        assert_eq!(review["tool"], mcp_request["tool"]);
+        assert_eq!(review["arguments"], mcp_request["arguments"]);
+        assert_eq!(review["credential_refs"], json!([]));
+        assert_eq!(review["environment_names"], json!([]));
         crate::capabilities::agent::coding::execute(
             &root,
             &storage,
@@ -2831,12 +2847,14 @@ mod tests {
         )
         .expect("persist approval execution claim");
         // This is an explicit test-fixture approval, not a claim of human GUI approval.
-        let approved = crate::capabilities::agent::coding_context::execute(
-            &root,
-            &storage,
-            json!({"action":"mcp_call","approved":true,"server_id":server_id,"tool":"echo","arguments":{"text":"violet"}}),
-        )
-        .expect("approved fixture MCP call");
+        let mut approved_request = mcp_request;
+        approved_request["approved"] = json!(true);
+        approved_request["review_revision"] = review["revision"].clone();
+        approved_request["approved_credential_refs"] = review["credential_refs"].clone();
+        approved_request["approved_environment_names"] = review["environment_names"].clone();
+        let approved =
+            crate::capabilities::agent::coding_context::execute(&root, &storage, approved_request)
+                .expect("approved fixture MCP call");
         let result = approved["result"].to_string();
         assert!(result.contains("violet"));
         crate::capabilities::agent::coding::execute(

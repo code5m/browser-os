@@ -8,10 +8,53 @@
 // 状态栏承载消息、无覆盖原生网页的浮层、成功操作不显示 Toast、文档根不滚动。
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { parse } from "@vue/compiler-sfc";
+import { baseParse } from "@vue/compiler-dom";
+
+function checkStatusMessages(source) {
+  const { descriptor, errors } = parse(source);
+  assert.deepEqual(errors, [], "StatusBar must remain a valid SFC");
+  assert.ok(descriptor.template, "StatusBar template is required");
+  const template = baseParse(descriptor.template.content);
+  const attribute = (node, name) => node.props.find(prop => prop.type === 6 && prop.name === name)?.value?.content;
+  const directive = (node, name) => node.props.find(prop => prop.type === 7 && prop.name === name)?.exp?.content;
+  const elements = [];
+  const visit = node => {
+    if (node.type === 1) elements.push(node);
+    for (const child of node.children ?? []) visit(child);
+  };
+  visit(template);
+  const footers = elements.filter(node => node.tag === "footer" && attribute(node, "class")?.split(/\s+/).includes("status"));
+  assert.equal(footers.length, 1, "Messages must occupy the status footer");
+  const siblings = footers[0].children.filter(node => node.type === 1);
+  const warning = siblings.find(node => directive(node, "if") === "layout.exitSaveNotice");
+  assert.ok(warning, "Exit-save failure must have a persistent status-bar warning");
+  assert.equal(attribute(warning, "role"), "alert");
+  assert.ok(attribute(warning, "class")?.split(/\s+/).includes("msg"));
+  const message = siblings[siblings.indexOf(warning) + 1];
+  assert.ok(message, "Transient message must follow the exit-save warning");
+  assert.equal(directive(message, "else-if"), "layout.msg", "Transient messages cannot obscure exit-save failure");
+  assert.equal(attribute(message, "role"), "status");
+  assert.ok(attribute(message, "class")?.split(/\s+/).includes("msg"));
+  for (const [node, expression] of [[warning, "layout.exitSaveNotice"], [message, "layout.msg"]]) {
+    assert.ok(node.children.some(child => child.type === 5 && child.content.content === expression),
+      "Accessible status must render the actual owner message");
+  }
+}
 
 const status = readFileSync("src/components/layout/StatusBar.vue", "utf8");
-// Preserve the status-bar message check; require its accessible status role explicitly.
-assert.match(status, /<span v-if="layout\.msg" class="msg" role="status">/);
+checkStatusMessages(status);
+const brokenMessages = [
+  status.replace('v-else-if="layout.msg"', 'v-if="layout.msg"'),
+  status.replace('class="msg" role="status"', 'class="msg"'),
+  status.replace('class="msg warn" role="alert"', 'class="msg warn" role="status"'),
+  status.replace('{{ layout.exitSaveNotice }}', ''),
+];
+for (const broken of brokenMessages) {
+  assert.notEqual(broken, status, "Overlay negative fixture must change its input");
+  assert.throws(() => checkStatusMessages(broken), assert.AssertionError);
+}
+checkStatusMessages(status.replace('class="msg" role="status"', 'role="status" class="msg"'));
 assert.doesNotMatch(status, /toast-pop/);
 assert.doesNotMatch(status, /position:\s*fixed;\s*top:/);
 

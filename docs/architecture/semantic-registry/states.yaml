@@ -285,13 +285,30 @@ states:
   fileEditorOpen:
     owner: useLayoutStore
     single_owner_required: true
-    meaning: 文件编辑器/Markdown 预览覆盖层开关（setView("editor") 时关闭）
+    meaning: 已批准导航提交后的主编辑器表面开关，仅 commitView 在进入 editor 时打开、离开时关闭
     not_meaning:
       - 行内编辑器（见 useFileStore.inlineFile）
     kind: stored
     derived: false
     canonical_writer:
-      - useLayoutStore.setView
+      - useLayoutStore.commitView
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  exitSaveNotice:
+    owner: useLayoutStore
+    single_owner_required: true
+    meaning: 退出保存失败的持续 UI 提示，仅下一次退出尝试或显式确认清除
+    not_meaning:
+      - 短暂 toast（见 msg）
+      - 原生退出批准、持久化成功凭据
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useLayoutStore.setExitSaveNotice
     forbidden_writers:
       - components/**
     duplicate_names: []
@@ -569,9 +586,165 @@ states:
     adr_required: false
     status: CURRENT_FACT
 
+  # 恢复目录与编辑副本沿用 Workspace Owner；持久化真源仍在原生加密日志。
+  editorRecoverySession:
+    owner: useFileStore
+    single_owner_required: true
+    meaning: 当前编辑器恢复副本的原生 recovery_id 与密文 revision，供条件更新和另存提交
+    not_meaning:
+      - 源文件写入授权或任意路径访问许可
+      - 浏览器持久化草稿正文
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useFileStore.openRecoveredDraft
+      - useFileStore.saveRecoveredDraftAs
+      - useFileStore.enterDir
+      - useFileStore.openEditorDocument
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+    note: 恢复副本由原生加密日志拥有；序列化草稿队列只更新当前捕获副本的 revision，切换文档不得重定向旧写入
+
+  editorRecoveryId:
+    owner: useFileStore
+    meaning: 当前恢复编辑会话 id 的只读投影，普通文档为空
+    not_meaning:
+      - 独立恢复会话真源
+    kind: derived
+    derived: true
+    derived_from:
+      - editorRecoverySession
+    canonical_writer: []
+    forbidden_writers:
+      - everyone（派生量禁止写入）
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  recoverableDrafts:
+    owner: useFileStore
+    single_owner_required: true
+    meaning: 原生加密草稿目录的有界分页展示缓存，保留损坏条目的错误和版本
+    not_meaning:
+      - 草稿正文或持久化真源
+      - 已确认删除或保存成功的凭据
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useFileStore.loadRecoverableDrafts
+      - useFileStore.discardRecoverableDraft
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  recoveryNextCursor:
+    owner: useFileStore
+    single_owner_required: true
+    meaning: 上次原生草稿目录读取返回的下一页游标，空值表示没有下一页
+    not_meaning:
+      - 任意目录路径或文件访问授权
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useFileStore.loadRecoverableDrafts
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  recoveryLoading:
+    owner: useFileStore
+    single_owner_required: true
+    meaning: 草稿目录请求在途标识，防止同一 Owner 重叠分页读取
+    not_meaning:
+      - 原生恢复完成或加密校验成功
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useFileStore.loadRecoverableDrafts
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  recoveryActionBusy:
+    owner: useFileStore
+    single_owner_required: true
+    meaning: 恢复打开或显式丢弃操作在途标识，由完成路径释放
+    not_meaning:
+      - 跨进程文件写锁或原生草稿所有权
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useFileStore.openRecoveredDraft
+      - useFileStore.discardRecoverableDraft
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  recoverySaving:
+    owner: useFileStore
+    single_owner_required: true
+    meaning: 恢复副本另存为新文件在途标识，失败仍保留当前草稿
+    not_meaning:
+      - 目标文件写入成功凭据
+      - 覆盖已有目标的授权
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useFileStore.saveRecoveredDraftAs
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  recoveryError:
+    owner: useFileStore
+    single_owner_required: true
+    meaning: 草稿目录读取、恢复或条件删除失败的有界 UI 错误文本
+    not_meaning:
+      - 可忽略的原生错误或自动重试许可
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useFileStore.loadRecoverableDrafts
+      - useFileStore.openRecoveredDraft
+      - useFileStore.discardRecoverableDraft
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  recoveryPanelOpen:
+    owner: useFileStore
+    single_owner_required: true
+    meaning: 加密草稿恢复目录面板的 UI 可见状态
+    not_meaning:
+      - 恢复会话已打开或草稿已保存
+    kind: stored
+    derived: false
+    canonical_writer:
+      - useFileStore.toggleRecoveryPanel
+    forbidden_writers:
+      - components/**
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
   editorSavedContent:
     owner: useFileStore
-    meaning: 主编辑器最近成功读取或写入的文本快照，用于草稿与非原子冲突检查
+    meaning: 主编辑器最近成功读取或保存的文本基线，由现有原生条件保存再次验证
     not_meaning:
       - 跨进程原子 CAS token
     kind: stored
@@ -588,7 +761,7 @@ states:
 
   editorDirty:
     owner: useFileStore
-    meaning: 主编辑器草稿与最近快照不一致的派生布尔量
+    meaning: 主编辑器存在恢复副本或内容偏离最近快照时的未保存派生布尔量
     not_meaning:
       - 文件系统是否发生外部修改
     kind: derived
@@ -597,6 +770,7 @@ states:
       - editorFilePath
       - fileContent
       - editorSavedContent
+      - editorRecoverySession
     canonical_writer: []
     forbidden_writers:
       - everyone

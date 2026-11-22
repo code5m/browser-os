@@ -282,6 +282,7 @@ pub(crate) fn cancel_thread_io<T>(thread: &std::thread::JoinHandle<T>) -> Result
 mod tests {
     use super::*;
     use std::os::windows::process::CommandExt;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::{
         process::Command,
         thread,
@@ -396,7 +397,8 @@ mod tests {
 
     struct NativeTerminalSink {
         captured: std::sync::Mutex<Vec<u8>>,
-        fail_data: bool,
+        fail_after: Option<&'static str>,
+        failed_data: AtomicUsize,
     }
 
     impl crate::terminal::TermOutput for NativeTerminalSink {
@@ -410,7 +412,15 @@ mod tests {
                     let excess = captured.len() - 8192;
                     captured.drain(..excess);
                 }
-                if self.fail_data {
+                // ConPTY may emit initialization frames before the fixture
+                // reaches its non-reading state. Let those frames through;
+                // otherwise retrying the first frame prevents READY delivery.
+                let should_fail = self.fail_after.is_some_and(|marker| {
+                    self.failed_data.load(Ordering::Acquire) > 0
+                        || String::from_utf8_lossy(&captured).contains(marker)
+                });
+                if should_fail {
+                    self.failed_data.fetch_add(1, Ordering::Release);
                     return Err("intentional native-fixture sink failure".into());
                 }
             }
@@ -445,7 +455,8 @@ mod tests {
         );
         let sink = Arc::new(NativeTerminalSink {
             captured: Mutex::new(Vec::new()),
-            fail_data: false,
+            fail_after: None,
+            failed_data: AtomicUsize::new(0),
         });
         let mut command = CommandBuilder::new("powershell.exe");
         command.args([
@@ -504,7 +515,8 @@ mod tests {
         use std::sync::{Arc, Mutex};
         let sink = Arc::new(NativeTerminalSink {
             captured: Mutex::new(Vec::new()),
-            fail_data: true,
+            fail_after: Some("__PTY_READY__"),
+            failed_data: AtomicUsize::new(0),
         });
         let mut command = CommandBuilder::new("powershell.exe");
         command.args([
@@ -519,16 +531,17 @@ mod tests {
                 .expect("native ConPTY must be available; missing prerequisites are a failure");
         let pid = session.process_id().expect("native child PID");
         let deadline = Instant::now() + Duration::from_secs(30);
-        loop {
-            if String::from_utf8_lossy(&sink.captured.lock().unwrap()).contains("__PTY_READY__") {
-                break;
-            }
+        // The second failed delivery proves the production pump retried a
+        // real READY frame before input is queued and close is requested.
+        while sink.failed_data.load(Ordering::Acquire) < 2 {
             assert!(
                 Instant::now() < deadline,
-                "native child did not reach non-reading state"
+                "native child did not reach output retry after READY; output={:?}",
+                String::from_utf8_lossy(&sink.captured.lock().unwrap())
             );
             thread::sleep(Duration::from_millis(10));
         }
+        assert!(String::from_utf8_lossy(&sink.captured.lock().unwrap()).contains("__PTY_READY__"));
         let input = session.input();
         let bytes = vec![b'x'; crate::terminal::TERM_INPUT_MAX_BYTES];
         let mut accepted = 0usize;

@@ -221,7 +221,7 @@ export const useLayoutStore = defineStore("layout", () => {
   function commitView(v: MainView): boolean {
     mainView.value = v;
     navigationRevision += 1;
-    if (v !== "editor") fileEditorOpen.value = false;
+    fileEditorOpen.value = v === "editor";
     navSection.value = "";
     return true;
   }

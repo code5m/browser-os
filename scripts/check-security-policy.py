@@ -18,15 +18,14 @@ from native_bridge_owner_sources import read_native_bridge_owners
 # M0-3.b 已收口：capability 删除了残留的 `browser` label，远程权限集不再向外部页面
 # 开放写盘/开终端类副作用命令，且上报类命令带来源校验与载荷边界。
 # 剩余缺口归 M0-3.c（路径策略）与 M0-3.d（launch_app 应用条目白名单）。
-# M0-3.d 已收口 launch_app：不再 `sh -c` 执行任意字符串，改为解析成 (程序, 参数)
-# 直接 spawn，并禁 shell 解释器、要求目标可解析为可执行文件、补审计日志。
+# M0-3.d 已收口 launch_app：直接启动经过校验的可执行目标。
+# V2 已收口只读路径与动态 JS IPC 来源：下方链路/负例必须持续成立。
+# 浏览器开放 http/https 导航的残余事实保留，由 remote report-only 权限补偿。
 EXPECTED_GAPS = (
     "REMOTE_WILDCARD_IPC",
-    "EVAL_WITHOUT_SOURCE_CHECK",
-    "READ_ONLY_BROWSE_WITHOUT_PATH_POLICY",
 )
 
-# 路径类命令：这些函数直接把调用方传入的 path 交给 std::fs，没有策略层。
+# Legacy raw filesystem sinks remain forbidden in an unprotected command or delegate.
 FILE_COMMAND_MARKERS = (
     "std::fs::write(",
     "std::fs::remove_dir_all(",
@@ -57,24 +56,60 @@ def function_body(source: str, name: str) -> str:
 WRITE_COMMANDS = ("write_file", "create_file", "create_dir", "delete_path", "rename_path")
 
 
-def write_commands_use_path_policy(bridge_source: str) -> bool:
-    """写/删类命令的函数体里必须出现路径策略调用。
+def command_path_policy_body(source: str, name: str) -> str:
+    """Follow only the concrete command's invoked implementation chain.
 
-    只看全文是否出现 `check_path_within_roots` 会被「某处引用但没用上」骗过去，
-    因此逐个命令取函数体判定。
+    Physical async wrappers contain admission/source checks, while authorization
+    remains inside the blocking owner. An uncalled helper or another command's
+    check cannot prove this command safe. Missing links fail closed.
     """
+    chain = [name, f"{name}_blocking"]
+    if name == "write_file":
+        chain.append("write_file_authorized")
+    body = function_body(source, chain[0])
+    for index, current in enumerate(chain):
+        if not body:
+            return ""
+        if re.search(r"\b(?:check_path_within_roots|check_delete_target)\s*\(", body):
+            return body
+        if index + 1 == len(chain):
+            return ""
+        delegate = chain[index + 1]
+        if not re.search(rf"\b{re.escape(delegate)}\s*\(", body):
+            return ""
+        if re.search(r"\b(?:std::fs|fs)::(?:read|read_dir|read_to_string|write|remove_file|remove_dir_all|create_dir_all|rename)\s*\(", body):
+            return ""
+        body = function_body(source, delegate)
+    return ""
+
+
+def write_commands_use_path_policy(bridge_source: str) -> bool:
     checked = 0
     for name in WRITE_COMMANDS:
-        body = function_body(bridge_source, name)
-        if not body:
+        if not function_body(bridge_source, name):
             continue
         checked += 1
-        # delete_path 走 check_delete_target（内部再调 check_path_within_roots），两者都算接入。
-        if not (
-            "check_path_within_roots" in body or "check_delete_target" in body
-        ):
+        if not command_path_policy_body(bridge_source, name):
             return False
     return checked > 0
+
+
+def eval_command_is_main_only(source: str) -> bool:
+    """The dynamic JS IPC entry must reject remote callers before dispatch."""
+    body = function_body(source, "eval_in_tab")
+    if not body:
+        return False
+    source_check = re.search(r"\brequire_main\s*\(\s*&webview\s*,[^;]+\)\s*\?", body)
+    id_bound = re.search(r"\bbound_text\s*\([^;]*&id\s*\)\s*\?", body)
+    js_bound = re.search(r"\bbound_text\s*\([^;]*&js\s*\)\s*\?", body)
+    effect = re.search(r"\beval_in_tab_blocking\s*\(|\.eval\s*\(", body)
+    if not all((source_check, id_bound, js_bound, effect)):
+        return False
+    if max(source_check.end(), id_bound.end(), js_bound.end()) > effect.start():
+        return False
+    if "eval_in_tab_blocking" in effect.group(0):
+        return bool(function_body(source, "eval_in_tab_blocking"))
+    return True
 
 
 def detect_gaps(
@@ -110,11 +145,11 @@ def detect_gaps(
     if not write_commands_use_path_policy(bridge_source):
         gaps.append("FILE_COMMANDS_WITHOUT_PATH_POLICY")
 
-    # SEC-09（M0-3.c 登记，留待后续裁决）：只读浏览类命令仍可读取任意路径。
-    read_commands = ("pub fn list_dir(", "pub fn read_file(", "pub fn browse_workspace(")
-    if any(cmd in bridge_source for cmd in read_commands) and not all(
-        "check_path_within_roots" in function_body(bridge_source, name)
-        for name in ("list_dir", "read_file")
+    # SEC-09: the actual path-taking read commands now use the same authorized
+    # native owner chain. browse_workspace/get_start_dirs take no caller path.
+    read_commands = ("list_dir", "read_file")
+    if any(function_body(bridge_source, name) for name in read_commands) and not all(
+        command_path_policy_body(bridge_source, name) for name in read_commands
     ):
         gaps.append("READ_ONLY_BROWSE_WITHOUT_PATH_POLICY")
 
@@ -129,11 +164,10 @@ def detect_gaps(
     )
     if remote_block:
         remote_allow = remote_block.group(1)
-        leaked = [
-            c
-            for c in ("save_note", "request_open_terminal", "collect_selection")
-            if f'"{c}"' in remote_allow
-        ]
+        # The remote capability is a return-channel contract, not a general
+        # Native allowlist. Dynamic JS/files/process effects cannot be added.
+        allowed_reports = {"report_resources", "report_title", "report_grid_load_failed"}
+        leaked = [c for c in re.findall(r'"([^"]+)"', remote_allow) if c not in allowed_reports]
         if leaked:
             gaps.append("REMOTE_SIDE_EFFECT_COMMANDS_EXPOSED")
 
@@ -141,10 +175,11 @@ def detect_gaps(
     if re.search(r'"remote"\s*:\s*\{[\s\S]{0,200}?"https?://\*"', capability_sources):
         gaps.append("REMOTE_WILDCARD_IPC")
 
-    # SEC-05：向子 webview 注入 JS，且没有来源/意图校验。
-    has_eval = re.search(r"\.eval\(\s*&", bridge_source)
-    has_source_check = "check_webview_label" in bridge_source and "user_intent" in bridge_source
-    if has_eval and not has_source_check:
+    # SEC-05: follow the real dynamic-JS IPC entry, not unrelated occurrences
+    # of a source-check name elsewhere in the facade. Native internal eval is
+    # allowed only behind this main-only, bounded entry and the remote list.
+    has_eval = re.search(r"\.eval\(\s*&", bridge_source) or function_body(bridge_source, "eval_in_tab")
+    if has_eval and not eval_command_is_main_only(bridge_source):
         gaps.append("EVAL_WITHOUT_SOURCE_CHECK")
 
     return gaps
@@ -252,7 +287,10 @@ pub fn check_launch_target(line: &str) -> Result<(String, Vec<String>), PolicyEr
     Ok((program, args))
 }
 """
-    legacy_gaps = list(EXPECTED_GAPS) + [
+    legacy_gaps = [
+        "REMOTE_WILDCARD_IPC",
+        "EVAL_WITHOUT_SOURCE_CHECK",
+        "READ_ONLY_BROWSE_WITHOUT_PATH_POLICY",
         "LAUNCH_APP_ARBITRARY_SHELL",
         "FILE_COMMANDS_WITHOUT_PATH_POLICY",
         "CAPABILITY_STALE_BROWSER_LABEL",
@@ -278,9 +316,10 @@ pub fn write_file(path: String, content: String) -> Result<(), String> {
     security_policy::check_path_within_roots(&canonical, allowed_roots())?;
     std::fs::write(&canonical, &content).map_err(|e| e.to_string())
 }
-pub fn eval_in_tab(id: String, js: String) {
-    if !user_intent_confirmed() { return; }
-    security_policy::check_webview_label(&id)?;
+pub fn eval_in_tab(webview: Webview, id: String, js: String) {
+    native_legacy_policy::require_main(&webview, "eval_in_tab")?;
+    native_legacy_policy::bound_text("eval_in_tab", "id", &id)?;
+    native_legacy_policy::bound_text("eval_in_tab", "js", &js)?;
     let _ = win.eval(&format!("{}", js));
 }
 pub fn list_dir(path: String) -> Result<Vec<String>, String> {
@@ -323,6 +362,81 @@ pub fn check_launch_target(line: &str) -> Result<(String, Vec<String>), PolicyEr
         resolved_policy,
     ):
         print("self-test: resolved fixture still reports gaps", file=sys.stderr)
+        return 1
+
+    # Async physical owners: prove every edge rather than accepting an
+    # unrelated protected helper. Each mutation must fail independently.
+    async_writes = """
+pub async fn write_file(path: String) {
+    FILESYSTEM_IO.run(move || write_file_blocking(path)).await
+}
+fn write_file_blocking(path: String) { write_file_authorized(&path) }
+fn write_file_authorized(path: &str) {
+    check_path_within_roots(path, roots())?;
+    native::save_if_unchanged(path, roots(), before, content)
+}
+"""
+    if not write_commands_use_path_policy(async_writes):
+        print("self-test: protected async write chain rejected", file=sys.stderr)
+        return 1
+    for changed in (
+        async_writes.replace("move || write_file_blocking(path)", "move || unsafe_write(path)"),
+        async_writes.replace("write_file_authorized(&path)", "unsafe_write(&path)"),
+        async_writes.replace("check_path_within_roots(path, roots())?;", ""),
+        async_writes.replace("FILESYSTEM_IO.run", "std::fs::write(path, data); FILESYSTEM_IO.run"),
+    ):
+        if write_commands_use_path_policy(changed):
+            print("self-test: broken async write chain accepted", file=sys.stderr)
+            return 1
+    async_reads = """
+pub async fn list_dir(path: String) { FILESYSTEM_IO.run(move || list_dir_blocking(path)).await }
+fn list_dir_blocking(path: String) {
+    check_path_within_roots(&path, roots())?;
+    native::list_directory(path, roots())
+}
+pub async fn read_file(path: String) { FILESYSTEM_IO.run(move || read_file_blocking(path)).await }
+fn read_file_blocking(path: String) {
+    check_path_within_roots(&path, roots())?;
+    native::read_regular(path, roots(), MAX_BYTES)
+}
+"""
+    if not all(command_path_policy_body(async_reads, name) for name in ("list_dir", "read_file")):
+        print("self-test: protected async read chain rejected", file=sys.stderr)
+        return 1
+    for name in ("list_dir", "read_file"):
+        changed = async_reads.replace(f"move || {name}_blocking(path)", "move || unprotected_read(path)")
+        if command_path_policy_body(changed, name):
+            print(f"self-test: unprotected {name} wrapper accepted", file=sys.stderr)
+            return 1
+    async_eval = """
+pub async fn eval_in_tab(webview: Webview, id: String, js: String) {
+    require_main(&webview, "eval_in_tab")?;
+    bound_text("eval_in_tab", "id", &id)?;
+    bound_text("eval_in_tab", "js", &js)?;
+    TAB_EVAL_WORKERS.run(move || eval_in_tab_blocking(app, id, js)).await
+}
+fn eval_in_tab_blocking(app: AppHandle, id: String, js: String) { eval_in_child(&id, &js) }
+"""
+    if not eval_command_is_main_only(async_eval):
+        print("self-test: main-only bounded async eval rejected", file=sys.stderr)
+        return 1
+    for changed in (
+        async_eval.replace('require_main(&webview, "eval_in_tab")?;', ""),
+        async_eval.replace('bound_text("eval_in_tab", "js", &js)?;', ""),
+        async_eval.replace('bound_text("eval_in_tab", "id", &id)?;', ""),
+        async_eval.replace("fn eval_in_tab_blocking(", "fn unrelated_eval_helper("),
+        async_eval.replace('require_main(&webview, "eval_in_tab")?;', "").replace(
+            ".await", '.await; require_main(&webview, "eval_in_tab")?;'
+        ),
+    ):
+        if eval_command_is_main_only(changed):
+            print("self-test: unprotected async eval accepted", file=sys.stderr)
+            return 1
+    leaked_permissions = resolved_permissions.replace('"report_title"', '"report_title", "eval_in_tab"')
+    if "REMOTE_SIDE_EFFECT_COMMANDS_EXPOSED" not in detect_gaps(
+        resolved_bridge, resolved_capabilities + leaked_permissions, resolved_policy
+    ):
+        print("self-test: remote dynamic-JS exposure accepted", file=sys.stderr)
         return 1
 
     # 端到端：临时仓库扫描必须与 fixture 判定一致。

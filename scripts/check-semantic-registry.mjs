@@ -403,7 +403,7 @@ function rule8(files, reg, loc) {
 // Phase 6B — 把“Owner 唯一”提升为“Owner 唯一 + Writer 唯一 + Checker 可证明”。
 // 仅对 registry 中 `single_owner_required === true` 且声明了 `canonical_writer` 的**存储态**强制：
 //   a) owner 文件内：写入必须发生在 canonical_writer 列出的函数体内；函数外或错误函数内写入 = FAIL。
-//   b) 非 owner 文件（含组件 / 其它 store / composable）：任何 `state.value =` 直写 = FAIL。
+//   b) 非 owner 文件：state.value 或从 owner factory 取得的 Pinia store 属性直写 = FAIL。
 // 区分读取与写入：写入 = `.value` 后接 `=` / `+=`；读取（`.value` 后非赋值，如 `===` / 取值）不误报。
 // 真源：states.yaml 的 canonical_writer / forbidden_writers / owner；不硬编码 allow-list（遵守 §6 原则）。
 function findFunctionRanges(code) {
@@ -423,6 +423,14 @@ function findFunctionRanges(code) {
         if (depth === 0) {
           let k = j + 1;
           while (k < code.length && /\s/.test(code[k])) k++;
+          // TypeScript named-function return annotations keep their owner.
+          // Recognize simple names/generics/unions; unsupported structural
+          // types remain unclassified so their writes still fail closed.
+          if (code[k] === ":") {
+            const atom = "[A-Za-z_$][\\w$]*(?:\\s*<[\\w$.,<>\\[\\]|?\\s]+>)?(?:\\s*\\[\\])*";
+            const annotation = code.slice(k).match(new RegExp("^:\\s*" + atom + "(?:\\s*[|&]\\s*" + atom + ")*\\s*"));
+            if (annotation) k += annotation[0].length;
+          }
           if (code[k] === "{") bodyStart = k;
           break;
         }
@@ -466,9 +474,19 @@ function rule9(files, reg, loc) {
     const ownerFile = resolved[owner];
     if (!ownerFile) continue;                          // credential 等 Rust 侧 owner 无文件映射，跳过
     const NAME = key;
-    const writeRe = new RegExp("\\b" + NAME + "\\.value\\s*(?:\\+=|=(?![=>]))", "g");
+    const escapeRe = (value) => value.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
     for (const f of files) {
       const code = stripComments(f.src);
+      // Pinia unwraps refs on store instances. Resolve the owner factory's
+      // actual local aliases, not arbitrary same-named object properties or
+      // a state-specific exception list.
+      const aliases = [...code.matchAll(new RegExp(
+        "\\b(?:const|let|var)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*" + escapeRe(owner) + "\\s*\\(", "g",
+      ))].map((match) => escapeRe(match[1]));
+      const targets = ["\\b" + escapeRe(NAME) + "\\.value"];
+      for (const alias of aliases) targets.push("\\b" + alias + "\\." + escapeRe(NAME) + "(?:\\.value)?");
+      targets.push("\\b" + escapeRe(owner) + "\\s*\\(\\s*\\)\\." + escapeRe(NAME) + "(?:\\.value)?");
+      const writeRe = new RegExp("(?:" + targets.join("|") + ")\\s*(?:\\+=|=(?![=>]))", "g");
       const fns = findFunctionRanges(code);
       let m;
       while ((m = writeRe.exec(code))) {
@@ -483,7 +501,7 @@ function rule9(files, reg, loc) {
             out.push({ rule: "R9", code: "SEMANTIC_STATE_WRITER_VIOLATION", file: f.path, line: lineIdx + 1, detail: `"${NAME}" 在 owner 文件 ${ownerFile} 内由非 canonical 函数 "${enc}" 写入（允许：${cw.join(" / ")}）`, severity: "fail" });
           }
         } else {
-          out.push({ rule: "R9", code: "SEMANTIC_STATE_WRITER_VIOLATION", file: f.path, line: lineIdx + 1, detail: `"${NAME}"（owner=${owner}）在非 owner 文件 ${f.path} 被直接写入 .value=（违反 canonical_writer：${cw.join(" / ")}）；仅 owner 文件内的 canonical_writer 函数可写`, severity: "fail" });
+          out.push({ rule: "R9", code: "SEMANTIC_STATE_WRITER_VIOLATION", file: f.path, line: lineIdx + 1, detail: `"${NAME}"（owner=${owner}）在非 owner 文件 ${f.path} 被直接写入（违反 canonical_writer：${cw.join(" / ")}）；仅 owner 文件内的 canonical_writer 函数可写`, severity: "fail" });
         }
       }
     }
@@ -751,6 +769,38 @@ const ANCHOR_FILES = [
 ];
 const ALL = (arr) => [...ANCHOR_FILES, ...arr];
 
+
+function runR9TypedWriterSelfTest() {
+  const owner = "src/stores/useLayoutStore.ts";
+  const fileOwner = "src/capabilities/workspace/state/useFileStore.ts";
+  const loc = { resolved: { useLayoutStore: owner } };
+  const reg = { states: { states: {
+    fileEditorOpen: { owner: "useLayoutStore", single_owner_required: true, canonical_writer: ["useLayoutStore.commitView"] },
+  } } };
+  const cases = [
+    ["typed canonical function", owner, 'function commitView(v: MainView): boolean { fileEditorOpen.value = v === "editor"; return true; }', 0],
+    ["generic async return", owner, "async function commitView(): Promise<boolean> { fileEditorOpen.value = true; return true; }", 0],
+    ["typed rogue function", owner, "function rogue(): boolean { fileEditorOpen.value = true; return true; }", 1],
+    ["top-level after typed function", owner, "function commitView(): boolean { return true; }\nfileEditorOpen.value = true;", 1],
+    ["structural return fails closed", owner, "function commitView(): { ok: boolean } { fileEditorOpen.value = true; return { ok: true }; }", 1],
+    ["Pinia owner alias", fileOwner, "const layout = useLayoutStore(); function openFile() { layout.fileEditorOpen = true; }", 1],
+    ["renamed local alias", fileOwner, "const shell = useLayoutStore(); shell.fileEditorOpen = true;", 1],
+    ["direct owner instance", fileOwner, "useLayoutStore().fileEditorOpen = true;", 1],
+    ["Pinia read and owner action", fileOwner, 'const layout = useLayoutStore(); if (layout.fileEditorOpen === true) layout.setView("home");', 0],
+    ["unrelated object property", fileOwner, "const fixture = { fileEditorOpen: false }; fixture.fileEditorOpen = true;", 0],
+  ];
+  let bad = 0;
+  for (const [name, path, src, expected] of cases) {
+    const findings = rule9([{ path, src }], reg, loc);
+    if (findings.length !== expected) {
+      bad++;
+      console.log("  ✗ R9 writer fixture " + name + ": expected " + expected + ", got " + findings.length);
+    }
+  }
+  if (!bad) console.log("  ✓ R9 typed/Pinia writer fixtures: 10/10");
+  return bad;
+}
+
 function runSelfTest() {
   const reg = loadRegistry();
   let bad = 0;
@@ -776,6 +826,7 @@ function runSelfTest() {
 
   // R6 写穿式 computed setter 回归：derived + computed({get,set}) 写穿真源 不误报；derived + ref 存储态写入 仍判失败。
   bad += runR6SelfTest();
+  bad += runR9TypedWriterSelfTest();
 
   console.log("");
   console.log(bad === 0 ? "SELF_TEST_RESULT=ALL_PASS" : `SELF_TEST_RESULT=FAIL(${bad})`);

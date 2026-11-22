@@ -9,7 +9,7 @@ M2-1 只做「图片领域与持久化」：`ImageRef` / `Artifact.images` / `sa
   - `ImageRef` 结构性不含 cookie / authorization / set-cookie / headers / body
   - `Artifact.images` 必须 `#[serde(default)]`（否则历史成果会被静默丢弃）
   - MIME 白名单为常量表，含 png/jpeg/webp/gif 且**不含 svg**
-  - 落盘必须：id 形态校验 + rel_path 白名单 + canonicalize + 前缀校验 + 原子写
+  - 落盘必须：id/rel_path 校验 + canonicalize/前缀 + Workspace 原生 create-only 原子写
   - 溯源 URL 必须经 `redact_sensitive_url`
   - 配额校验必须发生在落盘之前（先验收后写，不留临时文件）
   - 两条命令必须过 `check_invocation_source`，且同步进 ACL 与 invoke_handler
@@ -51,9 +51,10 @@ def strip_line_comments(source: str) -> str:
     return "\n".join(line.split("//", 1)[0] for line in source.splitlines())
 
 
-def rust_fn_body(source: str, name: str) -> str:
-    """提取 `fn <name>(...) { ... }` 的 body（含花括号）。"""
-    match = re.search(rf"\bfn\s+{re.escape(name)}\s*\(", source)
+def rust_fn_body(source: str, name: str, public_only: bool = False) -> str:
+    """提取函数体；public_only 区分公共平台分发器与 pub(super) 适配器。"""
+    prefix = r"\bpub\s+fn" if public_only else r"\bfn"
+    match = re.search(rf"{prefix}\s+{re.escape(name)}\s*\(", source)
     if not match:
         return ""
     depth = 0
@@ -95,6 +96,83 @@ def rust_struct_body(source: str, name: str) -> str:
                 return source[start : i + 1]
     return source[start:]
 
+
+
+def compact_code(source: str) -> str:
+    return re.sub(r"\s+", "", strip_line_comments(source))
+
+
+def calls_in_order(source: str, *calls: str) -> bool:
+    """Match the real owner call sequence, ignoring formatting and line comments."""
+    code = compact_code(source)
+    cursor = 0
+    for call in calls:
+        found = code.find(compact_code(call), cursor)
+        if found < 0:
+            return False
+        cursor = found + len(compact_code(call))
+    return True
+
+
+def check_native_image_create(files: dict[str, str]) -> list[str]:
+    """The image owner delegates atomic create; inspect both actual adapters."""
+    violations: list[str] = []
+    safe_paths = files.get("safe_paths", "")
+    windows = files.get("safe_paths_windows", "")
+    dispatch = rust_fn_body(safe_paths, "create_new_file", public_only=True)
+    if not calls_in_order(
+        dispatch,
+        '#[cfg(target_os = "linux")]',
+        "linux::create_new_file(path, roots, bytes)",
+        '#[cfg(target_os = "windows")]',
+        "windows::create_new_file(path, roots, bytes)",
+    ):
+        violations.append("IMG_NATIVE_CREATE_DISPATCH_MISSING")
+
+    linux_create = rust_fn_body(safe_paths, "create_new_file")
+    linux_temp = compact_code(rust_fn_body(safe_paths, "create_temp_at"))
+    linux_rename = compact_code(rust_fn_body(safe_paths, "rename_bound"))
+    if not calls_in_order(
+        linux_create,
+        "open_allowed_dir(parent_path, roots)?",
+        "create_temp_at(&parent, &temp)?",
+        "staged.write_all(content)?",
+        "staged.sync_all()?",
+        "rename_bound(&parent, &temp, &parent, filename)?",
+        "sync_directory(&parent)",
+    ) or not all(token in linux_temp for token in (
+        "libc::openat(", "libc::O_EXCL", "libc::O_NOFOLLOW", "0o600",
+    )) or not all(token in linux_rename for token in (
+        "libc::renameat2(", "libc::RENAME_NOREPLACE",
+    )):
+        violations.append("IMG_NATIVE_CREATE_BOUNDARY_MISSING:linux")
+    if not calls_in_order(linux_create, "if result.is_err()", "unlink_at(&parent, &temp)"):
+        violations.append("IMG_NATIVE_CREATE_CLEANUP_MISSING:linux")
+
+    windows_create = rust_fn_body(windows, "create_new_file")
+    windows_rename = compact_code(rust_fn_body(windows, "rename_no_replace"))
+    if not calls_in_order(
+        windows_create,
+        "open_authorized_root(parent_path, roots)?",
+        "open_destination_directory(parent_path)?",
+        "authorize_with_root(&parent, &root)?",
+        "open_child_at(",
+        "&parent, &temp,",
+        "FILE_CREATE,",
+        "stage.write_all(content)?",
+        "stage.sync_all()?",
+        "rename_no_replace(&parent_path.join(&temp), parent_path, filename, roots)",
+    ) or not all(token in windows_rename for token in (
+        "authorize_with_root(&source,&source_root)?",
+        "authorize_with_root(&destination,&destination_root)?",
+        "ReplaceIfExists:false",
+        "RootDirectory=destination.as_raw_handle()",
+        "NtSetInformationFile(",
+    )):
+        violations.append("IMG_NATIVE_CREATE_BOUNDARY_MISSING:windows")
+    if not calls_in_order(windows_create, "if result.is_err()", "remove_regular_at(&parent, &temp)"):
+        violations.append("IMG_NATIVE_CREATE_CLEANUP_MISSING:windows")
+    return violations
 
 def detect_violations(files: dict[str, str]) -> list[str]:
     v: list[str] = []
@@ -140,21 +218,37 @@ def detect_violations(files: dict[str, str]) -> list[str]:
         if "svg" in body.lower():
             v.append("IMG_SVG_ALLOWED")
 
-    # ---- 4) 落盘路径安全：id 校验 + rel_path 白名单 + canonicalize + 前缀 + 原子写 ----
+    # ---- 4) 路径验证与 Workspace 原生 create-only 原子写链 ----
     write_body = rust_fn_body(images, "write_image_file")
+    write_code = compact_code(write_body)
     if not write_body:
         v.append("IMG_WRITE_FN_MISSING")
     else:
-        if "validate_id(" not in write_body:
+        if not all(call in write_code for call in (
+            "validate_id(artifact_id)?", "validate_id(image_id)?",
+        )):
             v.append("IMG_ID_VALIDATION_MISSING")
-        if "validate_rel_path(" not in write_body:
+        if "validate_rel_path(&rel)?" not in write_code:
             v.append("IMG_RELPATH_VALIDATION_MISSING")
-        if "canonicalize" not in write_body:
+        if ".canonicalize()" not in write_code:
             v.append("IMG_CANONICALIZE_MISSING")
-        if "starts_with" not in write_body:
+        if "!parent_canon.starts_with(&root_canon)" not in write_code:
             v.append("IMG_PREFIX_CHECK_MISSING")
-        if "rename" not in write_body or ".tmp" not in write_body:
+        if not calls_in_order(
+            write_body,
+            "validate_id(artifact_id)?",
+            "validate_id(image_id)?",
+            "validate_rel_path(&rel)?",
+            "safe_paths::create_directory_all(directory, &allowed)",
+            "!parent_canon.starts_with(&root_canon)",
+            "safe_paths::create_new_file(&target, &allowed, bytes)",
+        ):
             v.append("IMG_ATOMIC_WRITE_MISSING")
+        if "check_path_within_roots(&directory.to_string_lossy(),&allowed)" not in write_code:
+            v.append("IMG_DIRECTORY_AUTHORIZATION_MISSING")
+        if re.search(r"\b(?:fs::(?:write|copy|rename|create_dir_all)|File::create|OpenOptions::new)\(", write_code):
+            v.append("IMG_WRITE_BYPASSES_OWNER")
+    v.extend(check_native_image_create(files))
 
     # ---- 5) 溯源 URL 脱敏 ----
     images_code = strip_line_comments(images)
@@ -250,6 +344,8 @@ def read_repo(root: Path) -> dict[str, str]:
     return {
         "domain": read("src-tauri/src/domain.rs"),
         "images": read("src-tauri/src/shared/images.rs"),
+        "safe_paths": read("src-tauri/src/capabilities/workspace/safe_paths.rs"),
+        "safe_paths_windows": read("src-tauri/src/capabilities/workspace/safe_paths_windows.rs"),
         "bridge": read_native_bridge_owners(root, "workspace_commands") + "\n" + read("src-tauri/src/capabilities/session/commands.rs"),
         "main_rs": read("src-tauri/src/main.rs"),
         "acl": read("src-tauri/permissions/default-commands.toml"),
@@ -298,7 +394,7 @@ def run_self_test(root: Path) -> int:
     ))
     samples.append((
         "落盘去掉 canonicalize",
-        mutate(images=good["images"].replace("fs::canonicalize", "identity_path")),
+        mutate(images=good["images"].replace(".canonicalize()", ".unchecked_path()")),
         "IMG_CANONICALIZE_MISSING",
     ))
     samples.append((
@@ -307,9 +403,61 @@ def run_self_test(root: Path) -> int:
         "IMG_PREFIX_CHECK_MISSING",
     ))
     samples.append((
-        "落盘改非原子写（rename 换成 copy）",
-        mutate(images=good["images"].replace("fs::rename(&tmp, &target)", "fs::copy(&tmp, &target)")),
+        "落盘绕过 create-only 原生 Owner",
+        mutate(images=good["images"].replace(
+            "safe_paths::create_new_file(&target, &allowed, bytes)",
+            "safe_paths::atomic_write(&target, &allowed, bytes)")),
         "IMG_ATOMIC_WRITE_MISSING",
+    ))
+    samples.append((
+        "落盘改为原始路径写入",
+        mutate(images=good["images"].replace(
+            "crate::capabilities::workspace::safe_paths::create_new_file(&target, &allowed, bytes)",
+            "fs::write(&target, bytes)")),
+        "IMG_WRITE_BYPASSES_OWNER",
+    ))
+    samples.append((
+        "已有图片目录绕过允许根授权",
+        mutate(images=good["images"].replace(
+            "check_path_within_roots(&directory.to_string_lossy(), &allowed)",
+            "unchecked_directory(&directory.to_string_lossy(), &allowed)")),
+        "IMG_DIRECTORY_AUTHORIZATION_MISSING",
+    ))
+    samples.append((
+        "平台分发器绕过 Windows 原子创建",
+        mutate(safe_paths=good["safe_paths"].replace(
+            "windows::create_new_file(path, roots, bytes)", "windows::unchecked_write(path, roots, bytes)")),
+        "IMG_NATIVE_CREATE_DISPATCH_MISSING",
+    ))
+    samples.append((
+        "Linux 原子 rename 允许覆盖旧文件",
+        mutate(safe_paths=good["safe_paths"].replace("libc::RENAME_NOREPLACE", "0")),
+        "IMG_NATIVE_CREATE_BOUNDARY_MISSING:linux",
+    ))
+    samples.append((
+        "Linux stage 未同步即发布",
+        mutate(safe_paths=good["safe_paths"].replace("staged.sync_all()?;", "")),
+        "IMG_NATIVE_CREATE_BOUNDARY_MISSING:linux",
+    ))
+    samples.append((
+        "Linux stage 失败后未清理",
+        mutate(safe_paths=good["safe_paths"].replace("unlink_at(&parent, &temp);", "")),
+        "IMG_NATIVE_CREATE_CLEANUP_MISSING:linux",
+    ))
+    samples.append((
+        "Windows 原子 rename 允许覆盖旧文件",
+        mutate(safe_paths_windows=good["safe_paths_windows"].replace("ReplaceIfExists: false", "ReplaceIfExists: true")),
+        "IMG_NATIVE_CREATE_BOUNDARY_MISSING:windows",
+    ))
+    samples.append((
+        "Windows stage 未授权 parent",
+        mutate(safe_paths_windows=good["safe_paths_windows"].replace("authorize_with_root(&parent, &root)?;", "")),
+        "IMG_NATIVE_CREATE_BOUNDARY_MISSING:windows",
+    ))
+    samples.append((
+        "Windows stage 失败后未清理",
+        mutate(safe_paths_windows=good["safe_paths_windows"].replace("remove_regular_at(&parent, &temp);", "")),
+        "IMG_NATIVE_CREATE_CLEANUP_MISSING:windows",
     ))
     samples.append((
         "落盘去掉 id 校验（artifact_id 与 image_id 都去掉）",

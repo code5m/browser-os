@@ -39,6 +39,7 @@ bridge.readFile = async path => path.endsWith('b.txt') ? 'document B' : 'documen
 setActivePinia(createPinia());
 const files = useFileStore(), layout = useLayoutStore();
 await files.openFile({ path: '/work/a.txt', name: 'a.txt', is_dir: false, size: 10 });
+assert.equal(layout.fileEditorOpen, true, 'successful editor publication opens the Layout-owned surface');
 const oldJournal = deferred(), cas = deferred();
 const journals = [];
 bridge.editorDraftSave = async (path, session, baseline, content) => {
@@ -66,6 +67,7 @@ layout.activateHome();
 late.resolve('late');
 await opening;
 assert.equal(layout.mainView, 'home');
+assert.equal(layout.fileEditorOpen, false, 'a stale editor read cannot reopen the surface after Home wins');
 assert.equal(files.editorFilePath, '/work/b.txt', 'late editor reads do not replace the newer navigation');
 
 const inline = deferred();
@@ -104,6 +106,12 @@ assert.equal(files.recoverableDrafts.length, 1);
 await files.openRecoveredDraft('source');
 assert.equal(files.editorRecoveryId, 'fork', 'recovery edits use an isolated native fork');
 assert.equal(files.fileContent, 'orphan contents');
+assert.equal(layout.fileEditorOpen, true, 'a recovered document uses the same Layout publication');
+globalThis.confirm = () => false;
+assert.equal(layout.activateHome(), false, 'a dirty recovery can refuse navigation');
+assert.equal(layout.mainView, 'editor');
+assert.equal(layout.fileEditorOpen, true, 'a refused navigation preserves the editor surface');
+globalThis.confirm = () => true;
 await files.saveFile();
 assert.equal(nativeWrites, 0, 'ordinary save cannot recreate an orphan source');
 files.setFileContent('edited recovery');

@@ -1,8 +1,9 @@
-# M0 安全威胁矩阵（V1.3）
+# M0 安全威胁矩阵（V1.4）
 
 > 建立时间：2026-08-31（M0-3.a）｜ V1.1：M0-3.b 收口 ｜ V1.2：M0-3.c 写路径收口 ｜ V1.3：M0-3.d 启动目标收口 ｜ 分支：`feature-M0-baseline`
 > 范围：M0-3.a 盘点定契约；M0-3.b 收口 capability/远程 IPC；**M0-3.c 收口写路径（只读浏览按裁决保留并登记 SEC-09）**；M0-3.d 收口 launch_app。
 > 配套：契约模块 `src-tauri/src/security_policy.rs`；静态夹具 `scripts/check-security-policy.py`。
+> V1.4（2026-11-22）：按 Windows/Linux V2 当前物理 Owner 更新 SEC-05/09 与 async 委派检查；历史快照和冻结证据保留，当前结论以本节与下方 V1.4 说明为准。
 > 冻结基线证据（`logs/m0-baseline/**`）未改动；M1/M2 仍锁定；本文件不代表 M0 完成。
 
 ## 1. 资产与信任边界
@@ -12,8 +13,8 @@
 | 主窗口 `main` | Tauri 主 webview | 受信任，运行前端 bundle |
 | 子 webview `tab-*` / `grid-*` | 浏览器页签 / 宫格 | **加载任意外部页面，属不可信内容** |
 | 远端页面 IPC | `capabilities/browser-remote.json` | 外部域可通过 remote 权限调命令 |
-| 本地文件系统 | `read_file`/`write_file`/`create_file`/`create_dir`/`delete_path` | 当前**无**允许根目录约束 |
-| 外部进程 | `launch_app`（`sh -c`） | 当前**无**应用条目 allowlist |
+| 本地文件系统 | `bridge/filesystem_commands.rs` 的读写/创建/删除/重命名 | main-only IPC → 有界阻塞执行 → 允许根目录检查与 Workspace 原生句柄操作 |
+| 外部进程 | `framework/commands.rs::launch_app` | 已解析目标经过 `check_launch_target`，直接 spawn；不经 shell 二次解释 |
 | PTY 终端 | `term_spawn`/`term_write` | 用户在终端内的行为等同其本机权限，不作策略约束对象 |
 
 **信任边界一句话**：`tab-*`/`grid-*` 内的外部页面是不可信输入；凡是「不可信内容能触达的命令」都必须有来源校验与意图校验。
@@ -26,9 +27,11 @@
 | SEC-02 | 写/删类文件命令（`write_file`/`create_file`/`create_dir`/`delete_path`/`rename_path`） | 任意路径写删、递归删、`rename` 新名称可带 `../` 跨目录移动 | 原 `bridge.rs` 文件命令区 | ~~P0~~ **已关闭** | ✅ M0-3.c |
 | SEC-03 | `capabilities/*.json` | 残留已不存在的 `browser` label | 原 `default.json` windows、`browser-remote.json` webviews | ~~P1~~ **已关闭** | ✅ M0-3.b |
 | SEC-04 | `browser-remote.json` `remote.urls` | `https://*`/`http://*` 全通配：外部页面可调用远程集内命令 | `browser-remote.json` remote 段 | **P0 → 可接受残余风险** | 补偿控制已落地（见 §5） |
-| SEC-05 | `bridge.rs:68 .eval(&id.to_string(), js)` | 向子 webview 注入任意 JS；与 SEC-04 组合等于给外部页面留执行面 | `bridge.rs:68`、`bridge.rs:1672` | **P0** | M0-3.b |
+| SEC-05 | `bridge/tab_runtime.rs::eval_in_tab` | 远程页面触发动态 JS 执行 | 当前入口先 `require_main`、限制 id/js，再进入 `TAB_EVAL_WORKERS`；remote-collect 不授予该命令 | ~~P0~~ **已关闭** | ✅ V1.4 源码契约；平台行为另由原生验收证明 |
 | SEC-06 | 写/删类命令 | 无用户意图校验与审计 | 同 SEC-02；远程侧 `save_note`/`collect_selection` | **P1** | 远程侧 ✅ M0-3.b；本地路径 M0-3.c |
 | SEC-07 | `launch_app` 参数 | shell 元字符未过滤 | 原 `launch_app` 实现 | ~~P0~~ **已关闭** | ✅ M0-3.d |
+
+| SEC-09 | `bridge/filesystem_commands.rs::list_dir/read_file` | 任意调用方路径读取 | 同一命令经实际 `_blocking` 调用取得 allowed_roots，再调用路径策略与原生安全访问；非调用 helper 不算证据 | ~~P1~~ **已关闭** | ✅ V1.4 源码契约 |
 
 ## 3. 已落地的最小契约（`src-tauri/src/security_policy.rs`）
 
@@ -106,3 +109,11 @@
 | 符号链接逃逸拒绝用例 | `check_path_within_roots` | ✅ 契约+单测+生产接入（M0-3.c） |
 | shell 元字符拒绝用例 | `check_shell_command` → `check_launch_target` | ✅ 契约+单测+生产接入（M0-3.d） |
 | 允许路径与合法应用仍可用 | 正向用例（`/usr/bin/code`、允许根目录内文件、可解析程序） | ✅ 单测已含 |
+
+## 7. V1.4 当前 Owner 契约与静态证据边界
+
+`list_dir`、`read_file` 和五个写入类命令已经拆为 async IPC 与阻塞 Owner。检查器逐命令沿实际被调用的 `_blocking` 链检查路径策略；`write_file` 继续追踪 `write_file_authorized`。删掉任一委派边、授权调用，或在未授权 wrapper 中直接访问文件，负例必须失败。`browse_workspace` 和 `get_start_dirs` 不接受调用方路径，不能再被当作任意路径读取的证据。
+
+`eval_in_tab` 的动态 JS 入口在占用 worker 前拒绝非 main 来源并限制 id/js 载荷；远程权限集只允许 `report_resources`、`report_title`、`report_grid_load_failed`。源码夹具逐项删除来源/载荷检查、把来源检查移到执行后、断开实际 helper，以及向远程权限加入 eval，均必须被检出。该检查约束受信任主窗口的能力入口，不禁止 Native 内部的固定脚本，也不把存在某个无关检查函数名当作授权证明。
+
+当前静态 `EXPECTED_GAPS` 只保留 `REMOTE_WILDCARD_IPC`：浏览器仍需导航任意 HTTP/HTTPS 页面，补偿控制是精确回传命令集与原生来源/载荷约束。默认审计因此仍报告这一已登记残余事实；pre-merge 的 `--expect-current-gaps` 检查不得增加新的例外。上述源码形态证据不替代 Windows/Linux 原生执行、安装版 GUI 与真实账户验收。

@@ -26,12 +26,14 @@
   （`--expect-pending` 验证 MCP 产物尚未落地）；W7 A3 以**只读 Tauri 命令桥**落地 MCP
   （mcp_policy_get / mcp_registry_list / mcp_capability_preview），W1 的「独立 rmcp server + mcp_tools」
   架构被 W7 Hard Stop 永久否决。故 W8 收口 W1 语义：PENDING 码位全部退役，rmcp/server/listener
-  由单一 **ACTIVE** 守门 `MCP_NO_RMCP_SERVER` 永久禁止，并新增 `--expect-current-gaps` 当前相位断言。
+  由单一 **ACTIVE** 守门 `MCP_NO_RMCP_SERVER` 约束 MCP Owner，并新增 `--expect-current-gaps` 当前相位断言。
 
 为什么需要这个夹具（编译器与人工都守不住）：
 - 纯 Rust rmcp 会把 `tokio` 作为 **normal 非 optional** 依赖带进来（A3 主篇 §3.1 实测）；
   阶段一同 package 双 target 下 `[dependencies]` 对 lib/bin 同时生效（A2 §1 第 2 条实测）——
-  因此「MCP 不能污染主二进制依赖图」只能由本脚本在 pre-merge 阶段断言。
+  当前 BFC 与 Agent Foundation 已有独立的 tokio 使用；因此本脚本拒绝桌面直接 rmcp 依赖，
+   并在 MCP 注册表、stdio 模块及实际 mcp_* 命令体内禁止网络与异步运行时，不能把其它 Owner
+   的 tokio 依赖或 loopback 测试误判为 MCP server。
 - 能力白名单若被多处各自定义（Skill / A2A / MCP / Plugin），会静默漂移（A11 D46）。
 - `read_file`/`list_dir` 在仓库里**无路径根策略**（A3 补篇 §3 / `check-security-policy.py` 的
   `READ_ONLY_BROWSE_WITHOUT_PATH_POLICY` 已知缺口）；经 MCP 暴露后从「本地可读性缺口」升级为
@@ -46,7 +48,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import os
 import re
 import sys
@@ -84,6 +85,8 @@ def _mcp_bridge_present(repo: dict[str, str]) -> bool:
         all(f"bridge::{c}" in main for c in cmds)
         and all(f'"{c}"' in acl for c in cmds)
         and all(f'"{c}"' in bts for c in cmds)
+        and all(sum(name == c for r, t in repo.items() if _is_src_rs(r)
+                    for name, _body in _mcp_command_bodies(t)) == 1 for c in cmds)
     )
 
 
@@ -111,6 +114,40 @@ def _is_cargo(rel: str) -> bool:
 
 def _is_pkg(rel: str) -> bool:
     return rel.endswith("package.json") or rel.endswith("package-lock.json")
+
+
+_MCP_STDIO_FILES = ("src-tauri/src/bin/mcp_server.rs", "src-tauri/src/mcp_server.rs")
+_MCP_REGISTRY_FILES = ("src-tauri/src/mcp.rs",)
+_MCP_NETWORK = re.compile(
+    r"\b(?:axum|hyper::Server|TcpListener|TcpStream|UdpSocket)\b"
+)
+
+
+def _without_comment_lines(text: str) -> str:
+    # Keep string literals and code intact; explanatory whole-line comments
+    # (including the original no-TcpListener contract) are not executable imports.
+    return re.sub(r"(?m)^\s*//[^\n]*", "", text)
+
+
+def _mcp_command_bodies(text: str) -> list[tuple[str, str]]:
+    text = _without_comment_lines(text)
+    return [(match.group(1), _extract_fn_body(text, match.end()))
+            for match in _RE_MCP_CMD.finditer(text)]
+
+
+def _mcp_owner_sections(rel: str, text: str) -> list[str]:
+    """Follow the MCP surface, including commands after physical bridge extraction.
+
+    The integration bridge also owns plugin lifecycle commands; only mcp_*
+    command bodies belong to this read-only surface. Other capability Owners
+    and their test listeners are not MCP transports.
+    """
+    if not _is_src_rs(rel):
+        return []
+    if (rel in _MCP_REGISTRY_FILES + _MCP_STDIO_FILES
+            or rel.startswith("src-tauri/src/mcp_tools/")):
+        return [_without_comment_lines(text)]
+    return [body for _name, body in _mcp_command_bodies(text)]
 
 
 # ---- ALWAYS-ACTIVE（硬红线，与 M5-2 是否开建无关）----
@@ -147,28 +184,34 @@ def c_fs_tool_policy(rel, text, repo):
 
 
 def c_no_rmcp_server(rel, text, repo):
-    # W7/W10 Hard Stop 守门（ACTIVE）：MCP 仍是只读优先；**禁止**未门控的 rmcp server / 网络监听 /
-    # mcp_tools 运行时。W7 否决了「未隔离的独立 server」架构，W8 收口为单一 ACTIVE 守门；W10 A3 打开
-    # 了**feature-gated 的 std-only stdio 骨架**（见 MCP_SERVER_GATED）：只要 mcp_server 二进制 /
-    # mcp_tools 目录是 feature-gated（required-features / #![cfg(feature="mcp")]）且 std-only，
-    # 本码位即放行；反之（未门控 / 含网络监听）仍判违规。
+    # Desktop MCP remains a read-only bridge plus gated stdio skeleton.
+    # Runtime dependencies used by BFC/Agent Foundation are governed by those
+    # Owners; they do not grant MCP permission to use a runtime or listener.
     problems = []
     if _is_cargo(rel):
-        if re.search(r"\brmcp\b", text):
-            problems.append("Cargo.toml 出现 rmcp 依赖（禁止 rmcp server 架构，MCP 须为只读 Tauri 桥）")
-        if re.search(r"\btokio\b", text):
-            problems.append("Cargo.toml 出现 tokio 依赖（MCP 只读桥无需异步运行时，W7 Hard Stop）")
-        m = re.search(r'\[\[bin\]\][^\[]*?name\s*=\s*["\']mcp_server["\']([^\[]*)', text, re.S)
-        if m and "required-features" not in m.group(1):
-            problems.append("Cargo.toml 出现 [[bin]] mcp_server 但缺少 required-features 门控（禁止未隔离的独立 MCP server 二进制）")
-    if _is_src_rs(rel):
-        if re.search(r"\baxum\b|\bhyper::Server\b|tokio::net::TcpListener|std::net::TcpListener", text):
-            problems.append("src 出现 HTTP/网络监听形态（axum/hyper::Server/TcpListener，禁止 MCP server 监听）")
-    # 允许 feature-gated 的 mcp_tools/ 目录（W10 可选）；仅当目录内存在非自门控文件时判违规。
-    for r in repo:
-        if r.startswith("src-tauri/src/mcp_tools/") and r.endswith(".rs"):
-            if not re.search(r'#!\s*\[\s*cfg\(\s*feature\s*=\s*"mcp"\s*\)\s*\]', repo[r]):
-                problems.append(f"{r} 非自门控（mcp_tools/ 内文件必须以 #![cfg(feature=\"mcp\")] 门控）")
+        cargo = re.sub(r"(?m)^\s*#.*$", "", text)
+        if (re.search(r"(?m)^\s*rmcp\s*=", cargo)
+                or re.search(r'package\s*=\s*["\']rmcp["\']', cargo)
+                or re.search(r"(?m)^\s*\[[^\]\n]*dependencies\.rmcp\]", cargo)):
+            problems.append("桌面 Cargo.toml 引入 rmcp 依赖（MCP 只读桥不得启用独立 rmcp server）")
+        for block in re.split(r"(?m)^\s*\[\[bin\]\]\s*$", cargo)[1:]:
+            # A new TOML table ends this bin, while required-features' array
+            # belongs to the current key and must remain available below.
+            block = re.split(r"(?m)^\s*\[(?![\s\"'])", block, maxsplit=1)[0]
+            if not re.search(r'\bname\s*=\s*["\']mcp_server["\']', block):
+                continue
+            required = re.search(r"required-features\s*=\s*\[([^\]]*)\]", block, re.S)
+            if not required or not re.search(r'["\']mcp["\']', required.group(1)):
+                problems.append('mcp_server 二进制缺少 required-features = ["mcp"] 门控')
+    for section in _mcp_owner_sections(rel, text):
+        section = _without_comment_lines(section)
+        if _MCP_NETWORK.search(section):
+            problems.append(f"{rel} 的 MCP Owner 含网络监听/传输（MCP 只准 stdio）")
+        if re.search(r"\b(?:rmcp|tokio)\s*::|\buse\s+(?:rmcp|tokio)\b", section):
+            problems.append(f"{rel} 的 MCP Owner 引入 rmcp/tokio 运行时（只读 stdio 边界）")
+    if rel.startswith("src-tauri/src/mcp_tools/") and rel.endswith(".rs"):
+        if not re.search(r'#!\s*\[\s*cfg\(\s*feature\s*=\s*"mcp"\s*\)\s*\]', text):
+            problems.append(f'{rel} 非自门控（mcp_tools/ 必须以 #![cfg(feature="mcp")] 门控）')
     return problems or None
 
 
@@ -182,13 +225,15 @@ def c_server_gated(rel, text, repo):
     #      Command::new/spawn/std::process）；
     #   4) 必须走 stdio（使用 std::io 读 stdin），而非网络传输。
     # 命中任一违规 ⇒ 视为「未正确门控的 MCP server」⇒ 报错（与 W7 Hard Stop 一致）。
-    if rel not in ("src-tauri/src/bin/mcp_server.rs", "src-tauri/src/mcp_server.rs"):
+    if rel not in _MCP_STDIO_FILES:
         return None
+    text = _without_comment_lines(text)
     problems = []
     if not re.search(r'#!\s*\[\s*cfg\(\s*feature\s*=\s*"mcp"\s*\)\s*\]', text):
         problems.append('MCP 运行时预备件未以 #![cfg(feature="mcp")] 自门控（默认构建不得编译）')
     cargo = repo.get("src-tauri/Cargo.toml", "")
-    if not re.search(r"\[features\]", cargo) or not re.search(r"\bmcp\b", cargo):
+    feature_block = re.search(r"(?ms)^\[features\]\s*\n(.*?)(?=^\[|\Z)", cargo)
+    if not feature_block or not re.search(r"(?m)^\s*mcp\s*=", feature_block.group(1)):
         problems.append("Cargo.toml 缺少 [features] mcp（feature 门控缺失）")
     if re.search(
         r"\baxum\b|\bhyper::Server\b|tokio::net::TcpListener|std::net::TcpListener|"
@@ -209,7 +254,7 @@ def c_stdio_no_arg_echo(rel, text, repo):
     # 本码位静态守护 stdio 传输层（mcp_server.rs）：其 JSON-RPC 响应构造不得把请求
     # 的 params/arguments 原始内容插值进 format! 文本、序列化进响应、或打印进日志。
     # 仅当仓库存在 MCP stdio 预备件时才守门（与 `MCP_SERVER_GATED` 同源文件判定）。
-    if rel not in ("src-tauri/src/bin/mcp_server.rs", "src-tauri/src/mcp_server.rs"):
+    if rel not in _MCP_STDIO_FILES:
         return None
     problems = []
     # 1) 不得直接序列化 params/arguments 进响应文本（可能回显原始 argument）。
@@ -233,7 +278,7 @@ def c_stdio_bounded(rel, text, repo):
     #   2) 必须存在有界读取函数（read_line_bounded 之类）并被 stdio 环调用；
     #   3) 不得出现无界 `stdin.lock().lines()` 读取（越界请求可撑爆内存）。
     # 与 `MCP_SERVER_GATED` 同源文件判定（产物不存在则不守门）。
-    if rel not in ("src-tauri/src/bin/mcp_server.rs", "src-tauri/src/mcp_server.rs"):
+    if rel not in _MCP_STDIO_FILES:
         return None
     problems = []
     if not re.search(r"const\s+MAX_INPUT_BYTES\s*:", text):
@@ -256,16 +301,14 @@ def c_graph_not_exposed(rel, text, repo):
     # 守门文件：`mcp.rs`（命令注册表）、`domain.rs`（`MCP_CAPABILITY_V1` 白名单块）、
     # `mcp_server.rs`（stdio 骨架）。命中任一图谱能力标识即判
     # 「图谱能力被接进 MCP 面」；未解锁前必须显式改本码位并留 A0 裁决记录。
-    if rel not in ("src-tauri/src/mcp.rs", "src-tauri/src/domain.rs",
-                   "src-tauri/src/mcp_server.rs"):
-        return None
-    # `domain.rs` 内本就有 GRAPH_* 容量常量与 GraphNode/GraphEdge 领域类型，
-    # 故只守「能力白名单块」，避免误报；其余 MCP 文件全文件扫描。
     if rel == "src-tauri/src/domain.rs":
         block = re.search(r"MCP_CAPABILITY_V1\s*:\s*&\[&str\]\s*=\s*&\[(.*?)\]", text, re.S)
         text = block.group(1) if block else ""
+    else:
+        text = "\n".join(_mcp_owner_sections(rel, text))
     problems = []
-    for m in ("graph_query", "graph_node_get", "graph_stats", "GraphState", "crate::graph"):
+    for m in ("graph_query", "graph_node_get", "graph_stats", "GraphState",
+              "crate::graph", "crate::capabilities::graph"):
         if m in text:
             problems.append(
                 f"{rel} 引用图谱能力 `{m}`（图谱只读命令不得经 MCP 暴露；"
@@ -284,17 +327,15 @@ def c_plugin_not_exposed(rel, text, repo):
     # `mcp_server.rs`（stdio 骨架）。命中任一插件能力标识即判
     # 「插件能力被接进 MCP 面」；未解锁前必须显式改本码位并留 A0 裁决记录。
     # 与 W12 的 `MCP_GRAPH_NOT_EXPOSED` 同源范式。
-    if rel not in ("src-tauri/src/mcp.rs", "src-tauri/src/domain.rs",
-                   "src-tauri/src/mcp_server.rs"):
-        return None
-    # `domain.rs` 内本就有插件领域类型（如 `PluginManifest` / `PluginState`），
-    # 故只守「能力白名单块」，避免误报；其余 MCP 文件全文件扫描。
     if rel == "src-tauri/src/domain.rs":
         block = re.search(r"MCP_CAPABILITY_V1\s*:\s*&\[&str\]\s*=\s*&\[(.*?)\]", text, re.S)
         text = block.group(1) if block else ""
+    else:
+        text = "\n".join(_mcp_owner_sections(rel, text))
     problems = []
     for m in ("plugin_install", "plugin_enable", "plugin_disable", "plugin_list",
-             "plugin_get", "plugin_key", "plugin_uninstall", "crate::plugin"):
+             "plugin_get", "plugin_key", "plugin_uninstall", "crate::plugin",
+              "crate::capabilities::plugin"):
         if m in text:
             problems.append(
                 f"{rel} 引用插件能力 `{m}`（插件生命周期命令不得经 MCP 暴露；"
@@ -346,12 +387,21 @@ def c_parity(rel, text, repo):
     acl = repo.get("src-tauri/permissions/default-commands.toml", "")
     bts = repo.get("src/bridge.ts", "")
     missing = [c for c in mcp_cmds if (f'"{c}"' not in acl) or (f'"{c}"' not in bts)]
+    problems = []
     if missing:
-        return [f"mcp 命令缺 ACL/bridge.ts 奇偶：{sorted(missing)}"]
-    return None
+        problems.append(f"mcp 命令缺 ACL/bridge.ts 奇偶：{sorted(missing)}")
+    definitions = [name for r, t in repo.items() if _is_src_rs(r)
+                   for name, _body in _mcp_command_bodies(t)]
+    unresolved = [c for c in mcp_cmds if definitions.count(c) != 1]
+    if unresolved:
+        problems.append(f"已注册 mcp 命令缺少唯一实际 Owner 定义：{sorted(unresolved)}")
+    return problems or None
 
 
-_RE_MCP_CMD = re.compile(r"#\[tauri::command\][^\n]*\n\s*pub\s+fn\s+(mcp_[a-z_]+)\s*\(")
+_RE_MCP_CMD = re.compile(
+    r"#\[tauri::command(?:\([^\]]*\))?\]\s*"
+    r"(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+(mcp_[a-z_]+)\s*\("
+)
 # 只读约束（W7 Hard Stop）：mcp_* 命令不得含写/执行类副作用。
 _FORBIDDEN_SIDE_EFFECT = re.compile(
     r"\b(?:std::fs::write|fs::write|write_file|create_file|create_dir|delete_path|"
@@ -381,13 +431,11 @@ def _extract_fn_body(text: str, start: int) -> str:
 
 def c_bridge_readonly(rel, text, repo):
     # mcp_* 只读桥命令不得引入写/执行类副作用（与 W7 Hard Stop「只读」一致）。
-    if rel not in ("src-tauri/src/bridge.rs", "src-tauri/src/mcp.rs"):
+    if not _is_src_rs(rel):
         return None
     problems = []
-    for m in _RE_MCP_CMD.finditer(text):
-        name = m.group(1)
-        body = _extract_fn_body(text, m.end())
-        if _FORBIDDEN_SIDE_EFFECT.search(body):
+    for name, body in _mcp_command_bodies(text):
+        if _FORBIDDEN_SIDE_EFFECT.search(_without_comment_lines(body)):
             problems.append(f"mcp 命令 {name} 含写/执行类副作用（W7 只读约束）")
     return problems or None
 
@@ -525,6 +573,40 @@ def _run_self_test() -> int:
     if good_hits:
         failures.append(f"好样本误报：{good_hits}")
 
+    # Distinct Owners may use tokio or loopback listeners. The current bridge
+    # is physically split and shares a file with plugin lifecycle commands.
+    owned_good = dict(good)
+    owned_good["src-tauri/Cargo.toml"] += (
+        'tokio = { version = "1", features = ["net", "rt"] }\n'
+        '[[bin]]\nname = "mcp_server"\nrequired-features = ["mcp"]\n'
+    )
+    owned_good["src-tauri/src/capabilities/browser/bfc.rs"] = (
+        "use tokio::net::TcpStream;\n"
+        "async fn exchange() { let _ = TcpStream::connect(\"127.0.0.1:1\").await; }\n"
+        "#[cfg(test)] mod tests { use std::net::TcpListener; }\n"
+    )
+    commands = ("mcp_policy_get", "mcp_registry_list", "mcp_capability_preview")
+    owned_good["src-tauri/src/bridge.rs"] = (
+        "mod integration_commands;\npub use self::integration_commands::*;\n"
+    )
+    owned_good["src-tauri/src/bridge/integration_commands.rs"] = "".join(
+        f"#[tauri::command]\npub fn {command}() {{ current_policy_snapshot(); }}\n"
+        for command in commands
+    ) + (
+        "#[tauri::command]\npub fn plugin_install() { fs::write(\"manifest\", \"{}\"); }\n"
+    )
+    owned_good["src-tauri/src/main.rs"] = (
+        "fn main() { tauri::generate_handler!["
+        + ", ".join(f"bridge::{command}" for command in commands) + "]; }\n"
+    )
+    owned_good["src-tauri/permissions/default-commands.toml"] = (
+        "allow = [" + ", ".join(f'"{command}"' for command in commands) + "]\n"
+    )
+    owned_good["src/bridge.ts"] = "\n".join(f'invoke("{command}");' for command in commands)
+    owner_hits = detect_hits(owned_good)
+    if owner_hits or not _mcp_bridge_present(owned_good):
+        failures.append(f"分离 Owner 的真实桥正例误报或未识别：{owner_hits}")
+
     # 2) 坏样本：每个码位至少一个，且必须真的改动内容（变异防呆），且必须被检出
     def mutate(**kw):
         d = dict(good)
@@ -623,6 +705,56 @@ def _run_self_test() -> int:
         mutate(**{"src-tauri/src/bridge.rs":
             "#[tauri::command]\npub fn mcp_policy_set(app: AppHandle, webview: tauri::Webview, v: String) { std::fs::write(\"/x\", v).unwrap(); }\n"}),
         "src-tauri/src/bridge.rs")
+    # Owner scoping must not turn migrated commands or stdio helpers into gaps.
+    add("MCP_NO_RMCP_SERVER", "rmcp 依赖改名仍拒绝",
+        mutate(**{"src-tauri/Cargo.toml":
+                  '[dependencies]\nserver_sdk = { package = "rmcp", version = "3" }\n'}),
+        "src-tauri/Cargo.toml")
+    add("MCP_NO_RMCP_SERVER", "MCP 注册表使用 tokio runtime",
+        mutate(**{"src-tauri/src/mcp.rs":
+                  "fn run() { let _ = tokio::runtime::Runtime::new(); }\n"}),
+        "src-tauri/src/mcp.rs")
+    add("MCP_NO_RMCP_SERVER", "MCP 注册表导入监听器",
+        mutate(**{"src-tauri/src/mcp.rs":
+                  'use std::net::TcpListener;\nfn run() { TcpListener::bind("127.0.0.1:0"); }\n'}),
+        "src-tauri/src/mcp.rs")
+    add("MCP_NO_RMCP_SERVER", "已门控 mcp_tools 仍不得网络监听",
+        mutate(**{"src-tauri/src/mcp_tools/network.rs":
+                  '#![cfg(feature = "mcp")]\nuse std::net::TcpListener;\n'}),
+        "src-tauri/src/mcp_tools/network.rs")
+    for features in ("", 'required-features = []\n', 'required-features = ["other"]\n'):
+        add("MCP_NO_RMCP_SERVER", "mcp_server bin 必须门控实际 mcp feature",
+            mutate(**{"src-tauri/Cargo.toml":
+                      good["src-tauri/Cargo.toml"]
+                      + '[[bin]]\nname = "mcp_server"\n' + features}),
+            "src-tauri/Cargo.toml")
+    owner = "src-tauri/src/bridge/integration_commands.rs"
+    add("MCP_NO_RMCP_SERVER", "迁移后的 MCP 桥不得监听",
+        mutate(**{owner: '#[tauri::command]\npub fn mcp_registry_list() {'
+                         ' std::net::TcpListener::bind("127.0.0.1:0"); }\n'}), owner)
+    add("MCP_BRIDGE_READONLY", "迁移后的 MCP 桥不得写文件",
+        mutate(**{owner: '#[tauri::command]\npub fn mcp_policy_get() {'
+                         ' std::fs::write("policy", "value"); }\n'}), owner)
+    add("MCP_BRIDGE_READONLY", "异步/带属性 MCP 桥仍受只读守门",
+        mutate(**{owner: '#[tauri::command(rename_all = "snake_case")]\n'
+                         'pub async fn mcp_registry_list() { db_query(); }\n'}), owner)
+    add("MCP_GRAPH_NOT_EXPOSED", "迁移后的 MCP 桥不得绑定 Graph Owner",
+        mutate(**{owner: '#[tauri::command]\npub fn mcp_policy_get() {'
+                         ' crate::capabilities::graph::commands::graph_stats(); }\n'}), owner)
+    add("MCP_PLUGIN_NOT_EXPOSED", "迁移后的 MCP 桥不得绑定 Plugin Owner",
+        mutate(**{owner: '#[tauri::command]\npub fn mcp_policy_get() {'
+                         ' crate::capabilities::plugin::install(); }\n'}), owner)
+    add("MCP_GRAPH_NOT_EXPOSED", "bin 位置的 stdio server 同样不得暴露图谱",
+        mutate(**{"src-tauri/src/bin/mcp_server.rs":
+                  good["src-tauri/src/mcp_server.rs"]
+                  + "\nfn exposed() { crate::graph::graph_query(); }\n"}),
+        "src-tauri/src/bin/mcp_server.rs")
+    missing_owner = dict(owned_good)
+    missing_owner[owner] = "// MCP Owner definitions removed.\n"
+    add("MCP_PARITY", "handler/ACL 存在但真实 MCP Owner 被移除", missing_owner, owner)
+    if _mcp_bridge_present(missing_owner):
+        failures.append("移除实际 Owner 后，桥存在性检查仍误报成功")
+
     for code, _desc, mutated in bad_cases:
         h = detect_hits(mutated)
         if code not in h:
@@ -635,7 +767,8 @@ def _run_self_test() -> int:
             print(f"  - {f}")
         print("MCP_POLICY_SELF_TEST=FAIL")
         return 1
-    print(f"MCP_POLICY_SELF_TEST=PASS（ACTIVE={len(ACTIVE_CODES)}，PENDING={len(PENDING_CODES)}）")
+    print(f"MCP_POLICY_SELF_TEST=PASS（ACTIVE={len(ACTIVE_CODES)}，"
+          f"PENDING={len(PENDING_CODES)}，BAD={len(bad_cases)}）")
     return 0
 
 
@@ -645,7 +778,7 @@ def _run_self_test() -> int:
 
 
 def _mode_expect_current_gaps() -> int:
-    # W8 当前相位断言：只读 MCP 桥已落地、无 rmcp/server/listener/tokio、奇偶/只读/红线性门禁全绿。
+    # 当前 Owner 契约：只读 MCP 桥已落地；其内部不得引入 runtime/listener 或执行副作用。
     repo = _scan_real_repo()
     hits = detect_hits(repo)
     problems: list[str] = []
@@ -653,9 +786,7 @@ def _mode_expect_current_gaps() -> int:
         problems.append("MCP 只读桥未落地（W8 期望 mcp_policy_get / mcp_registry_list / "
                         "mcp_capability_preview 已在 main.rs 注册且 ACL + bridge.ts 齐备）")
     # 任一 ACTIVE 码位命中即违反 W8 相位（红线 / 奇偶 / 只读 不应出现）
-    blocked = ("MCP_NO_RMCP_SERVER", "MCP_SERVER_GATED", "MCP_PARITY", "MCP_BRIDGE_READONLY",
-               "MCP_FS_TOOL_PATH_POLICY", "MCP_CAPABILITY_DRIFT",
-               "MCP_NPM_SDK_PRESENT", "MCP_NPM_IN_CARGO", "MCP_NODE_RUNTIME_PRESENT")
+    blocked = tuple(name for name, _kind, _fn in ACTIVE_CODES)
     for code in blocked:
         if code in hits:
             problems.append(f"{code} 命中（W10 不应出现）：{hits[code]}")
@@ -665,7 +796,7 @@ def _mode_expect_current_gaps() -> int:
         print("MCP_CURRENT_GAPS_RESULT=FAIL")
         return 1
     print("MCP_CURRENT_GAPS_RESULT=PASS（W10 相位：只读桥在 + gated stdio 骨架已落地，"
-          "无未门控 rmcp/server/listener/tokio，奇偶/只读/红线性门禁全绿）")
+          "MCP Owner 无 runtime/listener，奇偶/只读/红线性门禁全绿）")
     return 0
 
 

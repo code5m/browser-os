@@ -67,7 +67,7 @@ use windows_sys::Win32::Security::{
 };
 use windows_sys::Win32::Storage::FileSystem::{
     FileIdBothDirectoryInfo, FileIdBothDirectoryRestartInfo, GetFileInformationByHandle,
-    GetFileInformationByHandleEx, GetFileType, GetFinalPathNameByHandleW, ReOpenFile,
+    GetFileInformationByHandleEx, GetFileType, GetFinalPathNameByHandleW,
     BY_HANDLE_FILE_INFORMATION, FILE_ALL_ACCESS, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL,
     FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
     FILE_ID_BOTH_DIR_INFO, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TYPE_DISK,
@@ -622,31 +622,50 @@ fn open_relative_with_share(
     Ok(file)
 }
 
-fn reopen_directory_for_creation(file: &File) -> io::Result<File> {
-    let raw = unsafe {
-        ReOpenFile(
-            file.as_raw_handle() as _,
-            FILE_ADD_SUBDIRECTORY | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
-            share_mode(true),
-            FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS,
-        )
-    };
-    if raw == INVALID_HANDLE_VALUE || raw.is_null() {
-        return Err(last_failure("PARENT_CREATE_OPEN"));
-    }
-    let reopened = unsafe { File::from_raw_handle(raw) };
-    if file_identity(file)? != file_identity(&reopened)? {
-        return Err(failure("PARENT_CREATE_IDENTITY_CHANGED", 0));
-    }
-    Ok(reopened)
-}
-
 struct OpenedPath {
     chain: Vec<File>,
 }
 impl OpenedPath {
     fn target(&self) -> &File {
         self.chain.last().expect("drive handle is always present")
+    }
+
+    /// Request creation rights through the retained native parent, never by
+    /// releasing the namespace pin or relaxing its ACL. Native directory
+    /// handles use the same relative-open contract as the initial traversal.
+    fn reopen_directory(&self, access: u32) -> io::Result<File> {
+        let original = self.target();
+        if !private_object(original)? {
+            return Err(failure("PARENT_CREATE_NOT_DIRECTORY", 0));
+        }
+        let path = final_path(original)?;
+        let reopened = if self.chain.len() > 1 {
+            let parent = &self.chain[self.chain.len() - 2];
+            let name = path
+                .file_name()
+                .ok_or_else(|| failure("PARENT_CREATE_NAME", 0))?;
+            open_relative(
+                parent,
+                name,
+                access | FILE_READ_ATTRIBUTES,
+                true,
+                false,
+                ptr::null_mut(),
+                true,
+            )?
+        } else {
+            // The volume root has no parent component. Keep its original
+            // handle pinned and verify the newly opened volume identity.
+            OpenOptions::new()
+                .access_mode(access | FILE_READ_ATTRIBUTES | SYNCHRONIZE)
+                .share_mode(share_mode(true))
+                .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+                .open(&path)?
+        };
+        if !private_object(&reopened)? || file_identity(original)? != file_identity(&reopened)? {
+            return Err(failure("PARENT_CREATE_IDENTITY_CHANGED", 0));
+        }
+        Ok(reopened)
     }
 }
 
@@ -742,7 +761,7 @@ fn open_path_options(
             Ok(child) => child,
             Err(error) if error.kind() == io::ErrorKind::NotFound && create.is_some() => {
                 let policy = create.expect("checked above");
-                let parent_writer = reopen_directory_for_creation(parent)?;
+                let parent_writer = result.reopen_directory(FILE_ADD_SUBDIRECTORY)?;
                 let mut descriptor = policy.descriptor(true)?;
                 open_relative(
                     &parent_writer,
@@ -1465,7 +1484,10 @@ mod tests {
 
     #[test]
     fn new_children_inherit_only_native_owner_and_system() {
-        let root = fixture("inherit");
+        let base = fixture("inherit");
+        let root = base.join("middle").join("private");
+        // Every missing component must be created through its pinned parent;
+        // reopening only a preexisting private root misses this native path.
         ensure_private_directory(&root, &PrivateTreeOptions::default()).unwrap();
         std::fs::create_dir(root.join("cache")).unwrap();
         std::fs::write(root.join("cache/entry"), b"cache").unwrap();
@@ -1477,7 +1499,13 @@ mod tests {
                 .repaired_objects,
             0
         );
-        std::fs::remove_dir_all(root).unwrap();
+        assert_eq!(
+            audit_private_directory(&base, true, &PrivateTreeOptions::default())
+                .unwrap()
+                .checked_objects,
+            5
+        );
+        std::fs::remove_dir_all(base).unwrap();
     }
 
     #[test]
@@ -1676,6 +1704,11 @@ mod tests {
         // the parent. Native MAXIMUM_ALLOWED suppresses implicit propagation.
         {
             let child = open_path(&root.join("child"), None, true, MAXIMUM_ALLOWED).unwrap();
+            // Elevated tokens may create files owned by Administrators.
+            // Establish this test's owner while the original full-access
+            // handle exists, then remove write rights to test shallow repair.
+            repair_object(child.target(), &policy, false).unwrap();
+            assert!(descriptor_is_private(child.target(), &policy, false, true).unwrap());
             set_test_dacl(
                 child.target(),
                 &owner_entries(

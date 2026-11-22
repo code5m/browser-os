@@ -1,74 +1,28 @@
 #!/usr/bin/env python3
-"""Expose the M4 database invariants as a reproducible fixture.
+"""Expose the database Owner invariants as a reproducible fixture.
 
-契约来源：
-- `logs/checkpoints/M4-1.b-20260905-2250.md`（`SupportedDb` / `DbConnectionConfig` / `DbErrorCode`）
-- `logs/checkpoints/M4-1.c-20260905-2255.md`（结果上限 / 取消 / 截断 / 多语句通道）
-- `logs/checkpoints/M4-1.d-20260905-2300.md` §3（生产判定信号契约）与 §5（码位表）
-- `logs/assist/A10-M4-security-review-20260905-2240.md` G-1~G-6、G-10、G-11
+The M4 contracts remain active: metadata never contains credentials, writes
+default to denied, SQL classification fails closed, and native synchronous
+drivers preserve bounded results, cancellation, timeouts and platform refusal.
+The source of these checks is the physical capabilities/database Owner, including
+its command, studio and durable profile paths; legacy root re-exports are not
+implementation evidence.
 
-本夹具守住的底线（默认模式 14 个 ACTIVE 码位，1 个 PENDING）：
+BFC/Agent Foundation may depend on tokio. This does not authorize the Database
+Owner to import an async driver/runtime, introduce an ORM or launch a JDBC sidecar.
+Tauri's existing spawn_blocking bridge delegates to the synchronous driver.
 
-  凭据结构（F2）
-  - `DbConnectionConfig` **结构性不含** password 字段——不是「写前清空」，是类型上不存在
-
-  写默认拒绝（F1）
-  - `allow_write` 必须存在且缺省 `false`；禁止自定义默认函数返回 `true`
-
-  依赖形态（M4-1.a §6.1 / G-11）
-  - 禁 JDBC 侧车
-  - 禁把 `tokio` / `async-std` / `sqlx` / `diesel` 提升为直接依赖（同步栈裁定）
-
-  错误码闭合（M4-1.b §4）
-  - `DbErrorCode` 变体、`as_str` 映射、`DB_` 前缀三者一致（18 码）
-
-  安全闸门纯度（F4）
-  - `security_policy.rs` 零 db 依赖：分类器与生产判定是纯函数，才能先于数据库实现合入
-
-  分类器 fail-closed（G-4 / G-5）
-  - 不可解析即拒、多语句整批拒、注释与字符串混淆不得绕过——
-    这条不变量的行为本体在 `cargo test`（M4-2.s 测试模块），静态层只能守住
-    「必需测试仍在」：删掉任一关键用例即 FAIL（见下文的诚实声明）
-
-PENDING 码位（1 个）：见下方 `PENDING_CODES` 注释。
-
-**2026-09-06（Lane A2）提升记录**：A4 命令层（`db_connect` / `db_query` /
-`db_disconnect` 已落地，ACL 顺序 + 审计脱敏就位）与 A3 连接池（`database.rs`
-已落地）均已实现，故原 8 个 pending 中 7 个提升为 ACTIVE：
-
-  - A4：`DB_ACL_ORDER` / `DB_CRED_IN_AUDIT` / `DB_MULTI_STATEMENT_FORBIDDEN`
-  - A3：`DB_CRED_NAMESPACE` / `DB_RESULT_LIMIT_MISSING` / `DB_TIMEOUT_NOT_LAYERED` / `DB_PLATFORM_DEGRADE`
-
-真实仓库复跑 15 码位全部零违规，产物已存在故不再是「存在才判」的空转项。
-其中 `DB_CRED_NAMESPACE` 为「弱守」：其 Keyring 调用实际落在 `bridge.rs`，
-本码位只扫 `database.rs`（仅含 `credential_key` / `DB_CRED_PREFIX` 的 `db:`
-字面量）。待 A4 把凭据落库逻辑收口后，建议把扫描目标扩到 `bridge.rs`（见 §5 备注）。
-
-唯一保留的 `DB_PERSIST_NOT_ATOMIC`：连接配置落盘（F10，
-`data_dir/db_connections.json` 原子写）尚未实现——当前 `bridge.rs` 仅维护内存态
-`DbConnectionRegistry`，无文件持久化。一旦 A3 落 `save_connections` + `atomic_write`，
-应从 `PENDING_CODES` 移除并补坏样本。
-
-`--expect-pending` 会在「pending 码位已经可被检出」时 FAIL —— 那意味着它已被
-实现，应立即转入默认判定。当前仅 `DB_PERSIST_NOT_ATOMIC` 保留，其制品缺失故
-返回 NONE（符合预期）。
-
-关于「产物存在才判」：仅剩 `DB_PERSIST_NOT_ATOMIC` 受此约束——`database*.rs`
-存在但无 `save_connections` 系列函数时该码位自动降级为 no-op；其余码位因制品已
-落地而常驻生效。
-
-**诚实声明**：`DB_SQL_PARSE_FAIL_CLOSED` 是**行为**不变量，真正的判定在
-`cargo test security_policy`（36 条用例）。本脚本只能静态守住「这些用例还在、
-分类器 API 还在」，不能替代运行时断言；两者都必须跑。
-
-默认模式：ACTIVE 不变量全部成立 → EXIT 0；任一被破坏 → 打印违规码并 EXIT 1。
---self-test：真实仓库零违规 + 一份**合成的合规参考实现**零违规 + 每个码位
-至少一个变异坏样本被检出（含变异防呆：坏样本必须真的改动内容，否则按漏检计）。
+DB_PERSIST_NOT_ATOMIC is ACTIVE: profiles::write_records now exists and must keep
+its exclusive temporary file, sync, atomic replacement and failure cleanup.
+--expect-pending remains compatible with existing callers; no pending exception
+remains. Static checks do not replace the real SQL classifier, transaction,
+credential, TLS and driver integration tests.
 """
 
 from __future__ import annotations
 
 import argparse
+import ast
 import re
 import sys
 from pathlib import Path
@@ -94,14 +48,11 @@ ACTIVE_CODES: tuple[str, ...] = (
     "DB_RESULT_LIMIT_MISSING",
     "DB_TIMEOUT_NOT_LAYERED",
     "DB_PLATFORM_DEGRADE",
-)
-
-PENDING_CODES: tuple[str, ...] = (
-    # A3（M4-2 连接池与查询核心）：连接配置落盘（F10，`data_dir/db_connections.json`
-    # 原子写）尚未实现——当前 `bridge.rs` 仅维护内存态 `DbConnectionRegistry`，无文件
-    # 持久化。一旦 A3 落 `save_connections` + `atomic_write`，应转入 ACTIVE 并补坏样本。
     "DB_PERSIST_NOT_ATOMIC",
 )
+
+PENDING_CODES: tuple[str, ...] = ()
+
 
 # ----------------------------- 检测常量 -----------------------------
 
@@ -115,7 +66,11 @@ CFG_FORBIDDEN_FIELD_RE = re.compile(
 # —— 命中即违规的只有上表的字段名。
 
 # 禁用的运行时 / ORM（M4-1.a §3 裁定：同步栈，应用层不自建 runtime）
-FORBIDDEN_RUNTIME_RE = re.compile(r"^\s*(tokio|async-std|sqlx|diesel|sea-orm)\s*=", re.M)
+FORBIDDEN_RUNTIME_RE = re.compile(r"^\s*(async-std|sqlx|diesel|sea-orm)\s*=", re.M)
+DB_RUNTIME_USE_RE = re.compile(
+    r"\b(?:tokio|async_std|sqlx|diesel|sea_orm)\s*::|"
+    r"\buse\s+(?:tokio|async_std|sqlx|diesel|sea_orm)\b"
+)
 
 # JDBC 侧车（WBS 明令禁止）
 JDBC_TOKENS = ("jdbc", "jre", "jdk", "maven", "gradle", "ojdbc")
@@ -132,6 +87,7 @@ DB_DEP_REFS = (
     "mysql::",
     "postgres::",
     "crate::database",
+    "crate::capabilities::database",
 )
 
 # 分类器必备 API（`DB_SQL_PARSE_FAIL_CLOSED` 的组成之一）
@@ -282,6 +238,125 @@ def cargo_dependencies(cargo: str) -> str:
     return "\n".join(lines)
 
 
+def _jdbc_command(value) -> bool:
+    if isinstance(value, (list, tuple)):
+        command = " ".join(item for item in value if isinstance(item, str))
+    elif isinstance(value, str):
+        command = value
+    else:
+        return False
+    return bool(re.search(r"\b(?:java(?:\.exe)?|mvn|gradle)\b", command, re.I)
+                and re.search(r"jdbc|ojdbc|database[-_]bridge", command, re.I))
+
+
+def script_starts_jdbc(name: str, source: str) -> bool:
+    if name.endswith(".py"):
+        try:
+            tree = ast.parse(source)
+        except SyntaxError as error:
+            raise RuntimeError(f"DB_SCRIPT_PARSE_FAILED: {name}") from error
+        modules = {"subprocess", "os"}
+        functions = set()
+        launches = {"run", "Popen", "call", "check_call", "check_output",
+                    "system", "execv", "execve", "execvp", "execvpe"}
+        constants = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                modules.update(alias.asname or alias.name for alias in node.names
+                               if alias.name in ("subprocess", "os"))
+            elif isinstance(node, ast.ImportFrom) and node.module in ("subprocess", "os"):
+                functions.update(alias.asname or alias.name for alias in node.names
+                                 if alias.name in launches)
+            elif isinstance(node, ast.Assign) and len(node.targets) == 1:
+                target = node.targets[0]
+                if isinstance(target, ast.Name):
+                    try:
+                        constants[target.id] = ast.literal_eval(node.value)
+                    except (ValueError, TypeError):
+                        constants.pop(target.id, None)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            fn = node.func
+            is_launch = (
+                isinstance(fn, ast.Attribute) and isinstance(fn.value, ast.Name)
+                and fn.value.id in modules and fn.attr in launches
+            ) or (isinstance(fn, ast.Name) and fn.id in functions)
+            if not is_launch:
+                continue
+            args = list(node.args[:1]) + [arg.value for arg in node.keywords if arg.arg == "args"]
+            for arg in args:
+                try:
+                    value = constants[arg.id] if isinstance(arg, ast.Name) else ast.literal_eval(arg)
+                    if _jdbc_command(value):
+                        return True
+                except (KeyError, ValueError, TypeError):
+                    # A launcher with unresolved arguments and JDBC material
+                    # needs explicit review; do not silently approve a sidecar.
+                    if re.search(r"jdbc|ojdbc|database[-_]bridge", source, re.I):
+                        return True
+        return False
+    if name.endswith(".sh"):
+        return any(_jdbc_command(line) for line in source.splitlines()
+                   if re.match(r"^\s*(?:exec\s+)?(?:java(?:\.exe)?|mvn|gradle)\s", line))
+    if name.endswith(".mjs"):
+        return any(_jdbc_command(line) for line in source.splitlines()
+                   if re.match(
+                       r"^\s*(?:(?:const|let)\s+\w+\s*=\s*)?(?:await\s+)?"
+                       r"(?:\w+\.)?(?:spawn|spawnSync|execFile|execFileSync|exec|execSync)\s*\(",
+                       line))
+    return False
+
+
+def rust_call_arguments(source: str, name: str) -> list[list[str]]:
+    """Extract call arguments, without mistaking format strings for delimiters."""
+    calls = []
+    for match in re.finditer(rf"\b{re.escape(name)}\s*\(", source):
+        stack = ["("]
+        start = match.end()
+        args = []
+        quoted = False
+        escaped = False
+        for index in range(start, len(source)):
+            char = source[index]
+            if quoted:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == '"':
+                    quoted = False
+                continue
+            if char == '"':
+                quoted = True
+            elif char in "([{":
+                stack.append(char)
+            elif char in ")]}":
+                if not stack:
+                    break
+                stack.pop()
+                if not stack:
+                    tail = source[start:index].strip()
+                    if tail:
+                        args.append(tail)
+                    calls.append(args)
+                    break
+            elif char == "," and len(stack) == 1:
+                args.append(source[start:index].strip())
+                start = index + 1
+    return calls
+
+
+def _ordered(source: str, patterns: tuple[str, ...]) -> bool:
+    offset = 0
+    for pattern in patterns:
+        match = re.search(pattern, source[offset:], re.S)
+        if not match:
+            return False
+        offset += match.end()
+    return True
+
+
 # ----------------------------- 检测规则 -----------------------------
 
 
@@ -296,6 +371,8 @@ def detect_hits(files: dict) -> dict[str, list[str]]:
     security = files.get("security_rs", "")
     database = files.get("database_rs", "")
     bridge = files.get("bridge_rs", "")
+    profiles = files.get("profiles_rs", "")
+    studio = files.get("studio_rs", "")
     main_rs = files.get("main_rs", "")
     acl = files.get("acl_toml", "")
     cargo = files.get("cargo_toml", "")
@@ -305,6 +382,9 @@ def detect_hits(files: dict) -> dict[str, list[str]]:
     domain_code = strip_comments(domain)
     security_code = strip_comments(security)
     database_code = strip_comments(database)
+    profile_code = strip_comments(profiles)
+    studio_code = strip_comments(studio)
+    owner_code = "\n".join((database_code, strip_comments(bridge), profile_code, studio_code))
 
     # ================= ACTIVE =================
 
@@ -340,7 +420,6 @@ def detect_hits(files: dict) -> dict[str, list[str]]:
     for label, blob in (
         ("Cargo.toml", cargo),
         ("build.rs", build_rs),
-        ("scripts", scripts_txt),
     ):
         if not blob.strip():
             continue
@@ -349,14 +428,26 @@ def detect_hits(files: dict) -> dict[str, list[str]]:
             if token in low:
                 hit("DB_JDBC_SIDECAR", f"{label}:{token}")
 
-    # ---- 4) 依赖形态：不得提升 tokio / async ORM ----
+    scripts = dict(files.get("scripts", {}))
+    if scripts_txt:
+        scripts["fixture.py"] = scripts_txt
+    for name, source in scripts.items():
+        if script_starts_jdbc(name, source):
+            hit("DB_JDBC_SIDECAR", f"{name}: executable JDBC sidecar")
+    if re.search(r'Command::new\s*\(\s*"(?:java|java\.exe)"', owner_code):
+        hit("DB_JDBC_SIDECAR", "Database Owner spawns a Java sidecar")
+
+    # ---- 4) Database Owner keeps synchronous drivers; shared tokio is not DB permission ----
     deps = cargo_dependencies(cargo)
     if cargo.strip():
         for m in FORBIDDEN_RUNTIME_RE.finditer(deps):
             hit(
                 "DB_UNDECLARED_RUNTIME",
-                f"Cargo.toml [dependencies] 引入 {m.group(1)}（M4-1.a §3：同步栈，应用层不自建 runtime）",
+                f"Cargo.toml [dependencies] 引入 {m.group(1)}（同步驱动不引入第二套 ORM/runtime）",
             )
+
+    for match in DB_RUNTIME_USE_RE.finditer(owner_code):
+        hit("DB_UNDECLARED_RUNTIME", f"Database Owner 引用 {match.group(0)}")
 
     # ---- 5) 错误码闭合（18 码，变体↔映射一致）----
     enum_m = re.search(r"pub\s+enum\s+DbErrorCode\s*\{([^}]*)\}", domain_code)
@@ -405,7 +496,7 @@ def detect_hits(files: dict) -> dict[str, list[str]]:
                 f"缺失必需用例 {name}（不可解析即拒 / 多语句整批拒 / 生产判定不确定即拒的取证被删除）",
             )
 
-    # ================= PENDING =================
+    # ================= Implemented Owner paths (ACTIVE) =================
 
     # ---- P1) ACL 顺序：db_* 必须插在 list_artifact_images 之前（A4）----
     anchor = acl.find(f'"{ACL_ANCHOR}"')
@@ -415,35 +506,67 @@ def detect_hits(files: dict) -> dict[str, list[str]]:
             if idx > anchor:
                 hit("DB_ACL_ORDER", f"{cmd} 排在 {ACL_ANCHOR} 之后")
 
-    # ---- P2) db 审计 detail 不得含 SQL 原文与凭据（A4，G-3）----
-    for event in DB_AUDIT_EVENTS:
-        index = bridge.find(f'"{event}"')
-        if index < 0:
-            continue
-        window = bridge[index : index + 260].lower()
-        for bad in AUDIT_FORBIDDEN:
-            if bad in window:
-                hit("DB_CRED_IN_AUDIT", f"{event}:{bad}")
+    # ---- DB audit examines only the actual detail argument, across both Owners ----
+    for source in (strip_comments(bridge), studio_code):
+        for args in rust_call_arguments(source, "log_audit"):
+            if len(args) < 3 or not re.match(r'^"db\.', args[1]):
+                continue
+            detail = args[2].lower()
+            for bad in AUDIT_FORBIDDEN + ("sql",):
+                if re.search(rf"\b{re.escape(bad)}", detail):
+                    hit("DB_CRED_IN_AUDIT", f"{args[1]}:{bad}")
 
     if not database_code.strip():
+        hit("DB_RESULT_LIMIT_MISSING", "Database driver Owner is missing")
+        hit("DB_TIMEOUT_NOT_LAYERED", "Database driver Owner is missing")
         return hits
 
-    # ---- P3) 多语句通道禁用于处理用户 SQL（A4 命令层，M4-1.c §5）----
-    # 扫 **bridge.rs 的 db_query**（命令层是唯一处理用户 SQL 的入口）；database.rs
-    # 仅在测试 fixture 用 execute_batch 建表，属合法，不在此判。
-    if "fn db_query" in bridge:
+    # ---- User SQL must keep one-statement execution and the same fail-closed gate ----
+    sql_entries = [
+        ("commands", bridge, name)
+        for name in re.findall(r"\bfn\s+(db_query[A-Za-z0-9_]*)\s*\(", bridge)
+    ]
+    if not any(name == "db_query" for _label, _source, name in sql_entries):
+        hit("DB_SQL_PARSE_FAIL_CLOSED", "commands.rs 缺实际 db_query Owner")
+    if studio_code:
+        sql_entries.extend(("studio", studio_code, name) for name in ("run_sql", "transact"))
+    for label, source, name in sql_entries:
+        body = rust_fn_body(strip_comments(source), name)
         for bad in MULTI_STATEMENT_APIS:
-            if bad in bridge:
-                hit("DB_MULTI_STATEMENT_FORBIDDEN", f"bridge.rs 命令层用 {bad} 处理用户 SQL")
+            if re.search(rf"\b{bad}\s*\(", body):
+                hit("DB_MULTI_STATEMENT_FORBIDDEN", f"{label}::{name} 使用 {bad}")
+        if name in ("db_query", "run_sql"):
+            gate = body.find("evaluate_db_query_gate")
+            query = re.search(r"\.\s*query\s*\(|crate::database::query\s*\(", body)
+            gate_end = body.find(";", gate) if gate >= 0 else -1
+            if (gate < 0 or not query or gate >= query.start()
+                    or gate_end < 0 or "?" not in body[gate:gate_end]):
+                hit("DB_SQL_PARSE_FAIL_CLOSED", f"{label}::{name} 未在查询前传播安全闸门拒绝")
 
-    # ---- P4) Keyring 键必须是 db:<conn_id>（A3，G-1）----
-    if re.search(r"KeyringStore::(save_token|get_token|delete_token)\s*\(", database_code):
-        # 只认 `db:` 前缀字面量（`format!("db:{}", id)` 亦命中），不认裸 `conn_id`
-        if not re.search(r'"db:', database_code):
-            hit(
-                "DB_CRED_NAMESPACE",
-                "database.rs 使用 KeyringStore 但无 `db:` 键前缀（与 git 的 repo_id 会静默互串）",
-            )
+    # ---- Credential identity follows the canonical namespace and validated versions ----
+    key = rust_fn_body(database_code, "credential_key")
+    literal_key = re.search(r'format!\s*\(\s*"db:\{\}"\s*,\s*conn_id\s*\)', key)
+    constant_key = (
+        re.search(r'const\s+DB_CRED_PREFIX\s*:\s*&str\s*=\s*"db:"', database_code)
+        and re.search(r'format!\s*\(\s*"\{DB_CRED_PREFIX\}\{conn_id\}"\s*\)', key)
+    )
+    if not literal_key and not constant_key:
+        hit("DB_CRED_NAMESPACE", "credential_key 未绑定 db:<conn_id>")
+    if profile_code:
+        reference = rust_fn_body(profile_code, "reference")
+        if not _ordered(reference, (
+            r"credential_key\s*\(\s*&self\.config\.id\s*\)",
+            r"\.strip_prefix\s*\(\s*&format!\s*\(\s*\"\{legacy\}:\"\s*\)\s*\)",
+            r"Uuid::parse_str\s*\(\s*version\s*\)",
+        )):
+            hit("DB_CRED_NAMESPACE", "StoredProfile.reference 未验证所属连接及版本 UUID")
+    for operation in ("stage", "record_retirement", "reconcile"):
+        for args in rust_call_arguments(owner_code, f"credential_versions::{operation}"):
+            if len(args) < 2 or args[1] != '"db"':
+                hit("DB_CRED_NAMESPACE", f"credential_versions::{operation} 未绑定 db Owner")
+    if re.search(r"KeyringStore::(?:save_token|get_token|delete_token)\s*\(\s*&?(?:conn_id|cfg\.id|id)\s*[,)]",
+                 owner_code):
+        hit("DB_CRED_NAMESPACE", "Keyring 使用裸连接 ID，绕过命名空间")
 
     # ---- P5) 结果结构必须有截断标记（A3，M4-1.c §2）----
     if re.search(r"\bstruct\s+\w*QueryResult\b", database_code) or "row_count" in database_code:
@@ -451,17 +574,35 @@ def detect_hits(files: dict) -> dict[str, list[str]]:
             if not re.search(rf"\bpub\s+{field}\s*:", database_code):
                 hit("DB_RESULT_LIMIT_MISSING", f"结果 DTO 缺 {field} 字段（禁止静默截断）")
 
-    # ---- P6) 连接配置落盘必须原子写（A3，F10）----
+    # ---- Durable profile persistence is implemented and ACTIVE ----
     for fn in ("save_connections", "save_connections_at", "persist_config"):
         body = rust_fn_body(database_code, fn)
         if body and "atomic_write" not in body:
             hit("DB_PERSIST_NOT_ATOMIC", f"database.rs::{fn} 未走 atomic_write")
+    writer = rust_fn_body(profile_code, "write_records")
+    if not writer or not _ordered(writer, (
+        r"serde_json::to_vec_pretty\s*\(\s*configs\s*\)",
+        r"assert_regular_or_missing\s*\(\s*path\s*\)\s*\?",
+        r"\.write\s*\(\s*true\s*\)\s*\.create_new\s*\(\s*true\s*\)",
+        r"\.open\s*\(\s*&temp\s*\)",
+        r"\.write_all\s*\(\s*&bytes\s*\)",
+        r"\.sync_all\s*\(\s*\)",
+        r"crate::session::atomic_replace_file\s*\(\s*&temp\s*,\s*path\s*\)",
+    )):
+        hit("DB_PERSIST_NOT_ATOMIC", "profiles::write_records 缺独占临时文件/同步/原子替换")
+    if (not re.search(r"if\s+result\.is_err\(\).*?fs::remove_file\s*\(\s*&temp\s*\)", writer, re.S)
+            or "directory.sync_all()" not in writer
+            or not re.search(r"opts\.mode\s*\(\s*0o600\s*\)", writer)
+            or re.search(r"(?:fs::write|File::create)\s*\(\s*path\s*[,)]", writer)):
+        hit("DB_PERSIST_NOT_ATOMIC", "profile 写入缺权限/父目录同步/失败清理或绕过 staging")
+    snapshot = rust_fn_body(strip_comments(bridge), "persist_snapshot")
+    if not re.search(r"profiles::write_records\s*\(\s*&profiles::path_for\s*\(", snapshot):
+        hit("DB_PERSIST_NOT_ATOMIC", "commands::persist_snapshot 未委托真实 profile Owner")
 
     # ---- P7) 超时分层必须复用 30/600/5（A3，M4-1.c §4）----
-    if "timeout" in database_code.lower():
-        for name in TIMEOUT_CONSTANTS:
-            if name not in database_code:
-                hit("DB_TIMEOUT_NOT_LAYERED", f"database.rs 缺 {name}")
+    for name in TIMEOUT_CONSTANTS:
+        if name not in database_code:
+            hit("DB_TIMEOUT_NOT_LAYERED", f"database.rs 缺 {name}")
 
     # ---- P8) 非 Linux 必须显式降级（A3，D29）----
     if "target_os" in database_code:
@@ -484,38 +625,36 @@ def _read(path: Path) -> str:
         return ""
 
 
-def _glob_concat(root: Path, pattern: str) -> str:
-    parts = [_read(p) for p in sorted((root / "src-tauri/src").glob(pattern)) if p.is_file()]
-    return "\n".join(parts)
+def _read_required(path: Path) -> str:
+    content = _read(path)
+    if not content.strip():
+        raise RuntimeError(f"DB_OWNER_SOURCE_MISSING: {path}")
+    return content
 
 
-def _scripts_concat(root: Path) -> str:
-    """拼接 `scripts/` 下脚本用于 JDBC 侧车扫描。
-
-    **排除本文件自身**：本夹具的代码里必然出现 `jdbc` 等检测 token，
-    把自己纳入扫描会得到恒真告警。
-    """
+def _script_sources(root: Path) -> dict[str, str]:
+    # Preserve language boundaries: policy fixtures containing launch examples
+    # are data, whereas an actual subprocess call is an executable sidecar.
     self_name = Path(__file__).name
-    parts: list[str] = []
-    for pattern in ("*.py", "*.sh", "*.mjs"):
-        for p in sorted((root / "scripts").glob(pattern)):
-            if p.is_file() and p.name != self_name:
-                parts.append(_read(p))
-    return "\n".join(parts)
+    return {p.name: _read(p)
+            for pattern in ("*.py", "*.sh", "*.mjs")
+            for p in sorted((root / "scripts").glob(pattern))
+            if p.is_file() and p.name != self_name}
 
 
 def read_repo(root: Path) -> dict:
     return {
         "domain_rs": _read(root / "src-tauri/src/domain.rs"),
         "security_rs": _read(root / "src-tauri/src/security_policy.rs"),
-        # 实现归 A3：文件可能不存在（→ 空串 → 存在才判）
-        "database_rs": _glob_concat(root, "database*.rs"),
-        "bridge_rs": _read(root / "src-tauri/src/bridge.rs"),
+        "database_rs": _read_required(root / "src-tauri/src/capabilities/database/database.rs"),
+        "bridge_rs": _read_required(root / "src-tauri/src/capabilities/database/commands.rs"),
+        "profiles_rs": _read_required(root / "src-tauri/src/capabilities/database/profiles.rs"),
+        "studio_rs": _read_required(root / "src-tauri/src/capabilities/database/studio.rs"),
         "main_rs": _read(root / "src-tauri/src/main.rs"),
         "acl_toml": _read(root / "src-tauri/permissions/default-commands.toml"),
         "cargo_toml": _read(root / "src-tauri/Cargo.toml"),
         "build_rs": _read(root / "src-tauri/build.rs"),
-        "scripts_txt": _scripts_concat(root),
+        "scripts": _script_sources(root),
     }
 
 
@@ -650,10 +789,58 @@ BRIDGE_GOOD = '''
 pub fn db_query(app: AppHandle, webview: tauri::Webview, conn_id: String, sql: String)
     -> Result<DbQueryResult, String> {
     check_invocation_source(&webview, "db_query", None, &app)?;
+    sp::evaluate_db_query_gate(&sql, &cfg, encrypted, confirmed)?;
     let rows = crate::database::query(&app, &conn_id, &sql)?;
     workspace::log_audit(&app, "db.query", format!("conn_id={} rows={} truncated={}",
         conn_id, rows.row_count, rows.truncated));
     Ok(rows)
+}
+fn persist_snapshot(app: &AppHandle, records: &[StoredProfile]) -> Result<(), String> {
+    profiles::write_records(&profiles::path_for(app)?, records)
+}
+'''
+
+PROFILES_GOOD = '''
+impl StoredProfile {
+    pub fn reference(&self) -> Result<String, String> {
+        let legacy = crate::database::credential_key(&self.config.id);
+        if self.credential_ref.is_empty() || self.credential_ref == legacy {
+            return Ok(legacy);
+        }
+        let version = self.credential_ref.strip_prefix(&format!("{legacy}:"))
+            .ok_or("DB_CREDENTIAL_REF_INVALID")?;
+        uuid::Uuid::parse_str(version).map_err(|_| "DB_CREDENTIAL_REF_INVALID")?;
+        Ok(self.credential_ref.clone())
+    }
+}
+pub(crate) fn write_records(path: &Path, configs: &[StoredProfile]) -> Result<(), String> {
+    let bytes = serde_json::to_vec_pretty(configs)?;
+    assert_regular_or_missing(path)?;
+    let temp = dir.join("profiles.tmp");
+    let mut opts = fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    opts.mode(0o600);
+    let result = (|| {
+        let mut f = opts.open(&temp)?;
+        f.write_all(&bytes)?;
+        f.sync_all()?;
+        crate::session::atomic_replace_file(&temp, path)?;
+        #[cfg(unix)]
+        fs::File::open(dir).and_then(|directory| directory.sync_all())?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    result
+}
+'''
+
+STUDIO_GOOD = '''
+fn run_sql(pool: &mut DbPool, sql: &str) -> Result<Value, String> {
+    sp::evaluate_db_query_gate(sql, cfg, pool.encrypted(), confirmed)?;
+    pool.query(sql, cancel, timeout, id)
 }
 '''
 
@@ -711,6 +898,8 @@ def reference_impl() -> dict:
         "security_rs": SECURITY_GOOD,
         "database_rs": DATABASE_GOOD,
         "bridge_rs": BRIDGE_GOOD,
+        "profiles_rs": PROFILES_GOOD,
+        "studio_rs": STUDIO_GOOD,
         "main_rs": MAIN_GOOD,
         "acl_toml": ACL_GOOD,
         "cargo_toml": CARGO_GOOD,
@@ -730,16 +919,30 @@ def run_self_test(root: Path) -> int:
     if overlap:
         failures.append(f"码位重复定义（ACTIVE ∩ PENDING）：{sorted(overlap)}")
 
-    # 1) 好样本 A：真实仓库（db 命令与 database.rs 尚未落地 → 必须零违规）
+    # 1) 真实仓库：实际 driver/command/studio/profile Owner 均必须满足契约
     real = detect_hits(read_repo(root))
     if real:
-        failures.append(f"真实仓库存在违规（应为空）：{sorted(real)}")
+        failures.append(f"真实仓库存在违规（应为空）：{real}")
 
     # 2) 好样本 B：合成参考实现（产物齐备 → 仍必须零违规，证明无误报）
     good = reference_impl()
     ref = detect_hits(good)
     if ref:
         failures.append(f"合成参考实现存在违规（应为空，说明码位误报）：{sorted(ref)}")
+
+    scoped_good = dict(good)
+    scoped_good["cargo_toml"] = good["cargo_toml"].replace(
+        'postgres = "0.19"', 'postgres = "0.19"\ntokio = { version = "1", features = ["net"] }')
+    scoped_good["bridge_rs"] += (
+        '\nfn credential_worker(secret: &str) { let _ = secret; }\n')
+    scoped_good["scripts"] = {
+        "metadata.py": 'jdbc_url = "jdbc:mysql://example.invalid/database"\n',
+        "policy_fixture.py": (
+            'fixture = \'subprocess.run(["java", "-jar", "jdbc-bridge.jar"])\'\n'),
+    }
+    scoped_hits = detect_hits(scoped_good)
+    if scoped_hits:
+        failures.append(f"共享 runtime/独立凭据函数/侧车文本夹具正例误报：{scoped_hits}")
 
     samples: list[tuple[str, dict, str, str]] = []
 
@@ -787,11 +990,10 @@ def run_self_test(root: Path) -> int:
     )
 
     add(
-        "把 tokio 提升为直接依赖",
-        mutate(cargo_toml=good["cargo_toml"].replace(
-            'rusqlite = { version = "0.32", features = ["bundled"] }',
-            'tokio = { version = "1", features = ["full"] }')),
-        "cargo_toml",
+        "Database Owner 自建 tokio runtime",
+        mutate(database_rs=good["database_rs"]
+               + "\nfn connect_async() { tokio::runtime::Runtime::new(); }\n"),
+        "database_rs",
         "DB_UNDECLARED_RUNTIME",
     )
 
@@ -817,7 +1019,7 @@ def run_self_test(root: Path) -> int:
         "DB_SQL_PARSE_FAIL_CLOSED",
     )
 
-    # ---- PENDING 坏样本（8）----
+    # ---- 已实现 Owner 的坏样本（含已转 ACTIVE 的持久化）----
 
     add(
         "db_* 插在 list_artifact_images 之后",
@@ -884,6 +1086,77 @@ def run_self_test(root: Path) -> int:
         "DB_PLATFORM_DEGRADE",
     )
 
+    add(
+        "Database Owner 不能通过 import alias 引入 runtime",
+        mutate(database_rs=good["database_rs"] + "\nuse tokio as async_driver;\n"),
+        "database_rs", "DB_UNDECLARED_RUNTIME")
+    add(
+        "新增 ORM 直接依赖仍拒绝",
+        mutate(cargo_toml=good["cargo_toml"].replace(
+            'postgres = "0.19"', 'postgres = "0.19"\nsqlx = "0.8"')),
+        "cargo_toml", "DB_UNDECLARED_RUNTIME")
+    for name, source in (
+        ("launch.py", 'import subprocess\nsubprocess.run(["java", "-jar", "jdbc-bridge.jar"])\n'),
+        ("alias.py", 'from subprocess import Popen as launch\n'
+                     'command = ["java", "-jar", "jdbc-bridge.jar"]\nlaunch(command)\n'),
+        ("launch.sh", 'java -jar jdbc-bridge.jar\n'),
+        ("launch.mjs", 'childProcess.spawn("java", ["-jar", "jdbc-bridge.jar"]);\n'),
+    ):
+        add(f"真实 JDBC 侧车启动 {name}", mutate(scripts={name: source}),
+            "scripts", "DB_JDBC_SIDECAR")
+    add(
+        "迁移后的命令 Owner 安全闸门被移除",
+        mutate(bridge_rs=good["bridge_rs"].replace(
+            "    sp::evaluate_db_query_gate(&sql, &cfg, encrypted, confirmed)?;\n", "")),
+        "bridge_rs", "DB_SQL_PARSE_FAIL_CLOSED")
+    add(
+        "Studio 安全闸门错误不再传播",
+        mutate(studio_rs=good["studio_rs"].replace(
+            "pool.encrypted(), confirmed)?;", "pool.encrypted(), confirmed);")),
+        "studio_rs", "DB_SQL_PARSE_FAIL_CLOSED")
+    add(
+        "审计 format 捕获 SQL 变量仍是泄漏",
+        mutate(bridge_rs=good["bridge_rs"].replace(
+            'format!("conn_id={} rows={} truncated={}",\n        conn_id, rows.row_count, rows.truncated)',
+            'format!("{sql}")')),
+        "bridge_rs", "DB_CRED_IN_AUDIT")
+    add(
+        "Studio 审计不得回显凭据",
+        mutate(studio_rs=good["studio_rs"]
+               + '\nfn audit() { log_audit(&app, "db.session.operation", format!("{password}")); }\n'),
+        "studio_rs", "DB_CRED_IN_AUDIT")
+    add(
+        "移除真实 driver Owner 不能由旧 shim 兜底通过",
+        mutate(database_rs="pub use super::database::*;\n"),
+        "database_rs", "DB_CRED_NAMESPACE")
+    add(
+        "持久化凭据版本必须验证 UUID",
+        mutate(profiles_rs=good["profiles_rs"].replace(
+            '        uuid::Uuid::parse_str(version).map_err(|_| "DB_CREDENTIAL_REF_INVALID")?;\n', "")),
+        "profiles_rs", "DB_CRED_NAMESPACE")
+    add(
+        "凭据版本操作不得切换到 Git 命名空间",
+        mutate(bridge_rs=good["bridge_rs"]
+               + '\nfn stage() { credential_versions::stage(&path, "git", &id, secret, &retired); }\n'),
+        "bridge_rs", "DB_CRED_NAMESPACE")
+    for before, after, detail in (
+        ("opts.write(true).create_new(true);", "opts.write(true).create(true);", "独占创建"),
+        ("        f.sync_all()?;\n", "", "数据同步"),
+        ("crate::session::atomic_replace_file(&temp, path)?;", "fs::write(path, bytes)?;", "原子替换"),
+        ("directory.sync_all()", "Ok(())", "目录同步"),
+        ("        let _ = fs::remove_file(&temp);", "", "失败清理"),
+        ("opts.mode(0o600);", "opts.mode(0o666);", "私有权限"),
+    ):
+        add(f"profile writer 失去{detail}",
+            mutate(profiles_rs=good["profiles_rs"].replace(before, after)),
+            "profiles_rs", "DB_PERSIST_NOT_ATOMIC")
+    add(
+        "命令持久化绕过 Profile Owner",
+        mutate(bridge_rs=good["bridge_rs"].replace(
+            "profiles::write_records(&profiles::path_for(app)?, records)",
+            'fs::write("profiles.json", "[]")')),
+        "bridge_rs", "DB_PERSIST_NOT_ATOMIC")
+
     # ---- 执行坏样本 ----
     covered: set[str] = set()
     for desc, mutated, _key, expect in samples:
@@ -904,7 +1177,7 @@ def run_self_test(root: Path) -> int:
         return 1
 
     print(
-        f"DB_SELF_TEST_RESULT=PASS: 2 好样本零违规（真实仓库 + 合成参考实现）"
+        f"DB_SELF_TEST_RESULT=PASS: 3 好样本零违规（真实 Owner + 合成参考 + Owner 分离）"
         f" + {len(samples)} 个坏样本全部检出（含变异防呆）；"
         f"ACTIVE={len(ACTIVE_CODES)} PENDING={len(PENDING_CODES)}"
     )

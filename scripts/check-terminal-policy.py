@@ -32,10 +32,11 @@ from native_bridge_owner_sources import read_native_bridge_owners
 def rust_function_body(source: str, name: str) -> str:
     """Read the top-level function's source contract, not a Rust execution test."""
     found = re.search(
-        r"\bfn\s+" + re.escape(name) + r"\s*\([^)]*\)[^{]*\{(.*?)^\}",
+        r"^(?P<indent>[ \t]*)(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+"
+        + re.escape(name) + r"\s*\([^)]*\)[^{]*\{(.*?)^(?P=indent)\}",
         source, re.S | re.M,
     )
-    return found.group(1) if found else ""
+    return found.group(2) if found else ""
 
 
 def store_function_body(source: str, name: str) -> str:
@@ -155,11 +156,34 @@ def detect_violations(files: dict) -> list[str]:
             or kill_scope.group(1).find("session.request_close()") >
                kill_scope.group(1).find("terms.remove(&id)")):
         v.append("TERM_CLOSE_ATOMIC_MISSING:移除session前须原子登记cleanup owner")
-    for command in ("term_kill", "term_resize"):
-        body = rust_function_body(bridge, command)
-        if ("spawn_blocking" not in body or command + "_sync(" not in body
-                or "pub async fn " + command not in bridge):
-            v.append("TERM_ASYNC_OWNER_MISSING:关闭与resize不得在GUI事件线程等待")
+    async_kill = rust_function_body(bridge, "term_kill")
+    if ("spawn_blocking" not in async_kill or "term_kill_sync(" not in async_kill
+            or "pub async fn term_kill" not in bridge):
+        v.append("TERM_ASYNC_OWNER_MISSING:关闭不得在GUI事件线程等待")
+
+    # Resize uses one native worker per admitted session and one replaceable
+    # pending size. A new spawn_blocking task per IPC would recreate an unbounded
+    # queue behind a blocked ConPTY call.
+    async_resize = rust_function_body(bridge, "term_resize")
+    async_scope = scoped_table_binding(async_resize, "control")
+    enqueue = rust_function_body(term, "enqueue_resize")
+    resize_worker = rust_function_body(term, "run_resize_owner")
+    if (async_scope is None or "terminals.lock()" not in async_scope.group(1)
+            or ".control()" not in async_scope.group(1)
+            or "enqueue_resize(cols, rows)?" not in async_resize[async_scope.end():]
+            or ".await" not in async_resize[async_scope.end():]
+            or "pub async fn term_resize" not in bridge
+            or "spawn_blocking" in async_resize or "control.resize(" in async_resize
+            or "pending: Mutex<Option<ResizeRequest>>" not in term
+            or "pending.replace(ResizeRequest" not in enqueue
+            or 'previous.reply.send(Err("TERM_RESIZE_SUPERSEDED".into()))' not in enqueue
+            or "if worker.is_none()" not in enqueue
+            or "self.admission.upgrade()" not in enqueue
+            or "TerminalPermit { _lease: lease }" not in enqueue
+            or "control.run_resize_owner()" not in enqueue
+            or "self.resize(request.size.cols, request.size.rows)" not in resize_worker
+            or "request.reply.send(result)" not in resize_worker):
+        v.append("TERM_ASYNC_OWNER_MISSING:resize须经有界session owner锁外提交并异步接收结果")
 
     # ---- F7：关闭协议（stop 标志 + 线程回收）----
     if "Arc<AtomicBool>" not in term or "stop" not in term:
@@ -189,7 +213,7 @@ def detect_violations(files: dict) -> list[str]:
     app_shutdown = rust_function_body(bridge, "register_shutdown_tasks")
     publish = rust_function_body(bridge, "publish_terminal")
     if ("terminal::request_shutdown()" not in app_shutdown
-            or 'register_with_deadline("kill-terminals", &["stop-background-workers"]' not in app_shutdown
+            or not re.search(r'register_with_deadline\(\s*"kill-terminals",\s*&\[\s*"stop-background-workers"\s*\]', app_shutdown)
             or "terminal::shutdown_until(deadline)" not in app_shutdown
             or "terminal::terminate_session" in app_shutdown
             or "session.request_close()" not in app_shutdown
@@ -219,12 +243,15 @@ def detect_violations(files: dict) -> list[str]:
     if "!measure" not in term:
         v.append("TERM_MEASURE_BYPASS:terminal.rs 未按测量模式关闭丢弃/合并")
 
-    # ---- F9: terminal core adds no runtime dependency ----
-    # Cargo already contains tokio for another capability. Check the owning
-    # source rather than falsely rejecting unrelated package dependencies;
-    # GUI adapters use Tauri's existing spawn_blocking runtime.
-    if re.search(r"\b(?:tokio|crossbeam)::", term):
-        v.append("TERM_TOKIO_DEP:terminal core直接引入额外运行时/队列依赖")
+    # ---- F9: the existing runtime only supplies one-shot result delivery ----
+    # The session's native thread owns resize; oneshot does not create a runtime
+    # or an input queue. Reject all other tokio paths and import aliases.
+    runtime_source = re.sub(
+        r"\btokio::sync::oneshot::(?:Sender|Receiver|channel)\b", "", term,
+    )
+    if (re.search(r"\b(?:tokio|crossbeam)\s*::", runtime_source)
+            or re.search(r"\buse\s+tokio\b", term)):
+        v.append("TERM_TOKIO_DEP:terminal core不得自建runtime或额外队列")
 
     # ---- F10：Channel 必须从 @tauri-apps/api/core 子路径导入 ----
     if not re.search(
@@ -501,6 +528,24 @@ def run_self_test(root: Path) -> int:
         "terminal_rs",
         "TERM_TOKIO_DEP",
     )
+
+    for needle, replacement, description in (
+        ("enqueue_resize(cols, rows)?", "resize(cols, rows)?", "resize绕过有界owner"),
+        ("pending.replace(ResizeRequest", "pending.push(ResizeRequest", "resize恢复无界pending队列"),
+        ('previous.reply.send(Err("TERM_RESIZE_SUPERSEDED".into()))',
+         "previous.reply.send(Ok(()))", "被替代的resize伪报完成"),
+        ("self.admission.upgrade()", "self.admission.bypass()", "resize未持有session许可"),
+        ("control.run_resize_owner()", "control.resize(80, 24)", "resize未由唯一worker处理"),
+        ("request.reply.send(result)", "request.reply.send(Ok(()))", "resize丢失原生错误"),
+    ):
+        key = "bridge_rs" if needle == "enqueue_resize(cols, rows)?" else "terminal_rs"
+        add(description, mutate(**{key: good[key].replace(needle, replacement, 1)}),
+            key, "TERM_ASYNC_OWNER_MISSING")
+    for injected in ("use tokio::sync::mpsc;", "use tokio as hidden_runtime;",
+                     "use crossbeam::channel;"):
+        add("禁止额外runtime或队列: " + injected,
+            mutate(terminal_rs=good["terminal_rs"] + "\n" + injected + "\n"),
+            "terminal_rs", "TERM_TOKIO_DEP")
 
     # 14. Channel 从顶层导入（Tauri v2 下拿不到）
     add(

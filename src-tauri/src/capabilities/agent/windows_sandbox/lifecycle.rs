@@ -306,7 +306,7 @@ fn initialize_test_store() -> Result<(), String> {
             &path,
             &PrivateTreeOptions::default(),
         )
-        .map_err(|_| "SANDBOX_TEST_JOURNAL_PREPARE")?;
+        .map_err(|error| format!("SANDBOX_TEST_JOURNAL_PREPARE: {error}"))?;
         initialize_recovery_store(&path)?;
     }
     Ok(())
