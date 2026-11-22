@@ -72,12 +72,19 @@ function verifySidecar(source, lock, patch) {
   assert.equal(source.schema_version, 1, "SBOM_RA_SCHEMA");
   assert.equal(source.source_repository, "https://github.com/rust-lang/rust", "SBOM_RA_REPOSITORY");
   assert.equal(source.source_commit, RA_COMMIT, "SBOM_RA_SOURCE");
+  assert.equal(source.hygiene_reference_commit, "008951695fa9f66a68ff6e20159e86f626015a3f", "SBOM_RA_HYGIENE_REFERENCE");
   assert.equal(source.source_subdirectory, "src/tools/rust-analyzer", "SBOM_RA_SUBDIRECTORY");
   assert.equal(source.target, "x86_64-pc-windows-msvc", "SBOM_RA_TARGET");
   assert.equal(source.lock_file, "Cargo.lock", "SBOM_RA_LOCK_PATH");
   assert.equal(source.patch_file, "metadata-stdin.patch", "SBOM_RA_PATCH_PATH");
   assert.equal(source.xtask_manifest_file, "src/tools/rust-analyzer/xtask/Cargo.toml", "SBOM_RA_XTASK_MANIFEST_PATH");
   assert.equal(source.xtask_dist_source_file, "src/tools/rust-analyzer/xtask/src/dist.rs", "SBOM_RA_XTASK_DIST_PATH");
+  assert.equal(source.hygiene_source_file, "src/tools/rust-analyzer/crates/span/src/hygiene.rs", "SBOM_RA_HYGIENE_SOURCE_PATH");
+  assert.equal(source.hir_expand_hygiene_source_file, "src/tools/rust-analyzer/crates/hir-expand/src/hygiene.rs", "SBOM_RA_HIR_EXPAND_HYGIENE_SOURCE_PATH");
+  for (const field of ["upstream_hygiene_sha256", "patched_hygiene_sha256",
+    "upstream_hir_expand_hygiene_sha256", "patched_hir_expand_hygiene_sha256"]) {
+    assert.ok(typeof source[field] === "string" && /^[a-f0-9]{64}$/.test(source[field]), "SBOM_RA_HYGIENE_DIGEST:" + field);
+  }
   for (const field of ["upstream_xtask_manifest_sha256", "patched_xtask_manifest_sha256",
     "upstream_xtask_dist_sha256", "patched_xtask_dist_sha256"]) {
     assert.ok(typeof source[field] === "string" && /^[a-f0-9]{64}$/.test(source[field]), "SBOM_RA_XTASK_DIGEST:" + field);
@@ -150,12 +157,17 @@ if (process.argv.includes("--self-test")) {
   const source = {
     schema_version: 1, source_repository: "https://github.com/rust-lang/rust",
     source_commit: RA_COMMIT, source_subdirectory: "src/tools/rust-analyzer",
+    hygiene_reference_commit: "008951695fa9f66a68ff6e20159e86f626015a3f",
     runtime_id: "fixture-runtime", target: "x86_64-pc-windows-msvc",
     lock_file: "Cargo.lock", patch_file: "metadata-stdin.patch",
     xtask_manifest_file: "src/tools/rust-analyzer/xtask/Cargo.toml",
     xtask_dist_source_file: "src/tools/rust-analyzer/xtask/src/dist.rs",
     upstream_xtask_manifest_sha256: "b".repeat(64), patched_xtask_manifest_sha256: "c".repeat(64),
     upstream_xtask_dist_sha256: "d".repeat(64), patched_xtask_dist_sha256: "e".repeat(64),
+    hygiene_source_file: "src/tools/rust-analyzer/crates/span/src/hygiene.rs",
+    hir_expand_hygiene_source_file: "src/tools/rust-analyzer/crates/hir-expand/src/hygiene.rs",
+    upstream_hygiene_sha256: "1".repeat(64), patched_hygiene_sha256: "2".repeat(64),
+    upstream_hir_expand_hygiene_sha256: "3".repeat(64), patched_hir_expand_hygiene_sha256: "4".repeat(64),
     lock_sha256: sha256(lock), patch_sha256: sha256(patch),
     licenses: ["LICENSE-MIT", "LICENSE-APACHE"].map(file => ({
       file, source: "src/tools/rust-analyzer/" + file, sha256: "a".repeat(64),
@@ -166,9 +178,16 @@ if (process.argv.includes("--self-test")) {
   assert.throws(() => verifySidecar(source, lock, Buffer.from("tampered\n")), /SBOM_RA_PATCH_DIGEST/);
   assert.throws(() => verifySidecar({ ...source, lock_file: "../Cargo.lock" }, lock, patch), /SBOM_RA_LOCK_PATH/);
   assert.throws(() => verifySidecar({ ...source, source_commit: "0".repeat(40) }, lock, patch), /SBOM_RA_SOURCE/);
+  assert.throws(() => verifySidecar({ ...source, hygiene_reference_commit: "0".repeat(40) }, lock, patch), /SBOM_RA_HYGIENE_REFERENCE/);
   assert.throws(() => verifySidecar({ ...source, licenses: source.licenses.slice(0, 1) }, lock, patch), /SBOM_RA_LICENSES/);
   assert.throws(() => verifySidecar({ ...source, xtask_manifest_file: "../Cargo.toml" }, lock, patch), /SBOM_RA_XTASK_MANIFEST_PATH/);
   assert.throws(() => verifySidecar({ ...source, xtask_dist_source_file: "../dist.rs" }, lock, patch), /SBOM_RA_XTASK_DIST_PATH/);
+  assert.throws(() => verifySidecar({ ...source, hygiene_source_file: "../hygiene.rs" }, lock, patch), /SBOM_RA_HYGIENE_SOURCE_PATH/);
+  assert.throws(() => verifySidecar({ ...source, hir_expand_hygiene_source_file: "../hygiene.rs" }, lock, patch), /SBOM_RA_HIR_EXPAND_HYGIENE_SOURCE_PATH/);
+  for (const field of ["upstream_hygiene_sha256", "patched_hygiene_sha256",
+    "upstream_hir_expand_hygiene_sha256", "patched_hir_expand_hygiene_sha256"]) {
+    assert.throws(() => verifySidecar({ ...source, [field]: "invalid" }, lock, patch), /SBOM_RA_HYGIENE_DIGEST/);
+  }
   for (const field of ["upstream_xtask_manifest_sha256", "patched_xtask_manifest_sha256",
     "upstream_xtask_dist_sha256", "patched_xtask_dist_sha256"]) {
     assert.throws(() => verifySidecar({ ...source, [field]: "invalid" }, lock, patch), /SBOM_RA_XTASK_DIGEST/);
@@ -183,7 +202,7 @@ if (process.argv.includes("--self-test")) {
   assert.equal(local[0].hashes, undefined);
   assert.ok(local[0].properties.some(property => property.name === "browseros:modified" && property.value === "true"));
   assert.ok(local[0].properties.some(property => property.name === "browseros:upstream-advisory"));
-  console.log("SBOM_SELF_TEST=PASS sidecar_negative=11 glib_origin=visible cargo_distinct_origins=2");
+  console.log("SBOM_SELF_TEST=PASS sidecar_negative=18 glib_origin=visible cargo_distinct_origins=2");
   process.exit(0);
 }
 
@@ -214,6 +233,13 @@ const analyzerBom = bom("BrowserOS rust-analyzer lockfile SBOM generator", cargo
     { name: "browseros:xtask-dist-source-file", value: sidecar.source.xtask_dist_source_file },
     { name: "browseros:upstream-xtask-dist-sha256", value: sidecar.source.upstream_xtask_dist_sha256 },
     { name: "browseros:patched-xtask-dist-sha256", value: sidecar.source.patched_xtask_dist_sha256 },
+    { name: "browseros:hygiene-reference-commit", value: sidecar.source.hygiene_reference_commit },
+    { name: "browseros:hygiene-source-file", value: sidecar.source.hygiene_source_file },
+    { name: "browseros:upstream-hygiene-sha256", value: sidecar.source.upstream_hygiene_sha256 },
+    { name: "browseros:patched-hygiene-sha256", value: sidecar.source.patched_hygiene_sha256 },
+    { name: "browseros:hir-expand-hygiene-source-file", value: sidecar.source.hir_expand_hygiene_source_file },
+    { name: "browseros:upstream-hir-expand-hygiene-sha256", value: sidecar.source.upstream_hir_expand_hygiene_sha256 },
+    { name: "browseros:patched-hir-expand-hygiene-sha256", value: sidecar.source.patched_hir_expand_hygiene_sha256 },
     { name: "browseros:licenses", value: JSON.stringify(sidecar.source.licenses) },
     { name: "browseros:license-byte-validation", value: "Pinned source metadata; actual license bytes verified by runtime build/package gate" },
   ],

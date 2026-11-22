@@ -7,7 +7,7 @@
   "rust_release": "1.100.0",
   "target": "x86_64-pc-windows-msvc",
   "patch_file": "metadata-stdin.patch",
-  "patch_sha256": "626a733ead50825183a7bfd9571d83146b9ea9d711ad566ce96643259864ad9e",
+  "patch_sha256": "416ce871daf25d17da6d16346db5ab74598602e7476ddb723d70675aadf14590",
   "metadata_source_file": "src/tools/rust-analyzer/crates/project-model/src/lib.rs",
   "upstream_metadata_sha256": "6eeed4441b61d803e3b8d14612641faf8be03317fadb9707ae9e242d320e8cd5",
   "patched_metadata_sha256": "c18c1971cbaff1155f56802c21a297ed9018bee3979c52344dbe6117e1f599ec",
@@ -83,5 +83,12 @@
   "patched_xtask_manifest_sha256": "0c1fe3e13d049b5b0cf20c55133bed8a53528ed61348ff473dc9f515229c1558",
   "xtask_dist_source_file": "src/tools/rust-analyzer/xtask/src/dist.rs",
   "upstream_xtask_dist_sha256": "e2b16f0ac6f4b2a53f1ff8b678504f112245a53ae17f9e7c6c2b85c274254472",
-  "patched_xtask_dist_sha256": "384043641d91029af77f7f903533e429c30e8fb4d3186b97e4fec7f59c0864d9"
+  "patched_xtask_dist_sha256": "384043641d91029af77f7f903533e429c30e8fb4d3186b97e4fec7f59c0864d9",
+  "hygiene_source_file": "src/tools/rust-analyzer/crates/span/src/hygiene.rs",
+  "upstream_hygiene_sha256": "14b39f9745cd851bf06f86235f1770674f6f3322395c8c6c9645d3954da6f82c",
+  "patched_hygiene_sha256": "a6e4d35853d5af32195b55b70b8ee278e10cae2411ecf6835b3e844f3ef3fe9e",
+  "hir_expand_hygiene_source_file": "src/tools/rust-analyzer/crates/hir-expand/src/hygiene.rs",
+  "upstream_hir_expand_hygiene_sha256": "babd920f90928ede243c7bffd9dfe6f1828a0176ff4fdf3d2a51d38ec0178ec9",
+  "patched_hir_expand_hygiene_sha256": "7eba65b5e2c36a3732906fa136e565ed458c4f8b97a1a848aabf10a976668a3c",
+  "hygiene_reference_commit": "008951695fa9f66a68ff6e20159e86f626015a3f"
 }

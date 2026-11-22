@@ -167,6 +167,9 @@ if ($Source.schema_version -ne 1 -or
     $Source.metadata_source_file -cne "src/tools/rust-analyzer/crates/project-model/src/lib.rs" -or
     $Source.xtask_manifest_file -cne "src/tools/rust-analyzer/xtask/Cargo.toml" -or
     $Source.xtask_dist_source_file -cne "src/tools/rust-analyzer/xtask/src/dist.rs" -or
+    $Source.hygiene_source_file -cne "src/tools/rust-analyzer/crates/span/src/hygiene.rs" -or
+    $Source.hir_expand_hygiene_source_file -cne "src/tools/rust-analyzer/crates/hir-expand/src/hygiene.rs" -or
+    $Source.hygiene_reference_commit -cne "008951695fa9f66a68ff6e20159e86f626015a3f" -or
     $Source.lock_file -cne "Cargo.lock" -or
     @($Source.licenses).Count -ne 2 -or
     $Source.licenses[0].file -cne "LICENSE-MIT" -or
@@ -233,10 +236,14 @@ try {
     $MetadataSource = Join-Path $Checkout $Source.metadata_source_file
     $XtaskManifest = Join-Path $Checkout $Source.xtask_manifest_file
     $XtaskDistribution = Join-Path $Checkout $Source.xtask_dist_source_file
+    $HygieneSource = Join-Path $Checkout $Source.hygiene_source_file
+    $HirExpandHygieneSource = Join-Path $Checkout $Source.hir_expand_hygiene_source_file
     $BuildLockFile = Join-Path $Project "Cargo.lock"
     Assert-Hash $MetadataSource $Source.upstream_metadata_sha256 "upstream metadata"
     Assert-Hash $XtaskManifest $Source.upstream_xtask_manifest_sha256 "upstream xtask manifest"
     Assert-Hash $XtaskDistribution $Source.upstream_xtask_dist_sha256 "upstream xtask distribution"
+    Assert-Hash $HygieneSource $Source.upstream_hygiene_sha256 "upstream hygiene"
+    Assert-Hash $HirExpandHygieneSource $Source.upstream_hir_expand_hygiene_sha256 "upstream hir-expand hygiene"
     Assert-Hash $BuildLockFile $Source.upstream_lock_sha256 "upstream lock"
     foreach ($License in $Source.licenses) {
         Assert-Hash (Join-Path $Checkout $License.source) $License.sha256 "upstream license"
@@ -248,6 +255,8 @@ try {
     Assert-Hash $MetadataSource $Source.patched_metadata_sha256 "patched metadata"
     Assert-Hash $XtaskManifest $Source.patched_xtask_manifest_sha256 "patched xtask manifest"
     Assert-Hash $XtaskDistribution $Source.patched_xtask_dist_sha256 "patched xtask distribution"
+    Assert-Hash $HygieneSource $Source.patched_hygiene_sha256 "patched hygiene"
+    Assert-Hash $HirExpandHygieneSource $Source.patched_hir_expand_hygiene_sha256 "patched hir-expand hygiene"
     Assert-Hash $BuildLockFile $Source.lock_sha256 "security lock"
     $Changed = @((
         Read-CheckedOutput "git" @("-C", $Checkout, "diff", "--name-only")
@@ -256,12 +265,14 @@ try {
         $Source.metadata_source_file,
         ($Source.source_subdirectory + "/Cargo.lock"),
         $Source.xtask_manifest_file,
-        $Source.xtask_dist_source_file
+        $Source.xtask_dist_source_file,
+        $Source.hygiene_source_file,
+        $Source.hir_expand_hygiene_source_file
     ) | Sort-Object
-    if ($ExpectedChanged.Count -ne 4) {
+    if ($ExpectedChanged.Count -ne 6) {
         throw "WINDOWS_LSP_SOURCE_CHANGE_CONTRACT_INVALID"
     }
-    if ($Changed.Count -ne 4 -or
+    if ($Changed.Count -ne 6 -or
         (($Changed | Sort-Object) -join "|") -cne ($ExpectedChanged -join "|")) {
         $ActualPreview = @($Changed | Select-Object -First 8 | ForEach-Object {
             $ChangedPath = [string]$_
@@ -337,6 +348,52 @@ try {
             "build", "--manifest-path", (Join-Path $Project "Cargo.toml"), "--locked",
             "--release", "--target", $Source.target, "--target-dir", $TargetDirectory,
             "--jobs", "2", "-p", "rust-analyzer", "--bin", "rust-analyzer")
+
+        # Exercise the actual patched library with Salsa enabled before publishing.
+        # Listing, every test result and the summary must all prove the same eight tests.
+        $HygieneNames = @(
+            "hygiene::tests::test_root_edition_is_root",
+            "hygiene::tests::test_root_edition_editions",
+            "hygiene::tests::test_roots_do_not_overlap_with_salsa_ids",
+            "hygiene::tests::test_non_root_value_is_not_root",
+            "hygiene::tests::test_interned_context_round_trips_through_u32",
+            "hygiene::tests::test_browseros_self_and_ancestor_normalization",
+            "hygiene::tests::test_browseros_interning_preserves_first_normalization",
+            "hygiene::tests::test_browseros_hygiene_key_fields_and_reinterning"
+        )
+        $HygieneArguments = @(
+            "test", "--manifest-path", (Join-Path $Project "Cargo.toml"), "--locked",
+            "--release", "--target", $Source.target, "--target-dir", $TargetDirectory,
+            "--jobs", "2", "-p", "span", "--lib", "--features", "salsa",
+            "hygiene::tests::"
+        )
+        $HygieneInventory = Read-CheckedOutput $Cargo (
+            $HygieneArguments + @("--", "--list", "--format", "terse", "--color", "never"))
+        $ObservedHygieneNames = @($HygieneInventory -split "\r?\n" | ForEach-Object {
+            if ($_ -match "^(hygiene::tests::[A-Za-z0-9_]+): test$") {
+                $Matches[1]
+            }
+        })
+        if ($HygieneNames.Count -ne 8 -or $ObservedHygieneNames.Count -ne 8 -or
+            (($ObservedHygieneNames | Sort-Object) -join "|") -cne
+                (($HygieneNames | Sort-Object) -join "|")) {
+            Write-Host $HygieneInventory
+            throw "WINDOWS_LSP_HYGIENE_TEST_INVENTORY_MISMATCH"
+        }
+        $HygieneOutput = Read-CheckedOutput $Cargo (
+            $HygieneArguments + @("--", "--test-threads=1", "--show-output", "--color", "never"))
+        Write-Host $HygieneOutput
+        foreach ($HygieneName in $HygieneNames) {
+            $PassedPattern = "(?m)^test " + [regex]::Escape($HygieneName) + " \.\.\. ok\r?$"
+            if ([regex]::Matches($HygieneOutput, $PassedPattern).Count -ne 1) {
+                throw "WINDOWS_LSP_HYGIENE_TEST_DID_NOT_PASS:$HygieneName"
+            }
+        }
+        $SummaryPattern = "(?m)^test result: ok\. 8 passed; 0 failed; 0 ignored; 0 measured; [0-9]+ filtered out; finished in .+$"
+        if ([regex]::Matches($HygieneOutput, $SummaryPattern).Count -ne 1) {
+            throw "WINDOWS_LSP_HYGIENE_TEST_SUMMARY_MISMATCH"
+        }
+        Write-Host "WINDOWS_LSP_HYGIENE_TESTS=PASS passed=8 failed=0 ignored=0"
     } finally {
         Pop-Location
     }
@@ -344,6 +401,8 @@ try {
     Assert-Hash $MetadataSource $Source.patched_metadata_sha256 "metadata after build"
     Assert-Hash $XtaskManifest $Source.patched_xtask_manifest_sha256 "xtask manifest after build"
     Assert-Hash $XtaskDistribution $Source.patched_xtask_dist_sha256 "xtask distribution after build"
+    Assert-Hash $HygieneSource $Source.patched_hygiene_sha256 "hygiene after build and tests"
+    Assert-Hash $HirExpandHygieneSource $Source.patched_hir_expand_hygiene_sha256 "hir-expand hygiene after build and tests"
     Assert-Hash $BuildLockFile $Source.lock_sha256 "lock after build"
 
     $Executable = Join-Path $TargetDirectory ($Source.target + "/release/rust-analyzer.exe")

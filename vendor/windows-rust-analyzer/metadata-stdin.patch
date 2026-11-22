@@ -66,3 +66,324 @@ index 0b8b14cb227173c155c7249455ef5ffdb930c245..121cf1e77f8fcb4970763bbf02243444
                  .compression_method(zip::CompressionMethod::Deflated)
                  .compression_level(Some(9)),
          )?;
+diff --git a/src/tools/rust-analyzer/crates/span/src/hygiene.rs b/src/tools/rust-analyzer/crates/span/src/hygiene.rs
+--- a/src/tools/rust-analyzer/crates/span/src/hygiene.rs
++++ b/src/tools/rust-analyzer/crates/span/src/hygiene.rs
+@@ -47,8 +47,8 @@
+         outer_transparency: Transparency,
+         edition: Edition,
+         parent: SyntaxContext,
+-        opaque: SyntaxContext,
+-        opaque_and_semiopaque: SyntaxContext,
++        opaque_if_not_self: Option<SyntaxContext>,
++        opaque_and_semiopaque_if_not_self: Option<SyntaxContext>,
+     }
+
+     impl PartialEq for SyntaxContextData {
+@@ -80,9 +80,52 @@
+
+     /// Key to use during hash lookups. Each field is some type that implements `Lookup<T>`
+     /// for the owned type. This permits interning with an `&str` when a `String` is required and so forth.
+-    #[derive(Hash)]
+-    struct StructKey<'db, T0, T1, T2, T3>(T0, T1, T2, T3, std::marker::PhantomData<&'db ()>);
++    struct StructKey<'db, T0, T1, T2, T3>(
++        T0,
++        T1,
++        T2,
++        T3,
++        Option<SyntaxContext>,
++        Option<SyntaxContext>,
++        std::marker::PhantomData<&'db ()>,
++    );
+
++    // The normalization fields are derived caches, not part of the interned key.
++    // Keep the same four-field hash as SyntaxContextData and its equality check.
++    impl<T0, T1, T2, T3> std::hash::Hash for StructKey<'_, T0, T1, T2, T3>
++    where
++        T0: std::hash::Hash,
++        T1: std::hash::Hash,
++        T2: std::hash::Hash,
++        T3: std::hash::Hash,
++    {
++        fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
++            self.0.hash(state);
++            self.1.hash(state);
++            self.2.hash(state);
++            self.3.hash(state);
++        }
++    }
++
++    impl<T0, T1, T2, T3> zalsa_::Lookup<SyntaxContextData> for StructKey<'_, T0, T1, T2, T3>
++    where
++        T0: zalsa_::Lookup<Option<MacroCallId>>,
++        T1: zalsa_::Lookup<Transparency>,
++        T2: zalsa_::Lookup<Edition>,
++        T3: zalsa_::Lookup<SyntaxContext>,
++    {
++        fn into_owned(self) -> SyntaxContextData {
++            SyntaxContextData {
++                outer_expn: zalsa_::Lookup::into_owned(self.0),
++                outer_transparency: zalsa_::Lookup::into_owned(self.1),
++                edition: zalsa_::Lookup::into_owned(self.2),
++                parent: zalsa_::Lookup::into_owned(self.3),
++                opaque_if_not_self: self.4,
++                opaque_and_semiopaque_if_not_self: self.5,
++            }
++        }
++    }
++
+     impl<'db, T0, T1, T2, T3> zalsa_::HashEqLike<StructKey<'db, T0, T1, T2, T3>> for SyntaxContextData
+     where
+         Option<MacroCallId>: zalsa_::HashEqLike<T0>,
+@@ -90,12 +133,6 @@
+         Edition: zalsa_::HashEqLike<T2>,
+         SyntaxContext: zalsa_::HashEqLike<T3>,
+     {
+-        fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+-            zalsa_::HashEqLike::<T0>::hash(&self.outer_expn, &mut *h);
+-            zalsa_::HashEqLike::<T1>::hash(&self.outer_transparency, &mut *h);
+-            zalsa_::HashEqLike::<T2>::hash(&self.edition, &mut *h);
+-            zalsa_::HashEqLike::<T3>::hash(&self.parent, &mut *h);
+-        }
+         fn eq(&self, data: &StructKey<'db, T0, T1, T2, T3>) -> bool {
+             zalsa_::HashEqLike::<T0>::eq(&self.outer_expn, &data.0)
+                 && zalsa_::HashEqLike::<T1>::eq(&self.outer_transparency, &data.1)
+@@ -205,8 +242,8 @@
+             outer_transparency: T1,
+             edition: T2,
+             parent: T3,
+-            opaque: impl FnOnce(SyntaxContext) -> SyntaxContext,
+-            opaque_and_semiopaque: impl FnOnce(SyntaxContext) -> SyntaxContext,
++            opaque_if_not_self: Option<SyntaxContext>,
++            opaque_and_semiopaque_if_not_self: Option<SyntaxContext>,
+         ) -> Self
+         where
+             Db: ?Sized + salsa::Database,
+@@ -225,16 +262,10 @@
+                     outer_transparency,
+                     edition,
+                     parent,
++                    opaque_if_not_self,
++                    opaque_and_semiopaque_if_not_self,
+                     std::marker::PhantomData,
+                 ),
+-                |id, data| SyntaxContextData {
+-                    outer_expn: zalsa_::Lookup::into_owned(data.0),
+-                    outer_transparency: zalsa_::Lookup::into_owned(data.1),
+-                    edition: zalsa_::Lookup::into_owned(data.2),
+-                    parent: zalsa_::Lookup::into_owned(data.3),
+-                    opaque: opaque(zalsa_::FromId::from_id(id)),
+-                    opaque_and_semiopaque: opaque_and_semiopaque(zalsa_::FromId::from_id(id)),
+-                },
+             )
+         }
+
+@@ -300,7 +331,7 @@
+                 Some(id) => {
+                     let zalsa = db.zalsa();
+                     let fields = SyntaxContext::ingredient(zalsa).data(zalsa, id);
+-                    fields.opaque
++                    fields.opaque_if_not_self.unwrap_or(self)
+                 }
+                 None => self,
+             }
+@@ -315,7 +346,7 @@
+                 Some(id) => {
+                     let zalsa = db.zalsa();
+                     let fields = SyntaxContext::ingredient(zalsa).data(zalsa, id);
+-                    fields.opaque_and_semiopaque
++                    fields.opaque_and_semiopaque_if_not_self.unwrap_or(self)
+                 }
+                 None => self,
+             }
+@@ -566,8 +597,8 @@
+             Transparency::Opaque,
+             Edition::Edition2021,
+             root,
+-            |_| root,
+-            |_| root,
++            Some(root),
++            Some(root),
+         );
+
+         // SAFETY: The value was produced by `SyntaxContext::into_u32` above.
+@@ -575,4 +606,141 @@
+         assert_eq!(round_tripped.edition(&db), Edition::Edition2021);
+         assert_eq!(round_tripped.parent(&db), root);
+     }
++
++    #[test]
++    fn test_browseros_self_and_ancestor_normalization() {
++        let db = salsa::DatabaseImpl::new();
++        let edition = Edition::Edition2021;
++        let root = SyntaxContext::root(edition);
++        // SAFETY: This valid ID is only hashed and compared, never dereferenced.
++        let call = Some(crate::MacroCallId(unsafe { salsa::Id::from_index(1) }));
++        let opaque = SyntaxContext::new(&db, call, Transparency::Opaque, edition, root, None, None);
++        let semi = SyntaxContext::new(
++            &db,
++            call,
++            Transparency::SemiOpaque,
++            edition,
++            opaque,
++            Some(opaque),
++            None,
++        );
++        let transparent = SyntaxContext::new(
++            &db,
++            call,
++            Transparency::Transparent,
++            edition,
++            semi,
++            Some(opaque),
++            Some(semi),
++        );
++
++        assert_eq!(root.opaque(&db), root);
++        assert_eq!(root.opaque_and_semiopaque(&db), root);
++        assert_eq!(opaque.opaque(&db), opaque);
++        assert_eq!(opaque.opaque_and_semiopaque(&db), opaque);
++        assert_eq!(semi.opaque(&db), opaque);
++        assert_eq!(semi.opaque_and_semiopaque(&db), semi);
++        assert_eq!(transparent.normalize_to_macros_2_0(&db), opaque);
++        assert_eq!(transparent.normalize_to_macro_rules(&db), semi);
++        assert_eq!(transparent.parent(&db), semi);
++        assert_eq!(semi.parent(&db), opaque);
++        assert_eq!(opaque.parent(&db), root);
++        assert_eq!(transparent.marks(&db).count(), 3);
++        assert_eq!(transparent.edition(&db), edition);
++    }
++
++    #[test]
++    fn test_browseros_interning_preserves_first_normalization() {
++        let db = salsa::DatabaseImpl::new();
++        let edition = Edition::Edition2021;
++        let root = SyntaxContext::root(edition);
++        // SAFETY: This valid ID is only hashed and compared, never dereferenced.
++        let call = Some(crate::MacroCallId(unsafe { salsa::Id::from_index(1) }));
++        let transparency = Transparency::Opaque;
++        let first = SyntaxContext::new(&db, call, transparency, edition, root, None, None);
++        let borrowed = SyntaxContext::new(
++            &db,
++            &call,
++            &transparency,
++            &edition,
++            &root,
++            Some(root),
++            Some(root),
++        );
++        assert_eq!(first, borrowed);
++        assert_eq!(borrowed.opaque(&db), first);
++        assert_eq!(borrowed.opaque_and_semiopaque(&db), first);
++
++        // SAFETY: This valid ID is only hashed and compared, never dereferenced.
++        let cold_call = Some(crate::MacroCallId(unsafe { salsa::Id::from_index(2) }));
++        let cold_borrowed = SyntaxContext::new(
++            &db,
++            &cold_call,
++            &transparency,
++            &edition,
++            &root,
++            Some(root),
++            Some(root),
++        );
++        let cold_owned =
++            SyntaxContext::new(&db, cold_call, transparency, edition, root, None, None);
++        assert_eq!(cold_borrowed, cold_owned);
++        assert_eq!(cold_owned.opaque(&db), root);
++        assert_eq!(cold_owned.opaque_and_semiopaque(&db), root);
++
++        let cached = SyntaxContext::new(
++            &db,
++            call,
++            Transparency::Transparent,
++            edition,
++            root,
++            Some(root),
++            Some(root),
++        );
++        let repeated =
++            SyntaxContext::new(&db, call, Transparency::Transparent, edition, root, None, None);
++        assert_eq!(cached, repeated);
++        assert_eq!(repeated.opaque(&db), root);
++        assert_eq!(repeated.opaque_and_semiopaque(&db), root);
++    }
++
++    #[test]
++    fn test_browseros_hygiene_key_fields_and_reinterning() {
++        let db = salsa::DatabaseImpl::new();
++        let edition = Edition::Edition2021;
++        let root = SyntaxContext::root(edition);
++        // SAFETY: These valid IDs are only hashed and compared, never dereferenced.
++        let call = Some(crate::MacroCallId(unsafe { salsa::Id::from_index(1) }));
++        let other_call = Some(crate::MacroCallId(unsafe { salsa::Id::from_index(2) }));
++        let first = SyntaxContext::new(&db, call, Transparency::Opaque, edition, root, None, None);
++        let other_keys = [
++            (other_call, Transparency::Opaque, edition, root),
++            (call, Transparency::SemiOpaque, edition, root),
++            (call, Transparency::Opaque, Edition::Edition2018, root),
++            (call, Transparency::Opaque, edition, first),
++        ];
++        let mut ids = std::collections::HashSet::from([first.into_u32()]);
++        for (call, transparency, edition, parent) in other_keys {
++            let distinct = SyntaxContext::new(&db, call, transparency, edition, parent, None, None);
++            assert!(ids.insert(distinct.into_u32()));
++            let repeated = SyntaxContext::new(
++                &db,
++                call,
++                transparency,
++                edition,
++                parent,
++                Some(root),
++                Some(root),
++            );
++            assert_eq!(repeated, distinct);
++            assert_eq!(repeated.opaque(&db), distinct);
++            assert_eq!(repeated.opaque_and_semiopaque(&db), distinct);
++        }
++        assert_eq!(ids.len(), 5);
++        // SAFETY: This ID was returned by the same live database above.
++        let round_tripped = unsafe { SyntaxContext::from_u32(first.into_u32()) };
++        assert_eq!(round_tripped, first);
++        assert_eq!(round_tripped.parent(&db), root);
++        assert_eq!(round_tripped.edition(&db), edition);
++    }
+ }
+diff --git a/src/tools/rust-analyzer/crates/hir-expand/src/hygiene.rs b/src/tools/rust-analyzer/crates/hir-expand/src/hygiene.rs
+--- a/src/tools/rust-analyzer/crates/hir-expand/src/hygiene.rs
++++ b/src/tools/rust-analyzer/crates/hir-expand/src/hygiene.rs
+@@ -22,8 +22,6 @@
+ // FIXME: Move this into the span crate? Not quite possible today as that depends on `MacroCallLoc`
+ // which contains a bunch of unrelated things
+
+-use std::convert::identity;
+-
+ use span::{Edition, MacroCallId, Span, SyntaxContext};
+
+ use base_db::SourceDatabase;
+@@ -121,13 +119,13 @@
+
+     if transparency >= Transparency::Opaque {
+         let parent = opaque;
+-        opaque = SyntaxContext::new(db, call_id, transparency, edition, parent, identity, identity);
++        opaque = SyntaxContext::new(db, call_id, transparency, edition, parent, None, None);
+     }
+
+     if transparency >= Transparency::SemiOpaque {
+         let parent = opaque_and_semiopaque;
+         opaque_and_semiopaque =
+-            SyntaxContext::new(db, call_id, transparency, edition, parent, |_| opaque, identity);
++            SyntaxContext::new(db, call_id, transparency, edition, parent, Some(opaque), None);
+     }
+
+     let parent = ctxt;
+@@ -137,7 +135,7 @@
+         transparency,
+         edition,
+         parent,
+-        |_| opaque,
+-        |_| opaque_and_semiopaque,
++        Some(opaque),
++        Some(opaque_and_semiopaque),
+     )
+ }
