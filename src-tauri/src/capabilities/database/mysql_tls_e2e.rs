@@ -68,7 +68,10 @@ fn mysql_tls_e2e_prefer_and_require_encrypt_and_enforce_readonly() {
         let before = pool
             .query(select, &QueryCancel::new(), Some(10), "tls-read")
             .unwrap();
-        assert_eq!(before.rows, vec![vec![DbValue::Text("original".to_string())]]);
+        assert_eq!(
+            before.rows,
+            vec![vec![DbValue::Text("original".to_string())]]
+        );
         let update = "UPDATE browseros_tls_readonly_fixture SET label = 'changed' WHERE id = 1";
         assert_eq!(
             evaluate_db_query_gate(update, &cfg, pool.encrypted(), true),
@@ -97,7 +100,10 @@ fn rejected_certificate(host: &str, reasons: &[&str]) {
         let error = DbPool::connect(&cfg, Some(&password), &[])
             .expect_err("certificate failure must not establish or downgrade the connection");
         assert_eq!(error.code, DbErrorCode::ConnectFailed);
-        assert!(!error.message.contains(&password), "password must not escape");
+        assert!(
+            !error.message.contains(&password),
+            "password must not escape"
+        );
         let message = error.message.to_ascii_lowercase();
         assert!(
             message.contains("certificate verify failed")

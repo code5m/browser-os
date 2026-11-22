@@ -3,6 +3,12 @@ import { lspFailureHint } from '../src/capabilities/agent/model/codingLsp.mjs';
 assert.match(lspFailureHint('LSP_BUSY'),/忙/);
 assert.doesNotMatch(lspFailureHint('LSP_BUSY secret-value'),/secret-value/);
 assert.doesNotMatch(lspFailureHint('unexpected secret-value'),/secret-value/);
+assert.match(lspFailureHint('LSP_DIAGNOSTICS_UNSUPPORTED'),/更新 rust-analyzer/);
+assert.match(lspFailureHint('LSP_DIAGNOSTICS_CAPABILITY_INVALID'),/能力信息无效/);
+assert.match(lspFailureHint('LSP_DIAGNOSTICS_REPORT_INVALID'),/不完整.*结果不可用/);
+assert.match(lspFailureHint('LSP_DOCUMENT_VERSION_EXHAUSTED'),/关闭并重新开启/);
+assert.doesNotMatch(lspFailureHint('LSP_DIAGNOSTICS_REPORT_INVALID secret-value'),/secret-value/);
+
 import {editorRange,completionItems,diagnosticMarkers,definitionRanges,plainHover,mappedDefinitionTargets,diagnosticContext} from '../src/capabilities/agent/model/codingLsp.mjs';
 const range={start:{line:0,character:2},end:{line:0,character:5}};
 assert.deepEqual(editorRange(range),{startLineNumber:1,startColumn:3,endLineNumber:1,endColumn:6});

@@ -15,8 +15,10 @@ const base=process.env.CODING_UI_URL||'http://127.0.0.1:1433';
   bridge.runCommand=async(id,values,expectedRevision)=>{commandCalls.push({id,values,expectedRevision});if(expectedRevision!==commandRevision)throw Error('SNIPPET_REVIEW_CHANGED');if(operation.value.id==='command-unknown')throw Error('transport failed');return {run_id:'fixture',script_id:'fixture-command',status:'succeeded',output_tail:'ok',exit_code:0,truncated:false};};
   const operation=ref({id:'first',kind:'mcp',input:{server_id:'fixture',tool:'test',arguments:{}},status:'pending'}),calls=[],results=[];
   const reviews=[],events=[];
+  // Match the native JSON boundary, including nested operation arguments and reviewed scopes.
   bridge.codingService=async request=>{
-    calls.push(structuredClone(request));events.push(request.action);
+    request=JSON.parse(JSON.stringify(request));
+    calls.push(request);events.push(request.action);
     if(request.action==='mcp_review'){
       const reference='ai:1234567890abcdef12345678:11111111-1111-4111-8111-111111111111';
       const review={action:'mcp_call',command:'/usr/bin/fixture',args:['--fixture'],workspace:request.root,cwd:request.root,

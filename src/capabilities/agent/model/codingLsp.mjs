@@ -53,9 +53,19 @@ export function diagnosticContext(response,path) {
 }
 export function lspFailureHint(error) {
   const code=String(error).replace(/^Error: /,'');
-  return ({LSP_BUSY:'语言服务正忙，请稍后重试',LSP_TIMEOUT:'语言服务超时，请稍后重试',LSP_TIMEOUT_OR_CLOSED:'语言服务超时或已关闭',LSP_SERVER_UNAVAILABLE:'语言服务不可用，请重新检测',LSP_APPROVAL_REQUIRED:'请先批准当前项目的语言服务',LSP_MODULE_APPROVAL_REQUIRED:'请先批准读取 Rust 模块树'})[code] || '语言服务请求失败，请检查配置或重新检测';
+  return ({
+    LSP_BUSY:'语言服务正忙，请稍后重试',
+    LSP_TIMEOUT:'语言服务超时，请稍后重试',
+    LSP_TIMEOUT_OR_CLOSED:'语言服务超时或已关闭',
+    LSP_SERVER_UNAVAILABLE:'语言服务不可用，请重新检测',
+    LSP_APPROVAL_REQUIRED:'请先批准当前项目的语言服务',
+    LSP_MODULE_APPROVAL_REQUIRED:'请先批准读取 Rust 模块树',
+    LSP_DIAGNOSTICS_UNSUPPORTED:'当前 Rust 语言服务版本不支持此诊断功能，请更新 rust-analyzer 后重新检测',
+    LSP_DIAGNOSTICS_CAPABILITY_INVALID:'语言服务的诊断能力信息无效，请重新检测或更新 rust-analyzer',
+    LSP_DIAGNOSTICS_REPORT_INVALID:'语言服务返回的诊断不完整，本次结果不可用，请重新检测',
+    LSP_DOCUMENT_VERSION_EXHAUSTED:'语言服务文档版本已失效，请关闭并重新开启语言服务',
+  })[code] || '语言服务请求失败，请检查配置或重新检测';
 }
-
 /** Fixed, non-sensitive recovery wording shared by the native status panel. */
 export function sandboxRecoveryHint(status) {
   switch (status?.state) {

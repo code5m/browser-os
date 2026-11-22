@@ -210,6 +210,33 @@ fn frame(reader: &mut impl BufRead) -> Result<Value, String> {
         .map_err(|_| "LSP_FRAME_READ_FAILED")?;
     serde_json::from_slice(&body).map_err(|_| "LSP_FRAME_JSON_INVALID".into())
 }
+fn diagnostic_identifier(initialize: &Value) -> Result<Option<String>, String> {
+    let provider = initialize["capabilities"]["diagnosticProvider"]
+        .as_object()
+        .ok_or("LSP_DIAGNOSTICS_UNSUPPORTED")?;
+    if !provider
+        .get("interFileDependencies")
+        .is_some_and(Value::is_boolean)
+        || !provider
+            .get("workspaceDiagnostics")
+            .is_some_and(Value::is_boolean)
+    {
+        return Err("LSP_DIAGNOSTICS_CAPABILITY_INVALID".into());
+    }
+    match provider.get("identifier") {
+        None => Ok(None),
+        Some(Value::String(identifier)) => Ok(Some(identifier.clone())),
+        Some(_) => Err("LSP_DIAGNOSTICS_CAPABILITY_INVALID".into()),
+    }
+}
+
+fn full_diagnostic_items(mut report: Value) -> Result<Value, String> {
+    if report["kind"] != "full" || !report["items"].is_array() {
+        return Err("LSP_DIAGNOSTICS_REPORT_INVALID".into());
+    }
+    Ok(report["items"].take())
+}
+
 struct Scratch(PathBuf);
 impl Drop for Scratch {
     fn drop(&mut self) {
@@ -224,8 +251,7 @@ struct Session {
     rx: mpsc::Receiver<Result<Value, String>>,
     deadline: Instant,
     next_request_id: u64,
-    diagnostics: Value,
-    document_uri: String,
+    diagnostic_identifier: Option<String>,
 }
 
 struct CachedDocument {
@@ -326,18 +352,25 @@ impl CachedSession {
     fn update_document(&mut self, path: &str, uri: &str, content: &str) -> Result<(), String> {
         let content_hash = format!("{:x}", Sha256::digest(content.as_bytes()));
         let previous = self.documents.get(path);
-        let version = previous.map_or(1, |doc| doc.version.saturating_add(1));
-        self.session.document_uri = uri.to_string();
+        if previous.is_some_and(|doc| doc.content_hash == content_hash) {
+            self.last_used = Instant::now();
+            return Ok(());
+        }
+        let version = match previous {
+            Some(doc) => doc
+                .version
+                .checked_add(1)
+                .ok_or("LSP_DOCUMENT_VERSION_EXHAUSTED")?,
+            None => 1,
+        };
         if previous.is_none() {
-            self.session.renew_deadline();
             self.session.send(json!({
                 "jsonrpc":"2.0","method":"textDocument/didOpen",
                 "params":{"textDocument":{
                     "uri":uri,"languageId":"rust","version":version,"text":content
                 }}
             }))?;
-        } else if previous.is_some_and(|doc| doc.content_hash != content_hash) {
-            self.session.renew_deadline();
+        } else {
             self.session.send(json!({
                 "jsonrpc":"2.0","method":"textDocument/didChange",
                 "params":{
@@ -403,22 +436,16 @@ impl Session {
         self.rpc(id, method, params)
     }
 
-    fn await_document(&mut self) -> Result<(), String> {
-        loop {
-            let value = self
-                .rx
-                .recv_timeout(self.deadline.saturating_duration_since(Instant::now()))
-                .map_err(|_| "LSP_DOCUMENT_READY_TIMEOUT")??;
-            if value["method"] == "textDocument/publishDiagnostics"
-                && value["params"]["uri"] == self.document_uri
-            {
-                self.diagnostics = value["params"]["diagnostics"].clone();
-                return Ok(());
-            }
-            if value.get("method").is_some() && value.get("id").is_some() {
-                self.send(json!({"jsonrpc":"2.0","id":value["id"],"error":{"code":-32601,"message":"Client operations are disabled"}}))?;
-            }
+    fn pull_diagnostics(&mut self, uri: &str) -> Result<Value, String> {
+        // No previousResultId: every reply must describe this synchronized
+        // document in full. Push notifications may arrive late or be omitted
+        // when an edit leaves the diagnostic set unchanged.
+        let mut params = json!({"textDocument":{"uri":uri}});
+        if let Some(identifier) = &self.diagnostic_identifier {
+            params["identifier"] = json!(identifier);
         }
+        let report = self.rpc_next("textDocument/diagnostic", params)?;
+        full_diagnostic_items(report)
     }
     fn await_ready(&mut self) -> Result<(), String> {
         loop {
@@ -562,9 +589,7 @@ impl Session {
                 rx,
                 deadline: Instant::now() + Duration::from_secs(12),
                 next_request_id: 2,
-                diagnostics: json!([]),
-                // Set to the validated /work URI before any LSP request.
-                document_uri: String::new(),
+                diagnostic_identifier: None,
             }),
             Err(error) => {
                 unsafe {
@@ -607,7 +632,6 @@ impl Session {
         Ok(())
     }
     fn rpc(&mut self, id: u64, method: &str, params: Value) -> Result<Value, String> {
-        self.renew_deadline();
         self.send(json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}))?;
         loop {
             let value = self
@@ -621,10 +645,6 @@ impl Session {
                     return Err("LSP_SERVER_ERROR".into());
                 }
                 return Ok(value["result"].clone());
-            } else if value["method"] == "textDocument/publishDiagnostics"
-                && value["params"]["uri"] == self.document_uri
-            {
-                self.diagnostics = value["params"]["diagnostics"].clone();
             }
         }
     }
@@ -827,7 +847,6 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
         }
 
         let mut session = Session::start(&server, &scratch.0)?;
-        session.document_uri = document_uri.clone();
         let config = json!({
             "linkedProjects":[{
                 "crates":[{
@@ -843,7 +862,8 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
             "files":{"watcher":"server"},
             "cachePriming":{"enable":false},"numThreads":2
         });
-        let _init = session.rpc(
+        session.renew_deadline();
+        let init = session.rpc(
             1,
             "initialize",
             json!({
@@ -853,15 +873,19 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
                     "experimental":{"serverStatusNotification":true},
                     "textDocument":{
                         "completion":{"completionItem":{"snippetSupport":true}},
-                        "hover":{"contentFormat":["plaintext"]}
+                        "hover":{"contentFormat":["plaintext"]},
+                        "diagnostic":{
+                            "dynamicRegistration":false,
+                            "relatedDocumentSupport":false
+                        }
                     }
                 },
                 "initializationOptions":config
             }),
         )?;
+        session.diagnostic_identifier = diagnostic_identifier(&init)?;
         session.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}))?;
         session.await_ready()?;
-        session.document_uri = document_uri.clone();
         session.renew_deadline();
         session.send(json!({
             "jsonrpc":"2.0","method":"textDocument/didOpen",
@@ -869,7 +893,6 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
                 "uri":document_uri,"languageId":"rust","version":1,"text":content
             }}
         }))?;
-        session.await_document()?;
 
         let mut documents = HashMap::new();
         documents.insert(
@@ -900,6 +923,9 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
         remove_cached_session(&key, &cached);
         return Err("LSP_SESSION_STALE_RETRY".into());
     }
+    // Synchronization, the requested feature and its diagnostics share one
+    // deadline. A second RPC must not extend this request's resource budget.
+    managed.session.renew_deadline();
     if let Err(error) = managed.update_document(&document_path, &document_uri, content) {
         drop(managed);
         remove_cached_session(&key, &cached);
@@ -911,8 +937,13 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
         json!({"textDocument":{"uri":document_uri},
             "position":{"line":line,"character":character}})
     };
-    let result = match managed.session.rpc_next(method, parameters) {
-        Ok(result) => result,
+    let response = (|| {
+        let result = managed.session.rpc_next(method, parameters)?;
+        let diagnostics = managed.session.pull_diagnostics(&document_uri)?;
+        Ok::<_, String>((result, diagnostics))
+    })();
+    let (result, diagnostics) = match response {
+        Ok(response) => response,
         Err(error) => {
             // A timed-out or broken JSON-RPC stream is not reusable. Drop the
             // sandbox now so the next request starts from a fresh source snapshot.
@@ -922,7 +953,6 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
         }
     };
     managed.last_used = Instant::now();
-    let diagnostics = managed.session.diagnostics.clone();
     drop(managed);
 
     let mut targets = vec![];
@@ -991,6 +1021,64 @@ mod tests {
         let _ = fs::remove_dir(root);
         assert_eq!(result, json!({"safe":true}));
     }
+    #[test]
+    fn pull_diagnostics_require_negotiation_and_a_complete_report() {
+        for capabilities in [json!({}), json!({"diagnosticProvider":false})] {
+            assert_eq!(
+                diagnostic_identifier(&json!({"capabilities":capabilities})).unwrap_err(),
+                "LSP_DIAGNOSTICS_UNSUPPORTED"
+            );
+        }
+        let provider = json!({
+            "identifier":"rust-analyzer",
+            "interFileDependencies":true,
+            "workspaceDiagnostics":false
+        });
+        assert_eq!(
+            diagnostic_identifier(&json!({"capabilities":{"diagnosticProvider":provider}}))
+                .unwrap(),
+            Some("rust-analyzer".into())
+        );
+        let anonymous = json!({"interFileDependencies":false,"workspaceDiagnostics":false});
+        assert_eq!(
+            diagnostic_identifier(&json!({"capabilities":{"diagnosticProvider":anonymous}}))
+                .unwrap(),
+            None
+        );
+        for invalid in [
+            json!({}),
+            json!({
+                "identifier":17,"interFileDependencies":true,"workspaceDiagnostics":false
+            }),
+        ] {
+            assert_eq!(
+                diagnostic_identifier(&json!({"capabilities":{"diagnosticProvider":invalid}}))
+                    .unwrap_err(),
+                "LSP_DIAGNOSTICS_CAPABILITY_INVALID"
+            );
+        }
+        assert_eq!(
+            full_diagnostic_items(json!({"kind":"full","items":[]})).unwrap(),
+            json!([])
+        );
+        let items = json!([{"severity":1,"message":"syntax error"}]);
+        assert_eq!(
+            full_diagnostic_items(json!({"kind":"full","items":items})).unwrap(),
+            items
+        );
+        for report in [
+            json!({"kind":"unchanged","resultId":"old-document"}),
+            json!({"kind":"full"}),
+            json!({"kind":"full","items":null}),
+            json!({"items":[]}),
+        ] {
+            assert_eq!(
+                full_diagnostic_items(report).unwrap_err(),
+                "LSP_DIAGNOSTICS_REPORT_INVALID"
+            );
+        }
+    }
+
     #[test]
     fn frame_limits_and_headers() {
         let _guard = REAL_LSP_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -1133,7 +1221,13 @@ mod tests {
                 .is_some_and(|items| !items.is_empty()),
             "{result}"
         );
-        assert_eq!(result["result"][0]["uri"], "file:///work/main.rs");
+        assert_eq!(result["document_uri"], "file:///work/document.rs");
+        assert_eq!(result["result"][0]["uri"], result["document_uri"]);
+        let target = &result["definition_targets"][0];
+        assert_eq!(target["uri"], result["document_uri"]);
+        assert_eq!(target["path"], "main.rs");
+        assert_eq!(target["hash"], result["document_hash"]);
+        assert_eq!(target["range"]["start"]["line"], 0);
     }
     #[test]
     #[ignore = "explicit installed rust-analyzer sandbox integration"]
@@ -1284,13 +1378,31 @@ mod tests {
             22,
         );
         assert!(!hover["result"]["contents"].is_null(), "{hover}");
-        let diagnostics = call("diagnostics", "fn main(){let = ;}", 0, 0);
-        assert!(
-            diagnostics["diagnostics"]
+        for (content, has_error) in [
+            ("fn main(){let = ;}", true),
+            ("fn main(){let = ;}", true),
+            ("fn main(){}", false),
+            ("fn main() {}", false),
+            ("fn main(){let = ;}", true),
+        ] {
+            let diagnostics = call("diagnostics", content, 0, 0);
+            assert_eq!(diagnostics["session_reused"], true, "{diagnostics}");
+            assert_eq!(
+                diagnostics["document_hash"],
+                format!("{:x}", Sha256::digest(content.as_bytes()))
+            );
+            let items = diagnostics["diagnostics"]
                 .as_array()
-                .is_some_and(|items| !items.is_empty()),
-            "{diagnostics}"
-        );
+                .expect("a complete current diagnostic array");
+            assert_eq!(
+                items.iter().any(|item| item["severity"] == 1),
+                has_error,
+                "{diagnostics}"
+            );
+            if !has_error {
+                assert!(items.is_empty(), "{diagnostics}");
+            }
+        }
         let _ = fs::remove_dir(root);
     }
 }

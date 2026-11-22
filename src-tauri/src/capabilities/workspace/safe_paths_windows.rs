@@ -1484,7 +1484,7 @@ pub(super) fn remove_if_unchanged(
     if object_identity(&identity) != expected.identity || bytes != expected.bytes {
         return Err("FILE_CONFLICT".into());
     }
-    mark_object_deleted(&target).map_err(|_| "FILE_DELETE_FAILED")
+    mark_object_deleted(&target).map_err(|_| "FILE_DELETE_FAILED".to_string())
 }
 
 /// Atomic create/replace for Agent-owned drafts, new files and recovery

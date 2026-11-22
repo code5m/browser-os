@@ -13,7 +13,8 @@ const base=process.env.CODING_UI_URL||'http://127.0.0.1:1433';
   window.__TAURI_INTERNALS__={transformCallback:()=>1};
   const files={'main.ts':'const original = 1;','other.ts':'const other = 2;'},calls=[];let session={session_id:'fixture-session',root:'/fixture',messages:[],changes:[],tool_events:[]};
   bridge.aiService=async()=>({profiles:[{id:'fixture',name:'Fixture',model:'fixture-model',kind:'chat'}],bindings:{default:'fixture'}});
-  bridge.codingService=async request=>{calls.push(structuredClone(request));if(request.action==='tree')return {entries:Object.keys(files).map(path=>({path,name:path,kind:'file'})),truncated:true};if(request.action==='session')return structuredClone(session);if(request.action==='read')return {path:request.path,content:files[request.path],hash:'hash:'+files[request.path]};if(request.action==='propose'){if(request.expected_hash!=='hash:'+files[request.path])throw Error('fixture stale source');session.changes=[{path:request.path,content:request.content,expected_hash:request.expected_hash}];return structuredClone(session);}if(request.action==='apply'){for(const change of session.changes)files[change.path]=change.content;session.changes=[];return structuredClone(session);}if(request.action==='chat'){session.messages.push({role:'user',content:request.message},{role:'assistant',content:'Review the proposed change'});session.changes=[{path:'main.ts',content:'const agent = 3;',expected_hash:'hash:'+files['main.ts']}];return structuredClone(session);}if(request.action==='discard'){session.changes=[];return structuredClone(session);}if(request.action==='skills_list')return {skills:[{path:'/fixture/skill/SKILL.md',name:'fixture-skill'}]};if(request.action==='skill_read')return {text:'Fixture skill instructions'};return {};};
+  // Match Tauri's JSON request boundary; incoming Vue proxies are not structured-cloneable.
+  bridge.codingService=async request=>{request=JSON.parse(JSON.stringify(request));calls.push(request);if(request.action==='tree')return {entries:Object.keys(files).map(path=>({path,name:path,kind:'file'})),truncated:true};if(request.action==='session')return structuredClone(session);if(request.action==='read')return {path:request.path,content:files[request.path],hash:'hash:'+files[request.path]};if(request.action==='propose'){if(request.expected_hash!=='hash:'+files[request.path])throw Error('fixture stale source');session.changes=[{path:request.path,content:request.content,expected_hash:request.expected_hash}];return structuredClone(session);}if(request.action==='apply'){for(const change of session.changes)files[change.path]=change.content;session.changes=[];return structuredClone(session);}if(request.action==='chat'){session.messages.push({role:'user',content:request.message},{role:'assistant',content:'Review the proposed change'});session.changes=[{path:'main.ts',content:'const agent = 3;',expected_hash:'hash:'+files['main.ts']}];return structuredClone(session);}if(request.action==='discard'){session.changes=[];return structuredClone(session);}if(request.action==='skills_list')return {skills:[{path:'/fixture/skill/SKILL.md',name:'fixture-skill'}]};if(request.action==='skill_read')return {text:'Fixture skill instructions'};return {};};
   const show=ref(true);window.fixture={files,calls,bridge,show};createApp({render:()=>show.value?h(Workbench):h('div','other view')}).mount('#app');</script>`;
   await page.route('**/__coding_test',route=>route.fulfill({contentType:'text/html',body:html}));await page.goto(base+'/__coding_test');
   await page.getByLabel('模型',{exact:true}).selectOption('fixture');
@@ -49,6 +50,7 @@ const base=process.env.CODING_UI_URL||'http://127.0.0.1:1433';
     const original=window.fixture.bridge.codingService;
     window.fixture.mcpRuns=0;window.fixture.mcpReviews=[];window.fixture.mcpRequests=[];
     window.fixture.bridge.codingService=async request=>{
+      request=JSON.parse(JSON.stringify(request));
       if(request.action==='mcp_review'){
         window.fixture.mcpReviews.push(structuredClone(request));
         const reference='ai:1234567890abcdef12345678:11111111-1111-4111-8111-111111111111';
@@ -243,6 +245,7 @@ const base=process.env.CODING_UI_URL||'http://127.0.0.1:1433';
     const original=window.fixture.bridge.codingService;
     const state={session_id:'fixture-session',root:'/fixture',messages:[],changes:[],tool_events:[],status:'approval_required',operations:[{id:'operation-fixture',kind:'mcp',input:{server_id:'fixture-server',tool:'fixture-read',arguments:{query:'test'}},status:'pending'}]};let chats=0,failRecovery=true;
     window.fixture.bridge.codingService=async request=>{
+      request=JSON.parse(JSON.stringify(request));
       if(request.action==='chat'){window.fixture.calls.push(request);chats++;if(chats>1){state.status='complete';state.messages=[{role:'assistant',content:'Continued after reviewed operation'}];}return structuredClone(state);}
       if(request.action==='mcp_review'){
         window.fixture.calls.push(structuredClone(request));
