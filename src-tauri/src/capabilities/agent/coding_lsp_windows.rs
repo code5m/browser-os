@@ -1622,29 +1622,32 @@ impl Session {
                 .map_err(|_| "LSP_READER_THREAD_START_FAILED")?,
         );
         let root_uri = uri_for(&session.snapshot)?;
-        let init = session.rpc_next("initialize", json!({
-            "processId":null,
-            "rootUri":root_uri.clone(),
-            "workspaceFolders":[{"uri":root_uri,"name":"reviewed-snapshot"}],
-            "capabilities":{
-                "experimental":{"serverStatusNotification":true},
-                "textDocument":{
-                    "synchronization":{},"definition":{},"references":{},"hover":{},
-                    "completion":{},"documentSymbol":{},
-                    "diagnostic":{"dynamicRegistration":false,"relatedDocumentSupport":false}
+        let init = session.rpc_next(
+            "initialize",
+            json!({
+                "processId":null,
+                "rootUri":root_uri.clone(),
+                "workspaceFolders":[{"uri":root_uri,"name":"reviewed-snapshot"}],
+                "capabilities":{
+                    "experimental":{"serverStatusNotification":true},
+                    "textDocument":{
+                        "synchronization":{},"definition":{},"references":{},"hover":{},
+                        "completion":{},"documentSymbol":{},
+                        "diagnostic":{"dynamicRegistration":false,"relatedDocumentSupport":false}
+                    }
+                },
+                "initializationOptions":{
+                    // rust-analyzer accepts inline rust-project.json graphs.
+                    // A file-path entry triggered file-watcher errors on the
+                    // isolated Windows profile even when the host file existed.
+                    "linkedProjects":[reviewed_graph],
+                    "cargo":{"sysroot":null,"autoreload":false,"buildScripts":{"enable":false}},
+                    "procMacro":{"enable":false},
+                    "checkOnSave":{"enable":false},
+                    "check":{"enable":false}
                 }
-            },
-            "initializationOptions":{
-                // rust-analyzer accepts inline rust-project.json graphs.
-                // A file-path entry triggered file-watcher errors on the
-                // isolated Windows profile even when the host file existed.
-                "linkedProjects":[reviewed_graph],
-                "cargo":{"sysroot":null,"autoreload":false,"buildScripts":{"enable":false}},
-                "procMacro":{"enable":false},
-                "checkOnSave":{"enable":false},
-                "check":{"enable":false}
-            }
-        }));
+            }),
+        );
         #[cfg(test)]
         if let Err(ref error) = init {
             eprintln!(
@@ -3273,9 +3276,8 @@ mod tests {
                 "LSP_DIAGNOSTICS_REPORT_INVALID"
             );
         }
-        let status_event = |params| {
-            json!({"jsonrpc":"2.0","method":"experimental/serverStatus","params":params})
-        };
+        let status_event =
+            |params| json!({"jsonrpc":"2.0","method":"experimental/serverStatus","params":params});
         for health in ["ok", "warning"] {
             let loading = status_event(json!({"health":health,"quiescent":false}));
             let ready = status_event(json!({"health":health,"quiescent":true}));
