@@ -317,7 +317,7 @@ pub fn close_grid_blocking(app: AppHandle) -> Result<(), String> {
             },
         );
     }
-    mgr.shutdown_all();
+    mgr.shutdown_all()?;
     for i in 0..MAX_GRID {
         let label = format!("grid-{i}");
         state.child_layouts.lock().unwrap().remove(&label);

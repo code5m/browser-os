@@ -490,13 +490,14 @@ pub fn register_shutdown_tasks(app: &AppHandle) -> Result<(), String> {
                 .store(true, Ordering::SeqCst);
             terminal::request_shutdown();
             crate::capabilities::agent::public_api::request_native_shutdown();
+            app.state::<AppState>().grid_manager.request_shutdown();
             Ok(())
         })?;
     }
 
     // M4-7.c / F7：`stop-scheduler` 必须**早于** `kill-running-scripts`
     // （先停触发，再杀运行中的；否则定时器可能在进程回收后再拉起子进程）。
-    // 紧随 `stop-background-workers` 之后注册 ⇒ 索引 1 < kill-running-scripts 的索引 5。
+    // 紧随 `stop-background-workers`，脚本回收任务显式依赖该停止信号。
     // 只置停止位 + 通知条件变量：**不 join 线程、不取消在飞运行**
     // （M0-2.b：清理任务不得持业务锁阻塞；在飞运行交给 `kill-running-scripts` 收口）。
     {
@@ -507,27 +508,17 @@ pub fn register_shutdown_tasks(app: &AppHandle) -> Result<(), String> {
         })?;
     }
 
-    {
-        // M1-9：会话 flush 必须**先于** close-tabs——先确定会话数据的落盘/释放，
-        // 再销毁子 webview，避免清理过程中的失败/中断导致会话状态不确定。
-        let app = app.clone();
-        coordinator.register("flush-sessions", move || {
-            let report = crate::capabilities::session::commands::flush_sessions_inner(&app);
-            eprintln!(
-                "[shutdown] flush-sessions persisted={} drafts_dropped={} tmp_removed={} capacity_removed={}",
-                report.persisted, report.drafts_dropped, report.tmp_removed, report.capacity_removed
-            );
-            Ok(())
-        })?;
-    }
-
+    // Optional exit saving already succeeded in main's reversible preflight.
+    // Cleanup errors cannot veto teardown, so saving never belongs in this list.
     {
         let app = app.clone();
         coordinator.register("close-tabs", move || {
             use tauri_plugin_browser_tabs::TabManagerState;
             let state = app.state::<AppState>();
             let manager = app.state::<TabManagerState>();
-            let ids: Vec<String> = state.tabs.lock().unwrap().keys().cloned().collect();
+            // Native plugin ownership includes an unpublished late creation;
+            // hibernated tabs have no native WebView to close.
+            let ids = manager.get_tab_ids();
             let mut errors = Vec::new();
             for id in &ids {
                 if let Err(error) = manager.close_tab(&id.to_string()) {
@@ -569,16 +560,19 @@ pub fn register_shutdown_tasks(app: &AppHandle) -> Result<(), String> {
     }
 
     {
-        coordinator.register_with_deadline("shutdown-agent-native", &["stop-background-workers"], move |deadline| {
-            crate::capabilities::agent::public_api::shutdown_native_until(deadline)
+        coordinator.register_with_deadline("shutdown-agent-lsp", &["stop-background-workers"], move |deadline| {
+            crate::capabilities::agent::public_api::shutdown_lsp_until(deadline)
+        })?;
+        coordinator.register_with_deadline("shutdown-agent-sandbox", &["stop-background-workers"], move |deadline| {
+            crate::capabilities::agent::public_api::shutdown_sandbox_until(deadline)
         })?;
     }
 
     {
         let app = app.clone();
-        coordinator.register_with_deadline("shutdown-grid", &["close-tabs"], move |_deadline| {
+        coordinator.register_with_deadline("shutdown-grid", &["close-tabs"], move |deadline| {
             let state = app.state::<AppState>();
-            state.grid_manager.shutdown_all();
+            state.grid_manager.shutdown_until(deadline)?;
             for i in 0..MAX_GRID {
                 let label = format!("grid-{i}");
                 state.child_layouts.lock().unwrap().remove(&label);

@@ -175,6 +175,11 @@ export const useLayoutStore = defineStore("layout", () => {
     navSection.value = "";
   }
 
+  // A failed exit save remains visible until another exit attempt or an
+  // explicit acknowledgement. Ordinary transient messages cannot hide it.
+  const exitSaveNotice = ref("");
+  function setExitSaveNotice(text: string) { exitSaveNotice.value = text; }
+
   let toastTimer: number | null = null;
   function showToast(text: string) {
     msg.value = text;
@@ -396,6 +401,8 @@ export const useLayoutStore = defineStore("layout", () => {
     clipOpen,
     fileEditorOpen,
     msg,
+    exitSaveNotice,
+    setExitSaveNotice,
     leftResizing,
     browserDockOpen,
     browserDockTab,

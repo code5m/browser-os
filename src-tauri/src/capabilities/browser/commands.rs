@@ -6,6 +6,7 @@
 use crate::domain::*;
 use tauri::{AppHandle, Emitter, Manager};
 use url::Url;
+use std::sync::atomic::Ordering;
 
 /// A non-tiny offscreen/hidden initial viewport avoids a 1x1 WebKitGTK
 /// relayout while the first navigation and native tab positioning race.
@@ -30,6 +31,9 @@ pub fn spawn_child_window(
     css_h: f64,
 ) -> Result<(), String> {
     use tauri_plugin_browser_tabs::{CreateTabOptions, LogicalRect, TabManagerState};
+    if app.state::<crate::AppState>().shutdown_requested.load(Ordering::Acquire) {
+        return Err("TAB_APPLICATION_SHUTTING_DOWN".into());
+    }
     let init_script = include_str!("../../../injected/collect.js");
     let manager = app.state::<TabManagerState>();
     manager
@@ -53,6 +57,13 @@ pub fn spawn_child_window(
             initialization_script: Some(init_script.to_string()),
         })
         .map_err(|e| format!("创建子 webview 失败: {e}"))?;
+    if app.state::<crate::AppState>().shutdown_requested.load(Ordering::Acquire) {
+        // The plugin remains the native owner; do not publish a late WebView
+        // after the session snapshot was accepted for exit.
+        manager.close_tab(&label.to_string())
+            .map_err(|_| "TAB_CANCELLED_CLEANUP_FAILED".to_string())?;
+        return Err("TAB_APPLICATION_SHUTTING_DOWN".into());
+    }
     eprintln!("[spawn_child_window] 子 webview 已创建 label={}", label);
     Ok(())
 }
@@ -130,6 +141,9 @@ pub fn hide_bounds(app: &AppHandle, id: &str) {
 }
 /// 创建一个浏览器页签（独立子窗口，方案 B），返回其信息并设为激活页签。
 pub fn create_tab(app: AppHandle, url: &str) -> Result<TabInfo, String> {
+    if app.state::<crate::AppState>().shutdown_requested.load(Ordering::Acquire) {
+        return Err("TAB_APPLICATION_SHUTTING_DOWN".into());
+    }
     let target = normalize_url(url);
     let _ = Url::parse(&target).map_err(|e| format!("无效网址: {e}"))?;
 
@@ -166,11 +180,22 @@ pub fn create_tab(app: AppHandle, url: &str) -> Result<TabInfo, String> {
         url: target.clone(),
         title: title0.clone(),
     };
-    app.state::<crate::AppState>()
-        .tabs
-        .lock()
-        .unwrap()
-        .insert(id.clone(), info.clone());
+    let published = {
+        // Exit accepts its snapshot while holding this same authoritative lock.
+        let mut tabs = state0.tabs.lock().unwrap();
+        if state0.shutdown_requested.load(Ordering::Acquire) {
+            false
+        } else {
+            tabs.insert(id.clone(), info.clone());
+            true
+        }
+    };
+    if !published {
+        use tauri_plugin_browser_tabs::TabManagerState;
+        app.state::<TabManagerState>().close_tab(&id)
+            .map_err(|_| "TAB_CANCELLED_CLEANUP_FAILED".to_string())?;
+        return Err("TAB_APPLICATION_SHUTTING_DOWN".into());
+    }
     *app.state::<crate::AppState>().active_tab.lock().unwrap() = Some(id.clone());
     // 休眠计时：新页签激活，旧页签从 now 起算 idle
     {

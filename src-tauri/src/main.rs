@@ -216,6 +216,12 @@ impl ExitLifecycleState {
     }
 
     fn claim(&self) -> bool {
+        // A rejected save can reopen admission before its worker has returned.
+        // Never replace that still-owned JoinHandle on a rapid second close.
+        let worker = self.worker.lock().unwrap_or_else(|e| e.into_inner());
+        if worker.is_some() || self.completed() {
+            return false;
+        }
         !self.started.swap(true, std::sync::atomic::Ordering::AcqRel)
     }
 
@@ -224,25 +230,70 @@ impl ExitLifecycleState {
     }
 }
 
+fn publish_exit_status(app: &tauri::AppHandle, phase: &str, code: &str) {
+    use tauri::Emitter;
+    // Fixed phase/code/counts only: never send URLs, page text or filesystem
+    // error strings into a global event or diagnostic log.
+    if app.emit_to("main", "app://exit-status", serde_json::json!({
+        "phase": phase, "code": code
+    })).is_err() {
+        eprintln!("[shutdown] EXIT_STATUS_DELIVERY_FAILED");
+    }
+}
+
+fn cancel_graceful_shutdown(app: &tauri::AppHandle, code: &str) {
+    // Called only before the coordinator/native shutdown latches are entered.
+    app.state::<ExitLifecycleState>()
+        .started.store(false, std::sync::atomic::Ordering::Release);
+    eprintln!("[shutdown] exit_cancelled {code}");
+    publish_exit_status(app, "blocked", code);
+}
+
 fn begin_graceful_shutdown(app: tauri::AppHandle, trigger: &'static str) {
     let state = app.state::<ExitLifecycleState>();
     state.reap_finished_worker();
     if !state.claim() {
         return;
     }
-    let started = std::time::Instant::now();
-    let deadline = started + shutdown::APPLICATION_SHUTDOWN_BUDGET;
-    // Close the bridge admission gate before an in-flight spawn can publish.
-    if let Some(business) = app.try_state::<bridge::AppState>() {
-        business.shutdown_requested.store(true, std::sync::atomic::Ordering::Release);
-    }
+    publish_exit_status(&app, "saving", "");
     let worker_app = app.clone();
+    // Keep publication in the same slot gate checked by claim(). A fast save
+    // failure may reopen started before spawn returns its JoinHandle.
+    let mut worker_slot = state.worker.lock().unwrap_or_else(|e| e.into_inner());
     let spawn = std::thread::Builder::new()
         .name("browseros-shutdown".into())
         .spawn(move || {
+            // Saving is a reversible exit preflight, not an ordinary cleanup
+            // task. A failed/panicked save must leave tabs and all native owners
+            // alive so the user can correct the problem and retry closing.
+            let saved = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                crate::capabilities::session::commands::prepare_exit_sessions(&worker_app)
+            }));
+            let saved = match saved {
+                Ok(saved) => saved,
+                Err(_) => {
+                    cancel_graceful_shutdown(&worker_app, "SESSION_EXIT_SAVE_PANICKED");
+                    return;
+                }
+            };
+            if !saved.can_exit() {
+                cancel_graceful_shutdown(&worker_app, &saved.failure_summary());
+                return;
+            }
+            eprintln!(
+                "[shutdown] sessions_saved persisted={} drafts_dropped={} tmp_removed={} capacity_removed={}",
+                saved.summary.persisted, saved.summary.drafts_dropped,
+                saved.summary.tmp_removed, saved.summary.capacity_removed
+            );
+            // The Session owner atomically accepted the authoritative snapshot
+            // and closed bridge admission under its final locks. No fallible
+            // session flush is repeated after this point.
+            publish_exit_status(&worker_app, "closing", "");
+            let started = std::time::Instant::now();
+            let deadline = started + shutdown::APPLICATION_SHUTDOWN_BUDGET;
             eprintln!("[shutdown] begin trigger={trigger}");
             // Independent owners run off the UI loop and share one absolute
-            // deadline. A blocked task does not postpone all other cleanup.
+            // cleanup deadline. Saving cannot be timed out into data loss.
             let report = worker_app
                 .state::<shutdown::ShutdownCoordinator>()
                 .shutdown_until(deadline);
@@ -251,8 +302,6 @@ fn begin_graceful_shutdown(app: tauri::AppHandle, trigger: &'static str) {
                 started.elapsed().as_millis()
             );
             log_shutdown_report(&report);
-            // The coordinator finishing is not proof that every resource was
-            // reclaimed. Preserve failure/pending status in the process exit.
             let exit_code = if report.ok() { 0 } else { 1 };
             worker_app
                 .state::<ExitLifecycleState>()
@@ -266,17 +315,13 @@ fn begin_graceful_shutdown(app: tauri::AppHandle, trigger: &'static str) {
         });
     match spawn {
         Ok(worker) => {
-            *state.worker.lock().unwrap_or_else(|e| e.into_inner()) = Some(worker);
+            *worker_slot = Some(worker);
+            drop(worker_slot);
             state.reap_finished_worker();
         }
-        Err(error) => {
-            // No coordinator ran, so no native owner has closed its admission
-            // latch. Reopen only this bridge flag and allow another exit attempt.
-            if let Some(business) = app.try_state::<bridge::AppState>() {
-                business.shutdown_requested.store(false, std::sync::atomic::Ordering::Release);
-            }
-            state.started.store(false, std::sync::atomic::Ordering::Release);
-            eprintln!("[shutdown] unable to start cleanup worker: {error}");
+        Err(_) => {
+            drop(worker_slot);
+            cancel_graceful_shutdown(&app, "SESSION_EXIT_WORKER_UNAVAILABLE");
         }
     }
 }
@@ -1703,21 +1748,16 @@ fn main() {
                         WindowEvent::Focused(false) => {
                             // 延迟判定：点击宫格子窗口同样触发主窗 blur，
                             // 150ms 内等子进程焦点上报到达后再决定（睡必须离开事件回调）
-                            let h = handle.clone();
-                            std::thread::spawn(move || {
-                                std::thread::sleep(std::time::Duration::from_millis(150));
-                                h.state::<AppState>()
-                                    .grid_manager
-                                    .hide_for_blur_if_no_child_focus();
-                            });
+                            handle.state::<AppState>()
+                                .grid_manager
+                                .request_hide_for_blur_async();
                         }
                         WindowEvent::Focused(true) => {
                             // show_for_focus sends UDS messages; avoid blocking GTK
                             // behind an unresponsive grid child.
-                            let h = handle.clone();
-                            std::thread::spawn(move || {
-                                h.state::<AppState>().grid_manager.show_for_focus();
-                            });
+                            handle.state::<AppState>()
+                                .grid_manager
+                                .request_show_for_focus_async();
                         }
                         WindowEvent::CloseRequested { api, .. } => {
                             // Prevent the main window from disappearing while
@@ -2068,4 +2108,34 @@ mod graceful_exit_state_tests {
         }
         assert_eq!(wins.load(std::sync::atomic::Ordering::Acquire), 1);
     }
+
+    #[test]
+    fn rejected_exit_waits_for_owned_worker_before_retry() {
+        use std::sync::{Arc, mpsc};
+        use std::time::{Duration, Instant};
+        let exit = Arc::new(ExitLifecycleState::default());
+        assert!(exit.claim());
+        let (cancelled_tx, cancelled_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let owner = Arc::clone(&exit);
+        let worker = std::thread::spawn(move || {
+            owner.started.store(false, std::sync::atomic::Ordering::Release);
+            cancelled_tx.send(()).unwrap();
+            release_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        });
+        *exit.worker.lock().unwrap() = Some(worker);
+        cancelled_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(!exit.claim(), "a cancelled but live worker still owns the exit attempt");
+        release_tx.send(()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            exit.reap_finished_worker();
+            if exit.worker.lock().unwrap().is_none() { break; }
+            assert!(Instant::now() < deadline, "worker must finish before a retry");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(!exit.completed());
+        assert!(exit.claim(), "failed saving must not permanently close the application");
+    }
+
 }

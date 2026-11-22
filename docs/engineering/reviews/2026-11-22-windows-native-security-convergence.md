@@ -5,7 +5,8 @@
 修复分支：`fix/windows-native-security-convergence-20261122`  
 首轮起点：`fix/windows-private-dir-acl-case@285542f57bd055592b4d5019e5a89e8555bcc805`  
 第二轮接续：`fecfae2b062fa281a0ced3d0f006dcef5ce39ee2`  
-第三轮审查起点：`add44f3b599b526a14ba28c5f993f51cb4561bae`，在同一分支修复确认的问题；本台账对应其后的本次提交
+第三轮审查起点：`add44f3b599b526a14ba28c5f993f51cb4561bae`  
+第四轮审查起点：`e039c83a33c076971f39fbe4f7943ebfea233c3f`；最新结论见 §9.3，本台账随其后的同分支修复提交交付
 
 > 本轮交付是源码、回归定义和文档的修改。没有运行测试、校验脚本、构建、CI、NSIS、GUI 或性能测量。文中的“已修改”不代表原生问题已修愈，也不代表 Windows/Linux 回归通过。macOS 只有明确列出的源码准备，不能据此宣布 macOS 已支持。
 
@@ -251,6 +252,58 @@ ShutdownCoordinator 在独立线程启动各资源 owner，所有原生等待接
 
 将身份/权限语义、资源所有权、数据流边界、容量限制与证据归属分别设计：不把 POSIX mode 当作 extended ACL 的全部语义，不把线程已入 reaper 当作应用退出完成，不把一次字符串转换当作流式 Unicode 解码，也不把一个过滤器通过当作整组用例已执行。先明确每项 native 能力及失败行为，再补真实平台用例；源码更新和运行证据分别交付。
 
+## 9.3 第四轮：核对 e039c83a 的复审意见
+
+这次把几份复审中的重复项合并后，按实际调用链确认。不能把“尚未运行”重复算作源码遗漏，也不能仅凭函数名猜测是否递归或依赖包是否可被 Cargo 选中。
+
+| 意见 | 核对结论 | 本轮处理 |
+| --- | --- | --- |
+| 退出自动保存失败仍被计为成功并清草稿 | 成立，是数据保存错误传播缺陷 | 内部逐项 Saved/Failed/Skipped 报告；失败和变化草稿保留；保存失败、busy、panic 均不启动退出清理 |
+| Grid 初始化 journal 再递归扫描全部 app data | 误报 | 第二参明确是 deep=false；只有 Walk.visit 的 deep 分支枚举子项。保留浅层身份/ACL 复读，补无关子树不被访问的原生回归定义 |
+| 恢复 pending/rejected 后没有用户可用的再扫描入口 | 成立 | 有界只读状态、固定原因码、记录列表与显式安全重试；完整复扫成功才清健康失败标志 |
+| Grid 关闭忽略全局 deadline、错误与子进程结果 | 成立 | 应用退出独立 admission、同一截止时间、进程/Job/线程所有者及未完成报告；普通关闭保留再次打开能力 |
+| LSP 先等待完才汇总 Sandbox | 诊断和调度改进，不能据此认定已有进程泄漏 | 两个独立 coordinator 任务收到同一绝对 deadline，各自返回结果 |
+| 从 src-tauri manifest 用 -p 选 portable-pty/browser-tabs 必定选错 workspace | 误报 | 两者是应用的 path dependencies；Cargo 可以按 -p 测试依赖包。保留已有 --locked 和无 dev-dependency 约束，不改独立 workspace 锁文件 |
+| 当前没有 Windows/Linux/GUI PASS | 属实，按本轮明确要求未运行 | 所有执行状态继续 NOT_RUN，不伪造验收结果 |
+
+Cargo 行为依据：[Cargo 维护者对依赖包 -p 选择的解释](https://github.com/rust-lang/cargo/issues/13962)及 [cargo test 包选择规则](https://doc.rust-lang.org/cargo/commands/cargo-test.html#package-selection)。依赖 crate 将来新增 dev-dependencies 时仍须重新审查包/锁归属，不能移除 --locked 规避问题。本轮没有执行 cargo metadata 或 cargo test。
+
+### 会话保存和退出的完整交接
+
+退出保存现在是不可逆清理之前的预检。普通 flush 保持原有公开 DTO，遇到部分失败返回 Err。内部报告保留各 tab/session ID、成功/失败/跳过与并发变化；原始保存错误不进入全局事件或日志。只有成功落盘且草稿仍等于快照时才删除该草稿；同时复读权威 tabs 的新增、关闭、URL/标题变化。保存、删除和策略更新共享写入互斥，竞争返回固定 busy 结果。
+
+专用 prepare_exit_sessions 在最后一次比较时同时持有 writer、drafts、tabs 锁，确认成功后设置既有 bridge admission flag；之后没有文件 I/O 或可失败的业务步骤。main 只在 can_exit 成功后启动原生清理。Browser 新建/导航/标题的最终发布在同一 tabs 锁下检查该 flag，不能将迟到结果写回已接受的退出快照；迟到的 WebView 交还原有插件 owner 关闭。主进程退出任务枚举实际插件持有的 WebView，避免把休眠页签或未发布资源误当作普通表项。
+
+保存失败、发生并发变化或保存 panic 时，窗口和页签保留，状态栏持续显示退出已取消及重试办法；普通短消息不会覆盖它。保存 worker 的 JoinHandle 从 spawn 到发布使用同一槽锁，失败后必须结束并 join 才能开始下一次退出，避免快速失败重试覆盖旧 handle。
+
+移除了 bridge 关闭任务中无条件成功的重复 flush，以及不能等待结果的 beforeunload 保存。普通 Tab 关闭仍然不保存、不确认；用户未启用 auto_save_on_exit 时不静默落盘。资源瀑布仍是点时快照，既有 50 条存档容量和强制杀进程边界未改变。
+
+10 秒预算从保存预检已被接受后的不可逆资源清理开始；不能用保存超时作为丢弃页签后强退的理由。文件系统单次调用仍没有硬中断承诺。
+
+### 安全恢复可诊断、可重试
+
+RecoveryStatus 仅输出固定状态/原因码、opaque 记录编号、上次扫描计数和当前 pending cleanup 数量，不输出路径、SID、原始 journal 或错误文本。最多枚举 512 个元数据、返回 64 条内容，诊断预算上限 750ms；重试最多 10 秒，并受传入截止时间缩短。状态和重试各自使用独立 native 枚举 cursor，避免两个读取调用共享目录 handle 时互相影响。
+
+Coding Workbench 的固定布局面板提供重新检查、显式安全重试和待核对记录。重试使用 startup 已绑定的 REGISTRY，前端不能传目录或记录 ID 作为删除目标。只读查询不会清除 rejected；后台清完一个资源也不等于所有记录都安全。只有完整复扫成功且没有未完成 owner，才恢复 admission。
+
+未知 Intent、身份不匹配和不能证明归属的旧资源仍保留，面板显示需人工核对及固定原因；没有“忽略并删除”按钮。新入口解决可证明资源在暂时占用/预算不足后的恢复与健康重置，不宣称能自动处理没有所有权证据的资源。
+
+接入面板时还核对了语言服务调用方：Windows lsp_status 原先没有提供前端选择器实际读取的 path/name，本轮补齐可信 rust-analyzer 的这两个字段，保留既有工具链准备错误和 compilation_verified=false。
+
+### Grid 与 Agent 的退出结果
+
+Grid 的应用关闭先停止接收并覆盖在途创建，再向资源 owner 发出终止请求。最终成功需要子进程/Job、相关 I/O worker 和清理 owner 均完成；未结束的资源保留在进程内清理登记中并返回 Pending/错误，不能仅因已经调用 kill 就汇报成功。Linux 清理进程组时保留 leader 身份，Windows 独立检查 Job active process count；共享 deadline 不为每个进程重新计时。焦点显隐调度也纳入同一 worker 所有权，保持原有 150ms 延迟和显隐算法。
+
+LSP 与 Sandbox 分别登记独立关闭任务。Grid、Terminal、Agent 共享同一个清理截止时间，但各自拥有和报告资源。进程强制结束之后仍无法由内存登记继续清理；AppContainer 的持久恢复记录继续承担下次启动的已证明资源恢复。
+
+### 本轮交付和执行边界
+
+增加/同步了真实保存失败、草稿并发替换、新增草稿、权威页签变化、opt-out、退出 worker 重试、恢复记录只读观察、未知 Intent 保留、预算失败后安全重试及 Grid 生命周期的回归定义；原生名称清单也同步。所有定义仅写入仓库，未执行。
+
+没有触发 Actions、测试、校验器、构建、checksum、安装包、GUI 或合并；没有修改 master、创建 PR 或 dispatch 工作流。安装版、Windows 原生效果、Linux 回归和性能数据保持 NOT_RUN。持续子对象 ACL 监控仍不是冷准备租约的承诺，不会为了制造“全部完成”而把它写成已实现。
+
+这轮暴露的改进点是：审查模块时同时跟到真实调用方、失败分支和最终消费点；核对布尔参数与工具合同后再认定缺陷；修订测试定义必须保留“未执行”的事实。未来 macOS 移植同样需要区分源码合同、调用链接线与实际平台证据。
+
 ## 10. 源码索引
 
 - [共享 Windows 安全实现](../../../crates/browseros-platform-security/src/windows.rs)
@@ -287,3 +340,11 @@ ShutdownCoordinator 在独立线程启动各资源 owner，所有原生等待接
 - [GitHub CLI 的所选 ref 与输入读取实现](https://github.com/cli/cli/blob/trunk/pkg/cmd/workflow/run/run.go)
 - [DeleteAppContainerProfile 的重复调用与句柄关闭合同](https://learn.microsoft.com/en-us/windows/win32/api/userenv/nf-userenv-deleteappcontainerprofile)
 - [Windows 嵌套 Job 的子进程与终止语义](https://learn.microsoft.com/en-us/windows/win32/procthread/nested-jobs)
+
+### 第四轮新增源码
+
+- [退出保存报告与原子接受](../../../src-tauri/src/capabilities/session/commands.rs)
+- [Grid 共用清理所有权](../../../src-tauri/src/grid_lifecycle.rs)
+- [Grid Windows 进程适配](../../../src-tauri/src/grid_process_windows.rs)
+- [Grid Linux 进程适配](../../../src-tauri/src/grid_process.rs)
+- [恢复诊断与重试面板](../../../src/capabilities/agent/ui/SandboxRecoveryPanel.vue)

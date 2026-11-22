@@ -39,6 +39,9 @@ pub fn tab_open(
     crate::shared::native_legacy_policy::require_main(&webview, "tab_open")?;
     crate::shared::native_legacy_policy::bound_text("tab_open", "id", &id)?;
     crate::shared::native_legacy_policy::bound_text("tab_open", "url", &url)?;
+    if app.state::<AppState>().shutdown_requested.load(Ordering::Acquire) {
+        return Err("TAB_APPLICATION_SHUTTING_DOWN".into());
+    }
 
     let target = normalize_url(&url);
     let _ = Url::parse(&target).map_err(|e| format!("无效网址: {e}"))?;
@@ -47,8 +50,13 @@ pub fn tab_open(
         navigate_tab_webview(&app, &id, &target)
             .map_err(|retry| format!("{e}; 恢复后重试导航失败: {retry}"))?;
     }
-    // 更新存储的 url
-    if let Some(t) = app.state::<AppState>().tabs.lock().unwrap().get_mut(&id) {
+    // Publish navigation only before the exit snapshot is atomically accepted.
+    let state = app.state::<AppState>();
+    let mut tabs = state.tabs.lock().unwrap();
+    if state.shutdown_requested.load(Ordering::Acquire) {
+        return Err("TAB_APPLICATION_SHUTTING_DOWN".into());
+    }
+    if let Some(t) = tabs.get_mut(&id) {
         t.url = target.clone();
     }
     Ok(())
@@ -777,7 +785,12 @@ pub fn tab_set_title(
     crate::shared::native_legacy_policy::bound_text("tab_set_title", "id", &id)?;
     crate::shared::native_legacy_policy::bound_text("tab_set_title", "title", &title)?;
 
-    if let Some(t) = app.state::<AppState>().tabs.lock().unwrap().get_mut(&id) {
+    let state = app.state::<AppState>();
+    let mut tabs = state.tabs.lock().unwrap();
+    if state.shutdown_requested.load(Ordering::Acquire) {
+        return Err("TAB_APPLICATION_SHUTTING_DOWN".into());
+    }
+    if let Some(t) = tabs.get_mut(&id) {
         t.title = title;
     }
     Ok(())

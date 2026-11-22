@@ -94,8 +94,15 @@ impl JobObject {
     /// enumeration is safe here because the suspended process cannot create
     /// additional threads before its primary thread is resumed.
     pub fn attach_suspended_pid(pid: u32) -> Result<Self, String> {
-        if pid == 0 { return Err("WINDOWS_JOB_INVALID_PID".into()); }
         let owner = Self::create()?;
+        owner.assign_suspended_pid(pid)?;
+        Ok(owner)
+    }
+
+    /// Borrow an already-owned Job so callers can retain the Job and the
+    /// suspended Child together if assignment/resumption fails part way.
+    pub fn assign_suspended_pid(&self, pid: u32) -> Result<(), String> {
+        if pid == 0 { return Err("WINDOWS_JOB_INVALID_PID".into()); }
         unsafe {
             let process = OpenProcess(
                 PROCESS_SET_QUOTA | PROCESS_TERMINATE | PROCESS_SUSPEND_RESUME,
@@ -104,7 +111,7 @@ impl JobObject {
             if process.is_null() {
                 return Err(format!("WINDOWS_PROCESS_OPEN: {}", std::io::Error::last_os_error()));
             }
-            let assigned = AssignProcessToJobObject(owner.0, process);
+            let assigned = AssignProcessToJobObject(self.0, process);
             if assigned == 0 {
                 let error = std::io::Error::last_os_error();
                 CloseHandle(process);
@@ -132,7 +139,7 @@ impl JobObject {
             CloseHandle(snapshot);
             if thread_count != 1 {
                 CloseHandle(process);
-                let _ = owner.terminate();
+                let _ = self.terminate();
                 return Err(format!("WINDOWS_SUSPENDED_PROCESS_THREAD_COUNT:{thread_count}"));
             }
             let thread = OpenThread(
@@ -143,7 +150,7 @@ impl JobObject {
             if thread.is_null() {
                 let error = std::io::Error::last_os_error();
                 CloseHandle(process);
-                let _ = owner.terminate();
+                let _ = self.terminate();
                 return Err(format!("WINDOWS_PRIMARY_THREAD_OPEN: {error}"));
             }
             // Thread IDs can be reused between the Toolhelp snapshot and
@@ -152,7 +159,7 @@ impl JobObject {
             if GetProcessIdOfThread(thread) != pid {
                 CloseHandle(thread);
                 CloseHandle(process);
-                let _ = owner.terminate();
+                let _ = self.terminate();
                 return Err("WINDOWS_PRIMARY_THREAD_OWNER_MISMATCH".into());
             }
             let previous = ResumeThread(thread);
@@ -161,7 +168,7 @@ impl JobObject {
             if previous != 1 {
                 // 1 is the exact CREATE_SUSPENDED count. 0 means user code
                 // was already running; >1 means another actor changed state.
-                let _ = owner.terminate();
+                let _ = self.terminate();
                 return Err(if previous == u32::MAX {
                     format!("WINDOWS_PRIMARY_THREAD_RESUME: {}", std::io::Error::last_os_error())
                 } else {
@@ -169,7 +176,7 @@ impl JobObject {
                 });
             }
         }
-        Ok(owner)
+        Ok(())
     }
 
     /// Kernel accounting, not a snapshot of just the original child's PID.

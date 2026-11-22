@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "reviewed_source_basis": "add44f3b599b526a14ba28c5f993f51cb4561bae",
+  "reviewed_source_basis": "e039c83a33c076971f39fbe4f7943ebfea233c3f",
   "name_matching": "unique exact Rust test name or unique ::-delimited suffix; resolved full names are recorded",
   "coverage_policy": "Required names must all be enumerated and finish ok. New extra tests are allowed, executed, and recorded; none can substitute for a missing required name. Ignored extras are accepted only in full-suite and are never acceptance evidence.",
   "selections": [
@@ -8,10 +8,13 @@
       "id": "windows-grid",
       "package": "mvp-browser-os",
       "filter": "windows_grid_tests",
-      "required_count": 2,
+      "required_count": 5,
       "required_names": [
         "pipe_name_is_private_unique_and_stable_per_index",
-        "grid_hibernation_requires_a_live_blank_page_proof"
+        "grid_hibernation_requires_a_live_blank_page_proof",
+        "grid_process::windows_grid_tests::application_grid_shutdown_does_not_wait_for_ordinary_lifecycle_lock",
+        "grid_process::windows_grid_tests::ordinary_grid_close_remains_reopenable",
+        "grid_process::windows_grid_tests::grid_retirement_waits_for_job_descendants_after_root_exit"
       ],
       "allow_additional_tests": true,
       "allow_ignored": false,
@@ -607,7 +610,7 @@
       "id": "platform-security",
       "package": "browseros-platform-security",
       "filter": "",
-      "required_count": 34,
+      "required_count": 36,
       "required_names": [
         "native_private_tree_is_idempotent_and_preserves_bytes",
         "new_children_inherit_only_native_owner_and_system",
@@ -642,7 +645,9 @@
         "native_recovery_refuses_linked_data_and_keeps_root",
         "native_named_job_rejects_untrusted_existing_dacl",
         "native_recovery_namespace_survives_profile_removal",
-        "native_recovery_namespace_rejects_untrusted_writer"
+        "native_recovery_namespace_rejects_untrusted_writer",
+        "windows::recovery::tests::native_recovery_store_initialization_does_not_traverse_unrelated_children",
+        "windows::recovery::tests::native_recovery_readonly_diagnostic_observes_active_journal"
       ],
       "allow_additional_tests": true,
       "allow_ignored": false,
@@ -708,14 +713,17 @@
       "id": "appcontainer-recovery",
       "package": "mvp-browser-os",
       "filter": "capabilities::agent::windows_sandbox::lifecycle::tests",
-      "required_count": 6,
+      "required_count": 9,
       "required_names": [
         "recovery_retains_unbound_intent_and_blocks_new_profiles",
         "recovery_skips_a_live_native_record_lease",
         "abandoned_bound_profile_is_recovered_by_native_identity",
         "local_shutdown_shortens_cleanup_and_preserves_pending_record",
         "journal_rejects_path_fields_and_sid_substitution",
-        "journal_uses_last_complete_frame_after_interrupted_write"
+        "journal_uses_last_complete_frame_after_interrupted_write",
+        "capabilities::agent::windows_sandbox::lifecycle::tests::recovery_status_preserves_unbound_intent_and_rejection",
+        "capabilities::agent::windows_sandbox::lifecycle::tests::explicit_recovery_retry_clears_completed_budget_failure",
+        "capabilities::agent::windows_sandbox::lifecycle::tests::recovery_diagnostic_record_list_is_bounded_and_read_only"
       ],
       "allow_additional_tests": true,
       "allow_ignored": false,
@@ -723,10 +731,72 @@
       "role": "required"
     },
     {
+      "id": "session-exit-save",
+      "package": "mvp-browser-os",
+      "filter": "capabilities::session::commands::flush_tests",
+      "role": "required",
+      "required_count": 6,
+      "required_names": [
+        "capabilities::session::commands::flush_tests::exit_flush_reports_partial_write_failure_and_retains_failed_draft",
+        "capabilities::session::commands::flush_tests::exit_flush_keeps_a_draft_replaced_during_persist",
+        "capabilities::session::commands::flush_tests::exit_flush_keeps_a_draft_created_after_snapshot",
+        "capabilities::session::commands::flush_tests::exit_flush_detects_changed_closed_and_new_authoritative_tabs",
+        "capabilities::session::commands::flush_tests::exit_flush_disabled_policy_reports_skips_and_preserves_newer_drafts",
+        "capabilities::session::commands::flush_tests::exit_flush_public_result_preserves_shape_and_redacts_failure_details"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 120
+    },
+    {
+      "id": "exit-worker-state",
+      "package": "mvp-browser-os",
+      "filter": "graceful_exit_state_tests",
+      "role": "required",
+      "required_count": 3,
+      "required_names": [
+        "graceful_exit_state_tests::only_one_cleanup_worker_claims_close_and_exit_events",
+        "graceful_exit_state_tests::concurrent_close_callbacks_do_not_spawn_duplicate_cleanup",
+        "graceful_exit_state_tests::rejected_exit_waits_for_owned_worker_before_retry"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 60
+    },
+    {
+      "id": "grid-cleanup-ownership",
+      "package": "mvp-browser-os",
+      "filter": "grid_process::lifecycle::tests",
+      "required_count": 3,
+      "required_names": [
+        "grid_process::lifecycle::tests::grid_shutdown_retains_worker_owner_until_released",
+        "grid_process::lifecycle::tests::grid_shutdown_does_not_wait_for_an_admitted_operation",
+        "grid_process::lifecycle::tests::ordinary_grid_retirement_does_not_close_admission"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 90,
+      "role": "required"
+    },
+    {
+      "id": "grid-pipe-cancellation",
+      "package": "mvp-browser-os",
+      "filter": "windows_pipe::tests",
+      "required_count": 2,
+      "required_names": [
+        "windows_pipe::tests::cancellation_interrupts_the_shared_native_reader_and_rejects_late_writes",
+        "windows_pipe::tests::listener_cancellation_releases_a_pending_native_accept"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 120,
+      "role": "required"
+    },
+    {
       "id": "windows-full-suite",
       "package": "mvp-browser-os",
       "filter": "",
-      "required_count": 79,
+      "required_count": 99,
       "required_names": [
         "a_running_process_can_be_adopted_but_is_not_used_for_spawn_paths",
         "abandoned_bound_profile_is_recovered_by_native_identity",
@@ -806,7 +876,27 @@
         "windows_script_cancel_reaps_immediate_node_grandchild",
         "windows_script_parent_crash_drops_job_and_reaps_grandchild",
         "windows_script_timeout_reaps_immediate_node_grandchild",
-        "windows_script_whitelist_rejects_shell_execution_without_side_effects"
+        "windows_script_whitelist_rejects_shell_execution_without_side_effects",
+        "capabilities::session::commands::flush_tests::exit_flush_reports_partial_write_failure_and_retains_failed_draft",
+        "capabilities::session::commands::flush_tests::exit_flush_keeps_a_draft_replaced_during_persist",
+        "capabilities::session::commands::flush_tests::exit_flush_keeps_a_draft_created_after_snapshot",
+        "capabilities::session::commands::flush_tests::exit_flush_detects_changed_closed_and_new_authoritative_tabs",
+        "capabilities::session::commands::flush_tests::exit_flush_disabled_policy_reports_skips_and_preserves_newer_drafts",
+        "capabilities::session::commands::flush_tests::exit_flush_public_result_preserves_shape_and_redacts_failure_details",
+        "graceful_exit_state_tests::only_one_cleanup_worker_claims_close_and_exit_events",
+        "graceful_exit_state_tests::concurrent_close_callbacks_do_not_spawn_duplicate_cleanup",
+        "graceful_exit_state_tests::rejected_exit_waits_for_owned_worker_before_retry",
+        "capabilities::agent::windows_sandbox::lifecycle::tests::recovery_status_preserves_unbound_intent_and_rejection",
+        "capabilities::agent::windows_sandbox::lifecycle::tests::explicit_recovery_retry_clears_completed_budget_failure",
+        "capabilities::agent::windows_sandbox::lifecycle::tests::recovery_diagnostic_record_list_is_bounded_and_read_only",
+        "grid_process::windows_grid_tests::application_grid_shutdown_does_not_wait_for_ordinary_lifecycle_lock",
+        "grid_process::windows_grid_tests::ordinary_grid_close_remains_reopenable",
+        "grid_process::windows_grid_tests::grid_retirement_waits_for_job_descendants_after_root_exit",
+        "grid_process::lifecycle::tests::grid_shutdown_retains_worker_owner_until_released",
+        "grid_process::lifecycle::tests::grid_shutdown_does_not_wait_for_an_admitted_operation",
+        "grid_process::lifecycle::tests::ordinary_grid_retirement_does_not_close_admission",
+        "windows_pipe::tests::cancellation_interrupts_the_shared_native_reader_and_rejects_late_writes",
+        "windows_pipe::tests::listener_cancellation_releases_a_pending_native_accept"
       ],
       "allow_additional_tests": true,
       "allow_ignored": true,

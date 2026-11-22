@@ -246,6 +246,8 @@ impl PrivateRecordStore {
     pub fn open(parent: &Path, budget: &OperationBudget) -> io::Result<Self> {
         budget.check()?;
         let mut options = PrivateTreeOptions { max_duration: budget.remaining()?, ..PrivateTreeOptions::default() };
+        // The prepared application data epoch belongs to startup. This is an
+        // exact shallow parent check (deep=false), never another subtree scan.
         audit_private_directory(parent, false, &options)?;
         budget.check()?;
         options.max_duration = budget.remaining()?;
@@ -264,8 +266,18 @@ impl PrivateRecordStore {
     }
     pub fn entries(&self, limit: usize, budget: &OperationBudget) -> io::Result<Vec<PinnedDirectoryEntry>> {
         budget.check()?;
-        let volume = file_identity(self.opened.target())?.volume_serial;
-        directory_entries_checked(self.opened.target(), limit, Instant::now(), budget.remaining()?, Some(budget))
+        // Each observer owns a fresh native enumeration cursor. Reusing the
+        // retained directory handle would let a read-only status request reset
+        // an in-progress recovery scan's GetFileInformationByHandleEx cursor.
+        let parent = self.opened.chain.get(self.opened.chain.len().saturating_sub(2))
+            .ok_or_else(|| failure("RECOVERY_STORE_PARENT", 0))?;
+        let directory = open_relative(parent, OsStr::new(RECORD_ROOT), RECORD_ACCESS,
+            true, false, ptr::null_mut(), true)?;
+        if file_identity(&directory)? != file_identity(self.opened.target())?
+            || !descriptor_is_private(&directory, &Policy::new()?, true, true)?
+        { return Err(failure("RECOVERY_STORE_CHANGED", 0)); }
+        let volume = file_identity(&directory)?.volume_serial;
+        directory_entries_checked(&directory, limit, Instant::now(), budget.remaining()?, Some(budget))
             .map(|entries| entries.into_iter().map(|entry| PinnedDirectoryEntry {
                 name: entry.name, directory: entry.directory,
                 identity: FileIdentity { volume_serial: volume, file_index: entry.identity },
@@ -290,6 +302,20 @@ impl PrivateRecordStore {
         audit_private_file(&file)?;
         Ok(ExclusivePrivateRecord { file, _parents: self.opened.chain.iter().map(File::try_clone).collect::<io::Result<_>>()? })
     }
+    /// A diagnostic observation, not a recovery lease. It may read the last
+    /// complete journal frame while its owner is appending; it never grants
+    /// mutation rights or proves that the owner is inactive.
+    pub fn open_readonly(&self, entry: &PinnedDirectoryEntry, budget: &OperationBudget) -> io::Result<File> {
+        budget.check()?;
+        if entry.directory || !record_name(&entry.name) { return Err(failure("RECOVERY_RECORD_NAME", 0)); }
+        let file = open_relative_with_share(self.opened.target(), &entry.name,
+            1 /* FILE_READ_DATA */ | READ_CONTROL | FILE_READ_ATTRIBUTES,
+            false, false, ptr::null_mut(), FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)?;
+        if file_identity(&file)? != entry.identity { return Err(failure("RECOVERY_RECORD_CHANGED", 0)); }
+        audit_private_file(&file)?;
+        Ok(file)
+    }
+
     /// A live owner holds WRITE+DELETE and refuses write/delete sharing. A
     /// second owner cannot obtain this native lease, even in another process.
     /// Busy is retained, never treated as a stale record that may be deleted.
@@ -721,6 +747,49 @@ mod tests {
         assert!(hold_profile_cleanup_namespace(&scope, name, sid, &budget).is_err());
         ensure_private_directory_root(&parent, &PrivateTreeOptions::default()).unwrap();
         std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn native_recovery_store_initialization_does_not_traverse_unrelated_children() {
+        let base = fixture("shallow-store");
+        let parent = base.join("app-data");
+        ensure_private_directory(&parent, &PrivateTreeOptions::default()).unwrap();
+        std::fs::create_dir(parent.join("unrelated")).unwrap();
+        std::fs::write(base.join("outside"), b"unrelated data").unwrap();
+        std::fs::hard_link(base.join("outside"), parent.join("unrelated/alias")).unwrap();
+        // Deep audit would inspect and reject the linked unrelated child.
+        assert!(audit_private_directory(&parent, true, &PrivateTreeOptions::default()).is_err());
+        let budget = budget();
+        let store = PrivateRecordStore::open(&parent, &budget).unwrap();
+        assert!(store.entries(1, &budget).unwrap().is_empty());
+        assert_eq!(std::fs::read(base.join("outside")).unwrap(), b"unrelated data");
+        drop(store);
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn native_recovery_readonly_diagnostic_observes_active_journal() {
+        use std::io::Read;
+        let parent = fixture("readonly-record");
+        ensure_private_directory(&parent, &PrivateTreeOptions::default()).unwrap();
+        let budget = budget();
+        let store = PrivateRecordStore::open(&parent, &budget).unwrap();
+        let mut owner = store.create(OsStr::new("0123456789abcdef0123456789abcdef.profile"), &budget).unwrap();
+        owner.file_mut().write_all(b"complete frame").unwrap();
+        owner.file().sync_all().unwrap();
+        let entry = store.entries(1, &budget).unwrap().pop().unwrap();
+        assert!(store.try_open(&entry, &budget).unwrap().is_none());
+        let mut reader = store.open_readonly(&entry, &budget).unwrap();
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes).unwrap();
+        assert_eq!(bytes, b"complete frame");
+        assert!(reader.write_all(b"forbidden").is_err(), "diagnostic handles must not carry write access");
+        assert_eq!(owner.file().metadata().unwrap().len(), b"complete frame".len() as u64);
+        drop(reader);
+        owner.mark_deleted().unwrap();
+        drop(owner);
+        drop(store);
+        std::fs::remove_dir_all(parent).unwrap();
     }
 
 }

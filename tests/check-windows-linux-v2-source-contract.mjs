@@ -49,6 +49,10 @@ const nativeRecovery = read('../crates/browseros-platform-security/src/windows/r
 const sandboxLifecycle = read('../src-tauri/src/capabilities/agent/windows_sandbox/lifecycle.rs');
 const shutdown = read('../src-tauri/src/shutdown.rs');
 const bridgeLifecycle = read('../src-tauri/src/bridge.rs');
+const sessionExit = read('../src-tauri/src/capabilities/session/commands.rs');
+const browserOwner = read('../src-tauri/src/capabilities/browser/commands.rs');
+const browserRuntime = read('../src-tauri/src/bridge/tab_runtime.rs');
+const recoveryPanel = read('../src/capabilities/agent/ui/SandboxRecoveryPanel.vue');
 const terminalState = read('../src/capabilities/terminal/state/useTerminalStore.ts');
 const nativeDispatcher = read('../.github/workflows/browseros-developer-feedback.yml');
 const terminalCommands = read('../src-tauri/src/bridge/terminal_commands.rs');
@@ -67,7 +71,7 @@ assert.match(gridIpc, /MAX_GRID_WIRE_BYTES/);
 assert.match(process, /AssignProcessToJobObject/);
 assert.match(process, /attach_suspended_pid/);
 assert.match(process, /CREATE_SUSPENDED/);
-assert.match(winGrid, /attach_suspended_pid/);
+assert.match(winGrid, /assign_suspended_pid/);
 assert.match(winGrid, /CREATE_SUSPENDED/);
 assert.match(scriptRunner, /creation_flags\(crate::windows_process::CREATE_SUSPENDED\)/);
 assert.match(scriptRunner, /attach_suspended_pid/);
@@ -714,5 +718,34 @@ assert.match(sandboxLifecycle, /namespace\.recheck/);
 const sandboxProduction = windowsSandbox.split('#[cfg(test)]\nmod tests')[0];
 assert.doesNotMatch(sandboxProduction, /std::fs::remove_dir_all/);
 assert.match(privateLease, /NOT a continuous descendant ACL monitor/);
+
+// Saving can veto exit before any irreversible cleanup. A failed cleanup task
+// cannot supply this guarantee, and an unload callback cannot await failures.
+assert.match(sessionExit, /pub\(crate\) fn prepare_exit_sessions/);
+assert.match(sessionExit, /SessionFlushOutcome::Failed/);
+assert.match(sessionExit, /reconcile_snapshot_changes/);
+assert.match(sessionExit, /if accept_exit && report\.can_exit\(\)/);
+const exitPreflight = main.slice(main.indexOf('fn begin_graceful_shutdown('), main.indexOf('fn log_shutdown_report('));
+assert.ok(exitPreflight.indexOf('prepare_exit_sessions(') < exitPreflight.indexOf('.shutdown_until('));
+assert.match(exitPreflight, /if !saved\.can_exit\(\)/);
+assert.doesNotMatch(exitPreflight, /shutdown_requested\.store\(true/);
+assert.doesNotMatch(bridgeLifecycle, /register\("flush-sessions"/);
+assert.match(browserOwner, /TAB_APPLICATION_SHUTTING_DOWN/);
+assert.match(browserRuntime, /TAB_APPLICATION_SHUTTING_DOWN/);
+
+// A diagnosis never grants deletion. Retry keeps the native identity/lease
+// checks and has no caller path or record ID deletion parameter.
+assert.match(sandboxLifecycle, /pub\(crate\) fn recovery_status\(until: Instant\)/);
+assert.match(sandboxLifecycle, /pub\(crate\) fn retry_recovery\(until: Instant\)/);
+assert.match(sandboxLifecycle, /recovery_status_preserves_unbound_intent_and_rejection/);
+assert.match(nativeRecovery, /open_readonly/);
+assert.match(nativeRecovery, /native_recovery_store_initialization_does_not_traverse_unrelated_children/);
+assert.match(recoveryPanel, /sandbox_recovery_status/);
+assert.match(recoveryPanel, /sandbox_recovery_retry/);
+assert.match(codingPublicApi, /SANDBOX_RECOVERY_APPROVAL_REQUIRED/);
+assert.match(bridgeLifecycle, /"shutdown-agent-lsp"/);
+assert.match(bridgeLifecycle, /"shutdown-agent-sandbox"/);
+assert.match(bridgeLifecycle, /grid_manager\.shutdown_until\(deadline\)\?/);
+assert.match(windowsLsp, /"path":toolchain\.as_ref\(\)\.ok\(\)/);
 
 console.log('WINDOWS_LINUX_V2_SOURCE_CONTRACT=PASS (static-only, Windows GUI pending)');

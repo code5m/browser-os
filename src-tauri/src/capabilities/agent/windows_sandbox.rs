@@ -5,7 +5,10 @@
 
 use crate::windows_process::CREATE_SUSPENDED;
 mod lifecycle;
-pub(crate) use lifecycle::{initialize_recovery_store, recover_abandoned_profiles, request_shutdown, shutdown_until, RecoveryReport};
+pub(crate) use lifecycle::{
+    initialize_recovery_store, recover_abandoned_profiles, recovery_status, retry_recovery,
+    request_shutdown, shutdown_until, RecoveryReport,
+};
 pub use browseros_platform_security::windows::OperationBudget;
 use browseros_platform_security::windows::{
     AppContainerAccess, AppContainerDirectory, AppContainerPolicy,

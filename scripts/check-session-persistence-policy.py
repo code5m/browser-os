@@ -10,8 +10,8 @@ M1-9 把会话存档（BrowserSession）与关闭协议接入既有 M1-8 资源�
   - 原子写（.tmp + rename）；单会话资源上限与全局会话容量上限存在
   - 10 个会话命令全部过 check_invocation_source；审计格式串不含 URL/预览内容
   - ACL（permissions/default-commands.toml）与 invoke_handler 同步
-  - 生命周期：create_tab 建草稿、close_tab 清草稿、flush-sessions 注册在
-    close-tabs 之前、启动时 prune_tmp_files（异常退出恢复边界）
+  - 生命周期：Browser tabs 是权威源，普通 close_tab 清内存；main 在退出闩关闭前
+    完成可失败保存预检，逐项失败或并发变化必须取消退出；仅启动时清理 .tmp
   - 默认策略：close_prompt=true（后端契约保留）、auto_save_on_exit=false
 
   前端（TS/Vue）—— Owner 最终裁决（2026-09-12）后：
@@ -149,7 +149,12 @@ def detect_violations(files: dict[str, str]) -> list[str]:
     if not atomic_body:
         v.append("SP_ATOMIC_WRITE_MISSING")
     else:
-        if ".tmp" not in atomic_body or "rename" not in atomic_body:
+        replace_body = rust_fn_body(session_rs, "atomic_replace_file")
+        has_replace = (
+            "rename" in atomic_body
+            or ("atomic_replace_file" in atomic_body and "rename" in replace_body)
+        )
+        if ".tmp" not in atomic_body or not has_replace:
             v.append("SP_ATOMIC_WRITE_NOT_ATOMIC")
     if "fn prune_sessions" not in session_rs or "fn prune_tmp_files" not in session_rs:
         v.append("SP_PRUNE_MISSING")
@@ -184,23 +189,81 @@ def detect_violations(files: dict[str, str]) -> list[str]:
     if "upsert_session_draft" in strip_line_comments(bridge):
         v.append("SP_BROWSER_WRITES_SESSION_DRAFT")
     session_builder = rust_fn_body(bridge, "build_session_for_tab")
-    if not all(anchor in session_builder for anchor in ("state.tabs", "tabs.get(tab_id)", "build_session(")):
+    snapshot_builder = rust_fn_body(bridge, "build_session_snapshot")
+    if not all(anchor in session_builder for anchor in ("state.tabs", "tabs.get(tab_id)", "build_session_snapshot(")):
         v.append("SP_SESSION_TAB_SOURCE_MISSING")
-    flush_body = rust_fn_body(bridge, "flush_sessions_inner")
-    if not all(anchor in flush_body for anchor in ("session_auto_save_on_exit", "if auto_save", "state.tabs", ".keys()", "build_session_for_tab(", "persist_session(")):
+    if "crate::session::build_session(" not in snapshot_builder:
+        v.append("SP_SESSION_SNAPSHOT_REDACTION_MISSING")
+    ordinary_flush = rust_fn_body(bridge, "flush_sessions_inner")
+    exit_prepare = rust_fn_body(bridge, "prepare_exit_sessions")
+    if "flush_sessions_with_intent(app, false)" not in ordinary_flush:
+        v.append("SP_FLUSH_ACCEPTS_EXIT")
+    if "flush_sessions_with_intent(app, true)" not in exit_prepare:
+        v.append("SP_EXIT_PREPARE_NOT_WIRED")
+    flush_body = rust_fn_body(bridge, "flush_sessions_with_intent")
+    if not all(anchor in flush_body for anchor in ("session_auto_save_on_exit", "if auto_save", "state.tabs", "tabs.keys()", "build_session_snapshot(", "persist_snapshots(")):
         v.append("SP_AUTO_SAVE_TAB_SOURCE_MISSING")
+    public_flush = rust_fn_body(bridge, "flush_sessions")
+    if "into_public_report()" not in public_flush:
+        v.append("SP_FLUSH_PUBLIC_FAILURE_IGNORED")
+    persist_body = rust_fn_body(bridge, "persist_snapshots")
+    if not all(anchor in persist_body for anchor in (
+        "match persist(session)", "Err(error)", "SessionFlushOutcome::Failed",
+        "remove_matching_draft", "snapshot.draft.as_ref()",
+    )):
+        v.append("SP_FLUSH_FAILURE_OR_DRAFT_GUARD_MISSING")
+    if ".clear()" in flush_body or "reconcile_snapshot_changes(" not in flush_body:
+        v.append("SP_FLUSH_CONCURRENT_STATE_GUARD_MISSING")
+    if "shutdown_requested" not in flush_body or "ExitAlreadyAccepted" not in flush_body:
+        v.append("SP_FLUSH_ACCEPTED_EXIT_GUARD_MISSING")
+    if "session_write_guard()" not in flush_body:
+        v.append("SP_FLUSH_WRITER_SERIALIZATION_MISSING")
+    # The existing bridge flag commits the decision in the same scope as the
+    # final source comparison. Releasing either source guard reopens the race.
+    acceptance = re.search(
+        r"\{\s*let drafts = state\.session_drafts\.lock\(\)\.unwrap\(\);\s*"
+        r"let current_tabs = state\.tabs\.lock\(\)\.unwrap\(\);\s*"
+        r"reconcile_snapshot_changes\([^;]*\);\s*"
+        r"report\.policy_changed\s*=[^;]*;\s*"
+        r"if accept_exit && report\.can_exit\(\)\s*\{\s*"
+        r"state\.shutdown_requested\.store\(true,\s*Ordering::Release\);\s*\}\s*\}",
+        strip_line_comments(flush_body),
+    )
+    if acceptance is None:
+        v.append("SP_EXIT_ACCEPTANCE_NOT_ATOMIC")
+    policy_setter = rust_fn_body(bridge, "set_session_policy")
+    if "session_write_guard()" not in policy_setter:
+        v.append("SP_POLICY_WRITER_SERIALIZATION_MISSING")
+    if "shutdown_requested" not in policy_setter or "SESSION_EXIT_ALREADY_ACCEPTED" not in policy_setter:
+        v.append("SP_POLICY_AFTER_ACCEPTANCE_ALLOWED")
     close_body = rust_fn_body(bridge, "close_tab")
     if "session_drafts" not in close_body or "remove" not in close_body:
         v.append("SP_DRAFT_ON_CLOSE_MISSING")
     shutdown_body = rust_fn_body(bridge, "register_shutdown_tasks")
-    flush_idx = shutdown_body.find('"flush-sessions"')
-    close_idx = shutdown_body.find('"close-tabs"')
-    if flush_idx < 0:
-        v.append("SP_FLUSH_TASK_MISSING")
-    elif close_idx < 0 or flush_idx > close_idx:
-        v.append("SP_FLUSH_AFTER_CLOSE_TABS")
-    if "flush_sessions_inner" not in shutdown_body:
-        v.append("SP_FLUSH_NOT_WIRED")
+    if '"close-tabs"' not in shutdown_body:
+        v.append("SP_CLOSE_TABS_TASK_MISSING")
+    if any(anchor in shutdown_body for anchor in (
+        '"flush-sessions"', "flush_sessions_inner", "prepare_exit_sessions",
+    )):
+        v.append("SP_LATE_EXIT_FLUSH")
+
+    # Only the dedicated preflight can commit exit at the locked snapshot.
+    # Main handles a refused save before starting irreversible native cleanup.
+    exit_body = rust_fn_body(main_rs, "begin_graceful_shutdown")
+    save_idx = exit_body.find("prepare_exit_sessions(")
+    approval_idx = exit_body.find(".can_exit()")
+    cleanup_idx = exit_body.find(".shutdown_until(")
+    if save_idx < 0 or approval_idx < save_idx or "failure_summary()" not in exit_body:
+        v.append("SP_EXIT_PREFLIGHT_NOT_WIRED")
+    if cleanup_idx < approval_idx or save_idx < 0:
+        v.append("SP_EXIT_PREFLIGHT_AFTER_SHUTDOWN")
+    if re.search(r"shutdown_requested\s*\.store\s*\(\s*true", exit_body):
+        v.append("SP_EXIT_ACCEPTANCE_OUTSIDE_SNAPSHOT")
+    failure_branch = re.search(r"if\s+!\w+\.can_exit\(\)\s*\{", exit_body)
+    if failure_branch is None:
+        v.append("SP_EXIT_PREFLIGHT_FAILURE_IGNORED")
+    elif "return;" not in exit_body[failure_branch.end():cleanup_idx]:
+        v.append("SP_EXIT_PREFLIGHT_FAILURE_IGNORED")
     if "prune_tmp_files" not in main_rs:
         v.append("SP_STARTUP_PRUNE_MISSING")
 
@@ -280,8 +343,10 @@ def detect_violations(files: dict[str, str]) -> list[str]:
     ):
         if method not in bridge_ts:
             v.append(f"SP_BRIDGE_TS_MISSING: {method}")
-    if "flushSessions" not in app_vue:
-        v.append("SP_FLUSH_ON_UNLOAD_MISSING")
+    # beforeunload cannot await/report native persistence reliably. The native
+    # preflight owns application-exit saving; do not reintroduce a second flush.
+    if "flushSessions(" in strip_line_comments(app_vue):
+        v.append("SP_FLUSH_ON_UNLOAD_FORBIDDEN")
     # recentlyClosed 内存栈 + 恢复入口必须存在（Ctrl+Shift+T）
     if "recentlyClosed" not in browser_store:
         v.append("SP_RECENTLY_CLOSED_MISSING")
@@ -375,18 +440,48 @@ GOOD_BRIDGE = """
 fn create_tab(app: AppHandle, url: &str) -> Result<TabInfo, String> {
     Ok(info)
 }
-fn build_session_for_tab(app: &AppHandle, tab_id: &str) -> Option<BrowserSession> {
+fn build_session_snapshot(tab: &TabInfo) -> SessionSaveSnapshot {
+    let session = crate::session::build_session(&tab.id, &tab.url, &tab.title);
+    snapshot(session)
+}
+fn build_session_for_tab(app: &AppHandle, tab_id: &str) -> Option<SessionSaveSnapshot> {
     let tabs = state.tabs.lock().unwrap();
     let tab = tabs.get(tab_id)?;
-    Some(crate::session::build_session(tab_id, &tab.url, &tab.title))
+    Some(build_session_snapshot(tab))
 }
-fn flush_sessions_inner(app: &AppHandle) -> SessionFlushReport {
+fn persist_snapshots(snapshots: &[SessionSaveSnapshot]) {
+    match persist(session) {
+        Ok(count) => remove_matching_draft(drafts, tab_id, snapshot.draft.as_ref()),
+        Err(error) => SessionFlushOutcome::Failed { error },
+    }
+}
+fn flush_sessions_inner(app: &AppHandle) -> SessionFlushOutcomeReport {
+    flush_sessions_with_intent(app, false)
+}
+fn prepare_exit_sessions(app: &AppHandle) -> SessionFlushOutcomeReport {
+    flush_sessions_with_intent(app, true)
+}
+fn flush_sessions_with_intent(app: &AppHandle, accept_exit: bool) -> SessionFlushOutcomeReport {
+    let _write = session_write_guard();
+    if state.shutdown_requested.load(Ordering::Acquire) {
+        return skipped(SessionFlushSkipReason::ExitAlreadyAccepted);
+    }
     let auto_save = state.session_auto_save_on_exit.load(Ordering::SeqCst);
+    let tabs = state.tabs.lock().unwrap().clone();
     if auto_save {
-        let tab_ids = state.tabs.lock().unwrap().keys().cloned().collect();
+        let tab_ids = tabs.keys().cloned().collect();
         for tab_id in tab_ids {
-            let session = build_session_for_tab(app, &tab_id);
-            persist_session(app, &session);
+            let snapshot = build_session_snapshot(tab);
+            persist_snapshots(snapshot);
+        }
+    }
+    {
+        let drafts = state.session_drafts.lock().unwrap();
+        let current_tabs = state.tabs.lock().unwrap();
+        reconcile_snapshot_changes(before, current);
+        report.policy_changed = auto_save != state.session_auto_save_on_exit.load(Ordering::SeqCst);
+        if accept_exit && report.can_exit() {
+            state.shutdown_requested.store(true, Ordering::Release);
         }
     }
     report()
@@ -396,10 +491,6 @@ fn close_tab(app: &AppHandle, id: &str) -> Result<(), String> {
     Ok(())
 }
 pub fn register_shutdown_tasks(app: &AppHandle) -> Result<(), String> {
-    coordinator.register("flush-sessions", move || {
-        let report = flush_sessions_inner(&app);
-        Ok(())
-    })?;
     coordinator.register("close-tabs", move || { Ok(()) })?;
     Ok(())
 }
@@ -438,8 +529,7 @@ pub fn session_restore(app: AppHandle, webview: tauri::Webview, id: String) -> R
 }
 pub fn flush_sessions(app: AppHandle, webview: tauri::Webview) -> Result<SessionFlushReport, String> {
     check_invocation_source(&webview, "flush_sessions", None, &app)?;
-    workspace::log_audit(&app, "session_flush", format!("auto_save={a} persisted={p} drafts_dropped={d} tmp_removed={t}"));
-    Ok(x)
+    flush_sessions_inner(&app).into_public_report()
 }
 pub fn get_session_policy(app: AppHandle, webview: tauri::Webview) -> Result<SessionPolicy, String> {
     check_invocation_source(&webview, "get_session_policy", None, &app)?;
@@ -447,6 +537,10 @@ pub fn get_session_policy(app: AppHandle, webview: tauri::Webview) -> Result<Ses
 }
 pub fn set_session_policy(app: AppHandle, webview: tauri::Webview, close_prompt: Option<bool>, auto_save_on_exit: Option<bool>) -> Result<SessionPolicy, String> {
     check_invocation_source(&webview, "set_session_policy", None, &app)?;
+    let _write = session_write_guard();
+    if state.shutdown_requested.load(Ordering::Acquire) {
+        return Err("SESSION_EXIT_ALREADY_ACCEPTED".to_string());
+    }
     workspace::log_audit(&app, "session_policy", format!("close_prompt={} auto_save_on_exit={}", a, b));
     Ok(x)
 }
@@ -467,6 +561,14 @@ app.state::<AppState>()
     .session_close_prompt
     .store(true, Ordering::SeqCst);
 let tmp = crate::session::prune_tmp_files(&dir);
+fn begin_graceful_shutdown(app: AppHandle) {
+    let report = prepare_exit_sessions(&app);
+    if !report.can_exit() {
+        notify(report.failure_summary());
+        return;
+    }
+    coordinator.shutdown_until(deadline);
+}
 """
 
 GOOD_ACL = """
@@ -508,7 +610,7 @@ async function saveTab(tabId, preview) {
 GOOD_PANEL = "<button @click=\"session.saveTab('tab-1')\">保存</button>"
 
 GOOD_APP_VUE = """
-window.addEventListener("beforeunload", () => bridge.flushSessions().catch(() => {}));
+// Application-exit persistence is owned by the native preflight.
 """
 
 GOOD_TYPES_TS = "export interface RecentlyClosedEntry { url: string; title: string; }"
@@ -574,9 +676,52 @@ def run_self_test() -> int:
         ("handler 未注册",
          {"main_rs": GOOD_MAIN_RS.replace("bridge::session_save,\n", "")},
          "SP_HANDLER_NOT_REGISTERED"),
-        ("flush 注册在 close-tabs 之后",
-         {"bridge": GOOD_BRIDGE.replace('coordinator.register("flush-sessions", move || {\n        let report = flush_sessions_inner(&app);\n        Ok(())\n    })?;\n    coordinator.register("close-tabs"', 'coordinator.register("close-tabs", move || { Ok(()) })?;\n    coordinator.register("flush-sessions", move || {\n        let report = flush_sessions_inner(&app);\n        Ok(())\n    })?;\n    coordinator.register("close-tabs-x"')},
-         "SP_FLUSH_AFTER_CLOSE_TABS"),
+        ("不可逆清理中再次保存",
+         {"bridge": GOOD_BRIDGE.replace('coordinator.register("close-tabs"', 'coordinator.register("flush-sessions", move || flush_sessions_inner(&app))?; coordinator.register("close-tabs"')},
+         "SP_LATE_EXIT_FLUSH"),
+        ("预检未接到应用退出",
+         {"main_rs": GOOD_MAIN_RS.replace("prepare_exit_sessions(&app)", "count_only_flush(&app)")},
+         "SP_EXIT_PREFLIGHT_NOT_WIRED"),
+        ("先关闩再保存",
+         {"main_rs": GOOD_MAIN_RS.replace(
+             "    let report = prepare_exit_sessions(&app);",
+             "    business.shutdown_requested.store(true, Ordering::Release);\n    let report = prepare_exit_sessions(&app);")},
+         "SP_EXIT_ACCEPTANCE_OUTSIDE_SNAPSHOT"),
+        ("预检失败仍然退出",
+         {"main_rs": GOOD_MAIN_RS.replace("        return;", "        keep_running();")},
+         "SP_EXIT_PREFLIGHT_FAILURE_IGNORED"),
+        ("公共flush吞掉内部失败",
+         {"bridge": GOOD_BRIDGE.replace("flush_sessions_inner(&app).into_public_report()", "Ok(flush_sessions_inner(&app).summary)")},
+         "SP_FLUSH_PUBLIC_FAILURE_IGNORED"),
+        ("失败被计为已保存",
+         {"bridge": GOOD_BRIDGE.replace("Err(error) => SessionFlushOutcome::Failed { error }", "Err(error) => SessionFlushOutcome::Saved")},
+         "SP_FLUSH_FAILURE_OR_DRAFT_GUARD_MISSING"),
+        ("无条件清空较新草稿",
+         {"bridge": GOOD_BRIDGE.replace("reconcile_snapshot_changes(before, current);", "state.session_drafts.lock().unwrap().clear();")},
+         "SP_FLUSH_CONCURRENT_STATE_GUARD_MISSING"),
+        ("退出已接受仍可再次保存",
+         {"bridge": GOOD_BRIDGE.replace("ExitAlreadyAccepted", "ExitUnchecked")},
+         "SP_FLUSH_ACCEPTED_EXIT_GUARD_MISSING"),
+        ("并发flush不再序列化",
+         {"bridge": GOOD_BRIDGE.replace("session_write_guard()", "no_writer_guard()")},
+         "SP_FLUSH_WRITER_SERIALIZATION_MISSING"),
+        ("普通flush错误提交退出",
+         {"bridge": GOOD_BRIDGE.replace("flush_sessions_with_intent(app, false)", "flush_sessions_with_intent(app, true)")},
+         "SP_FLUSH_ACCEPTS_EXIT"),
+        ("退出预检没有提交接受决策",
+         {"bridge": GOOD_BRIDGE.replace("flush_sessions_with_intent(app, true)", "flush_sessions_with_intent(app, false)")},
+         "SP_EXIT_PREPARE_NOT_WIRED"),
+        ("接受前释放页签一致性锁",
+         {"bridge": GOOD_BRIDGE.replace("        if accept_exit && report.can_exit() {", "        drop(current_tabs);\n        if accept_exit && report.can_exit() {")},
+         "SP_EXIT_ACCEPTANCE_NOT_ATOMIC"),
+        ("并发策略更新不再序列化",
+         {"bridge": GOOD_BRIDGE.replace(
+             'check_invocation_source(&webview, "set_session_policy", None, &app)?;\n    let _write = session_write_guard();',
+             'check_invocation_source(&webview, "set_session_policy", None, &app)?;')},
+         "SP_POLICY_WRITER_SERIALIZATION_MISSING"),
+        ("接受退出后仍可更改保存策略",
+         {"bridge": GOOD_BRIDGE.replace("SESSION_EXIT_ALREADY_ACCEPTED", "POLICY_WRITE_ALLOWED")},
+         "SP_POLICY_AFTER_ACCEPTANCE_ALLOWED"),
         ("Browser 重新直写 Session 草稿",
          {"bridge": GOOD_BRIDGE.replace("Ok(info)", "upsert_session_draft(&app, &id, &target, &title0); Ok(info)")},
          "SP_BROWSER_WRITES_SESSION_DRAFT"),
@@ -584,7 +729,7 @@ def run_self_test() -> int:
          {"bridge": GOOD_BRIDGE.replace("tabs.get(tab_id)", "drafts.get(tab_id)")},
          "SP_SESSION_TAB_SOURCE_MISSING"),
         ("退出自动保存只迭代旧草稿",
-         {"bridge": GOOD_BRIDGE.replace("state.tabs.lock().unwrap().keys()", "state.session_drafts.lock().unwrap().keys()")},
+         {"bridge": GOOD_BRIDGE.replace("tabs.keys()", "snapshot_drafts.keys()")},
          "SP_AUTO_SAVE_TAB_SOURCE_MISSING"),
         ("退出自动保存绕过开关",
          {"bridge": GOOD_BRIDGE.replace("if auto_save", "if true")},
@@ -616,9 +761,9 @@ def run_self_test() -> int:
         ("会话 UI 出现凭据标识符",
          {"panel": GOOD_PANEL + "\nconst token = 'x';"},
          "SP_FRONTEND_CREDENTIAL_TOKEN"),
-        ("beforeunload 未 flush",
-         {"app_vue": GOOD_APP_VUE.replace("bridge.flushSessions()", "bridge.closeBrowser()")},
-         "SP_FLUSH_ON_UNLOAD_MISSING"),
+        ("beforeunload 恢复异步保存兜底",
+         {"app_vue": GOOD_APP_VUE + '\nwindow.addEventListener("beforeunload", () => bridge.flushSessions());'},
+         "SP_FLUSH_ON_UNLOAD_FORBIDDEN"),
         ("saveTab 缺失（手动保存能力被误删）",
          {"session_store": "async function loadSessions() {}\n"},
          "SP_SAVE_TAB_MISSING"),

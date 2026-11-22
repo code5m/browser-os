@@ -25,4 +25,12 @@ assert.equal(mappedDefinitionTargets({definition_targets:[{...targets.definition
 const diagnostics=diagnosticContext({scope:'isolated_current_rust_document',document_hash:'a'.repeat(64),diagnostics:Array.from({length:25},()=>({range,severity:1,message:'x'.repeat(600)}))},'main.rs');
 assert.equal(diagnostics.compilation_verified,false);assert.equal(diagnostics.errors,25);assert.equal(diagnostics.diagnostics.length,20);assert.equal(diagnostics.truncated,true);assert.ok(JSON.stringify(diagnostics).length<16000);
 assert.throws(()=>diagnosticContext({diagnostics:[]},'main.rs'));
+
+const { sandboxRecoveryHint } = await import('../src/capabilities/agent/model/codingLsp.mjs');
+assert.match(sandboxRecoveryHint({state:'review_required'}), /需要核对/);
+assert.match(sandboxRecoveryHint({state:'pending'}), /重试/);
+assert.equal(sandboxRecoveryHint({state:'unsupported'}), '');
+assert.match(sandboxRecoveryHint({state:'not_initialized'}), /重启/);
+assert.ok(!sandboxRecoveryHint({state:'unexpected',lastCode:'secret-token'}).includes('secret-token'));
+
 console.log('CODING_LSP_CONVERSION_PASS');

@@ -75,6 +75,7 @@ onErrorCaptured((err: unknown) => {
 const appHeight = ref<string>("100vh");
 let unlistenResize: (() => void) | null = null;
 let unlistenChildShortcut: (() => void) | null = null;
+let unlistenExitStatus: (() => void) | null = null;
 let uiHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let layoutBusy = false;
 
@@ -127,6 +128,7 @@ onBeforeUnmount(() => {
   window.removeEventListener("browseros:set-shell-mode", onShellModeRequest);
   unlistenResize?.();
   unlistenChildShortcut?.();
+  unlistenExitStatus?.();
   if (uiHeartbeatTimer !== null) clearInterval(uiHeartbeatTimer);
   uiHeartbeatTimer = null;
 });
@@ -152,6 +154,14 @@ onMounted(async () => {
   if (!(window as any).__TAURI_INTERNALS__) {
     return;
   }
+  unlistenExitStatus = await bridge.onExitStatus((event) => {
+    if (event.phase === "blocked") {
+      layout.setExitSaveNotice("退出已取消：会话保存未完成，页签仍保留。请稍后重试；若反复失败，请检查存储空间和权限。");
+    } else if (event.phase === "saving" || event.phase === "closing") {
+      layout.setExitSaveNotice("");
+      layout.showToast(event.phase === "saving" ? "正在保存退出会话…" : "正在关闭并释放资源…");
+    }
+  });
   // The native watchdog samples GTK. This periodic shell pulse separately
   // marks Vue/JS event-loop progress in the existing session logfile, so a
   // frozen renderer can be distinguished from a blocked GTK host. No URLs,
@@ -324,8 +334,8 @@ onMounted(async () => {
 
   // STAGE H-C：改走 browser 能力 public 动作，Shell 不再直连 native 销毁重资源（NATIVE-03）。
   window.addEventListener("beforeunload", () => browser.closeBrowser().catch(() => {}));
-  // M1-9：前端卸载前 flush（与后端 ShutdownCoordinator 的 flush-sessions 双保险）
-  window.addEventListener("beforeunload", () => bridge.flushSessions().catch(() => {}));
+  // Exit saving is owned by the native reversible preflight. An unload
+  // callback cannot await failures and must not race or repeat that write.
   window.addEventListener("click", art.closeCtx);
   window.addEventListener("scroll", art.closeCtx, true);
   // 文件树右键菜单同样需要点空白/滚动时关闭
@@ -367,7 +377,7 @@ onMounted(async () => {
         <component :is="aiNavPanelComp" />
         <MainArea />
       </div>
-      <StatusBar v-if="layout.shellMode !== 'immersive'" />
+      <StatusBar v-if="layout.shellMode !== 'immersive' || layout.exitSaveNotice" />
       <component :is="confirmModalComp" />
       <!-- M1-7 Git 写确认闸门：全局挂载，保证任何视图下待确认任务都能被看到/处理 -->
       <GitWriteConfirmDialog />

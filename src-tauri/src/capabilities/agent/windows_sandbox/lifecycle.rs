@@ -16,6 +16,9 @@ const JOB_PREFIX: &str = r"Global\BrowserOS.Coding.Job.v1.";
 const MAX_RECORDS: usize = 512;
 const MAX_JOURNAL_BYTES: usize = 16 * 1024;
 const MAX_FRAME_BYTES: usize = 4096;
+const MAX_STATUS_RECORDS: usize = 64;
+const STATUS_BUDGET: Duration = Duration::from_millis(750);
+const RETRY_BUDGET: Duration = Duration::from_secs(10);
 // Linearize producer publication with the one-way shutdown latch. The gate
 // covers only counters/flags; no filesystem, native cleanup, wait or wake runs
 // while it is held.
@@ -24,12 +27,40 @@ static INITIALIZING: AtomicUsize = AtomicUsize::new(0);
 static STOPPING: AtomicBool = AtomicBool::new(false);
 static REGISTRY: OnceLock<Arc<Registry>> = OnceLock::new();
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct RecoveryReport {
     pub recovered: usize,
     pub active: usize,
     pub pending: usize,
     pub rejected: usize,
+}
+
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RecoveryRecordDiagnostic {
+    pub record_id: Option<String>,
+    pub phase: String,
+    pub code: String,
+    pub retryable: bool,
+}
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RecoveryStatus {
+    pub state: String,
+    pub can_start: bool,
+    pub retry_available: bool,
+    pub last_code: Option<String>,
+    pub last_report: RecoveryReport,
+    pub pending_cleanup: usize,
+    pub records: Vec<RecoveryRecordDiagnostic>,
+    pub truncated: bool,
+}
+#[derive(Clone, Default)]
+struct RecoveryObservation {
+    report: RecoveryReport,
+    code: Option<String>,
 }
 
 struct Registry {
@@ -41,6 +72,7 @@ struct Registry {
     stopping: AtomicBool,
     cleanup_deadline: Mutex<Option<Instant>>,
     recovery_budget: Mutex<Option<OperationBudget>>,
+    observation: Mutex<RecoveryObservation>,
 }
 impl Registry {
     fn new(store: PrivateRecordStore) -> Self {
@@ -48,7 +80,12 @@ impl Registry {
             store, controls: Mutex::new(Vec::new()), recovering: AtomicBool::new(false),
             rejected: AtomicBool::new(false), pending_recovery: AtomicUsize::new(0),
             stopping: AtomicBool::new(false), cleanup_deadline: Mutex::new(None), recovery_budget: Mutex::new(None),
+            observation: Mutex::new(RecoveryObservation::default()),
         }
+    }
+    fn remember(&self, report: &RecoveryReport, code: Option<&str>) {
+        *self.observation.lock().unwrap_or_else(|poison| poison.into_inner()) =
+            RecoveryObservation { report: report.clone(), code: code.map(str::to_owned) };
     }
     fn can_start(&self) -> bool {
         !STOPPING.load(Ordering::Acquire) && !self.stopping.load(Ordering::Acquire)
@@ -542,10 +579,17 @@ fn recover_registry(registry: Arc<Registry>, until: Instant) -> Result<RecoveryR
             return Err("SANDBOX_RECOVERY_BUSY".into());
         }
     }
+    registry.remember(&RecoveryReport::default(), Some("SANDBOX_RECOVERY_SCANNING"));
     struct Recovering<'a> { registry: &'a Registry, completed: bool }
     impl Drop for Recovering<'_> {
         fn drop(&mut self) {
-            if !self.completed { self.registry.rejected.store(true, Ordering::Release); }
+            if !self.completed {
+                self.registry.rejected.store(true, Ordering::Release);
+                let mut observation = self.registry.observation.lock().unwrap_or_else(|poison| poison.into_inner());
+                if observation.code.as_deref() == Some("SANDBOX_RECOVERY_SCANNING") {
+                    observation.code = Some("SANDBOX_RECOVERY_SCAN_FAILED".into());
+                }
+            }
             self.registry.recovery_budget.lock().unwrap_or_else(|poison| poison.into_inner()).take();
             self.registry.recovering.store(false, Ordering::Release);
             super::wake_cleanup_reaper();
@@ -560,7 +604,14 @@ fn recover_registry(registry: Arc<Registry>, until: Instant) -> Result<RecoveryR
     if STOPPING.load(Ordering::Acquire) || registry.stopping.load(Ordering::Acquire) { budget.cancel(); }
     let entries = match registry.store.entries(MAX_RECORDS, &budget) {
         Ok(entries) => entries,
-        Err(_) => { registry.rejected.store(true, Ordering::Release); return Err("SANDBOX_RECOVERY_ENUMERATE".into()); }
+        Err(error) => {
+            let code = if budget.check().is_err() { "SANDBOX_RECOVERY_BUDGET" }
+                else if error.to_string().contains("TREE_OBJECT_LIMIT") { "SANDBOX_RECOVERY_RECORD_LIMIT" }
+                else { "SANDBOX_RECOVERY_ENUMERATE" };
+            registry.remember(&RecoveryReport::default(), Some(code));
+            registry.rejected.store(true, Ordering::Release);
+            return Err(code.into());
+        }
     };
     let owner = current_user_sid()?;
     let mut report = RecoveryReport::default();
@@ -610,13 +661,170 @@ fn recover_registry(registry: Arc<Registry>, until: Instant) -> Result<RecoveryR
         }
     }
     if report.rejected != 0 || report.pending != 0 {
+        let code = if report.rejected != 0 { "SANDBOX_RECOVERY_REVIEW_REQUIRED" }
+            else if budget.check().is_err() { "SANDBOX_RECOVERY_BUDGET" }
+            else { "SANDBOX_RECOVERY_PENDING" };
+        registry.remember(&report, Some(code));
         registry.rejected.store(true, Ordering::Release);
         return Err(format!("SANDBOX_RECOVERY_PENDING; recovered={}; active={}; pending={}; rejected={}",
             report.recovered, report.active, report.pending, report.rejected));
     }
+    // Only a complete native rescan may clear this admission failure. The
+    // read-only diagnostic API and completion of one queued task cannot
+    // silently dismiss a different unbound or unexamined record.
+    registry.remember(&report, None);
     registry.rejected.store(false, Ordering::Release);
     recovering.completed = true;
     Ok(report)
+}
+
+
+fn diagnostic_id(entry: &browseros_platform_security::windows::PinnedDirectoryEntry) -> Option<String> {
+    entry.name.to_str().and_then(|name| name.strip_suffix(".profile"))
+        .filter(|id| valid_id(id)).map(str::to_owned)
+}
+fn diagnostic_record(
+    registry: &Registry,
+    entry: &browseros_platform_security::windows::PinnedDirectoryEntry,
+    owner: &str,
+    budget: &OperationBudget,
+) -> RecoveryRecordDiagnostic {
+    let mut result = RecoveryRecordDiagnostic {
+        record_id: diagnostic_id(entry), phase: "unknown".into(),
+        code: "SANDBOX_RECOVERY_RECORD_UNREADABLE".into(), retryable: false,
+    };
+    let file = match registry.store.open_readonly(entry, budget) {
+        Ok(file) => file,
+        Err(_) => return result,
+    };
+    let mut bytes = Vec::new();
+    if file.take((MAX_JOURNAL_BYTES + 1) as u64).read_to_end(&mut bytes).is_err()
+        || bytes.len() > MAX_JOURNAL_BYTES || budget.check().is_err()
+    { return result; }
+    let Some(file_name) = entry.name.to_str() else { return result; };
+    let record = match last_record(&bytes) {
+        Ok((record, _)) if record.verify(file_name, owner).is_ok() => record,
+        _ => {
+            result.code = "SANDBOX_RECOVERY_RECORD_UNVERIFIED".into();
+            return result;
+        }
+    };
+    let (phase, code, retryable) = match record.phase {
+        Phase::Intent => ("intent", "SANDBOX_RECOVERY_IDENTITY_NOT_BOUND", false),
+        Phase::Bound => ("bound", "SANDBOX_RECOVERY_BOUND_RETRYABLE", true),
+        Phase::DataRemoved => ("data_removed", "SANDBOX_RECOVERY_UNREGISTER_RETRYABLE", true),
+        Phase::NotRegistered => ("not_registered", "SANDBOX_RECOVERY_RECORD_RETRYABLE", true),
+    };
+    result.phase = phase.into();
+    result.code = code.into();
+    result.retryable = retryable;
+    result
+}
+
+fn status_for_registry(
+    registry: &Registry, until: Instant, record_limit: usize,
+) -> Result<RecoveryStatus, String> {
+    let budget = OperationBudget::until(until.min(Instant::now() + STATUS_BUDGET));
+    let mut records = Vec::new();
+    let mut truncated = false;
+    let mut diagnostic_code = None;
+    if budget.check().is_err() {
+        truncated = true;
+        diagnostic_code = Some("SANDBOX_RECOVERY_STATUS_BUDGET");
+    } else {
+        let owner = current_user_sid().map_err(|_| "SANDBOX_RECOVERY_STATUS_OWNER")?;
+        match registry.store.entries(MAX_RECORDS, &budget) {
+            Ok(entries) => {
+                let limit = record_limit.min(MAX_STATUS_RECORDS);
+                truncated = entries.len() > limit;
+                for entry in entries.into_iter().take(limit) {
+                    if budget.check().is_err() {
+                        truncated = true;
+                        diagnostic_code = Some("SANDBOX_RECOVERY_STATUS_BUDGET");
+                        break;
+                    }
+                    records.push(diagnostic_record(registry, &entry, &owner, &budget));
+                    if budget.check().is_err() {
+                        truncated = true;
+                        diagnostic_code = Some("SANDBOX_RECOVERY_STATUS_BUDGET");
+                        break;
+                    }
+                }
+            }
+            Err(error) => {
+                truncated = true;
+                diagnostic_code = Some(if budget.check().is_err() { "SANDBOX_RECOVERY_STATUS_BUDGET" }
+                    else if error.to_string().contains("TREE_OBJECT_LIMIT") { "SANDBOX_RECOVERY_RECORD_LIMIT" }
+                    else { "SANDBOX_RECOVERY_STATUS_ENUMERATE" });
+            }
+        }
+    }
+    // This is an observation, not a deletion authorization or a claim that
+    // live owners are inactive. Creating a profile/retrying recovery rechecks
+    // its native admission, record lease, Job and identity at the action.
+    let observation = registry.observation.lock().map_err(|_| "SANDBOX_RECOVERY_STATUS_LOCK")?.clone();
+    let pending = registry.pending_recovery.load(Ordering::Acquire);
+    let stopping = STOPPING.load(Ordering::Acquire) || registry.stopping.load(Ordering::Acquire);
+    let recovering = registry.recovering.load(Ordering::Acquire);
+    let rejected = registry.rejected.load(Ordering::Acquire);
+    let state = if stopping { "stopping" }
+        else if recovering { "recovering" }
+        else if rejected && observation.report.rejected != 0 { "review_required" }
+        else if rejected || pending != 0 { "pending" }
+        else { "ready" };
+    let last_code = observation.code.or_else(|| diagnostic_code.map(str::to_owned))
+        .or_else(|| (pending != 0).then(|| "SANDBOX_RECOVERY_CLEANUP_PENDING".into()));
+    Ok(RecoveryStatus {
+        state: state.into(), can_start: registry.can_start(),
+        retry_available: !stopping && !recovering,
+        last_code, last_report: observation.report, pending_cleanup: pending,
+        records, truncated,
+    })
+}
+
+/// Bounded, read-only metadata from the already-bound journal. It does not
+/// create a store, claim an exclusive cleanup lease, change health/admission,
+/// terminate a Job, or expose filesystem paths, SIDs or raw journal contents.
+pub(crate) fn recovery_status(until: Instant) -> Result<RecoveryStatus, String> {
+    let Some(registry) = REGISTRY.get() else {
+        let stopping = STOPPING.load(Ordering::Acquire);
+        return Ok(RecoveryStatus {
+            state: if stopping { "stopping" } else { "not_initialized" }.into(),
+            can_start: false, retry_available: false,
+            last_code: Some(if stopping { "SANDBOX_ADMISSION_CLOSED" }
+                else { "SANDBOX_JOURNAL_NOT_INITIALIZED" }.into()),
+            last_report: RecoveryReport::default(), pending_cleanup: 0,
+            records: Vec::new(), truncated: false,
+        });
+    };
+    status_for_registry(registry, until, MAX_STATUS_RECORDS)
+}
+
+fn retry_registry(registry: Arc<Registry>, until: Instant) -> Result<RecoveryStatus, String> {
+    let until = until.min(Instant::now() + RETRY_BUDGET);
+    // The original producer gate/CAS serializes scans. Existing native record
+    // leases still exclude this retry from live hosts and queued cleanup.
+    // A failed attempt remains visible in the status instead of being
+    // presented as successful deletion; unknown Intent records are retained.
+    if let Err(error) = recover_registry(Arc::clone(&registry), until) {
+        // In-progress/shutdown admission is already reflected by the native
+        // state. Other failures must remain observable even if they occurred
+        // before the scan guard could publish its normal failure snapshot.
+        if error != "SANDBOX_RECOVERY_BUSY" && error != "SANDBOX_ADMISSION_CLOSED"
+            && !registry.rejected.load(Ordering::Acquire)
+        {
+            registry.remember(&RecoveryReport::default(), Some("SANDBOX_RECOVERY_SCAN_FAILED"));
+            registry.rejected.store(true, Ordering::Release);
+        }
+    }
+    status_for_registry(&registry, until, MAX_STATUS_RECORDS)
+}
+
+/// Explicit retry accepts no filesystem path or record identifier from a UI.
+/// It uses only the journal installed by trusted startup preparation.
+pub(crate) fn retry_recovery(until: Instant) -> Result<RecoveryStatus, String> {
+    let registry = REGISTRY.get().cloned().ok_or("SANDBOX_JOURNAL_NOT_INITIALIZED")?;
+    retry_registry(registry, until)
 }
 
 pub(super) fn admission_available() -> bool {
@@ -816,4 +1024,69 @@ mod tests {
         assert!(recovered.phase == Phase::Bound);
         assert_eq!(recovered.identity.unwrap().file_index, 2);
     }
+    #[test]
+    fn recovery_status_preserves_unbound_intent_and_rejection() {
+        let (parent, registry, budget) = local_registry("status-intent");
+        let lease = begin_in_registry(Arc::clone(&registry), &budget).unwrap();
+        drop(lease);
+        assert!(recover_registry(Arc::clone(&registry), Instant::now() + Duration::from_secs(2)).is_err());
+        let status = status_for_registry(&registry, Instant::now() + Duration::from_secs(2), MAX_STATUS_RECORDS).unwrap();
+        assert_eq!(status.state, "review_required");
+        assert!(!status.can_start);
+        assert!(status.retry_available);
+        assert_eq!(status.records.len(), 1);
+        assert_eq!(status.records[0].phase, "intent");
+        assert_eq!(status.records[0].code, "SANDBOX_RECOVERY_IDENTITY_NOT_BOUND");
+        assert!(!status.records[0].retryable);
+        assert_eq!(registry.store.entries(2, &budget).unwrap().len(), 1);
+        assert!(registry.rejected.load(Ordering::Acquire));
+        let retried = retry_registry(Arc::clone(&registry), Instant::now() + Duration::from_secs(2)).unwrap();
+        assert_eq!(retried.state, "review_required");
+        assert_eq!(registry.store.entries(2, &budget).unwrap().len(), 1);
+        discard_test_records(&registry);
+        drop(registry);
+        std::fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[test]
+    fn explicit_recovery_retry_clears_completed_budget_failure() {
+        let (parent, registry, budget) = local_registry("retry-budget");
+        let mut lease = begin_in_registry(Arc::clone(&registry), &budget).unwrap();
+        // No profile was registered; this durable phase is safe to clean.
+        lease.not_registered();
+        drop(lease);
+        assert!(recover_registry(Arc::clone(&registry), Instant::now()).is_err());
+        assert!(!registry.can_start());
+        let status = retry_registry(Arc::clone(&registry), Instant::now() + Duration::from_secs(10)).unwrap();
+        assert_eq!(status.state, "ready");
+        assert!(status.can_start);
+        assert_eq!(status.last_report.recovered, 1);
+        assert!(status.last_code.is_none());
+        assert_eq!(status.pending_cleanup, 0);
+        assert!(registry.store.entries(1, &budget).unwrap().is_empty());
+        drop(registry);
+        std::fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[test]
+    fn recovery_diagnostic_record_list_is_bounded_and_read_only() {
+        let (parent, registry, budget) = local_registry("status-limit");
+        let mut owners = Vec::new();
+        for _ in 0..3 {
+            owners.push(begin_in_registry(Arc::clone(&registry), &budget).unwrap());
+        }
+        let status = status_for_registry(&registry, Instant::now() + Duration::from_secs(2), 2).unwrap();
+        assert_eq!(status.records.len(), 2);
+        assert!(status.truncated);
+        assert!(status.records.iter().all(|record| record.phase == "intent" && !record.retryable));
+        assert_eq!(registry.store.entries(4, &budget).unwrap().len(), 3);
+        // A status read must neither steal the native owner lease nor mutate
+        // the admission state because an active intent was merely observed.
+        assert!(registry.can_start());
+        drop(owners);
+        discard_test_records(&registry);
+        drop(registry);
+        std::fs::remove_dir_all(parent).unwrap();
+    }
+
 }

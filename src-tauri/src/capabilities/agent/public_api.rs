@@ -82,6 +82,9 @@ pub(crate) fn dispatch_coding_request(
         return Err("AGENT_ROOT_INVALID".into());
     }
     let action = request["action"].as_str().unwrap_or("");
+    if matches!(action, "sandbox_recovery_status" | "sandbox_recovery_retry") {
+        return sandbox_recovery_request(action, request["approved"] == true);
+    }
     if ["lsp_status", "lsp_start", "lsp_request", "lsp_diagnostics", "lsp_close"].contains(&action) {
         return super::coding_lsp::execute(root, request);
     }
@@ -166,19 +169,50 @@ pub(crate) fn request_native_shutdown() {
     }
 }
 
-pub(crate) fn shutdown_native_until(deadline: std::time::Instant) -> Result<(), String> {
+/// Independent coordinator tasks receive the same deadline. A busy LSP owner
+/// must not postpone the Sandbox owner's completion report until time runs out.
+pub(crate) fn shutdown_lsp_until(deadline: std::time::Instant) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    { super::coding_lsp::shutdown_until(deadline) }
+    #[cfg(not(target_os = "windows"))]
+    { let _ = deadline; Ok(()) }
+}
+
+pub(crate) fn shutdown_sandbox_until(deadline: std::time::Instant) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    { super::windows_sandbox::shutdown_until(deadline) }
+    #[cfg(not(target_os = "windows"))]
+    { let _ = deadline; Ok(()) }
+}
+
+/// Uses only the recovery store installed at trusted application startup.
+/// Neither a caller-supplied path nor a record ID can become a deletion target.
+fn sandbox_recovery_request(action: &str, approved: bool) -> Result<Value, String> {
+    if action == "sandbox_recovery_retry" && !approved {
+        return Err("SANDBOX_RECOVERY_APPROVAL_REQUIRED".into());
+    }
     #[cfg(target_os = "windows")]
     {
-        request_native_shutdown();
-        let lsp = super::coding_lsp::shutdown_until(deadline);
-        let sandbox = super::windows_sandbox::shutdown_until(deadline);
-        let errors: Vec<String> = [lsp, sandbox].into_iter().filter_map(Result::err).collect();
-        if errors.is_empty() { Ok(()) } else { Err(errors.join(";")) }
+        let status = if action == "sandbox_recovery_retry" {
+            super::windows_sandbox::retry_recovery(
+                std::time::Instant::now() + std::time::Duration::from_secs(10)
+            )
+        } else {
+            super::windows_sandbox::recovery_status(
+                std::time::Instant::now() + std::time::Duration::from_millis(750)
+            )
+        }?;
+        serde_json::to_value(status).map_err(|_| "SANDBOX_RECOVERY_STATUS_INVALID".into())
     }
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = deadline;
-        Ok(())
+        Ok(serde_json::json!({
+            "state": "unsupported", "canStart": true, "retryAvailable": false,
+            "lastCode": null, "lastReport": {
+                "recovered": 0, "active": 0, "pending": 0, "rejected": 0
+            },
+            "pendingCleanup": 0, "records": [], "truncated": false
+        }))
     }
 }
 

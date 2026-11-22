@@ -1749,10 +1749,14 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
             // created/deleted a Windows AppContainer OS profile on EVERY call.
             // Report prerequisites separately from native launch verification.
             let sandbox_available = super::windows_sandbox::sandbox_prerequisites_available();
-            let toolchain = runtime_with_budget(&operation)
-                .and_then(|analyzer| rustc_cfg_peer_with_budget(&analyzer, &operation));
+            let toolchain = runtime_with_budget(&operation).and_then(|analyzer| {
+                rustc_cfg_peer_with_budget(&analyzer, &operation)?;
+                Ok(analyzer)
+            });
             Ok(json!({
-                "profiles":[{"id":"rust_analyzer","language":"rust","available":toolchain.is_ok(),"command":"rust-analyzer.exe",
+                "profiles":[{"id":"rust_analyzer","name":"Rust Analyzer","language":"rust",
+                    "available":toolchain.is_ok(),"command":"rust-analyzer.exe",
+                    "path":toolchain.as_ref().ok().map(|path| path.to_string_lossy().into_owned()),
                     "unavailable_reason":toolchain.as_ref().err()}],
                 "toolchain":lsp_toolchain_contract(),
                 "sandbox_available":sandbox_available,

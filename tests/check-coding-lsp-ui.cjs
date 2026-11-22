@@ -12,12 +12,18 @@ const base=process.env.CODING_UI_URL||'http://127.0.0.1:1433';
   await page.route('**/__lsp_test',route=>route.fulfill({contentType:'text/html',body:`<style>html,body,#app{height:100%;margin:0}</style><div id="app"></div><script type="module">
    import {createApp} from '${vue}';import Workbench from '/src/capabilities/agent/ui/CodingWorkbench.vue';import {bridge} from '/src/bridge.ts';
    window.__TAURI_INTERNALS__={transformCallback:()=>1};
-   const calls=[];window.fixture={calls,resolved:false};
+   const calls=[];window.fixture={calls,resolved:false,recoveryBlocked:true};
    bridge.aiService=async()=>({profiles:[{id:'fixture',name:'Fixture',model:'fixture-model',kind:'chat'}],bindings:{default:'fixture'}});
    bridge.codingService=async request=>{calls.push(request);
     if(request.action==='tree')return {entries:[{path:'main.rs',name:'main.rs',kind:'file'}]};
     if(request.action==='session')return {root:request.root,session_id:'fixture',messages:[],changes:[],operations:[]};
     if(request.action==='read')return request.path==='math.rs'?{content:'pub fn square(x:i32)->i32{x*x}',hash:window.fixture.stale?'b'.repeat(64):'a'.repeat(64)}:{content:'fn square(x:i32)->i32{x*x}\\nfn main(){let answer=square(4);}',hash:'fixture'};
+    if(request.action==='sandbox_recovery_status'||request.action==='sandbox_recovery_retry')return {
+     state:window.fixture.recoveryBlocked?'review_required':'ready',canStart:!window.fixture.recoveryBlocked,retryAvailable:true,
+     lastCode:window.fixture.recoveryBlocked?'SANDBOX_RECOVERY_REVIEW_REQUIRED':null,
+     lastReport:{recovered:0,active:0,pending:0,rejected:window.fixture.recoveryBlocked?1:0},pendingCleanup:0,truncated:false,
+     records:window.fixture.recoveryBlocked?[{recordId:'a'.repeat(32),phase:'intent',code:'SANDBOX_RECOVERY_IDENTITY_NOT_BOUND',retryable:false}]:[],
+    };
     if(request.action==='lsp_status')return {profiles:[{path:'/trusted/rust-analyzer',name:'Rust fixture'}],sandbox_available:true};
     if(request.action==='chat'||request.action==='resolve_operation'){
      if(request.action==='resolve_operation')window.fixture.resolved=true;
@@ -36,6 +42,16 @@ const base=process.env.CODING_UI_URL||'http://127.0.0.1:1433';
    };createApp(Workbench).mount('#app');</script>`}));
   await page.goto(base+'/__lsp_test');
   await page.getByLabel('项目目录',{exact:true}).fill('/fixture');await page.getByRole('button',{name:'打开项目',exact:true}).click();
+  await page.locator('.sandbox-recovery').filter({hasText:'需要核对的恢复记录'}).waitFor();
+  await page.getByRole('button',{name:'重试安全恢复',exact:true}).click();
+  await page.waitForFunction(()=>window.fixture.calls.some(r=>r.action==='sandbox_recovery_retry'));
+  assert.ok(await page.locator('.language-service button').filter({hasText:'启用语言服务'}).isDisabled());
+  assert.match(await page.locator('.sandbox-recovery').innerText(),/需要核对/,'unproven records remain blocked after retry');
+  await page.evaluate(()=>{window.fixture.recoveryBlocked=false;});
+  await page.getByRole('button',{name:'重试安全恢复',exact:true}).click();
+  await page.locator('.sandbox-recovery').filter({hasText:'隔离执行已就绪'}).waitFor();
+  const retries=await page.evaluate(()=>window.fixture.calls.filter(r=>r.action==='sandbox_recovery_retry'));
+  assert.ok(retries.length>=2&&retries.every(r=>r.approved===true&&!('path' in r)&&!('record_id' in r)));
   await page.locator('.file-row').click();await page.locator('.coding-code[data-editor-ready="true"]').waitFor();
   await page.evaluate(async()=>{window.fixtureApi=await import(performance.getEntriesByType('resource').map(item=>item.name).find(name=>/monaco-editor.*editor.*api/.test(name)));});
   assert.equal(await page.evaluate(()=>window.fixture.calls.filter(r=>r.action==='lsp_request').length),0,'no implicit server start');

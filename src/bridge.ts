@@ -967,6 +967,12 @@ export const bridge = {
   // 关闭路径 flush：按策略落盘/释放草稿 + 清理 tmp + 容量裁剪
   flushSessions: () => invoke<SessionFlushReport>("flush_sessions"),
 
+  // Native exit owns saving and teardown. Only a status event crosses to UI.
+  onExitStatus: (cb: (event: { phase: "saving" | "blocked" | "closing"; code: string }) => void) =>
+    listen<{ phase: "saving" | "blocked" | "closing"; code: string }>(
+      "app://exit-status", (event) => cb(event.payload),
+    ),
+
   // 会话策略：关闭弹窗 / 退出自动保存
   getSessionPolicy: () => invoke<SessionPolicy>("get_session_policy"),
 

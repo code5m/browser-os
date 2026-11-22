@@ -5,7 +5,7 @@
   "as_of": "2026-11-22",
   "reference_native_run": "https://github.com/code5m/browser-os/actions/runs/44321240531",
   "reference_head": "7783dbd1a175c6fd0bab283ddf63fb0220887a6c",
-  "current_source_patch": "third_round_stream_shutdown_recovery_and_native_harness_repairs_not_executed",
+  "current_source_patch": "fourth_round_exit_save_recovery_diagnostics_and_grid_shutdown_not_executed",
   "scope": "Windows/Linux source repairs and macOS platform preflight; macOS product support remains unsupported",
   "note": "This repair branch was requested without CI, tests, validators, builds or merge. Historical native results belong only to reference_head. Current native/installer/GUI/performance evidence is NOT_RUN; no current CODE_PASS, PACKAGE_PASS or GUI_PASS claim.",
   "capabilities": [
@@ -15,7 +15,7 @@
       "windows": "source_present_current_native_not_run",
       "macos": "unsupported",
       "severity": "P1",
-      "notes": "Workspace and WebView2 now retain shared kernel preparation epochs: first consumer performs cold deep audit, Grid joins check the root only, tab creation never traverses active cache. No measured cold-start or installed GUI result.",
+      "notes": "Prepared epoch joins and journal initialization use shallow root checks; repeated full-tree scan claim was disproved in source. Exit saving errors now keep the window open with persistent status. Installed GUI/performance NOT_RUN.",
       "previous_record": {
         "linux": "implemented_history_ci_pass",
         "windows": "implemented_native_gui_unverified"
@@ -27,7 +27,7 @@
       "windows": "source_present_current_native_not_run",
       "macos": "unsupported",
       "severity": "P1",
-      "notes": "Linux UDS / Windows owner-PID checked NamedPipe and Job Object retained. macOS selects explicit unsupported adapter before mutating Grid UI state. Current native/GUI tests NOT_RUN.",
+      "notes": "Grid-only lifecycle owns in-flight creation, child/Job retirement and worker completion under application shutdown deadline; normal close remains reopenable. Pending resources stay owned; Windows/Linux native and GUI NOT_RUN.",
       "previous_record": {
         "linux": "implemented_history_ci_pass",
         "windows": "implemented_native_tests_history_pass_gui_unverified"
@@ -111,7 +111,7 @@
       "windows": "source_present_current_native_not_run",
       "macos": "unsupported",
       "severity": "P1",
-      "notes": "App-owned trees grant generic AppContainer FILE_TRAVERSE only, own package retains RX/M; compliant profile opens read-only first. Windows LSP cancels at application shutdown and retains capacity/owners until cleanup. Native profile journal and identity/active-owner checked recovery added; ambiguous legacy OS ACEs and unjournaled profiles are not auto-deleted. compilation_verified=false; all native evidence NOT_RUN.",
+      "notes": "Read-only bounded recovery diagnostics and explicit retry use installed registry only; complete successful rescan restores health, unknown Intent stays retained for review. LSP/Sandbox shutdown report independently; Windows LSP discovery supplies trusted path/name for existing selector. Native execution NOT_RUN; compilation_verified=false.",
       "previous_record": {
         "linux": "implemented_history_ci_pass",
         "windows": "source_patched_lsp_document_contract_appcontainer_native_unverified"
@@ -231,10 +231,10 @@
       "windows": "source_shared_deadline_and_profile_recovery_not_run",
       "macos": "source_shared_deadline_only_not_run",
       "severity": "P1",
-      "notes": "One absolute 10-second application wait; independent cleanup starts without per-terminal timeout multiplication. Pending tasks remain owned in-process; durable Windows AppContainer records provide conservative next-start recovery. NOT_RUN, no complete cleanup guarantee after forced exit."
+      "notes": "Opt-in exit save is a reversible preflight; errors and concurrent content changes veto cleanup and keep tabs. Snapshot acceptance commits admission under writer/drafts/tabs locks. Independent resource cleanup shares one 10-second deadline after save acceptance; persistent AppContainer recovery remains proof-bound. All execution NOT_RUN."
     }
   ],
-  "source_base": "add44f3b599b526a14ba28c5f993f51cb4561bae",
+  "source_base": "e039c83a33c076971f39fbe4f7943ebfea233c3f",
   "current_execution": {
     "ci": "NOT_RUN",
     "tests": "NOT_RUN",
@@ -246,7 +246,7 @@
     "performance": "NOT_RUN",
     "merge": "NOT_REQUESTED"
   },
-  "previous_source_base": "fecfae2b062fa281a0ced3d0f006dcef5ce39ee2",
+  "previous_source_base": "add44f3b599b526a14ba28c5f993f51cb4561bae",
   "dispatch_entry": {
     "workflow": ".github/workflows/browseros-developer-feedback.yml",
     "ref": "fix/windows-native-security-convergence-20261122",
@@ -255,5 +255,13 @@
     "native_implementation": ".github/workflows/windows-linux-v2-experimental.yml",
     "execution": "NOT_RUN",
     "input_schema": "selected_ref_yaml_via_explicit_cli_or_api; default_branch_web_form_not_authoritative"
+  },
+  "review_dispositions": {
+    "grid_journal_full_tree_rescan": "DISPROVED_deep_false",
+    "cargo_dependency_package_selection": "DISPROVED_dependencies_selectable_with_p",
+    "session_exit_failure": "SOURCE_REPAIRED_NOT_RUN",
+    "sandbox_recovery_retry": "SOURCE_REPAIRED_NOT_RUN",
+    "grid_exit_deadline": "SOURCE_REPAIRED_NOT_RUN",
+    "lsp_sandbox_parallel_report": "SOURCE_IMPROVED_NOT_RUN"
   }
 }

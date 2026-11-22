@@ -55,3 +55,17 @@ export function lspFailureHint(error) {
   const code=String(error).replace(/^Error: /,'');
   return ({LSP_BUSY:'语言服务正忙，请稍后重试',LSP_TIMEOUT:'语言服务超时，请稍后重试',LSP_TIMEOUT_OR_CLOSED:'语言服务超时或已关闭',LSP_SERVER_UNAVAILABLE:'语言服务不可用，请重新检测',LSP_APPROVAL_REQUIRED:'请先批准当前项目的语言服务',LSP_MODULE_APPROVAL_REQUIRED:'请先批准读取 Rust 模块树'})[code] || '语言服务请求失败，请检查配置或重新检测';
 }
+
+/** Fixed, non-sensitive recovery wording shared by the native status panel. */
+export function sandboxRecoveryHint(status) {
+  switch (status?.state) {
+    case 'ready': return '隔离执行已就绪';
+    case 'recovering': return '正在恢复上次未完成的隔离资源，请稍后重新检查';
+    case 'pending': return '隔离资源尚未释放，可重试安全恢复';
+    case 'review_required': return '隔离执行暂不可用：存在需要核对的恢复记录';
+    case 'stopping': return '应用正在退出，隔离执行已停止接收任务';
+    case 'not_initialized': return '隔离恢复存储未就绪，请检查启动诊断后重启';
+    case 'unsupported': return '';
+    default: return '隔离恢复状态未知，请重新检查';
+  }
+}

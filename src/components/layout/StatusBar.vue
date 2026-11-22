@@ -136,7 +136,9 @@ const memLow = computed(() => {
     <span v-if="viewLabel" class="viewchip">当前：{{ viewLabel }}</span>
     <span v-else-if="viewUnknown" class="viewchip warn" role="alert">⚠ 未知视图：{{ layout.mainView }}</span>
     <span class="tabcount" :title="'网页 ' + browser.tabs.length + ' 个；目录与模块 ' + layout.modTabs.length + ' 个'">共 {{ tabCount }} 个页签</span>
-    <span v-if="layout.msg" class="msg" role="status">{{ layout.msg }}</span>
+    <span v-if="layout.exitSaveNotice" class="msg warn" role="alert" :title="layout.exitSaveNotice">{{ layout.exitSaveNotice }}</span>
+    <span v-else-if="layout.msg" class="msg" role="status">{{ layout.msg }}</span>
+    <button v-if="layout.exitSaveNotice" class="rd-close" type="button" @click="layout.setExitSaveNotice('')">已知悉</button>
     <span v-else class="status-space" aria-hidden="true"></span>
     <button
       v-if="stats"
