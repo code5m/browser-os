@@ -1,8 +1,9 @@
 //! Handle-based owner/SYSTEM private storage.
 //!
 //! Repair is deliberately non-transactional and idempotent: objects already
-//! secured stay secured after a failure. We never restore an unsafe DACL, delete
-//! data, enable privileges, or accept an incomplete audit. Close users of the
+//! secured stay secured after a failure. Private-directory ACL preparation never
+//! deletes data, restores an unsafe DACL, enables privileges, or accepts an
+//! incomplete audit. Separate recovery deletes only proved, inactive sandbox data. Close users of the
 //! directory, resolve the reported native error and retry the same operation.
 //! All errors omit paths and user/account names.
 //!
@@ -24,11 +25,13 @@ use std::os::windows::io::{AsRawHandle, FromRawHandle};
 use std::path::{Component, Path, PathBuf, Prefix};
 use std::ptr;
 use std::time::{Duration, Instant};
-use std::sync::{Arc, atomic::{AtomicBool, AtomicUsize, Ordering}};
+use std::sync::{Arc, atomic::{AtomicBool, AtomicUsize, AtomicU64, Ordering}};
 
 mod lease;
 pub use lease::PreparedPrivateDirectory;
 mod appcontainer;
+mod recovery;
+pub use recovery::{PrivateRecordStore, ExclusivePrivateRecord, NativeProfileIdentity, ProfileDeleteReport, NamedPrivateJob, NativeProfileScope, ProfileCleanupNamespace, hold_profile_cleanup_namespace, delete_recorded_profile_tree};
 pub use appcontainer::{AppContainerAccess, AppContainerDirectory, AppContainerPolicy, PinnedReadDirectory, PinnedDirectoryEntry, PinnedReadFile};
 use windows_sys::Wdk::Foundation::OBJECT_ATTRIBUTES;
 use windows_sys::Wdk::Storage::FileSystem::{
@@ -80,11 +83,12 @@ const DIRECTORY_FLAGS: u32 = OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE;
 
 
 /// One cancellation signal and absolute deadline for the entire preparation.
-/// Clones do not restart the clock. Cleanup must not depend on this budget.
+/// Clones do not restart the clock. Cleanup uses an independent budget, never
+/// the cancelled request budget; application shutdown may shorten its deadline.
 #[derive(Clone, Debug)]
 pub struct OperationBudget {
     started: Instant,
-    deadline: Instant,
+    deadline_nanos: Arc<AtomicU64>,
     cancelled: Arc<AtomicBool>,
     cleanup_owners: Arc<AtomicUsize>,
 }
@@ -92,24 +96,36 @@ impl OperationBudget {
     pub fn new(duration: Duration) -> Self {
         let started = Instant::now();
         Self {
-            started, deadline: started.checked_add(duration).unwrap_or(started),
+            started,
+            deadline_nanos: Arc::new(AtomicU64::new(duration.as_nanos().min(u64::MAX as u128) as u64)),
             cancelled: Arc::new(AtomicBool::new(false)),
             cleanup_owners: Arc::new(AtomicUsize::new(0)),
         }
+    }
+    pub fn until(deadline: Instant) -> Self {
+        let budget = Self::new(deadline.saturating_duration_since(Instant::now()));
+        budget.shorten_to(deadline);
+        budget
+    }
+    /// A process-wide shutdown can shorten an in-progress cleanup without
+    /// restarting its clock. All clones observe the same earlier deadline.
+    pub fn shorten_to(&self, deadline: Instant) {
+        let nanos = deadline.saturating_duration_since(self.started).as_nanos().min(u64::MAX as u128) as u64;
+        self.deadline_nanos.fetch_min(nanos, Ordering::AcqRel);
     }
     pub fn cancel(&self) { self.cancelled.store(true, Ordering::Release); }
     pub fn check(&self) -> io::Result<()> {
         if self.cancelled.load(Ordering::Acquire) {
             return Err(io::Error::new(io::ErrorKind::Interrupted, "WINDOWS_OPERATION_CANCELLED"));
         }
-        if Instant::now() >= self.deadline {
+        if self.started.elapsed().as_nanos() >= u128::from(self.deadline_nanos.load(Ordering::Acquire)) {
             return Err(io::Error::new(io::ErrorKind::TimedOut, "WINDOWS_OPERATION_DEADLINE"));
         }
         Ok(())
     }
     pub fn remaining(&self) -> io::Result<Duration> {
         self.check()?;
-        Ok(self.deadline.saturating_duration_since(Instant::now()))
+        Ok(Duration::from_nanos(self.deadline_nanos.load(Ordering::Acquire)).saturating_sub(self.started.elapsed()))
     }
     pub fn elapsed(&self) -> Duration { self.started.elapsed() }
     /// Resource owners retain this barrier through asynchronous cleanup.

@@ -11,10 +11,10 @@ emit 一次全局事件」，必须是 worker → sync_channel → pump → sink
 Phase 8E / Train D（Terminal capability 隔离）同步：
   - 前端读取路径随物理迁移更新：useSystemStore → capabilities/terminal/state/useTerminalStore.ts；
     TerminalPane.vue / useTerminalResize.ts → capabilities/terminal/ui/**。
-  - `TERM_HISTORY_CLEAR_MISSING` 检测器重基线化：原实现统计 `clearTermHistory()` 文本出现 ≥3 次，
-    而 per-pane 重构（commit 2a96cb1）后真实清理点是 `clearTermHistory(id)`（调用）
-    + `termHistories.delete(id)`（移除桶）。新检测要求**两者同在**，比原文本计数更严（不变量未放宽）。
-    行为级证明见 scripts/check-terminal-owners.mjs（真实 store：killTerm → 回放为空）。
+  - 输出 owner 在 Channel 建立前创建有界 startup slot；关闭先封闭该 slot、清空
+    history/buffer，再移除 ID 索引。迟到 callback 不依赖永久 tombstones。
+    行为级证据来自 scripts/check-terminal-ui-logic.mjs；本脚本仅检查源码接线，
+    不能替代真实运行，更不能用作原生 PTY 支持的证明。
 
 默认模式：全部不变量成立 → EXIT 0；任一被破坏 → 打印违规码并 EXIT 1。
 --self-test：好样本零违规 + 每个不变量至少一个变异坏样本被检出（含变异防呆）。
@@ -33,6 +33,15 @@ def rust_function_body(source: str, name: str) -> str:
     """Read the top-level function's source contract, not a Rust execution test."""
     found = re.search(
         r"\bfn\s+" + re.escape(name) + r"\s*\([^)]*\)[^{]*\{(.*?)^\}",
+        source, re.S | re.M,
+    )
+    return found.group(1) if found else ""
+
+
+def store_function_body(source: str, name: str) -> str:
+    """Source wiring inside this store's two-space-indented functions."""
+    found = re.search(
+        r"\bfunction\s+" + re.escape(name) + r"\s*\([^)]*\)[^{]*\{(.*?)^  \}",
         source, re.S | re.M,
     )
     return found.group(1) if found else ""
@@ -68,6 +77,16 @@ def detect_violations(files: dict) -> list[str]:
     # ---- F3：聚合窗口与批量上限 ----
     if "TERM_FLUSH_INTERVAL_MS" not in term or "should_flush" not in term:
         v.append("TERM_MERGE_MISSING:terminal.rs 缺聚合窗口常量/should_flush（F3 合并）")
+
+    # UTF-8 boundaries belong to the stream, not each 16ms flush.
+    flush_body = rust_function_body(term, "flush_batch")
+    pump_body = rust_function_body(term, "run_pump")
+    if ("decoder.push(batch)" not in flush_body or "decoder.finish()" not in flush_body
+            or "String::from_utf8_lossy" in flush_body
+            or "let mut decoder = Utf8StreamDecoder::default()" not in pump_body
+            or "decoder.cancel()" not in pump_body
+            or "error.error_len()" not in term or "self.tail.extend_from_slice(remaining)" not in term):
+        v.append("TERM_UTF8_STREAM_MISSING:跨flush须保留UTF-8尾部，并区分invalid/EOF/取消")
 
     # ---- F4：sink 抽象 + 双入口（Event 兼容 / Channel 单播）----
     if "trait TermOutput" not in term:
@@ -155,6 +174,34 @@ def detect_violations(files: dict) -> list[str]:
     if "wait_while_running" not in rust_function_body(term, "send_with_backoff"):
         v.append("TERM_BACKOFF_CANCEL_MISSING:输出退避必须响应stop")
 
+    shutdown_body = rust_function_body(term, "shutdown_registry_until")
+    spawn_body = rust_function_body(term, "spawn_terminal_with_command")
+    if ("struct TerminalAdmission" not in term or "leases.lock()" not in term
+            or "self.closed.store(true, Ordering::Release)" not in term
+            or "let stop = permit.stop()" not in spawn_body
+            or 'Err("TERM_SHUTTING_DOWN".into())' not in spawn_body
+            or "deadline.saturating_duration_since(now)" not in shutdown_body
+            or "active == 0 && pending == 0" not in shutdown_body
+            or "worker.is_none()" not in shutdown_body
+            or "TERM_CLEANUP_PENDING" not in shutdown_body):
+        v.append("TERM_SHUTDOWN_DEADLINE_MISSING:shutdown须封闭admission并按统一截止等待所有owner")
+
+    app_shutdown = rust_function_body(bridge, "register_shutdown_tasks")
+    publish = rust_function_body(bridge, "publish_terminal")
+    if ("terminal::request_shutdown()" not in app_shutdown
+            or 'register_with_deadline("kill-terminals", &["stop-background-workers"]' not in app_shutdown
+            or "terminal::shutdown_until(deadline)" not in app_shutdown
+            or "terminal::terminate_session" in app_shutdown
+            or "session.request_close()" not in app_shutdown
+            or "terminals.drain().collect()" not in app_shutdown
+            or "drop(sessions)" not in app_shutdown):
+        v.append("TERM_APP_SHUTDOWN_WIRING_MISSING:应用退出须先发起全部close，再统一deadline等待")
+    if ("state.terminals.lock()" not in publish
+            or "state.shutdown_requested.load(Ordering::Acquire)" not in publish
+            or "session.request_close()" not in publish
+            or "terminals.insert(info.id.clone(), session)" not in publish):
+        v.append("TERM_LATE_PUBLISH_GATE_MISSING:shutdown后的in-flight spawn不得重新填充终端表")
+
     # ---- F8：退避与停止条件 ----
     for token in (
         "TERM_RETRY_BASE_MS",
@@ -215,16 +262,41 @@ def detect_violations(files: dict) -> list[str]:
         v.append("TERM_HISTORY_RECORD_MISSING:useSystemStore 未登记输出进临时历史（历史上限形同虚设）")
     if "replayTermHistory" not in pane:
         v.append("TERM_HISTORY_REPLAY_MISSING:TerminalPane 未回放临时历史（面板重建后一片空白）")
-    # 会话结束必须清空，否则旧会话输出会作为残影回放到新终端。
-    # per-pane 语义（2a96cb1 起）：清理 = 调用 clearTermHistory(<id>) 置空该 pane 的历史
-    # + termHistories.delete(<id>) 移除该 pane 的桶。要求两者同在（缺任一即视为未清理）。
-    _clear_call = re.search(r"clearTermHistory\(\s*[A-Za-z_]\w*\s*\)", store)
-    _bucket_drop = re.search(r"termHistories\.delete\(", store)
-    if _clear_call is None or _bucket_drop is None:
-        v.append(
-            "TERM_HISTORY_CLEAR_MISSING:临时历史未在会话结束/重启时清空（跨会话残影）"
-            f"［clearTermHistory(id)={bool(_clear_call)} termHistories.delete(id)={bool(_bucket_drop)}］"
-        )
+    # Both dimensions are necessary: 40 strings alone may retain huge output,
+    # and a byte cap alone may retain an unbounded number of tiny chunks.
+    append_body = store_function_body(store, "appendOutput")
+    replay_body = store_function_body(store, "replayTermHistory")
+    remove_body = store_function_body(store, "removeClosedTerm")
+    close_slot = store_function_body(store, "closeOutputSlot")
+    spawn_store = store_function_body(store, "spawnTerm")
+    receive_body = store_function_body(store, "receiveSessionMessage")
+    for token in ("TERM_HISTORY_MAX_BYTES", "TERM_BUFFER_MAX_CHUNKS", "TERM_BUFFER_MAX_BYTES"):
+        if token not in store:
+            v.append(f"TERM_OUTPUT_BOUNDS_MISSING:输出缓冲缺独立字节/条数预算 {token}")
+    if ("buffer.chunks.length >= maxChunks" not in append_body
+            or "buffer.bytes + chunk.bytes > maxBytes" not in append_body
+            or "utf8TailWithin(text, maxBytes)" not in append_body
+            or "pushTermHistory(id, chunk.text)" not in replay_body):
+        v.append("TERM_OUTPUT_BOUNDS_MISSING:隐藏缓冲/回放须按实际字节和条数限制并保留Unicode边界")
+    if ("startingSessions.add(slot)" not in spawn_store
+            or "receiveSessionMessage(slot, msg)" not in spawn_store
+            or "termBuffers.set(id, slot.buffer)" not in spawn_store
+            or "termHistories.set(id, slot.history)" not in spawn_store
+            or "outputSessions.size + startingSessions.size >= TERM_SESSION_LIMIT" not in spawn_store
+            or "startingSessions.delete(slot)" not in spawn_store):
+        v.append("TERM_OUTPUT_STARTUP_OWNER_MISSING:启动前须创建有界slot并保留早到Channel输出")
+    if ('slot.phase === "closed" || slot.phase === "closing"' not in receive_body
+            or "outputSessions.get(msg.id)" not in store_function_body(store, "onTermChannelMsg")
+            or 'slot.phase = "closed"' not in close_slot
+            or "closeOutputSlot(slot)" not in remove_body
+            or "outputSessions.delete(id)" not in remove_body):
+        v.append("TERM_OUTPUT_LIFECYCLE_MISSING:未知和已关闭输出不得重建会话状态")
+    if ("termBufferNotice(props.paneId)" not in pane
+            or "updateReplayNotice(id, slot)" not in replay_body):
+        v.append("TERM_OUTPUT_TRUNCATION_NOTICE_MISSING:回放截断须向用户明确显示")
+    if ("resetOutput(slot.history)" not in close_slot or "resetOutput(slot.buffer)" not in close_slot
+            or "termHistories.delete(id)" not in remove_body or "termBuffers.delete(id)" not in remove_body):
+        v.append("TERM_HISTORY_CLEAR_MISSING:关闭须清空captured输出slot并删除全部会话索引")
     # 隐私红线：仅内存，不落盘、不进审计、后端不留存
     for line in store.splitlines():
         if "localStorage" in line and "termHistory" in line:
@@ -585,25 +657,85 @@ def run_self_test(root: Path) -> int:
         "TERM_HISTORY_REPLAY_MISSING",
     )
 
-    # 26. 会话结束未清历史（旧会话输出成为新终端残影）
-    #     per-pane 语义下真实清理点是 clearTermHistory(id) 调用（2a96cb1 起）。
+    # Closing must clear the captured slot too: the Channel closure may outlive
+    # its map entry. Removing only the map is not a sufficient lifetime contract.
     add(
-        "会话结束未清空临时历史",
-        mutate(
-            system_store_ts=good["system_store_ts"].replace("    clearTermHistory(id);\n", "", 1)
-        ),
+        "会话结束未清空captured历史",
+        mutate(system_store_ts=good["system_store_ts"].replace(
+            "    resetOutput(slot.history);\n", "", 1)),
         "system_store_ts",
         "TERM_HISTORY_CLEAR_MISSING",
     )
-
-    # 26b. 只置空不移除桶（内存泄漏 + 桶残留）
     add(
         "会话结束只清空不移除历史桶",
-        mutate(
-            system_store_ts=good["system_store_ts"].replace("    termHistories.delete(id);\n", "", 1)
-        ),
+        mutate(system_store_ts=good["system_store_ts"].replace(
+            "    termHistories.delete(id);\n", "", 1)),
         "system_store_ts",
         "TERM_HISTORY_CLEAR_MISSING",
+    )
+    add(
+        "跨flush丢失UTF-8流式解码状态",
+        mutate(terminal_rs=good["terminal_rs"].replace(
+            "decoder.push(batch)", "Utf8StreamDecoder::default().push(batch)", 1)),
+        "terminal_rs",
+        "TERM_UTF8_STREAM_MISSING",
+    )
+    add(
+        "shutdown绕过统一deadline",
+        mutate(terminal_rs=good["terminal_rs"].replace(
+            "deadline.saturating_duration_since(now)", "Duration::from_secs(60)", 1)),
+        "terminal_rs",
+        "TERM_SHUTDOWN_DEADLINE_MISSING",
+    )
+    add(
+        "隐藏缓冲删除字节限制",
+        mutate(system_store_ts=good["system_store_ts"].replace(
+            "buffer.bytes + chunk.bytes > maxBytes", "false", 1)),
+        "system_store_ts",
+        "TERM_OUTPUT_BOUNDS_MISSING",
+    )
+    add(
+        "隐藏缓冲删除条数限制",
+        mutate(system_store_ts=good["system_store_ts"].replace(
+            "buffer.chunks.length >= maxChunks", "false", 1)),
+        "system_store_ts",
+        "TERM_OUTPUT_BOUNDS_MISSING",
+    )
+    add(
+        "spawn返回时覆盖早到输出",
+        mutate(system_store_ts=good["system_store_ts"].replace(
+            "termBuffers.set(id, slot.buffer)", "termBuffers.set(id, emptyOutput())", 1)),
+        "system_store_ts",
+        "TERM_OUTPUT_STARTUP_OWNER_MISSING",
+    )
+    add(
+        "关闭slot继续接收迟到消息",
+        mutate(system_store_ts=good["system_store_ts"].replace(
+            'slot.phase === "closed" || slot.phase === "closing"', "false", 1)),
+        "system_store_ts",
+        "TERM_OUTPUT_LIFECYCLE_MISSING",
+    )
+    add(
+        "截断提示未接到界面",
+        mutate(terminal_pane_vue=good["terminal_pane_vue"].replace(
+            "termBufferNotice(props.paneId)", "removedBufferNotice(props.paneId)")),
+        "terminal_pane_vue",
+        "TERM_OUTPUT_TRUNCATION_NOTICE_MISSING",
+    )
+
+    add(
+        "应用关闭丢失统一terminal deadline",
+        mutate(bridge_rs=good["bridge_rs"].replace(
+            "terminal::shutdown_until(deadline)", "terminal::shutdown_without_deadline()", 1)),
+        "bridge_rs",
+        "TERM_APP_SHUTDOWN_WIRING_MISSING",
+    )
+    add(
+        "在途spawn绕过发布时shutdown门闩",
+        mutate(bridge_rs=good["bridge_rs"].replace(
+            "state.shutdown_requested.load(Ordering::Acquire)", "false")),
+        "bridge_rs",
+        "TERM_LATE_PUBLISH_GATE_MISSING",
     )
 
     # 27. 历史被落盘（隐私红线）

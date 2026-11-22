@@ -197,9 +197,24 @@ fn native_hide_all_webviews(app: tauri::AppHandle) -> Result<(), String> {
 struct ExitLifecycleState {
     started: std::sync::atomic::AtomicBool,
     completed: std::sync::atomic::AtomicBool,
+    worker: std::sync::Mutex<Option<std::thread::JoinHandle<()>>>,
 }
 
 impl ExitLifecycleState {
+    fn reap_finished_worker(&self) {
+        let finished = {
+            let mut worker = self.worker.lock().unwrap_or_else(|e| e.into_inner());
+            if worker.as_ref().is_some_and(|worker| worker.is_finished()) {
+                worker.take()
+            } else { None }
+        };
+        if let Some(worker) = finished {
+            if worker.join().is_err() {
+                eprintln!("[shutdown] SHUTDOWN_LAUNCHER_PANICKED");
+            }
+        }
+    }
+
     fn claim(&self) -> bool {
         !self.started.swap(true, std::sync::atomic::Ordering::AcqRel)
     }
@@ -211,22 +226,28 @@ impl ExitLifecycleState {
 
 fn begin_graceful_shutdown(app: tauri::AppHandle, trigger: &'static str) {
     let state = app.state::<ExitLifecycleState>();
+    state.reap_finished_worker();
     if !state.claim() {
         return;
+    }
+    let started = std::time::Instant::now();
+    let deadline = started + shutdown::APPLICATION_SHUTDOWN_BUDGET;
+    // Close the bridge admission gate before an in-flight spawn can publish.
+    if let Some(business) = app.try_state::<bridge::AppState>() {
+        business.shutdown_requested.store(true, std::sync::atomic::Ordering::Release);
     }
     let worker_app = app.clone();
     let spawn = std::thread::Builder::new()
         .name("browseros-shutdown".into())
         .spawn(move || {
-            let started = std::time::Instant::now();
             eprintln!("[shutdown] begin trigger={trigger}");
-            // Cleanup work is serialized by ShutdownCoordinator and runs OFF
-            // the GTK loop. The app remains alive until its report is ready.
+            // Independent owners run off the UI loop and share one absolute
+            // deadline. A blocked task does not postpone all other cleanup.
             let report = worker_app
                 .state::<shutdown::ShutdownCoordinator>()
-                .shutdown();
+                .shutdown_until(deadline);
             eprintln!(
-                "[shutdown] cleanup_finished trigger={trigger} elapsed_ms={}",
+                "[shutdown] cleanup_report trigger={trigger} elapsed_ms={}",
                 started.elapsed().as_millis()
             );
             log_shutdown_report(&report);
@@ -243,21 +264,31 @@ fn begin_graceful_shutdown(app: tauri::AppHandle, trigger: &'static str) {
                 worker_app.exit(1);
             }
         });
-    if let Err(error) = spawn {
-        // A failed thread creation must not leave an unclosable window.
-        state
-            .started
-            .store(false, std::sync::atomic::Ordering::Release);
-        eprintln!("[shutdown] unable to start cleanup worker: {error}");
+    match spawn {
+        Ok(worker) => {
+            *state.worker.lock().unwrap_or_else(|e| e.into_inner()) = Some(worker);
+            state.reap_finished_worker();
+        }
+        Err(error) => {
+            // No coordinator ran, so no native owner has closed its admission
+            // latch. Reopen only this bridge flag and allow another exit attempt.
+            if let Some(business) = app.try_state::<bridge::AppState>() {
+                business.shutdown_requested.store(false, std::sync::atomic::Ordering::Release);
+            }
+            state.started.store(false, std::sync::atomic::Ordering::Release);
+            eprintln!("[shutdown] unable to start cleanup worker: {error}");
+        }
     }
 }
 
 fn log_shutdown_report(report: &shutdown::ShutdownReport) {
     eprintln!(
-        "[shutdown] completed ok={} already_shutdown={} executed={}",
+        "[shutdown] report ok={} already_shutdown={} tasks={} waiting_tasks={} owner_pending={}",
         report.ok(),
         report.already_shutdown,
-        report.executed()
+        report.executed(),
+        report.pending(),
+        !report.owners_complete
     );
     for failure in report.failures() {
         eprintln!(

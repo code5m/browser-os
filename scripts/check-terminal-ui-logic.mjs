@@ -81,7 +81,7 @@ const { terminalManifest } = await import(`${ROOT}src/capabilities/terminal/mani
 // ---------- mock bridge（只替换终端相关方法，记录调用） ----------
 const calls = [];
 let spawnSeq = 0;
-bridge.createTermChannel = () => ({ __channel: true });
+bridge.createTermChannel = (onmessage) => ({ __channel: true, onmessage });
 bridge.termSpawnChannel = async () => ({ id: `term-${++spawnSeq}` });
 bridge.termSpawn = async () => {
   throw new Error("前端不得调用 term_spawn（Event 广播）");
@@ -189,6 +189,8 @@ assert(
   `E1-T5e per-pane 历史互不串味（实得 ${JSON.stringify(p2replay)}）`
 );
 assert(replayOf(p1).length === 40, "E1-T5f 新 pane 的输出不影响旧 pane 历史");
+assert(replayOf(p2).join("") === p2replay.join(""),
+  "E1-T5g 隐藏输出首次回放后进入有界历史，下一次重建仍保留");
 
 // T6：killTerm 后该 pane 历史清空（会话结束即消亡，不残留到下一段会话）。
 await terminal.killTerm(p2);
@@ -203,8 +205,8 @@ assert(replayOf(p2).length === 0, "E1-T6c 被杀 pane 回放为空（无跨会�
 terminal.onTermChannelMsg({ id: p1, kind: "data", data: "OLD-RESIDUE" });
 const afterResidue = replayOf(p1);
 assert(
-  afterResidue.length === 40 && afterResidue[afterResidue.length - 1] === "OLD-RESIDUE",
-  "E1-T7a 旧会话历史已累积且上限仍生效（保留最新）"
+  afterResidue.length === 40 && !afterResidue.includes("OLD-RESIDUE"),
+  "E1-T7a EOF 后的迟到输出不再改变历史或重新打开会话"
 );
 await terminal.killTerm(p1);
 const p3 = await terminal.spawnTerm();
@@ -225,6 +227,149 @@ const leaked = storageWrites.filter(
     v.includes("OLD-RESIDUE")
 );
 assert(leaked.length === 0, `E1-T8 终端输出/历史零落盘（泄漏 ${leaked.length} 条）`);
+
+// ===========================================================================
+// Output ownership/bounds regressions. Channel callbacks can precede invoke
+// resolution; these exercise the real store and only substitute native IPC.
+// ===========================================================================
+{
+  const normalSpawn = bridge.termSpawnChannel;
+  let earlyChannel;
+  let resolveSpawn;
+  const id = "term-" + (++spawnSeq);
+  bridge.termSpawnChannel = async (channel) => {
+    earlyChannel = channel;
+    channel.onmessage({ id, kind: "data", data: "BEFORE-SPAWN-中🙂" });
+    return await new Promise((resolve) => { resolveSpawn = resolve; });
+  };
+  const pending = terminal.spawnTerm();
+  assert(!terminal.termPanes.some((pane) => pane.id === id),
+    "OUTPUT-1 startup output remains owned before the native spawn result arrives");
+  resolveSpawn({ id });
+  assert(await pending === id, "OUTPUT-1a the startup slot binds to its returned ID");
+  earlyChannel.onmessage({ id, kind: "data", data: "AFTER-SPAWN" });
+  const replay = replayOf(id);
+  assert(replay.join("") === "BEFORE-SPAWN-中🙂AFTER-SPAWN",
+    "OUTPUT-1b early Channel output is not overwritten at spawn completion");
+  assert(replayOf(id).join("") === replay.join(""),
+    "OUTPUT-1c early and hidden output survives a second remount exactly once");
+  await terminal.killTerm(id);
+  const beforeFlow = terminal.droppedBytes;
+  earlyChannel.onmessage({ id, kind: "data", data: "LATE-CLOSED" });
+  earlyChannel.onmessage({ id, kind: "exit", reason: "input_failed", data: "late exit" });
+  earlyChannel.onmessage({ id, kind: "flow", dropped_chunks: 1, dropped_bytes: 200 });
+  terminal.onTermData({ id, data: "LATE-EVENT" });
+  for (let i = 0; i < 1_000; i += 1) {
+    terminal.onTermChannelMsg({ id: "never-owned-" + i, kind: "data", data: "unknown" });
+    terminal.onTermChannelMsg({ id: "never-owned-" + i, kind: "exit", reason: "eof" });
+  }
+  assert(replayOf(id).length === 0 && replayOf("never-owned-999").length === 0,
+    "OUTPUT-1d closed/unknown IDs cannot recreate replay buffers");
+  assert(terminal.termNotice(id) === "" && terminal.termBufferNotice(id) === ""
+    && terminal.termNotice("never-owned-999") === "" && terminal.droppedBytes === beforeFlow,
+    "OUTPUT-1e late callbacks cannot recreate notices or flow counters");
+  bridge.termSpawnChannel = normalSpawn;
+}
+{
+  const normalSpawn = bridge.termSpawnChannel;
+  const id = "term-" + (++spawnSeq);
+  bridge.termSpawnChannel = async (channel) => {
+    channel.onmessage({ id, kind: "data", data: "EARLY-OUTPUT" });
+    channel.onmessage({ id, kind: "exit", reason: "input_failed", data: "early failure" });
+    return { id };
+  };
+  assert(await terminal.spawnTerm() === id, "OUTPUT-2 early exit still publishes an owned stopped pane");
+  assert(replayOf(id).join("") === "EARLY-OUTPUT"
+    && terminal.termNotice(id).includes("输入传输失败"),
+    "OUTPUT-2a early exit remains a visible control notice, outside byte history");
+  assert(!await terminal.termWrite(id, "must not reach native input"),
+    "OUTPUT-2b an early exit closes input before spawn returns to the caller");
+  await terminal.killTerm(id);
+  bridge.termSpawnChannel = normalSpawn;
+}
+{
+  const pane = await terminal.spawnTerm();
+  for (let i = 0; i < 500; i += 1) {
+    terminal.onTermChannelMsg({ id: pane, kind: "data", data: "TINY-" + i + ";" });
+  }
+  const replay = replayOf(pane);
+  assert(replay.length === 128 && replay[0] === "TINY-372;" && replay[127] === "TINY-499;",
+    "OUTPUT-3 hidden output has an independent 128-entry limit retaining newest chunks");
+  assert(terminal.termBufferNotice(pane).includes("已截断"),
+    "OUTPUT-3a hidden entry overflow has a visible truncation notice");
+  const again = replayOf(pane);
+  assert(again.length === 40 && again[0] === "TINY-460;" && again[39] === "TINY-499;",
+    "OUTPUT-3b replay transfers hidden chunks into the separate bounded history");
+  await terminal.killTerm(pane);
+}
+{
+  const pane = await terminal.spawnTerm();
+  const text = "中🙂".repeat(50_000) + "TAIL";
+  terminal.onTermChannelMsg({ id: pane, kind: "data", data: text });
+  const replay = replayOf(pane).join("");
+  const encoder = new TextEncoder();
+  assert(encoder.encode(replay).length <= 128 * 1024 && replay.endsWith("TAIL")
+    && encoder.encode(replay).length >= 128 * 1024 - 3,
+    "OUTPUT-4 one large hidden chunk obeys the byte cap even below the entry cap");
+  assert(new TextDecoder().decode(encoder.encode(replay)) === replay,
+    "OUTPUT-4a byte truncation never splits a Unicode surrogate pair");
+  assert(terminal.termBufferNotice(pane).includes("已截断"),
+    "OUTPUT-4b byte overflow has a visible notice");
+  await terminal.killTerm(pane);
+}
+{
+  const pane = await terminal.spawnTerm();
+  const live = [];
+  terminal.bindTermWriter(pane, (data) => live.push(data));
+  const text = "界🙂".repeat(100_000) + "VISIBLE-TAIL";
+  terminal.onTermChannelMsg({ id: pane, kind: "data", data: text });
+  assert(live.join("") === text, "OUTPUT-5 history limits do not truncate live xterm delivery");
+  const replay = replayOf(pane).join("");
+  assert(new TextEncoder().encode(replay).length <= 256 * 1024 && replay.endsWith("VISIBLE-TAIL"),
+    "OUTPUT-5a one mounted history entry also obeys an independent byte cap");
+  assert(terminal.termBufferNotice(pane).includes("已截断"),
+    "OUTPUT-5b remount explains older history omitted by the byte budget");
+  await terminal.killTerm(pane);
+}
+{
+  const normalSpawn = bridge.termSpawnChannel;
+  const releases = [];
+  bridge.termSpawnChannel = async (channel) => {
+    const id = "term-" + (++spawnSeq);
+    channel.onmessage({ id, kind: "data", data: "reserved" });
+    return await new Promise((resolve) => { releases.push(() => resolve({ id })); });
+  };
+  const reserved = Array.from({ length: 32 }, () => terminal.spawnTerm());
+  assert(await terminal.spawnTerm() === "" && releases.length === 32,
+    "OUTPUT-6 in-flight startup slots share the 32-session bound");
+  for (const release of releases) release();
+  const ids = await Promise.all(reserved);
+  assert(ids.every(Boolean) && terminal.termPanes.length === 32,
+    "OUTPUT-6a reserved startup slots bind without losing their bounded output");
+  for (const id of ids) await terminal.killTerm(id);
+  bridge.termSpawnChannel = normalSpawn;
+}
+
+{
+  const normalKill = bridge.termKill;
+  const id = "term-" + (spawnSeq + 1);
+  let closeAttempts = 0;
+  bridge.termKill = async () => {
+    closeAttempts += 1;
+    throw new Error("TERM_CLEANUP_PENDING: injected cleanup delay");
+  };
+  // Fault injection after the native result was published: the production
+  // store must transfer an already visible owner through its normal close path.
+  const failingCwd = { toString() { throw new Error("injected post-publication failure"); } };
+  assert(await terminal.spawnTerm(failingCwd) === "",
+    "OUTPUT-7 post-publication setup failure is returned as a failed startup");
+  assert(closeAttempts === 1 && terminal.termPanes.some((pane) => pane.id === id)
+    && terminal.isTermClosing(id) && terminal.termNotice(id).includes("资源回收尚未完成"),
+    "OUTPUT-7a a published startup failure keeps pending cleanup visible and retryable");
+  bridge.termKill = normalKill;
+  assert(await terminal.killTerm(id) && !terminal.termPanes.some((pane) => pane.id === id),
+    "OUTPUT-7b eventual cleanup removes the failed startup's owned pane");
+}
 
 // ===========================================================================
 // Input ownership/backpressure regressions. The native bridge is substituted;

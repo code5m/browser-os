@@ -1,0 +1,817 @@
+{
+  "schema_version": 1,
+  "reviewed_source_basis": "add44f3b599b526a14ba28c5f993f51cb4561bae",
+  "name_matching": "unique exact Rust test name or unique ::-delimited suffix; resolved full names are recorded",
+  "coverage_policy": "Required names must all be enumerated and finish ok. New extra tests are allowed, executed, and recorded; none can substitute for a missing required name. Ignored extras are accepted only in full-suite and are never acceptance evidence.",
+  "selections": [
+    {
+      "id": "windows-grid",
+      "package": "mvp-browser-os",
+      "filter": "windows_grid_tests",
+      "required_count": 2,
+      "required_names": [
+        "pipe_name_is_private_unique_and_stable_per_index",
+        "grid_hibernation_requires_a_live_blank_page_proof"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "grid-framing",
+      "package": "mvp-browser-os",
+      "filter": "framing_tests",
+      "required_count": 2,
+      "required_names": [
+        "two_requests_survive_shared_bufreader_without_losing_prefetched_frames",
+        "rejects_oversized_line_and_truncated_frame"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "authorized-read",
+      "package": "mvp-browser-os",
+      "filter": "authorized_windows_read",
+      "required_count": 1,
+      "required_names": [
+        "authorized_windows_read_returns_bytes_and_denies_external_files"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "pinned-move",
+      "package": "mvp-browser-os",
+      "filter": "pinned_handle_move",
+      "required_count": 1,
+      "required_names": [
+        "pinned_handle_move_is_no_replace_and_does_not_touch_external_root"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "windows-cas",
+      "package": "mvp-browser-os",
+      "filter": "windows_cas",
+      "required_count": 2,
+      "required_names": [
+        "windows_cas_replaces_unchanged_file_and_preserves_external_edit",
+        "windows_cas_pinned_parent_survives_junction_replacement"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "cross-platform-cas",
+      "package": "mvp-browser-os",
+      "filter": "capabilities::workspace::cas::tests",
+      "required_count": 3,
+      "required_names": [
+        "replace_is_atomic_and_conflicts_preserve_external_content",
+        "concurrent_cooperating_writers_from_distinct_file_descriptors_have_one_winner",
+        "target_symlink_and_oversized_draft_are_denied"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "private-pipe",
+      "package": "mvp-browser-os",
+      "filter": "local_owner_pipe_roundtrip",
+      "required_count": 1,
+      "required_names": [
+        "local_owner_pipe_roundtrip_validates_actual_client_pid"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "windows-process",
+      "package": "mvp-browser-os",
+      "filter": "windows_process::",
+      "required_count": 7,
+      "required_names": [
+        "suspended_spawn_assigns_job_before_immediate_grandchild_can_run",
+        "dropping_job_after_parent_crash_kills_grandchild",
+        "conpty_terminal_uses_atomic_job_list_and_reaps_immediate_grandchild",
+        "conpty_production_close_reaps_queued_input_during_output_backoff",
+        "owned_thread_cancellation_interrupts_blocked_pipe_input",
+        "conpty_child_exit_code_259_is_terminal_and_kill_is_idempotent",
+        "a_running_process_can_be_adopted_but_is_not_used_for_spawn_paths"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "windows_script_cancel_reaps_immediate_node_grandchild",
+      "package": "mvp-browser-os",
+      "filter": "windows_script_cancel_reaps_immediate_node_grandchild",
+      "required_count": 1,
+      "required_names": [
+        "windows_script_cancel_reaps_immediate_node_grandchild"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "windows_script_timeout_reaps_immediate_node_grandchild",
+      "package": "mvp-browser-os",
+      "filter": "windows_script_timeout_reaps_immediate_node_grandchild",
+      "required_count": 1,
+      "required_names": [
+        "windows_script_timeout_reaps_immediate_node_grandchild"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "windows_script_parent_crash_drops_job_and_reaps_grandchild",
+      "package": "mvp-browser-os",
+      "filter": "windows_script_parent_crash_drops_job_and_reaps_grandchild",
+      "required_count": 1,
+      "required_names": [
+        "windows_script_parent_crash_drops_job_and_reaps_grandchild"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "conpty_rejects_invalid_terminal_dimensions",
+      "package": "mvp-browser-os",
+      "filter": "conpty_rejects_invalid_terminal_dimensions",
+      "required_count": 1,
+      "required_names": [
+        "conpty_rejects_invalid_terminal_dimensions"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "script-whitelist",
+      "package": "mvp-browser-os",
+      "filter": "windows_script_whitelist_rejects_shell_execution",
+      "required_count": 1,
+      "required_names": [
+        "windows_script_whitelist_rejects_shell_execution_without_side_effects"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "node-job-output",
+      "package": "mvp-browser-os",
+      "filter": "windows_node_script_executes_in_job",
+      "required_count": 1,
+      "required_names": [
+        "windows_node_script_executes_in_job_and_captures_bounded_output"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "coding-authorized-read",
+      "package": "mvp-browser-os",
+      "filter": "windows_coding_can_read_an_authorized_regular_file",
+      "required_count": 1,
+      "required_names": [
+        "windows_coding_can_read_an_authorized_regular_file_but_never_escape_root"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "windows-agent",
+      "package": "mvp-browser-os",
+      "filter": "windows_agent_",
+      "required_count": 4,
+      "required_names": [
+        "windows_agent_atomic_write_creates_nested_files_without_touching_junction_target",
+        "windows_agent_session_stages_then_applies_nested_new_file",
+        "windows_agent_apply_rejects_external_modification",
+        "windows_agent_fault_rolls_back_every_applied_file"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "appcontainer",
+      "package": "mvp-browser-os",
+      "filter": "capabilities::agent::windows_sandbox::tests",
+      "required_count": 12,
+      "required_names": [
+        "appcontainer_runs_without_host_workspace_or_loopback_access",
+        "state_directory_stays_pinned_until_profile_teardown",
+        "native_private_tree_depth_limit_preserves_existing_data",
+        "cmd_command_line_preserves_raw_tail_and_quoted_file_path",
+        "quoted_arguments_survive_process_creation",
+        "appcontainer_own_state_create_write_read_and_cross_package_denial",
+        "own_package_reads_snapshot_but_cannot_overwrite_source",
+        "runtime_actual_byte_budget_rejects_before_destination_write",
+        "repeated_runtime_component_compares_bytes_without_mutating_open",
+        "cancelled_budget_stops_before_profile_creation_and_keeps_cleanup_observable",
+        "stderr_diagnostics_are_bounded_sticky_and_path_free",
+        "appcontainer_other_package_cannot_list_private_snapshot"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "real_appcontainer_stdio_initializes_lists_calls_and_scrubs_secrets",
+      "package": "mvp-browser-os",
+      "filter": "real_appcontainer_stdio_initializes_lists_calls_and_scrubs_secrets",
+      "required_count": 1,
+      "required_names": [
+        "real_appcontainer_stdio_initializes_lists_calls_and_scrubs_secrets"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "stdin_backpressure_obeys_deadline",
+      "package": "mvp-browser-os",
+      "filter": "stdin_backpressure_obeys_deadline",
+      "required_count": 1,
+      "required_names": [
+        "stdin_backpressure_obeys_deadline"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "snapshot_rejects_junctions_instead_of_copying_external_sources",
+      "package": "mvp-browser-os",
+      "filter": "snapshot_rejects_junctions_instead_of_copying_external_sources",
+      "required_count": 1,
+      "required_names": [
+        "snapshot_rejects_junctions_instead_of_copying_external_sources"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "private_snapshot_requires_own_package_sid_and_rejects_other_profiles",
+      "package": "mvp-browser-os",
+      "filter": "private_snapshot_requires_own_package_sid_and_rejects_other_profiles",
+      "required_count": 1,
+      "required_names": [
+        "private_snapshot_requires_own_package_sid_and_rejects_other_profiles"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "real_rust_analyzer_runs_against_private_snapshot",
+      "package": "mvp-browser-os",
+      "filter": "real_rust_analyzer_runs_against_private_snapshot",
+      "required_count": 1,
+      "required_names": [
+        "real_rust_analyzer_runs_against_private_snapshot"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 600,
+      "role": "required"
+    },
+    {
+      "id": "fake_loopback_port_occupant_cannot_receive_snapshot_before_identity_proof",
+      "package": "mvp-browser-os",
+      "filter": "fake_loopback_port_occupant_cannot_receive_snapshot_before_identity_proof",
+      "required_count": 1,
+      "required_names": [
+        "fake_loopback_port_occupant_cannot_receive_snapshot_before_identity_proof"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "process_execution_requires_explicit_approval_and_rejects_shell_actions",
+      "package": "mvp-browser-os",
+      "filter": "process_execution_requires_explicit_approval_and_rejects_shell_actions",
+      "required_count": 1,
+      "required_names": [
+        "process_execution_requires_explicit_approval_and_rejects_shell_actions"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "knowledge_search_redacts_sensitive_lines",
+      "package": "mvp-browser-os",
+      "filter": "knowledge_search_redacts_sensitive_lines",
+      "required_count": 1,
+      "required_names": [
+        "knowledge_search_redacts_sensitive_lines"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "external-url-privacy",
+      "package": "mvp-browser-os",
+      "filter": "external_url_privacy_tests",
+      "required_count": 1,
+      "required_names": [
+        "external_url_audit_never_preserves_credentials_or_user_text"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "audit-concurrency",
+      "package": "mvp-browser-os",
+      "filter": "audit_concurrency_tests",
+      "required_count": 1,
+      "required_names": [
+        "concurrent_audit_appends_keep_every_entry"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "cancelled_and_cleanup_reservations_do_not_release_capacity",
+      "package": "mvp-browser-os",
+      "filter": "cancelled_and_cleanup_reservations_do_not_release_capacity",
+      "required_count": 1,
+      "required_names": [
+        "cancelled_and_cleanup_reservations_do_not_release_capacity"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "failed_native_start_keeps_capacity_until_cleanup_guard_drops",
+      "package": "mvp-browser-os",
+      "filter": "failed_native_start_keeps_capacity_until_cleanup_guard_drops",
+      "required_count": 1,
+      "required_names": [
+        "failed_native_start_keeps_capacity_until_cleanup_guard_drops"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "released_native_cleanup_slot_is_reaped_without_another_request",
+      "package": "mvp-browser-os",
+      "filter": "released_native_cleanup_slot_is_reaped_without_another_request",
+      "required_count": 1,
+      "required_names": [
+        "released_native_cleanup_slot_is_reaped_without_another_request"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "cancelled_or_expired_preparation_cannot_enter_snapshot_io",
+      "package": "mvp-browser-os",
+      "filter": "cancelled_or_expired_preparation_cannot_enter_snapshot_io",
+      "required_count": 1,
+      "required_names": [
+        "cancelled_or_expired_preparation_cannot_enter_snapshot_io"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "snapshot_counts_ignored_entries_and_empty_directories",
+      "package": "mvp-browser-os",
+      "filter": "snapshot_counts_ignored_entries_and_empty_directories",
+      "required_count": 1,
+      "required_names": [
+        "snapshot_counts_ignored_entries_and_empty_directories"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "actual_snapshot_bytes_obey_remaining_read_and_write_capacity",
+      "package": "mvp-browser-os",
+      "filter": "actual_snapshot_bytes_obey_remaining_read_and_write_capacity",
+      "required_count": 1,
+      "required_names": [
+        "actual_snapshot_bytes_obey_remaining_read_and_write_capacity"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "unfinished_io_worker_stays_owned_until_it_can_be_joined",
+      "package": "mvp-browser-os",
+      "filter": "unfinished_io_worker_stays_owned_until_it_can_be_joined",
+      "required_count": 1,
+      "required_names": [
+        "unfinished_io_worker_stays_owned_until_it_can_be_joined"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "lsp_module_scan_observes_cancellation_before_reading_sources",
+      "package": "mvp-browser-os",
+      "filter": "lsp_module_scan_observes_cancellation_before_reading_sources",
+      "required_count": 1,
+      "required_names": [
+        "lsp_module_scan_observes_cancellation_before_reading_sources"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "pending_cleanup_retains_master_and_workers_until_reaped",
+      "package": "mvp-browser-os",
+      "filter": "pending_cleanup_retains_master_and_workers_until_reaped",
+      "required_count": 1,
+      "required_names": [
+        "pending_cleanup_retains_master_and_workers_until_reaped"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "spawn_error_guard_retains_native_close_until_completed",
+      "package": "mvp-browser-os",
+      "filter": "spawn_error_guard_retains_native_close_until_completed",
+      "required_count": 1,
+      "required_names": [
+        "spawn_error_guard_retains_native_close_until_completed"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "asynchronous_input_failure_emits_a_fixed_exit_without_another_keystroke",
+      "package": "mvp-browser-os",
+      "filter": "asynchronous_input_failure_emits_a_fixed_exit_without_another_keystroke",
+      "required_count": 1,
+      "required_names": [
+        "asynchronous_input_failure_emits_a_fixed_exit_without_another_keystroke"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "utf8_decoder_preserves_every_split_of_multibyte_output",
+      "package": "mvp-browser-os",
+      "filter": "utf8_decoder_preserves_every_split_of_multibyte_output",
+      "required_count": 1,
+      "required_names": [
+        "utf8_decoder_preserves_every_split_of_multibyte_output"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "utf8_decoder_replaces_only_invalid_bytes_and_incomplete_eof",
+      "package": "mvp-browser-os",
+      "filter": "utf8_decoder_replaces_only_invalid_bytes_and_incomplete_eof",
+      "required_count": 1,
+      "required_names": [
+        "utf8_decoder_replaces_only_invalid_bytes_and_incomplete_eof"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "utf8_decoder_cancel_discards_unfinished_suffix",
+      "package": "mvp-browser-os",
+      "filter": "utf8_decoder_cancel_discards_unfinished_suffix",
+      "required_count": 1,
+      "required_names": [
+        "utf8_decoder_cancel_discards_unfinished_suffix"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "pipeline_preserves_split_utf8_across_flushes",
+      "package": "mvp-browser-os",
+      "filter": "pipeline_preserves_split_utf8_across_flushes",
+      "required_count": 1,
+      "required_names": [
+        "pipeline_preserves_split_utf8_across_flushes"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "terminal_admission_shutdown_rejects_new_and_stops_reserved_session",
+      "package": "mvp-browser-os",
+      "filter": "terminal_admission_shutdown_rejects_new_and_stops_reserved_session",
+      "required_count": 1,
+      "required_names": [
+        "terminal_admission_shutdown_rejects_new_and_stops_reserved_session"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "shutdown-coordinator",
+      "package": "mvp-browser-os",
+      "filter": "shutdown::shutdown_tests",
+      "required_count": 3,
+      "required_names": [
+        "shared_deadline_reports_pending_without_blocking_independent_cleanup",
+        "independent_owners_receive_the_same_absolute_deadline",
+        "cleanup_dependency_finishes_before_dependent_resource_closes"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "platform-security",
+      "package": "browseros-platform-security",
+      "filter": "",
+      "required_count": 34,
+      "required_names": [
+        "native_private_tree_is_idempotent_and_preserves_bytes",
+        "new_children_inherit_only_native_owner_and_system",
+        "hardlinked_data_is_refused_without_changing_the_external_file",
+        "native_path_identity_rejects_a_sibling_and_accepts_own_child",
+        "unicode_ordinal_comparison_does_not_use_lossy_utf8",
+        "low_object_budget_returns_incomplete_error_instead_of_pass",
+        "an_exact_native_sid_is_required_for_each_ace",
+        "an_owner_deny_ace_is_not_an_owner_allow_ace",
+        "an_owner_read_only_mask_is_not_full_control",
+        "an_extra_world_ace_invalidates_an_otherwise_private_file",
+        "owner_and_system_counts_are_checked_per_object",
+        "directory_inheritance_flags_are_required_and_file_flags_are_empty",
+        "shallow_parent_preparation_preserves_existing_child_dacl",
+        "a_compliant_live_file_never_requires_a_mutating_open",
+        "namespace_comparison_accepts_unc_spelling_without_cross_share_aliases",
+        "package_native_repair_removes_world_and_other_container_from_every_object",
+        "package_exact_policy_rejects_same_sid_deny_wrong_mask_and_inherited_traversal",
+        "package_tree_repairs_are_bounded_and_never_follow_a_hardlink",
+        "pinned_directory_counts_all_entries_and_denies_source_replacement",
+        "package_sid_must_be_an_exact_appcontainer_sid",
+        "operation_budget_cancellation_keeps_resource_ownership_until_cleanup",
+        "traversal_parser_rejects_counted_sid_beyond_ace_bounds",
+        "consumers_share_preparation_and_cold_restart_reaudits",
+        "active_cache_churn_does_not_enter_a_deep_audit",
+        "preexisting_kernel_object_with_unexpected_access_is_not_trusted",
+        "generic_package_traversal_never_grants_directory_listing",
+        "compliant_profile_reopen_uses_read_only_handles",
+        "native_recovery_record_lease_excludes_second_owner",
+        "native_recovery_rejects_replaced_profile_identity",
+        "native_recovery_postorder_removes_only_recorded_tree",
+        "native_recovery_refuses_linked_data_and_keeps_root",
+        "native_named_job_rejects_untrusted_existing_dacl",
+        "native_recovery_namespace_survives_profile_removal",
+        "native_recovery_namespace_rejects_untrusted_writer"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "portable-pty",
+      "package": "portable-pty",
+      "filter": "",
+      "required_count": 3,
+      "required_names": [
+        "future_wait_owns_process_handle_across_repeated_polls",
+        "creation_and_resize_share_signed_dimension_bounds",
+        "invalid_dimensions_are_rejected_before_pipe_creation"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "browser-profile",
+      "package": "tauri-plugin-browser-tabs",
+      "filter": "browser_profile_tests::",
+      "required_count": 2,
+      "required_names": [
+        "windows_profile_acl_contains_only_current_user_and_system",
+        "native_browser_tabs_share_one_app_scoped_profile_directory"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "shutdown_admission_rejects_new_reservations_and_late_publication",
+      "package": "mvp-browser-os",
+      "filter": "shutdown_admission_rejects_new_reservations_and_late_publication",
+      "required_count": 1,
+      "required_names": [
+        "shutdown_admission_rejects_new_reservations_and_late_publication"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "terminal_shutdown_deadline_retains_pending_owners_until_all_reaped",
+      "package": "mvp-browser-os",
+      "filter": "terminal_shutdown_deadline_retains_pending_owners_until_all_reaped",
+      "required_count": 1,
+      "required_names": [
+        "terminal_shutdown_deadline_retains_pending_owners_until_all_reaped"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "appcontainer-recovery",
+      "package": "mvp-browser-os",
+      "filter": "capabilities::agent::windows_sandbox::lifecycle::tests",
+      "required_count": 6,
+      "required_names": [
+        "recovery_retains_unbound_intent_and_blocks_new_profiles",
+        "recovery_skips_a_live_native_record_lease",
+        "abandoned_bound_profile_is_recovered_by_native_identity",
+        "local_shutdown_shortens_cleanup_and_preserves_pending_record",
+        "journal_rejects_path_fields_and_sid_substitution",
+        "journal_uses_last_complete_frame_after_interrupted_write"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
+      "role": "required"
+    },
+    {
+      "id": "windows-full-suite",
+      "package": "mvp-browser-os",
+      "filter": "",
+      "required_count": 79,
+      "required_names": [
+        "a_running_process_can_be_adopted_but_is_not_used_for_spawn_paths",
+        "abandoned_bound_profile_is_recovered_by_native_identity",
+        "actual_snapshot_bytes_obey_remaining_read_and_write_capacity",
+        "appcontainer_other_package_cannot_list_private_snapshot",
+        "appcontainer_own_state_create_write_read_and_cross_package_denial",
+        "appcontainer_runs_without_host_workspace_or_loopback_access",
+        "asynchronous_input_failure_emits_a_fixed_exit_without_another_keystroke",
+        "authorized_windows_read_returns_bytes_and_denies_external_files",
+        "cancelled_and_cleanup_reservations_do_not_release_capacity",
+        "cancelled_budget_stops_before_profile_creation_and_keeps_cleanup_observable",
+        "cancelled_or_expired_preparation_cannot_enter_snapshot_io",
+        "cleanup_dependency_finishes_before_dependent_resource_closes",
+        "cmd_command_line_preserves_raw_tail_and_quoted_file_path",
+        "concurrent_audit_appends_keep_every_entry",
+        "concurrent_cooperating_writers_from_distinct_file_descriptors_have_one_winner",
+        "conpty_child_exit_code_259_is_terminal_and_kill_is_idempotent",
+        "conpty_production_close_reaps_queued_input_during_output_backoff",
+        "conpty_rejects_invalid_terminal_dimensions",
+        "conpty_terminal_uses_atomic_job_list_and_reaps_immediate_grandchild",
+        "dropping_job_after_parent_crash_kills_grandchild",
+        "external_url_audit_never_preserves_credentials_or_user_text",
+        "failed_native_start_keeps_capacity_until_cleanup_guard_drops",
+        "fake_loopback_port_occupant_cannot_receive_snapshot_before_identity_proof",
+        "grid_hibernation_requires_a_live_blank_page_proof",
+        "independent_owners_receive_the_same_absolute_deadline",
+        "journal_rejects_path_fields_and_sid_substitution",
+        "journal_uses_last_complete_frame_after_interrupted_write",
+        "knowledge_search_redacts_sensitive_lines",
+        "local_owner_pipe_roundtrip_validates_actual_client_pid",
+        "local_shutdown_shortens_cleanup_and_preserves_pending_record",
+        "lsp_module_scan_observes_cancellation_before_reading_sources",
+        "native_private_tree_depth_limit_preserves_existing_data",
+        "own_package_reads_snapshot_but_cannot_overwrite_source",
+        "owned_thread_cancellation_interrupts_blocked_pipe_input",
+        "pending_cleanup_retains_master_and_workers_until_reaped",
+        "pinned_handle_move_is_no_replace_and_does_not_touch_external_root",
+        "pipe_name_is_private_unique_and_stable_per_index",
+        "pipeline_preserves_split_utf8_across_flushes",
+        "private_snapshot_requires_own_package_sid_and_rejects_other_profiles",
+        "process_execution_requires_explicit_approval_and_rejects_shell_actions",
+        "quoted_arguments_survive_process_creation",
+        "real_appcontainer_stdio_initializes_lists_calls_and_scrubs_secrets",
+        "real_rust_analyzer_runs_against_private_snapshot",
+        "recovery_retains_unbound_intent_and_blocks_new_profiles",
+        "recovery_skips_a_live_native_record_lease",
+        "rejects_oversized_line_and_truncated_frame",
+        "released_native_cleanup_slot_is_reaped_without_another_request",
+        "repeated_runtime_component_compares_bytes_without_mutating_open",
+        "replace_is_atomic_and_conflicts_preserve_external_content",
+        "runtime_actual_byte_budget_rejects_before_destination_write",
+        "shared_deadline_reports_pending_without_blocking_independent_cleanup",
+        "shutdown_admission_rejects_new_reservations_and_late_publication",
+        "snapshot_counts_ignored_entries_and_empty_directories",
+        "snapshot_rejects_junctions_instead_of_copying_external_sources",
+        "spawn_error_guard_retains_native_close_until_completed",
+        "state_directory_stays_pinned_until_profile_teardown",
+        "stderr_diagnostics_are_bounded_sticky_and_path_free",
+        "stdin_backpressure_obeys_deadline",
+        "suspended_spawn_assigns_job_before_immediate_grandchild_can_run",
+        "target_symlink_and_oversized_draft_are_denied",
+        "terminal_admission_shutdown_rejects_new_and_stops_reserved_session",
+        "terminal_shutdown_deadline_retains_pending_owners_until_all_reaped",
+        "two_requests_survive_shared_bufreader_without_losing_prefetched_frames",
+        "unfinished_io_worker_stays_owned_until_it_can_be_joined",
+        "utf8_decoder_cancel_discards_unfinished_suffix",
+        "utf8_decoder_preserves_every_split_of_multibyte_output",
+        "utf8_decoder_replaces_only_invalid_bytes_and_incomplete_eof",
+        "windows_agent_apply_rejects_external_modification",
+        "windows_agent_atomic_write_creates_nested_files_without_touching_junction_target",
+        "windows_agent_fault_rolls_back_every_applied_file",
+        "windows_agent_session_stages_then_applies_nested_new_file",
+        "windows_cas_pinned_parent_survives_junction_replacement",
+        "windows_cas_replaces_unchanged_file_and_preserves_external_edit",
+        "windows_coding_can_read_an_authorized_regular_file_but_never_escape_root",
+        "windows_node_script_executes_in_job_and_captures_bounded_output",
+        "windows_script_cancel_reaps_immediate_node_grandchild",
+        "windows_script_parent_crash_drops_job_and_reaps_grandchild",
+        "windows_script_timeout_reaps_immediate_node_grandchild",
+        "windows_script_whitelist_rejects_shell_execution_without_side_effects"
+      ],
+      "allow_additional_tests": true,
+      "allow_ignored": true,
+      "timeout_seconds": 900,
+      "role": "full-suite"
+    }
+  ]
+}

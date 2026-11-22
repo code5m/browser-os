@@ -488,6 +488,8 @@ pub fn register_shutdown_tasks(app: &AppHandle) -> Result<(), String> {
             app.state::<AppState>()
                 .shutdown_requested
                 .store(true, Ordering::SeqCst);
+            terminal::request_shutdown();
+            crate::capabilities::agent::public_api::request_native_shutdown();
             Ok(())
         })?;
     }
@@ -550,34 +552,31 @@ pub fn register_shutdown_tasks(app: &AppHandle) -> Result<(), String> {
 
     {
         let app = app.clone();
-        coordinator.register("kill-terminals", move || {
+        coordinator.register_with_deadline("kill-terminals", &["stop-background-workers"], move |deadline| {
             let sessions: Vec<(String, TerminalSession)> = {
                 let state = app.state::<AppState>();
-                let mut terminals = state.terminals.lock().unwrap();
-                // Register every owner before removing table entries. This
-                // prevents a concurrent IPC close from observing false success
-                // and starts cleanup for all sessions before bounded waits.
+                let mut terminals = state.terminals.lock().unwrap_or_else(|e| e.into_inner());
                 for session in terminals.values_mut() { session.request_close(); }
                 terminals.drain().collect()
             };
-            let mut errors = Vec::new();
-            for (id, mut session) in sessions {
-                // M3.a：统一走进程组回收 + 线程回收（F6/F7），不再只杀直接子进程。
-                if let Err(error) = terminal::terminate_session(&mut session) {
-                    errors.push(format!("{id} kill: {error}"));
-                }
-            }
-            if errors.is_empty() {
-                Ok(())
-            } else {
-                Err(format!("terminal cleanup errors: {}", errors.join("; ")))
-            }
+            // request_close transferred every resource to its cleanup owner.
+            // Dropping these empty session facades does not wait four seconds
+            // per terminal. Pending IPC closes and in-flight spawns are covered
+            // by the same native admission/cleanup registry.
+            drop(sessions);
+            terminal::shutdown_until(deadline)
+        })?;
+    }
+
+    {
+        coordinator.register_with_deadline("shutdown-agent-native", &["stop-background-workers"], move |deadline| {
+            crate::capabilities::agent::public_api::shutdown_native_until(deadline)
         })?;
     }
 
     {
         let app = app.clone();
-        coordinator.register("shutdown-grid", move || {
+        coordinator.register_with_deadline("shutdown-grid", &["close-tabs"], move |_deadline| {
             let state = app.state::<AppState>();
             state.grid_manager.shutdown_all();
             for i in 0..MAX_GRID {
@@ -592,7 +591,7 @@ pub fn register_shutdown_tasks(app: &AppHandle) -> Result<(), String> {
 
     {
         let app = app.clone();
-        coordinator.register("kill-running-scripts", move || {
+        coordinator.register_with_deadline("kill-running-scripts", &["stop-scheduler"], move |_deadline| {
             let killed =
                 crate::script_runner::kill_all_running(&app.state::<AppState>().script_runs);
             eprintln!("[shutdown] kill-running-scripts killed={killed}");

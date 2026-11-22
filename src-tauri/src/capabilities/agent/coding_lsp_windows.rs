@@ -14,6 +14,7 @@ use std::io::{self, BufRead, BufReader, Read, Write};
 use std::os::windows::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, OnceLock, mpsc};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -40,6 +41,7 @@ struct StartingEntry {
 
 #[derive(Default)]
 struct SessionCache {
+    shutting_down: bool,
     ready: HashMap<String, Arc<Mutex<Session>>>,
     // A reservation owns capacity from the first preparation step until its
     // process, pipe workers and profile owner have actually finished cleanup.
@@ -51,6 +53,7 @@ impl SessionCache {
         &mut self, root: &Path, budget: OperationBudget,
     ) -> Result<uuid::Uuid, String> {
         check_operation(&budget)?;
+        if self.shutting_down { return Err("LSP_APPLICATION_SHUTTING_DOWN".into()); }
         if self.starting.len() >= MAX_SESSIONS {
             return Err("LSP_SESSION_LIMIT".into());
         }
@@ -65,7 +68,7 @@ impl SessionCache {
     }
 
     fn start_is_active(&self, token: &uuid::Uuid, root: &Path) -> bool {
-        self.starting.get(token).is_some_and(|reserved|
+        !self.shutting_down && self.starting.get(token).is_some_and(|reserved|
             reserved.root == root
                 && reserved.phase == ReservationPhase::Preparing
                 && reserved.budget.check().is_ok()
@@ -109,9 +112,84 @@ impl SessionCache {
         ).count()
     }
 }
+static APPLICATION_SHUTDOWN: AtomicBool = AtomicBool::new(false);
 static SESSIONS: OnceLock<Mutex<SessionCache>> = OnceLock::new();
 fn sessions() -> &'static Mutex<SessionCache> {
     SESSIONS.get_or_init(|| Mutex::new(SessionCache::default()))
+}
+
+/// Quiesce admission before the coordinator waits for any other resource.
+pub(crate) fn request_shutdown() {
+    APPLICATION_SHUTDOWN.store(true, Ordering::Release);
+    {
+        let mut cache = sessions().lock().unwrap_or_else(|p| p.into_inner());
+        cache.shutting_down = true;
+        for reservation in cache.starting.values() { reservation.budget.cancel(); }
+    }
+    wake_cleanup_reaper();
+}
+
+fn retire_shutdown_sessions() {
+    if !APPLICATION_SHUTDOWN.load(Ordering::Acquire) { return; }
+    let candidates: Vec<_> = {
+        let cache = sessions().lock().unwrap_or_else(|p| p.into_inner());
+        cache.ready.iter().map(|(id, owner)| (id.clone(), owner.clone())).collect()
+    };
+    for (id, owner) in candidates {
+        let closed = match owner.try_lock() {
+            Ok(mut session) => {
+                // Initiate release, without adding a new per-session wait.
+                let _ = session.shutdown_until(Instant::now());
+                true
+            }
+            Err(std::sync::TryLockError::Poisoned(poison)) => {
+                let mut session = poison.into_inner();
+                let _ = session.shutdown_until(Instant::now());
+                true
+            }
+            Err(std::sync::TryLockError::WouldBlock) => false,
+        };
+        if closed {
+            let removed = {
+                let mut cache = sessions().lock().unwrap_or_else(|p| p.into_inner());
+                if cache.ready.get(&id).is_some_and(|current| Arc::ptr_eq(current, &owner)) {
+                    cache.ready.remove(&id)
+                } else { None }
+            };
+            // Session/StartReservation Drop may acquire the cache again.
+            drop(removed);
+        }
+        // Busy requests observe APPLICATION_SHUTDOWN at each receive/send poll.
+        // Their owner remains in ready until a later reaper pass obtains it.
+    }
+}
+
+pub(crate) fn shutdown_until(deadline: Instant) -> Result<(), String> {
+    request_shutdown();
+    loop {
+        reap_deferred_cleanup();
+        let (ready, reserved) = {
+            let cache = sessions().lock().unwrap_or_else(|p| p.into_inner());
+            (cache.ready.len(), cache.starting.len())
+        };
+        let deferred = deferred_cleanup().lock().unwrap_or_else(|p| p.into_inner()).len();
+        if ready == 0 && reserved == 0 && deferred == 0 {
+            CLEANUP_SIGNAL.notify_all();
+            let mut worker = CLEANUP_WORKER.get_or_init(|| Mutex::new(None))
+                .lock().unwrap_or_else(|p| p.into_inner());
+            if worker.as_ref().is_some_and(|worker| worker.is_finished()) {
+                if worker.take().unwrap().join().is_err() {
+                    return Err("LSP_CLEANUP_REAPER_PANICKED".into());
+                }
+            }
+            if worker.is_none() { return Ok(()); }
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(format!("LSP_APPLICATION_CLEANUP_PENDING: ready={ready} reserved={reserved} deferred={deferred}"));
+        }
+        thread::sleep(remaining.min(Duration::from_millis(10)));
+    }
 }
 
 fn operation_error(error: io::Error) -> String {
@@ -122,6 +200,9 @@ fn operation_error(error: io::Error) -> String {
     }.into()
 }
 fn check_operation(budget: &OperationBudget) -> Result<(), String> {
+    if APPLICATION_SHUTDOWN.load(Ordering::Acquire) {
+        return Err("LSP_APPLICATION_SHUTTING_DOWN".into());
+    }
     budget.check().map_err(operation_error)
 }
 fn new_operation(seconds: u64) -> OperationBudget {
@@ -859,9 +940,15 @@ fn ensure_cleanup_reaper() {
         loop {
             reap_deferred_cleanup();
             let owners = deferred_cleanup().lock().unwrap_or_else(|p| p.into_inner());
-            let native_pending = sessions().lock().unwrap_or_else(|p| p.into_inner())
-                .starting.values().any(|entry| entry.owner_released);
-            if !owners.is_empty() || native_pending {
+            let (native_pending, application_pending) = {
+                let cache = sessions().lock().unwrap_or_else(|p| p.into_inner());
+                (cache.starting.values().any(|entry| entry.owner_released),
+                    !cache.ready.is_empty() || !cache.starting.is_empty())
+            };
+            if APPLICATION_SHUTDOWN.load(Ordering::Acquire) && owners.is_empty() && !application_pending {
+                break;
+            }
+            if !owners.is_empty() || native_pending || APPLICATION_SHUTDOWN.load(Ordering::Acquire) {
                 let (owners, _) = CLEANUP_SIGNAL.wait_timeout(owners, Duration::from_millis(50))
                     .unwrap_or_else(|p| p.into_inner());
                 drop(owners);
@@ -898,6 +985,7 @@ fn queue_deferred_cleanup(owner: DeferredCleanup) {
 }
 
 fn reap_deferred_cleanup() {
+    retire_shutdown_sessions();
     let completed = {
         let mut owners = deferred_cleanup().lock().unwrap_or_else(|p| p.into_inner());
         let mut completed = Vec::new();
@@ -936,7 +1024,11 @@ struct Session {
 impl Drop for Session {
     fn drop(&mut self) {
         if !self.closed {
-            let _ = self.shutdown();
+            if APPLICATION_SHUTDOWN.load(Ordering::Acquire) {
+                let _ = self.shutdown_until(Instant::now());
+            } else {
+                let _ = self.shutdown();
+            }
         }
         self.writer.take();
         if !self.cleanup_complete() {
@@ -975,6 +1067,9 @@ impl Session {
             && self.cleanup_budget.cleanup_complete()
     }
     fn shutdown(&mut self) -> Result<(), String> {
+        self.shutdown_until(Instant::now() + Duration::from_secs(3))
+    }
+    fn shutdown_until(&mut self, until: Instant) -> Result<(), String> {
         self.closed = true;
         if self.process.is_none() {
             self.reservation.take();
@@ -987,7 +1082,6 @@ impl Session {
         }
         let terminate_error = self.process().terminate().err();
         self.writer.take();
-        let until = Instant::now() + Duration::from_secs(3);
         while Instant::now() < until
             && (!self.process().cleanup_complete()
                 || self.writer_thread.as_ref().is_some_and(|handle| !handle.is_finished())
@@ -1227,6 +1321,7 @@ impl Session {
     }
     fn recv_frame(&self, timeout_error: &'static str) -> Result<Value, String> {
         loop {
+            check_operation(&self.operation)?;
             if let Some(error) = self.observed_failure() { return Err(error); }
             let remaining = self.operation.remaining().map_err(operation_error)?;
             let wait = remaining.min(Duration::from_millis(100));
@@ -1624,6 +1719,7 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
     // This clock starts before canonicalization, reservation, snapshot, ACL
     // changes, runtime staging or process creation. Nested stages never reset it.
     let operation = new_operation(request["timeout_seconds"].as_u64().unwrap_or(30));
+    check_operation(&operation)?;
     reap_deferred_cleanup();
     retry_cleanup_reaper();
     retire_expired();
@@ -1816,6 +1912,25 @@ fn blocked_null_device_child(stderr: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shutdown_admission_rejects_new_reservations_and_late_publication() {
+        let mut cache = SessionCache::default();
+        let root = Path::new(r"C:\fixture");
+        let operation = new_operation(30);
+        let token = cache.reserve_start(root, operation.clone()).unwrap();
+        assert!(cache.start_is_active(&token, root));
+        cache.shutting_down = true;
+        for entry in cache.starting.values() { entry.budget.cancel(); }
+        assert!(!cache.start_is_active(&token, root));
+        assert_eq!(
+            cache.reserve_start(root, new_operation(30)).unwrap_err(),
+            "LSP_APPLICATION_SHUTTING_DOWN"
+        );
+        assert_eq!(cache.starting.len(), 1, "cancellation does not release an owned capacity lease");
+        cache.release_start(&token);
+        assert!(cache.starting.is_empty());
+    }
 
     #[test]
     fn restricted_null_device_child_is_reported_without_raw_stderr() {

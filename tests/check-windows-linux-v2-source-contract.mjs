@@ -43,6 +43,13 @@ const privateLease = read('../crates/browseros-platform-security/src/windows/lea
 const packageAcl = read('../crates/browseros-platform-security/src/windows/appcontainer.rs');
 const auditLock = read('../src-tauri/src/capabilities/workspace/audit_lock.rs');
 const nativeTestRunner = read('../scripts/windows-native-test-runner.ps1');
+const nativeSupervisor = read('../scripts/windows-native-test-supervisor.cs');
+const nativeRequired = JSON.parse(read('../scripts/windows-native-required-tests.json'));
+const nativeRecovery = read('../crates/browseros-platform-security/src/windows/recovery.rs');
+const sandboxLifecycle = read('../src-tauri/src/capabilities/agent/windows_sandbox/lifecycle.rs');
+const shutdown = read('../src-tauri/src/shutdown.rs');
+const bridgeLifecycle = read('../src-tauri/src/bridge.rs');
+const terminalState = read('../src/capabilities/terminal/state/useTerminalStore.ts');
 const nativeDispatcher = read('../.github/workflows/browseros-developer-feedback.yml');
 const terminalCommands = read('../src-tauri/src/bridge/terminal_commands.rs');
 const startup = read('../src-tauri/src/startup.rs');
@@ -102,7 +109,9 @@ assert.match(windowsSandbox, /PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES/);
 assert.match(windowsSandbox, /CapabilityCount: 0/);
 assert.match(windowsSandbox, /PROC_THREAD_ATTRIBUTE_HANDLE_LIST/);
 assert.match(windowsSandbox, /PROC_THREAD_ATTRIBUTE_JOB_LIST/);
-assert.match(windowsSandbox, /JobObject::create_for_spawn/);
+assert.match(windowsSandbox, /NamedPrivateJob/);
+assert.match(sandboxLifecycle, /NamedPrivateJob::create/);
+assert.match(nativeRecovery, /JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE/);
 assert.match(windowsSandbox, /ResumeThread/);
 assert.match(windowsMcp, /MCP_EXPLICIT_APPROVAL_REQUIRED/);
 assert.match(windowsMcp, /MCP_SHELL_COMMAND_REJECTED/);
@@ -270,11 +279,12 @@ assert.match(gitStudio, /case_variant_symlink_never_exposes_other_git_workspace/
 assert.doesNotMatch(gitStudio, /fs::read_to_string\(file\)/);
 assert.doesNotMatch(gitStudio, /hash\.update\(fs::read\(path\)/);
 // Only a package SID may read private snapshot *files*. The Windows
-// restricted lowbox traverses directories through non-inheritable generic
-// AppContainer ACEs; those grants must never propagate onto source files.
+// restricted lowbox traverses directories through non-inheritable traverse-only
+// AppContainer ACEs; those grants must never include listing or reach source files.
 assert.match(windowsLsp, /protect_lsp_snapshot/);
 assert.match(packageAcl, /if directory && self\.directory_traversal/);
-assert.match(packageAcl, /&self\.all_packages, FILE_GENERIC_READ \| FILE_GENERIC_EXECUTE, 0/);
+assert.match(packageAcl, /&self\.all_packages, FILE_TRAVERSE, 0/);
+assert.doesNotMatch(packageAcl, /&self\.all_packages, FILE_GENERIC_READ/);
 assert.match(packageAcl, /&self\.package, self\.mask\(\), flags/);
 assert.match(packageAcl, /fn exact_app_descriptor/);
 assert.match(packageAcl, /seen\[slot\]/);
@@ -309,23 +319,39 @@ assert.doesNotMatch(v2Workflow, /^  (push|pull_request|schedule):/m);
 assert.match(v2Workflow, /source_sha:/);
 assert.ok(v2Workflow.includes('^[0-9a-fA-F]{40}$'));
 assert.match(v2Workflow, /ref: \$\{\{ needs\.source\.outputs\.sha \}\}/);
-assert.ok(v2Workflow.includes('$matrixPassed = $nativeTests.Count - $failedFilters.Count'));
+assert.ok(v2Workflow.includes('$matrixPassed = $nativeSelections.Count - $failedSelections.Count'));
 assert.ok(v2Workflow.includes('$fullSuiteFailure = $null'));
-assert.doesNotMatch(v2Workflow, /\$failedFilters\.Add\('full_windows_native_suite/);
-assert.ok(nativeTestRunner.includes('$result.passed -lt 1'));
+assert.doesNotMatch(v2Workflow, /\$failedSelections\.Add\('windows-full-suite/);
+assert.match(nativeTestRunner, /Get-NativeSelectionManifest/);
+assert.ok(nativeTestRunner.includes('$selection.required_count -ne $required.Count'));
+assert.match(nativeTestRunner, /NATIVE_REQUIRED_NAME_MISSING_OR_AMBIGUOUS/);
+assert.match(nativeTestRunner, /NATIVE_REQUIRED_TEST_DID_NOT_PASS/);
+assert.match(nativeTestRunner, /NATIVE_TEST_ENUMERATION_EXECUTION_MISMATCH/);
 assert.ok(nativeTestRunner.includes('$result.ignored -ne 0'));
 assert.match(nativeTestRunner, /NATIVE_REQUIRED_TESTS_NOT_EXECUTED/);
-assert.match(v2Workflow, /SKIP\(\?:PED\)/);
-assert.match(v2Workflow, /PASS_WITH_IGNORED/);
+assert.match(nativeTestRunner, /SKIP\(\?:PED\)/);
+assert.match(nativeTestRunner, /PASS_WITH_IGNORED/);
 assert.match(v2Workflow, /GUI: NOT_RUN/);
 assert.match(v2Workflow, /Vendored ConPTY and process waiter regression/);
 assert.match(v2Workflow, /Get-NativeRustTestBinary -Manifest 'src-tauri\/Cargo.toml' -Package 'portable-pty'/);
 assert.match(v2Workflow, /Get-NativeRustTestBinary -Manifest 'crates\/browseros-platform-security\/Cargo.toml' -Package 'browseros-platform-security'/);
 assert.match(v2Workflow, /Get-NativeRustTestBinary -Manifest 'src-tauri\/Cargo.toml' -Package 'tauri-plugin-browser-tabs'/);
 assert.match(nativeTestRunner, /cargo test --manifest-path \$Manifest --locked -p \$Package --lib --no-run/);
-assert.equal(v2Workflow.match(/Invoke-NativeRustHarness -Executable \$testExe/g)?.length, 3);
-assert.match(nativeTestRunner, /\.Kill\(\$true\)/);
-assert.match(nativeTestRunner, /NATIVE_TEST_PROCESS_CLEANUP_TIMEOUT/);
+assert.match(v2Workflow, /-SelectionId 'windows-full-suite'/);
+assert.match(v2Workflow, /Get-NativeSelectionManifest/);
+assert.match(nativeTestRunner, /NATIVE_JOB_CLEANUP_UNCONFIRMED/);
+assert.doesNotMatch(nativeTestRunner, /\.Kill\(\$true\)/);
+assert.match(nativeSupervisor, /JOB_LIST/);
+assert.match(nativeSupervisor, /HANDLE_LIST/);
+assert.match(nativeSupervisor, /IsProcessInJob/);
+assert.match(nativeSupervisor, /QueryInformationJobObject/);
+assert.match(nativeSupervisor, /accounting\.ActiveProcesses == 0/);
+assert.match(nativeSupervisor, /CleanupComplete/);
+assert.equal(nativeRequired.schema_version, 1);
+for (const selection of nativeRequired.selections) {
+  assert.equal(selection.required_count, selection.required_names.length);
+  assert.ok(selection.required_count > 0);
+}
 assert.match(v2Workflow, /BROWSEROS_NATIVE_CLEANUP_BLOCKED/);
 assert.match(v2Workflow, /LINUX_REQUIRED_FRAMING_NOT_EXECUTED/);
 // Cargo can test this non-workspace path dependency via the host manifest
@@ -643,5 +669,50 @@ assert.match(windowsLsp, /actual_snapshot_bytes_obey_remaining_read_and_write_ca
 assert.match(windowsLsp, /unfinished_io_worker_stays_owned_until_it_can_be_joined/);
 assert.match(windowsLsp, /CLEANUP_SIGNAL/);
 assert.doesNotMatch(windowsLsp, /icacls\.exe/);
+
+
+// Terminal byte streams and ownership are separate from acceptance evidence.
+assert.match(terminal, /struct Utf8StreamDecoder/);
+assert.doesNotMatch(terminal, /String::from_utf8_lossy\(batch\)/);
+assert.match(terminal, /utf8_decoder_preserves_every_split_of_multibyte_output/);
+assert.match(terminal, /pipeline_preserves_split_utf8_across_flushes/);
+assert.match(terminalState, /startingSessions/);
+assert.match(terminalState, /TERM_BUFFER_MAX_BYTES = 128 \* 1024/);
+assert.match(terminalState, /TERM_HISTORY_MAX_BYTES = 256 \* 1024/);
+assert.match(terminalState, /receiveSessionMessage\(slot/);
+assert.match(terminalState, /slot\.phase === "closed" \|\| slot\.phase === "closing"/);
+assert.match(terminalState, /termBufferNotice/);
+assert.doesNotMatch(terminalState, /termBuffers\.set\(id, \[\]\)/);
+
+// One absolute application deadline; start resource release before awaiting it.
+assert.match(shutdown, /APPLICATION_SHUTDOWN_BUDGET/);
+assert.match(shutdown, /pub fn shutdown_until/);
+assert.match(shutdown, /retained_tasks/);
+assert.match(shutdown, /self\.owners_complete && self\.failures\(\)\.is_empty\(\)/);
+assert.match(shutdown, /SHUTDOWN_DEPENDENCY_NOT_EXECUTED/);
+assert.match(shutdown, /CleanupOutcome::Pending/);
+assert.match(main, /\.shutdown_until\(deadline\)/);
+assert.match(main, /worker: std::sync::Mutex<Option<std::thread::JoinHandle<\(\)>>>/);
+assert.match(bridgeLifecycle, /register_with_deadline\("kill-terminals"/);
+assert.match(bridgeLifecycle, /terminal::shutdown_until\(deadline\)/);
+assert.match(terminalCommands, /fn publish_terminal/);
+assert.match(terminalCommands, /state\.shutdown_requested\.load\(Ordering::Acquire\)/);
+assert.match(windowsLsp, /LSP_APPLICATION_SHUTTING_DOWN/);
+assert.match(windowsLsp, /fn retire_shutdown_sessions/);
+assert.match(windowsLsp, /shutdown_admission_rejects_new_reservations_and_late_publication/);
+assert.match(startup, /prepare_native_recovery/);
+assert.match(sandboxLifecycle, /initialize_recovery_store/);
+assert.match(sandboxLifecycle, /recover_abandoned_profiles/);
+assert.match(sandboxLifecycle, /SANDBOX_RECOVERY_IDENTITY_NOT_BOUND/);
+assert.match(nativeRecovery, /pub fn delete_recorded_profile_tree/);
+assert.match(nativeRecovery, /RECOVERY_PROFILE_IDENTITY_CHANGED/);
+assert.match(nativeRecovery, /SetFileInformationByHandle/);
+assert.match(nativeRecovery, /OpenFileById/);
+assert.match(nativeRecovery, /hold_profile_cleanup_namespace/);
+assert.match(nativeRecovery, /RECOVERY_NAMESPACE_UNTRUSTED_WRITER/);
+assert.match(sandboxLifecycle, /namespace\.recheck/);
+const sandboxProduction = windowsSandbox.split('#[cfg(test)]\nmod tests')[0];
+assert.doesNotMatch(sandboxProduction, /std::fs::remove_dir_all/);
+assert.match(privateLease, /NOT a continuous descendant ACL monitor/);
 
 console.log('WINDOWS_LINUX_V2_SOURCE_CONTRACT=PASS (static-only, Windows GUI pending)');

@@ -70,6 +70,21 @@ pub fn prepare_workspace(app: &AppHandle) -> io::Result<()> {
         // Diagnostics are optional. Never fall back to a public temporary file.
         eprintln!("[startup] private diagnostic log unavailable: {:?}", error.kind());
     }
+    #[cfg(target_os = "windows")]
+    {
+        // Grid children install the same journal root but do not repeat the
+        // main process's recovery scan. A blocked recovery disables new native
+        // sandboxes through their owner; it must not delete unknown data or
+        // prevent the browser UI from displaying the diagnostic.
+        let recover_abandoned = crate::parse_grid_child_arg().is_none();
+        if crate::capabilities::agent::public_api::prepare_native_recovery(
+            &crate::workspace::data_dir(app),
+            recover_abandoned,
+            std::time::Instant::now() + std::time::Duration::from_secs(2),
+        ).is_err() {
+            eprintln!("[startup] native sandbox preparation: SANDBOX_RECOVERY_BLOCKED");
+        }
+    }
     let tabs = app.try_state::<tauri_plugin_browser_tabs::TabManagerState>()
         .ok_or_else(|| io::Error::other("BROWSER_PROFILE_MANAGER_UNAVAILABLE"))?;
     tabs.prepare_storage().map_err(|error| io::Error::other(error.to_string()))?;

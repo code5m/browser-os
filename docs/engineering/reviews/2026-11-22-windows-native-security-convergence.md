@@ -4,7 +4,8 @@
 仓库：`code5m/browser-os`  
 修复分支：`fix/windows-native-security-convergence-20261122`  
 首轮起点：`fix/windows-private-dir-acl-case@285542f57bd055592b4d5019e5a89e8555bcc805`  
-本轮接续：`fecfae2b062fa281a0ced3d0f006dcef5ce39ee2`，在同一修复分支收敛复审遗漏
+第二轮接续：`fecfae2b062fa281a0ced3d0f006dcef5ce39ee2`  
+第三轮审查起点：`add44f3b599b526a14ba28c5f993f51cb4561bae`，在同一分支修复确认的问题；本台账对应其后的本次提交
 
 > 本轮交付是源码、回归定义和文档的修改。没有运行测试、校验脚本、构建、CI、NSIS、GUI 或性能测量。文中的“已修改”不代表原生问题已修愈，也不代表 Windows/Linux 回归通过。macOS 只有明确列出的源码准备，不能据此宣布 macOS 已支持。
 
@@ -88,7 +89,7 @@ Tauri 2.11.5 在 build 阶段初始化插件，在 RuntimeRunEvent::Ready 中执
 
 两处 setup 的第一项业务动作都是 prepare_workspace，失败后直接调用 report_failure 并退出。Windows 报告使用不需要 WebView profile 的原生 MessageBox；没有临时公共目录回退、自动删除数据或自动提权。
 
-成功路径依次为：准备 workspace 并保留跨进程凭证，尝试启用非 Linux 私有诊断日志，调用 TabManager::prepare_storage 准备共享浏览器 Profile，最后释放早到 URL。data_dir getter 只读已发布状态，不再承担隐式目录迁移。
+成功路径依次为：准备 workspace 并保留跨进程凭证，尝试启用非 Linux 私有诊断日志；Windows 初始化 sandbox 记录存储，主进程进行有界遗留恢复、Grid 不重复扫描；随后调用 TabManager::prepare_storage 准备共享浏览器 Profile，最后释放早到 URL。data_dir getter 只读已发布状态，不再承担隐式目录迁移。
 
 PendingOpenUrls 在 Builder 中管理，早于插件初始化生效。准备之前最多保存 64 条、每条 8,192 字节；超限、队列不可用或锁中毒会明确拒绝，并只记录错误代码，不记录原始 URL。ready=true 与提取 pending 在同一 Mutex 内完成，随后在锁外调用审计和 URL 处理。新到请求可与已取出的旧请求交错处理，但不会掉入“已取空队列、尚未置 ready”的丢项窗口。
 
@@ -106,9 +107,9 @@ Windows LSP 明确传播 rustup 配置、必需 rustc peer 和 stage 失败；ru
 
 ### 5.2 AppContainer 保留独立 package 策略
 
-AppContainer 目录仍通过 GetAppContainerFolderPath 获取，位于 app_data 之外。state 给 package 修改权限，runtime/snapshot 给读取执行权限；generic AppContainer 仅获得目录的非继承 RX（含列目录/遍历），不继承到源码文件。这类 package SID 树不能套用普通 owner+SYSTEM owner-only 规则，共享安全 crate 遇到 S-1-15-* 或不支持的 ACE 类型会明确拒绝。
+AppContainer 目录仍通过 GetAppContainerFolderPath 获取，位于 app_data 之外。state 给 package 修改权限，runtime/snapshot 给读取执行权限；generic AppContainer 在应用完全自有子树上仅获得非继承 FILE_TRAVERSE，不含 FILE_LIST_DIRECTORY、READ_DATA 或写权限；自有 package 保留业务所需 RX/M。这类 package SID 树不能套用普通 owner+SYSTEM owner-only 规则，共享安全 crate 遇到 S-1-15-* 或不支持的 ACE 类型会明确拒绝。
 
-本轮替换 AppContainer 的路径式 icacls。完全自有 state/runtime/snapshot 子树按独立原生策略收敛并逐对象回读，陌生 explicit grant/deny 不再残留后仍返回成功。通用 package 只允许目录上的非继承 RX，不传播到文件。OS 管理的 profile 祖先保留系统 ACE，仅句柄化添加并核对必要 traversal，不套用自有子树整体重置策略。state 长期句柄仅保留必要读取/遍历权限，避免一直持有 MAXIMUM_ALLOWED/DELETE 与子进程 cwd 自冲突。runtime 复制按实际读取量限额，不再使用无界 io::copy 后才比较长度。设置权限、复制和 spawn 使用相同 deadline/cancel，失败资源由有界所有者继续清理。自有 state 创建写读、跨包 state 拒绝、snapshot 写入拒绝、旧宽泛 ACL 修复均补了原生回归源码，执行为 NOT_RUN。
+本轮替换 AppContainer 的路径式 icacls。完全自有 state/runtime/snapshot 子树按独立原生策略收敛并逐对象回读，陌生 explicit grant/deny 不再残留后仍返回成功。通用 package 只允许自有目录上的非继承 FILE_TRAVERSE，不传播到文件；逐对象精确重写会清除自有子树上旧的 generic RX。OS 管理的 profile 祖先保留系统 ACE，仅句柄化添加并核对必要 traversal，不套用自有子树整体重置策略。旧版本若已在 OS 祖先留下 generic RX，而没有足够的来源证据，本轮不会擅自降权系统 ACE；不宣称整个 OS 祖先链都已去除列举权限。合规 profile 先完整只读探测，只有确认缺少授权才申请改权句柄；state 长期句柄仅保留必要读取/遍历权限，避免一直持有 MAXIMUM_ALLOWED/DELETE 与子进程 cwd 自冲突。runtime 复制按实际读取量限额，不再使用无界 io::copy 后才比较长度。设置权限、复制和 spawn 使用相同 deadline/cancel，失败资源由有界所有者继续清理。自有 state 创建写读、跨包 state 拒绝、snapshot 写入拒绝、旧宽泛 ACL 修复均补了原生回归源码，执行为 NOT_RUN。
 
 ### 5.3 ConPTY 与 vendored portable-pty
 
@@ -184,7 +185,7 @@ keyring 3.6.3 缺少 apple-native 时，macOS 可能选择 mock backend；本轮
 
 此前“只新增 workflow_dispatch 文件”的方案确实缺少默认分支登记条件。本轮复用 **`browseros-developer-feedback.yml`**：它已在默认 `master@f2c56312866d8756607a2a2339a240acc9d26641` 存在并支持手动触发。修复分支为该路径增加默认关闭的 `windows_native` 输入；以后单独授权时选择修复 ref 和其完整 source_sha，才调用同修订的 `windows-linux-v2-experimental.yml` reusable workflow。后者只有 workflow_call，避免再把功能分支独有文件宣传成可直接调度的入口。source job 要求 source_sha 等于所选 workflow ref 的 github.sha。普通 push 的快速检查规则保留；本次提交使用 `[skip ci]`。这里没有修改 master、创建 PR、合并或实际 dispatch。
 
-Windows 所有 required 入口，包括 shared crate、portable-pty、WebView2，统一使用 `windows-native-test-runner.ps1`。退出码、超时、实际执行数量、ignored、SKIP 一起判断；零通过不能成为 PASS。超时终止后再次等待进程退出；若清理未完成，后续 native/NSIS 步骤保持阻断。Profile 和 vendor 通过 host manifest 的 committed lockfile 运行；full suite 独立报告，ignored 不算验收。Linux 定义完整 native 回归并保留输出；GUI 和性能仍独立。NSIS 另需 build_windows_installer=true，产物永远不会自动成为安装/GUI 通过证据。
+Windows 所有 required 入口，包括 shared crate、portable-pty、WebView2，统一使用 `windows-native-test-runner.ps1`。独立 manifest 冻结关键用例名；同一 Job supervisor 先枚举测试，再逐名对应实际结果。仅有 passed>=1 不再足够，缺失/重复/ignored/SKIP/failed 均不能成为 required PASS。测试进程通过 PROC_THREAD_ATTRIBUTE_JOB_LIST 在创建时进入独立 kill-on-close Job，终止后需要主进程 signaled 且 Job ActiveProcesses==0；只观察父进程退出不能成为清理成功。清理未知时 quarantine 后续 native/NSIS 步骤。输出文件大小采用轮询阈值，不宣称硬磁盘配额。Profile 和 vendor 通过 host manifest 的 committed lockfile 运行；full suite 独立报告，ignored 不算验收。Linux framing 同步读取 required 名称清单并对账枚举、逐名结果和数量；Linux 全量 native 回归仍单独汇总并保留输出，GUI 和性能独立。NSIS 另需 build_windows_installer=true，产物永远不会自动成为安装/GUI 通过证据。
 
 每次未来复验都要记录完整 SHA、平台、构建参数、实际测试数量与 passed/failed/ignored、独立 full-suite 结果，以及 GUI/性能是否运行。本轮执行状态全部为 NOT_RUN。
 
@@ -209,6 +210,47 @@ Windows 所有 required 入口，包括 shared crate、portable-pty、WebView2�
 
 不存在“没有运行就改写成 PASS”的补丁。Windows/Linux 编译、原生效果、WebView2、NSIS/安装升级、BFC 真实账号、GUI 与真实性能仍需另行执行；macOS Grid、LSP sandbox、WKWebView 数据隔离及签名分发也没有在本请求中实现。
 
+## 9.2 第三轮：哪些复审意见成立，哪些需要限定
+
+对照的是 add44f3b 的实际源码，不把几份重复审查相加成“新缺陷数量”。源码缺陷、条件性兼容风险和按请求未运行的验收分别记录：
+
+| 复审意见 | 判断 | 本次源码处理 |
+| --- | --- | --- |
+| ALL APPLICATION PACKAGES 的 generic RX 包含列目录 | 成立；旧注释已有 RX/list 说明，但权限超出仅遍历需要 | 完全自有子树收窄为 FILE_TRAVERSE，own package 保留 RX/M，补跨包 list 拒绝正反例定义 |
+| profile 即使合规仍申请 MAXIMUM_ALLOWED | 可以确认有无条件改权打开；共享冲突尚未复现 | 先完整只读 probe，确实缺 grant 才打开修改；继续用原生身份复核 |
+| 32 个终端按每个 4 秒等待，应用无总截止 | 成立 | 关闭入口后，各资源独立启动清理，共享 APPLICATION_SHUTDOWN_BUDGET=10 秒的绝对截止；依赖关系保留 flush→close-tabs→Grid |
+| 进程退出后内存 reaper 不能完成 Profile 清理 | 成立 | AppContainer 持久记录、活动 owner/Job 证据和下次启动恢复；未知记录保留，不借任意日志路径删除 |
+| Channel 早到数据被 spawn 返回后的初始化清空 | 成立 | starting slot 在调用前存在，返回时绑定身份，保留已收数据 |
+| 隐藏终端无界输出、关闭后迟到消息重建 buffer | 成立 | 输出有字节及条数预算、截断提示；关闭 slot 丢弃后续消息，不累积无限 tombstone |
+| 每批 from_utf8_lossy 损坏跨批字符 | 成立 | 流式保存不完整 UTF-8 尾部；有效中文/emoji 跨 flush 不替换，真实无效字节及 EOF 残缺有明确规则 |
+| 测试超时只证明主进程退出 | 成立 | 原子 Job 归属、完整进程数归零，未知清理阻断后续用例 |
+| 过滤器仅 passed>=1 不能发现必需用例减少 | 成立 | required 用例 manifest、执行前枚举、逐名结果、数量一致性；不把无效旧过滤器保留为证据 |
+| default branch 与 ref 输入不同，所以分支入口一定不能用 | 这个结论不成立 | 使用已登记 workflow 路径与显式 ref；CLI 交互询问时从所选 ref 读取输入定义，显式输入与同一 ref 一起交给 dispatch API。网页默认表单不作为执行契约；实际 dispatch 仍 NOT_RUN |
+| 冷准备租约没有持续子对象监测 | 是机制边界，不能表述成已实现持续防篡改 | 明确 root-only 热路径只证根身份/ACL；不重新在创建标签页时深扫，不把后台抽查包装成对同一普通用户进程的隔离保证 |
+| 新 SHA 没有 Windows/Linux/GUI PASS | 事实，但不是又一个源码缺陷 | 按用户要求不执行；所有对应状态保持 NOT_RUN |
+
+### 应用退出与残留恢复的边界
+
+关窗立即关闭终端 bridge 发布入口；native terminal admission 和 Windows LSP/AppContainer admission 同步进入关闭状态。已经进入 OS 创建但尚未发布的终端也计入资源许可，返回后再次检查关闭状态；不能把 session 重新插回已经 drain 的表。LSP 启动预留、已发布会话和清理中的会话都保留容量，接收循环观察应用关闭，不等待原请求超时后才取消。
+
+ShutdownCoordinator 在独立线程启动各资源 owner，所有原生等待接收同一个 absolute deadline；慢任务不阻止其他独立资源开始释放。会话落盘与关闭 WebView 仍有明确依赖。线程创建失败时保留闭包及其资源，依赖该任务的后续任务保持 Pending，不伪装成已经执行。各任务结果全部返回后，还需 join 已启动 task owner，owners_complete 才能使总报告成功；不能只依据结果列表全为 Ok。截止后报告 Pending/失败并以非零退出；scheduler/task JoinHandle 在进程仍存活时继续由 owner 持有，不能将“协调器给出了报告”写成“所有资源清完”。
+
+应用退出仍会终止这些内存 owner。可恢复的 AppContainer 状态必须在资源逃逸前记录持久 ownership intent，并用严格 BrowserOS 名称、原生派生 package SID、OS 解析位置、根对象身份和活动 lease/Job 再确认。恢复不使用 journal 里的任意路径作为打开或删除目标；身份不符、链接和仍持有独占记录 lease 的活跃 owner 都不能被接管。若已获得记录独占权但该记录绑定的 Job 仍活跃，则进入保留 lease 的清理流程，不能当成恢复完成或直接删除仍被进程使用的 Profile。
+
+文件删除走有界句柄相对清理；注销另用 DeleteAppContainerProfile 名称 API，不能宣称它变成了句柄 API。绑定阶段识别 OS Profile 的整个 package 范围，记录并固定它外侧 namespace 的原生身份；恢复时从 volume/file ID 再打开并复核，持外侧 pin 跨注销调用，不持有 API 将删除范围内的文件句柄。布局无法确认、外侧目录身份改变或存在不可信写权限时保持 Pending。未完成根身份绑定的创建崩溃、旧版没有记录的遗留 Profile，都不属于可自动证明的删除对象。
+
+恢复初始化、正在扫描的恢复生产者、Profile controls、待清理任务及 reaper 自身都纳入关闭屏障。不能在队列暂时为空时漏掉稍后登记的恢复任务，也不能在 registry 尚未安装成功时忽略已经启动的清理线程。服务停止只发生在关闭接收且生产者和资源都归零后；只 join 已结束线程，超时保留 owner 和记录。无法证明所有权或未在预算内完成时保留记录，阻止新的 sandbox 准备并输出固定错误码，不删除未知目录。
+
+主进程在私有 workspace 已准备后执行一个 2 秒预算的恢复阶段；Grid 只初始化记录存储，不重复扫描。恢复失败不令整个 GUI 崩溃，Agent 的原生 sandbox 功能保持阻断。预算在原生调用边界检查，不能硬中断任意文件系统驱动调用；应用级等待总截止和文件系统单调用可中断性不是同一承诺。
+
+### 保留的实际验收空白
+
+本轮没有调用原生测试执行器、Add-Type、Cargo、Node/Python 校验器、构建器、checksum、workflow_dispatch、安装包或 GUI 驱动。新的回归定义证明的是以后必须覆盖的场景，不是已经获得的运行结果。Windows 原生效果、Linux 回归、同一 SHA 的安装版、真实 BFC 会话与大缓存性能都仍是 NOT_RUN。
+
+### 下次移植 macOS 时沿用的约束
+
+将身份/权限语义、资源所有权、数据流边界、容量限制与证据归属分别设计：不把 POSIX mode 当作 extended ACL 的全部语义，不把线程已入 reaper 当作应用退出完成，不把一次字符串转换当作流式 Unicode 解码，也不把一个过滤器通过当作整组用例已执行。先明确每项 native 能力及失败行为，再补真实平台用例；源码更新和运行证据分别交付。
+
 ## 10. 源码索引
 
 - [共享 Windows 安全实现](../../../crates/browseros-platform-security/src/windows.rs)
@@ -221,7 +263,7 @@ Windows 所有 required 入口，包括 shared crate、portable-pty、WebView2�
 - [Windows LSP](../../../src-tauri/src/capabilities/agent/coding_lsp_windows.rs)
 - [Windows AppContainer](../../../src-tauri/src/capabilities/agent/windows_sandbox.rs)
 - [portable-pty 本地补丁说明](../../../src-tauri/vendor/portable-pty/README.md)
-- [manual-only 工作流](../../../.github/workflows/windows-linux-v2-experimental.yml)
+- [可复用 Windows 原生工作流](../../../.github/workflows/windows-linux-v2-experimental.yml)
 - [源码契约定义](../../../tests/check-windows-linux-v2-source-contract.mjs)
 
 ### 第二轮新增源码
@@ -232,3 +274,16 @@ Windows 所有 required 入口，包括 shared crate、portable-pty、WebView2�
 - [终端生产生命周期](../../../src-tauri/src/capabilities/terminal/terminal.rs)
 - [已登记的手动调度入口](../../../.github/workflows/browseros-developer-feedback.yml)
 - [required native 统一计数器](../../../scripts/windows-native-test-runner.ps1)
+
+### 第三轮新增源码与官方合同
+
+- [应用级关闭协调器](../../../src-tauri/src/shutdown.rs)
+- [AppContainer 原生恢复基础设施](../../../crates/browseros-platform-security/src/windows/recovery.rs)
+- [Agent Profile 持久生命周期](../../../src-tauri/src/capabilities/agent/windows_sandbox/lifecycle.rs)
+- [终端有界输出与启动状态](../../../src/capabilities/terminal/state/useTerminalStore.ts)
+- [Windows 测试进程 Job supervisor](../../../scripts/windows-native-test-supervisor.cs)
+- [必需原生测试名称清单](../../../scripts/windows-native-required-tests.json)
+- [GitHub 手动调度及指定 ref 规则](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow)
+- [GitHub CLI 的所选 ref 与输入读取实现](https://github.com/cli/cli/blob/trunk/pkg/cmd/workflow/run/run.go)
+- [DeleteAppContainerProfile 的重复调用与句柄关闭合同](https://learn.microsoft.com/en-us/windows/win32/api/userenv/nf-userenv-deleteappcontainerprofile)
+- [Windows 嵌套 Job 的子进程与终止语义](https://learn.microsoft.com/en-us/windows/win32/procthread/nested-jobs)

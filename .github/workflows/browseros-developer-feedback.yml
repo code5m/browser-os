@@ -112,9 +112,11 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # This file already has workflow_dispatch on the default branch. Select the
-  # repair branch as the dispatch ref; the relative reusable workflow is loaded
-  # from that same commit. No default-branch edit, PR or merge is required.
+  # This workflow path already has workflow_dispatch on the default branch.
+  # GitHub CLI resolves input definitions from the selected --ref; the relative
+  # reusable workflow is tied to that ref's commit and requires the matching SHA.
+  # The default-branch UI can expose a different input form. This source wiring
+  # has not been dispatched or exercised and is not native acceptance evidence.
   windows-native:
     if: github.event_name == 'workflow_dispatch' && inputs.windows_native == true
     uses: ./.github/workflows/windows-linux-v2-experimental.yml

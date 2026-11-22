@@ -15,14 +15,10 @@ fn term_measure_mode(app: &AppHandle) -> bool {
 /// `term_spawn_channel`（夹具锚定前端不得调用本命令）。
 #[tauri::command]
 pub fn term_spawn(app: AppHandle) -> Result<TermInfo, String> {
+    reject_terminal_during_shutdown(&app)?;
     let measure = term_measure_mode(&app);
     let (info, session) = terminal::spawn_terminal(Arc::new(EventSink(app.clone())), measure)?;
-    app.state::<AppState>()
-        .terminals
-        .lock()
-        .unwrap()
-        .insert(info.id.clone(), session);
-    Ok(info)
+    publish_terminal(&app, info, session)
 }
 
 /// 创建并启动一个 PTY 终端，输出走**每终端独立 Channel 单播**（F4 Channel sink，前端唯一入口）。
@@ -31,13 +27,31 @@ pub fn term_spawn_channel(
     app: AppHandle,
     channel: tauri::ipc::Channel<serde_json::Value>,
 ) -> Result<TermInfo, String> {
+    reject_terminal_during_shutdown(&app)?;
     let measure = term_measure_mode(&app);
     let (info, session) = terminal::spawn_terminal(Arc::new(ChannelSink(channel)), measure)?;
-    app.state::<AppState>()
-        .terminals
-        .lock()
-        .unwrap()
-        .insert(info.id.clone(), session);
+    publish_terminal(&app, info, session)
+}
+
+fn reject_terminal_during_shutdown(app: &AppHandle) -> Result<(), String> {
+    if app.state::<AppState>().shutdown_requested.load(Ordering::Acquire) {
+        return Err("TERM_APPLICATION_SHUTTING_DOWN".into());
+    }
+    Ok(())
+}
+
+/// Linearize publication with the shutdown drain. Native creation may have
+/// started before exit was requested; it must never repopulate the drained map.
+fn publish_terminal(app: &AppHandle, info: TermInfo, mut session: TerminalSession) -> Result<TermInfo, String> {
+    let state = app.state::<AppState>();
+    let mut terminals = state.terminals.lock().unwrap_or_else(|e| e.into_inner());
+    if state.shutdown_requested.load(Ordering::Acquire) {
+        session.request_close();
+        drop(terminals);
+        drop(session);
+        return Err("TERM_APPLICATION_SHUTTING_DOWN".into());
+    }
+    terminals.insert(info.id.clone(), session);
     Ok(info)
 }
 

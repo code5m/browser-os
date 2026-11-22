@@ -1,218 +1,321 @@
-//! M0-2.b：幂等关闭协调器（`ShutdownCoordinator`）——统一生命周期核心的最小实现。
+//! Idempotent application shutdown with one absolute deadline.
 //!
-//! 当前已由 main.rs 的 CloseRequested/ExitRequested 和 bridge::register_shutdown_tasks
-//! 实际接入，覆盖后台扫描停止信号、调度器、会话落盘、WebView、PTY、Grid 与脚本。
-//! 注意：这是资源 Owner 清理执行框架，不等价于实测所有 OS 资源都已归零；
-//! 安装版进程树的 PID / FD / RSS / PSS 仍需要单独运行场景取证。
-//!
-//! 契约（对应 M0-2 验收项）：
-//!   1. 幂等：连续调用两次不会产生重复副作用，也不会 panic 或死锁。
-//!   2. 失败隔离：单个清理任务返回 `Err` 或 panic，都不阻止其余资源回收。
-//!   3. 可观测：每次执行返回结构化报告，记录每个任务的成功/失败/panic。
-//!
-//! 并发语义（明确约定，避免误用）：
-//!   - 首次调用者执行全部任务并缓存报告；已完成的后续调用直接返回同一份报告。
-//!   - 若清理**尚未结束**时再次调用（其他线程并发，或清理任务内部重入），
-//!     立即返回「进行中」报告且**不阻塞**：清理任务常持有业务锁（如 `AppState` 的
-//!     `terminals`/`child_layouts`），阻塞等待极易与这些锁形成死锁。
-//!     需要「关闭已完成」语义的调用方应在 M0-2.c 迁移时配合退出流程等待，而非在此加锁。
-
+//! Resource owners start independently unless an explicit dependency is declared.
+//! The coordinator retains the scheduler thread; that scheduler retains all task
+//! JoinHandles until they finish. A deadline returns Pending, never a successful
+//! cleanup claim. Process exit still ends these owners: recoverable native state
+//! therefore has its own durable, identity-checked recovery journal.
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::{Arc, Mutex};
-use std::thread::ThreadId;
+use std::sync::{Arc, Condvar, Mutex};
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
-/// 单个清理任务的最终结果。
+pub const APPLICATION_SHUTDOWN_BUDGET: Duration = Duration::from_secs(10);
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CleanupOutcome {
-    /// 清理成功。
     Ok,
-    /// 任务返回 `Err(msg)`：已隔离，其余任务继续执行。
     Failed(String),
-    /// 任务 panic：已隔离（转为结果），其余任务继续执行，panic 不向上传播。
     Panicked(String),
+    /// Work has not completed by the application's shared deadline.
+    Pending(String),
 }
 
-/// 单个清理任务的报告。
 #[derive(Debug, Clone)]
 pub struct CleanupReport {
     pub name: String,
     pub outcome: CleanupOutcome,
 }
-
 impl CleanupReport {
-    /// 是否属于需要归因的失败（含 panic）。
     pub fn is_failure(&self) -> bool {
         !matches!(self.outcome, CleanupOutcome::Ok)
     }
 }
 
-/// 一次关闭执行的整体报告。
 #[derive(Debug, Clone)]
 pub struct ShutdownReport {
-    /// 各任务结果，顺序与注册顺序一致。
     pub reports: Vec<CleanupReport>,
-    /// 为 true 表示本次调用**未**执行清理：此前已关闭，或清理正在由其他调用者执行（含重入）。
     pub already_shutdown: bool,
+    /// True only after the coordinator has joined all started task owners.
+    /// Individual outcomes still determine whether resource cleanup succeeded.
+    pub owners_complete: bool,
 }
-
 impl ShutdownReport {
-    /// 全部任务成功（无失败、无 panic）且本次确实执行了清理。
     pub fn ok(&self) -> bool {
-        !self.already_shutdown && self.failures().is_empty()
+        !self.already_shutdown && self.owners_complete && self.failures().is_empty()
     }
-
-    /// 失败与 panic 的任务列表，供调用方归因与日志。
     pub fn failures(&self) -> Vec<&CleanupReport> {
         self.reports.iter().filter(|r| r.is_failure()).collect()
     }
-
-    /// 已执行的任务数量（用于测试与观测）。
+    pub fn pending(&self) -> usize {
+        self.reports.iter().filter(|r| matches!(r.outcome, CleanupOutcome::Pending(_))).count()
+    }
+    /// Legacy accessor: number of task reports, including Pending. This is
+    /// never evidence that pending cleanup actually completed.
     pub fn executed(&self) -> usize {
         self.reports.len()
     }
 }
 
-type CleanupTask = Box<dyn FnOnce() -> Result<(), String> + Send>;
-
-struct Inner {
-    tasks: Vec<(String, CleanupTask)>,
-    /// 关闭开始后禁止再注册，避免「注册到一半的清理」造成资源遗漏。
-    closed: bool,
-    /// 当前正在执行清理的线程（用于并发/重入判定，避免阻塞等待导致死锁）。
-    runner: Option<ThreadId>,
+type CleanupTask = Box<dyn FnOnce(Instant) -> Result<(), String> + Send>;
+struct RegisteredTask {
+    name: String,
+    after: Vec<String>,
+    run: CleanupTask,
 }
-
-/// 幂等关闭协调器：`Send + Sync`，可交由 Tauri `manage` 作为全局状态。
+struct Progress {
+    reports: Vec<CleanupReport>,
+    finished: bool,
+}
+struct Execution {
+    progress: Mutex<Progress>,
+    changed: Condvar,
+    // Retain captures when spawning the scheduler/task thread itself fails.
+    // A failed Builder::spawn otherwise drops its closure before it can run.
+    scheduled: Mutex<Option<Vec<RegisteredTask>>>,
+    retained_tasks: Mutex<Vec<Arc<Mutex<Option<CleanupTask>>>>>,
+}
+struct Inner {
+    tasks: Vec<RegisteredTask>,
+    closed: bool,
+    execution: Option<Arc<Execution>>,
+    /// Own the scheduler even after the foreground deadline has expired.
+    worker: Option<JoinHandle<()>>,
+}
 pub struct ShutdownCoordinator {
     inner: Mutex<Inner>,
-    /// 首次执行结果的缓存；有值即代表清理已完成。
-    report: Mutex<Option<Arc<ShutdownReport>>>,
 }
-
 impl Default for ShutdownCoordinator {
-    fn default() -> Self {
-        Self::new()
-    }
+    fn default() -> Self { Self::new() }
 }
-
 impl ShutdownCoordinator {
     pub fn new() -> Self {
-        Self {
-            inner: Mutex::new(Inner {
-                tasks: Vec::new(),
-                closed: false,
-                runner: None,
-            }),
-            report: Mutex::new(None),
-        }
+        Self { inner: Mutex::new(Inner {
+            tasks: Vec::new(), closed: false, execution: None, worker: None,
+        }) }
     }
 
-    /// 注册一个清理任务。清理开始后注册会被拒绝（返回 `Err`，不 panic）。
+    /// Preserve the historical registration order for ordinary tasks.
     pub fn register<F>(&self, name: impl Into<String>, task: F) -> Result<(), String>
-    where
-        F: FnOnce() -> Result<(), String> + Send + 'static,
-    {
-        let name = name.into();
+    where F: FnOnce() -> Result<(), String> + Send + 'static {
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        if inner.closed {
-            return Err(format!("关闭已开始，拒绝注册清理任务：{name}"));
+        let after = inner.tasks.last().map(|t| vec![t.name.clone()]).unwrap_or_default();
+        Self::insert(&mut inner, name.into(), after, Box::new(move |_| task()))
+    }
+
+    /// Independent resource owners share the SAME deadline. Dependencies only
+    /// impose completion order; an error in one task does not suppress cleanup.
+    pub fn register_with_deadline<F>(
+        &self, name: impl Into<String>, after: &[&str], task: F,
+    ) -> Result<(), String>
+    where F: FnOnce(Instant) -> Result<(), String> + Send + 'static {
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        Self::insert(&mut inner, name.into(),
+            after.iter().map(|name| (*name).to_owned()).collect(), Box::new(task))
+    }
+
+    fn insert(inner: &mut Inner, name: String, after: Vec<String>, run: CleanupTask) -> Result<(), String> {
+        if inner.closed { return Err(format!("关闭已开始，拒绝注册清理任务：{name}")); }
+        if inner.tasks.iter().any(|t| t.name == name) {
+            return Err(format!("SHUTDOWN_DUPLICATE_TASK: {name}"));
         }
-        inner.tasks.push((name, Box::new(task)));
+        // Depend only on already-registered tasks: cycles cannot be constructed.
+        if after.iter().any(|dependency| !inner.tasks.iter().any(|t| &t.name == dependency)) {
+            return Err(format!("SHUTDOWN_UNKNOWN_DEPENDENCY: {name}"));
+        }
+        inner.tasks.push(RegisteredTask { name, after, run });
         Ok(())
     }
 
-    /// 是否已执行过清理（M0-2.c 迁移退出路径后使用）。
     #[allow(dead_code)]
     pub fn is_shutdown(&self) -> bool {
-        self.report
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .is_some()
+        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        inner.execution.as_ref().map(|execution| {
+            let progress = execution.progress.lock().unwrap_or_else(|e| e.into_inner());
+            progress.finished && !progress.reports.iter()
+                .any(|report| matches!(report.outcome, CleanupOutcome::Pending(_)))
+        }).unwrap_or(false)
     }
 
-    /// 上一次执行的完整报告（重复调用只能拿到空报告，诊断取历史时用本方法）。
     #[allow(dead_code)]
     pub fn last_report(&self) -> Option<Arc<ShutdownReport>> {
-        self.report
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone()
+        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        inner.execution.as_ref().map(|execution| {
+            let progress = execution.progress.lock().unwrap_or_else(|e| e.into_inner());
+            Arc::new(ShutdownReport {
+                reports: progress.reports.clone(), already_shutdown: false,
+                owners_complete: progress.finished,
+            })
+        })
     }
 
-    /// 已注册但尚未执行的任务数量（M0-2.c 迁移与诊断使用）。
     #[allow(dead_code)]
     pub fn pending_tasks(&self) -> usize {
-        self.inner
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .tasks
-            .len()
+        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(execution) = &inner.execution {
+            execution.progress.lock().unwrap_or_else(|e| e.into_inner()).reports.iter()
+                .filter(|r| matches!(r.outcome, CleanupOutcome::Pending(_))).count()
+        } else { inner.tasks.len() }
     }
 
-    /// 执行关闭：幂等、失败隔离、不因重入/并发而死锁。
     pub fn shutdown(&self) -> Arc<ShutdownReport> {
-        // 已完成：本次不再执行任何任务。返回空报告并标记 already_shutdown，
-        // 保持「reports 描述本次调用」的语义；历史结果可用 last_report() 查询。
-        if self
-            .report
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .is_some()
-        {
-            return Arc::new(ShutdownReport {
-                reports: Vec::new(),
-                already_shutdown: true,
-            });
-        }
+        self.shutdown_until(Instant::now() + APPLICATION_SHUTDOWN_BUDGET)
+    }
 
-        let me = std::thread::current().id();
-        let tasks = {
+    /// The caller never adds a fresh timeout for each task or terminal.
+    /// Reentrant/concurrent requests return immediately without waiting on locks
+    /// held by the first caller's cleanup workers.
+    pub fn shutdown_until(&self, deadline: Instant) -> Arc<ShutdownReport> {
+        let execution = {
             let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             if inner.closed {
-                // 清理进行中（并发或重入）：不阻塞、不重复执行。
                 return Arc::new(ShutdownReport {
-                    reports: Vec::new(),
-                    already_shutdown: true,
+                    reports: Vec::new(), already_shutdown: true, owners_complete: false,
                 });
             }
-            let _ = me;
             inner.closed = true;
-            inner.runner = Some(me);
-            std::mem::take(&mut inner.tasks)
+            let tasks = std::mem::take(&mut inner.tasks);
+            let execution = Arc::new(Execution {
+                progress: Mutex::new(Progress {
+                    reports: tasks.iter().map(|t| CleanupReport {
+                        name: t.name.clone(),
+                        outcome: CleanupOutcome::Pending("SHUTDOWN_WAITING_FOR_DEPENDENCY".into()),
+                    }).collect(),
+                    finished: tasks.is_empty(),
+                }),
+                changed: Condvar::new(),
+                scheduled: Mutex::new(Some(tasks)),
+                retained_tasks: Mutex::new(Vec::new()),
+            });
+            inner.execution = Some(execution.clone());
+            let has_tasks = !execution.progress.lock().unwrap_or_else(|e| e.into_inner()).reports.is_empty();
+            if has_tasks {
+                let progress = execution.clone();
+                match std::thread::Builder::new().name("browseros-cleanup-owner".into())
+                    .spawn(move || run_tasks(deadline, progress)) {
+                    Ok(worker) => inner.worker = Some(worker),
+                    Err(error) => {
+                        let mut state = execution.progress.lock().unwrap_or_else(|e| e.into_inner());
+                        for report in &mut state.reports {
+                            report.outcome = CleanupOutcome::Pending(format!("SHUTDOWN_WORKER_START_FAILED: {error}"));
+                        }
+                        state.finished = true;
+                    }
+                }
+            }
+            execution
         };
-
-        let mut reports = Vec::with_capacity(tasks.len());
-        for (name, task) in tasks {
-            let outcome = match catch_unwind(AssertUnwindSafe(task)) {
-                Ok(Ok(())) => CleanupOutcome::Ok,
-                Ok(Err(msg)) => CleanupOutcome::Failed(msg),
-                Err(payload) => CleanupOutcome::Panicked(panic_message(payload)),
-            };
-            reports.push(CleanupReport { name, outcome });
+        let mut state = execution.progress.lock().unwrap_or_else(|e| e.into_inner());
+        while !state.finished {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() { break; }
+            state = execution.changed.wait_timeout(state, remaining)
+                .unwrap_or_else(|e| e.into_inner()).0;
         }
-
         let report = Arc::new(ShutdownReport {
-            reports,
-            already_shutdown: false,
+            reports: state.reports.clone(), already_shutdown: false,
+            owners_complete: state.finished,
         });
-        {
+        drop(state);
+        // Join only when the owned scheduler has actually ended. A pending
+        // thread remains owned, and is never mistaken for completed cleanup.
+        let worker = {
             let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-            inner.runner = None;
-        }
-        *self.report.lock().unwrap_or_else(|e| e.into_inner()) = Some(report.clone());
+            if inner.worker.as_ref().is_some_and(|worker| worker.is_finished()) {
+                inner.worker.take()
+            } else { None }
+        };
+        if let Some(worker) = worker { let _ = worker.join(); }
         report
     }
 }
 
-/// 从 panic payload 提取可读信息（panic 不应导致关闭流程二次崩溃）。
+fn run_tasks(deadline: Instant, execution: Arc<Execution>) {
+    let tasks = execution.scheduled.lock().unwrap_or_else(|e| e.into_inner())
+        .take().expect("scheduler owns the registered task list once");
+    let names: Vec<String> = tasks.iter().map(|task| task.name.clone()).collect();
+    let mut waiting: Vec<Option<RegisteredTask>> = tasks.into_iter().map(Some).collect();
+    let mut finished = vec![false; waiting.len()];
+    let mut running = vec![false; waiting.len()];
+    let mut workers = Vec::new();
+    let (sender, receiver) = std::sync::mpsc::channel::<(usize, CleanupOutcome)>();
+    let mut completed = 0;
+    while completed < waiting.len() {
+        for index in 0..waiting.len() {
+            let eligible = waiting[index].as_ref().is_some_and(|task|
+                task.after.iter().all(|dependency|
+                    names.iter().position(|name| name == dependency).is_some_and(|i| finished[i])
+                )
+            );
+            if !eligible { continue; }
+            let task = waiting[index].take().expect("eligible task");
+            {
+                let mut state = execution.progress.lock().unwrap_or_else(|e| e.into_inner());
+                state.reports[index].outcome = CleanupOutcome::Pending("SHUTDOWN_CLEANUP_IN_PROGRESS".into());
+            }
+            let sender = sender.clone();
+            let name = task.name;
+            let retained = Arc::new(Mutex::new(Some(task.run)));
+            execution.retained_tasks.lock().unwrap_or_else(|e| e.into_inner()).push(retained.clone());
+            match std::thread::Builder::new().name(format!("cleanup-{name}"))
+                .spawn(move || {
+                    let task = retained.lock().unwrap_or_else(|e| e.into_inner())
+                        .take().expect("cleanup task is owned once");
+                    let outcome = match catch_unwind(AssertUnwindSafe(|| task(deadline))) {
+                        Ok(Ok(())) => CleanupOutcome::Ok,
+                        Ok(Err(message)) => CleanupOutcome::Failed(message),
+                        Err(payload) => CleanupOutcome::Panicked(panic_message(payload)),
+                    };
+                    let _ = sender.send((index, outcome));
+                }) {
+                Ok(worker) => {
+                    running[index] = true;
+                    workers.push(worker);
+                }
+                Err(error) => {
+                    // The task never ran. Keep dependent resources pending;
+                    // recording a spawn failure does not complete a dependency.
+                    completed += 1;
+                    execution.progress.lock().unwrap_or_else(|e| e.into_inner()).reports[index].outcome =
+                        CleanupOutcome::Pending(format!("SHUTDOWN_TASK_START_FAILED: {error}"));
+                    execution.changed.notify_all();
+                }
+            }
+        }
+        if completed == waiting.len() { break; }
+        if !running.iter().any(|active| *active) {
+            // Only dependencies of tasks that could not start remain. Retain
+            // their captures too; never run them out of order, spin or wait on
+            // a result that no worker can send.
+            for (index, task) in waiting.iter_mut().enumerate() {
+                if let Some(task) = task.take() {
+                    execution.retained_tasks.lock().unwrap_or_else(|e| e.into_inner())
+                        .push(Arc::new(Mutex::new(Some(task.run))));
+                    execution.progress.lock().unwrap_or_else(|e| e.into_inner()).reports[index].outcome =
+                        CleanupOutcome::Pending("SHUTDOWN_DEPENDENCY_NOT_EXECUTED".into());
+                }
+            }
+            break;
+        }
+        if let Ok((index, outcome)) = receiver.recv() {
+            running[index] = false;
+            finished[index] = true;
+            completed += 1;
+            execution.progress.lock().unwrap_or_else(|e| e.into_inner()).reports[index].outcome = outcome;
+            execution.changed.notify_all();
+        }
+    }
+    // The application deadline is enforced by the caller, not by detaching
+    // these owners. A blocked task and its resources stay in this owner thread.
+    for worker in workers { let _ = worker.join(); }
+    execution.progress.lock().unwrap_or_else(|e| e.into_inner()).finished = true;
+    execution.changed.notify_all();
+}
+
 fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
-    if let Some(s) = payload.downcast_ref::<&str>() {
-        return (*s).to_string();
-    }
-    if let Some(s) = payload.downcast_ref::<String>() {
-        return s.clone();
-    }
-    "未知 panic（无可读 payload）".to_string()
+    if let Some(message) = payload.downcast_ref::<&str>() { return (*message).to_owned(); }
+    if let Some(message) = payload.downcast_ref::<String>() { return message.clone(); }
+    "未知 panic（无可读 payload）".to_owned()
 }
 
 #[cfg(test)]
@@ -428,6 +531,73 @@ mod shutdown_tests {
         assert_eq!(nested.load(Ordering::SeqCst), 1, "重入后任务应正常收尾");
         assert_eq!(report.executed(), 1);
         assert!(report.ok());
+    }
+
+    #[test]
+    fn shared_deadline_reports_pending_without_blocking_independent_cleanup() {
+        let coordinator = ShutdownCoordinator::new();
+        let (release, blocked) = std::sync::mpsc::channel();
+        let independent = Arc::new(AtomicUsize::new(0));
+        coordinator.register("blocked-profile-owner", move || {
+            blocked.recv().map_err(|_| "FIXTURE_RELEASE_FAILED".to_owned())?;
+            Ok(())
+        }).unwrap();
+        let hits = independent.clone();
+        coordinator.register_with_deadline("independent-job-owner", &[], move |_| {
+            hits.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }).unwrap();
+        let deadline = Instant::now() + Duration::from_millis(100);
+        let report = coordinator.shutdown_until(deadline);
+        assert!(!report.ok(), "unreleased owner must not become a PASS");
+        assert!(report.pending() >= 1);
+        // Allow the retained owner to complete even when a slow host has not
+        // scheduled the independent worker before the foreground deadline.
+        release.send(()).unwrap();
+        let until = Instant::now() + Duration::from_secs(2);
+        while !coordinator.is_shutdown() && Instant::now() < until {
+            std::thread::yield_now();
+        }
+        assert!(coordinator.is_shutdown(), "timed-out owners must remain managed");
+        assert_eq!(independent.load(Ordering::SeqCst), 1);
+        assert!(coordinator.last_report().unwrap().ok());
+        assert!(coordinator.shutdown().already_shutdown);
+    }
+
+    #[test]
+    fn independent_owners_receive_the_same_absolute_deadline() {
+        let coordinator = ShutdownCoordinator::new();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        for index in 0..32 {
+            let seen = seen.clone();
+            coordinator.register_with_deadline(format!("resource-{index}"), &[], move |deadline| {
+                seen.lock().unwrap().push(deadline);
+                Ok(())
+            }).unwrap();
+        }
+        let deadline = Instant::now() + Duration::from_secs(3);
+        assert!(coordinator.shutdown_until(deadline).ok());
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 32);
+        assert!(seen.iter().all(|actual| *actual == deadline));
+    }
+
+    #[test]
+    fn cleanup_dependency_finishes_before_dependent_resource_closes() {
+        let coordinator = ShutdownCoordinator::new();
+        let flushed = Arc::new(AtomicUsize::new(0));
+        let marker = flushed.clone();
+        coordinator.register_with_deadline("flush", &[], move |_| {
+            marker.store(1, Ordering::SeqCst);
+            Err("FIXTURE_PERSIST_FAILURE".into())
+        }).unwrap();
+        coordinator.register_with_deadline("close", &["flush"], move |_| {
+            assert_eq!(flushed.load(Ordering::SeqCst), 1);
+            Ok(())
+        }).unwrap();
+        let report = coordinator.shutdown();
+        assert_eq!(report.failures().len(), 1);
+        assert!(matches!(report.reports[1].outcome, CleanupOutcome::Ok));
     }
 
     #[test]

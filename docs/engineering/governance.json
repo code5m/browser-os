@@ -31,7 +31,7 @@
       "id": "windows-linux-v2-experimental",
       "path": ".github/workflows/windows-linux-v2-experimental.yml",
       "role": "experimental_platform_feedback",
-      "scope": "reusable workflow_call only; explicitly invoked by registered Developer Feedback workflow_dispatch on selected ref with windows_native=true and matching source_sha; Windows/Linux evidence frozen, all required selections reject zero/ignored/SKIP; optional NSIS remains UNVERIFIED"
+      "scope": "reusable workflow_call only; registered Developer Feedback dispatch on explicit selected ref with matching source_sha; manifest-required test names must enumerate and pass individually; every native process uses atomic Job supervision and verified empty accounting; all execution in this repair NOT_RUN"
     },
     {
       "id": "ui-safety",
@@ -328,6 +328,8 @@
         ".github/workflows/browseros-developer-feedback.yml",
         ".github/workflows/windows-linux-v2-experimental.yml",
         "scripts/windows-native-test-runner.ps1",
+        "scripts/windows-native-test-supervisor.cs",
+        "scripts/windows-native-required-tests.json",
         "tests/check-windows-linux-v2-source-contract.mjs"
       ]
     }

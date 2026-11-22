@@ -6,8 +6,8 @@
 //
 // 语义来源：Phase 4 Terminal Lifecycle（INV-4-1 termPanes 唯一面板注册表；
 // INV-4-2 activeTermId 必须 ∈ termPanes.id）+ M3.c（临时历史 40 条、仅会话内存）。
-// 本次迁移（SCR-20260920-terminal-owner-extraction）**零语义变更**，只把归属从
-// useSystemStore（Terminal+Clipboard+Apps 混居）换成专属 owner，并落到能力包内。
+// owner 最初由 useSystemStore 迁入本能力包。本轮补充启动/关闭状态、隐藏缓冲与
+// 重建历史的独立字节/条数预算；输出仍只存在于当前会话内存。
 //
 // 边界（硬约束）：
 //   - Clipboard / Apps **不属**本 owner，留在 src/stores/useSystemStore.ts（Debt-8E-1）。
@@ -51,9 +51,113 @@ export const useTerminalStore = defineStore("terminal", () => {
   }
   // per-pane 运行时状态（替代旧的单 termId 全局态）
   const termWriters = new Map<string, (data: string) => void>();
-  const termHistories = new Map<string, string[]>();
-  const termBuffers = new Map<string, string[]>();
   const TERM_TEMP_HISTORY_LIMIT = 40;
+  const TERM_HISTORY_MAX_BYTES = 256 * 1024;
+  const TERM_BUFFER_MAX_CHUNKS = 128;
+  const TERM_BUFFER_MAX_BYTES = 128 * 1024;
+  const TERM_SESSION_LIMIT = 32;
+  type OutputChunk = { text: string; bytes: number };
+  type BoundedOutput = {
+    chunks: OutputChunk[];
+    bytes: number;
+    droppedChunks: number;
+    droppedBytes: number;
+  };
+  type OutputSession = {
+    phase: "starting" | "active" | "closing" | "closed";
+    id: string | null;
+    buffer: BoundedOutput;
+    history: BoundedOutput;
+    exit: TermMessage | null;
+    droppedChunks: number;
+    droppedBytes: number;
+  };
+  const termHistories = new Map<string, BoundedOutput>();
+  const termBuffers = new Map<string, BoundedOutput>();
+  const outputSessions = new Map<string, OutputSession>();
+  // A Channel closes over its own startup slot before invoke can deliver data.
+  // Closing that slot rejects late callbacks without an ever-growing ID set.
+  const startingSessions = new Set<OutputSession>();
+  const termReplayNotices = ref<Record<string, string>>({});
+  const outputDecoder = new TextDecoder("utf-8", { fatal: true });
+
+  function emptyOutput(): BoundedOutput {
+    return { chunks: [], bytes: 0, droppedChunks: 0, droppedBytes: 0 };
+  }
+  function resetOutput(buffer: BoundedOutput) {
+    buffer.chunks = [];
+    buffer.bytes = 0;
+    buffer.droppedChunks = 0;
+    buffer.droppedBytes = 0;
+  }
+  function saturatingCount(a: number, b: number): number {
+    return Math.min(Number.MAX_SAFE_INTEGER, a + b);
+  }
+  function utf8ByteLength(text: string): number {
+    let bytes = 0;
+    for (const character of text) {
+      const code = character.codePointAt(0)!;
+      bytes += code <= 0x7f ? 1 : code <= 0x7ff ? 2 : code <= 0xffff ? 3 : 4;
+    }
+    return bytes;
+  }
+  function utf8TailWithin(text: string, limit: number): OutputChunk {
+    let start = text.length;
+    let bytes = 0;
+    while (start > 0) {
+      let from = start - 1;
+      const code = text.charCodeAt(from);
+      let size = code <= 0x7f ? 1 : code <= 0x7ff ? 2 : 3;
+      if (code >= 0xdc00 && code <= 0xdfff && from > 0) {
+        const previous = text.charCodeAt(from - 1);
+        if (previous >= 0xd800 && previous <= 0xdbff) { from -= 1; size = 4; }
+      }
+      if (bytes + size > limit) break;
+      start = from;
+      bytes += size;
+    }
+    // Materialize only the retained suffix: a JS sliced string may otherwise
+    // keep the entire oversized parent allocation alive behind a small tail.
+    const retained = outputDecoder.decode(probeEncoder.encode(text.slice(start)));
+    return { text: retained, bytes };
+  }
+  function appendOutput(buffer: BoundedOutput, text: string, maxBytes: number, maxChunks: number) {
+    if (!text) return;
+    const originalBytes = utf8ByteLength(text);
+    const chunk = originalBytes > maxBytes
+      ? utf8TailWithin(text, maxBytes) : { text, bytes: originalBytes };
+    if (chunk.bytes < originalBytes) {
+      buffer.droppedBytes = saturatingCount(buffer.droppedBytes, originalBytes - chunk.bytes);
+      buffer.droppedChunks = saturatingCount(buffer.droppedChunks, 1);
+    }
+    while (buffer.chunks.length >= maxChunks || buffer.bytes + chunk.bytes > maxBytes) {
+      const old = buffer.chunks.shift();
+      if (!old) break;
+      buffer.bytes -= old.bytes;
+      buffer.droppedBytes = saturatingCount(buffer.droppedBytes, old.bytes);
+      buffer.droppedChunks = saturatingCount(buffer.droppedChunks, 1);
+    }
+    if (chunk.text) { buffer.chunks.push(chunk); buffer.bytes += chunk.bytes; }
+  }
+  function termBufferNotice(id: string): string {
+    return termReplayNotices.value[id] ?? "";
+  }
+  function updateReplayNotice(id: string, slot: OutputSession) {
+    const bytes = saturatingCount(slot.history.droppedBytes, slot.buffer.droppedBytes);
+    if (bytes > 0) {
+      termReplayNotices.value[id] = "回放内容已截断，已省略较早的 " + bytes + " 字节。";
+    } else {
+      delete termReplayNotices.value[id];
+    }
+  }
+  function closeOutputSlot(slot: OutputSession) {
+    slot.phase = "closed";
+    resetOutput(slot.buffer);
+    resetOutput(slot.history);
+    slot.exit = null;
+    slot.droppedChunks = 0;
+    slot.droppedBytes = 0;
+  }
 
   // Input delivery belongs to this session owner, including hidden/remounted
   // panes. Bound both payload bytes and request count; never chain an unbounded
@@ -193,25 +297,35 @@ export const useTerminalStore = defineStore("terminal", () => {
   // 红线：仅会话内内存持有——不落盘、不进 `audit.json`、不写 debug 日志正文，
   // 会话结束（killTerm / 重启）即清空，进程退出随内存一起消亡。
   function pushTermHistory(id: string, data: string) {
-    if (!data) return;
-    const h = termHistories.get(id) ?? [];
-    h.push(data);
-    // 超出上限丢最旧的：数组长度恒定 ≤ 40，不会随输出量无限增长。
-    if (h.length > TERM_TEMP_HISTORY_LIMIT) {
-      h.splice(0, h.length - TERM_TEMP_HISTORY_LIMIT);
-    }
-    termHistories.set(id, h);
+    const history = termHistories.get(id);
+    if (history) appendOutput(history, data, TERM_HISTORY_MAX_BYTES, TERM_TEMP_HISTORY_LIMIT);
   }
   function clearTermHistory(id: string) {
-    termHistories.set(id, []);
+    const slot = outputSessions.get(id);
+    if (!slot) return;
+    resetOutput(slot.history);
+    updateReplayNotice(id, slot);
   }
-  /** 面板重建后把历史 + 早期缓冲补写给该 pane 的 xterm。 */
+  /** Replaying never feeds old history back into itself. Hidden output moves
+   * into bounded history once, so another remount does not lose that output. */
   function replayTermHistory(id: string) {
-    const w = termWriters.get(id);
-    if (!w) return;
-    for (const d of termHistories.get(id) ?? []) w(d);
-    for (const d of termBuffers.get(id) ?? []) w(d);
-    termBuffers.set(id, []);
+    const slot = outputSessions.get(id);
+    const writer = termWriters.get(id);
+    if (!slot || slot.phase === "closed" || !writer) return;
+    updateReplayNotice(id, slot);
+    for (const chunk of slot.history.chunks) writer(chunk.text);
+    const pending = slot.buffer.chunks;
+    slot.buffer.chunks = [];
+    slot.buffer.bytes = 0;
+    // Keep truncation counters for this session. Clearing the queue must not
+    // erase the explanation of output that was already omitted.
+    for (const chunk of pending) {
+      pushTermHistory(id, chunk.text);
+      writer(chunk.text);
+    }
+    updateReplayNotice(id, slot);
+    // Exit is a control frame, never saved as terminal byte history. Its
+    // separate notice survives remounting even when it arrived before a writer.
   }
   // M3.a 丢弃统计（F2）：队列满时后端丢弃的字节数，仅展示不阻断。
   const droppedChunks = ref(0);
@@ -222,7 +336,7 @@ export const useTerminalStore = defineStore("terminal", () => {
   }
 
   function bindTermWriter(id: string, fn: ((data: string) => void) | null) {
-    if (fn) termWriters.set(id, fn);
+    if (fn && outputSessions.has(id)) termWriters.set(id, fn);
     else termWriters.delete(id);
   }
 
@@ -252,32 +366,74 @@ export const useTerminalStore = defineStore("terminal", () => {
 
   // 新建一个终端实例（PTY）。cwd 可选，传入则打开后 cd 到该目录。
   async function spawnTerm(cwd?: string): Promise<string> {
-    // H-G 同类防护：PTY 是 Terminal capability-owned 重资源，
-    // 只能由 Terminal Capability 受控生命周期创建。Terminal absent → 0 PTY。
-    // 与 Browser/Grid 的 buildGrid 闸同构（同一份编排真源，同一 fail-closed 口径）。
-    if (!isTerminalResourceAllowed()) {
+    if (!isTerminalResourceAllowed()) return "";
+    if (outputSessions.size + startingSessions.size >= TERM_SESSION_LIMIT) {
+      layout.showToast("终端数量已达上限，部分终端可能仍在启动或关闭。请稍后重试。");
       return "";
     }
+    const slot: OutputSession = {
+      phase: "starting", id: null, buffer: emptyOutput(), history: emptyOutput(),
+      exit: null, droppedChunks: 0, droppedBytes: 0,
+    };
+    startingSessions.add(slot);
     try {
-      // M3.a：每终端独立 Channel 单播（F4），替代全局 `term-data` 事件广播。
-      const ch = bridge.createTermChannel((msg) => onTermChannelMsg(msg));
+      const ch = bridge.createTermChannel((msg) => receiveSessionMessage(slot, msg));
       const r = await bridge.termSpawnChannel(ch);
       const id = r.id;
-      termProbeOn.value = !!r.probe;
+      const probe = !!r.probe;
+      if (slot.phase === "closed" || !isTerminalResourceAllowed()
+        || (slot.id !== null && slot.id !== id) || outputSessions.has(id)) {
+        closeOutputSlot(slot);
+        // The returned native session is still owned by its cleanup registry.
+        // An aborted startup must not publish a new pane after suspension.
+        try { await bridge.termKill(id); }
+        catch { layout.showToast("终端启动已取消，资源仍在关闭。请稍后重试。"); }
+        return "";
+      }
+      slot.id = id;
+      slot.phase = "active";
+      outputSessions.set(id, slot);
+      // Preserve the exact buffers captured before termSpawnChannel resolved.
+      termHistories.set(id, slot.history);
+      termBuffers.set(id, slot.buffer);
       termPanes.value.push({ id, cwd });
-      termHistories.set(id, []);
-      termBuffers.set(id, []);
+      // Count this owner once after publication, even if cwd input awaits
+      // bounded native admission while another pane is being opened.
+      startingSessions.delete(slot);
+      termProbeOn.value = probe;
       if (!activeTermId.value) activeTermId.value = id;
       resetDroppedStats();
-      if (cwd) await termWrite(id, "cd " + cwd + "\n");
-      maybeRunM0Throughput(id);
+      droppedChunks.value = slot.droppedChunks;
+      droppedBytes.value = slot.droppedBytes;
+      slot.droppedChunks = 0;
+      slot.droppedBytes = 0;
+      updateReplayNotice(id, slot);
+      if (slot.exit) showExitNotice(id, slot.exit);
+      if (cwd && !slot.exit) await termWrite(id, "cd " + cwd + "\n");
+      if (!slot.exit) maybeRunM0Throughput(id);
       return id;
-    } catch (e: any) {
-      const detail = String(e?.message ?? e);
+    } catch (error: unknown) {
+      const ownedId = slot.id;
+      if (ownedId && outputSessions.get(ownedId) === slot) {
+        // Publication may already have happened before cwd/driver/notice
+        // handling failed. Keep the pane and retry action if cleanup is pending.
+        await killTerm(ownedId);
+      } else {
+        closeOutputSlot(slot);
+        if (ownedId && !outputSessions.has(ownedId)) {
+          try { await bridge.termKill(ownedId); }
+          catch { layout.showToast("终端未能完成启动，资源仍在关闭。请稍后重试。"); }
+        }
+      }
+      const detail = String((error as { message?: unknown })?.message ?? error);
       layout.showToast(detail.includes("TERM_SESSION_LIMIT")
         ? "终端数量已达上限，部分终端可能仍在关闭。请关闭现有终端或稍后重试。"
-        : "终端启动失败: " + detail);
+        : (detail.includes("TERM_SHUTTING_DOWN") || detail.includes("TERM_APPLICATION_SHUTTING_DOWN"))
+          ? "应用正在关闭，未启动新的终端。"
+          : "终端启动失败: " + detail);
       return "";
+    } finally {
+      startingSessions.delete(slot);
     }
   }
   // 确保终端视图至少有一个实例（终端视图组件挂载时调用）
@@ -288,11 +444,17 @@ export const useTerminalStore = defineStore("terminal", () => {
     spawnTerm();
   }
   function removeClosedTerm(id: string) {
+    const slot = outputSessions.get(id);
+    if (slot) closeOutputSlot(slot);
+    outputSessions.delete(id);
     termPanes.value = termPanes.value.filter((pane) => pane.id !== id);
     termWriters.delete(id);
-    clearTermHistory(id);
     termHistories.delete(id);
     termBuffers.delete(id);
+    probeRecv.delete(id);
+    confirmScans.delete(id);
+    lastAutoConfirmAt.delete(id);
+    delete termReplayNotices.value[id];
     inputQueues.delete(id);
     inputClosed.delete(id);
     delete termNotices.value[id];
@@ -302,6 +464,9 @@ export const useTerminalStore = defineStore("terminal", () => {
   function killTerm(id: string): Promise<boolean> {
     const pending = pendingKills.get(id);
     if (pending) return pending;
+    const slot = outputSessions.get(id);
+    if (!slot) return Promise.resolve(true);
+    slot.phase = "closing";
     // Stop accepting input before waiting for the native close command.
     // This also wakes any queue-full retry timer.
     cancelTermInput(id);
@@ -428,59 +593,76 @@ export const useTerminalStore = defineStore("terminal", () => {
     await spawnTerm(dir);
   }
 
-  function onTermData(d: { id: string; data: string }) {
-    const w = termWriters.get(d.id);
-    if (w) {
-      pushTermHistory(d.id, d.data);
-      w(d.data);
-      maybeAutoConfirmCli(d.id, d.data);
-    } else {
-      const b = termBuffers.get(d.id) ?? [];
-      b.push(d.data);
-      termBuffers.set(d.id, b);
+  function onTermData(data: { id: string; data: string }) {
+    // Legacy Event delivery may only address a live session owned by this
+    // store. Unknown/closed IDs never allocate a buffer, notice or input tombstone.
+    onTermChannelMsg({ ...data, kind: "data" });
+  }
+
+  function showExitNotice(id: string, msg: TermMessage) {
+    cancelTermInput(id);
+    if (!isTermClosing(id)) {
+      const reason = String(msg.reason ?? "");
+      setTermNotice(id, reason === "input_failed"
+        ? "输入传输失败，部分输入可能未发送。请核对终端内容并重启后重试。"
+        : reason === "eof" ? "终端进程已退出，可以重启终端。"
+        : "终端输出连接已断开，请重启后重试。", reason !== "eof");
     }
   }
 
-  // M3.a Channel 回调：按 `kind` 分发（data → xterm；flow → 丢弃统计；exit → 结束提示）。
-  // 兼容：Event sink（`term_spawn`，仅 M0 内部驱动）不带 `kind`，按 data 处理。
-  function onTermChannelMsg(msg: TermMessage) {
-    const id = msg.id;
-    const data = msg.data ?? "";
+  function receiveSessionMessage(slot: OutputSession, msg: TermMessage) {
+    if (slot.phase === "closed" || slot.phase === "closing") return;
+    if (!msg.id || (slot.id !== null && slot.id !== msg.id)) return;
+    slot.id ??= msg.id;
+    const id = slot.id;
+    if (slot.phase === "active" && outputSessions.get(id) !== slot) return;
     if (msg.kind === "flow") {
-      droppedChunks.value += msg.dropped_chunks ?? 0;
-      droppedBytes.value += msg.dropped_bytes ?? 0;
-      return;
-    }
-    if (msg.kind === "exit") {
-      cancelTermInput(id);
-      if (!isTermClosing(id)) {
-        const reason = String(msg.reason ?? "");
-        setTermNotice(id, reason === "input_failed"
-          ? "输入传输失败，部分输入可能未发送。请核对终端内容并重启后重试。"
-          : reason === "eof" ? "终端进程已退出，可以重启终端。"
-          : "终端输出连接已断开，请重启后重试。", reason !== "eof");
+      const chunks = Math.max(0, Number.isFinite(msg.dropped_chunks) ? msg.dropped_chunks! : 0);
+      const bytes = Math.max(0, Number.isFinite(msg.dropped_bytes) ? msg.dropped_bytes! : 0);
+      if (slot.phase === "starting") {
+        slot.droppedChunks = saturatingCount(slot.droppedChunks, chunks);
+        slot.droppedBytes = saturatingCount(slot.droppedBytes, bytes);
+      } else {
+        droppedChunks.value = saturatingCount(droppedChunks.value, chunks);
+        droppedBytes.value = saturatingCount(droppedBytes.value, bytes);
       }
-      probeFeRecv(id, data, "exit");
-      if (termWriters.has(id)) termWriters.get(id)!(data);
       return;
     }
-    const w = termWriters.get(id);
-    if (w) {
+    if (slot.exit) return;
+    const data = msg.data ?? "";
+    if (msg.kind === "exit") {
+      slot.exit = msg;
+      if (slot.phase === "active") {
+        showExitNotice(id, msg);
+        probeFeRecv(id, data, "exit");
+        termWriters.get(id)?.(data);
+      }
+      return;
+    }
+    const writer = slot.phase === "active" ? termWriters.get(id) : undefined;
+    if (writer) {
       probeFeRecv(id, data, "xterm");
       pushTermHistory(id, data);
-      w(data);
+      writer(data);
       maybeAutoConfirmCli(id, data);
     } else {
-      probeFeRecv(id, data, "buffer");
-      const b = termBuffers.get(id) ?? [];
-      b.push(data);
-      termBuffers.set(id, b);
+      if (slot.phase === "active") probeFeRecv(id, data, "buffer");
+      appendOutput(slot.buffer, data, TERM_BUFFER_MAX_BYTES, TERM_BUFFER_MAX_CHUNKS);
+      if (slot.phase === "active") updateReplayNotice(id, slot);
     }
+  }
+
+  // Public/legacy routing only resolves already published owners. Startup data
+  // goes through the private Channel closure's slot, not an unbounded ID map.
+  function onTermChannelMsg(msg: TermMessage) {
+    const slot = outputSessions.get(msg.id);
+    if (slot) receiveSessionMessage(slot, msg);
   }
 
   registerTerminalLifecycleBinding({
-    canSuspend: () => termPanes.value.length === 0,
+    canSuspend: () => termPanes.value.length === 0 && startingSessions.size === 0,
     cleanup: () => {
+      for (const slot of startingSessions) closeOutputSlot(slot);
       terminalOpen.value = false;
       activeTermId.value = "";
       resetDroppedStats();
@@ -510,6 +692,7 @@ export const useTerminalStore = defineStore("terminal", () => {
     termWrite,
     killTerm,
     termNotice,
+    termBufferNotice,
     isTermClosing,
     setTermGrid,
     setTermGridCount,

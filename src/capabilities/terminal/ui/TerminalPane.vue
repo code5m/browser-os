@@ -267,6 +267,9 @@ onBeforeUnmount(() => {
       <button v-if="terminal.isTermClosing(props.paneId)" @click="closePane">检查关闭状态</button>
       <button v-else @click="restart">重启终端</button>
     </div>
+    <div v-if="terminal.termBufferNotice(props.paneId)" class="term-notice" role="status">
+      <span>{{ terminal.termBufferNotice(props.paneId) }}</span>
+    </div>
     <div ref="termEl" class="term-container"></div>
   </section>
 </template>

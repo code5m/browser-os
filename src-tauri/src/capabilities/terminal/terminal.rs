@@ -15,11 +15,12 @@
 //!
 //! 零新依赖：只用 `std::sync::mpsc` + `std::thread` + 既有 `libc`（F9）。
 
+use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TrySendError};
-use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -67,20 +68,67 @@ pub const TERM_CANCEL_POLL_MS: u64 = 20;
 const TERM_RECENT_CLEANUP_RESULTS: usize = 64;
 /// Active and still-cleaning sessions share one resource budget.
 pub const MAX_TERMINAL_SESSIONS: usize = 32;
-static TERMINAL_SESSION_COUNT: AtomicUsize = AtomicUsize::new(0);
+/// Admission and shutdown use the same lock. A permit covers a spawn still
+/// inside the OS, a published session, and all of its retained cleanup owners.
+#[derive(Default)]
+struct TerminalAdmission {
+    leases: Mutex<Vec<Weak<TerminalPermitLease>>>,
+    closed: AtomicBool,
+    active: AtomicUsize,
+    changed: Condvar,
+}
+
+fn terminal_admission() -> &'static Arc<TerminalAdmission> {
+    static ADMISSION: OnceLock<Arc<TerminalAdmission>> = OnceLock::new();
+    ADMISSION.get_or_init(|| Arc::new(TerminalAdmission::default()))
+}
 
 #[derive(Clone)]
 struct TerminalPermit { _lease: Arc<TerminalPermitLease> }
-struct TerminalPermitLease;
-impl TerminalPermit {
-    fn acquire() -> Result<Self, String> {
-        TERMINAL_SESSION_COUNT.fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
-            (count < MAX_TERMINAL_SESSIONS).then_some(count + 1)
-        }).map(|_| Self { _lease: Arc::new(TerminalPermitLease) }).map_err(|_| "TERM_SESSION_LIMIT".into())
+struct TerminalPermitLease {
+    admission: Arc<TerminalAdmission>,
+    stop: Arc<AtomicBool>,
+}
+
+impl TerminalAdmission {
+    fn acquire(self: &Arc<Self>) -> Result<TerminalPermit, String> {
+        let mut leases = self.leases.lock().unwrap_or_else(|e| e.into_inner());
+        if self.closed.load(Ordering::Acquire) { return Err("TERM_SHUTTING_DOWN".into()); }
+        leases.retain(|lease| lease.strong_count() != 0);
+        if self.active.load(Ordering::Acquire) >= MAX_TERMINAL_SESSIONS {
+            return Err("TERM_SESSION_LIMIT".into());
+        }
+        let lease = Arc::new(TerminalPermitLease {
+            admission: Arc::clone(self), stop: Arc::new(AtomicBool::new(false)),
+        });
+        self.active.fetch_add(1, Ordering::AcqRel);
+        leases.push(Arc::downgrade(&lease));
+        Ok(TerminalPermit { _lease: lease })
+    }
+
+    fn request_shutdown(&self) {
+        let leases = {
+            let leases = self.leases.lock().unwrap_or_else(|e| e.into_inner());
+            self.closed.store(true, Ordering::Release);
+            leases.iter().filter_map(Weak::upgrade).collect::<Vec<_>>()
+        };
+        // Do not perform PTY I/O or wait under the admission/table lock.
+        // Reserved spawns see this same stop token after any in-flight OS call.
+        for lease in leases { lease.stop.store(true, Ordering::Release); }
+        self.changed.notify_all();
     }
 }
+
+impl TerminalPermit {
+    fn acquire() -> Result<Self, String> { terminal_admission().acquire() }
+    fn stop(&self) -> Arc<AtomicBool> { Arc::clone(&self._lease.stop) }
+}
+
 impl Drop for TerminalPermitLease {
-    fn drop(&mut self) { TERMINAL_SESSION_COUNT.fetch_sub(1, Ordering::AcqRel); }
+    fn drop(&mut self) {
+        self.admission.active.fetch_sub(1, Ordering::AcqRel);
+        self.admission.changed.notify_all();
+    }
 }
 
 // ----------------------------- 诊断 Probe（默认关闭） -----------------------------
@@ -412,6 +460,84 @@ fn start_pipeline_with_failure(
     TerminalHandles { worker, pump }
 }
 
+/// Streaming UTF-8 decoding for terminal output. A read/flush boundary is
+/// not an encoding boundary: retain only an incomplete suffix (at most three
+/// bytes), and replace only sequences proven invalid by from_utf8.
+#[derive(Default)]
+struct Utf8StreamDecoder {
+    tail: Vec<u8>,
+}
+
+#[derive(Default, Debug, PartialEq, Eq)]
+struct DecodedChunk {
+    text: String,
+    invalid_sequences: usize,
+    truncated_tail_bytes: usize,
+}
+
+impl Utf8StreamDecoder {
+    fn push(&mut self, bytes: &[u8]) -> DecodedChunk {
+        let input = if self.tail.is_empty() {
+            Cow::Borrowed(bytes)
+        } else {
+            let mut joined = std::mem::take(&mut self.tail);
+            joined.extend_from_slice(bytes);
+            Cow::Owned(joined)
+        };
+        let mut remaining = input.as_ref();
+        let mut decoded = DecodedChunk::default();
+        while !remaining.is_empty() {
+            match std::str::from_utf8(remaining) {
+                Ok(valid) => {
+                    decoded.text.push_str(valid);
+                    break;
+                }
+                Err(error) => {
+                    let valid = error.valid_up_to();
+                    decoded.text.push_str(
+                        std::str::from_utf8(&remaining[..valid]).expect("UTF-8 valid prefix"),
+                    );
+                    remaining = &remaining[valid..];
+                    match error.error_len() {
+                        Some(invalid_len) => {
+                            decoded.text.push('\u{FFFD}');
+                            decoded.invalid_sequences += 1;
+                            remaining = &remaining[invalid_len..];
+                        }
+                        None => {
+                            // Incomplete, potentially valid UTF-8. A later
+                            // flush may complete it; do not invent corruption.
+                            self.tail.extend_from_slice(remaining);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        decoded
+    }
+
+    fn finish(&mut self) -> DecodedChunk {
+        // A genuine EOF makes the remaining incomplete sequence truncated.
+        // Emit one replacement and distinguish it from invalid interior bytes.
+        let truncated_tail_bytes = self.tail.len();
+        self.tail.clear();
+        DecodedChunk {
+            text: if truncated_tail_bytes == 0 { String::new() } else { "\u{FFFD}".into() },
+            invalid_sequences: 0,
+            truncated_tail_bytes,
+        }
+    }
+
+    fn cancel(&mut self) -> usize {
+        // Requested close/channel failure discards unsent output. Cancellation
+        // must not turn a deliberately abandoned suffix into a false bad byte.
+        let discarded = self.tail.len();
+        self.tail.clear();
+        discarded
+    }
+}
+
 fn run_pump(
     rx: Receiver<Vec<u8>>,
     out: Arc<dyn TermOutput>,
@@ -427,6 +553,7 @@ fn run_pump(
     let wait = Duration::from_millis(flush_interval_ms.max(1));
     let mut batch: Vec<u8> = Vec::with_capacity(TERM_BATCH_MAX_BYTES);
     let mut last_flush = Instant::now();
+    let mut decoder = Utf8StreamDecoder::default();
     let mut ok = true;
     let probe_on = probe_enabled();
 
@@ -440,7 +567,7 @@ fn run_pump(
                 batch.extend_from_slice(&chunk);
                 let elapsed = last_flush.elapsed().as_millis() as u64;
                 if should_flush(batch.len(), elapsed, flush_interval_ms) {
-                    if !flush_batch(&out, &id, &mut batch, &mut last_flush, &probe, &stop) {
+                    if !flush_batch(&out, &id, &mut batch, &mut last_flush, &probe, &stop, &mut decoder, false) {
                         ok = false;
                         break;
                     }
@@ -448,14 +575,15 @@ fn run_pump(
             }
             Err(RecvTimeoutError::Timeout) => {
                 // 窗口到点：先排空队列，再冲刷残余，避免小块滞留。
-                while let Ok(chunk) = rx.try_recv() {
+                while batch.len() < TERM_BATCH_MAX_BYTES && !stop.load(Ordering::Acquire) {
+                    let Ok(chunk) = rx.try_recv() else { break; };
                     if probe_on {
                         probe.gauge.fetch_sub(1, Ordering::Relaxed);
                     }
                     batch.extend_from_slice(&chunk);
                 }
                 notify_drops(&out, &id, &drops, &stop);
-                if !flush_batch(&out, &id, &mut batch, &mut last_flush, &probe, &stop) {
+                if !flush_batch(&out, &id, &mut batch, &mut last_flush, &probe, &stop, &mut decoder, false) {
                     ok = false;
                     break;
                 }
@@ -465,11 +593,19 @@ fn run_pump(
             }
             Err(RecvTimeoutError::Disconnected) => {
                 notify_drops(&out, &id, &drops, &stop);
-                if !flush_batch(&out, &id, &mut batch, &mut last_flush, &probe, &stop) {
+                if !flush_batch(&out, &id, &mut batch, &mut last_flush, &probe, &stop, &mut decoder, true) {
                     ok = false;
                 }
                 break;
             }
+        }
+    }
+
+    if !ok || stop.load(Ordering::Acquire) {
+        let tail_bytes = decoder.cancel();
+        batch.clear();
+        if probe_on && tail_bytes != 0 {
+            eprintln!("[TERM_PROBE] {id} utf8.cancel discarded_tail_bytes={tail_bytes}");
         }
     }
 
@@ -518,29 +654,39 @@ fn flush_batch(
     last_flush: &mut Instant,
     probe: &Arc<TermProbe>,
     stop: &AtomicBool,
+    decoder: &mut Utf8StreamDecoder,
+    eof: bool,
 ) -> bool {
-    if batch.is_empty() {
-        return true;
+    if stop.load(Ordering::Acquire) {
+        batch.clear();
+        decoder.cancel();
+        return false;
     }
+    if batch.is_empty() && !eof { return true; }
     let probe_on = probe_enabled();
     let raw_len = batch.len();
-    let utf8_valid = std::str::from_utf8(batch).is_ok();
-    let text = String::from_utf8_lossy(batch).to_string();
+    let mut decoded = decoder.push(batch);
     batch.clear();
+    if eof {
+        let tail = decoder.finish();
+        decoded.text.push_str(&tail.text);
+        decoded.truncated_tail_bytes += tail.truncated_tail_bytes;
+    }
     *last_flush = Instant::now();
     if probe_on {
-        let repl = text.matches('\u{FFFD}').count();
         let seq = probe.flush_seq.fetch_add(1, Ordering::Relaxed) + 1;
-        let cum = probe
-            .flush_bytes
-            .fetch_add(raw_len as u64, Ordering::Relaxed)
-            + raw_len as u64;
+        let cum = probe.flush_bytes.fetch_add(raw_len as u64, Ordering::Relaxed) + raw_len as u64;
+        let invalid_sequences = decoded.invalid_sequences;
+        let truncated_tail_bytes = decoded.truncated_tail_bytes;
+        let pending_tail_bytes = decoder.tail.len();
         eprintln!(
-            "[TERM_PROBE] {id} flush seq={seq} raw_bytes={raw_len} cum={cum} utf8_valid={utf8_valid} replacement_count={repl} enc_bytes={}",
-            text.len()
+            "[TERM_PROBE] {id} flush seq={seq} raw_bytes={raw_len} cum={cum} invalid_sequences={invalid_sequences} truncated_tail_bytes={truncated_tail_bytes} pending_tail_bytes={pending_tail_bytes} enc_bytes={}",
+            decoded.text.len()
         );
     }
-    send_with_backoff(out, id, TermMessage::Data(text), probe, stop)
+    // An incomplete suffix alone is not an empty output frame or an error.
+    if decoded.text.is_empty() { return true; }
+    send_with_backoff(out, id, TermMessage::Data(decoded.text), probe, stop)
 }
 
 fn notify_drops(
@@ -833,17 +979,18 @@ pub(crate) fn spawn_terminal_with_command(
     // A hung OS close/callback still consumes its permit. Repeated opens
     // cannot create an unbounded collection of pending owners or threads.
     let permit = TerminalPermit::acquire()?;
+    let stop = permit.stop();
     let id = format!("term-{}", uuid::Uuid::new_v4());
     #[cfg(windows)]
     let job = Arc::new(crate::windows_process::JobObject::create_for_spawn()
         .map_err(|e| format!("WINDOWS_TERMINAL_JOB_FAILED: {e}"))?);
+    if stop.load(Ordering::Acquire) { return Err("TERM_SHUTTING_DOWN".into()); }
     if probe_enabled() {
         eprintln!("[TERM_PROBE] {id} pty.openpty cols=100 rows=24");
     }
     let pair = native_pty_system().openpty(PtySize {
         rows: 24, cols: 100, pixel_width: 0, pixel_height: 0,
     }).map_err(|e| format!("无法创建 PTY: {e}"))?;
-    let stop = Arc::new(AtomicBool::new(false));
     let control = TerminalControl {
         master: Arc::new(Mutex::new(Some(pair.master))), stop: Arc::clone(&stop),
     };
@@ -860,6 +1007,7 @@ pub(crate) fn spawn_terminal_with_command(
             writer: None, handles: None, _permit: permit,
         }),
     };
+    if stop.load(Ordering::Acquire) { return Err("TERM_SHUTTING_DOWN".into()); }
     // Obtain fallible endpoints before starting a child. A failure drops only
     // independent pipe descriptors here; the master/slave belong to the guard.
     let (reader, writer) = {
@@ -872,6 +1020,7 @@ pub(crate) fn spawn_terminal_with_command(
         (reader, writer)
     };
     let resources = spawn_owner.resources.as_mut().ok_or("TERM_SPAWN_OWNER_MISSING")?;
+    if stop.load(Ordering::Acquire) { return Err("TERM_SHUTTING_DOWN".into()); }
     #[cfg(windows)]
     let child = resources.slave.as_ref().ok_or("TERM_SLAVE_MISSING")?
         .spawn_command_in_job(cmd, job.as_raw_handle())
@@ -884,6 +1033,8 @@ pub(crate) fn spawn_terminal_with_command(
     resources.pgid = pgid;
     // Drop the extra HPCON owner before publishing the session.
     drop(resources.slave.take());
+    // Even if shutdown won during spawn, install the Windows drain reader
+    // before handing the live child/HPCON to cleanup.
 
     #[cfg(unix)]
     let on_dead: Option<Arc<dyn Fn() + Send + Sync>> = pgid.map(|pgid| {
@@ -910,6 +1061,7 @@ pub(crate) fn spawn_terminal_with_command(
         id: id.clone(), input, control, stop,
         resources: spawn_owner.resources.take(), cleanup: None,
     };
+    if session.stop.load(Ordering::Acquire) { return Err("TERM_SHUTTING_DOWN".into()); }
     session.input.enqueue(b"\n")?;
     Ok((TermInfo { id, probe: probe_enabled() }, session))
 }
@@ -965,6 +1117,65 @@ pub(crate) fn wait_for_cleanup(id: &str, grace_ms: u64) -> Result<(), String> {
                 .map(|(_, completion)| Arc::clone(completion)))
     };
     completion.map_or(Ok(()), |completion| completion.wait(grace_ms))
+}
+
+/// Close the process-wide admission gate and stop every reserved/live input.
+/// This never waits per session. The bridge requests_close/drains its table
+/// next; in-flight spawns retain their permit and hand failure to the reaper.
+pub fn request_shutdown() {
+    terminal_admission().request_shutdown();
+    let registry = cleanup_registry();
+    registry.ensure_worker();
+    registry.changed.notify_all();
+}
+
+/// Await all terminal owners against the application's single absolute deadline,
+/// including tasks already removed from the IPC table and spawns still in the OS.
+/// A pending/error result never drops unfinished threads or refunds a permit.
+pub fn shutdown_until(deadline: Instant) -> Result<(), String> {
+    shutdown_registry_until(cleanup_registry(), deadline)
+}
+
+fn shutdown_registry_until(registry: &Arc<CleanupRegistry>, deadline: Instant) -> Result<(), String> {
+    let admission = &registry.admission;
+    admission.request_shutdown();
+    registry.changed.notify_all();
+    loop {
+        registry.ensure_worker();
+        let active = admission.active.load(Ordering::Acquire);
+        let (pending, errors) = {
+            let state = registry.state.lock().unwrap_or_else(|e| e.into_inner());
+            (state.tasks.len(), state.shutdown_errors.clone())
+        };
+        if active == 0 && pending == 0 {
+            // ensure_worker joins only a finished service; the run loop exits
+            // only after the admission gate is closed and every lease is gone.
+            let mut worker = registry.worker.lock().unwrap_or_else(|e| e.into_inner());
+            if worker.as_ref().map(|handle| handle.is_finished()).unwrap_or(false) {
+                if let Some(handle) = worker.take() {
+                    if handle.join().is_err() {
+                        return Err("TERM_SHUTDOWN_REAPER_FAILED".into());
+                    }
+                }
+            }
+            if worker.is_none() {
+                return if errors.is_empty() { Ok(()) }
+                    else { Err(format!("TERM_SHUTDOWN_COMPLETED_WITH_ERRORS: {}", errors.join("; "))) };
+            }
+        }
+        let now = Instant::now();
+        if now >= deadline {
+            return Err(format!("TERM_CLEANUP_PENDING: active={active}; tasks={pending}"));
+        }
+        registry.changed.notify_all();
+        // A bounded wait also covers an in-flight spawn that has not registered
+        // cleanup yet. Never restart a per-session grace period.
+        let guard = admission.leases.lock().unwrap_or_else(|e| e.into_inner());
+        let _wait = admission.changed.wait_timeout(
+            guard, deadline.saturating_duration_since(now)
+                .min(Duration::from_millis(TERM_CANCEL_POLL_MS)),
+        ).unwrap_or_else(|e| e.into_inner());
+    }
 }
 
 struct CleanupCompletion {
@@ -1031,9 +1242,13 @@ struct CleanupTask {
 struct CleanupRegistryState {
     tasks: Vec<CleanupTask>,
     completed: VecDeque<(String, Arc<CleanupCompletion>)>,
+    // At most MAX_TERMINAL_SESSIONS owners can finish after the gate closes.
+    shutdown_errors: Vec<String>,
+    service_failed: bool,
 }
 
 struct CleanupRegistry {
+    admission: Arc<TerminalAdmission>,
     state: Mutex<CleanupRegistryState>,
     changed: Condvar,
     worker: Mutex<Option<JoinHandle<()>>>,
@@ -1041,14 +1256,17 @@ struct CleanupRegistry {
 
 fn cleanup_registry() -> &'static Arc<CleanupRegistry> {
     static REGISTRY: OnceLock<Arc<CleanupRegistry>> = OnceLock::new();
-    REGISTRY.get_or_init(|| Arc::new(CleanupRegistry {
-        state: Mutex::new(CleanupRegistryState::default()),
-        changed: Condvar::new(),
-        worker: Mutex::new(None),
-    }))
+    REGISTRY.get_or_init(|| Arc::new(CleanupRegistry::new(Arc::clone(terminal_admission()))))
 }
 
 impl CleanupRegistry {
+    fn new(admission: Arc<TerminalAdmission>) -> Self {
+        Self {
+            admission, state: Mutex::new(CleanupRegistryState::default()),
+            changed: Condvar::new(), worker: Mutex::new(None),
+        }
+    }
+
     fn register(self: &Arc<Self>, id: String, resources: CleanupResources, completion: Arc<CleanupCompletion>) {
         let permit = resources._permit.clone();
         self.state.lock().unwrap_or_else(|e| e.into_inner()).tasks.push(CleanupTask {
@@ -1062,9 +1280,22 @@ impl CleanupRegistry {
     fn ensure_worker(self: &Arc<Self>) {
         let mut worker = self.worker.lock().unwrap_or_else(|e| e.into_inner());
         if worker.as_ref().map(|h| h.is_finished()).unwrap_or(false) {
-            if let Some(finished) = worker.take() { let _ = finished.join(); }
+            if let Some(finished) = worker.take() {
+                if finished.join().is_err() {
+                    let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+                    state.service_failed = true;
+                    state.shutdown_errors.push("TERM_SHUTDOWN_REAPER_FAILED".into());
+                }
+            }
         }
         if worker.is_some() { return; }
+        {
+            let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            if state.service_failed { return; }
+            if self.admission.closed.load(Ordering::Acquire)
+                && self.admission.active.load(Ordering::Acquire) == 0
+                && state.tasks.is_empty() { return; }
+        }
         let registry = Arc::clone(self);
         match thread::Builder::new().name("terminal-cleanup-reaper".into())
             .spawn(move || registry.run())
@@ -1105,6 +1336,9 @@ impl CleanupRegistry {
                             let finished = state.tasks.remove(index);
                             if let Err(error) = &result {
                                 eprintln!("[terminal] {} cleanup reported: {error}", finished.id);
+                                if self.admission.closed.load(Ordering::Acquire) {
+                                    state.shutdown_errors.push(error.clone());
+                                }
                             }
                             finished.completion.finish(result);
                             state.completed.push_back((finished.id, finished.completion));
@@ -1126,7 +1360,11 @@ impl CleanupRegistry {
             }
             // The service's own JoinHandle stays in the static registry.
             // Only finished task handles are ever removed/joined.
-            if state.tasks.is_empty() {
+            if state.tasks.is_empty() && self.admission.closed.load(Ordering::Acquire)
+                && self.admission.active.load(Ordering::Acquire) == 0 {
+                return;
+            }
+            if state.tasks.is_empty() && !self.admission.closed.load(Ordering::Acquire) {
                 let _guard = self.changed.wait(state).unwrap_or_else(|e| e.into_inner());
             } else {
                 let _guard = self.changed.wait_timeout(state, Duration::from_millis(TERM_CANCEL_POLL_MS))
@@ -1440,6 +1678,131 @@ mod tests {
         assert!(sink.send(&json!({"kind":"data"})).is_ok());
     }
 
+
+    #[test]
+    fn utf8_decoder_preserves_every_split_of_multibyte_output() {
+        // Includes a literal replacement character: valid U+FFFD is data,
+        // not evidence that an input sequence was invalid.
+        let expected = "A中🙂文\u{FFFD}Z";
+        let bytes = expected.as_bytes();
+        for split in 0..=bytes.len() {
+            let mut decoder = Utf8StreamDecoder::default();
+            let first = decoder.push(&bytes[..split]);
+            assert_eq!(first.invalid_sequences, 0, "split={split}");
+            assert!(decoder.tail.len() <= 3);
+            let second = decoder.push(&bytes[split..]);
+            assert_eq!(second.invalid_sequences, 0, "split={split}");
+            let eof = decoder.finish();
+            assert_eq!(eof.truncated_tail_bytes, 0, "split={split}");
+            assert_eq!(first.text + &second.text + &eof.text, expected, "split={split}");
+        }
+        let mut decoder = Utf8StreamDecoder::default();
+        let mut received = String::new();
+        for byte in bytes {
+            let chunk = decoder.push(&[*byte]);
+            assert_eq!(chunk.invalid_sequences, 0);
+            assert!(decoder.tail.len() <= 3);
+            received.push_str(&chunk.text);
+        }
+        assert_eq!(received, expected);
+        assert_eq!(decoder.finish(), DecodedChunk::default());
+    }
+
+    #[test]
+    fn utf8_decoder_replaces_only_invalid_bytes_and_incomplete_eof() {
+        let mut decoder = Utf8StreamDecoder::default();
+        let first = decoder.push(&[b'A', 0xff, 0xe4]);
+        assert_eq!(first.text, "A\u{FFFD}");
+        assert_eq!(first.invalid_sequences, 1);
+        assert_eq!(first.truncated_tail_bytes, 0);
+        let second = decoder.push(&[0xb8, 0xad, b'B', 0xf0, 0x9f]);
+        assert_eq!(second.text, "中B");
+        assert_eq!(second.invalid_sequences, 0);
+        let eof = decoder.finish();
+        assert_eq!(eof.text, "\u{FFFD}");
+        assert_eq!(eof.invalid_sequences, 0);
+        assert_eq!(eof.truncated_tail_bytes, 2);
+        assert_eq!(decoder.finish(), DecodedChunk::default(), "EOF is idempotent");
+
+        let mut decoder = Utf8StreamDecoder::default();
+        assert_eq!(decoder.push(&[0xe4]).text, "");
+        let broken = decoder.push(b"x");
+        assert_eq!(broken.text, "\u{FFFD}x");
+        assert_eq!(broken.invalid_sequences, 1, "a completed invalid prefix is not an EOF tail");
+    }
+
+    #[test]
+    fn utf8_decoder_cancel_discards_unfinished_suffix() {
+        let mut decoder = Utf8StreamDecoder::default();
+        assert_eq!(decoder.push(&[b'A', 0xf0, 0x9f]).text, "A");
+        assert_eq!(decoder.cancel(), 2);
+        assert_eq!(decoder.finish(), DecodedChunk::default());
+        assert_eq!(decoder.push(b"B").text, "B");
+    }
+
+    struct ChunkReader(VecDeque<Vec<u8>>);
+    impl Read for ChunkReader {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            let Some(chunk) = self.0.pop_front() else { return Ok(0); };
+            assert!(chunk.len() <= buf.len());
+            buf[..chunk.len()].copy_from_slice(&chunk);
+            Ok(chunk.len())
+        }
+    }
+
+    /// Encoding/pipeline regression only; native PTY coverage is a separate
+    /// required production-session test, not inferred from this fixture.
+    #[test]
+    fn pipeline_preserves_split_utf8_across_flushes() {
+        let chunks = VecDeque::from([
+            vec![b'A', 0xe4], vec![0xb8], vec![0xad, 0xf0, 0x9f],
+            vec![0x99, 0x82], vec![0xe6], vec![0x96, 0x87, b'Z'],
+        ]);
+        let (tx, rx) = mpsc::channel();
+        let handles = start_pipeline(
+            Box::new(ChunkReader(chunks)), Arc::new(CollectSink { tx: Mutex::new(tx) }),
+            "utf8-split".into(), Arc::new(AtomicBool::new(false)),
+            8, 0, false, None, Arc::new(TermProbe::default()),
+        );
+        let mut received = String::new();
+        let mut data_frames = 0;
+        loop {
+            let (kind, data) = rx.recv_timeout(Duration::from_secs(3))
+                .expect("pipeline must deliver output and EOF");
+            if kind == "exit" { break; }
+            if kind == "data" { data_frames += 1; received.push_str(&data); }
+        }
+        handles.worker.join().unwrap();
+        handles.pump.join().unwrap();
+        assert!(data_frames > 1, "fixture must exercise multiple independent flushes");
+        assert_eq!(received, "A中🙂文Z");
+    }
+
+    #[test]
+    fn terminal_admission_shutdown_rejects_new_and_stops_reserved_session() {
+        // Local instance: this test must not close the application's global
+        // gate and invalidate other native terminal tests in the same binary.
+        let admission = Arc::new(TerminalAdmission::default());
+        let reserved = admission.acquire().unwrap();
+        let active = admission.acquire().unwrap();
+        let cleanup_owner = active.clone();
+        let reserved_stop = reserved.stop();
+        let active_stop = active.stop();
+        assert_eq!(admission.active.load(Ordering::Acquire), 2);
+        admission.request_shutdown();
+        assert!(reserved_stop.load(Ordering::Acquire), "spawn not yet published must stop");
+        assert!(active_stop.load(Ordering::Acquire));
+        assert!(matches!(admission.acquire(), Err(error) if error == "TERM_SHUTTING_DOWN"));
+        drop(active);
+        assert_eq!(admission.active.load(Ordering::Acquire), 2, "pending cleanup retains its slot");
+        drop(cleanup_owner);
+        assert_eq!(admission.active.load(Ordering::Acquire), 1);
+        drop(reserved);
+        assert_eq!(admission.active.load(Ordering::Acquire), 0);
+        admission.request_shutdown();
+        assert!(admission.closed.load(Ordering::Acquire), "shutdown is monotonic");
+    }
+
     /// T1：合并策略（F3）。
     #[test]
     fn flush_policy_boundaries() {
@@ -1679,6 +2042,48 @@ mod tests {
             self.closed.store(true, Ordering::Release);
             self.io_gate.release();
         }
+    }
+
+    #[test]
+    fn terminal_shutdown_deadline_retains_pending_owners_until_all_reaped() {
+        let admission = Arc::new(TerminalAdmission::default());
+        let registry = Arc::new(CleanupRegistry::new(Arc::clone(&admission)));
+        let close_gate = Arc::new(Gate::default());
+        let _release = ReleaseGate(Arc::clone(&close_gate));
+        let mut closed = Vec::new();
+        for index in 0..2 {
+            let permit = admission.acquire().unwrap();
+            let flag = Arc::new(AtomicBool::new(false));
+            closed.push(Arc::clone(&flag));
+            let control = TerminalControl {
+                master: Arc::new(Mutex::new(Some(Box::new(DelayedCloseMaster {
+                    close_gate: Arc::clone(&close_gate),
+                    io_gate: Arc::new(Gate::default()), closed: flag,
+                })))),
+                stop: permit.stop(),
+            };
+            let id = format!("local-shutdown-{index}");
+            registry.register(id.clone(), CleanupResources {
+                control, child: Some(Box::new(ExitedChild)), pgid: None, slave: None,
+                #[cfg(windows)]
+                job: None,
+                writer: None, handles: None, _permit: permit,
+            }, Arc::new(CleanupCompletion::new(id)));
+        }
+        let deadline = Instant::now() + Duration::from_millis(40);
+        let result = shutdown_registry_until(&registry, deadline);
+        assert!(matches!(result, Err(error) if error.starts_with("TERM_CLEANUP_PENDING:")));
+        assert_eq!(admission.active.load(Ordering::Acquire), 2);
+        assert_eq!(registry.state.lock().unwrap().tasks.len(), 2);
+        assert!(registry.worker.lock().unwrap().is_some(), "pending service handle stays owned");
+        assert!(closed.iter().all(|flag| !flag.load(Ordering::Acquire)));
+        close_gate.release();
+        shutdown_registry_until(&registry, Instant::now() + Duration::from_secs(3))
+            .expect("both owners must be reaped against the same deadline");
+        assert!(closed.iter().all(|flag| flag.load(Ordering::Acquire)));
+        assert_eq!(admission.active.load(Ordering::Acquire), 0);
+        assert!(registry.state.lock().unwrap().tasks.is_empty());
+        assert!(registry.worker.lock().unwrap().is_none(), "completed service is joined too");
     }
 
     /// A deterministic ownership/order regression, not native ConPTY proof.

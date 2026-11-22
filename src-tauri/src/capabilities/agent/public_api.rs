@@ -1,5 +1,6 @@
-//! Agent-owned read-only Coding LSP status gateway for Agent Channel host.
-//! Keeps the framework implementation's existing native caller validation.
+//! Agent-owned facade for approved Coding requests and native lifecycle.
+//! User-request routes keep source/approval validation; startup and shutdown
+//! helpers are Rust-internal and are never registered as Tauri commands.
 use serde_json::Value;
 use tauri::{AppHandle, Webview};
 pub(crate) fn coding_lsp_summary(
@@ -153,4 +154,47 @@ mod coding_bootstrap_scope_tests {
         );
         std::fs::remove_dir_all(root).unwrap();
     }
+}
+
+/// Application lifecycle facade. Keep framework code out of native LSP and
+/// AppContainer internals; these functions perform no user request dispatch.
+pub(crate) fn request_native_shutdown() {
+    #[cfg(target_os = "windows")]
+    {
+        super::coding_lsp::request_shutdown();
+        super::windows_sandbox::request_shutdown();
+    }
+}
+
+pub(crate) fn shutdown_native_until(deadline: std::time::Instant) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        request_native_shutdown();
+        let lsp = super::coding_lsp::shutdown_until(deadline);
+        let sandbox = super::windows_sandbox::shutdown_until(deadline);
+        let errors: Vec<String> = [lsp, sandbox].into_iter().filter_map(Result::err).collect();
+        if errors.is_empty() { Ok(()) } else { Err(errors.join(";")) }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = deadline;
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn prepare_native_recovery(
+    private_data: &std::path::Path,
+    recover_abandoned: bool,
+    deadline: std::time::Instant,
+) -> Result<(), String> {
+    super::windows_sandbox::initialize_recovery_store(private_data)?;
+    if recover_abandoned {
+        let report = super::windows_sandbox::recover_abandoned_profiles(private_data, deadline)?;
+        eprintln!(
+            "[sandbox-recovery] recovered={} active={} pending={} rejected={}",
+            report.recovered, report.active, report.pending, report.rejected
+        );
+    }
+    Ok(())
 }

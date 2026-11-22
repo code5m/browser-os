@@ -5,7 +5,7 @@
   "as_of": "2026-11-22",
   "reference_native_run": "https://github.com/code5m/browser-os/actions/runs/44321240531",
   "reference_head": "7783dbd1a175c6fd0bab283ddf63fb0220887a6c",
-  "current_source_patch": "second_round_source_repairs_not_executed",
+  "current_source_patch": "third_round_stream_shutdown_recovery_and_native_harness_repairs_not_executed",
   "scope": "Windows/Linux source repairs and macOS platform preflight; macOS product support remains unsupported",
   "note": "This repair branch was requested without CI, tests, validators, builds or merge. Historical native results belong only to reference_head. Current native/installer/GUI/performance evidence is NOT_RUN; no current CODE_PASS, PACKAGE_PASS or GUI_PASS claim.",
   "capabilities": [
@@ -39,7 +39,7 @@
       "windows": "source_present_current_native_not_run",
       "macos": "unsupported",
       "severity": "P2",
-      "notes": "Bounded per-session input, cancellable output retries, independent control and retained cleanup ownership; production ConPTY close path used by native regression definitions. Frontend backpressure/error handling included. Actual I/O/process/thread cleanup NOT_RUN.",
+      "notes": "Starting Channel slots preserve early output; bounded hidden output and closed-slot filtering; streaming UTF-8 output; shared app shutdown deadline and admission gate. Actual I/O, memory, process and thread cleanup NOT_RUN.",
       "previous_record": {
         "linux": "implemented_history_ci_pass",
         "windows": "implemented_conpty_native_history_pass"
@@ -111,7 +111,7 @@
       "windows": "source_present_current_native_not_run",
       "macos": "unsupported",
       "severity": "P1",
-      "notes": "Native exact AppContainer policy is separate from owner-only policy; actual-byte and entry limits with shared deadline/cancellation. LSP active/start/deferred cleanup retain capacity until released, production fixed-code lowbox/cfg diagnostics. Restricted no-Cargo mode keeps compilation_verified=false. Native results NOT_RUN.",
+      "notes": "App-owned trees grant generic AppContainer FILE_TRAVERSE only, own package retains RX/M; compliant profile opens read-only first. Windows LSP cancels at application shutdown and retains capacity/owners until cleanup. Native profile journal and identity/active-owner checked recovery added; ambiguous legacy OS ACEs and unjournaled profiles are not auto-deleted. compilation_verified=false; all native evidence NOT_RUN.",
       "previous_record": {
         "linux": "implemented_history_ci_pass",
         "windows": "source_patched_lsp_document_contract_appcontainer_native_unverified"
@@ -224,9 +224,17 @@
       "macos": "source_patched_not_run",
       "severity": "P1",
       "notes": "No supplied URL text in diagnostic/audit records; OS file lock spans complete audit read/modify/replace; lifecycle marker uses bounded private audit channel. Regressions defined only."
+    },
+    {
+      "capability": "application_shutdown_recovery",
+      "linux": "source_shared_deadline_not_run",
+      "windows": "source_shared_deadline_and_profile_recovery_not_run",
+      "macos": "source_shared_deadline_only_not_run",
+      "severity": "P1",
+      "notes": "One absolute 10-second application wait; independent cleanup starts without per-terminal timeout multiplication. Pending tasks remain owned in-process; durable Windows AppContainer records provide conservative next-start recovery. NOT_RUN, no complete cleanup guarantee after forced exit."
     }
   ],
-  "source_base": "fecfae2b062fa281a0ced3d0f006dcef5ce39ee2",
+  "source_base": "add44f3b599b526a14ba28c5f993f51cb4561bae",
   "current_execution": {
     "ci": "NOT_RUN",
     "tests": "NOT_RUN",
@@ -238,13 +246,14 @@
     "performance": "NOT_RUN",
     "merge": "NOT_REQUESTED"
   },
-  "previous_source_base": "285542f57bd055592b4d5019e5a89e8555bcc805",
+  "previous_source_base": "fecfae2b062fa281a0ced3d0f006dcef5ce39ee2",
   "dispatch_entry": {
     "workflow": ".github/workflows/browseros-developer-feedback.yml",
     "ref": "fix/windows-native-security-convergence-20261122",
     "windows_native": true,
     "source_sha": "must_equal_selected_ref_commit",
     "native_implementation": ".github/workflows/windows-linux-v2-experimental.yml",
-    "execution": "NOT_RUN"
+    "execution": "NOT_RUN",
+    "input_schema": "selected_ref_yaml_via_explicit_cli_or_api; default_branch_web_form_not_authoritative"
   }
 }

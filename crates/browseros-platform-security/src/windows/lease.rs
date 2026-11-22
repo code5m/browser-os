@@ -7,6 +7,16 @@
 //! traversal. When the last participant exits the kernel deletes the evidence,
 //! so the next cold start must audit the complete tree again.
 //!
+//! This is a cold-preparation lease, NOT a continuous descendant ACL monitor.
+//! Its kernel objects and the filesystem owner are the same Windows user.
+//! It cannot authenticate against an unrestricted process running as that user
+//! (or an administrator), which can also rewrite DACLs or readiness objects.
+//! Cross-package confinement is enforced separately by AppContainer policy.
+//! A periodic background scan would only provide delayed diagnostics, not make
+//! that same-user threat boundary true; active caches also legitimately churn.
+//! The next cold epoch audits descendants again. Consumers must not describe a
+//! successful root-only check as evidence of continuous subtree integrity.
+//!
 //! Old binaries / orphaned WebView2 processes do not participate. If their
 //! live writes prevent a complete cold audit, preparation fails closed; close
 //! those storage users and retry. Native I/O deadlines are checked between

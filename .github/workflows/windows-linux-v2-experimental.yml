@@ -2,6 +2,7 @@ name: BrowserOS Windows V2 experimental native and BFC service
 # Reusable native implementation. The already-registered Developer Feedback
 # workflow dispatches it only with windows_native=true on the selected ref.
 # Branch pushes never start these jobs; do not dispatch this branch-only file.
+# Source wiring is not dispatch/native acceptance evidence. No run is implied.
 on:
   workflow_call:
     inputs:
@@ -285,120 +286,51 @@ jobs:
           }
           Write-Host "WINDOWS_NATIVE_TEST_BINARY_READY=$nativeTestExe"
           . ./scripts/windows-native-test-runner.ps1
-          function Invoke-NativeCargoTest([string]$filter, [int]$timeoutSeconds = 240) {
-            Invoke-NativeRustHarness -Executable $nativeTestExe -Filter $filter -TimeoutSeconds $timeoutSeconds
-          }
-          $nativeTests = @(
-            'windows_grid_tests'
-            'framing_tests'
-            'authorized_windows_read'
-            'pinned_handle_move'
-            'windows_cas'
-            'capabilities::workspace::cas::tests'
-            'local_owner_pipe_roundtrip'
-            'suspended_spawn_assigns_job_before_immediate_grandchild_can_run'
-            'dropping_job_after_parent_crash_kills_grandchild'
-            'windows_script_cancel_reaps_immediate_node_grandchild'
-            'windows_script_timeout_reaps_immediate_node_grandchild'
-            'windows_script_parent_crash_drops_job_and_reaps_grandchild'
-            # Cover the entire windows_process module, not just selected
-            # process/ConPTY fixtures that happened to pass on one runner.
-            'windows_process::'
-            'conpty_terminal_uses_atomic_job_list_and_reaps_immediate_grandchild'
-            'conpty_rejects_invalid_terminal_dimensions'
-            'conpty_child_exit_code_259_is_terminal_and_kill_is_idempotent'
-            'job_tree_is_terminated'
-            'windows_script_whitelist_rejects_shell_execution'
-            'windows_node_script_executes_in_job'
-            'windows_coding_can_read_an_authorized_regular_file'
-            'windows_agent_'
-            'capabilities::agent::windows_sandbox::tests'
-            'real_appcontainer_stdio_initializes_lists_calls_and_scrubs_secrets'
-            'stdin_backpressure_obeys_deadline'
-            'snapshot_rejects_junctions_instead_of_copying_external_sources'
-            'private_snapshot_requires_own_package_sid_and_rejects_other_profiles'
-            'real_rust_analyzer_runs_against_private_snapshot'
-            'fake_loopback_port_occupant_cannot_receive_snapshot_before_identity_proof'
-            'process_execution_requires_explicit_approval_and_rejects_shell_actions'
-            'knowledge_search_redacts_sensitive_lines'
-            'external_url_privacy_tests'
-            'audit_concurrency_tests'
-          )
-          $failedFilters = [System.Collections.Generic.List[string]]::new()
-          foreach ($filter in $nativeTests) {
-            $seconds = if ($filter -eq 'real_rust_analyzer_runs_against_private_snapshot') { 600 } else { 240 }
+          $nativeSelections = @((Get-NativeSelectionManifest).selections | Where-Object {
+            $_.package -ceq 'mvp-browser-os' -and $_.role -ceq 'required'
+          })
+          $failedSelections = [System.Collections.Generic.List[string]]::new()
+          foreach ($selection in $nativeSelections) {
             try {
-              Invoke-NativeCargoTest -filter $filter -timeoutSeconds $seconds
+              $nativeResult = Invoke-NativeRustHarness -Executable $nativeTestExe -SelectionId $selection.id
             } catch {
-              $failedFilters.Add($filter)
+              $failedSelections.Add([string]$selection.id)
               if ($env:BROWSEROS_NATIVE_CLEANUP_BLOCKED -eq '1') {
-                throw 'NATIVE_PROCESS_REMAINS: refusing to run another native test'
+                "Source: $env:BROWSEROS_SOURCE_SHA; full suite: NOT_RUN; runner quarantined because Job emptiness is unconfirmed" |
+                  Add-Content $env:GITHUB_STEP_SUMMARY
+                throw 'NATIVE_JOB_CLEANUP_UNCONFIRMED: refusing to run another native selection'
               }
-              Write-Host "::warning::Continuing native matrix after failed check: $filter"
+              Write-Host "::warning::Continuing native matrix after failed selection: $($selection.id)"
             }
           }
-          # Keep full-suite status separate from filter counts. A full-suite
-          # failure is not a thirty-first filter and must not subtract a second
-          # time from filters whose failure is already recorded.
+          # Full-suite evidence stays separate from selection counts. It uses
+          # the same atomic Job supervisor, enumeration and required-name gate.
+          # An ignored additional case can never replace a required passing case.
           $fullSuiteFailure = $null
           $fullSuiteStatus = 'NOT_RUN'
-          $fullOut = Join-Path $env:RUNNER_TEMP "full-windows-native.out.log"
-          $fullErr = Join-Path $env:RUNNER_TEMP "full-windows-native.err.log"
-          Remove-Item $fullOut, $fullErr -Force -ErrorAction SilentlyContinue
-          Write-Host "::group::full Windows native test suite"
-          $full = Start-Process -FilePath $nativeTestExe -NoNewWindow -PassThru -RedirectStandardOutput $fullOut -RedirectStandardError $fullErr -ArgumentList @('--test-threads=1', '--nocapture')
-          $fullFinished = $full.WaitForExit(900000)
-          if (-not $fullFinished) {
-            try { $full.Kill($true) } catch {}
-            if (-not $full.WaitForExit(5000)) {
-              $env:BROWSEROS_NATIVE_CLEANUP_BLOCKED = '1'
-              'BROWSEROS_NATIVE_CLEANUP_BLOCKED=1' | Add-Content $env:GITHUB_ENV
-              $full.Dispose()
-              throw 'NATIVE_PROCESS_REMAINS: full suite cleanup timed out; following native steps blocked'
-            }
-            $fullSuiteFailure = 'full_windows_native_suite_timeout'
-            $fullSuiteStatus = 'TIMEOUT'
-            Write-Host "::error::Windows full native suite exceeded 900 seconds"
-          } else {
-            $full.WaitForExit()
-            if ($full.ExitCode -ne 0) {
-              $fullSuiteFailure = 'full_windows_native_suite'
-              $fullSuiteStatus = 'FAIL'
-              Write-Host "::error::Windows full native suite exit=$($full.ExitCode)"
+          try {
+            $fullResult = Invoke-NativeRustHarness -Executable $nativeTestExe -SelectionId 'windows-full-suite'
+            $fullSuiteStatus = $fullResult.status
+            Write-Host "WINDOWS_NATIVE_FULL_IGNORED=$($fullResult.ignored) (ignored cases are not acceptance evidence)"
+          } catch {
+            $fullSuiteFailure = $_.Exception.Message
+            if ($_.Exception.Data.Contains('NativeResult')) {
+              $fullSuiteStatus = $_.Exception.Data['NativeResult'].status
             } else {
-              $fullSuiteStatus = 'COMPLETED'
-            }
-          }
-          $full.Dispose()
-          $fullOutput = ((Get-Content $fullOut -ErrorAction SilentlyContinue) + (Get-Content $fullErr -ErrorAction SilentlyContinue) | Out-String)
-          $fullOutput -split "`r?`n" | Select-Object -Last 160 | Write-Host
-          $fullSummary = [regex]::Matches($fullOutput, '(?m)^test result: (?<result>ok|FAILED)\. (?<passed>\d+) passed; (?<failed>\d+) failed; (?<ignored>\d+) ignored;')
-          if ($fullSuiteStatus -eq 'COMPLETED') {
-            if ($fullSummary.Count -ne 1 -or [int]$fullSummary[0].Groups['passed'].Value -lt 1) {
-              $fullSuiteFailure = 'full_windows_native_suite_no_executed_tests'
               $fullSuiteStatus = 'BLOCKED'
-            } elseif ($fullSummary[0].Groups['result'].Value -ne 'ok' -or
-                [int]$fullSummary[0].Groups['failed'].Value -ne 0 -or
-                $fullOutput -match '(?im)^\s*\[?SKIP(?:PED)?\b') {
-              $fullSuiteFailure = 'full_windows_native_suite_incomplete'
-              $fullSuiteStatus = 'BLOCKED'
-            } else {
-              $ignored = [int]$fullSummary[0].Groups['ignored'].Value
-              $fullSuiteStatus = if ($ignored -eq 0) { 'PASS' } else { 'PASS_WITH_IGNORED' }
-              Write-Host "WINDOWS_NATIVE_FULL_IGNORED=$ignored (ignored cases are not acceptance evidence)"
             }
+            Write-Host "::error::Windows full native suite: $fullSuiteStatus"
           }
-          Write-Host "::endgroup::"
-          $matrixPassed = $nativeTests.Count - $failedFilters.Count
+          $matrixPassed = $nativeSelections.Count - $failedSelections.Count
           Write-Host "WINDOWS_NATIVE_SOURCE_SHA=$env:BROWSEROS_SOURCE_SHA"
-          Write-Host "WINDOWS_NATIVE_MATRIX=$matrixPassed/$($nativeTests.Count) filters passed"
+          Write-Host "WINDOWS_NATIVE_MATRIX=$matrixPassed/$($nativeSelections.Count) required selections passed"
           Write-Host "WINDOWS_NATIVE_FULL_SUITE=$fullSuiteStatus"
-          "Source: $env:BROWSEROS_SOURCE_SHA; filters: $matrixPassed/$($nativeTests.Count); full suite: $fullSuiteStatus; GUI: NOT_RUN" |
+          "Source: $env:BROWSEROS_SOURCE_SHA; required selections: $matrixPassed/$($nativeSelections.Count); full suite: $fullSuiteStatus; GUI: NOT_RUN" |
             Add-Content $env:GITHUB_STEP_SUMMARY
-          if ($failedFilters.Count -gt 0 -or $null -ne $fullSuiteFailure) {
-            $failedFilters | ForEach-Object { Write-Host "::error::Windows native filter failed: $_" }
+          if ($failedSelections.Count -gt 0 -or $null -ne $fullSuiteFailure) {
+            $failedSelections | ForEach-Object { Write-Host "::error::Windows native selection failed: $_" }
             if ($null -ne $fullSuiteFailure) { Write-Host "::error::$fullSuiteFailure" }
-            throw "Windows native acceptance incomplete: $($failedFilters.Count) failed filters; full suite $fullSuiteStatus"
+            throw "Windows native acceptance incomplete: $($failedSelections.Count) failed selections; full suite $fullSuiteStatus"
           }
       - name: Shared Windows SID and DACL regression
         if: ${{ always() && !cancelled() && steps.windows_native_compile.outcome == 'success' && env.BROWSEROS_NATIVE_CLEANUP_BLOCKED != '1' }}
@@ -406,14 +338,14 @@ jobs:
         run: |
           . ./scripts/windows-native-test-runner.ps1
           $testExe = Get-NativeRustTestBinary -Manifest 'crates/browseros-platform-security/Cargo.toml' -Package 'browseros-platform-security'
-          Invoke-NativeRustHarness -Executable $testExe -Filter '' -TimeoutSeconds 240
+          Invoke-NativeRustHarness -Executable $testExe -SelectionId 'platform-security'
       - name: Vendored ConPTY and process waiter regression
         if: ${{ always() && !cancelled() && steps.windows_native_compile.outcome == 'success' && env.BROWSEROS_NATIVE_CLEANUP_BLOCKED != '1' }}
         shell: pwsh
         run: |
           . ./scripts/windows-native-test-runner.ps1
           $testExe = Get-NativeRustTestBinary -Manifest 'src-tauri/Cargo.toml' -Package 'portable-pty'
-          Invoke-NativeRustHarness -Executable $testExe -Filter '' -TimeoutSeconds 240
+          Invoke-NativeRustHarness -Executable $testExe -SelectionId 'portable-pty'
       - name: Windows WebView2 profile ACL regression
         if: ${{ always() && !cancelled() && steps.windows_native_compile.outcome == 'success' && env.BROWSEROS_NATIVE_CLEANUP_BLOCKED != '1' }}
         shell: pwsh
@@ -422,7 +354,7 @@ jobs:
           # Select the dependency package through the host's committed lockfile.
           # The plugin has no dev-dependencies requiring an independent workspace.
           $testExe = Get-NativeRustTestBinary -Manifest 'src-tauri/Cargo.toml' -Package 'tauri-plugin-browser-tabs'
-          Invoke-NativeRustHarness -Executable $testExe -Filter 'browser_profile_tests::' -TimeoutSeconds 240
+          Invoke-NativeRustHarness -Executable $testExe -SelectionId 'browser-profile'
       - name: Preserve native execution counts and logs
         if: ${{ always() && !cancelled() }}
         uses: actions/upload-artifact@v4
@@ -506,15 +438,60 @@ jobs:
       - name: Linux Grid IPC framing unit tests
         timeout-minutes: 20
         shell: bash
+        env:
+          BROWSEROS_SOURCE_SHA: ${{ needs.source.outputs.sha }}
         run: |
           set -o pipefail
-          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os framing_tests -- --test-threads=1 2>&1 | tee "$RUNNER_TEMP/linux-framing.log"
+          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os framing_tests -- --list --format terse --color never 2>&1 | tee "$RUNNER_TEMP/linux-framing-list.log"
+          cargo test --manifest-path src-tauri/Cargo.toml --locked --bin mvp-browser-os framing_tests -- --test-threads=1 --show-output --color never 2>&1 | tee "$RUNNER_TEMP/linux-framing.log"
           python3 - <<'PY'
-          import os, pathlib, re
-          text = pathlib.Path(os.environ["RUNNER_TEMP"], "linux-framing.log").read_text(errors="replace")
-          rows = re.findall(r"^test result: ok\. (\d+) passed; (\d+) failed; (\d+) ignored;", text, re.M)
-          if len(rows) != 1 or int(rows[0][0]) < 1 or int(rows[0][1]) or int(rows[0][2]) or re.search(r"^\s*\[?SKIP(?:PED)?\b", text, re.M | re.I):
-              raise SystemExit("LINUX_REQUIRED_FRAMING_NOT_EXECUTED")
+          import json, os, pathlib, re
+          def blocked(reason):
+              raise SystemExit("LINUX_REQUIRED_FRAMING_NOT_EXECUTED:" + reason)
+          temporary = pathlib.Path(os.environ["RUNNER_TEMP"])
+          manifest = json.loads(pathlib.Path("scripts/windows-native-required-tests.json").read_text())
+          selection = next(item for item in manifest["selections"] if item["id"] == "grid-framing")
+          required = selection["required_names"]
+          if selection["required_count"] != len(required) or not required or len(set(required)) != len(required):
+              blocked("invalid_required_name_count")
+          listing = (temporary / "linux-framing-list.log").read_text(errors="replace")
+          enumerated = re.findall(r"^([^\r\n]+): test\r?$", listing, re.M)
+          if not enumerated or len(set(enumerated)) != len(enumerated):
+              blocked("empty_or_duplicate_enumeration")
+          resolved = []
+          for expected in required:
+              matches = [name for name in enumerated if name == expected or name.endswith("::" + expected)]
+              if len(matches) != 1 or matches[0] in resolved:
+                  blocked("missing_or_ambiguous_required_name:" + expected)
+              resolved.append(matches[0])
+          additional = sorted(set(enumerated) - set(resolved))
+          if additional and not selection["allow_additional_tests"]:
+              blocked("unreviewed_additional_names")
+          text = (temporary / "linux-framing.log").read_text(errors="replace")
+          actual = re.findall(r"^test ([^\r\n]+?)(?: - (?:should panic|compile fail|compile))? \.\.\. (ok|FAILED|ignored)(?:, [^\r\n]*)?\r?$", text, re.M)
+          executed = dict(actual)
+          if len(executed) != len(actual) or set(executed) != set(enumerated):
+              blocked("enumeration_execution_mismatch")
+          if any(executed.get(name) != "ok" for name in resolved):
+              blocked("required_name_did_not_pass")
+          rows = re.findall(r"^test result: (ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored;", text, re.M)
+          counts = [sum(status == expected for status in executed.values()) for expected in ("ok", "FAILED", "ignored")]
+          if len(rows) != 1 or rows[0][0] != "ok" or [int(value) for value in rows[0][1:]] != counts:
+              blocked("result_count_mismatch")
+          if counts[1] or counts[2] or re.search(r"^\s*\[?SKIP(?:PED)?\b", text, re.M | re.I):
+              blocked("failed_ignored_or_skip")
+          evidence = {
+              "source_sha": os.environ["BROWSEROS_SOURCE_SHA"],
+              "selection": "grid-framing", "status": "PASS",
+              "required_count": len(resolved), "required_names": resolved,
+              "enumerated_names": enumerated, "executed_tests": executed,
+              "additional_tests_allowed": selection["allow_additional_tests"],
+              "additional_tests": additional,
+              "passed": counts[0], "failed": counts[1], "ignored": counts[2],
+          }
+          (temporary / "linux-framing-required-results.json").write_text(json.dumps(evidence, indent=2) + "\n")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+              summary.write(f"Linux framing source={evidence['source_sha']}; required={len(resolved)}; enumerated={len(enumerated)}; additional={len(additional)}; status=PASS\n")
           PY
       - name: Linux complete native regression (GUI remains NOT_RUN)
         timeout-minutes: 40
@@ -545,5 +522,7 @@ jobs:
           path: |
             ${{ runner.temp }}/linux-native.log
             ${{ runner.temp }}/linux-framing.log
+            ${{ runner.temp }}/linux-framing-list.log
+            ${{ runner.temp }}/linux-framing-required-results.json
           if-no-files-found: warn
           retention-days: 7

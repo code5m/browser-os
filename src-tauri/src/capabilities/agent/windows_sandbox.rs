@@ -3,11 +3,13 @@
 //! optional private snapshot are exposed; the real workspace is never mounted.
 #![cfg(windows)]
 
-use crate::windows_process::{JobObject, CREATE_SUSPENDED};
+use crate::windows_process::CREATE_SUSPENDED;
+mod lifecycle;
+pub(crate) use lifecycle::{initialize_recovery_store, recover_abandoned_profiles, request_shutdown, shutdown_until, RecoveryReport};
 pub use browseros_platform_security::windows::OperationBudget;
 use browseros_platform_security::windows::{
     AppContainerAccess, AppContainerDirectory, AppContainerPolicy,
-    PinnedReadDirectory, PinnedReadFile, PrivateTreeOptions, OperationCleanupGuard, file_identity,
+    PinnedReadDirectory, PinnedReadFile, PrivateTreeOptions, OperationCleanupGuard, NamedPrivateJob, file_identity,
 };
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -68,6 +70,7 @@ fn wide_text(value: &str) -> Result<Vec<u16>, String> {
 pub(super) fn sandbox_prerequisites_available() -> bool {
     system_binary("cmd.exe").is_ok()
         && current_user_sid().is_ok()
+        && lifecycle::admission_available()
 }
 
 pub(super) fn no_reparse_path(path: &Path) -> Result<(), String> {
@@ -215,28 +218,22 @@ impl StderrDiagnostic {
 }
 
 struct ProfileCleanup {
-    name: String,
-    folder: PathBuf,
-    _owner: OperationCleanupGuard,
+    lease: lifecycle::ProfileLease,
     last_try: Option<Instant>,
     failures: u32,
 }
 impl ProfileCleanup {
+    fn new(lease: lifecycle::ProfileLease) -> Self {
+        Self { lease, last_try: None, failures: 0 }
+    }
     fn try_finish(&mut self) -> bool {
-        if self.last_try.is_some_and(|last| last.elapsed() < Duration::from_secs(
-            (1u64 << self.failures.min(5)).min(30)
-        )) { return false; }
+        if !lifecycle::shutdown_requested()
+            && self.last_try.is_some_and(|last| last.elapsed() < Duration::from_secs(
+                (1u64 << self.failures.min(5)).min(30)
+            ))
+        { return false; }
         self.last_try = Some(Instant::now());
-        let name = match wide_text(&self.name) { Ok(name) => name, Err(_) => return false };
-        let deleted = unsafe { DeleteAppContainerProfile(name.as_ptr()) };
-        let registration_done = deleted >= 0
-            || matches!(deleted as u32, 0x8007_0002 | 0x8007_0490);
-        let files_done = self.folder.as_os_str().is_empty() || match std::fs::remove_dir_all(&self.folder) {
-            Ok(()) => true,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
-            Err(_) => false,
-        };
-        if registration_done && files_done { return true; }
+        if self.lease.try_cleanup().is_ok() { return true; }
         self.failures = self.failures.saturating_add(1);
         if self.failures == 1 { eprintln!("SANDBOX_PROFILE_CLEANUP_PENDING"); }
         false
@@ -245,11 +242,11 @@ impl ProfileCleanup {
 enum CleanupTask { Process(Box<ProcessResources>), Profile(ProfileCleanup) }
 struct CleanupReaper {
     queue: Arc<(Mutex<Vec<CleanupTask>>, Condvar)>,
-    _worker: thread::JoinHandle<()>,
+    worker: Mutex<Option<thread::JoinHandle<()>>>,
 }
+static CLEANUP_REAPER: OnceLock<Mutex<Option<Arc<CleanupReaper>>>> = OnceLock::new();
 fn cleanup_reaper() -> Result<Arc<CleanupReaper>, String> {
-    static REAPER: OnceLock<Mutex<Option<Arc<CleanupReaper>>>> = OnceLock::new();
-    let mut slot = REAPER.get_or_init(|| Mutex::new(None))
+    let mut slot = CLEANUP_REAPER.get_or_init(|| Mutex::new(None))
         .lock().unwrap_or_else(|poison| poison.into_inner());
     if let Some(reaper) = slot.as_ref() { return Ok(Arc::clone(reaper)); }
     // Only successful worker creation is cached. A temporary OS thread limit
@@ -262,7 +259,9 @@ fn cleanup_reaper() -> Result<Arc<CleanupReaper>, String> {
                 let (lock, wake) = &*owned;
                 let mut queued = lock.lock().unwrap_or_else(|poison| poison.into_inner());
                 while queued.is_empty() {
-                    queued = wake.wait(queued).unwrap_or_else(|poison| poison.into_inner());
+                    if lifecycle::reaper_may_exit() { return; }
+                    queued = wake.wait_timeout(queued, Duration::from_millis(25))
+                        .unwrap_or_else(|poison| poison.into_inner()).0;
                 }
                 let pending = std::mem::take(&mut *queued);
                 drop(queued);
@@ -285,14 +284,35 @@ fn cleanup_reaper() -> Result<Arc<CleanupReaper>, String> {
                 thread::sleep(Duration::from_millis(25));
             }
         }).map_err(|_| "SANDBOX_CLEANUP_REAPER_START".to_string())?;
-        Ok(CleanupReaper { queue, _worker: worker })
+        Ok(CleanupReaper { queue, worker: Mutex::new(Some(worker)) })
     })()?;
     let reaper = Arc::new(created);
     *slot = Some(Arc::clone(&reaper));
     Ok(reaper)
 }
+
+fn installed_cleanup_reaper() -> Option<Arc<CleanupReaper>> {
+    CLEANUP_REAPER.get().and_then(|slot|
+        slot.lock().unwrap_or_else(|poison| poison.into_inner()).as_ref().cloned())
+}
+fn wake_cleanup_reaper() {
+    if let Some(reaper) = installed_cleanup_reaper() { reaper.queue.1.notify_all(); }
+}
+fn join_cleanup_reaper_if_finished() -> Result<bool, String> {
+    let Some(reaper) = installed_cleanup_reaper() else { return Ok(true); };
+    let worker = {
+        let mut worker = reaper.worker.lock().map_err(|_| "SANDBOX_CLEANUP_WORKER_LOCK")?;
+        if worker.as_ref().is_some_and(|thread| !thread.is_finished()) { return Ok(false); }
+        worker.take()
+    };
+    if let Some(worker) = worker {
+        worker.join().map_err(|_| "SANDBOX_CLEANUP_WORKER_PANIC")?;
+    }
+    Ok(true)
+}
+
 fn enqueue_cleanup(task: CleanupTask) {
-    let reaper = cleanup_reaper().expect("initialized before native profile creation");
+    let reaper = installed_cleanup_reaper().expect("initialized before native profile creation");
     let (queue, wake) = &*reaper.queue;
     queue.lock().unwrap_or_else(|poison| poison.into_inner()).push(task);
     wake.notify_one();
@@ -327,7 +347,7 @@ pub struct SandboxProfile {
     preparation_failed: AtomicBool,
     budget: OperationBudget,
     diagnostic: Arc<Mutex<StderrDiagnostic>>,
-    cleanup_owner: Option<OperationCleanupGuard>,
+    recovery_lease: Option<lifecycle::ProfileLease>,
 }
 unsafe impl Send for SandboxProfile {}
 
@@ -338,44 +358,39 @@ impl SandboxProfile {
 
     pub fn create_with_budget(budget: OperationBudget) -> Result<Self, String> {
         budget.check().map_err(|error| error.to_string())?;
-        cleanup_reaper()?;
-        let cleanup_owner = budget.hold_cleanup();
-        let name = format!("BrowserOS.Coding.{}", uuid::Uuid::new_v4().simple());
-        let name_wide = wide_text(&name)?;
+        // Initialization owns the cleanup worker before admission is enabled.
+        // A rejected start cannot create a new service after shutdown joins it.
+        // The fsynced owner/SID intent and exclusive native record lease
+        // precede the userenv create API. All following failures already have
+        // an owning SandboxProfile that queues the durable cleanup obligation.
+        let recovery_lease = lifecycle::begin(&budget)?;
+        let name = recovery_lease.name().to_owned();
+        let expected_sid = recovery_lease.expected_sid().to_owned();
+        let mut profile = Self {
+            name, sid: ptr::null_mut(), sid_string: expected_sid, folder: PathBuf::new(),
+            root_guard: None, state_guard: Mutex::new(None), runtime_guard: Mutex::new(None),
+            snapshot_guard: Mutex::new(None), extra_guards: Mutex::new(Vec::new()),
+            runtime_pins: Mutex::new(Vec::new()), staged_bytes: Mutex::new(0),
+            preparation_failed: AtomicBool::new(false), budget,
+            diagnostic: Arc::new(Mutex::new(StderrDiagnostic::default())),
+            recovery_lease: Some(recovery_lease),
+        };
+        let name_wide = wide_text(&profile.name)?;
         let display = wide_text("BrowserOS isolated coding tool")?;
         let description = wide_text("No network; private MCP/LSP execution")?;
+        profile.budget.check().map_err(|error| error.to_string())?;
         let mut sid = ptr::null_mut();
         let result = unsafe {
-            CreateAppContainerProfile(
-                name_wide.as_ptr(),
-                display.as_ptr(),
-                description.as_ptr(),
-                ptr::null(),
-                0,
-                &mut sid,
-            )
+            CreateAppContainerProfile(name_wide.as_ptr(), display.as_ptr(), description.as_ptr(),
+                ptr::null(), 0, &mut sid)
         };
         if result < 0 {
             if !sid.is_null() { unsafe { FreeSid(sid); } }
+            profile.recovery_lease.as_mut().expect("owned intent").not_registered();
             return Err(format!("SANDBOX_PROFILE_CREATE:{result:x}"));
         }
-        let profile = Self {
-            name,
-            sid,
-            sid_string: String::new(),
-            folder: PathBuf::new(),
-            root_guard: None,
-            state_guard: Mutex::new(None),
-            runtime_guard: Mutex::new(None),
-            snapshot_guard: Mutex::new(None),
-            extra_guards: Mutex::new(Vec::new()),
-            runtime_pins: Mutex::new(Vec::new()),
-            staged_bytes: Mutex::new(0),
-            preparation_failed: AtomicBool::new(false),
-            budget,
-            diagnostic: Arc::new(Mutex::new(StderrDiagnostic::default())),
-            cleanup_owner: Some(cleanup_owner),
-        };
+        profile.recovery_lease.as_mut().expect("owned intent").registered();
+        profile.sid = sid;
         if profile.sid.is_null() { return Err("SANDBOX_PROFILE_SID_MISSING".into()); }
         profile.finish_create()
     }
@@ -398,7 +413,8 @@ impl SandboxProfile {
             Err("SANDBOX_SID_TEXT")
         };
         unsafe { LocalFree(sid_text as _) };
-        self.sid_string = parsed_sid?;
+        let actual_sid = parsed_sid?;
+        if actual_sid != self.sid_string { return Err("SANDBOX_PROFILE_SID_MISMATCH".into()); }
         let name_wide = wide_text(&self.sid_string)?;
         let mut folder = ptr::null_mut();
         let result = unsafe { GetAppContainerFolderPath(name_wide.as_ptr(), &mut folder) };
@@ -424,12 +440,18 @@ impl SandboxProfile {
         // missing/replaced result fails closed; no path-based recursive mkdir.
         self.budget.check().map_err(|error| error.to_string())?;
         let policy = self.policy(AppContainerAccess::ReadExecute, false)?;
-        // Generic package access is directory-only and noninheritable here.
-        // Prepare it once before any child/private-directory pin exists;
-        // later LSP calls never rewrite an active OS-managed ancestor.
+        // Generic package access is FILE_TRAVERSE only and noninheritable.
+        // Private child directories keep own-package list/read permissions;
+        // other packages cannot enumerate their contents.
         self.root_guard = Some(AppContainerDirectory::open_profile(
             &self.folder, &policy, true, &self.budget,
         ).map_err(|error| format!("SANDBOX_PROFILE_TRAVERSE_ACL:{error}"))?);
+        let identity = self.root_guard.as_ref().expect("pinned profile").identity_record()
+            .map_err(|_| "SANDBOX_PROFILE_NATIVE_IDENTITY")?;
+        let scope = self.root_guard.as_ref().expect("pinned profile").recovery_scope(&self.name, &self.sid_string)
+            .map_err(|_| "SANDBOX_PROFILE_NAMESPACE_IDENTITY")?;
+        self.recovery_lease.as_mut().expect("owned intent").bind(identity, scope)?;
+        self.budget.check().map_err(|error| error.to_string())?;
         Ok(self)
     }
 
@@ -785,21 +807,18 @@ impl Drop for SandboxProfile {
         unsafe {
             if !self.sid.is_null() { FreeSid(self.sid); self.sid = ptr::null_mut(); }
         }
-        if let Some(owner) = self.cleanup_owner.take() {
-            // File/profile deletion can itself be slow. Retain the budget's
-            // cleanup barrier in the background owner until it really ends.
-            enqueue_cleanup(CleanupTask::Profile(ProfileCleanup {
-                name: std::mem::take(&mut self.name),
-                folder: std::mem::take(&mut self.folder),
-                _owner: owner, last_try: None, failures: 0,
-            }));
+        if let Some(lease) = self.recovery_lease.take() {
+            // The durable native lease and budget barrier move with cleanup.
+            // Process exit may stop this worker; the next host can recover only
+            // a bound, inactive profile with the exact recorded OS identity.
+            enqueue_cleanup(CleanupTask::Profile(ProfileCleanup::new(lease)));
         }
     }
 }
 
 struct ProcessResources {
     handle: HANDLE,
-    job: JobObject,
+    job: NamedPrivateJob,
     profile: SandboxProfile,
     stderr: Option<thread::JoinHandle<()>>,
 }
@@ -848,7 +867,9 @@ impl SandboxProcess {
             _ => Err(win32_error("SANDBOX_WAIT")),
         }
     }
-    pub fn terminate(&self) -> Result<(), String> { self.resources().job.terminate() }
+    pub fn terminate(&self) -> Result<(), String> {
+        self.resources().job.terminate().map_err(|_| "SANDBOX_JOB_TERMINATE".into())
+    }
     pub fn profile(&self) -> &SandboxProfile { &self.resources().profile }
     pub fn cleanup_complete(&self) -> bool { self.resources().is_complete() }
 }
@@ -1144,7 +1165,7 @@ fn spawn_inner(
     let (parent_error, child_error) = pipe_security_for_stderr(&profile)?;
     inheritable(parent_error.as_raw_handle(), false)?;
     inheritable(child_error.as_raw_handle(), true)?;
-    let job = JobObject::create_for_spawn()?;
+    let job = profile.recovery_lease.as_ref().ok_or("SANDBOX_JOURNAL_CLOSED")?.create_job()?;
     let inherited_jobs = [job.as_raw_handle() as HANDLE];
     profile.budget.check().map_err(|error| error.to_string())?;
 
@@ -1625,6 +1646,32 @@ mod tests {
         assert_eq!(diagnostic.tail.len(), STDERR_TAIL);
         assert_eq!(diagnostic.code, Some("LSP_CHILD_NULL_DEVICE_DENIED"));
         assert!(!diagnostic.code.unwrap().contains("private"));
+    }
+
+    #[test]
+    fn appcontainer_other_package_cannot_list_private_snapshot() {
+        let profile = SandboxProfile::create().unwrap();
+        let snapshot = profile.snapshot_dir().unwrap();
+        let file = snapshot.join("visible-only-to-own-package.rs");
+        std::fs::write(&file, b"own-list-read-marker").unwrap();
+        profile.protect_lsp_snapshot(&snapshot).unwrap();
+        let cmd = system_binary("cmd.exe").unwrap();
+        let own_command = format!("dir /b \"{}\" & type \"{}\"", snapshot.display(), file.display());
+        let (stdout, stderr, exit, retained) = run_profile_retained(
+            profile, &cmd, &["/D".into(), "/C".into(), own_command], &[],
+        ).unwrap();
+        assert_eq!(exit, 0, "own package list/read failed: {stderr}");
+        assert!(stdout.contains("visible-only-to-own-package.rs"));
+        assert!(stdout.contains("own-list-read-marker"));
+        let other_command = format!("dir /b \"{}\"", snapshot.display());
+        let (stdout, stderr, exit) = run_isolated(
+            &cmd, &["/D".into(), "/C".into(), other_command], &[],
+        ).unwrap();
+        assert_ne!(exit, 0, "another package enumerated the private snapshot: {stdout} {stderr}");
+        assert!(!stdout.contains("visible-only-to-own-package.rs"));
+        let budget = retained.profile().budget().clone();
+        drop(retained);
+        wait_cleanup(&budget);
     }
 
 }

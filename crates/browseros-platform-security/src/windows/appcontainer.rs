@@ -58,6 +58,8 @@ impl AppContainerPolicy {
         Ok(Self { base: Policy::new()?, package, all_packages, access, directory_traversal })
     }
 
+    pub(super) fn package_sid(&self) -> &OwnedSid { &self.package }
+
     fn mask(&self) -> u32 {
         FILE_GENERIC_READ | FILE_GENERIC_EXECUTE | match self.access {
             AppContainerAccess::ReadExecute => 0,
@@ -70,7 +72,7 @@ impl AppContainerPolicy {
         if !self.base.owner_is_system() { entries.push((&self.base.system, FILE_ALL_ACCESS, flags)); }
         entries.push((&self.package, self.mask(), flags));
         if directory && self.directory_traversal {
-            entries.push((&self.all_packages, FILE_GENERIC_READ | FILE_GENERIC_EXECUTE, 0));
+            entries.push((&self.all_packages, FILE_TRAVERSE, 0));
         }
         entries
     }
@@ -195,40 +197,64 @@ pub struct AppContainerDirectory {
 impl AppContainerDirectory {
     pub fn path(&self) -> &Path { &self.path }
     pub fn identity(&self) -> io::Result<FileIdentity> { file_identity(self.opened.target()) }
+    pub fn identity_record(&self) -> io::Result<NativeProfileIdentity> { super::recovery::profile_identity(self.opened.target()) }
+    pub fn recovery_scope(&self, name: &str, package_sid: &str) -> io::Result<NativeProfileScope> {
+        super::recovery::profile_scope(&self.opened, name, package_sid)
+    }
 
     /// OS-managed ancestors retain their existing owner and DACL entries.
-    /// Add only noninheritable RX traversal; protect private child trees with
+    /// Add only noninheritable FILE_TRAVERSE; protect private child trees with
     /// the independent exact policy before a lowbox process can start.
     pub fn open_profile(
         path: &Path, policy: &AppContainerPolicy, generic_traversal: bool,
         budget: &OperationBudget,
     ) -> io::Result<Self> {
         budget.check()?;
-        // An already-running profile may pin a shared OS ancestor. Audit
-        // that ancestor first and request mutation rights only if a grant is
-        // actually missing; repeated profile creation is read-only there.
-        let probe = open_path_options(path, None, true, PIN_ACCESS, 0, None, Some(budget))?;
-        if probe.chain.len() < 2 { return Err(failure("PACKAGE_PARENT_MISSING", 0)); }
-        let needs_parent = generic_traversal
-            && !has_traversal(&probe.chain[probe.chain.len() - 2], &policy.all_packages)?;
-        drop(probe);
-        let mutating = open_path_options(path, None, true, MAXIMUM_ALLOWED,
-            usize::from(needs_parent), None, Some(budget))?;
-        if !private_object(mutating.target())? { return Err(failure("PACKAGE_ROOT_NOT_DIRECTORY", 0)); }
-        add_traversal(mutating.target(), &policy.package, budget)?;
-        if generic_traversal {
-            add_traversal(mutating.target(), &policy.all_packages, budget)?;
-            if mutating.chain.len() < 2 { return Err(failure("PACKAGE_PARENT_MISSING", 0)); }
-            let parent = &mutating.chain[mutating.chain.len() - 2];
-            if needs_parent { add_traversal(parent, &policy.all_packages, budget)?; }
-            else if !has_traversal(parent, &policy.all_packages)? {
-                return Err(failure("PROFILE_PARENT_POLICY_CHANGED", 0));
-            }
+        // Read-only first. Existing profile/cwd pins may reject DELETE access;
+        // a compliant profile must never request mutation rights at all.
+        let mut opened = open_path_options(path, None, true, PIN_ACCESS, 0, None, Some(budget))?;
+        if opened.chain.len() < 2 || !private_object(opened.target())? {
+            return Err(failure("PACKAGE_ROOT_NOT_DIRECTORY", 0));
         }
-        let expected = file_identity(mutating.target())?;
-        drop(mutating);
-        let opened = open_path_options(path, None, true, PIN_ACCESS, 0, None, Some(budget))?;
-        if expected != file_identity(opened.target())? { return Err(failure("PACKAGE_ROOT_CHANGED", 0)); }
+        let root = opened.chain.len() - 1;
+        let parent = root - 1;
+        let need_own = !has_traversal(opened.target(), &policy.package)?;
+        let need_generic = generic_traversal && !has_traversal(opened.target(), &policy.all_packages)?;
+        let need_parent = generic_traversal && !has_traversal(&opened.chain[parent], &policy.all_packages)?;
+        if !need_own && !need_generic && !need_parent {
+            return Ok(Self { opened, path: path.to_owned() });
+        }
+        let identities = opened.chain.iter().map(file_identity).collect::<io::Result<Vec<_>>>()?;
+        let names: Vec<_> = path.components().filter_map(|part| match part {
+            Component::Normal(name) => Some(name.to_os_string()), _ => None,
+        }).collect();
+        if names.len() + 1 != opened.chain.len() || (need_parent && parent == 0) {
+            return Err(failure("PACKAGE_PARENT_MISSING", 0));
+        }
+        // Upgrade only the objects proved noncompliant. The other ancestor
+        // handles stay pinned; each close/reopen uses its held parent handle
+        // and compares the original native identity before any ACL mutation.
+        if need_parent {
+            replace_profile_handle(&mut opened, parent, &names[parent - 1],
+                identities[parent], MAXIMUM_ALLOWED, budget)?;
+            add_traversal(&opened.chain[parent], &policy.all_packages, budget)?;
+        }
+        if need_own || need_generic {
+            replace_profile_handle(&mut opened, root, &names[root - 1],
+                identities[root], MAXIMUM_ALLOWED, budget)?;
+            if need_own { add_traversal(opened.target(), &policy.package, budget)?; }
+            if need_generic { add_traversal(opened.target(), &policy.all_packages, budget)?; }
+            replace_profile_handle(&mut opened, root, &names[root - 1],
+                identities[root], PIN_ACCESS, budget)?;
+        }
+        if need_parent {
+            replace_profile_handle(&mut opened, parent, &names[parent - 1],
+                identities[parent], PIN_ACCESS, budget)?;
+        }
+        if !has_traversal(opened.target(), &policy.package)?
+            || (generic_traversal && (!has_traversal(opened.target(), &policy.all_packages)?
+                || !has_traversal(&opened.chain[parent], &policy.all_packages)?))
+        { return Err(failure("PROFILE_TRAVERSAL_READBACK", 0)); }
         Ok(Self { opened, path: path.to_owned() })
     }
 
@@ -310,6 +336,20 @@ impl AppContainerDirectory {
         chain.push(file);
         Ok(PinnedReadFile { opened: OpenedPath { chain }, path: self.path.join(name) })
     }
+}
+
+
+fn replace_profile_handle(
+    opened: &mut OpenedPath, index: usize, name: &OsStr, expected: FileIdentity,
+    access: u32, budget: &OperationBudget,
+) -> io::Result<()> {
+    budget.check()?;
+    if index == 0 || index >= opened.chain.len() { return Err(failure("PROFILE_HANDLE_INDEX", 0)); }
+    drop(opened.chain.remove(index));
+    let file = open_relative(&opened.chain[index - 1], name, access, true, false, ptr::null_mut(), true)?;
+    if file_identity(&file)? != expected { return Err(failure("PROFILE_COMPONENT_CHANGED", 0)); }
+    opened.chain.insert(index, file);
+    Ok(())
 }
 
 /// A file and all its parents are pinned. No write/delete sharing on the file
@@ -428,8 +468,11 @@ fn app_tree(
 }
 
 // OS-owned profile ancestors are NOT private child trees. Preserve every old
-// ACE byte-for-byte and owner/control state, adding one exact, noninheritable
+// ACE byte-for-byte and owner/control state, adding one exact, noninheritable FILE_TRAVERSE
 // traversal ACE only when absent. Never replace their complete DACL policy.
+// Historical RX ACEs have no ownership tag. They may be OS-supplied: keep them
+// here rather than guessing provenance. Owned private child trees use the exact
+// policy above, so their old broad package ACEs are safely replaced.
 fn acl_bytes(acl: *mut ACL) -> io::Result<Vec<Vec<u8>>> {
     if acl.is_null() || unsafe { IsValidAcl(acl) } == 0 { return Err(failure("PROFILE_ACL_INVALID", 0)); }
     let count = unsafe { (*acl).AceCount } as u32;
@@ -458,7 +501,7 @@ fn traversal_match(bytes: &[u8], sid: &OwnedSid) -> bool {
     let raw_sid = aligned.as_ptr() as PSID;
     if unsafe { IsValidSid(raw_sid) } == 0 { return false; }
     let mask = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
-    mask == (FILE_GENERIC_READ | FILE_GENERIC_EXECUTE)
+    mask == FILE_TRAVERSE
         && unsafe { EqualSid(raw_sid, sid.as_ptr()) } != 0
 }
 fn copied_sid(raw: PSID) -> io::Result<OwnedSid> {
@@ -498,7 +541,7 @@ fn add_traversal(file: &File, sid: &OwnedSid, budget: &OperationBudget) -> io::R
     for entry in &old {
         if !added && u32::from(entry[1]) & INHERITED_ACE != 0 {
             if unsafe { AddAccessAllowedAceEx(acl, ACL_REVISION_DS_VALUE, 0,
-                FILE_GENERIC_READ | FILE_GENERIC_EXECUTE, sid.as_ptr()) } == 0
+                FILE_TRAVERSE, sid.as_ptr()) } == 0
             { return Err(last_failure("PROFILE_TRAVERSAL_ADD")); }
             added = true;
         }
@@ -507,7 +550,7 @@ fn add_traversal(file: &File, sid: &OwnedSid, budget: &OperationBudget) -> io::R
         }
     }
     if !added && unsafe { AddAccessAllowedAceEx(acl, ACL_REVISION_DS_VALUE, 0,
-        FILE_GENERIC_READ | FILE_GENERIC_EXECUTE, sid.as_ptr()) } == 0
+        FILE_TRAVERSE, sid.as_ptr()) } == 0
     { return Err(last_failure("PROFILE_TRAVERSAL_ADD")); }
     let code = unsafe { SetSecurityInfo(file.as_raw_handle() as _, SE_FILE_OBJECT,
         DACL_SECURITY_INFORMATION, ptr::null_mut(), ptr::null_mut(), acl, ptr::null()) };
@@ -534,6 +577,10 @@ pub struct PinnedDirectoryEntry {
 }
 pub struct PinnedReadDirectory { opened: OpenedPath, path: PathBuf }
 impl PinnedReadDirectory {
+    pub fn identity_record(&self) -> io::Result<NativeProfileIdentity> { super::recovery::profile_identity(self.opened.target()) }
+    pub fn recovery_scope(&self, name: &str, package_sid: &str) -> io::Result<NativeProfileScope> {
+        super::recovery::profile_scope(&self.opened, name, package_sid)
+    }
     pub fn open(path: &Path, budget: &OperationBudget) -> io::Result<Self> {
         budget.check()?;
         let opened = open_path_options(path, None, true, PIN_ACCESS, 0, None, Some(budget))?;
@@ -756,6 +803,54 @@ mod tests {
         bytes[offset_of!(ACCESS_ALLOWED_ACE, SidStart) + 1] = 255;
         assert!(!traversal_match(&bytes, &policy.all_packages));
         let _ = descriptor.as_ptr();
+    }
+
+    #[test]
+    fn generic_package_traversal_never_grants_directory_listing() {
+        let root = fixture("traverse-only");
+        ensure_private_directory(&root, &PrivateTreeOptions::default()).unwrap();
+        let opened = open_path(&root, None, true, MAXIMUM_ALLOWED).unwrap();
+        let policy = policy(AppContainerAccess::ReadExecute, true);
+        let mut old: Vec<_> = policy.entries(true).into_iter()
+            .map(|(sid, mask, flags)| (sid, false, mask, flags)).collect();
+        old.iter_mut().find(|(sid, _, _, _)| unsafe {
+            EqualSid(sid.as_ptr(), policy.all_packages.as_ptr()) != 0
+        }).unwrap().2 = FILE_GENERIC_READ | FILE_GENERIC_EXECUTE;
+        set_acl(opened.target(), &old);
+        assert!(!exact_app_descriptor(opened.target(), &policy, true, true).unwrap());
+        let budget = OperationBudget::new(Duration::from_secs(10));
+        let report = app_tree(opened.target(), &policy, &PrivateTreeOptions::default(),
+            &budget, true, true).unwrap();
+        assert_eq!(report.repaired_objects, 1);
+        let (_allocation, _, acl, _) = native_descriptor(opened.target()).unwrap();
+        let entries = acl_bytes(acl).unwrap();
+        let generic = entries.iter().find(|bytes| traversal_match(bytes, &policy.all_packages))
+            .expect("native exact traversal ACE");
+        assert_eq!(u32::from_le_bytes(generic[4..8].try_into().unwrap()), FILE_TRAVERSE);
+        assert_eq!(generic[1], 0, "traversal must never inherit onto files");
+        assert_eq!(FILE_TRAVERSE & FILE_LIST_DIRECTORY, 0);
+        assert!(policy.entries(false).iter().all(|(sid, _, _)| unsafe {
+            EqualSid(sid.as_ptr(), policy.all_packages.as_ptr()) == 0
+        }));
+        drop(opened);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn compliant_profile_reopen_uses_read_only_handles() {
+        let root = fixture("profile-reopen");
+        ensure_private_directory(&root, &PrivateTreeOptions::default()).unwrap();
+        let policy = policy(AppContainerAccess::ReadExecute, false);
+        let budget = OperationBudget::new(Duration::from_secs(10));
+        let first = AppContainerDirectory::open_profile(&root, &policy, false, &budget).unwrap();
+        // The first no-DELETE pin makes an unconditional MAXIMUM_ALLOWED open
+        // conflict. The second compliant preparation must stay read-only.
+        let second = AppContainerDirectory::open_profile(&root, &policy, false, &budget).unwrap();
+        assert_eq!(first.identity().unwrap(), second.identity().unwrap());
+        assert!(has_traversal(second.opened.target(), &policy.package).unwrap());
+        drop(second);
+        drop(first);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
 }
