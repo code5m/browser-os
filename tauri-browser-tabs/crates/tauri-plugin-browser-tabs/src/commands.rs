@@ -3,8 +3,6 @@ use crate::models::{
 };
 use crate::platform;
 use parking_lot::RwLock;
-#[cfg(target_os = "windows")]
-use std::os::windows::fs::MetadataExt;
 use std::collections::HashMap;
 #[cfg(target_os = "linux")]
 use std::os::unix::fs::PermissionsExt;
@@ -71,248 +69,91 @@ fn ensure_private_browser_profile(app: &AppHandle<Wry>) -> Result<PathBuf> {
     Ok(profile)
 }
 
-// Browser sub-WebViews use a single app-owned WebView2 user data folder.
-// The trusted main UI keeps its default, separate storage environment. The
-// profile DACL is reset and verified before the first child WebView is created.
+// Browser sub-WebViews use a single app-owned WebView2 directory. Native
+// owner/SYSTEM checks are shared with app-data storage; display names, locales
+// and command output never participate in an authorization decision.
 #[cfg(target_os = "windows")]
-fn reject_windows_reparse_path(path: &Path) -> Result<()> {
-    if !path.is_absolute() {
-        return Err(BrowserTabError::Platform("browser profile path is not absolute".into()));
+fn browser_profile_security_options() -> browseros_platform_security::windows::PrivateTreeOptions {
+    browseros_platform_security::windows::PrivateTreeOptions {
+        max_objects: 200_000,
+        max_depth: 128,
+        max_repairs: 200_000,
+        max_duration: Duration::from_secs(30),
     }
-    let mut current = PathBuf::new();
-    for component in path.components() {
-        current.push(component.as_os_str());
-        match std::fs::symlink_metadata(&current) {
-            Ok(metadata) if metadata.file_attributes() & 0x0000_0400 != 0 => {
-                return Err(BrowserTabError::Platform("browser profile path contains a reparse point".into()));
-            }
-            Ok(_) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(_) => return Err(BrowserTabError::Platform("cannot inspect browser profile path".into())),
-        }
-    }
-    Ok(())
 }
 
 #[cfg(target_os = "windows")]
-fn windows_system_binary(name: &str) -> Result<PathBuf> {
-    use std::os::windows::ffi::OsStringExt;
-    use windows_sys::Win32::System::SystemInformation::GetSystemDirectoryW;
-    // Do not trust a caller-inherited SystemRoot/WINDIR variable when selecting
-    // ACL tooling. Resolve the actual OS System32 directory via Win32.
-    let mut buffer = [0u16; 512];
-    let length = unsafe { GetSystemDirectoryW(buffer.as_mut_ptr(), buffer.len() as u32) };
-    if length == 0 || length as usize >= buffer.len() {
-        return Err(BrowserTabError::Platform("Windows system directory unavailable".into()));
-    }
-    let root = std::ffi::OsString::from_wide(&buffer[..length as usize]);
-    let path = PathBuf::from(root).join(name);
-    if !path.is_file() {
-        return Err(BrowserTabError::Platform(format!("Windows system tool unavailable: {name}")));
-    }
-    Ok(path)
+fn secure_windows_browser_profile(
+    profile: &Path,
+) -> Result<browseros_platform_security::windows::PrivateTreeReport> {
+    browseros_platform_security::windows::ensure_private_directory(
+        profile, &browser_profile_security_options(),
+    ).map_err(|error| BrowserTabError::Platform(format!("BROWSER_PROFILE_ACL_MIGRATION: {error}")))
 }
 
 #[cfg(target_os = "windows")]
-fn current_windows_user_sid() -> Result<String> {
-    let whoami = windows_system_binary("whoami.exe")?;
-    let output = std::process::Command::new(whoami)
-        .args(["/user", "/fo", "csv", "/nh"])
-        .output()
-        .map_err(|_| BrowserTabError::Platform("cannot identify Windows profile owner".into()))?;
-    if !output.status.success() {
-        return Err(BrowserTabError::Platform("cannot identify Windows profile owner".into()));
-    }
-    let text = String::from_utf8_lossy(&output.stdout);
-    let line = text.lines().find(|line| line.contains("S-1-"))
-        .ok_or_else(|| BrowserTabError::Platform("Windows user SID unavailable".into()))?;
-    let fields: Vec<_> = line.trim_start_matches('\u{feff}').split(',').collect();
-    let sid = fields.get(1).map(|value| value.trim().trim_matches('"'))
-        .filter(|value| value.strip_prefix("S-1-").is_some_and(|suffix| {
-            !suffix.is_empty()
-                && suffix.split('-').all(|part| {
-                    !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit())
-                })
-        }))
-        .ok_or_else(|| BrowserTabError::Platform("Windows user SID invalid".into()))?;
-    Ok(sid.to_string())
+fn audit_windows_profile_acl(
+    profile: &Path, deep: bool,
+) -> Result<browseros_platform_security::windows::PrivateTreeReport> {
+    browseros_platform_security::windows::audit_private_directory(
+        profile, deep, &browser_profile_security_options(),
+    ).map_err(|error| BrowserTabError::Platform(format!("BROWSER_PROFILE_ACL_AUDIT: {error}")))
 }
 
 #[cfg(target_os = "windows")]
-fn reject_profile_reparse_tree(directory: &Path) -> Result<usize> {
-    const MAX_OBJECTS: usize = 200_000;
-    const MAX_DEPTH: usize = 128;
-    let mut pending = vec![(directory.to_path_buf(), 0usize)];
-    let mut count = 1usize;
-    while let Some((current, depth)) = pending.pop() {
-        if depth >= MAX_DEPTH {
-            return Err(BrowserTabError::Platform("WebView2 profile tree depth limit".into()));
-        }
-        for entry in std::fs::read_dir(&current)
-            .map_err(|_| BrowserTabError::Platform("cannot enumerate WebView2 profile tree".into()))?
-        {
-            let entry = entry.map_err(|_| BrowserTabError::Platform("cannot inspect WebView2 profile entry".into()))?;
-            let path = entry.path();
-            let metadata = std::fs::symlink_metadata(&path)
-                .map_err(|_| BrowserTabError::Platform("cannot inspect WebView2 profile metadata".into()))?;
-            if metadata.file_attributes() & 0x0000_0400 != 0 {
-                return Err(BrowserTabError::Platform("WebView2 profile contains a reparse point".into()));
-            }
-            count = count.checked_add(1)
-                .filter(|value| *value <= MAX_OBJECTS)
-                .ok_or_else(|| BrowserTabError::Platform("WebView2 profile object limit".into()))?;
-            if metadata.is_dir() {
-                pending.push((path, depth + 1));
-            } else if !metadata.is_file() {
-                return Err(BrowserTabError::Platform("WebView2 profile contains a special file".into()));
-            }
-        }
-    }
-    Ok(count)
+struct ProfileAudit {
+    identity: browseros_platform_security::windows::FileIdentity,
+    verified_at: Instant,
 }
 
 #[cfg(target_os = "windows")]
-fn secure_windows_browser_profile(profile: &Path) -> Result<()> {
-    let icacls = windows_system_binary("icacls.exe")?;
-    let sid = current_windows_user_sid()?;
-    let object_count = reject_profile_reparse_tree(profile)?;
-
-    // Normalize object ownership before resetting ACLs. A copied legacy
-    // profile may otherwise remain owned by another account that can rewrite
-    // its DACL despite the current user's explicit access grant.
-    let owner_sid = format!("*{sid}");
-    let set_owner = std::process::Command::new(&icacls)
-        .arg(profile)
-        .args(["/setowner", owner_sid.as_str(), "/T"])
-        .output()
-        .map_err(|_| BrowserTabError::Platform("cannot set WebView2 profile owner".into()))?;
-    if !set_owner.status.success() {
-        return Err(BrowserTabError::Platform("cannot set WebView2 profile owner".into()));
-    }
-
-    // Reset all existing descendants to inherited ACLs before protecting the
-    // profile root. This runs before the first WebView2 child opens the folder.
-    let reset = std::process::Command::new(&icacls)
-        .arg(profile)
-        .args(["/reset", "/T"])
-        .output()
-        .map_err(|_| BrowserTabError::Platform("cannot reset WebView2 profile ACL".into()))?;
-    if !reset.status.success() {
-        return Err(BrowserTabError::Platform("cannot reset WebView2 profile ACL".into()));
-    }
-
-    let grant_user = format!("*{sid}:(OI)(CI)F");
-    let secure = std::process::Command::new(&icacls)
-        .arg(profile)
-        .args(["/inheritance:r", "/grant:r"])
-        .arg(grant_user)
-        .arg("*S-1-5-18:(OI)(CI)F")
-        .output()
-        .map_err(|_| BrowserTabError::Platform("BROWSER_PROFILE_ACL: cannot secure WebView2 profile ACL".into()))?;
-    if !secure.status.success() {
-        return Err(BrowserTabError::Platform("BROWSER_PROFILE_ACL: cannot secure WebView2 profile ACL".into()));
-    }
-
-    let verified_count = audit_windows_profile_acl(profile, true)?;
-    if verified_count != object_count {
-        return Err(BrowserTabError::Platform("WebView2 profile changed during ACL reset".into()));
-    }
-    Ok(())
-}
-
-/// Read-only profile DACL verification. It does not reset ACLs on live
-/// WebView2 cache files. The fast path checks just the root on every tab;
-/// a full tree audit runs periodically without mutating active files.
-#[cfg(target_os = "windows")]
-fn audit_windows_profile_acl(profile: &Path, deep: bool) -> Result<usize> {
-    reject_windows_reparse_path(profile)?;
-    let object_count = if deep { reject_profile_reparse_tree(profile)? } else { 1 };
-    let icacls = windows_system_binary("icacls.exe")?;
-    let sid = current_windows_user_sid()?;
-    let mut command = std::process::Command::new(icacls);
-    command.arg(profile);
-    if deep { command.arg("/T"); }
-    let verify = command.output()
-        .map_err(|_| BrowserTabError::Platform("cannot inspect WebView2 profile ACL".into()))?;
-    if !verify.status.success() {
-        return Err(BrowserTabError::Platform("cannot verify WebView2 profile ACL".into()));
-    }
-    let listing = String::from_utf8_lossy(&verify.stdout);
-    let entries: Vec<_> = listing.lines().filter(|line| line.contains(":(")).collect();
-    let user_entries = entries.iter().filter(|line| line.contains(&sid)).count();
-    let system_entries = entries.iter().filter(|line|
-        line.contains("S-1-5-18") || line.to_ascii_uppercase().contains("SYSTEM")
-    ).count();
-    if entries.len() != object_count * 2
-        || user_entries != object_count
-        || system_entries != object_count
-        || listing.to_ascii_lowercase().contains("everyone")
-        || listing.to_ascii_lowercase().contains("authenticated users")
-        || listing.contains("S-1-1-0")
-        || listing.contains("S-1-5-32-545")
-    {
-        return Err(BrowserTabError::Platform("WebView2 profile ACL is not owner-exclusive".into()));
-    }
-    if deep && reject_profile_reparse_tree(profile)? != object_count {
-        return Err(BrowserTabError::Platform("WebView2 profile changed during ACL audit".into()));
-    }
-    Ok(object_count)
-}
-
-#[cfg(target_os = "windows")]
-static PROFILE_AUDIT: OnceLock<Mutex<Option<(PathBuf, Instant)>>> = OnceLock::new();
+static PROFILE_AUDIT: OnceLock<Mutex<Option<ProfileAudit>>> = OnceLock::new();
 
 #[cfg(target_os = "windows")]
 fn ensure_private_browser_profile(app: &AppHandle<Wry>) -> Result<PathBuf> {
-    let base = app
-        .path()
-        .app_data_dir()
+    let base = app.path().app_data_dir()
         .map_err(|_| BrowserTabError::Platform("browser profile directory unavailable".into()))?;
-    reject_windows_reparse_path(&base)?;
-    std::fs::create_dir_all(&base)
-        .map_err(|_| BrowserTabError::Platform("browser profile base unavailable".into()))?;
-    reject_windows_reparse_path(&base)?;
-    let canonical_base = std::fs::canonicalize(&base)
-        .map_err(|_| BrowserTabError::Platform("browser profile base unavailable".into()))?;
-    let profile = browser_profile_path(&canonical_base);
-    reject_windows_reparse_path(&profile)?;
-    if let Ok(meta) = std::fs::symlink_metadata(&profile) {
-        if !meta.is_dir() || meta.file_attributes() & 0x0000_0400 != 0 {
-            return Err(BrowserTabError::Platform("browser profile path invalid".into()));
-        }
-    }
-    std::fs::create_dir_all(&profile)
-        .map_err(|_| BrowserTabError::Platform("cannot create browser profile".into()))?;
-    reject_windows_reparse_path(&profile)?;
-    let canonical_profile = std::fs::canonicalize(&profile)
-        .map_err(|_| BrowserTabError::Platform("browser profile unavailable".into()))?;
-    if canonical_profile != profile {
-        return Err(BrowserTabError::Platform("browser profile path invalid".into()));
-    }
+    let profile = browser_profile_path(&base);
     let audit = PROFILE_AUDIT.get_or_init(|| Mutex::new(None));
     let mut state = audit.lock().unwrap_or_else(|poison| poison.into_inner());
     match state.as_ref() {
         None => {
-            // Only the initial profile opening normalizes all legacy ACLs.
-            secure_windows_browser_profile(&canonical_profile)?;
-            *state = Some((canonical_profile.clone(), Instant::now()));
+            // Before the first browser consumer only. Missing components are
+            // created with a private descriptor; existing data is preserved.
+            let parent_report = browseros_platform_security::windows::ensure_private_directory_root(
+                &base, &browser_profile_security_options(),
+            ).map_err(|error| BrowserTabError::Platform(format!(
+                "BROWSER_PROFILE_PARENT_ACL: {error}"
+            )))?;
+            eprintln!(
+                "BROWSER_PROFILE_PARENT_ACL_READY checked={} repaired={} elapsed_ms={}",
+                parent_report.checked_objects, parent_report.repaired_objects, parent_report.elapsed_ms,
+            );
+            let report = secure_windows_browser_profile(&profile)?;
+            eprintln!(
+                "BROWSER_PROFILE_ACL_READY checked={} repaired={} elapsed_ms={}",
+                report.checked_objects, report.repaired_objects, report.elapsed_ms,
+            );
+            *state = Some(ProfileAudit { identity: report.root_identity, verified_at: Instant::now() });
         }
-        Some((existing, _)) if existing != &canonical_profile => {
-            return Err(BrowserTabError::Platform("WebView2 profile identity changed".into()));
-        }
-        Some((_, verified_at)) if verified_at.elapsed() >= Duration::from_secs(600) => {
-            // Periodic full verification is read-only: never chmod or reset
-            // an active WebView2 cache tree while browser tabs are running.
-            audit_windows_profile_acl(&canonical_profile, true)?;
-            *state = Some((canonical_profile.clone(), Instant::now()));
-        }
-        Some(_) => {
-            // Cheap root ACL verification and ancestor reparse guard on every
-            // tab creation; no O(profile-size) recursive ACL rewrite.
-            audit_windows_profile_acl(&canonical_profile, false)?;
+        Some(previous) => {
+            let deep = previous.verified_at.elapsed() >= Duration::from_secs(600);
+            // Audits of an active WebView2 profile never rewrite permissions.
+            // A failed/incomplete audit does not advance the cached evidence.
+            let report = audit_windows_profile_acl(&profile, deep)?;
+            if report.root_identity != previous.identity {
+                return Err(BrowserTabError::Platform("WebView2 profile identity changed".into()));
+            }
+            if deep {
+                eprintln!(
+                    "BROWSER_PROFILE_ACL_AUDITED checked={} elapsed_ms={}",
+                    report.checked_objects, report.elapsed_ms,
+                );
+                *state = Some(ProfileAudit { identity: report.root_identity, verified_at: Instant::now() });
+            }
         }
     }
-    Ok(canonical_profile)
+    Ok(profile)
 }
 
 #[cfg(all(test, any(target_os = "linux", target_os = "windows")))]
@@ -329,14 +170,12 @@ mod browser_profile_tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("profile.dat"), b"fixture").unwrap();
-        secure_windows_browser_profile(&dir).expect("owner-only profile ACL");
-        let icacls = windows_system_binary("icacls.exe").unwrap();
-        let output = std::process::Command::new(icacls).arg(&dir).output().unwrap();
-        let listing = String::from_utf8_lossy(&output.stdout);
-        assert!(output.status.success());
-        assert!(!listing.to_ascii_lowercase().contains("everyone"));
-        assert!(!listing.to_ascii_lowercase().contains("authenticated users"));
-        assert!(!listing.contains("S-1-1-0"));
+        let secured = secure_windows_browser_profile(&dir).expect("native owner-only profile ACL");
+        let audited = audit_windows_profile_acl(&dir, true).expect("native ACE identity audit");
+        assert_eq!(audited.checked_objects, 2);
+        assert_eq!(secured.root_identity, audited.root_identity);
+        assert_eq!(secure_windows_browser_profile(&dir).unwrap().repaired_objects, 0);
+        assert_eq!(std::fs::read(dir.join("profile.dat")).unwrap(), b"fixture");
         std::fs::remove_dir_all(dir).unwrap();
     }
 

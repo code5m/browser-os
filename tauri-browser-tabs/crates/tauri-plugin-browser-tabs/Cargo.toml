@@ -23,6 +23,7 @@ log.workspace = true
 parking_lot.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
+browseros-platform-security = { path = "../../../crates/browseros-platform-security" }
 windows-sys = { version = "=0.60.2", features = ["Win32_System_SystemInformation"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]

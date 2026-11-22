@@ -31,7 +31,7 @@
       "id": "windows-linux-v2-experimental",
       "path": ".github/workflows/windows-linux-v2-experimental.yml",
       "role": "experimental_platform_feedback",
-      "scope": "V2 integration branch pushes and manual dispatch; Windows native Rust check and NSIS only after success, BFC service loopback smoke; not GUI PASS"
+      "scope": "manual dispatch only, pinned source_sha across Windows/Linux; required native filters reject zero/ignored/skipped execution, full-suite counts separate; NSIS diagnostic build requires explicit opt-in and remains UNVERIFIED; no GUI PASS"
     },
     {
       "id": "ui-safety",

@@ -58,6 +58,20 @@ pub(crate) fn mem_total_mb() -> Option<u64> {
     windows_meminfo_mb().map(|(total, _)| total)
 }
 
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+pub(crate) fn mem_available_mb() -> Option<u64> { None }
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+pub(crate) fn mem_total_mb() -> Option<u64> { None }
+
+fn require_grid_platform() -> Result<(), String> {
+    if cfg!(any(target_os = "linux", target_os = "windows")) {
+        Ok(())
+    } else {
+        Err(format!("GRID_PLATFORM_UNSUPPORTED:{}", std::env::consts::OS))
+    }
+}
+
 /// Reuse existing Grid children without charging their already-allocated RSS
 /// against free MemAvailable again. Only missing indices consume new budget.
 /// Use the SAME reserve for UI capacity and actual Grid creation.
@@ -132,6 +146,7 @@ pub(crate) fn grid_url_needs_navigation(existing: Option<&str>, target: Option<&
 }
 
 pub fn create_grid_blocking(app: AppHandle, n: usize, urls: Vec<String>) -> Result<usize, String> {
+    require_grid_platform()?;
     let requested = n.clamp(2, MAX_GRID);
     let state = app.state::<AppState>();
     let manager = &state.grid_manager;
@@ -322,6 +337,7 @@ pub async fn grid_open(app: AppHandle, index: usize, url: String) -> Result<(), 
 }
 
 pub fn grid_open_blocking(app: AppHandle, index: usize, url: String) -> Result<(), String> {
+    require_grid_platform()?;
     let label = format!("grid-{index}");
     ensure_grid_child(&app, index)?;
     let target = initial_grid_url(&url);
@@ -414,6 +430,7 @@ fn apply_grid_zoom(app: &AppHandle, label: &str, z: f64) {
 /// 前端在每次定位/布局变化后调用；应用时机做了防抖，避免反复 zoom 卡顿。
 #[tauri::command]
 pub fn grid_set_zoom(app: AppHandle, index: usize, zoom: f64) -> Result<(), String> {
+    require_grid_platform()?;
     let label = format!("grid-{index}");
     // 与上次相同则跳过（去重，避免重复 zoom 触发重排卡顿）
     {
@@ -459,6 +476,7 @@ pub fn grid_position_blocking(
     width: f64,
     height: f64,
 ) -> Result<(), String> {
+    require_grid_platform()?;
     // Repeated suspend/blur notifications must not wake a cell that is already
     // hibernated. A positive/visible rectangle below is the explicit resume path.
     if x <= -20000.0
@@ -815,6 +833,12 @@ pub async fn list_apps() -> Vec<AppEntry> {
     tauri::async_runtime::spawn_blocking(list_windows_apps_blocking)
         .await
         .unwrap_or_default()
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+#[tauri::command]
+pub fn list_apps() -> Result<Vec<AppEntry>, String> {
+    Err(format!("APP_DISCOVERY_PLATFORM_UNSUPPORTED:{}", std::env::consts::OS))
 }
 
 // ====== 浏览器页签命令（供前端页签栏调用） ======

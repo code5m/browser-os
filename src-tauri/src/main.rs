@@ -25,6 +25,9 @@ mod grid_process;
 #[cfg(target_os = "windows")]
 #[path = "grid_process_windows.rs"]
 mod grid_process;
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+#[path = "grid_process_unsupported.rs"]
+mod grid_process;
 #[cfg(target_os = "linux")]
 mod hang_diagnostics;
 #[cfg(not(target_os = "linux"))]
@@ -49,6 +52,7 @@ mod native_58_gui_review;
 mod security_policy;
 mod session;
 mod shutdown;
+mod startup;
 mod capabilities {
     pub mod agent;
     pub mod bfc;
@@ -314,6 +318,7 @@ fn run_grid_child(index: u32) {
     tauri::Builder::default()
         .plugin(tauri_plugin_browser_tabs::init_with_host(&label_for_plugin))
         .manage(AppState::default())
+        .manage(startup::PendingOpenUrls::default())
         .invoke_handler(tauri::generate_handler![
             bridge::collect_selection,
             bridge::save_note,
@@ -322,6 +327,12 @@ fn run_grid_child(index: u32) {
             crate::framework::commands::debug_log,
         ])
         .setup(move |app| {
+            if let Err(error) = startup::prepare_workspace(app.handle()) {
+                // Tauri turns a returned setup error into a panic at RunEvent::Ready.
+                // Report this failure here, before any WebView can be created.
+                startup::report_failure(&error);
+                std::process::exit(1);
+            }
             let window = WebviewWindowBuilder::new(
                 app,
                 &label,
@@ -368,7 +379,8 @@ fn run_grid_child(index: u32) {
         })
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {
-            eprintln!("[grid-child-{}] RUN_ERROR: {e}", index);
+            eprintln!("[grid-child-{}] RUN_ERROR", index);
+            startup::report_failure(&e);
             std::process::exit(1);
         });
 }
@@ -1472,7 +1484,7 @@ fn main() {
         // grid 子进程走 run_grid_child 的独立 Builder（无本插件），不受影响。
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             for u in bridge::extract_open_urls(&argv) {
-                bridge::handle_open_url(app, &u);
+                startup::dispatch_open_url(app, &u);
             }
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.show();
@@ -1493,6 +1505,14 @@ fn main() {
                 .unwrap()
         })
         .setup(|app| {
+            // Prepare workspace storage before business state, schedulers or WebViews.
+            // Early single-instance/Opened requests stay in bounded memory.
+            if let Err(error) = startup::prepare_workspace(app.handle()) {
+                // Tauri turns a returned setup error into a panic at RunEvent::Ready.
+                // Report this failure here, before any WebView can be created.
+                startup::report_failure(&error);
+                std::process::exit(1);
+            }
             // debug 主界面由 Vite 的 HTTP 地址提供，只在 debug 进程动态授予精确
             // localhost:1421 来源。文件故意放在 capabilities/ 之外，避免自动打进
             // release；默认 capability 也不向任何远程来源扩权。
@@ -1504,7 +1524,7 @@ fn main() {
             // 内部就绪前不发提示），待 m0_ready 后由前端拉取打开，保证不丢。
             let argv: Vec<String> = std::env::args().collect();
             for u in bridge::extract_open_urls(&argv) {
-                bridge::handle_open_url(app.handle(), &u);
+                startup::dispatch_open_url(app.handle(), &u);
             }
             // 插件把 window.open / target="_blank" 统一拦截为 browser-tabs://event
             // (newWindowRequested)。这里转发为前端既有的 new-tab-request 事件，
@@ -1730,6 +1750,7 @@ fn main() {
             Ok(())
         })
         .manage(AppState::default())
+        .manage(startup::PendingOpenUrls::default())
         .manage(capabilities::bfc::runtime::BfcRuntime::default())
         // M0-2.b：注入统一生命周期核心。本检查点只提供核心，不迁移任何退出路径
         // （M0-2.c 负责把窗口关闭/菜单退出/系统退出与 grid/PTY/tab/线程调用方切到它）。
@@ -1953,7 +1974,7 @@ fn main() {
         ])
         .build(tauri::generate_context!())
         .unwrap_or_else(|e| {
-            let _ = std::fs::write(std::env::temp_dir().join("mvp-life.log"), format!("RUN_ERROR: {e}\n"));
+            startup::report_failure(&e);
             std::process::exit(1);
         })
         .run(|app, event| {
@@ -1963,7 +1984,7 @@ fn main() {
                 #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
                 tauri::RunEvent::Opened { urls } => {
                     for u in urls {
-                        bridge::handle_open_url(app, u.as_str());
+                        startup::dispatch_open_url(app, u.as_str());
                     }
                 }
                 tauri::RunEvent::ExitRequested { api, .. } => {

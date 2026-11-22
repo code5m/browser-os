@@ -267,40 +267,12 @@ mod tests {
         let _ = std::fs::remove_file(marker);
     }
 
-    /// True when this session can host a ConPTY pseudo console. A headless
-    /// agent/service session has no console host, so CreatePseudoConsole fails
-    /// there with ERROR_INVALID_HANDLE (0x80070006); the ping grandchildren
-    /// then fail later with ERROR_NO_DATA (0x800700E8) as their pipes close.
-    /// CI or a real desktop can force the acceptance tests via the env flag.
-    fn interactive_console_available() -> bool {
-        if std::env::var_os("BROWSEROS_REQUIRE_CONPTY").is_some() {
-            return true;
-        }
-        extern "C" {
-            fn GetConsoleWindow() -> *mut core::ffi::c_void;
-        }
-        !unsafe { GetConsoleWindow() }.is_null()
-    }
-
-    /// ConPTY needs an interactive console host. Skipping here is NOT a pass:
-    /// it only means this session cannot host a pseudo console, so the real
-    /// acceptance gate stays on the interactive Windows CI runner.
-    macro_rules! require_interactive_conpty {
-        () => {
-            if !interactive_console_available() {
-                eprintln!(
-                    "SKIP conpty test: no interactive console host in this session; \
-                     accepted on the interactive Windows CI runner \
-                     (set BROWSEROS_REQUIRE_CONPTY=1 to force)."
-                );
-                return;
-            }
-        };
-    }
+    // These are mandatory native acceptance tests. GetConsoleWindow only
+    // describes the calling process; it does not establish ConPTY support.
+    // Missing native prerequisites must fail visibly, never return as PASS.
 
     #[test]
     fn conpty_terminal_uses_atomic_job_list_and_reaps_immediate_grandchild() {
-        require_interactive_conpty!();
         use portable_pty::{native_pty_system, CommandBuilder, PtySize, PtySystem};
         use std::io::{Read, Write};
         use std::sync::{Arc, Mutex};
@@ -324,7 +296,7 @@ mod tests {
         let mut reader = pair.master.try_clone_reader().expect("clone ConPTY output");
         let captured = Arc::new(Mutex::new(Vec::<u8>::new()));
         let capture = Arc::clone(&captured);
-        let _pump = thread::spawn(move || {
+        let pump = thread::spawn(move || {
             let mut buf = [0u8; 4096];
             while let Ok(n) = reader.read(&mut buf) {
                 if n == 0 { break; }
@@ -365,17 +337,23 @@ mod tests {
         };
         assert_eq!(std::fs::read_to_string(&primary).unwrap().trim(), "started");
         job.terminate().expect("terminate ConPTY Job and all descendants");
-        child.wait().expect("wait ConPTY shell");
+        assert!(wait_pid_exit(pid, Duration::from_secs(8)), "ConPTY shell did not exit");
+        child.wait().expect("reap exited ConPTY shell");
         assert!(wait_pid_exit(grandchild_pid, Duration::from_secs(8)),
             "ConPTY grandchild PID {grandchild_pid} escaped the Job Object");
         drop(writer);
         drop(pair);
+        let drain_deadline = Instant::now() + Duration::from_secs(5);
+        while !pump.is_finished() && Instant::now() < drain_deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(pump.is_finished(), "ConPTY output reader did not receive EOF");
+        pump.join().expect("join ConPTY output reader");
         let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
     fn conpty_child_exit_code_259_is_terminal_and_kill_is_idempotent() {
-        require_interactive_conpty!();
         use portable_pty::{native_pty_system, CommandBuilder, PtySize, PtySystem};
         let pair = native_pty_system().openpty(
             PtySize { rows: 24, cols: 80, pixel_width: 0, pixel_height: 0 }
@@ -385,7 +363,9 @@ mod tests {
         command.args(["/C", "exit /B 259"]);
         let mut child = pair.slave.spawn_command_in_job(command, job.as_raw_handle())
             .expect("spawn exit-code fixture in ConPTY Job");
-        let status = child.wait().expect("wait for signaled process");
+        let pid = child.process_id().expect("native exit fixture PID");
+        assert!(wait_pid_exit(pid, Duration::from_secs(8)), "ConPTY exit fixture timed out");
+        let status = child.wait().expect("reap signaled process");
         assert_eq!(status.exit_code(), 259, "exit code 259 is not STILL_ACTIVE");
         assert_eq!(child.try_wait().unwrap().unwrap().exit_code(), 259);
         child.kill().expect("terminating an already-exited child is idempotent");

@@ -609,16 +609,16 @@ pub fn spawn_terminal(
     let mut writer = match master.take_writer() {
         Ok(writer) => writer,
         Err(error) => {
-            let _ = child.kill();
-            let _ = child.wait();
+            let pgid = pgid_of(&child);
+            let _ = terminate_group(&mut child, pgid, TERM_GROUP_GRACE_MS);
             return Err(format!("writer: {error}"));
         }
     };
     let reader = match master.try_clone_reader() {
         Ok(reader) => reader,
         Err(error) => {
-            let _ = child.kill();
-            let _ = child.wait();
+            let pgid = pgid_of(&child);
+            let _ = terminate_group(&mut child, pgid, TERM_GROUP_GRACE_MS);
             return Err(format!("reader: {error}"));
         }
     };
@@ -711,7 +711,9 @@ pub fn terminate_session(session: &mut TerminalSession) -> Result<(), String> {
     // drops the original writer without changing the field's trait-object type.
     let _ = std::mem::replace(&mut session.writer, Box::new(std::io::sink()));
     if let Some(handles) = session.handles.take() {
-        join_pipeline(handles, TERM_THREAD_JOIN_GRACE_MS);
+        if let Err(error) = join_pipeline(handles, TERM_THREAD_JOIN_GRACE_MS) {
+            errors.push(error);
+        }
     }
     if errors.is_empty() {
         Ok(())
@@ -726,6 +728,7 @@ pub fn terminate_group(
     pgid: Option<i32>,
     grace_ms: u64,
 ) -> Result<(), String> {
+    let mut kill_error = None;
     match pgid {
         #[cfg(unix)]
         Some(pgid) => {
@@ -741,22 +744,30 @@ pub fn terminate_group(
                 kill_group(pgid, libc::SIGKILL);
             }
         }
-        // Non-Unix platforms cannot send process-group signals. Both a
-        // missing group and an unexpected legacy group value kill only the
-        // owned terminal child, never an unrelated OS process.
         #[cfg(not(unix))]
         Some(_) => {
-            let _ = child.kill();
+            kill_error = child.kill().err();
         }
-        // 非 unix / 无进程组：降级为杀直接子进程（与改造前一致）。
         None => {
-            let _ = child.kill();
+            kill_error = child.kill().err();
         }
     }
-    child
-        .wait()
-        .map(|_| ())
-        .map_err(|e| format!("终端等待失败: {e}"))
+    // A failed kill must never lead to an unbounded wait on a live child.
+    // wait() is only used after the kernel-backed try_wait reports exit.
+    let deadline = Instant::now() + Duration::from_millis(grace_ms.max(2000));
+    loop {
+        match child.try_wait().map_err(|error| format!("TERM_CHILD_STATUS_FAILED: {error}"))? {
+            Some(_) => return child.wait().map(|_| ())
+                .map_err(|error| format!("TERM_CHILD_REAP_FAILED: {error}")),
+            None if Instant::now() >= deadline => {
+                return Err(match kill_error {
+                    Some(error) => format!("TERM_CHILD_KILL_FAILED: {error}"),
+                    None => "TERM_CHILD_REAP_TIMEOUT".into(),
+                });
+            }
+            None => thread::sleep(Duration::from_millis(TERM_GROUP_POLL_INTERVAL_MS)),
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -780,8 +791,9 @@ fn kill_group(pgid: i32, sig: i32) {
 #[cfg(not(unix))]
 fn kill_group(_pgid: i32, _sig: i32) {}
 
-/// 等待 worker/pump 结束；超时则不再 join（退出路径不得被线程拖住）。
-fn join_pipeline(handles: TerminalHandles, grace_ms: u64) {
+/// Reap both output threads within one deadline. A detached or panicked
+/// worker is an explicit incomplete cleanup result, never a successful close.
+fn join_pipeline(handles: TerminalHandles, grace_ms: u64) -> Result<(), String> {
     let deadline = Instant::now() + Duration::from_millis(grace_ms);
     while Instant::now() < deadline {
         if handles.worker.is_finished() && handles.pump.is_finished() {
@@ -789,16 +801,22 @@ fn join_pipeline(handles: TerminalHandles, grace_ms: u64) {
         }
         thread::sleep(Duration::from_millis(TERM_GROUP_POLL_INTERVAL_MS));
     }
+    let mut errors = Vec::new();
     if handles.worker.is_finished() {
-        let _ = handles.worker.join();
+        if handles.worker.join().is_err() {
+            errors.push("TERM_WORKER_PANICKED");
+        }
     } else {
-        eprintln!("[terminal] worker 线程未在 {grace_ms} ms 内结束，放弃 join");
+        errors.push("TERM_WORKER_CLEANUP_TIMEOUT");
     }
     if handles.pump.is_finished() {
-        let _ = handles.pump.join();
+        if handles.pump.join().is_err() {
+            errors.push("TERM_PUMP_PANICKED");
+        }
     } else {
-        eprintln!("[terminal] pump 线程未在 {grace_ms} ms 内结束，放弃 join");
+        errors.push("TERM_PUMP_CLEANUP_TIMEOUT");
     }
+    if errors.is_empty() { Ok(()) } else { Err(errors.join("; ")) }
 }
 
 #[cfg(test)]
@@ -1053,6 +1071,7 @@ mod tests {
             !process_group_alive(pgid),
             "kill 后进程组不应存活（sleep 不得成为孤儿）"
         );
+        #[cfg(target_os = "linux")]
         assert!(
             !std::path::Path::new(&format!("/proc/{pgid}")).exists(),
             "shell 进程目录应已消失"

@@ -1,5 +1,6 @@
 //! Windows Rust LSP in a no-network AppContainer with a private source copy.
-//! Cargo may create lock files inside this copy; it is not a read-only tree.
+//! Source snapshots are read-only to the lowbox. A staged rustc is required
+//! only for metadata/cfg probes; Cargo, build scripts and proc macros are disabled.
 //! The host workspace is not mounted or writable by the analyzer.
 #![cfg(windows)]
 
@@ -115,18 +116,34 @@ fn no_reparse(path: &Path) -> Result<(), String> {
 /// every toolchain call answer "no default is configured", because the shim
 /// resolves its toolchain through a deliberately private USERPROFILE. Resolve
 /// the INSTALLED toolchain images from rustup metadata; never run rustup.
-fn rustup_home() -> Option<PathBuf> {
-    std::env::var_os("RUSTUP_HOME")
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("USERPROFILE")
-                .map(PathBuf::from)
-                .map(|home| home.join(".rustup"))
-        })
-        .filter(|path| path.join("settings.toml").is_file())
+fn rustup_home() -> Result<Option<PathBuf>, String> {
+    let configured = std::env::var_os("RUSTUP_HOME");
+    let explicitly_configured = configured.is_some();
+    let home = configured.map(PathBuf::from).or_else(|| {
+        std::env::var_os("USERPROFILE")
+            .map(PathBuf::from)
+            .map(|home| home.join(".rustup"))
+    });
+    let Some(home) = home else { return Ok(None); };
+    let settings = home.join("settings.toml");
+    match fs::symlink_metadata(&settings) {
+        Ok(metadata) => {
+            if !metadata.is_file() || metadata.file_attributes() & REPARSE != 0 {
+                return Err("LSP_RUSTUP_SETTINGS_UNSAFE".into());
+            }
+            no_reparse(&settings).map_err(|_| "LSP_RUSTUP_SETTINGS_UNSAFE")?;
+            Ok(Some(home))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && !explicitly_configured =>
+            Ok(None),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound =>
+            Err("LSP_RUSTUP_SETTINGS_MISSING".into()),
+        Err(_) => Err("LSP_RUSTUP_SETTINGS_UNREADABLE".into()),
+    }
 }
 fn rustup_analyzer_binary(rustup_home: &Path) -> Result<PathBuf, String> {
-    let settings = fs::read_to_string(rustup_home.join("settings.toml")).unwrap_or_default();
+    let settings = fs::read_to_string(rustup_home.join("settings.toml"))
+        .map_err(|_| "LSP_RUSTUP_SETTINGS_UNREADABLE")?;
     let default = settings.lines().find_map(|line| {
         let (key, value) = line.split_once('=')?;
         (key.trim() == "default_toolchain").then(|| value.trim().trim_matches('"').to_string())
@@ -162,11 +179,17 @@ fn rustup_analyzer_binary(rustup_home: &Path) -> Result<PathBuf, String> {
 fn runtime() -> Result<PathBuf, String> {
     // Prefer the installed toolchain image. Staging a rustup shim, or staging
     // the shim's cargo/rustc peers, cannot work inside the sandbox.
-    if let Some(home) = rustup_home() {
-        if let Ok(analyzer) = rustup_analyzer_binary(&home) {
-            return Ok(analyzer);
+    let missing_toolchain = if let Some(home) = rustup_home()? {
+        match rustup_analyzer_binary(&home) {
+            Ok(analyzer) => return Ok(analyzer),
+            Err(error) if error == "LSP_RUST_ANALYZER_TOOLCHAIN_MISSING" => Some(error),
+            // Invalid or unreadable configured toolchains must not silently
+            // fall back to an unrelated executable later on PATH.
+            Err(error) => return Err(error),
         }
-    }
+    } else {
+        None
+    };
     if let Some(paths) = std::env::var_os("PATH") {
         for directory in std::env::split_paths(&paths).filter(|path| path.is_absolute()) {
             let candidate = directory.join("rust-analyzer.exe");
@@ -184,7 +207,41 @@ fn runtime() -> Result<PathBuf, String> {
                 .map_err(|_| "LSP_RUST_ANALYZER_NOT_FOUND".into());
         }
     }
-    Err("LSP_RUST_ANALYZER_NOT_FOUND".into())
+    Err(missing_toolchain.unwrap_or_else(|| "LSP_RUST_ANALYZER_NOT_FOUND".into()))
+}
+
+/// A real rustc beside the selected analyzer is required for cfg/data-layout
+/// probes. Missing, reparse or non-file peers are explicit preflight failures.
+fn rustc_cfg_peer(analyzer: &Path) -> Result<PathBuf, String> {
+    let directory = analyzer.parent().ok_or("LSP_RUSTC_CFG_PEER_MISSING")?;
+    let candidate = directory.join("rustc.exe");
+    let metadata = fs::symlink_metadata(&candidate)
+        .map_err(|_| "LSP_RUSTC_CFG_PEER_MISSING")?;
+    if !metadata.is_file() || metadata.file_attributes() & REPARSE != 0 {
+        return Err("LSP_RUSTC_CFG_PEER_UNSAFE".into());
+    }
+    no_reparse(&candidate).map_err(|_| "LSP_RUSTC_CFG_PEER_UNSAFE")?;
+    candidate.canonicalize().map_err(|_| "LSP_RUSTC_CFG_PEER_MISSING".into())
+}
+
+fn rustc_cfg_environment(
+    profile: &SandboxProfile, analyzer: &Path,
+) -> Result<Vec<(String, String)>, String> {
+    let peer = rustc_cfg_peer(analyzer)?;
+    let staged = profile.stage_runtime_peer(&peer)
+        .map_err(|error| format!("LSP_RUSTC_CFG_STAGE_FAILED:{error}"))?;
+    let path = staged.to_str().ok_or("LSP_RUSTC_CFG_PATH_NOT_UNICODE")?;
+    Ok(vec![("RUSTC".to_string(), path.to_string())])
+}
+
+fn lsp_toolchain_contract() -> Value {
+    json!({
+        "rustc_cfg_probe":"required",
+        "cargo_enabled":false,
+        "build_scripts_enabled":false,
+        "proc_macros_enabled":false,
+        "compilation_verified":false
+    })
 }
 
 fn source_file(path: &Path) -> bool {
@@ -196,10 +253,9 @@ fn source_file(path: &Path) -> bool {
     ) || path.file_name().and_then(|value| value.to_str()) == Some("Cargo.lock")
 }
 /// Generate a bounded non-Cargo project graph from the *private* copy.
-/// rust-analyzer can analyze a rust-project.json without spawning cargo or
-/// rustc. Its usual child-process launch opens \\.\NUL on Windows, which a
-/// no-capability AppContainer token cannot access on the failing runner.
-/// We deliberately expose syntax/IDE analysis, not compilation verification.
+/// No Cargo discovery/build is enabled. rustc metadata/cfg probes use the
+/// explicitly staged peer and remain subject to the lowbox restrictions.
+/// Successful syntax/IDE analysis never constitutes compilation verification.
 fn write_reviewed_rust_project(snapshot: &Path) -> Result<PathBuf, String> {
     let mut pending = vec![(snapshot.to_path_buf(), 0usize)];
     let mut crate_roots = Vec::<PathBuf>::new();
@@ -406,49 +462,8 @@ fn snapshot(root: &Path, profile: &SandboxProfile) -> Result<PathBuf, String> {
         &mut SnapshotBudget { files: 0, bytes: 0 },
     )?;
     write_reviewed_rust_project(&destination)?;
-    profile.protect_snapshot(&destination)?;
-    grant_snapshot_read(&destination, profile.sid_string())?;
-    // The staged runtime images load inside the lowbox with owner+SYSTEM
-    // full control and a package `RX` entry. Snapshot files carrying only the
-    // package entry are still rejected, so give them that same shape.
-    profile.protect_snapshot_files(&destination)?;
+    profile.protect_lsp_snapshot(&destination)?;
     Ok(destination)
-}
-/// Give the private source files only this package SID's read access.
-/// Windows lowbox path traversal also requires access to each ancestor.
-/// The general AppContainer SID can therefore traverse/enumerate private
-/// *directories* without inheritance; NEVER grant it access on source files.
-/// The native cross-package negative test is a mandatory release gate.
-fn grant_snapshot_read(root: &Path, sid: &str) -> Result<(), String> {
-    let icacls = system_icacls()?;
-    let mut ancestors = Vec::new();
-    if let Some(container) = root.parent() {
-        ancestors.push(container.to_path_buf());
-        if let Some(package) = container.parent() {
-            ancestors.push(package.to_path_buf());
-        }
-    }
-    for directory in ancestors {
-        grant_entry(&icacls, &directory, &format!("*{sid}:RX"))?;
-        // No (OI)/(CI): an inherited general SID on files could reveal
-        // private source to a different AppContainer.
-        grant_entry(&icacls, &directory, "*S-1-15-2-1:RX")?;
-    }
-    let mut pending = vec![root.to_path_buf()];
-    while let Some(directory) = pending.pop() {
-        grant_entry(&icacls, &directory, &format!("*{sid}:(OI)(CI)RX"))?;
-        // Directory-only traversability; source files remain package-only.
-        grant_entry(&icacls, &directory, "*S-1-15-2-1:RX")?;
-        for entry in fs::read_dir(&directory).map_err(|_| "LSP_SNAPSHOT_ACL")? {
-            let path = entry.map_err(|_| "LSP_SNAPSHOT_ACL")?.path();
-            if path.is_dir() {
-                pending.push(path);
-            } else {
-                grant_entry(&icacls, &path, &format!("*{sid}:RX"))?;
-            }
-        }
-    }
-    Ok(())
 }
 fn system_icacls() -> Result<PathBuf, String> {
     let system_root = std::env::var_os("SystemRoot").ok_or("LSP_SNAPSHOT_ACL")?;
@@ -459,18 +474,6 @@ fn system_icacls() -> Result<PathBuf, String> {
         return Err("LSP_SNAPSHOT_ACL".into());
     }
     Ok(icacls)
-}
-fn grant_entry(icacls: &Path, path: &Path, rights: &str) -> Result<(), String> {
-    let output = std::process::Command::new(icacls)
-        .arg(path)
-        .arg("/grant")
-        .arg(rights)
-        .output()
-        .map_err(|_| "LSP_SNAPSHOT_ACL")?;
-    if !output.status.success() {
-        return Err("LSP_SNAPSHOT_ACL".into());
-    }
-    Ok(())
 }
 fn uri_for(path: &Path) -> Result<String, String> {
     url::Url::from_file_path(path)
@@ -582,7 +585,9 @@ fn frame(reader: &mut BufReader<std::fs::File>) -> Result<Value, String> {
 
 struct Session {
     process: SandboxProcess,
-    writer: mpsc::SyncSender<Vec<u8>>,
+    writer: Option<mpsc::SyncSender<Vec<u8>>>,
+    writer_thread: Option<thread::JoinHandle<()>>,
+    reader_thread: Option<thread::JoinHandle<()>>,
     write_result: mpsc::Receiver<Result<(), String>>,
     reader: mpsc::Receiver<Result<Value, String>>,
     reader_fault: Arc<Mutex<Option<String>>>,
@@ -595,10 +600,42 @@ struct Session {
 }
 impl Drop for Session {
     fn drop(&mut self) {
-        let _ = self.process.terminate();
+        let _ = self.shutdown();
     }
 }
 impl Session {
+    fn shutdown(&mut self) -> Result<(), String> {
+        self.closed = true;
+        let terminate_error = self.process.terminate().err();
+        // Stop queued writes before waiting for EOF on the owned process tree.
+        self.writer.take();
+        let until = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < until
+            && (!matches!(self.process.try_wait(), Ok(true))
+                || self.writer_thread.as_ref().is_some_and(|handle| !handle.is_finished())
+                || self.reader_thread.as_ref().is_some_and(|handle| !handle.is_finished()))
+        {
+            thread::sleep(Duration::from_millis(10));
+        }
+        let mut errors = Vec::new();
+        if !matches!(self.process.try_wait(), Ok(true)) {
+            errors.push("LSP_PROCESS_CLEANUP_INCOMPLETE".to_string());
+        }
+        if let Some(error) = terminate_error {
+            errors.push(error);
+        }
+        for handle in [&mut self.writer_thread, &mut self.reader_thread] {
+            if handle.as_ref().is_some_and(|thread| thread.is_finished()) {
+                if handle.take().unwrap().join().is_err() {
+                    errors.push("LSP_IO_THREAD_PANICKED".into());
+                }
+            } else if handle.is_some() {
+                errors.push("LSP_CLEANUP_TIMEOUT".into());
+            }
+        }
+        if errors.is_empty() { Ok(()) } else { Err(errors.join(";")) }
+    }
+
     fn start(root: &Path, seconds: u64) -> Result<Self, String> {
         let root = root.canonicalize().map_err(|_| "LSP_ROOT_INVALID")?;
         let profile = SandboxProfile::create()?;
@@ -641,9 +678,7 @@ impl Session {
             fs::write(&target, content).map_err(|_| "LSP_SNAPSHOT_WRITE_FAILED")?;
         }
         write_reviewed_rust_project(&snapshot)?;
-        profile.protect_snapshot(&snapshot)?;
-        grant_snapshot_read(&snapshot, profile.sid_string())?;
-        profile.protect_snapshot_files(&snapshot)?;
+        profile.protect_lsp_snapshot(&snapshot)?;
         Self::start_with_snapshot(root, profile, snapshot, seconds)
     }
 
@@ -655,29 +690,11 @@ impl Session {
     ) -> Result<Self, String> {
         let server = runtime()?;
         let state = profile.state_dir()?;
-        // The no-network AppContainer must not launch Cargo/rustc children
-        // through Rust std's Stdio::null (\\.\NUL is denied by the lowbox).
-        // A reviewed rust-project.json is created before locking snapshot ACLs.
-        // This intentionally provides IDE/syntax semantics without Cargo
-        // dependency resolution, build scripts or compilation claims.
+        // Keep the source graph read-only and disable Cargo/build execution.
+        // rustc is required only for analyzer cfg/data-layout probes. Staging
+        // errors must fail before spawning, not become a later timeout.
         let reviewed_graph = reviewed_project_for_initialize(&snapshot)?;
-        // The lowbox PATH is pinned to System32, so a launched analyzer cannot
-        // find `rustc` for its startup `--print cfg` probe. Stage the real
-        // toolchain rustc inside the private profile and point RUSTC at it,
-        // exactly as the reviewed Cargo toolchain probe does. This keeps the
-        // no-network, no-Cargo-build contract: rustc is used only to answer
-        // cfg/data-layout queries, never to compile user code.
-        let mut environment: Vec<(String, String)> = Vec::new();
-        if let Ok(analyzer) = runtime() {
-            if let Some(bin) = analyzer.parent() {
-                if let Ok(rustc) = profile.stage_runtime_peer(&bin.join("rustc.exe")) {
-                    environment.push((
-                        "RUSTC".to_string(),
-                        rustc.to_string_lossy().into_owned(),
-                    ));
-                }
-            }
-        }
+        let environment = rustc_cfg_environment(&profile, &server)?;
         // Do not reintroduce the retired --no-proc-macro CLI flag: use LSP
         // initialization options to disable proc macros and check-on-save.
         let child = profile
@@ -700,40 +717,16 @@ impl Session {
         } = child;
         let (writer, write_rx) = mpsc::sync_channel::<Vec<u8>>(4);
         let (write_tx, write_result) = mpsc::channel();
-        thread::spawn(move || {
-            let mut input = std::io::BufWriter::new(stdin);
-            while let Ok(bytes) = write_rx.recv() {
-                let result = input
-                    .write_all(&bytes)
-                    .and_then(|_| input.flush())
-                    .map_err(|_| "LSP_WRITE_FAILED".to_string());
-                let failed = result.is_err();
-                if write_tx.send(result).is_err() || failed {
-                    break;
-                }
-            }
-        });
         let (reader_tx, reader) = mpsc::sync_channel(32);
         let reader_fault = Arc::new(Mutex::new(None));
         let on_read_failure = Arc::clone(&reader_fault);
-        thread::spawn(move || {
-            let mut reader = BufReader::new(stdout);
-            loop {
-                let value = frame(&mut reader);
-                let failed = value.is_err();
-                if send_bounded(&reader_tx, value, Duration::from_secs(2)).is_err() {
-                    *on_read_failure.lock().unwrap_or_else(|p| p.into_inner()) =
-                        Some("LSP_OUTPUT_BACKPRESSURE".into());
-                    break;
-                }
-                if failed {
-                    break;
-                }
-            }
-        });
+        // Establish ownership before spawning either I/O thread. Any later
+        // startup error runs Session::drop and closes the entire process tree.
         let mut session = Self {
             process,
-            writer,
+            writer: Some(writer),
+            writer_thread: None,
+            reader_thread: None,
             write_result,
             reader,
             reader_fault,
@@ -744,6 +737,38 @@ impl Session {
             last_used: Instant::now(),
             closed: false,
         };
+        session.writer_thread = Some(thread::Builder::new()
+            .name("browseros-lsp-write".into())
+            .spawn(move || {
+                let mut input = std::io::BufWriter::new(stdin);
+                while let Ok(bytes) = write_rx.recv() {
+                    let result = input
+                        .write_all(&bytes)
+                        .and_then(|_| input.flush())
+                        .map_err(|_| "LSP_WRITE_FAILED".to_string());
+                    let failed = result.is_err();
+                    if write_tx.send(result).is_err() || failed {
+                        break;
+                    }
+                }
+            }).map_err(|_| "LSP_WRITER_THREAD_START_FAILED")?);
+        session.reader_thread = Some(thread::Builder::new()
+            .name("browseros-lsp-read".into())
+            .spawn(move || {
+                let mut reader = BufReader::new(stdout);
+                loop {
+                    let value = frame(&mut reader);
+                    let failed = value.is_err();
+                    if send_bounded(&reader_tx, value, Duration::from_secs(2)).is_err() {
+                        *on_read_failure.lock().unwrap_or_else(|p| p.into_inner()) =
+                            Some("LSP_OUTPUT_BACKPRESSURE".into());
+                        break;
+                    }
+                    if failed {
+                        break;
+                    }
+                }
+            }).map_err(|_| "LSP_READER_THREAD_START_FAILED")?);
         let root_uri = uri_for(&session.snapshot)?;
         let init = session.rpc_next("initialize", json!({
             "processId":null,
@@ -826,7 +851,8 @@ impl Session {
             {
                 return Err(error);
             }
-            match self.writer.try_send(pending) {
+            let writer = self.writer.as_ref().ok_or("LSP_SESSION_CLOSED")?;
+            match writer.try_send(pending) {
                 Ok(()) => break,
                 Err(mpsc::TrySendError::Disconnected(_)) => return Err("LSP_WRITE_FAILED".into()),
                 Err(mpsc::TrySendError::Full(value)) => {
@@ -1113,6 +1139,7 @@ fn one_shot_document_request(root: &Path, request: &Value) -> Result<Value, Stri
     let public = isolated_document.then_some(public_uri.as_str());
     remap_reviewed_uris(&mut result, &session.snapshot, root, public);
     remap_reviewed_uris(&mut diagnostics, &session.snapshot, root, public);
+    session.shutdown()?;
     Ok(json!({
         "result":result,
         "diagnostics":diagnostics,
@@ -1121,6 +1148,7 @@ fn one_shot_document_request(root: &Path, request: &Value) -> Result<Value, Stri
         "scope":scope,
         "compilation_verified":false,
         "analysis_mode":"rust-project-no-cargo",
+        "toolchain":lsp_toolchain_contract(),
         "sandbox":"appcontainer-no-network-private-source-copy"
     }))
 }
@@ -1197,8 +1225,11 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
             // created/deleted a Windows AppContainer OS profile on EVERY call.
             // Report prerequisites separately from native launch verification.
             let sandbox_available = super::windows_sandbox::sandbox_prerequisites_available();
+            let toolchain = runtime().and_then(|analyzer| rustc_cfg_peer(&analyzer));
             Ok(json!({
-                "profiles":[{"id":"rust_analyzer","language":"rust","available":runtime().is_ok(),"command":"rust-analyzer.exe"}],
+                "profiles":[{"id":"rust_analyzer","language":"rust","available":toolchain.is_ok(),"command":"rust-analyzer.exe",
+                    "unavailable_reason":toolchain.as_ref().err()}],
+                "toolchain":lsp_toolchain_contract(),
                 "sandbox_available":sandbox_available,
                 "sandbox_verified":false,
                 "platform":"windows",
@@ -1233,6 +1264,7 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
             Ok(
                 json!({"session_id":id,"profile":"rust_analyzer",
                     "analysis_mode":"rust-project-no-cargo",
+                    "toolchain":lsp_toolchain_contract(),
                     "compilation_verified":false,
                     "sandbox":"appcontainer-no-network-private-source-copy"}),
             )
@@ -1300,12 +1332,16 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
             };
             let mut owned = Vec::new();
             let mut busy_candidates = 0usize;
+            let mut cleanup_errors = Vec::new();
             for (id, entry) in candidates {
                 let matches_workspace = match entry.try_lock() {
                     Ok(mut session) if session.root == root => {
                         // Mark as closed while holding its mutex. Requests
                         // that previously cloned this Arc must fail closed.
                         session.closed = true;
+                        if let Err(error) = session.shutdown() {
+                            cleanup_errors.push(error);
+                        }
                         true
                     }
                     Err(_) if request["session_id"].as_str().is_some() => {
@@ -1350,7 +1386,8 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
             Ok(json!({
                 "closed_sessions":count,
                 "skipped_busy_candidates":busy_candidates,
-                "close_complete":busy_candidates == 0
+                "close_complete":busy_candidates == 0 && cleanup_errors.is_empty(),
+                "cleanup_errors":cleanup_errors
             }))
         }
         _ => Err("LSP_ACTION_UNKNOWN".into()),
@@ -1947,6 +1984,28 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+
+    #[test]
+    fn cfg_peer_missing_or_directory_fails_before_runtime_spawn() {
+        let root = std::env::temp_dir().join(format!("browseros-cfg-peer-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&root).unwrap();
+        let analyzer = root.join("rust-analyzer.exe");
+        fs::write(&analyzer, b"fixture").unwrap();
+        assert_eq!(rustc_cfg_peer(&analyzer).unwrap_err(), "LSP_RUSTC_CFG_PEER_MISSING");
+        fs::create_dir(root.join("rustc.exe")).unwrap();
+        assert_eq!(rustc_cfg_peer(&analyzer).unwrap_err(), "LSP_RUSTC_CFG_PEER_UNSAFE");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn cfg_probe_does_not_advertise_cargo_or_compilation() {
+        let contract = lsp_toolchain_contract();
+        assert_eq!(contract["rustc_cfg_probe"], "required");
+        for field in ["cargo_enabled", "build_scripts_enabled", "proc_macros_enabled", "compilation_verified"] {
+            assert_eq!(contract[field], false);
+        }
+    }
+
     #[test]
     fn real_rust_analyzer_runs_against_private_snapshot() {
         if runtime().is_err() {
@@ -1977,6 +2036,8 @@ mod tests {
         let id = started["session_id"].as_str().unwrap();
         assert_eq!(started["analysis_mode"], "rust-project-no-cargo");
         assert_eq!(started["compilation_verified"], json!(false));
+        assert_eq!(started["toolchain"]["rustc_cfg_probe"], "required");
+        assert_eq!(started["toolchain"]["cargo_enabled"], false);
         let diagnostics = acceptance(
             "DIAGNOSTICS",
             execute(
@@ -2047,6 +2108,8 @@ mod tests {
             execute(&root, json!({"action":"lsp_close","session_id":id})),
         );
         assert_eq!(closed["closed_sessions"], 1);
+        assert_eq!(closed["close_complete"], true);
+        assert_eq!(closed["cleanup_errors"], json!([]));
         fs::remove_dir_all(root).unwrap();
     }
 

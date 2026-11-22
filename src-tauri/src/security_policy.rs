@@ -404,13 +404,10 @@ pub fn check_webview_label(label: &str) -> Result<(), PolicyError> {
 ///
 /// 判断顺序刻意先 `canonicalize` 再比较前缀，这样 `a/b/../../../etc` 与
 /// 「指向外部的软链接」都会被同一套规则拦下。
-/// Windows keeps two spellings of the same path: the caller's form and the
-/// `\\?\`-prefixed verbatim form `canonicalize` returns. It is also
-/// case-insensitive, and an allowed root may itself live behind a junction.
-/// Comparing components with a case-insensitive match after canonicalizing
-/// both sides is the only form that agrees with the filesystem.
-/// Normalize a Windows verbatim prefix for component-wise comparisons.
-/// Never perform lossy UTF-16 replacement when deciding authorization.
+/// Windows path spellings can differ in prefix and case, while a volume
+/// can also contain genuinely distinct case-sensitive names. Windows access
+/// decisions below resolve native object identities; normalization is not an
+/// authorization fallback.
 fn strip_verbatim(path: &std::path::Path) -> PathBuf {
     #[cfg(windows)]
     {
@@ -437,10 +434,7 @@ pub(crate) fn canonical_root(root: &std::path::Path) -> std::io::Result<PathBuf>
 fn same_component(a: &std::ffi::OsStr, b: &std::ffi::OsStr) -> bool {
     #[cfg(windows)]
     {
-        // Accept ordinary case differences in Windows paths; non-Unicode
-        // components are only accepted if their exact OS representation agrees.
-        a == b || a.to_str().zip(b.to_str())
-            .is_some_and(|(left, right)| left.eq_ignore_ascii_case(right))
+        browseros_platform_security::windows::same_path_component(a, b)
     }
     #[cfg(not(windows))]
     {
@@ -451,31 +445,45 @@ fn same_component(a: &std::ffi::OsStr, b: &std::ffi::OsStr) -> bool {
 }
 
 pub(crate) fn within_root(path: &std::path::Path, root: &std::path::Path) -> bool {
-    let path = strip_verbatim(path);
-    let root = strip_verbatim(root);
-    if !path.is_absolute() || !root.is_absolute() {
-        return false;
+    #[cfg(windows)]
+    {
+        browseros_platform_security::windows::path_is_within_root(path, root).unwrap_or(false)
     }
-    if path.components().any(|component|
-        matches!(component, std::path::Component::ParentDir)
-    ) || root.components().any(|component|
-        matches!(component, std::path::Component::ParentDir)
-    ) {
-        return false;
+    #[cfg(not(windows))]
+    {
+        let path = strip_verbatim(path);
+            let root = strip_verbatim(root);
+            if !path.is_absolute() || !root.is_absolute() {
+                return false;
+            }
+            if path.components().any(|component|
+                matches!(component, std::path::Component::ParentDir)
+            ) || root.components().any(|component|
+                matches!(component, std::path::Component::ParentDir)
+            ) {
+                return false;
+            }
+            let mut remaining = path.components();
+            for expected in root.components() {
+                match remaining.next() {
+                    Some(actual) if same_component(actual.as_os_str(), expected.as_os_str()) => {}
+                    _ => return false,
+                }
+            }
+            true
     }
-    let mut remaining = path.components();
-    for expected in root.components() {
-        match remaining.next() {
-            Some(actual) if same_component(actual.as_os_str(), expected.as_os_str()) => {}
-            _ => return false,
-        }
-    }
-    true
 }
 
 /// Equality of canonical paths (not a replacement for handle identity).
 pub(crate) fn same_path(a: &std::path::Path, b: &std::path::Path) -> bool {
-    within_root(a, b) && within_root(b, a)
+    #[cfg(windows)]
+    {
+        browseros_platform_security::windows::paths_are_same_file(a, b).unwrap_or(false)
+    }
+    #[cfg(not(windows))]
+    {
+        within_root(a, b) && within_root(b, a)
+    }
 }
 
 pub fn check_path_within_roots(path: &str, roots: &[PathBuf]) -> Result<PathBuf, PolicyError> {

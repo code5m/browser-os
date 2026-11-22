@@ -739,6 +739,10 @@ mod linux {
 #[path = "safe_paths_windows.rs"]
 mod windows;
 
+#[cfg(unix)]
+#[path = "private_directory_unix.rs"]
+mod private_directory_unix;
+
 pub fn move_no_replace(src: &Path, dest_dir: &Path, roots: &[PathBuf]) -> std::io::Result<()> {
     #[cfg(target_os = "linux")]
     {
@@ -827,16 +831,24 @@ pub fn create_directory_all(path: &Path, roots: &[PathBuf]) -> std::io::Result<(
     }
 }
 
-/// Secure a private app-owned directory on Windows. Other platforms keep
-/// their existing directory ownership/mode policy.
+/// Secure the caller-selected private application root using native ownership
+/// and access controls. This does not recursively normalize existing contents.
 pub fn ensure_private_directory(path: &Path) -> std::io::Result<()> {
     #[cfg(target_os = "windows")]
     {
         windows::ensure_private_directory(path)
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(unix)]
     {
-        std::fs::create_dir_all(path)
+        private_directory_unix::ensure_private_directory(path)
+    }
+    #[cfg(not(any(unix, target_os = "windows")))]
+    {
+        let _ = path;
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "PRIVATE_DIRECTORY_PLATFORM_UNSUPPORTED",
+        ))
     }
 }
 

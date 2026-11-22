@@ -5,7 +5,7 @@ Workflow registration is machine-enforced by `docs/engineering/governance.json`.
 | File | Role | Trigger policy |
 | --- | --- | --- |
 | `bfc-targeted-regression.yml` | BFC script syntax, synthetic DOM, readback and tab-binding regression | relevant BFC changes on all branch pushes / PRs; no real B站 requests or native builds |
-| `windows-linux-v2-experimental.yml` | Windows x64 experimental Rust and NSIS build; Windows BFC local service smoke; static code contract | V2 onepass branch pushes and manual; failures visible, separate from desktop GUI acceptance |
+| `windows-linux-v2-experimental.yml` | Windows/Linux native regression, shared private-directory security, BFC local service smoke; optional diagnostic NSIS | manual dispatch only; exact `source_sha` required for all jobs; installer separately opt-in and UNVERIFIED; no automatic branch trigger or GUI claim |
 | `capability-v2-ui-safety.yml` | fast UI policy feedback | all branch pushes / PR to master; risk-aware jobs; manual full |
 | `capability-v2-validation.yml` | fast merge gate with explicit optional native and installed GUI modes | master pushes / non-draft PRs targeting master (including ready-for-review); manual full |
 | `capability-v3-hotplug.yml` | focused Hot-Plug acceptance | all branch pushes / PR to master; risk-aware jobs; manual full |
@@ -15,7 +15,7 @@ Workflow registration is machine-enforced by `docs/engineering/governance.json`.
 | `browseros-sustained-performance.yml` | opted-in installed RSS/PSS/CPU evidence | manual dispatch only; no weekly schedule |
 | `mirror-to-gitee.yml` | retired legacy mirror placeholder | manual only; no branch/tag push trigger |
 
-The v2/v3 filenames remain for historical compatibility. Every developer branch push gets the Quick Gate, and existing focused safety/hot-plug/governance workflows remain active. Full Validation no longer starts on developer pushes or draft PRs; it runs on master pushes, non-draft PRs targeting master (including the ready-for-review transition), and explicit manual dispatch. The fail-closed `scripts/ci-impact.py` still selects `docs`, `ui`, or `full` for runs that actually invoke Full Validation. Unknown, native, bridge, dependency, workflow and mixed-sensitive changes remain full. A skipped check is never evidence of passing that check.
+The v2/v3 filenames remain for historical compatibility. Every developer branch push gets the Quick Gate, and existing focused safety/hot-plug/governance workflows remain active. Full Validation no longer starts on developer pushes or draft PRs; it runs on master pushes, non-draft PRs targeting master (including the ready-for-review transition), and explicit manual dispatch. The fail-closed `scripts/ci-impact.py` still selects `docs`, `ui`, or `full` for runs that actually invoke Full Validation. Unknown, native, bridge, dependency, workflow and mixed-sensitive changes remain full. A skipped check is never evidence of passing that check. Commits explicitly created with GitHub's `[skip ci]` instruction do not run push checks; that exception records NOT_RUN, never PASS.
 
 The independent Preview job builds a release Debian package only after an explicit workflow_dispatch request with build_preview=true (default false). Branch pushes never compile a native preview. The formerly weekly installed-resource benchmark is also manual-only.
 
@@ -48,3 +48,11 @@ The registered `.githooks/pre-commit` checks staged content for known local AI c
 - Draft PR: fast feedback only; preview is manual opt-in. Mark ready for review: Full Validation runs; all required checks must succeed before merge.
 - Download the preview from the Developer Feedback workflow's `browseros-preview-<sha>` artifact. Check `SOURCE_COMMIT` and `SHA256SUMS` and install it on the authorized test desktop. Preview is `PACKAGE_PASS` at most; only user-confirmed real desktop acceptance may be `GUI_PASS`.
 - GitHub required-check settings must be reconciled with conditionally skipped jobs; branch protection should require the always-running impact/governance jobs instead of skipped child jobs, without weakening full/release evidence.
+
+## Windows/Linux native source identity and result accounting
+
+The experimental platform workflow is manual-only on every branch. To run it in a separately authorized session, select the workflow revision containing the fixes and supply the exact 40-character `source_sha`. One source job resolves it once; every BrowserOS checkout uses that frozen SHA. The independently reviewed BFC service keeps its own pinned revision. This avoids treating a green check on an earlier commit or a different branch as current native evidence.
+
+Required test filters must execute at least one case, contain no ignored cases, and report no explicit runtime skip. The filtered matrix and full Rust suite have separate status fields: a full-suite failure does not reduce the number of passing filters a second time. A full run with ignored cases is labelled `PASS_WITH_IGNORED`; the ignored cases provide no acceptance evidence. Installed GUI remains `NOT_RUN` in these native summaries.
+
+NSIS output additionally requires `build_installer=true` (default false). It is a diagnostic `UNVERIFIED` artifact even if native tests pass. Installed-client GUI, real BFC login and signing remain separate acceptance work. Editing this workflow does not dispatch it.

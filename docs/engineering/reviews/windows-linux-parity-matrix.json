@@ -1,141 +1,233 @@
 {
   "schema_version": 1,
   "repo": "code5m/browser-os",
-  "branch": "feature/browseros-windows-linux-v2-onepass-20261114",
-  "as_of": "2026-11-17",
-  "reference_native_run": "https://github.com/code5m/browser-os/actions/runs/43981446235",
-  "reference_head": "d273d4c5a770c4ee77c1428cb685c2459ef2d070",
-  "current_source_patch": "not_native_verified",
-  "scope": "Windows+Linux parity only; macOS unsupported",
-  "note": "All new source patches pending compile/native/NSIS/GUI verification; run #201 on older SHA remains a failure.",
+  "branch": "fix/windows-native-security-convergence-20261122",
+  "as_of": "2026-11-22",
+  "reference_native_run": "https://github.com/code5m/browser-os/actions/runs/44321240531",
+  "reference_head": "7783dbd1a175c6fd0bab283ddf63fb0220887a6c",
+  "current_source_patch": "implemented_not_executed",
+  "scope": "Windows/Linux source repairs and macOS platform preflight; macOS product support remains unsupported",
+  "note": "This repair branch was requested without CI, tests, validators, builds or merge. Historical native results belong only to reference_head. Current native/installer/GUI/performance evidence is NOT_RUN; no current CODE_PASS, PACKAGE_PASS or GUI_PASS claim.",
   "capabilities": [
     {
       "capability": "core_gui",
-      "linux": "implemented_history_ci_pass",
-      "windows": "implemented_native_gui_unverified",
+      "linux": "source_present_current_native_not_run",
+      "windows": "source_present_current_native_not_run",
       "macos": "unsupported",
       "severity": "P1",
-      "notes": "WebKitGTK vs WebView2; installed build and login-state need Win11 evidence"
+      "notes": "Application data and WebView2 profiles share native SID/DACL policy. Private-root preparation precedes windows and workers; startup errors are diagnostic and fail closed. Installed Win11/WebView2/BFC session behavior NOT_RUN.",
+      "previous_record": {
+        "linux": "implemented_history_ci_pass",
+        "windows": "implemented_native_gui_unverified"
+      }
     },
     {
       "capability": "grid_process_ipc",
-      "linux": "implemented_history_ci_pass",
-      "windows": "implemented_native_tests_history_pass_gui_unverified",
+      "linux": "source_present_current_native_not_run",
+      "windows": "source_present_current_native_not_run",
       "macos": "unsupported",
       "severity": "P1",
-      "notes": "Linux UDS / Windows owner-PID checked NamedPipe and Job Object"
+      "notes": "Linux UDS / Windows owner-PID checked NamedPipe and Job Object retained. macOS selects explicit unsupported adapter before mutating Grid UI state. Current native/GUI tests NOT_RUN.",
+      "previous_record": {
+        "linux": "implemented_history_ci_pass",
+        "windows": "implemented_native_tests_history_pass_gui_unverified"
+      }
     },
     {
       "capability": "terminal",
-      "linux": "implemented_history_ci_pass",
-      "windows": "implemented_conpty_native_history_pass",
+      "linux": "source_present_current_native_not_run",
+      "windows": "source_present_current_native_not_run",
       "macos": "unsupported",
       "severity": "P2",
-      "notes": "Windows ConPTY startup, resize, terminate; GUI interaction not verified"
+      "notes": "ConPTY tests run without GetConsoleWindow skip; writer, waiter handle, resize and worker teardown source repaired. Actual terminal I/O and process-tree cleanup NOT_RUN.",
+      "previous_record": {
+        "linux": "implemented_history_ci_pass",
+        "windows": "implemented_conpty_native_history_pass"
+      }
     },
     {
       "capability": "workspace_cas",
-      "linux": "implemented_history_ci_pass",
-      "windows": "implemented_native_history_pass",
+      "linux": "source_present_current_native_not_run",
+      "windows": "source_present_current_native_not_run",
       "macos": "unsupported",
       "severity": "P2",
-      "notes": "Pinned directory content CAS; current patch untested"
+      "notes": "Windows ancestry and path identity use opened handles; Unicode lexical comparison no longer provides the authorization proof. Junction/hardlink/concurrent replacement native cases NOT_RUN.",
+      "previous_record": {
+        "linux": "implemented_history_ci_pass",
+        "windows": "implemented_native_history_pass"
+      }
     },
     {
       "capability": "file_manager",
-      "linux": "source_patched_dirfd_recursive_delete_unverified",
-      "windows": "source_patched_handle_pinned_recursive_delete_native_unverified",
+      "linux": "source_present_current_native_not_run",
+      "windows": "source_present_current_native_not_run",
       "macos": "unsupported",
       "severity": "P1",
-      "notes": "Recursive deletion implemented via Linux dirfd/openat/unlinkat and Windows pinned directory/NT handle disposition; reject reparse/symlink/special entries and cap depth/entries; not native verified"
+      "notes": "Recursive deletion implemented via Linux dirfd/openat/unlinkat and Windows pinned directory/NT handle disposition; reject reparse/symlink/special entries and cap depth/entries; not native verified",
+      "previous_record": {
+        "linux": "source_patched_dirfd_recursive_delete_unverified",
+        "windows": "source_patched_handle_pinned_recursive_delete_native_unverified"
+      }
     },
     {
       "capability": "system_apps",
-      "linux": "implemented_xdg",
-      "windows": "source_patched_start_menu_exe_and_packaged_aumid_unverified",
+      "linux": "source_present_current_native_not_run",
+      "windows": "source_present_current_native_not_run",
       "macos": "unsupported",
       "severity": "P2",
-      "notes": "Windows Start Menu .lnk and bounded Get-StartApps UWP/MSIX AUMID discovery; packaged app launch rechecks registration, requires native user gesture and trusted explorer; not all protocol shortcuts supported"
+      "notes": "Windows Start Menu .lnk and bounded Get-StartApps UWP/MSIX AUMID discovery; packaged app launch rechecks registration, requires native user gesture and trusted explorer; not all protocol shortcuts supported",
+      "previous_record": {
+        "linux": "implemented_xdg",
+        "windows": "source_patched_start_menu_exe_and_packaged_aumid_unverified"
+      }
     },
     {
       "capability": "launch_policy",
-      "linux": "source_patched_unverified",
-      "windows": "source_patched_unverified",
+      "linux": "source_present_current_native_not_run",
+      "windows": "source_present_current_native_not_run",
       "macos": "unsupported",
       "severity": "P1",
-      "notes": "Native path separators, Windows .exe / shell wrappers, canonical executable, main-webview restriction"
+      "notes": "Native path separators, Windows .exe / shell wrappers, canonical executable, main-webview restriction",
+      "previous_record": {
+        "linux": "source_patched_unverified",
+        "windows": "source_patched_unverified"
+      }
     },
     {
       "capability": "agent_files",
-      "linux": "implemented_history_ci_pass",
-      "windows": "implemented_native_history_pass",
+      "linux": "source_present_current_native_not_run",
+      "windows": "source_present_current_native_not_run",
       "macos": "unsupported",
       "severity": "P2",
-      "notes": "Handle-validated file operations; current HEAD needs native regression"
+      "notes": "Windows ancestry and path identity use opened handles; Unicode lexical comparison no longer provides the authorization proof. Junction/hardlink/concurrent replacement native cases NOT_RUN.",
+      "previous_record": {
+        "linux": "implemented_history_ci_pass",
+        "windows": "implemented_native_history_pass"
+      }
     },
     {
       "capability": "agent_mcp_lsp",
-      "linux": "implemented_history_ci_pass",
-      "windows": "source_patched_lsp_document_contract_appcontainer_native_unverified",
+      "linux": "source_present_current_native_not_run",
+      "windows": "source_present_current_native_not_run",
       "macos": "unsupported",
       "severity": "P1",
-      "notes": "Windows persistent LSP plus Linux-style single approved document request with private snapshot; previous run #201 AppContainer MCP/LSP CreateProcessW error 5 is NOT cleared without new Windows native evidence"
+      "notes": "Toolchain preparation fails explicitly; restricted rust-project-no-cargo mode retains compilation_verified=false. Profile state and snapshot ACL ownership remain separate from app-data policy. Diagnostics/symbol/hover/definition and cross-package negatives NOT_RUN.",
+      "previous_record": {
+        "linux": "implemented_history_ci_pass",
+        "windows": "source_patched_lsp_document_contract_appcontainer_native_unverified"
+      }
     },
     {
       "capability": "script_runner",
-      "linux": "implemented_posix_node_python_bash",
-      "windows": "implemented_node_python_only_unverified",
+      "linux": "source_present_current_native_not_run",
+      "windows": "source_present_current_native_not_run",
       "macos": "unsupported",
       "severity": "P2",
-      "notes": "Windows shell/bash intentionally unavailable; no insecure emulation"
+      "notes": "Windows shell/bash intentionally unavailable; no insecure emulation",
+      "previous_record": {
+        "linux": "implemented_posix_node_python_bash",
+        "windows": "implemented_node_python_only_unverified"
+      }
     },
     {
       "capability": "bfc_loopback",
-      "linux": "implemented",
-      "windows": "synthetic_ci_pass",
+      "linux": "source_present_current_native_not_run",
+      "windows": "source_present_current_native_not_run",
       "macos": "unsupported",
       "severity": "P1",
-      "notes": "Windows BFC synthetic identity and import pass; real Bilibili login/browser binding not validated"
+      "notes": "Previous Windows synthetic CI pass is historical only. Shared WebView2 private-profile policy source repaired; real login, multi-page readback and restart persistence NOT_RUN.",
+      "previous_record": {
+        "linux": "implemented",
+        "windows": "synthetic_ci_pass"
+      }
     },
     {
       "capability": "default_browser",
-      "linux": "xdg_settings",
-      "windows": "user_settings_handoff",
+      "linux": "source_present_current_native_not_run",
+      "windows": "source_present_current_native_not_run",
       "macos": "unsupported",
       "severity": "P2",
-      "notes": "Windows opens Settings/default apps after explicit intent, cannot silently set UserChoice"
+      "notes": "Windows opens Settings/default apps after explicit intent, cannot silently set UserChoice",
+      "previous_record": {
+        "linux": "xdg_settings",
+        "windows": "user_settings_handoff"
+      }
     },
     {
       "capability": "git_database_tools",
-      "linux": "implemented",
-      "windows": "source_patched_native_unverified",
-      "macos": "not_assessed",
+      "linux": "source_present_current_native_not_run",
+      "windows": "source_present_current_native_not_run",
+      "macos": "native_not_assessed",
       "severity": "P2",
-      "notes": "Git conflict resolver now uses Linux/Windows pinned CAS; DB profile and Agent config use cross-platform atomic replacement; native Windows acceptance pending; measurement report M0 writes now reuse unique-stage atomic_write"
+      "notes": "Existing atomic replacement, sharing retries, Git rebase and CAS repairs retained; Windows rename documentation corrected. Native data integrity and installed interaction NOT_RUN.",
+      "previous_record": {
+        "linux": "implemented",
+        "windows": "source_patched_native_unverified"
+      }
     },
     {
-      "capability": "installer_nsys",
+      "capability": "installer_nsis",
       "linux": "not_applicable",
-      "windows": "manual_workflow_dispatch_pending",
+      "windows": "manual_opt_in_not_run",
       "macos": "not_applicable",
       "severity": "P1",
-      "notes": "NSIS and installed WebView2 GUI not accepted"
+      "notes": "Manual-only exact-source workflow; NSIS requires build_installer=true and yields UNVERIFIED diagnostic artifact. No current package, install, signing or GUI evidence.",
+      "previous_record": {
+        "linux": "not_applicable",
+        "windows": "manual_workflow_dispatch_pending"
+      }
     },
     {
       "capability": "resource_monitor",
-      "linux": "implemented_procfs",
-      "windows": "source_patched_toolhelp_workingset_globalmemorystatusex",
+      "linux": "source_present_current_native_not_run",
+      "windows": "source_present_current_native_not_run",
       "macos": "unsupported",
       "severity": "P1",
-      "notes": "Windows previously displayed 0 for /proc process RSS and MemTotal; now uses Toolhelp+GetProcessMemoryInfo"
+      "notes": "Windows previously displayed 0 for /proc process RSS and MemTotal; now uses Toolhelp+GetProcessMemoryInfo",
+      "previous_record": {
+        "linux": "implemented_procfs",
+        "windows": "source_patched_toolhelp_workingset_globalmemorystatusex"
+      }
     },
     {
       "capability": "image_storage",
-      "linux": "source_patched_native_pinned_create",
-      "windows": "source_patched_native_pinned_create",
+      "linux": "source_present_current_native_not_run",
+      "windows": "source_present_current_native_not_run",
       "macos": "unsupported",
       "severity": "P2",
-      "notes": "Image writes use safe anchored mkdir/create-only stage instead of write-before-validate and std::fs::rename"
+      "notes": "Image writes use safe anchored mkdir/create-only stage instead of write-before-validate and std::fs::rename",
+      "previous_record": {
+        "linux": "source_patched_native_pinned_create",
+        "windows": "source_patched_native_pinned_create"
+      }
+    },
+    {
+      "capability": "private_application_directory",
+      "linux": "source_owner_mode_and_fd_guard_native_not_run",
+      "windows": "source_shared_sid_dacl_handle_policy_native_not_run",
+      "macos": "source_private_root_guard_only_native_not_run",
+      "severity": "P0",
+      "notes": "Linux effective UID/mode checked on directory descriptors; macOS extended ACL is handled natively. This is a private-root policy, not completion of macOS filesystem capability APIs."
+    },
+    {
+      "capability": "credential_store",
+      "linux": "secret_service_source_present_not_run",
+      "windows": "credential_manager_source_present_not_run",
+      "macos": "apple_native_keychain_enabled_not_run",
+      "severity": "P1",
+      "notes": "Explicit native backends; Keychain feature and registry-verified lock dependency entries added. No OS keyring operation executed."
     }
-  ]
+  ],
+  "source_base": "285542f57bd055592b4d5019e5a89e8555bcc805",
+  "current_execution": {
+    "ci": "NOT_RUN",
+    "tests": "NOT_RUN",
+    "validators": "NOT_RUN",
+    "build": "NOT_RUN",
+    "windows_native": "NOT_RUN",
+    "linux_native": "NOT_RUN",
+    "installed_gui": "GUI_PENDING",
+    "performance": "NOT_RUN",
+    "merge": "NOT_REQUESTED"
+  }
 }

@@ -83,6 +83,10 @@ unsafe impl Sync for PsuedoCon {}
 
 impl Drop for PsuedoCon {
     fn drop(&mut self) {
+        // In the no-client/error path these ends have not yet been released.
+        // Close them before ClosePseudoConsole to permit broken-pipe/EOF.
+        self.creation_pipes.get_mut()
+            .unwrap_or_else(|poison| poison.into_inner()).take();
         unsafe { (CONPTY.ClosePseudoConsole)(self.con) };
     }
 }
@@ -134,6 +138,7 @@ impl PsuedoCon {
     }
 
     pub fn resize(&self, size: COORD) -> Result<(), Error> {
+        ensure!(size.X > 0 && size.Y > 0, "ConPTY dimensions must be positive");
         let result = unsafe { (CONPTY.ResizePseudoConsole)(self.con, size) };
         ensure!(
             result == S_OK,
@@ -232,8 +237,6 @@ impl PsuedoCon {
         let _main_thread = unsafe { OwnedHandle::from_raw_handle(pi.hThread as _) };
         let proc = unsafe { OwnedHandle::from_raw_handle(pi.hProcess as _) };
 
-        Ok(WinChild {
-            proc: Mutex::new(proc),
-        })
+        Ok(WinChild::new(proc))
     }
 }

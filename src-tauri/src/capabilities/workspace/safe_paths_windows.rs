@@ -50,416 +50,25 @@ fn reject_reparse_ancestors(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-fn system_tool(name: &str) -> io::Result<PathBuf> {
-    use std::os::windows::ffi::OsStringExt;
-    use windows_sys::Win32::System::SystemInformation::GetSystemDirectoryW;
-    let mut buffer = [0u16; 512];
-    let length = unsafe { GetSystemDirectoryW(buffer.as_mut_ptr(), buffer.len() as u32) };
-    if length == 0 || length as usize >= buffer.len() {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(PathBuf::from(std::ffi::OsString::from_wide(&buffer[..length as usize])).join(name))
-}
-
-#[cfg(test)]
-mod windows_identity_contract_tests {
-    use super::{acl_listing_is_exclusive, valid_windows_sid};
-
-    const OWNER_SID: &str = "S-1-5-21-1697530992-2138327965-217515802-1001";
-    const OWNER_ACCOUNT: &str = r"yanghuiqian\yhq";
-
-    #[test]
-    fn sid_validation_preserves_literal_s_prefix_and_rejects_malformed_segments() {
-        assert!(valid_windows_sid("S-1-5-21-100-200-300-1001"));
-        assert!(!valid_windows_sid("1-5-21-100"));
-        assert!(!valid_windows_sid("S-1--21"));
-        assert!(!valid_windows_sid("S-1-5-21-abc"));
-        assert!(!valid_windows_sid("S-1-"));
-    }
-
-    /// Verbatim shape captured from `icacls <appdata> /T` on the machine that
-    /// hit the startup panic: lowercase `whoami` account vs mixed-case
-    /// `YANGHUIQIAN\Yhq` display, inherited `(I)` flags on children, and the
-    /// localized footer. Two objects -> four ACEs.
-    #[test]
-    fn acl_exclusivity_accepts_real_icacls_output_mixed_case_and_localized_footer() {
-        let listing = concat!(
-            "C:/Users/10146/AppData/Roaming/app NT AUTHORITY\\SYSTEM:(OI)(CI)(F)\n",
-            "                                          YANGHUIQIAN\\Yhq:(OI)(CI)(F)\n",
-            "\n",
-            "C:/Users/10146/AppData/Roaming/app\\sessions NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)\n",
-            "                                                     YANGHUIQIAN\\Yhq:(I)(OI)(CI)(F)\n",
-            "\n已成功处理 2 个文件; 处理 0 个文件时失败\n",
-        );
-        assert!(
-            acl_listing_is_exclusive(listing, 2, OWNER_SID, OWNER_ACCOUNT),
-            "real mixed-case / localized output must be accepted as exclusive"
-        );
-    }
-
-    /// P1: account names may contain non-ASCII characters. Folding must use
-    /// Unicode-aware `to_lowercase()`, not `to_ascii_lowercase()`.
-    #[test]
-    fn acl_exclusivity_folds_non_ascii_account_names() {
-        let listing = concat!(
-            "C:\\data\\app NT AUTHORITY\\SYSTEM:(OI)(CI)(F)\n",
-            "            CONTOSO\\JÖRG:(OI)(CI)(F)\n",
-        );
-        assert!(
-            acl_listing_is_exclusive(listing, 1, OWNER_SID, "contoso\\jörg"),
-            "non-ASCII account case differences must fold to the same key"
-        );
-    }
-
-    /// P2: a trustee whose name merely contains "SYSTEM" must never be counted
-    /// as the SYSTEM trustee (the old code used `contains("SYSTEM")`).
-    #[test]
-    fn acl_exclusivity_rejects_system_name_substring_impostor() {
-        let impostor = concat!(
-            "C:\\data\\app CONTOSO\\SystemAdmins:(OI)(CI)(F)\n",
-            "            YANGHUIQIAN\\Yhq:(OI)(CI)(F)\n",
-        );
-        assert!(
-            !acl_listing_is_exclusive(impostor, 1, OWNER_SID, OWNER_ACCOUNT),
-            "a lookalike trustee must not satisfy the SYSTEM requirement"
-        );
-    }
-
-    /// P3: broad groups must be rejected whether they appear as English names,
-    /// localized names, or SIDs — without a locale-dependent name blacklist.
-    #[test]
-    fn acl_exclusivity_rejects_broad_groups_by_name_and_sid() {
-        let broad_trustees = [
-            "Everyone",
-            "每个人",                              // localized Everyone
-            "NT AUTHORITY\\Authenticated Users",
-            "BUILTIN\\Users",
-            "BUILTIN\\Administrators",
-            "*S-1-1-0",                            // Everyone SID
-            "S-1-5-11",                            // Authenticated Users SID
-            "S-1-5-32-544",                        // Administrators SID
-            "S-1-5-32-545",                        // Users SID
-        ];
-        for trustee in broad_trustees {
-            let listing = format!(
-                "C:\\data\\app NT AUTHORITY\\SYSTEM:(OI)(CI)(F)\n  {trustee}:(OI)(CI)(F)\n  YANGHUIQIAN\\Yhq:(OI)(CI)(F)\n"
-            );
-            assert!(
-                !acl_listing_is_exclusive(&listing, 1, OWNER_SID, OWNER_ACCOUNT),
-                "broad trustee must be rejected: {trustee}"
-            );
-        }
-    }
-
-    #[test]
-    fn acl_exclusivity_accepts_sid_form_owner_and_system() {
-        // When name resolution fails, icacls prints raw SIDs instead of names.
-        let listing = format!(
-            "C:\\data\\app *S-1-5-18:(OI)(CI)(F)\n  *{OWNER_SID}:(OI)(CI)(F)\n"
-        );
-        assert!(acl_listing_is_exclusive(&listing, 1, OWNER_SID, OWNER_ACCOUNT));
-    }
-
-    #[test]
-    fn acl_exclusivity_rejects_wrong_ace_count() {
-        let one_object = concat!(
-            "C:\\data\\app NT AUTHORITY\\SYSTEM:(OI)(CI)(F)\n",
-            "            YANGHUIQIAN\\Yhq:(OI)(CI)(F)\n",
-        );
-        // Claim two objects but supply one object's worth of ACEs.
-        assert!(!acl_listing_is_exclusive(one_object, 2, OWNER_SID, OWNER_ACCOUNT));
-    }
-}
-
-fn valid_windows_sid(value: &str) -> bool {
-    value.strip_prefix("S-1-").is_some_and(|suffix| {
-        !suffix.is_empty() && suffix.split('-').all(|part| {
-            !part.is_empty() && part.bytes().all(|ch| ch.is_ascii_digit())
-        })
-    })
-}
-
-fn current_user_identity() -> io::Result<(String, String)> {
-    let whoami = system_tool("whoami.exe")?;
-    let output = std::process::Command::new(whoami)
-        .args(["/user", "/fo", "csv", "/nh"])
-        .output()?;
-    if !output.status.success() {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "WINDOWS_USER_SID_UNAVAILABLE",
-        ));
-    }
-    let text = String::from_utf8_lossy(&output.stdout);
-    let line = text
-        .lines()
-        .find(|line| line.contains("S-1-"))
-        .ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "WINDOWS_USER_SID_UNAVAILABLE",
-            )
-        })?;
-    // The Windows account display name may contain quoted commas. Parse
-    // from the final CSV separator, never tokenize the account field as SID.
-    let (account_raw, sid_raw) = line.trim_start_matches('\u{feff}')
-        .rsplit_once(',')
-        .ok_or_else(|| io::Error::new(
-            io::ErrorKind::PermissionDenied, "WINDOWS_USER_SID_UNAVAILABLE"
-        ))?;
-    let account = account_raw.trim().trim_matches('"');
-    if account.is_empty() {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied, "WINDOWS_USER_ACCOUNT_UNAVAILABLE"
-        ));
-    }
-    let sid = sid_raw.trim().trim_matches('"');
-    if !valid_windows_sid(sid) {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied, "WINDOWS_USER_SID_INVALID"
-        ));
-    }
-    Ok((account.to_string(), sid.to_string()))
-}
-
-/// Protect a private app-owned directory and every existing descendant.
-/// The root DACL is owner/SYSTEM-only; children are reset to inherit only
-/// that DACL. Reparse points, UNC paths and special files fail closed.
+/// Private app data uses the same native policy as WebView2. AppContainer
+/// profiles live outside app_data and have a separate package-SID policy.
 pub(super) fn ensure_private_directory(path: &Path) -> io::Result<()> {
-    reject_reparse_ancestors(path)?;
-    std::fs::create_dir_all(path)?;
-    reject_reparse_ancestors(path)?;
-    let root = open(path, true)?;
-    let expected = final_path(&root)?;
-    let (account, sid) = current_user_identity()?;
-    let icacls = system_tool("icacls.exe")?;
-    let mut pending = vec![path.to_path_buf()];
-    let mut objects = Vec::<PathBuf>::new();
-    const MAX_OBJECTS: usize = 50_000;
-    const MAX_DEPTH: usize = 64;
-    while let Some(directory) = pending.pop() {
-        let depth = directory
-            .strip_prefix(path)
-            .map(|relative| relative.components().count())
-            .unwrap_or(MAX_DEPTH);
-        if depth > MAX_DEPTH {
-            return Err(denied());
-        }
-        for entry in std::fs::read_dir(&directory)? {
-            let entry = entry?;
-            let child = entry.path();
-            let metadata = std::fs::symlink_metadata(&child)?;
-            if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
-                || !(metadata.is_file() || metadata.is_dir())
-            {
-                return Err(denied());
-            }
-            if final_path(&open(&child, metadata.is_dir())?)?
-                .to_lowercase()
-                .starts_with(&(expected.trim_end_matches('\\').to_lowercase() + "\\"))
-                == false
-            {
-                return Err(denied());
-            }
-            objects.push(child.clone());
-            if objects.len() > MAX_OBJECTS {
-                return Err(denied());
-            }
-            if metadata.is_dir() {
-                pending.push(child);
-            }
-        }
-    }
-
-    let owner_sid = format!("*{sid}");
-    let set_root_owner = std::process::Command::new(&icacls)
-        .arg(path)
-        .arg("/setowner")
-        .arg(&owner_sid)
-        .output()?;
-    if !set_root_owner.status.success() {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "WINDOWS_PRIVATE_DIR_OWNER_SET",
-        ));
-    }
-    let reset_root = std::process::Command::new(&icacls)
-        .arg(path)
-        .arg("/reset")
-        .output()?;
-    if !reset_root.status.success() {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "WINDOWS_PRIVATE_DIR_ACL_RESET",
-        ));
-    }
-    let suffix = ":(OI)(CI)F";
-    let grant_user = format!("*{sid}{suffix}");
-    let grant_system = format!("*S-1-5-18{suffix}");
-    let secure_root = std::process::Command::new(&icacls)
-        .arg(path)
-        .args(["/inheritance:r", "/grant:r"])
-        .arg(&grant_user)
-        .arg(&grant_system)
-        .output()?;
-    if !secure_root.status.success() {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "WINDOWS_PRIVATE_DIR_ACL_SET",
-        ));
-    }
-    for child in &objects {
-        let owner = std::process::Command::new(&icacls)
-            .arg(child)
-            .arg("/setowner")
-            .arg(&owner_sid)
-            .output()?;
-        if !owner.status.success() {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "WINDOWS_PRIVATE_CHILD_OWNER_SET",
-            ));
-        }
-        let reset = std::process::Command::new(&icacls)
-            .arg(child)
-            .arg("/reset")
-            .output()?;
-        if !reset.status.success() {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "WINDOWS_PRIVATE_CHILD_ACL_RESET",
-            ));
-        }
-    }
-    let verify = std::process::Command::new(&icacls)
-        .arg(path)
-        .arg("/T")
-        .output()?;
-    if !verify.status.success() {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "WINDOWS_PRIVATE_DIR_ACL_VERIFY",
-        ));
-    }
-    let listing = String::from_utf8_lossy(&verify.stdout);
-    let object_count = objects.len() + 1;
-    if !acl_listing_is_exclusive(&listing, object_count, &sid, &account) {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "WINDOWS_PRIVATE_DIR_ACL_NOT_EXCLUSIVE",
-        ));
-    }
+    let report = browseros_platform_security::windows::ensure_private_directory(
+        path,
+        &browseros_platform_security::windows::PrivateTreeOptions::default(),
+    )?;
+    eprintln!(
+        "WINDOWS_PRIVATE_STORAGE_READY checked={} repaired={} elapsed_ms={}",
+        report.checked_objects, report.repaired_objects, report.elapsed_ms,
+    );
     Ok(())
 }
 
-/// Verify the `icacls /T` listing grants exactly the current user and SYSTEM
-/// on every object, with no other trustee.
-///
-/// Two properties of the producer make string matching non-trivial:
-///   1. `icacls` prints trustees as display names (`DOMAIN\\User`,
-///      `NT AUTHORITY\\SYSTEM`) and resolves SIDs when it can. Windows account
-///      names are case-insensitive, but `whoami /user` and `icacls` disagree on
-///      casing (`yanghuiqian\\yhq` vs `YANGHUIQIAN\\Yhq`). A case-sensitive match
-///      reports zero owner entries and rejects an otherwise private directory.
-///      Fold with Unicode-aware `to_lowercase()` (not `to_ascii_lowercase()`,
-///      which silently misses non-ASCII account names).
-///   2. The summary/footer line is localized ("已成功处理 N 个文件",
-///      "N fichiers traités", ...), so group names in the listing are locale
-///      dependent too.
-///
-/// Instead of blacklisting broad groups by (localized) name — which can never
-/// be exhaustive — classify *every* ACE: its trustee must be the owner or
-/// SYSTEM. Any other trustee (Everyone, Authenticated Users, BUILTIN\\Users,
-/// or their localized equivalents) falls through and fails closed. This keeps
-/// the check strict on any Windows locale without a name blacklist.
-fn acl_listing_is_exclusive(listing: &str, object_count: usize, sid: &str, account: &str) -> bool {
-    let owner_key = account.to_lowercase();
-    let owner_sid_key = sid.to_lowercase();
-    // SYSTEM's well-known SID, and the SDDL display name icacls resolves it to.
-    // Both are locale-independent; the SID is the authoritative form.
-    const SYSTEM_SID: &str = "s-1-5-18";
-    const SYSTEM_NAME: &str = "nt authority\\system";
-
-    let mut ace_lines = 0usize;
-    let mut owner_entries = 0usize;
-    let mut system_entries = 0usize;
-
-    for line in listing.lines() {
-        // ACE lines carry the rights marker ":(..."; blank lines and the
-        // localized footer do not. The trustee is the text before that marker
-        // (the first line of each object also carries its path, hence the
-        // suffix match below rather than an exact equality).
-        let Some(rights_at) = line.find(":(") else { continue; };
-        ace_lines += 1;
-        let trustee = line[..rights_at].trim().to_lowercase();
-        if trustee.ends_with(owner_key.as_str()) || trustee.ends_with(owner_sid_key.as_str()) {
-            owner_entries += 1;
-        } else if trustee.ends_with(SYSTEM_SID) || trustee.ends_with(SYSTEM_NAME) {
-            system_entries += 1;
-        } else {
-            // Unknown trustee: fail closed rather than maintain a
-            // locale-dependent broad-group blacklist.
-            return false;
-        }
-    }
-
-    ace_lines == object_count * 2
-        && owner_entries == object_count
-        && system_entries == object_count
-}
-
-fn normalized_path(value: &str) -> String {
-    // Keep UNC roots absolute: \\?\UNC\server\share is the same location
-    // as \\server\share. Stripping \\?\ blindly produced a relative-looking
-    // "UNC\server" path that could disagree with the opened NT handle.
-    let folded = value.replace('/', "\\").to_ascii_lowercase();
-    let path = if let Some(unc) = folded.strip_prefix(r"\\?\unc\") {
-        format!(r"\\{unc}")
-    } else if let Some(rest) = folded.strip_prefix(r"\\?\") {
-        // Strip the Win32 verbatim prefix only from an actual drive path.
-        if rest.as_bytes().first().is_some_and(u8::is_ascii_alphabetic)
-            && rest.as_bytes().get(1) == Some(&b':')
-            && rest.as_bytes().get(2) == Some(&b'\\')
-        {
-            rest.to_owned()
-        } else {
-            folded
-        }
-    } else {
-        folded
-    };
-    if path.len() == 3 && path.as_bytes().get(1) == Some(&b':') && path.ends_with('\\') {
-        path
-    } else {
-        path.trim_end_matches('\\').to_owned()
-    }
-}
-
-#[cfg(test)]
-#[test]
-fn windows_path_normalizer_preserves_drive_and_unc_root_semantics() {
-    assert_eq!(normalized_path(r"\\?\C:\Workspace\FILE.rs"),
-        normalized_path(r"c:\workspace\file.rs"));
-    assert_eq!(normalized_path(r"\\?\UNC\SERVER\Share\Dir\file.rs"),
-        normalized_path(r"\\server\share\dir\file.rs"));
-    assert_eq!(normalized_path(r"C:\"), r"c:\");
-    assert_eq!(normalized_path(r"\\?\Volume{1234}\dir"),
-        r"\\?\volume{1234}\dir");
-}
-
 fn verify_path_handle(path: &Path, file: &File) -> io::Result<()> {
-    // A final-component OPEN_REPARSE_POINT flag does not prevent an
-    // intermediate junction from being followed. Check every component,
-    // then compare the kernel-resolved handle path with the current
-    // canonical path. The second check detects a parent swapped between
-    // the preflight and CreateFileW.
     reject_reparse_ancestors(path)?;
-    let actual = final_path(file)?;
-    let canonical = path.canonicalize()?.to_string_lossy().into_owned();
-    if normalized_path(&actual) != normalized_path(&canonical) {
+    if !browseros_platform_security::windows::path_matches_handle(path, file)? {
         return Err(denied());
     }
-    reject_reparse_ancestors(path)?;
     Ok(())
 }
 
@@ -529,34 +138,24 @@ fn final_path(file: &File) -> io::Result<String> {
     if used == 0 || used as usize >= buf.len() {
         return Err(io::Error::last_os_error());
     }
-    // Windows paths are case-insensitive. The trailing path separator
-    // enforces a whole-directory boundary rather than a prefix match.
-    Ok(String::from_utf16_lossy(&buf[..used as usize]).to_lowercase())
+    // Do not fold names or merge undecodable UTF-16 spellings. Authorization
+    // uses native file identities; text here is only a bounded path transport.
+    String::from_utf16(&buf[..used as usize]).map_err(|_| invalid_input())
 }
 fn open_authorized_root(path: &Path, roots: &[PathBuf]) -> io::Result<File> {
-    let path_key = normalized_path(&path.canonicalize()?.to_string_lossy());
+    let candidate = open(path, true)?;
     for root in roots {
-        let Ok(root_canonical) = root.canonicalize() else {
-            continue;
-        };
-        let root_key = normalized_path(&root_canonical.to_string_lossy());
-        let prefix = format!("{}\\", root_key.trim_end_matches('\\'));
-        if path_key != root_key && !path_key.starts_with(&prefix) {
-            continue;
+        let Ok(trusted) = open(root, true) else { continue; };
+        if browseros_platform_security::windows::handle_is_within_root(&candidate, &trusted)? {
+            return Ok(trusted);
         }
-        // Pin the allowed root before opening the requested child. A
-        // later rename/junction swap cannot redirect the child outside
-        // this already-open directory identity.
-        return open(root, true);
     }
     Err(denied())
 }
 
 fn authorize_with_root(file: &File, root: &File) -> io::Result<String> {
-    let actual = normalized_path(&final_path(file)?);
-    let root_path = normalized_path(&final_path(root)?);
-    if actual == root_path || actual.starts_with(&format!("{}\\", root_path.trim_end_matches('\\'))) {
-        return Ok(actual);
+    if browseros_platform_security::windows::handle_is_within_root(file, root)? {
+        return final_path(file);
     }
     Err(denied())
 }
@@ -611,14 +210,16 @@ pub(super) fn rename_no_replace(
         return Err(denied());
     }
     verify_path_handle(src, &source)?;
-    let source_path = authorize_with_root(&source, &source_root)?;
+    authorize_with_root(&source, &source_root)?;
     // Rename requires FILE_ADD_FILE / FILE_ADD_SUBDIRECTORY rights on
     // the pinned destination directory handle. A read-only directory
     // handle passes path checks but fails every real FileRenameInfo call.
     let destination = open_destination_directory(dest_dir)?;
-    let destination_path = authorize_with_root(&destination, &destination_root)?;
-    if destination_path == source_path
-        || meta.is_dir() && destination_path.starts_with(&(source_path + "\\"))
+    authorize_with_root(&destination, &destination_root)?;
+    if browseros_platform_security::windows::file_identity(&destination)?
+        == browseros_platform_security::windows::file_identity(&source)?
+        || meta.is_dir()
+            && browseros_platform_security::windows::handle_is_within_root(&destination, &source)?
     {
         return Err(denied());
     }
@@ -849,7 +450,7 @@ fn open_object_at(
     attributes.Length = std::mem::size_of::<OBJECT_ATTRIBUTES>() as u32;
     attributes.RootDirectory = parent.as_raw_handle() as _;
     attributes.ObjectName = &mut object_name;
-    attributes.Attributes = 0x0000_0040; // OBJ_CASE_INSENSITIVE
+    attributes.Attributes = 0; // Preserve exact names in case-sensitive directories.
     let mut raw = std::ptr::null_mut();
     let mut status_block = IO_STATUS_BLOCK::default();
     let status = unsafe {
@@ -886,7 +487,11 @@ fn open_object_at(
     {
         return Err(denied());
     }
-    authorize_named_child(&file, parent, filename)?;
+    // NtCreateFile resolves this single validated component against parent.
+    // Confirm object ancestry by identity, not by lowercased path strings.
+    if !browseros_platform_security::windows::handle_is_within_root(&file, parent)? {
+        return Err(denied());
+    }
     Ok(file)
 }
 
@@ -934,21 +539,6 @@ fn open_parent_tree(path: &Path) -> io::Result<File> {
         )?;
     }
     Ok(directory)
-}
-
-fn authorize_named_child(file: &File, parent: &File, filename: &std::ffi::OsStr) -> io::Result<()> {
-    let actual = normalized_path(&final_path(file)?);
-    let parent = normalized_path(&final_path(parent)?);
-    let expected = format!(
-        "{}\\{}",
-        parent.trim_end_matches('\\'),
-        filename.to_string_lossy().to_lowercase()
-    );
-    if actual == expected {
-        Ok(())
-    } else {
-        Err(denied())
-    }
 }
 
 #[derive(Debug, PartialEq, Eq)]

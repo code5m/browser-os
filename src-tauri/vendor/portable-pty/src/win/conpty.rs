@@ -6,6 +6,13 @@ use filedescriptor::{FileDescriptor, Pipe};
 use std::sync::{Arc, Mutex};
 use winapi::um::wincon::COORD;
 
+fn validated_dimensions(rows: u16, cols: u16) -> anyhow::Result<COORD> {
+    ensure!(rows > 0 && cols > 0
+        && rows <= i16::MAX as u16 && cols <= i16::MAX as u16,
+        "ConPTY size outside supported 1..=32767 rows/cols");
+    Ok(COORD { X: cols as i16, Y: rows as i16 })
+}
+
 #[derive(Default)]
 pub struct ConPtySystem {}
 
@@ -13,18 +20,12 @@ impl PtySystem for ConPtySystem {
     fn openpty(&self, size: PtySize) -> anyhow::Result<PtyPair> {
         // COORD uses signed 16-bit values. Truncating an arbitrary u16 can
         // turn a large requested terminal into a negative or zero console.
-        ensure!(size.cols > 0 && size.rows > 0
-            && size.cols <= i16::MAX as u16
-            && size.rows <= i16::MAX as u16,
-            "ConPTY size outside supported 1..=32767 rows/cols");
+        let coordinates = validated_dimensions(size.rows, size.cols)?;
         let stdin = Pipe::new()?;
         let stdout = Pipe::new()?;
 
         let con = PsuedoCon::new(
-            COORD {
-                X: size.cols as i16,
-                Y: size.rows as i16,
-            },
+            coordinates,
             stdin.read,
             stdout.write,
         )?;
@@ -50,9 +51,12 @@ impl PtySystem for ConPtySystem {
 }
 
 struct Inner {
-    con: PsuedoCon,
+    // Drop communication endpoints before ClosePseudoConsole. On older
+    // Windows builds closing a pseudo console with an undrained output pipe
+    // can otherwise block its destructor indefinitely.
     readable: FileDescriptor,
     writable: Option<FileDescriptor>,
+    con: PsuedoCon,
     size: PtySize,
 }
 
@@ -64,10 +68,7 @@ impl Inner {
         pixel_width: u16,
         pixel_height: u16,
     ) -> Result<(), Error> {
-        self.con.resize(COORD {
-            X: num_cols as i16,
-            Y: num_rows as i16,
-        })?;
+        self.con.resize(validated_dimensions(num_rows, num_cols)?)?;
         self.size = PtySize {
             rows: num_rows,
             cols: num_cols,
@@ -138,6 +139,16 @@ impl SlavePty for ConPtySlavePty {
 #[cfg(test)]
 mod conpty_input_contract_tests {
     use super::*;
+
+    #[test]
+    fn creation_and_resize_share_signed_dimension_bounds() {
+        for (rows, cols) in [(0, 80), (25, 0), (u16::MAX, 80), (25, u16::MAX)] {
+            assert!(validated_dimensions(rows, cols).is_err());
+        }
+        let maximum = validated_dimensions(32767, 32767).unwrap();
+        assert_eq!(maximum.X, 32767);
+        assert_eq!(maximum.Y, 32767);
+    }
 
     #[test]
     fn invalid_dimensions_are_rejected_before_pipe_creation() {

@@ -23,8 +23,10 @@ use crate::domain::{
 };
 
 /// Atomically replace a file staged in the same directory.
-/// Unix rename replaces an existing destination. Windows std::fs::rename does
-/// not, so use MoveFileExW(REPLACE_EXISTING | WRITE_THROUGH) explicitly.
+/// Rust rename can replace a destination on Windows. This helper selects
+/// MoveFileExW(REPLACE_EXISTING | WRITE_THROUGH) explicitly for bounded sharing-
+/// violation retries and a common staging contract; it does not promise a
+/// filesystem transaction or protect against unrelated external writers.
 pub fn atomic_replace_file(source: &Path, target: &Path) -> std::io::Result<()> {
     use std::io::{Error, ErrorKind};
     if source.parent() != target.parent() {

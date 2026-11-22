@@ -1,11 +1,6 @@
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-#[cfg(target_os = "windows")]
-use std::collections::HashSet;
-#[cfg(target_os = "windows")]
-use std::sync::{Mutex, OnceLock};
-
 use chrono::Utc;
 use tauri::{AppHandle, Manager};
 
@@ -18,28 +13,45 @@ use crate::domain::{
 /// M4-6 起对 `tasks.rs` 开放：任务持久化 `tasks.json` / `task-runs.json` 与既有
 /// `scripts.json` / `snippets.json` 必须落在**同一**数据目录（A1 实测项 11：全仓
 /// 持久化均为该目录下的 JSON，不得另起第二条路径）。
-#[cfg(target_os = "windows")]
-static PRIVATE_DATA_DIRS: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+struct PreparedDataDirectory {
+    path: PathBuf,
+}
 
-pub fn data_dir(app: &AppHandle) -> PathBuf {
-    let dir = app.path()
-        .app_data_dir()
-        .expect("app data dir")
-        .join("mvp-browser-os");
-    #[cfg(target_os = "windows")]
-    {
-        let secured = PRIVATE_DATA_DIRS.get_or_init(|| Mutex::new(HashSet::new()));
-        let mut secured = secured.lock().unwrap_or_else(|poison| poison.into_inner());
-        if !secured.contains(&dir) {
-            // The app data tree contains sessions, workspace metadata and
-            // encrypted draft journals. Do not silently continue with a
-            // broad inherited ACL or a reparse-point redirected directory.
-            crate::capabilities::workspace::safe_paths::ensure_private_directory(&dir)
-                .expect("secure Windows BrowserOS app-data directory");
-            secured.insert(dir.clone());
-        }
+/// Complete the fallible private-directory migration before starting any
+/// workspace reader, scheduler, browser window or IPC command handler.
+/// A failed preparation never publishes the path to application state.
+pub fn prepare_data_dir(app: &AppHandle) -> std::io::Result<()> {
+    if app.try_state::<PreparedDataDirectory>().is_some() {
+        return Ok(());
     }
-    dir
+    let base = app.path()
+        .app_data_dir()
+        .map_err(|_| std::io::Error::other("PRIVATE_DATA_DIR_LOCATION_UNAVAILABLE"))?;
+    #[cfg(target_os = "windows")]
+    browseros_platform_security::windows::ensure_private_directory_root(
+        &base,
+        &browseros_platform_security::windows::PrivateTreeOptions::default(),
+    ).map_err(|error| std::io::Error::new(
+        error.kind(),
+        format!("PRIVATE_DATA_DIR_PARENT_PREPARATION_FAILED: {error}"),
+    ))?;
+    let dir = base.join("mvp-browser-os");
+    crate::capabilities::workspace::safe_paths::ensure_private_directory(&dir)
+        .map_err(|error| std::io::Error::new(
+            error.kind(),
+            format!("PRIVATE_DATA_DIR_PREPARATION_FAILED: {error}"),
+        ))?;
+    if !app.manage(PreparedDataDirectory { path: dir }) {
+        return Err(std::io::Error::other("PRIVATE_DATA_DIR_ALREADY_INITIALIZED"));
+    }
+    Ok(())
+}
+
+/// Existing internal callers retain their path API. The only initialization
+/// entry is prepare_data_dir in both main and Grid-child setup, before windows
+/// or background workers exist. This getter performs no filesystem mutation.
+pub fn data_dir(app: &AppHandle) -> PathBuf {
+    app.state::<PreparedDataDirectory>().path.clone()
 }
 
 fn ensure(dir: &PathBuf) {

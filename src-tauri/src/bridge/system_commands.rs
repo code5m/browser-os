@@ -10,10 +10,10 @@ pub(crate) fn m0_config_of(app: &AppHandle) -> M0Config {
     app.state::<AppState>().m0_config.lock().unwrap().clone()
 }
 
-/// Measurement output uses the same cross-platform, unique-stage,
-/// sync-and-replace contract as session persistence. A fixed ".tmp" plus
-/// std::fs::rename cannot reliably replace an existing Windows report,
-/// and parallel measurements could trample each other's temporary file.
+/// Measurement output uses the shared cross-platform, unique-stage,
+/// sync-and-replace contract. std::fs::rename supports Windows replacement;
+/// the shared helper additionally supplies bounded sharing-violation retries.
+/// A fixed ".tmp" would let parallel measurements trample each other's file.
 fn m0_atomic_write(path: &str, content: &str) -> Result<(), String> {
     crate::session::atomic_write(std::path::Path::new(path), content)
         .map_err(|_| "M0_MEASUREMENT_ATOMIC_WRITE_FAILED".to_string())
@@ -171,7 +171,10 @@ pub fn get_default_browser(webview: tauri::Webview) -> Result<String, String> {
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
     }
-
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        Err(format!("DEFAULT_BROWSER_PLATFORM_UNSUPPORTED:{}", std::env::consts::OS))
+    }
 }
 
 /// M1-4：把本应用设为系统默认浏览器。
@@ -184,6 +187,7 @@ pub fn set_default_browser(
     intent: Option<String>,
 ) -> Result<String, String> {
     crate::shared::native_legacy_policy::require_main(&webview, "set_default_browser")?;
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     app.state::<crate::security_policy::IntentRegistry>()
         .consume(
             "set_default_browser",
@@ -223,6 +227,10 @@ pub fn set_default_browser(
     eprintln!("[open-url] set default browser -> {desktop}");
     workspace::log_audit(&app, "set_default_browser", desktop.clone());
     Ok(desktop)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        Err(format!("DEFAULT_BROWSER_PLATFORM_UNSUPPORTED:{}", std::env::consts::OS))
     }
 }
 

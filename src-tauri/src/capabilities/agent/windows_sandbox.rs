@@ -174,11 +174,57 @@ fn current_user_sid() -> Result<String, String> {
     Ok(value)
 }
 
+const PRIVATE_TREE_MAX_ENTRIES: usize = 8192;
+const PRIVATE_TREE_MAX_DEPTH: usize = 32;
+
+/// Inspect the entire tree before changing permissions. Never follow a
+/// reparse point or turn an unbounded mutable tree into repeated icacls work.
+fn private_tree_entries(root: &Path) -> Result<Vec<(PathBuf, bool)>, String> {
+    no_reparse_path(root)?;
+    let mut pending = vec![(root.to_path_buf(), 0usize)];
+    let mut entries = Vec::new();
+    let mut discovered = 1usize;
+    while let Some((path, depth)) = pending.pop() {
+        if depth > PRIVATE_TREE_MAX_DEPTH {
+            return Err("SANDBOX_PRIVATE_TREE_DEPTH_LIMIT".into());
+        }
+        let metadata = std::fs::symlink_metadata(&path)
+            .map_err(|_| "SANDBOX_PRIVATE_TREE_INSPECTION")?;
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err("SANDBOX_REPARSE_DENIED".into());
+        }
+        if !metadata.is_dir() && !metadata.is_file() {
+            return Err("SANDBOX_PRIVATE_TREE_SPECIAL_ENTRY".into());
+        }
+        let directory = metadata.is_dir();
+        if path == root && !directory {
+            return Err("SANDBOX_PRIVATE_TREE_NOT_DIRECTORY".into());
+        }
+        entries.push((path.clone(), directory));
+        if directory {
+            for child in std::fs::read_dir(&path)
+                .map_err(|_| "SANDBOX_PRIVATE_TREE_INSPECTION")?
+            {
+                discovered += 1;
+                if discovered > PRIVATE_TREE_MAX_ENTRIES {
+                    return Err("SANDBOX_PRIVATE_TREE_ENTRY_LIMIT".into());
+                }
+                let child = child.map_err(|_| "SANDBOX_PRIVATE_TREE_INSPECTION")?;
+                pending.push((child.path(), depth + 1));
+            }
+        }
+    }
+    Ok(entries)
+}
+
 pub struct SandboxProfile {
     name: String,
     sid: PSID,
     sid_string: String,
     folder: PathBuf,
+    // Hold the state directory without FILE_SHARE_DELETE after its one-time
+    // initialization. Repeated status/spawn access must not rewrite its tree.
+    state_guard: std::sync::Mutex<Option<File>>,
 }
 unsafe impl Send for SandboxProfile {}
 
@@ -207,6 +253,7 @@ impl SandboxProfile {
             sid,
             sid_string: String::new(),
             folder: PathBuf::new(),
+            state_guard: std::sync::Mutex::new(None),
         };
         profile.finish_create()
     }
@@ -218,13 +265,18 @@ impl SandboxProfile {
         }
         let mut length = 0usize;
         unsafe {
-            while *sid_text.add(length) != 0 {
+            while length < 256 && *sid_text.add(length) != 0 {
                 length += 1;
             }
-            self.sid_string = String::from_utf16(std::slice::from_raw_parts(sid_text, length))
-                .map_err(|_| "SANDBOX_SID_TEXT")?;
-            LocalFree(sid_text as _);
         }
+        let parsed_sid = if length < 256 {
+            unsafe { String::from_utf16(std::slice::from_raw_parts(sid_text, length)) }
+                .map_err(|_| "SANDBOX_SID_TEXT")
+        } else {
+            Err("SANDBOX_SID_TEXT")
+        };
+        unsafe { LocalFree(sid_text as _) };
+        self.sid_string = parsed_sid?;
         let name_wide = wide_text(&self.sid_string)?;
         let mut folder = ptr::null_mut();
         let result = unsafe { GetAppContainerFolderPath(name_wide.as_ptr(), &mut folder) };
@@ -233,14 +285,19 @@ impl SandboxProfile {
         }
         let mut length = 0usize;
         unsafe {
-            while *folder.add(length) != 0 {
+            while length < 32768 && *folder.add(length) != 0 {
                 length += 1;
             }
-            self.folder = PathBuf::from(std::ffi::OsString::from_wide(std::slice::from_raw_parts(
-                folder, length,
-            )));
-            CoTaskMemFree(folder as _);
         }
+        let private_folder = if length < 32768 {
+            Some(PathBuf::from(unsafe {
+                std::ffi::OsString::from_wide(std::slice::from_raw_parts(folder, length))
+            }))
+        } else {
+            None
+        };
+        unsafe { CoTaskMemFree(folder as _) };
+        self.folder = private_folder.ok_or("SANDBOX_PRIVATE_FOLDER")?;
         std::fs::create_dir_all(&self.folder).map_err(|_| "SANDBOX_PRIVATE_FOLDER")?;
         // The AppContainer package must be able to traverse its profile root
         // before it can execute a staged runtime. Do not rewrite OS-managed
@@ -269,36 +326,76 @@ impl SandboxProfile {
 
     pub fn state_dir(&self) -> Result<PathBuf, String> {
         let state = self.folder.join("state");
-        // Repeated state access within a single profile must not fail merely
-        // because the same private directory was initialized previously.
-        // grant_private_directory rechecks reparse safety on each use.
-        std::fs::create_dir_all(&state).map_err(|_| "SANDBOX_STATE_CREATE")?;
-        self.grant_private_directory(&state)?;
+        let mut guard = self.state_guard.lock().map_err(|_| "SANDBOX_STATE_LOCK")?;
+        if guard.is_some() {
+            // The retained handle denies rename/deletion of this directory.
+            // Descendants inherit its package grant when they are created.
+            no_reparse_path(&state)?;
+            return Ok(state);
+        }
+        match std::fs::create_dir(&state) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(_) => return Err("SANDBOX_STATE_CREATE".into()),
+        }
+        no_reparse_path(&state)?;
+        let pinned = OpenOptions::new()
+            .access_mode(0x0080) // FILE_READ_ATTRIBUTES
+            .share_mode(0x0001 | 0x0002) // READ | WRITE; deliberately no DELETE
+            .custom_flags(0x0200_0000 | 0x0020_0000) // BACKUP_SEMANTICS | OPEN_REPARSE_POINT
+            .open(&state)
+            .map_err(|_| "SANDBOX_STATE_PIN")?;
+        let metadata = pinned.metadata().map_err(|_| "SANDBOX_STATE_PIN")?;
+        if !metadata.is_dir()
+            || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+        {
+            return Err("SANDBOX_STATE_PIN".into());
+        }
+        self.apply_private_tree(&state, "M", false)?;
+        *guard = Some(pinned);
         Ok(state)
     }
-    fn grant_private_directory(&self, directory: &Path) -> Result<(), String> {
-        no_reparse_path(directory)?;
+
+    /// One bounded, preflighted permission pass for a private subtree.
+    /// State uses M; runtime and snapshots use RX. Generic AppContainer
+    /// traversal is optional and is NEVER inherited by files.
+    fn apply_private_tree(
+        &self, root: &Path, package_permission: &str, directory_traversal: bool,
+    ) -> Result<(), String> {
+        if !matches!(package_permission, "M" | "RX") {
+            return Err("SANDBOX_PRIVATE_TREE_PERMISSION".into());
+        }
+        no_reparse_path(root)?;
+        let private_root = self.folder.canonicalize().map_err(|_| "SANDBOX_PRIVATE_FOLDER")?;
+        let actual_root = root.canonicalize().map_err(|_| "SANDBOX_PRIVATE_TREE_INSPECTION")?;
+        if actual_root == private_root || !actual_root.starts_with(&private_root) {
+            return Err("SANDBOX_PRIVATE_TREE_OUTSIDE_PROFILE".into());
+        }
+        let entries = private_tree_entries(&actual_root)?;
         let icacls = system_binary("icacls.exe")?;
         let user = current_user_sid()?;
-        let output = std::process::Command::new(icacls)
-            .arg(directory)
-            .args(["/inheritance:r", "/grant:r"])
-            .arg(format!("*{user}:(OI)(CI)F"))
-            .arg("*S-1-5-18:(OI)(CI)F")
-            .arg(format!("*{}:(OI)(CI)M", self.sid_string))
-            .output()
-            .map_err(|_| "SANDBOX_STATE_ACL")?;
-        if !output.status.success() {
-            return Err("SANDBOX_STATE_ACL".into());
+        for (path, directory) in entries {
+            // Recheck immediately before each named ACL operation.
+            no_reparse_path(&path)?;
+            let flags = if directory { "(OI)(CI)" } else { "" };
+            let mut command = std::process::Command::new(&icacls);
+            command.arg(&path).args(["/inheritance:r", "/grant:r"])
+                .arg(format!("*{user}:{flags}F"))
+                .arg(format!("*S-1-5-18:{flags}F"))
+                .arg(format!("*{}:{flags}{package_permission}", self.sid_string));
+            if directory && directory_traversal {
+                // This noninheritable ACE exposes directory names/traversal,
+                // not source file bytes, to other lowboxes.
+                command.arg("*S-1-15-2-1:RX");
+            }
+            let output = command.output().map_err(|_| "SANDBOX_PRIVATE_TREE_ACL")?;
+            if !output.status.success() {
+                return Err("SANDBOX_PRIVATE_TREE_ACL".into());
+            }
         }
-        // `icacls /T` combined with inheritance flags is not equivalent: it
-        // strips the inherited package ACE from existing children and never
-        // applies an (OI)/(CI) spec to files, so a re-used state directory
-        // left its files unreadable by the lowbox. Existing descendants get
-        // the package ACE explicitly instead.
-        self.grant_existing_tree(directory, "M")?;
         Ok(())
     }
+
     pub fn snapshot_dir(&self) -> Result<PathBuf, String> {
         let snapshot = self.folder.join("snapshot");
         std::fs::create_dir(&snapshot).map_err(|_| "SANDBOX_SNAPSHOT_CREATE")?;
@@ -461,60 +558,12 @@ impl SandboxProfile {
             }
         }
         self.protect_snapshot(&directory)?;
-        // A directory-level (OI)(CI) grant is not enough evidence for the
-        // image file itself: icacls recursion and inherited ACE flags differ
-        // between files and directories. Pin read/execute directly onto every
-        // staged file so CreateProcessW can map the image in the lowbox.
-        self.protect_existing_files(&directory, "RX")?;
+        // protect_snapshot applies explicit file ACEs in the same pass;
+        // do not walk and rewrite every staged image a second time.
         // Pin the original executable name to a newly staged read-only file.
         // Access to the private runtime tree must not depend on writable state.
         no_reparse_path(&staged)?;
         Ok(staged)
-    }
-
-    /// Grant an explicit ACE to every file already present in a directory.
-    /// Inheritance covers files created later; this covers the files that
-    /// existed before the directory DACL was replaced, because a stale
-    /// inherited ACE is removed with the parent rewrite.
-    fn protect_existing_files(&self, directory: &Path, package_perm: &str) -> Result<(), String> {
-        let icacls = system_binary("icacls.exe")?;
-        let user = current_user_sid()?;
-        let entries = std::fs::read_dir(directory).map_err(|_| "SANDBOX_RUNTIME_STAGE_FAILED")?;
-        for entry in entries {
-            let path = entry.map_err(|_| "SANDBOX_RUNTIME_STAGE_FAILED")?.path();
-            if !path.is_file() {
-                continue;
-            }
-            no_reparse_path(&path)?;
-            let output = std::process::Command::new(&icacls)
-                .arg(&path)
-                .args(["/inheritance:r", "/grant:r"])
-                .arg(format!("*{user}:F"))
-                .arg("*S-1-5-18:F")
-                .arg(format!("*{}:{package_perm}", self.sid_string))
-                .output()
-                .map_err(|_| "SANDBOX_RUNTIME_FILE_ACL")?;
-            if !output.status.success() {
-                return Err("SANDBOX_RUNTIME_FILE_ACL".into());
-            }
-        }
-        Ok(())
-    }
-
-    /// Apply the package ACE to every existing file below `root`.
-    fn grant_existing_tree(&self, root: &Path, package_perm: &str) -> Result<(), String> {
-        let mut pending = vec![root.to_path_buf()];
-        while let Some(directory) = pending.pop() {
-            no_reparse_path(&directory)?;
-            self.protect_existing_files(&directory, package_perm)?;
-            for entry in std::fs::read_dir(&directory).map_err(|_| "SANDBOX_STATE_ACL")? {
-                let path = entry.map_err(|_| "SANDBOX_STATE_ACL")?.path();
-                if path.is_dir() {
-                    pending.push(path);
-                }
-            }
-        }
-        Ok(())
     }
 
     /// Copy a read-only source tree into the private profile and give every
@@ -561,66 +610,43 @@ impl SandboxProfile {
         Ok(destination.to_path_buf())
     }
 
-    /// Source snapshots are immutable to the AppContainer. Rust-analyzer
-    /// now consumes a reviewed rust-project.json without launching Cargo;
-    /// it must not need to write Cargo.lock or alter any workspace sources.
-    /// Keep owner+SYSTEM full control and only this package SID's RX grants.
-    /// Mutable tool state belongs under the separate private state directory.
+    /// Source snapshots and staged runtimes are immutable to the lowbox.
+    /// An explicit per-file RX grant is applied once, without icacls /T.
     pub fn protect_snapshot_files(&self, root: &Path) -> Result<(), String> {
-        no_reparse_path(root)?;
-        let icacls = system_binary("icacls.exe")?;
-        // Never grant Modify on the source tree (even on directories):
-        // create/rename/delete of source entries would otherwise remain
-        // possible despite per-file RX ACLs.
-        let mut pending = vec![root.to_path_buf()];
-        while let Some(directory) = pending.pop() {
-            let output = std::process::Command::new(&icacls)
-                .arg(&directory)
-                .arg("/grant")
-                .arg(format!("*{}:(OI)(CI)RX", self.sid_string))
-                .output()
-                .map_err(|_| "SANDBOX_SNAPSHOT_ACL")?;
-            if !output.status.success() {
-                return Err("SANDBOX_SNAPSHOT_ACL".into());
-            }
-            self.protect_existing_files(&directory, "RX")?;
-            for entry in std::fs::read_dir(&directory).map_err(|_| "SANDBOX_SNAPSHOT_ACL")? {
-                let path = entry.map_err(|_| "SANDBOX_SNAPSHOT_ACL")?.path();
-                if path.is_dir() {
-                    pending.push(path);
-                }
-            }
-        }
-        Ok(())
+        self.apply_private_tree(root, "RX", false)
     }
 
     pub fn protect_snapshot(&self, snapshot: &Path) -> Result<(), String> {
-        no_reparse_path(snapshot)?;
+        self.protect_snapshot_files(snapshot)
+    }
+
+    /// Preserve the established LSP traversal policy in one tree pass.
+    /// Owner/SYSTEM and this package can read files; generic AppContainers
+    /// may traverse directories only, with no (OI)/(CI) inheritance.
+    pub fn protect_lsp_snapshot(&self, snapshot: &Path) -> Result<(), String> {
+        self.apply_private_tree(snapshot, "RX", true)?;
         let icacls = system_binary("icacls.exe")?;
-        let user = current_user_sid()?;
-        let output = std::process::Command::new(icacls)
-            .arg(snapshot)
-            .args(["/inheritance:r", "/grant:r"])
-            .arg(format!("*{user}:(OI)(CI)F"))
-            .arg("*S-1-5-18:(OI)(CI)F")
-            .arg(format!("*{}:(OI)(CI)RX", self.sid_string))
-            .output()
-            .map_err(|_| "SANDBOX_SNAPSHOT_ACL")?;
-        if !output.status.success() {
-            return Err("SANDBOX_SNAPSHOT_ACL".into());
+        let mut ancestors = vec![self.folder.clone()];
+        if let Some(parent) = self.folder.parent() {
+            ancestors.push(parent.to_path_buf());
         }
-        // `/T` would strip the package ACE that existing files inherited from
-        // the pre-existing snapshot directory and never re-add it, because
-        // (OI)/(CI) specs do not apply to files. Grant the tree explicitly.
-        self.protect_snapshot_files(snapshot)?;
+        for directory in ancestors {
+            no_reparse_path(&directory)?;
+            let output = std::process::Command::new(&icacls)
+                .arg(&directory).arg("/grant:r")
+                .arg(format!("*{}:RX", self.sid_string))
+                .arg("*S-1-15-2-1:RX")
+                .output().map_err(|_| "SANDBOX_SNAPSHOT_TRAVERSE_ACL")?;
+            if !output.status.success() {
+                return Err("SANDBOX_SNAPSHOT_TRAVERSE_ACL".into());
+            }
+        }
         Ok(())
     }
 
-    /// Stage an additional executable from the same reviewed toolchain into
-    /// the private runtime before the main process is spawned. Rust Analyzer
-    /// invokes `cargo locate-project`, `cargo metadata` and `rustc --version`
-    /// as non-building probes, so those images must exist inside the lowbox
-    /// instead of being replaced by nonexistent placeholder paths.
+    /// Stage an explicitly selected executable in the private runtime.
+    /// Production LSP selects only rustc metadata/cfg probes; Cargo probes
+    /// remain diagnostic-only tests, never the production analysis contract.
     pub fn stage_runtime_peer(&self, peer: &Path) -> Result<PathBuf, String> {
         no_reparse_path(peer)?;
         let canonical = peer
@@ -678,6 +704,8 @@ impl SandboxProfile {
 
 impl Drop for SandboxProfile {
     fn drop(&mut self) {
+        // Release the no-delete state pin before removing the OS profile.
+        self.state_guard.get_mut().unwrap_or_else(|poison| poison.into_inner()).take();
         unsafe {
             if !self.sid.is_null() {
                 FreeSid(self.sid);
@@ -695,8 +723,9 @@ impl Drop for SandboxProfile {
 
 pub struct SandboxProcess {
     handle: HANDLE,
-    profile: SandboxProfile,
+    // Field order closes the kill-on-close Job before deleting profile data.
     _job: JobObject,
+    profile: SandboxProfile,
 }
 unsafe impl Send for SandboxProcess {}
 impl SandboxProcess {
@@ -1028,6 +1057,12 @@ fn spawn_inner(
         .map_err(|_| "SANDBOX_STDERR_SINK")?;
     inheritable(error_file.as_raw_handle(), true)?;
 
+    // Finish all fallible argument/environment work before the Win32
+    // attribute list is initialized. No ? may bypass its cleanup afterward.
+    let mut command = process_command_line(runtime, args)?;
+    let application = wide(runtime.as_os_str())?;
+    let directory = wide(current_directory.as_os_str())?;
+    let environment = environment_block(environment, current_directory, &profile.folder)?;
     let mut size = 0usize;
     unsafe {
         let _ = InitializeProcThreadAttributeList(ptr::null_mut(), 2, 0, &mut size);
@@ -1083,10 +1118,6 @@ fn spawn_inner(
         return Err(error);
     }
 
-    let mut command = process_command_line(runtime, args)?;
-    let application = wide(runtime.as_os_str())?;
-    let directory = wide(current_directory.as_os_str())?;
-    let environment = environment_block(environment, current_directory, &profile.folder)?;
     let mut startup: STARTUPINFOEXW = unsafe { std::mem::zeroed() };
     startup.StartupInfo.cb = std::mem::size_of::<STARTUPINFOEXW>() as u32;
     startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
@@ -1129,7 +1160,7 @@ fn spawn_inner(
                         .split_whitespace()
                         .collect::<Vec<_>>()
                         .join(" ");
-                    error.push_str(&format!(" acl={}", &acl[..acl.len().min(700)]));
+                    error.push_str(&format!(" acl={}", acl.chars().take(700).collect::<String>()));
                 }
             }
         }
@@ -1314,6 +1345,37 @@ mod tests {
             "cmd did not execute the host-file probe: stderr={stderr:?}"
         );
         std::fs::remove_file(host_file).unwrap();
+    }
+
+    #[test]
+    fn state_directory_stays_pinned_until_profile_teardown() {
+        let profile = SandboxProfile::create().expect("create AppContainer profile");
+        let state = profile.state_dir().expect("initialize private state");
+        std::fs::write(state.join("retained-data"), b"retain").unwrap();
+        assert_eq!(profile.state_dir().unwrap(), state);
+        assert_eq!(std::fs::read(state.join("retained-data")).unwrap(), b"retain");
+        let moved = state.with_file_name("moved-state");
+        assert!(std::fs::rename(&state, &moved).is_err(),
+            "live state must not be renamed away from its retained handle");
+        drop(profile);
+        assert!(!state.exists(), "profile teardown must release the state pin");
+    }
+
+    #[test]
+    fn private_tree_depth_limit_is_checked_before_acl_application() {
+        let root = std::env::temp_dir().join(format!(
+            "browseros-private-tree-{}", uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let mut deepest = root.clone();
+        for _ in 0..=PRIVATE_TREE_MAX_DEPTH {
+            deepest.push("d");
+            std::fs::create_dir(&deepest).unwrap();
+        }
+        let error = private_tree_entries(&root).unwrap_err();
+        assert_eq!(error, "SANDBOX_PRIVATE_TREE_DEPTH_LIMIT");
+        assert!(deepest.is_dir(), "inspection must preserve the existing tree");
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
