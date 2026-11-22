@@ -176,7 +176,9 @@ def event_has(
             continue
         if grid is not None and event.get("grid") != grid:
             continue
-        if require_cookie and "m0_session=ok" not in event.get("cookie", ""):
+        if require_cookie and "m0_session=ok" not in {
+            part.strip() for part in event.get("cookie", "").split(";")
+        }:
             continue
         if menu is not None and event.get("menu") != menu:
             continue
@@ -293,6 +295,23 @@ def run_self_test() -> int:
     assert event_has(sample, "1", "single_broadcast", "0", True)
     assert event_has(sample, "8", "context_menu", "0", True, "true")
     assert not event_has(sample, "8", "context_menu", "0", True, "false")
+    recovered = {
+        "case": "7", "phase": "after_crash_recovery", "grid": "0",
+        "cookie": "other=value; m0_session=ok", "nonce": "server-received-probe",
+    }
+    assert not event_has([], "7", "after_crash_recovery", "0", True)
+    assert event_has([recovered], "7", "after_crash_recovery", "0", True)
+    for key, value in [
+        ("case", "8"), ("phase", "loaded"), ("grid", "1"),
+        ("cookie", ""), ("cookie", "m0_session=okay"),
+        ("cookie", "other_m0_session=ok"),
+    ]:
+        wrong = {**recovered, key: value}
+        assert not event_has([wrong], "7", "after_crash_recovery", "0", True)
+    assert not event_has(
+        [{"case": "8", "phase": "context_menu", "grid": "0", "cookie": "m0_session=ok"}],
+        "8", "context_menu", "0", True, "true",
+    )
     print("M0_6C_GUI_REGRESSION_SELF_TEST=PASS")
     return 0
 
@@ -333,6 +352,7 @@ def main() -> int:
             "GRID_GUI_REGRESSION": "1",
             "M0_GUI_MOCK_BASE": f"http://127.0.0.1:{server.server_port}",
             "M0_GUI_REGRESSION_REPORT": str(driver_report_path),
+            "M0_GUI_EVENT_FILE": str(event_path.resolve()),
             "WEBKIT_DISABLE_DMABUF_RENDERER": "1",
             "GTK_USE_PORTAL": "0",
             "GDK_BACKEND": "x11",

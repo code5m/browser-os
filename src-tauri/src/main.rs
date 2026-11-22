@@ -9,6 +9,7 @@ mod crashlog;
 mod crashlog;
 mod domain;
 mod grid_ipc;
+mod gui_regression_receipt;
 #[cfg(target_os = "windows")]
 mod windows_apps;
 #[cfg(target_os = "windows")]
@@ -997,13 +998,14 @@ struct GuiRegressionReport {
     steps: Vec<GuiRegressionStep>,
 }
 
-fn gui_regression_eval(case_id: &str, grid: usize, phase: &str) -> String {
+fn gui_regression_eval(case_id: &str, grid: usize, phase: &str, nonce: &str) -> String {
     format!(
         r#"(function(){{
   var params = new URLSearchParams({{
     case: "{case_id}",
     grid: "{grid}",
     phase: "{phase}",
+    nonce: "{nonce}",
     title: document.title || "",
     cookie: document.cookie || "",
     bodyText: (document.body && document.body.innerText || "").slice(0, 80)
@@ -1013,7 +1015,7 @@ fn gui_regression_eval(case_id: &str, grid: usize, phase: &str) -> String {
     )
 }
 
-fn gui_regression_menu_eval(case_id: &str, grid: usize, phase: &str) -> String {
+fn gui_regression_menu_eval(case_id: &str, grid: usize, phase: &str, nonce: &str) -> String {
     format!(
         r#"(function(){{
   document.dispatchEvent(new MouseEvent("contextmenu", {{
@@ -1027,6 +1029,7 @@ fn gui_regression_menu_eval(case_id: &str, grid: usize, phase: &str) -> String {
       case: "{case_id}",
       grid: "{grid}",
       phase: "{phase}",
+      nonce: "{nonce}",
       menu: String(!!document.getElementById("jzjd-menu")),
       cookie: document.cookie || ""
     }});
@@ -1055,6 +1058,7 @@ fn run_grid_gui_regression(app: tauri::AppHandle) {
                 .to_string()
         });
         let mock_base = std::env::var("M0_GUI_MOCK_BASE").unwrap_or_default();
+        let receipt_path = std::env::var_os("M0_GUI_EVENT_FILE").map(std::path::PathBuf::from);
         let mut steps: Vec<GuiRegressionStep> = Vec::new();
         let mut fails: Vec<String> = Vec::new();
         let mut step = |id: &'static str, result: Result<String, String>| match result {
@@ -1085,13 +1089,25 @@ fn run_grid_gui_regression(app: tauri::AppHandle) {
             bridge::grid_open_blocking(app.clone(), index, gui_mock_url(&mock_base, case_id, index))
                 .map(|_| format!("grid-{index} opened case={case_id}"))
         };
+        let send_grid = |case_id: &str, index: usize, phase: &str| {
+            gui_regression_receipt::ReceiptProbe::send(case_id, index, phase, false, |nonce| {
+                native_eval_in_tab(
+                    app.clone(),
+                    format!("grid-{index}"),
+                    gui_regression_eval(case_id, index, phase, nonce),
+                )
+                .map(|_| ())
+            })
+        };
+        let wait_receipt = |probe: gui_regression_receipt::ReceiptProbe| {
+            let path = receipt_path
+                .as_deref()
+                .filter(|path| path.is_absolute())
+                .ok_or_else(|| "GUI_RECEIPT_PATH_MISSING".to_string())?;
+            probe.wait(path)
+        };
         let eval_grid = |case_id: &str, index: usize, phase: &str| {
-            native_eval_in_tab(
-                app.clone(),
-                format!("grid-{index}"),
-                gui_regression_eval(case_id, index, phase),
-            )
-            .map(|_| format!("grid-{index} eval case={case_id} phase={phase}"))
+            wait_receipt(send_grid(case_id, index, phase)?)
         };
 
         sleep_ms(3000);
@@ -1112,9 +1128,6 @@ fn run_grid_gui_regression(app: tauri::AppHandle) {
                     position_grid(0, 40.0, 110.0, 620.0, 450.0)?;
                     sleep_ms(1200);
                     eval_grid("1", 0, "single_broadcast")?;
-                    // eval schedules an async page fetch; let its evidence reach the local mock
-                    // before scenario 2 navigates this grid away (same rule as scenario 2).
-                    sleep_ms(600);
                     Ok("single grid command path exercised with local AI mock".to_string())
                 }),
         );
@@ -1133,12 +1146,13 @@ fn run_grid_gui_regression(app: tauri::AppHandle) {
                     )?;
                 }
                 sleep_ms(1800);
+                let mut probes = Vec::with_capacity(4);
                 for i in 0..4 {
-                    eval_grid("2", i, "concurrent_ai")?;
+                    probes.push(send_grid("2", i, "concurrent_ai")?);
                 }
-                // eval_in_tab schedules the page-side fetch but does not await its Promise.
-                // Give the local evidence POST time to land before scenario 3 navigates grid-0.
-                sleep_ms(600);
+                for probe in probes {
+                    wait_receipt(probe)?;
+                }
                 Ok("four grid children opened, positioned, and evaluated".to_string())
             })(),
         );
@@ -1192,10 +1206,6 @@ fn run_grid_gui_regression(app: tauri::AppHandle) {
                 position_grid(0, 40.0, 110.0, 620.0, 450.0)?;
                 sleep_ms(800);
                 eval_grid("5", 0, "after_view_switch")?;
-                // eval() schedules an async page-side /event fetch. Keep grid-0 on
-                // scenario 5 long enough for the evidence POST to land before
-                // scenario 6 navigates it. The assertion remains unchanged.
-                sleep_ms(700);
                 bridge::tab_close_native(app.clone(), tab.id)?;
                 Ok("tab view and grid view switched without orphaned child windows".to_string())
             })(),
@@ -1215,10 +1225,6 @@ fn run_grid_gui_regression(app: tauri::AppHandle) {
                 bridge::tab_close_native(app.clone(), first.id)?;
                 bridge::tab_close_native(app.clone(), second.id)?;
                 eval_grid("6", 0, "tabs_closed_grid_survives")?;
-                // eval() schedules the page's async /event fetch; keep this grid URL alive
-                // long enough for the evidence server to observe it before scenario 7 navigates.
-                // The Python assertion remains unchanged: this only removes a driver/evidence race.
-                sleep_ms(700);
                 Ok("normal tabs opened, switched, closed, and grid survived".to_string())
             })(),
         );
@@ -1267,12 +1273,21 @@ fn run_grid_gui_regression(app: tauri::AppHandle) {
                 sleep_ms(800);
                 bridge::term_kill_sync(app.clone(), term.id)?;
                 let stats = bridge::resource_stats_blocking(app.clone());
-                native_eval_in_tab(
-                    app.clone(),
-                    "grid-0".to_string(),
-                    gui_regression_menu_eval("8", 0, "context_menu"),
+                let probe = gui_regression_receipt::ReceiptProbe::send(
+                    "8",
+                    0,
+                    "context_menu",
+                    true,
+                    |nonce| {
+                        native_eval_in_tab(
+                            app.clone(),
+                            "grid-0".to_string(),
+                            gui_regression_menu_eval("8", 0, "context_menu", nonce),
+                        )
+                        .map(|_| ())
+                    },
                 )?;
-                sleep_ms(800);
+                wait_receipt(probe)?;
                 Ok(format!(
                     "terminal spawn/write/kill ok; resource app_total={:.1}MB",
                     stats.app_total_mb
@@ -1286,7 +1301,6 @@ fn run_grid_gui_regression(app: tauri::AppHandle) {
                 open_grid("9", 0)?;
                 sleep_ms(1800);
                 eval_grid("9", 0, "before_restart")?;
-                sleep_ms(800);
                 let old = app
                     .state::<AppState>()
                     .grid_manager
