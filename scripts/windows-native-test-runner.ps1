@@ -123,7 +123,7 @@ function Get-NativeRustTestBinary {
 function Invoke-SupervisedNativeProcess {
     param(
         [Parameter(Mandatory = $true)][string]$Executable,
-        [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][AllowEmptyString()][string[]]$Arguments,
         [Parameter(Mandatory = $true)][string]$LogPrefix,
         [ValidateRange(1, 1800)][int]$TimeoutSeconds
     )

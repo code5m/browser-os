@@ -457,7 +457,25 @@ jobs:
             throw 'NSIS_INSTALL_REQUIRES_FRESH_RUNNER'
           }
           . ./scripts/windows-native-test-runner.ps1
+          $payloadEvidence = Join-Path $env:RUNNER_TEMP 'browseros-nsis-payload'
+          New-Item -ItemType Directory -Path $payloadEvidence -Force | Out-Null
+          # Use the NSIS cache populated and verified by the locked Tauri build.
+          ./scripts/windows/check-nsis-supervision.ps1 -MakeNsis (Join-Path $env:LOCALAPPDATA 'tauri\NSIS\makensis.exe') -EvidenceDirectory (Join-Path $payloadEvidence 'argument regression') -SourceSha $env:BROWSEROS_SOURCE_SHA
           $installation = Invoke-SupervisedNativeProcess -Executable $installers[0].FullName -Arguments @('/S') -LogPrefix (Join-Path $env:RUNNER_TEMP 'browseros-nsis-install') -TimeoutSeconds 300
+          $installationProof = [ordered]@{
+            source_sha = $env:BROWSEROS_SOURCE_SHA
+            installer_sha256 = (Get-FileHash -LiteralPath $installers[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            arguments = @('/S')
+            timeout_seconds = 300
+            supervision = $installation.supervision
+          }
+          $proofJson = $installationProof | ConvertTo-Json -Depth 6
+          [IO.File]::WriteAllText(
+            (Join-Path $payloadEvidence 'installation-supervision.json'),
+            $proofJson + [Environment]::NewLine,
+            [Text.UTF8Encoding]::new($false)
+          )
+          Write-Host ('NSIS_INSTALL_SUPERVISION=' + ($installationProof | ConvertTo-Json -Depth 6 -Compress))
           Assert-NativeSupervision -Run $installation -Phase 'nsis-install'
           if ($installation.supervision.ExitCode -ne 0) { throw 'NSIS_INSTALL_FAILED' }
           $installedRoot = Join-Path $env:LOCALAPPDATA 'mvp-browser-os'

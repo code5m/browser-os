@@ -179,12 +179,23 @@ namespace BrowserOs.NativeTests
             }
         }
 
-        // The application path is passed separately to CreateProcessW. This
-        // quotes each argv item using Windows CRT rules; no PowerShell/cmd layer.
+        // The application path is passed separately to CreateProcessW; there
+        // is no PowerShell/cmd layer. Preserve plain tokens: NSIS 3.11 does not
+        // recognize a quoted "/S" as silent. Quote/escape only when required.
         public static string QuoteArgument(string argument)
         {
             if (argument == null || argument.IndexOf('\0') >= 0)
                 throw new ArgumentException("NATIVE_ARGUMENT_INVALID");
+            bool requiresQuotes = argument.Length == 0;
+            foreach (char value in argument)
+            {
+                if (Char.IsWhiteSpace(value) || value == '"')
+                {
+                    requiresQuotes = true;
+                    break;
+                }
+            }
+            if (!requiresQuotes) return argument;
             StringBuilder quoted = new StringBuilder("\"");
             int slashes = 0;
             foreach (char value in argument)

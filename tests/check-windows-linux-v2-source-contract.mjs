@@ -424,6 +424,21 @@ const windowsCompileStep = v2Workflow.indexOf('id: windows_native_compile');
 assert.ok(runtimeBuilderStep > 0 && windowsCompileStep > runtimeBuilderStep);
 assert.match(v2Workflow, /build-windows-lsp-runtime\.ps1 -WorkDirectory/);
 assert.match(v2Workflow, /NSIS_INSTALL_REQUIRES_FRESH_RUNNER/);
+const nsisSupervisionRegression = read('../scripts/windows/check-nsis-supervision.ps1');
+assert.ok(nsisSupervisionRegression.length > 0);
+const nsisInstallStep = sourceRegion(
+  v2Workflow,
+  '      - name: Install NSIS in the disposable runner and verify bundled runtime',
+  '      - name: Preserve NSIS installed payload evidence',
+);
+const argumentRegression = nsisInstallStep.indexOf('check-nsis-supervision.ps1');
+const installationLaunch = nsisInstallStep.indexOf('$installation = Invoke-SupervisedNativeProcess');
+const installationProof = nsisInstallStep.indexOf('installation-supervision.json');
+const installationCheck = nsisInstallStep.indexOf('Assert-NativeSupervision -Run $installation');
+assert.ok(argumentRegression >= 0 && argumentRegression < installationLaunch);
+assert.ok(installationLaunch < installationProof && installationProof < installationCheck);
+assert.match(nsisInstallStep, /-TimeoutSeconds 300/);
+
 assert.match(v2Workflow, /Assert-NativeSupervision -Run \$installation -Phase 'nsis-install'/);
 assert.match(v2Workflow, /\$installation\.supervision\.ExitCode -ne 0/);
 assert.match(v2Workflow, /verify-installed-browseros\.ps1 -ExePath \$installedExe -PayloadOnly/);
@@ -675,6 +690,81 @@ assert.match(windowsLsp, /"HOVER",/);
 assert.match(windowsLsp, /"DEFINITION",/);
 assert.match(windowsLsp, /"SYNTAX_DIAGNOSTICS",/);
 assert.match(windowsLsp, /"SYMBOLS",/);
+// Diagnostic replies describe the synchronized document, even when an empty
+// or unchanged set would not produce another push notification.
+const assertWindowsDiagnosticProtocol = (source) => {
+  const preparation = sourceRegion(source, 'let init = session.rpc_next(', '    fn begin_request(');
+  assert.match(preparation, /"serverStatusNotification"\s*:\s*true/);
+  assert.match(preparation, /"diagnostic"\s*:\s*\{"dynamicRegistration"\s*:\s*false/);
+  assert.match(preparation, /session\.diagnostic_identifier = diagnostic_identifier\(&initialized\)\?/);
+  assert.match(preparation, /"method":"initialized"/);
+  assert.match(preparation, /\.await_ready\(\)[\s\S]*Ok\(session\)/);
+  assert.doesNotMatch(preparation, /new_operation\(|begin_request\(|Duration::from_secs/);
+
+  const ready = sourceRegion(source, '    fn await_ready(', '    fn open_document(');
+  assert.match(ready, /self\.recv_frame\("LSP_READY_TIMEOUT"\)\?/);
+  assert.match(ready, /value\["method"\] == "experimental\/serverStatus"/);
+  assert.match(ready, /value\.get\("id"\)\.is_none\(\)/);
+  assert.match(ready, /server_status_ready\(&value\)\?/);
+  const status = sourceRegion(source, 'fn server_status_ready(', 'struct OpenDocument {');
+  assert.match(status, /value\["jsonrpc"\] != "2\.0"/);
+  assert.match(status, /status\["quiescent"\]\s*\.as_bool\(\)/);
+  assert.match(status, /Some\("error"\) if quiescent => Err\("LSP_SERVER_NOT_READY"\.into\(\)\)/);
+
+  const capability = sourceRegion(source, 'fn diagnostic_identifier(', 'fn full_diagnostic_items(');
+  assert.match(capability, /initialize\["capabilities"\]\["diagnosticProvider"\]\s*\.as_object\(\)/);
+  assert.match(capability, /"LSP_DIAGNOSTICS_UNSUPPORTED"/);
+  assert.match(capability, /"LSP_DIAGNOSTICS_CAPABILITY_INVALID"/);
+  const response = sourceRegion(source, 'fn rpc_response(', 'fn server_status_ready(');
+  assert.match(response, /value\["id"\] != json!\(expected_id\)/);
+  assert.match(response, /value\["jsonrpc"\] != "2\.0"/);
+  assert.match(response, /\.get\("result"\)\s*\.cloned\(\)\s*\.map\(Some\)/);
+  const rpc = sourceRegion(source, '    fn rpc(', '    fn rpc_next(');
+  assert.match(rpc, /rpc_response\(&value, id\)\?/);
+  const report = sourceRegion(source, 'fn full_diagnostic_items(', 'fn rpc_response(');
+  assert.match(report, /report\["kind"\] != "full" \|\| !report\["items"\]\.is_array\(\)/);
+  assert.match(report, /Ok\(report\["items"\]\.take\(\)\)/);
+
+  const document = sourceRegion(source, '    fn open_document(', '    fn pull_diagnostics(');
+  assert.match(document, /document\.content_hash == content_hash[\s\S]*return Ok\(document\.uri\.clone\(\)\)/);
+  assert.match(document, /\.version\s*\.checked_add\(1\)/);
+  assert.match(document, /"method":"textDocument\/didOpen"/);
+  assert.match(document, /"method":"textDocument\/didChange"/);
+  assert.match(document, /self\.send\(notification\)\?;[\s\S]*self\.documents\.insert\(/);
+  const pull = sourceRegion(source, '    fn pull_diagnostics(', '    fn diagnostics(');
+  assert.match(pull, /let version = document\.version/);
+  assert.match(pull, /"uri":document\.uri\.as_str\(\)/);
+  assert.match(pull, /self\.rpc_next\("textDocument\/diagnostic", params\)\?/);
+  assert.match(pull, /document\.version == version/);
+  assert.match(pull, /full_diagnostic_items\(report\)/);
+  assert.doesNotMatch(pull, /"previousResultId"\s*:|new_operation\(|begin_request\(|thread::sleep|Duration::from_secs/);
+  assert.doesNotMatch(source, /fn await_diagnostics\(/);
+  assert.match(sourceRegion(source, '    fn diagnostics(', '    /// Test builds retain bounded native evidence.'), /self\.pull_diagnostics\(&uri\)\?/);
+  assert.match(sourceRegion(source, 'fn one_shot_document_request(', 'fn get_session('), /session\.pull_diagnostics\(&private_uri\)\?/);
+};
+assertWindowsDiagnosticProtocol(windowsLsp);
+for (const [from, to] of [
+  ['"serverStatusNotification":true', '"serverStatusNotification":false'],
+  ['session.diagnostic_identifier = diagnostic_identifier(&initialized)?;', 'session.diagnostic_identifier = None;'],
+  ['.await_ready()', '.resources_stopped()'],
+  ['value["id"] != json!(expected_id)', 'value["id"] == json!(expected_id)'],
+  ['report["kind"] != "full"', 'report["kind"] != "unchanged"'],
+  ['self.rpc_next("textDocument/diagnostic", params)?', 'Ok::<_, String>(json!({"kind":"full","items":[]}))?'],
+  ['self.send(notification)?;', 'let _ = self.send(notification);'],
+]) {
+  const unsafeProtocol = windowsLsp.replace(from, to);
+  assert.notEqual(unsafeProtocol, windowsLsp, 'diagnostic negative fixture must mutate source');
+  assert.throws(() => assertWindowsDiagnosticProtocol(unsafeProtocol));
+}
+const fullNativeSuite = nativeRequired.selections.find((entry) => entry.id === 'windows-full-suite');
+assert.ok(fullNativeSuite.required_names.includes(
+  'capabilities::agent::coding_lsp::tests::pull_diagnostics_require_negotiation_and_a_complete_report',
+));
+assert.match(windowsLsp, /"VALID_DIAGNOSTICS"/);
+assert.match(windowsLsp, /"CHANGED_SYNTAX_DIAGNOSTICS"/);
+assert.match(windowsLsp, /"REPEATED_SYNTAX_DIAGNOSTICS"/);
+assert.match(windowsLsp, /"CLEARED_SYNTAX_DIAGNOSTICS"/);
+assert.match(windowsLsp, /assert_eq!\(synchronized_version\(\), changed_version\)/);
 assert.match(windowsLsp, /legacy_cargo_subprocess_probes_are_diagnostics_only/);
 assert.match(windowsLsp, /private_snapshot_requires_own_package_sid_and_rejects_other_profiles/);
 assert.match(windowsLsp, /write-negative profile/);
@@ -717,7 +807,7 @@ assert.match(mcpPayloadStaging, /staged_name\.push\(name\)/);
 assert.match(mcpPayloadStaging, /profile\.stage_state_file\(&staged_name,\s*&bytes\)\?/);
 assert.doesNotMatch(mcpPayloadStaging, /fs::write|fs::create_dir|to_string_lossy/);
 assert.match(windowsMcp, /PAYLOAD_LIMIT:\s*usize\s*=\s*super::windows_sandbox::MAX_STATE_PAYLOAD_BYTES/);
-for (const [id, count] of [['appcontainer', 14], ['windows-full-suite', 109]]) {
+for (const [id, count] of [['appcontainer', 14], ['windows-full-suite', 110]]) {
   const selection = nativeRequired.selections.find((entry) => entry.id === id);
   assert.equal(selection.required_count, count);
   assert.ok(selection.required_names.includes('state_file_staging_rejects_non_component_names'));

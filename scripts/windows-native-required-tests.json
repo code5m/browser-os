@@ -831,7 +831,7 @@
       "id": "windows-full-suite",
       "package": "mvp-browser-os",
       "filter": "",
-      "required_count": 109,
+      "required_count": 110,
       "required_names": [
         "a_running_process_can_be_adopted_but_is_not_used_for_spawn_paths",
         "abandoned_bound_profile_is_recovered_by_native_identity",
@@ -941,7 +941,8 @@
         "build_output_layout::tests::unit_layout_preserves_profile_directory",
         "build_output_layout::tests::target_prefix_and_custom_profile_are_preserved",
         "build_output_layout::tests::unrelated_packages_and_invalid_hashes_are_rejected",
-        "build_output_layout::tests::non_absolute_traversal_and_unexpected_suffixes_are_rejected"
+        "build_output_layout::tests::non_absolute_traversal_and_unexpected_suffixes_are_rejected",
+        "capabilities::agent::coding_lsp::tests::pull_diagnostics_require_negotiation_and_a_complete_report"
       ],
       "allow_additional_tests": true,
       "allow_ignored": true,
