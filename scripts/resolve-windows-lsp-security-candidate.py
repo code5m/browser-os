@@ -29,7 +29,7 @@ XTASK_DIST = SUBDIRECTORY + "/xtask/src/dist.rs"
 XTASK_MANIFEST_HASH = "31f58662e9be197079eca81be8abc6dea3ddb58c37f9a525b255596dbf72b6db"
 XTASK_DIST_HASH = "e2b16f0ac6f4b2a53f1ff8b678504f112245a53ae17f9e7c6c2b85c274254472"
 ZIP_BEFORE = 'zip = { version = "4.0", default-features = false, features = ["deflate-flate2", "time"] }'
-ZIP_AFTER = 'zip = { version = "9.0.5", default-features = false, features = ["deflate-flate2", "time"] }'
+ZIP_AFTER = 'zip = { version = "=9.0.5", default-features = false, features = ["deflate-flate2", "time"] }'
 TEST_NAME = "dist::browseros_dependency_security_candidate::zip_writer_retains_payload_and_symbols"
 ROOT = Path(__file__).resolve().parents[1]
 ARTIFACTS = ROOT / "artifacts" / "rust-analyzer-security-candidate"
@@ -288,7 +288,8 @@ def main() -> None:
             dist_path.write_bytes(dist_text.encode("utf-8"))
             status["phase"] = "resolve"
             for name, version in [("zip", "9.0.5"), ("crossbeam-epoch", "0.9.20"),
-                                  ("anyhow", "1.0.103"), ("salsa", "0.28.5")]:
+                                  ("anyhow", "1.0.103"), ("salsa", "0.28.5"),
+                                  ("salsa-macro-rules", "0.28.5")]:
                 run([cargo, "update", "-p", name, "--precise", version], cwd=project, env=env)
             resolved = (project / "Cargo.lock").read_bytes()
             packages = tomllib.loads(resolved.decode("utf-8"))["package"]
