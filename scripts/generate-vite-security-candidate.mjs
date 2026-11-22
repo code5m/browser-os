@@ -19,6 +19,19 @@ const inputs = Object.fromEntries(['package.json', 'package-lock.json'].map((nam
   name, execFileSync('git', ['show', sourceSha + ':' + name]),
 ]));
 const expected = JSON.parse(inputs['package.json']);
+const sourceLock = JSON.parse(inputs['package-lock.json']);
+if (!isDeepStrictEqual(expected.workspaces, ['packages/*'])) {
+  throw new Error('CANDIDATE_WORKSPACE_LAYOUT_CHANGED');
+}
+const workspaceManifests = execFileSync('git', [
+  'ls-tree', '-r', '--name-only', sourceSha, '--', 'packages',
+], { encoding: 'utf8' }).split('\n').filter(name => /^packages\/[^/]+\/package\.json$/.test(name));
+const lockedWorkspaces = Object.keys(sourceLock.packages).filter(name => name.startsWith('packages/'));
+if (!workspaceManifests.length || !isDeepStrictEqual(
+  workspaceManifests.map(name => dirname(name)).sort(), lockedWorkspaces.sort(),
+)) {
+  throw new Error('CANDIDATE_WORKSPACE_INVENTORY_MISMATCH');
+}
 if (expected.devDependencies?.vite !== '^5.2.0') {
   throw new Error('CANDIDATE_VITE_BASELINE_CHANGED');
 }
@@ -26,6 +39,15 @@ expected.devDependencies.vite = '6.4.6';
 const directory = mkdtempSync(join(process.env.RUNNER_TEMP || tmpdir(), 'browseros-vite-candidate-'));
 writeFileSync(join(directory, 'package.json'), JSON.stringify(expected, null, 2) + '\n');
 writeFileSync(join(directory, 'package-lock.json'), inputs['package-lock.json']);
+// npm must see the real workspace manifests; otherwise --package-lock-only
+// prunes their links and silently reclassifies workspace-only dependencies.
+for (const name of workspaceManifests) {
+  const bytes = execFileSync('git', ['show', sourceSha + ':' + name]);
+  inputs[name] = bytes;
+  const destination = join(directory, name);
+  mkdirSync(dirname(destination), { recursive: true });
+  writeFileSync(destination, bytes);
+}
 const registry = '--registry=https://registry.npmjs.org';
 const install = spawnSync('npm', [
   'install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund', registry,
@@ -37,10 +59,21 @@ const files = Object.fromEntries(['package.json', 'package-lock.json'].map((name
 const generatedPackage = JSON.parse(files['package.json']);
 const generatedLock = JSON.parse(files['package-lock.json']);
 if (!isDeepStrictEqual(generatedPackage, expected) ||
-    generatedLock.lockfileVersion !== JSON.parse(inputs['package-lock.json']).lockfileVersion ||
+    generatedLock.lockfileVersion !== sourceLock.lockfileVersion ||
     generatedLock.packages?.['']?.devDependencies?.vite !== '6.4.6' ||
     generatedLock.packages?.['node_modules/vite']?.version !== '6.4.6') {
   throw new Error('CANDIDATE_LOCK_CONTRACT_MISMATCH');
+}
+for (const name of workspaceManifests) {
+  const workspace = JSON.parse(inputs[name]);
+  const location = dirname(name);
+  const link = 'node_modules/' + workspace.name;
+  if (!isDeepStrictEqual(generatedLock.packages?.[location], sourceLock.packages?.[location]) ||
+      !isDeepStrictEqual(generatedLock.packages?.[link], sourceLock.packages?.[link]) ||
+      generatedLock.packages?.[link]?.link !== true ||
+      generatedLock.packages?.[link]?.resolved !== location) {
+    throw new Error('CANDIDATE_WORKSPACE_LOCK_CHANGED');
+  }
 }
 // Reproduce the generated native declaration report in a separate temporary
 // source tree. The normal checkout and ordinary check gates stay untouched.

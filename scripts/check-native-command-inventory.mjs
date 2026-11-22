@@ -69,7 +69,160 @@ function parseRegistered(text) {
   return [...seen.values()];
 }
 
-// DEFINED: #[tauri::command] followed by the fn signature.
+// Mask comments and literals for attribute discovery, while retaining literal
+// values in the separate source view used to parse cfg(target_os = "...").
+// Offsets and newlines stay aligned; examples inside strings/docs are not code.
+function rustAttributeViews(text) {
+  const source = [];
+  const syntax = [];
+  let from = 0;
+  let i = 0;
+  const blank = value => value.replace(/[^\r\n]/g, ' ');
+  const take = (end, comment) => {
+    source.push(text.slice(from, i), comment ? blank(text.slice(i, end)) : text.slice(i, end));
+    syntax.push(text.slice(from, i), blank(text.slice(i, end)));
+    i = end;
+    from = end;
+  };
+  while (i < text.length) {
+    if (text.startsWith('//', i)) {
+      const end = text.indexOf('\n', i);
+      take(end < 0 ? text.length : end, true);
+      continue;
+    }
+    if (text.startsWith('/*', i)) {
+      let end = i + 2;
+      let depth = 1;
+      while (end < text.length && depth) {
+        if (text.startsWith('/*', end)) { depth++; end += 2; }
+        else if (text.startsWith('*/', end)) { depth--; end += 2; }
+        else end++;
+      }
+      if (depth) throw new Error('Unterminated Rust block comment');
+      take(end, true);
+      continue;
+    }
+    const rawPrefix = (text[i] === 'r' && (text[i + 1] === '"' || text[i + 1] === '#'))
+      || ((text[i] === 'b' || text[i] === 'c') && text[i + 1] === 'r');
+    const raw = rawPrefix ? /^(?:br|cr|r)(#*)"/.exec(text.slice(i, i + 260)) : null;
+    if (raw) {
+      const marker = '"' + raw[1];
+      const end = text.indexOf(marker, i + raw[0].length);
+      if (end < 0) throw new Error('Unterminated Rust raw string');
+      take(end + marker.length, false);
+      continue;
+    }
+    if (text[i] === '"') {
+      let end = i + 1;
+      while (end < text.length && text[end] !== '"') {
+        end += text[end] === '\\' ? 2 : 1;
+      }
+      if (end >= text.length) throw new Error('Unterminated Rust string');
+      take(end + 1, false);
+      continue;
+    }
+    // A lifetime such as 'a is not a character literal.
+    if (text[i] === "'") {
+      const character = /^'(?:\\(?:x[0-9A-Fa-f]{2}|u\{[0-9A-Fa-f_]+\}|.)|[^'\\\r\n])'/u.exec(text.slice(i));
+      if (character) { take(i + character[0].length, false); continue; }
+    }
+    i++;
+  }
+  source.push(text.slice(from));
+  syntax.push(text.slice(from));
+  return { source: source.join(''), syntax: syntax.join('') };
+}
+
+// Only direct target_os predicates and Rust's all/any/not operators can prove
+// platform exclusivity here. Unknown/malformed cfg or cfg_attr is conservative:
+// it cannot exempt a duplicate. Values come from source, not an OS allowlist.
+function parseTargetOsCfg(expression) {
+  let offset = 0;
+  const space = () => { while (/\s/.test(expression[offset] || '') && offset < expression.length) offset++; };
+  function predicate(depth = 0) {
+    if (depth > 64) throw new Error('cfg nesting limit');
+    space();
+    const atom = /^target_os\s*=\s*"([A-Za-z0-9_-]+)"/.exec(expression.slice(offset));
+    if (atom) { offset += atom[0].length; return { kind: 'os', value: atom[1] }; }
+    const call = /^(all|any|not)\s*\(/.exec(expression.slice(offset));
+    if (!call) throw new Error('unsupported cfg predicate');
+    offset += call[0].length;
+    const args = [];
+    space();
+    while (expression[offset] !== ')') {
+      args.push(predicate(depth + 1));
+      space();
+      if (expression[offset] === ')') break;
+      if (expression[offset] !== ',') throw new Error('invalid cfg separator');
+      offset++;
+      space();
+    }
+    offset++;
+    if (call[1] === 'not' && args.length !== 1) throw new Error('invalid cfg not arity');
+    return { kind: call[1], args };
+  }
+  try {
+    const result = predicate();
+    space();
+    return offset === expression.length ? result : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseDefinedSource(text, file) {
+  const { source, syntax } = rustAttributeViews(text);
+  const attrs = [];
+  const start = /#\[/g;
+  let match;
+  while ((match = start.exec(syntax))) {
+    let end = match.index + 2;
+    let depth = 1;
+    while (end < syntax.length && depth) {
+      if (syntax[end] === '[') depth++;
+      else if (syntax[end] === ']') depth--;
+      end++;
+    }
+    if (depth) throw new Error('Unterminated Rust attribute in ' + file);
+    attrs.push({ start: match.index, end, body: source.slice(match.index + 2, end - 1).trim() });
+    start.lastIndex = end;
+  }
+  const results = [];
+  for (let index = 0; index < attrs.length; index++) {
+    const command = /^tauri\s*::\s*command(?:\s*\(([\s\S]*)\))?$/.exec(attrs[index].body);
+    if (!command) continue;
+    let first = index;
+    let last = index;
+    while (first > 0 && !source.slice(attrs[first - 1].end, attrs[first].start).trim()) first--;
+    while (last + 1 < attrs.length && !source.slice(attrs[last].end, attrs[last + 1].start).trim()) last++;
+    const fn = /^\s*(pub(?:\s*\([^)]*\))?\s+)?(async\s+)?fn\s+([A-Za-z_]\w*)/.exec(source.slice(attrs[last].end));
+    if (!fn) throw new Error('Unparsed Tauri command declaration in ' + file);
+    const rename = (command[1] || '').match(/\brename\s*=\s*"([^"]+)"/)?.[1] || null;
+    const cfg = [];
+    let unsupportedCfg = false;
+    for (const attr of attrs.slice(first, last + 1)) {
+      if (/^cfg_attr\b/.test(attr.body)) unsupportedCfg = true;
+      if (!/^cfg\b/.test(attr.body)) continue;
+      const expression = /^cfg\s*\(([\s\S]*)\)$/.exec(attr.body);
+      const parsed = expression ? parseTargetOsCfg(expression[1]) : null;
+      if (parsed) cfg.push(parsed);
+      else unsupportedCfg = true;
+    }
+    results.push({
+      fn: fn[3],
+      command: rename || fn[3],
+      rename,
+      file,
+      vis: fn[1] ? 'pub' : 'private',
+      async: fn[2] ? 'async' : 'sync',
+      cfg: unsupportedCfg ? null : cfg,
+    });
+  }
+  return results;
+}
+
+// DEFINED keeps every real declaration. Mutually exclusive variants are
+// reconciled below; no declaration is silently dropped to match a count.
 function parseDefined() {
   const results = [];
   function walk(dir) {
@@ -77,39 +230,35 @@ function parseDefined() {
       const full = path.join(dir, e.name);
       if (e.isDirectory()) walk(full);
       else if (e.name.endsWith('.rs')) {
-        const text = read(full);
-        const attrRe = /#\[tauri::command(?:\(([^\)]*)\))?\]/g;
-        let am;
-        while ((am = attrRe.exec(text))) {
-          // Skip literal mentions of `#[tauri::command]` inside comment lines
-          // (e.g. `//! 本模块不含 #[tauri::command]`), which are not real attributes.
-          const lineStart = text.lastIndexOf('\n', am.index) + 1;
-          const lineSoFar = text.slice(lineStart, am.index).trimStart();
-          if (lineSoFar.startsWith('//')) continue;
-
-          const inner = am[1] || '';
-          const renameM = inner.match(/rename\s*=\s*"([^"]+)"/);
-          const rename = renameM ? renameM[1] : null;
-          const after = text.slice(am.index);
-          const fnM = after.match(/\n\s*(pub\s+)?(async\s+)?fn\s+([A-Za-z_]\w*)/);
-          if (!fnM) continue;
-          const vis = fnM[1] ? 'pub' : 'private';
-          const async = fnM[2] ? 'async' : 'sync';
-          const fn = fnM[3];
-          results.push({
-            fn,
-            command: rename || fn,
-            rename,
-            file: path.relative(REPO, full),
-            vis,
-            async,
-          });
-        }
+        results.push(...parseDefinedSource(read(full), path.relative(REPO, full)));
       }
     }
   }
   walk(SRC);
   return results;
+}
+
+function cfgMatches(cfg, os) {
+  if (cfg.kind === 'os') return cfg.value === os;
+  if (cfg.kind === 'all') return cfg.args.every(arg => cfgMatches(arg, os));
+  if (cfg.kind === 'any') return cfg.args.some(arg => cfgMatches(arg, os));
+  return !cfgMatches(cfg.args[0], os);
+}
+
+function definitionsCanOverlap(left, right) {
+  if (left.cfg === null || right.cfg === null) return true;
+  const leftCfg = left.cfg || [];
+  const rightCfg = right.cfg || [];
+  // All unmentioned OS values have the same truth assignment. A null sentinel
+  // represents that class, including future targets and unsupported platforms.
+  const targets = new Set([null]);
+  const collect = cfg => {
+    if (cfg.kind === 'os') targets.add(cfg.value);
+    else cfg.args.forEach(collect);
+  };
+  [...leftCfg, ...rightCfg].forEach(collect);
+  return [...targets].some(os =>
+    leftCfg.every(cfg => cfgMatches(cfg, os)) && rightCfg.every(cfg => cfgMatches(cfg, os)));
 }
 
 // REGISTRY: 2-space command keys under `commands:` in the YAML.
@@ -191,12 +340,21 @@ function reconcile(registered, defined, registry, knownModules) {
   const registeredNotInRegistry = [...regNames].filter((n) => !regKeys.has(n)).sort();
   const registryNotRegistered = [...regKeys].filter((n) => !regNames.has(n)).sort();
 
-  const counts = {};
-  for (const d of defined) counts[d.command] = (counts[d.command] || 0) + 1;
-  const duplicateCommandNames = Object.entries(counts)
-    .filter(([, v]) => v > 1)
-    .map(([k]) => k)
-    .sort();
+  const byCommand = new Map();
+  for (const definition of defined) {
+    if (!byCommand.has(definition.command)) byCommand.set(definition.command, []);
+    byCommand.get(definition.command).push(definition);
+  }
+  const duplicateCommandNames = [];
+  const exclusivePlatformVariants = [];
+  for (const [command, variants] of byCommand) {
+    if (variants.length < 2) continue;
+    const overlaps = variants.some((left, i) =>
+      variants.slice(i + 1).some(right => definitionsCanOverlap(left, right)));
+    (overlaps ? duplicateCommandNames : exclusivePlatformVariants).push(command);
+  }
+  duplicateCommandNames.sort();
+  exclusivePlatformVariants.sort();
 
   const unknownDefinitionLocation = registered
     .filter((r) => !defCmds.has(r.name) && !knownModules.has(r.prefix))
@@ -209,6 +367,7 @@ function reconcile(registered, defined, registry, knownModules) {
     registeredNotInRegistry,
     registryNotRegistered,
     duplicateCommandNames,
+    exclusivePlatformVariants,
     unknownDefinitionLocation,
   };
 }
@@ -241,13 +400,13 @@ function summarize(reg, appDrift, counts) {
 // Self-test (positive + negative fixtures)
 // ---------------------------------------------------------------------------
 
-function runSelfTest() {
+function runSelfTest({ quiet = false } = {}) {
   let failures = 0;
   const assert = (cond, msg) => {
     if (!cond) {
       failures++;
       console.error('  ✗ ' + msg);
-    } else {
+    } else if (!quiet) {
       console.log('  ✓ ' + msg);
     }
   };
@@ -310,6 +469,69 @@ function runSelfTest() {
     'negative: DUPLICATE_COMMAND_NAMES = [z]',
   );
 
+  // Exercise source extraction and Boolean overlap together. These fixtures
+  // use arbitrary command/OS names; no production command is exempted by name.
+  const declaration = (cfg, name = 'platform_probe') =>
+    cfg + '\n#[tauri::command]\npub fn ' + name + '() {}\n';
+  const fromSource = source => {
+    const defs = parseDefinedSource(source, 'cfg-fixture.rs');
+    const names = [...new Set(defs.map(definition => definition.command))];
+    return { defs, report: reconcile(
+      names.map(name => ({ name, prefix: 'bridge', raw: 'bridge::' + name })),
+      defs, names, known,
+    ) };
+  };
+  const hasDuplicate = source => fromSource(source).report.duplicateCommandNames.length > 0;
+  const linux = declaration('#[cfg(target_os = "linux")]');
+  const windows = declaration('#[cfg(target_os = "windows")]');
+  const fallback = declaration('#[cfg(not(any(target_os = "linux", target_os = "windows")))]');
+  const exclusive = fromSource(linux + windows + fallback);
+  assert(exclusive.defs.length === 3, 'cfg: retain all three platform declarations');
+  assert(exclusive.report.duplicateCommandNames.length === 0
+    && exclusive.report.exclusivePlatformVariants.join(',') === 'platform_probe',
+  'cfg: Linux, Windows and the complete fallback are mutually exclusive');
+  assert(hasDuplicate(linux + linux), 'cfg: same target_os still conflicts');
+  assert(hasDuplicate(linux + declaration('')), 'cfg: unconditional and conditional definitions conflict');
+  assert(hasDuplicate(linux + declaration('#[cfg(not(target_os = "windows"))]')),
+    'cfg: not(windows) overlaps Linux');
+  assert(hasDuplicate(windows + declaration('#[cfg(any(target_os = "linux", target_os = "windows"))]')),
+    'cfg: any(...) overlap is rejected');
+  assert(!hasDuplicate(windows + declaration(
+    '#[cfg(all(not(target_os = "windows"), any(target_os = "linux", target_os = "future_os")))]')),
+  'cfg: nested Boolean predicates are evaluated without an OS allowlist');
+  assert(!hasDuplicate(declaration('#[cfg(target_os = "future_os")]') + declaration(
+    '#[cfg(not(target_os = "future_os"))]')),
+  'cfg: targets absent from the host remain part of the proof');
+  assert(hasDuplicate(declaration('#[cfg(not(target_os = "linux"))]') + declaration(
+    '#[cfg(not(target_os = "windows"))]')),
+  'cfg: unmentioned targets expose overlap between two negative predicates');
+  const adjacent = '#[tauri::command]\n#[cfg(\n all(\n target_os = "linux",\n not(target_os = "windows"),\n )\n)]\n'
+    + '#[cfg(not(target_os = "future_os"))]\npub async fn platform_probe() {}\n';
+  assert(!hasDuplicate(adjacent + windows + fallback),
+    'cfg: multiline attributes on either side of the command are conjoined');
+  assert(hasDuplicate(windows + declaration('#[cfg(feature = "optional")]')),
+    'cfg: unknown feature constraints cannot prove exclusivity');
+  assert(hasDuplicate(windows + declaration('#[cfg_attr(feature = "optional", cfg(target_os = "linux"))]')),
+    'cfg: conditional attributes cannot silently exempt a definition');
+  assert(hasDuplicate(windows + declaration('#[cfg(not(target_os = "windows", target_os = "linux"))]')),
+    'cfg: malformed Boolean predicates fail closed');
+  assert(hasDuplicate(windows + '#[cfg(target_os = "linux")]\nfn helper() {}\n' + declaration('')),
+    'cfg: a helper function attribute does not leak to a later command');
+  const commented = '// #[cfg(target_os = "linux")]\n/* #[cfg(target_os = "linux")] /* nested */ */\n'
+    + declaration('');
+  assert(hasDuplicate(windows + commented), 'cfg: comments cannot grant platform exclusivity');
+  const examples = 'const SAMPLE: &str = r##"#[cfg(target_os = "linux")]\n'
+    + '#[tauri::command]\nfn fake_command() {}"##;\n'
+    + 'const STRING: &str = "#[tauri::command]";\n'
+    + declaration('');
+  assert(fromSource(examples).defs.length === 1 && hasDuplicate(windows + examples),
+    'cfg: attributes and commands in raw/ordinary strings are ignored');
+  const renamed = '#[cfg(target_os = "windows")]\n#[tauri::command(rename = "platform_probe")]\n'
+    + 'pub fn another_name() {}\n';
+  assert(hasDuplicate(windows + renamed), 'cfg: renamed overlapping commands still conflict');
+  assert(!hasDuplicate(declaration('#[cfg(any())]') + declaration('#[cfg(all())]')),
+    'cfg: Rust empty any/all predicates retain their Boolean semantics');
+
   // negative: appstate drift
   const negApp = reconcileAppState(['f1', 'f3'], ['f1', 'f2']);
   assert(
@@ -322,7 +544,7 @@ function runSelfTest() {
   );
 
   if (failures === 0) {
-    console.log('SELF_TEST: PASS');
+    if (!quiet) console.log('SELF_TEST: PASS');
     return true;
   }
   console.error(`SELF_TEST: FAIL (${failures} assertion(s))`);
@@ -339,6 +561,9 @@ function main() {
     const ok = runSelfTest();
     process.exit(ok ? 0 : 1);
   }
+  // The normal authority gate also executes these dependency-free fixtures.
+  // Quiet mode preserves the --json interface consumed by semantic checks.
+  if (!runSelfTest({ quiet: true })) process.exit(1);
 
   const mainText = read(MAIN_RS);
   const yamlText = read(YAML);
@@ -391,6 +616,7 @@ function main() {
     console.log('REGISTERED_NOT_IN_REGISTRY :', reg.registeredNotInRegistry.join(', ') || '(none)');
     console.log('REGISTRY_NOT_REGISTERED    :', reg.registryNotRegistered.join(', ') || '(none)');
     console.log('DUPLICATE_COMMAND_NAMES    :', reg.duplicateCommandNames.join(', ') || '(none)');
+    console.log('EXCLUSIVE_PLATFORM_VARIANTS:', reg.exclusivePlatformVariants.join(', ') || '(none)');
     console.log('UNKNOWN_DEFINITION_LOCATION:', reg.unknownDefinitionLocation.join(', ') || '(none)');
     console.log('');
     console.log('--- APPSTATE MATRIX ---');
