@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 const LIMIT: u64 = 128 * 1024;
 const CONFIG_LIMIT: usize = 256 * 1024;
-const PAYLOAD_LIMIT: usize = 8 * 1024 * 1024;
+const PAYLOAD_LIMIT: usize = super::windows_sandbox::MAX_STATE_PAYLOAD_BYTES;
 fn admission_error(error: String) -> String {
     match error.as_str() {
         "SANDBOX_CAPACITY_BUSY" => "MCP_RESOURCE_CAPACITY".into(),
@@ -270,8 +270,6 @@ impl Session {
         }
         let profile = SandboxProfile::create().map_err(admission_error)?;
         let state = profile.state_dir()?;
-        let payload = state.join("payload");
-        fs::create_dir(&payload).map_err(|_| "MCP_PAYLOAD_CREATE")?;
         let mut args = Vec::<String>::new();
         for value in raw_args {
             let value = value.as_str().ok_or("MCP_ARGS_INVALID")?;
@@ -294,9 +292,9 @@ impl Session {
                 )
                 .map_err(|_| "MCP_PAYLOAD_READ_DENIED")?;
                 let name = canonical.file_name().ok_or("MCP_PAYLOAD_INVALID")?;
-                let destination =
-                    payload.join(format!("{}-{}", args.len(), name.to_string_lossy()));
-                fs::write(&destination, bytes).map_err(|_| "MCP_PAYLOAD_WRITE")?;
+                let mut staged_name = std::ffi::OsString::from(format!("payload-{}-", args.len()));
+                staged_name.push(name);
+                let destination = profile.stage_state_file(&staged_name, &bytes)?;
                 args.push(
                     destination
                         .to_str()

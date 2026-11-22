@@ -1,0 +1,791 @@
+{
+  "schemaVersion": 1,
+  "package": {
+    "name": "glib",
+    "version": "0.18.5",
+    "path": "src-tauri/vendor/glib",
+    "license": "MIT"
+  },
+  "upstream": {
+    "repository": "https://github.com/gtk-rs/gtk-rs-core",
+    "commit": "42b9caf98e03ded086362d9653ca58fe94dc8658",
+    "tree": "829038a44ac7c4582abc7b36aeb1c90013870978",
+    "tag": "0.18.5",
+    "subdirectory": "glib",
+    "verification": "Git blob identities from the immutable upstream commit; crates.io archive not downloaded or verified"
+  },
+  "registryOrigin": {
+    "source": "registry+https://github.com/rust-lang/crates.io-index",
+    "checksum": "233daaf6e83ae6a12a52055f568f9d7cf4671dabb78ff9560ab6da230ce00ee5",
+    "checksumEvidence": {
+      "repository": "https://github.com/rust-lang/crates.io-index",
+      "path": "gl/ib/glib",
+      "gitBlob": "314b9eec2eedc7bf59b3e5e4218579cb364bf77d",
+      "entry": "glib 0.18.5",
+      "verification": "Checksum and dependency constraints read from the official registry index; archive bytes not downloaded."
+    },
+    "archiveVerified": false
+  },
+  "patch": {
+    "advisory": "RUSTSEC-2024-0429",
+    "commit": "b5a4071e439bef2b5eea76c3aa25e5ae84839e34",
+    "url": "https://github.com/gtk-rs/gtk-rs-core/commit/b5a4071e439bef2b5eea76c3aa25e5ae84839e34",
+    "kind": "exact-upstream-backport",
+    "versionUnchanged": true
+  },
+  "manifestNormalization": {
+    "reason": "A standalone vendored glib crate must resolve its four sibling crates through the existing crates.io versions, not absent gtk-rs workspace paths.",
+    "replacements": [
+      {
+        "before": "ffi = { package = \"glib-sys\", version = \"0.18\", path = \"sys\" }",
+        "after": "ffi = { package = \"glib-sys\", version = \"0.18\" }"
+      },
+      {
+        "before": "gobject_ffi = { package = \"gobject-sys\", version = \"0.18\", path = \"gobject-sys\" }",
+        "after": "gobject_ffi = { package = \"gobject-sys\", version = \"0.18\" }"
+      },
+      {
+        "before": "glib-macros = { path = \"../glib-macros\", version = \"0.18\" }",
+        "after": "glib-macros = { version = \"0.18\" }"
+      },
+      {
+        "before": "gio_ffi = { package = \"gio-sys\", path = \"../gio/sys\", version = \"0.18\", optional = true }",
+        "after": "gio_ffi = { package = \"gio-sys\", version = \"0.18\", optional = true }"
+      }
+    ]
+  },
+  "files": [
+    {
+      "path": "benches/gstring.rs",
+      "upstreamPath": "glib/benches/gstring.rs",
+      "gitBlob": "a644ac02b604016b6479e904857a75af163a4ab6",
+      "size": 1164
+    },
+    {
+      "path": "Cargo.toml",
+      "upstreamPath": "glib/Cargo.toml",
+      "gitBlob": "f6b791e1c1d3f88d3406419b9bd2ed765fa842c6",
+      "size": 2197
+    },
+    {
+      "path": "COPYRIGHT",
+      "upstreamPath": "COPYRIGHT",
+      "gitBlob": "aabc43fe2c90345b52634bd0c73c7fd423eb4848",
+      "size": 651,
+      "materializedSymlink": {
+        "upstreamPath": "glib/COPYRIGHT",
+        "gitBlob": "dc5f40a221a379b2de12cc0e831a04bfeb67c6c8",
+        "target": "../COPYRIGHT"
+      }
+    },
+    {
+      "path": "Gir_GObject.toml",
+      "upstreamPath": "glib/Gir_GObject.toml",
+      "gitBlob": "8b6845669d7422fabdda060fd19a350505679596",
+      "size": 3640
+    },
+    {
+      "path": "Gir.toml",
+      "upstreamPath": "glib/Gir.toml",
+      "gitBlob": "8dfe2f7129d6dfd2068da42dddf032609c900a5e",
+      "size": 22016
+    },
+    {
+      "path": "LICENSE",
+      "upstreamPath": "LICENSE",
+      "gitBlob": "64a801a7baf36086abdeef709e60b2c062d584d1",
+      "size": 1024,
+      "materializedSymlink": {
+        "upstreamPath": "glib/LICENSE",
+        "gitBlob": "ea5b60640b01f74e295037aa8a6b7d4ea278a739",
+        "target": "../LICENSE"
+      }
+    },
+    {
+      "path": "README.md",
+      "upstreamPath": "glib/README.md",
+      "gitBlob": "7a2493d5856e74f10cdb7c2d634202ad73296990",
+      "size": 3720
+    },
+    {
+      "path": "src/auto/alias.rs",
+      "upstreamPath": "glib/src/auto/alias.rs",
+      "gitBlob": "cd6abd2dfe9fcbdc30f7ca98d202420b60db9ced",
+      "size": 332
+    },
+    {
+      "path": "src/auto/checksum.rs",
+      "upstreamPath": "glib/src/auto/checksum.rs",
+      "gitBlob": "6e8dbeb66b16565dd1521eaa81b6fd69c076c405",
+      "size": 1368
+    },
+    {
+      "path": "src/auto/constants.rs",
+      "upstreamPath": "glib/src/auto/constants.rs",
+      "gitBlob": "02a07d153d3f79452e37411897f3e3bab25fb33d",
+      "size": 6264
+    },
+    {
+      "path": "src/auto/date_time.rs",
+      "upstreamPath": "glib/src/auto/date_time.rs",
+      "gitBlob": "da0c3fc08cd9bfc9c9e6c4441b6be4ad90b8a2ec",
+      "size": 16318
+    },
+    {
+      "path": "src/auto/enums.rs",
+      "upstreamPath": "glib/src/auto/enums.rs",
+      "gitBlob": "7b6706ef534b99e0bcddcd11c1989d3eef057c8e",
+      "size": 102752
+    },
+    {
+      "path": "src/auto/flags.rs",
+      "upstreamPath": "glib/src/auto/flags.rs",
+      "gitBlob": "0ff8baa8814cb4ca16327588e4a509c91ca1cf54",
+      "size": 19925
+    },
+    {
+      "path": "src/auto/functions.rs",
+      "upstreamPath": "glib/src/auto/functions.rs",
+      "gitBlob": "7d569ad0f0724bb774be0c4da9c0192dd8205bf8",
+      "size": 26604
+    },
+    {
+      "path": "src/auto/key_file.rs",
+      "upstreamPath": "glib/src/auto/key_file.rs",
+      "gitBlob": "8c7986eb9159013aea292b9b4bd2c7db71b0bd8e",
+      "size": 15314
+    },
+    {
+      "path": "src/auto/main_context.rs",
+      "upstreamPath": "glib/src/auto/main_context.rs",
+      "gitBlob": "cc4da920d7ffd4a397418606d9e01bcd22f021e1",
+      "size": 4947
+    },
+    {
+      "path": "src/auto/main_loop.rs",
+      "upstreamPath": "glib/src/auto/main_loop.rs",
+      "gitBlob": "64a27a1256ce951f51264f2ed2ab5b4ae51559e3",
+      "size": 1557
+    },
+    {
+      "path": "src/auto/markup_parse_context.rs",
+      "upstreamPath": "glib/src/auto/markup_parse_context.rs",
+      "gitBlob": "f071797ff5f6988ca6127128297c3e8a9380b5c9",
+      "size": 3567
+    },
+    {
+      "path": "src/auto/mod.rs",
+      "upstreamPath": "glib/src/auto/mod.rs",
+      "gitBlob": "bbe89c83a5228b7ee026f7a32bd198c385c3a66e",
+      "size": 4239
+    },
+    {
+      "path": "src/auto/source.rs",
+      "upstreamPath": "glib/src/auto/source.rs",
+      "gitBlob": "e1418ba8603a81a5e2ddf5be86f298781e9dca07",
+      "size": 4434
+    },
+    {
+      "path": "src/auto/time_zone.rs",
+      "upstreamPath": "glib/src/auto/time_zone.rs",
+      "gitBlob": "23d3cef96b7c48c1d6dfc9930fdbc7abbbb07d41",
+      "size": 3092
+    },
+    {
+      "path": "src/auto/uri.rs",
+      "upstreamPath": "glib/src/auto/uri.rs",
+      "gitBlob": "d1e2c37967d1ba9455226e3d54bab182b750b65a",
+      "size": 16960
+    },
+    {
+      "path": "src/auto/versions.txt",
+      "upstreamPath": "glib/src/auto/versions.txt",
+      "gitBlob": "8871d4e3efa1f4b8827a5ffecb6724d73fdffe4d",
+      "size": 132
+    },
+    {
+      "path": "src/boxed_any_object.rs",
+      "upstreamPath": "glib/src/boxed_any_object.rs",
+      "gitBlob": "ef7db2d7c8a9b1c6116092b16e92cce34a95d5d7",
+      "size": 6519
+    },
+    {
+      "path": "src/boxed_inline.rs",
+      "upstreamPath": "glib/src/boxed_inline.rs",
+      "gitBlob": "6cae416691df8a0d7cde182805d0525b6d4bc1cc",
+      "size": 29709
+    },
+    {
+      "path": "src/boxed.rs",
+      "upstreamPath": "glib/src/boxed.rs",
+      "gitBlob": "70d6a23fac1bfc763916fca755bc859449f0b6fb",
+      "size": 24430
+    },
+    {
+      "path": "src/bridged_logging.rs",
+      "upstreamPath": "glib/src/bridged_logging.rs",
+      "gitBlob": "4573c83a35fa4511aadfd178c281cae5c885c601",
+      "size": 13937
+    },
+    {
+      "path": "src/byte_array.rs",
+      "upstreamPath": "glib/src/byte_array.rs",
+      "gitBlob": "4c07547bbd78c9f7610f2e67bd9512e5730f7da5",
+      "size": 3991
+    },
+    {
+      "path": "src/bytes.rs",
+      "upstreamPath": "glib/src/bytes.rs",
+      "gitBlob": "8f02125a530f78f562754e1f073448289157d433",
+      "size": 7205
+    },
+    {
+      "path": "src/char.rs",
+      "upstreamPath": "glib/src/char.rs",
+      "gitBlob": "5bc46db79f2126963c1fca7cb13028b1de99e73e",
+      "size": 5624
+    },
+    {
+      "path": "src/checksum.rs",
+      "upstreamPath": "glib/src/checksum.rs",
+      "gitBlob": "02f681f9afd8aac8e51a928af8431774814c9e2d",
+      "size": 1987
+    },
+    {
+      "path": "src/clone.rs",
+      "upstreamPath": "glib/src/clone.rs",
+      "gitBlob": "598ca8bb4c97b64aa648bb2137b15a9f090834a0",
+      "size": 2073
+    },
+    {
+      "path": "src/closure.rs",
+      "upstreamPath": "glib/src/closure.rs",
+      "gitBlob": "789cbd0ae3d6dd65ff1d5020a785013bb4822c90",
+      "size": 14750
+    },
+    {
+      "path": "src/collections/list.rs",
+      "upstreamPath": "glib/src/collections/list.rs",
+      "gitBlob": "71bf92b3e933fa0f29a10f66f9053bef70d31dba",
+      "size": 27224
+    },
+    {
+      "path": "src/collections/mod.rs",
+      "upstreamPath": "glib/src/collections/mod.rs",
+      "gitBlob": "9f775cd9d00f6f1bcae16cee175c679c224f9db7",
+      "size": 275
+    },
+    {
+      "path": "src/collections/ptr_slice.rs",
+      "upstreamPath": "glib/src/collections/ptr_slice.rs",
+      "gitBlob": "e925d98413cb8562d5db9307d6e6491ba294c180",
+      "size": 41267
+    },
+    {
+      "path": "src/collections/slice.rs",
+      "upstreamPath": "glib/src/collections/slice.rs",
+      "gitBlob": "82ef541346edeabcd6f0aa2931688cde472b7f3b",
+      "size": 27475
+    },
+    {
+      "path": "src/collections/slist.rs",
+      "upstreamPath": "glib/src/collections/slist.rs",
+      "gitBlob": "70f013b202cdcf1d57f4ef341ac6321ce07ac8e2",
+      "size": 27177
+    },
+    {
+      "path": "src/collections/strv.rs",
+      "upstreamPath": "glib/src/collections/strv.rs",
+      "gitBlob": "85b288e23b0ea7d61ca2026dce7999bddc8b6d21",
+      "size": 44165
+    },
+    {
+      "path": "src/control_flow.rs",
+      "upstreamPath": "glib/src/control_flow.rs",
+      "gitBlob": "6888d6219bd45b0ecc05d5cb089e5a9293f338bd",
+      "size": 2480
+    },
+    {
+      "path": "src/convert.rs",
+      "upstreamPath": "glib/src/convert.rs",
+      "gitBlob": "94e769d4cf382c374cc7034d364bf8856e85c2df",
+      "size": 13755
+    },
+    {
+      "path": "src/date_time.rs",
+      "upstreamPath": "glib/src/date_time.rs",
+      "gitBlob": "912c91508130dfa502921a06b4cfb6e05e47ad65",
+      "size": 366
+    },
+    {
+      "path": "src/date.rs",
+      "upstreamPath": "glib/src/date.rs",
+      "gitBlob": "60a90ef445ee8fad6dedb749288c497de564a82a",
+      "size": 13749
+    },
+    {
+      "path": "src/enums.rs",
+      "upstreamPath": "glib/src/enums.rs",
+      "gitBlob": "2c59236eea62a546f970466ed6585f419b8e8a2c",
+      "size": 30879
+    },
+    {
+      "path": "src/error.rs",
+      "upstreamPath": "glib/src/error.rs",
+      "gitBlob": "255aa2e7b2423412c805f9a97bcfa53fc756f5c0",
+      "size": 9227
+    },
+    {
+      "path": "src/exit_code.rs",
+      "upstreamPath": "glib/src/exit_code.rs",
+      "gitBlob": "4a275c9263bef6d8af7d0c1eebd5b38faa71f5c4",
+      "size": 680
+    },
+    {
+      "path": "src/future_with_timeout.rs",
+      "upstreamPath": "glib/src/future_with_timeout.rs",
+      "gitBlob": "92cf50f5aee0842e18febe5b74343bb5e3a8cae2",
+      "size": 2950
+    },
+    {
+      "path": "src/gobject/auto/binding_group.rs",
+      "upstreamPath": "glib/src/gobject/auto/binding_group.rs",
+      "gitBlob": "72137e55670feac7ae74942498317c889e45b766",
+      "size": 2647
+    },
+    {
+      "path": "src/gobject/auto/binding.rs",
+      "upstreamPath": "glib/src/gobject/auto/binding.rs",
+      "gitBlob": "af6bcaf0a8eb68a4acce2b6323205b5a4dca6cc5",
+      "size": 1579
+    },
+    {
+      "path": "src/gobject/auto/flags.rs",
+      "upstreamPath": "glib/src/gobject/auto/flags.rs",
+      "gitBlob": "22ea9c1a68d8c0fcbd715e66590a392ca3cd624f",
+      "size": 4598
+    },
+    {
+      "path": "src/gobject/auto/mod.rs",
+      "upstreamPath": "glib/src/gobject/auto/mod.rs",
+      "gitBlob": "dbd122a8a0b56f32ff47dcbd448f74fed6e3987e",
+      "size": 687
+    },
+    {
+      "path": "src/gobject/auto/signal_group.rs",
+      "upstreamPath": "glib/src/gobject/auto/signal_group.rs",
+      "gitBlob": "1a8a370811323203422a945848971e14353ae54f",
+      "size": 2045
+    },
+    {
+      "path": "src/gobject/binding_group.rs",
+      "upstreamPath": "glib/src/gobject/binding_group.rs",
+      "gitBlob": "78cba7d245dc11ce052f6e429bfa750eaca89e7f",
+      "size": 16670
+    },
+    {
+      "path": "src/gobject/binding.rs",
+      "upstreamPath": "glib/src/gobject/binding.rs",
+      "gitBlob": "01c0b8f6f30f1c7da6c7b8cfbb03a4a9b1ce53ce",
+      "size": 9508
+    },
+    {
+      "path": "src/gobject/flags.rs",
+      "upstreamPath": "glib/src/gobject/flags.rs",
+      "gitBlob": "a2f4c95e509323cd88b315febbaac5bf9a725590",
+      "size": 1909
+    },
+    {
+      "path": "src/gobject/mod.rs",
+      "upstreamPath": "glib/src/gobject/mod.rs",
+      "gitBlob": "274451c1b67192ce7d745cb4a56f80df170e9a5c",
+      "size": 573
+    },
+    {
+      "path": "src/gobject/signal_group.rs",
+      "upstreamPath": "glib/src/gobject/signal_group.rs",
+      "gitBlob": "f9fb063676ecf89e6bb0a672f16097db1cd89ecf",
+      "size": 8181
+    },
+    {
+      "path": "src/gstring_builder.rs",
+      "upstreamPath": "glib/src/gstring_builder.rs",
+      "gitBlob": "e08618d636789ddf7ac03b8789c5a476c2ff928e",
+      "size": 9407
+    },
+    {
+      "path": "src/gstring.rs",
+      "upstreamPath": "glib/src/gstring.rs",
+      "gitBlob": "1d1bc95b5c9e9f52364e75c2cd3d3f38affd912f",
+      "size": 73945
+    },
+    {
+      "path": "src/key_file.rs",
+      "upstreamPath": "glib/src/key_file.rs",
+      "gitBlob": "54c9eb16c1f83a3084b65ebc83883ad2c310ec1d",
+      "size": 9335
+    },
+    {
+      "path": "src/lib.rs",
+      "upstreamPath": "glib/src/lib.rs",
+      "gitBlob": "af61bcb6d4111a9a04960cb92755fbe0937f4f83",
+      "size": 6621
+    },
+    {
+      "path": "src/log.rs",
+      "upstreamPath": "glib/src/log.rs",
+      "gitBlob": "276d736c9d0fdbdec0d9bb7a0539934e1ceca275",
+      "size": 34213
+    },
+    {
+      "path": "src/main_context_channel.rs",
+      "upstreamPath": "glib/src/main_context_channel.rs",
+      "gitBlob": "a3da242d81f1b8a0df27a3b49714cd54afad3883",
+      "size": 30419
+    },
+    {
+      "path": "src/main_context_futures.rs",
+      "upstreamPath": "glib/src/main_context_futures.rs",
+      "gitBlob": "04d3e92821647bc6f81900cb967a42951b1858c2",
+      "size": 26537
+    },
+    {
+      "path": "src/main_context.rs",
+      "upstreamPath": "glib/src/main_context.rs",
+      "gitBlob": "35000992b3dc63b69159d194afd8b45167bffc73",
+      "size": 9513
+    },
+    {
+      "path": "src/manual_functions.rs",
+      "upstreamPath": "glib/src/manual_functions.rs",
+      "gitBlob": "7d81ba9d94d303631ce9da6cc6892c1f1b39db50",
+      "size": 9914
+    },
+    {
+      "path": "src/object.rs",
+      "upstreamPath": "glib/src/object.rs",
+      "gitBlob": "bb799bab304bfa081ec28a8dc4e95a512187c024",
+      "size": 160705
+    },
+    {
+      "path": "src/param_spec.rs",
+      "upstreamPath": "glib/src/param_spec.rs",
+      "gitBlob": "890b0b033c422eb57c0483ed5836d556a72ea943",
+      "size": 69707
+    },
+    {
+      "path": "src/prelude.rs",
+      "upstreamPath": "glib/src/prelude.rs",
+      "gitBlob": "596442b2f40d0763437aa318c1f11f0f78e7f437",
+      "size": 374
+    },
+    {
+      "path": "src/property.rs",
+      "upstreamPath": "glib/src/property.rs",
+      "gitBlob": "e6db701abc6317c849102521837695eeef1bf45f",
+      "size": 8863
+    },
+    {
+      "path": "src/quark.rs",
+      "upstreamPath": "glib/src/quark.rs",
+      "gitBlob": "37dbae983730c8030de9a2b2b0ec6e942535061a",
+      "size": 2514
+    },
+    {
+      "path": "src/shared.rs",
+      "upstreamPath": "glib/src/shared.rs",
+      "gitBlob": "f0d00463a354107d032be9286a4240c954fa428b",
+      "size": 23665
+    },
+    {
+      "path": "src/signal.rs",
+      "upstreamPath": "glib/src/signal.rs",
+      "gitBlob": "75d986e09d93e95703359a83ffe63bdc0e3e5f25",
+      "size": 5933
+    },
+    {
+      "path": "src/source_futures.rs",
+      "upstreamPath": "glib/src/source_futures.rs",
+      "gitBlob": "f483301813b7c921a4403e42c3a68083aa0df414",
+      "size": 15661
+    },
+    {
+      "path": "src/source.rs",
+      "upstreamPath": "glib/src/source.rs",
+      "gitBlob": "04704f8423516239c68569311b6838023aab048e",
+      "size": 40158
+    },
+    {
+      "path": "src/subclass/basic.rs",
+      "upstreamPath": "glib/src/subclass/basic.rs",
+      "gitBlob": "7fee28079bd58dd2d12e981e52b90b467e9f2cc0",
+      "size": 2092
+    },
+    {
+      "path": "src/subclass/boxed.rs",
+      "upstreamPath": "glib/src/subclass/boxed.rs",
+      "gitBlob": "2381362c2c4b6523575c1ae48c79f32f98914130",
+      "size": 3346
+    },
+    {
+      "path": "src/subclass/interface.rs",
+      "upstreamPath": "glib/src/subclass/interface.rs",
+      "gitBlob": "b87bfaebc1f15f115622a05723b372bbedb2def8",
+      "size": 7121
+    },
+    {
+      "path": "src/subclass/mod.rs",
+      "upstreamPath": "glib/src/subclass/mod.rs",
+      "gitBlob": "8fd16ad7dbc58b7ee49ffb1cffdc3cda3dc0968f",
+      "size": 9355
+    },
+    {
+      "path": "src/subclass/object_impl_ref.rs",
+      "upstreamPath": "glib/src/subclass/object_impl_ref.rs",
+      "gitBlob": "6a753465903033d0acb3d5a83c216dda1de9fcd4",
+      "size": 4279
+    },
+    {
+      "path": "src/subclass/object.rs",
+      "upstreamPath": "glib/src/subclass/object.rs",
+      "gitBlob": "ef84967c43f1227e29159d822eec56e838d8f095",
+      "size": 24414
+    },
+    {
+      "path": "src/subclass/shared.rs",
+      "upstreamPath": "glib/src/subclass/shared.rs",
+      "gitBlob": "acd459c6249fa47d5260b4f8a9fe3013b1782d45",
+      "size": 9284
+    },
+    {
+      "path": "src/subclass/signal.rs",
+      "upstreamPath": "glib/src/subclass/signal.rs",
+      "gitBlob": "2ea40cbb8f1395a86f127ef6bce66b9f0e7bc9fc",
+      "size": 21430
+    },
+    {
+      "path": "src/subclass/types.rs",
+      "upstreamPath": "glib/src/subclass/types.rs",
+      "gitBlob": "7e1cdd566e88f421a6451f4ce8ac2496084d1ec9",
+      "size": 38914
+    },
+    {
+      "path": "src/thread_guard.rs",
+      "upstreamPath": "glib/src/thread_guard.rs",
+      "gitBlob": "f3b4c617507654e6ee03ae1aaf38c42eff45f980",
+      "size": 3336
+    },
+    {
+      "path": "src/thread_pool.rs",
+      "upstreamPath": "glib/src/thread_pool.rs",
+      "gitBlob": "c30970853559f7515d5ef7cc02f355ed629c3fc9",
+      "size": 7750
+    },
+    {
+      "path": "src/time_span.rs",
+      "upstreamPath": "glib/src/time_span.rs",
+      "gitBlob": "082c63a391cb4fa5b0ca49d8633267163d6d77cc",
+      "size": 2734
+    },
+    {
+      "path": "src/time_zone.rs",
+      "upstreamPath": "glib/src/time_zone.rs",
+      "gitBlob": "ee0f10d25b7a899d6f3424bfa059464906ce881a",
+      "size": 460
+    },
+    {
+      "path": "src/translate.rs",
+      "upstreamPath": "glib/src/translate.rs",
+      "gitBlob": "11cfec05f01bc90b7ace7d60a688c6d8bfdc9f10",
+      "size": 94681
+    },
+    {
+      "path": "src/types.rs",
+      "upstreamPath": "glib/src/types.rs",
+      "gitBlob": "4cfa291e8b3a6b09a7d7d90265b1c543d82bb14f",
+      "size": 18400
+    },
+    {
+      "path": "src/unichar.rs",
+      "upstreamPath": "glib/src/unichar.rs",
+      "gitBlob": "435744e11fcacbf4ae6ff76035ae9f9bdda6acb4",
+      "size": 7864
+    },
+    {
+      "path": "src/unicollate.rs",
+      "upstreamPath": "glib/src/unicollate.rs",
+      "gitBlob": "0f94554d3508c480390c52ad9b18e080db8e228a",
+      "size": 2752
+    },
+    {
+      "path": "src/utils.rs",
+      "upstreamPath": "glib/src/utils.rs",
+      "gitBlob": "59e46be9e5906ba66a9390f632c1329f2e8ce5c0",
+      "size": 8574
+    },
+    {
+      "path": "src/value_array.rs",
+      "upstreamPath": "glib/src/value_array.rs",
+      "gitBlob": "081985aeee7510a6014b702e50735411e03c9231",
+      "size": 7064
+    },
+    {
+      "path": "src/value.rs",
+      "upstreamPath": "glib/src/value.rs",
+      "gitBlob": "8886db1ed283efc630e4bd961935c1426606894c",
+      "size": 45287
+    },
+    {
+      "path": "src/variant_dict.rs",
+      "upstreamPath": "glib/src/variant_dict.rs",
+      "gitBlob": "a9dfd840e16435f3dade8909eb4bf1dd8c409d33",
+      "size": 10269
+    },
+    {
+      "path": "src/variant_iter.rs",
+      "upstreamPath": "glib/src/variant_iter.rs",
+      "gitBlob": "b4061728a4411c660fce776da67cdc4bc637e757",
+      "size": 9874
+    },
+    {
+      "path": "src/variant_type.rs",
+      "upstreamPath": "glib/src/variant_type.rs",
+      "gitBlob": "ebd53c2278f03041691084d6ef51170df09af8eb",
+      "size": 33192
+    },
+    {
+      "path": "src/variant.rs",
+      "upstreamPath": "glib/src/variant.rs",
+      "gitBlob": "7793e804d23b268088ae688e4aff101c03dfd7ed",
+      "size": 77401
+    },
+    {
+      "path": "src/win32.rs",
+      "upstreamPath": "glib/src/win32.rs",
+      "gitBlob": "4e2984c56e77f7c2beb1b097318bc787fe81117a",
+      "size": 3385
+    },
+    {
+      "path": "src/wrapper.rs",
+      "upstreamPath": "glib/src/wrapper.rs",
+      "gitBlob": "1ad0610cf28c03ed8ef38b8f9fc1aff99a8519e2",
+      "size": 14934
+    },
+    {
+      "path": "tests/check_gir.rs",
+      "upstreamPath": "glib/tests/check_gir.rs",
+      "gitBlob": "2ccf5ff05bcfa33d69952bdecf001b5b611870cc",
+      "size": 230
+    },
+    {
+      "path": "tests/clone.rs",
+      "upstreamPath": "glib/tests/clone.rs",
+      "gitBlob": "ee6ccf296f064a8b52c6363cd5c7511a4ea38a1d",
+      "size": 19802
+    },
+    {
+      "path": "tests/derive.rs",
+      "upstreamPath": "glib/tests/derive.rs",
+      "gitBlob": "80a7a8901404f5c3fdb7bec82ff05767a856a241",
+      "size": 679
+    },
+    {
+      "path": "tests/log.rs",
+      "upstreamPath": "glib/tests/log.rs",
+      "gitBlob": "194cba87b9ac1e6b332e44a72e62664bbf3c631d",
+      "size": 3681
+    },
+    {
+      "path": "tests/print.rs",
+      "upstreamPath": "glib/tests/print.rs",
+      "gitBlob": "0cbcee2d250cc70dd5148250e2776af2a61e2790",
+      "size": 1713
+    },
+    {
+      "path": "tests/structured_log.rs",
+      "upstreamPath": "glib/tests/structured_log.rs",
+      "gitBlob": "0ffd5bf03b9bee5f60bbc57f57b159945956e815",
+      "size": 4485
+    },
+    {
+      "path": "tests/subclass_compiletest.rs",
+      "upstreamPath": "glib/tests/subclass_compiletest.rs",
+      "gitBlob": "509933ce1249ffe07ecdd5cfe7dddc0c7893b2fe",
+      "size": 590
+    },
+    {
+      "path": "tests/subclass_compiletest/01-auto-send-sync.rs",
+      "upstreamPath": "glib/tests/subclass_compiletest/01-auto-send-sync.rs",
+      "gitBlob": "a6288641ebbee09c8fff5cbf0506b8b84c1fd21a",
+      "size": 615
+    },
+    {
+      "path": "tests/subclass_compiletest/02-no-auto-send-sync.rs",
+      "upstreamPath": "glib/tests/subclass_compiletest/02-no-auto-send-sync.rs",
+      "gitBlob": "19e9779665d4eacdcd47af895ef6f6f614824b62",
+      "size": 645
+    },
+    {
+      "path": "tests/subclass_compiletest/02-no-auto-send-sync.stderr",
+      "upstreamPath": "glib/tests/subclass_compiletest/02-no-auto-send-sync.stderr",
+      "gitBlob": "9dfe0ca30881b27a240afed757b2357e53059567",
+      "size": 1266
+    },
+    {
+      "path": "tests/subclass_compiletest/03-object-no-auto-send-sync.rs",
+      "upstreamPath": "glib/tests/subclass_compiletest/03-object-no-auto-send-sync.rs",
+      "gitBlob": "901fb8d81ecebc69013967e03f630ddd94d98377",
+      "size": 125
+    },
+    {
+      "path": "tests/subclass_compiletest/03-object-no-auto-send-sync.stderr",
+      "upstreamPath": "glib/tests/subclass_compiletest/03-object-no-auto-send-sync.stderr",
+      "gitBlob": "4fc7bdc3967f66ac5cd762ef4060987c3199d23b",
+      "size": 1811
+    },
+    {
+      "path": "tests/subclass_compiletest/04-auto-send-sync-with-send-sync-parent.rs",
+      "upstreamPath": "glib/tests/subclass_compiletest/04-auto-send-sync-with-send-sync-parent.rs",
+      "gitBlob": "f3c38aebfe51c80c3374d0736aa629fa87d12639",
+      "size": 1489
+    },
+    {
+      "path": "tests/subclass_compiletest/05-no-auto-send-sync-with-non-send-sync-parent.rs",
+      "upstreamPath": "glib/tests/subclass_compiletest/05-no-auto-send-sync-with-non-send-sync-parent.rs",
+      "gitBlob": "836f225b82d1d923ee66d0e3663570ba48243305",
+      "size": 1457
+    },
+    {
+      "path": "tests/subclass_compiletest/05-no-auto-send-sync-with-non-send-sync-parent.stderr",
+      "upstreamPath": "glib/tests/subclass_compiletest/05-no-auto-send-sync-with-non-send-sync-parent.stderr",
+      "gitBlob": "b64598f260e3e15d04556033875d39f3778c54d6",
+      "size": 1775
+    },
+    {
+      "path": "tests/subclass_compiletest/06-no-auto-send-sync-with-non-send-sync-ffi-parent.rs",
+      "upstreamPath": "glib/tests/subclass_compiletest/06-no-auto-send-sync-with-non-send-sync-ffi-parent.rs",
+      "gitBlob": "e8e9338efa61ec293674d167bfac97489a921eb6",
+      "size": 1218
+    },
+    {
+      "path": "tests/subclass_compiletest/06-no-auto-send-sync-with-non-send-sync-ffi-parent.stderr",
+      "upstreamPath": "glib/tests/subclass_compiletest/06-no-auto-send-sync-with-non-send-sync-ffi-parent.stderr",
+      "gitBlob": "38fa770a917de42f2e5ec3c90714614901d16fc0",
+      "size": 2887
+    },
+    {
+      "path": "tests/value.rs",
+      "upstreamPath": "glib/tests/value.rs",
+      "gitBlob": "53a9eac99b9f8c422c9da3ea060d7d0c157a505a",
+      "size": 1707
+    }
+  ],
+  "fileNormalizations": [
+    {
+      "path": "LICENSE",
+      "before": "SOFTWARE.\n\n",
+      "after": "SOFTWARE.\n",
+      "reason": "Remove one extra blank line at EOF to retain the repository whitespace gate; license text is unchanged."
+    }
+  ]
+}

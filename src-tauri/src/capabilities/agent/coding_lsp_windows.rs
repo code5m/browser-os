@@ -4,6 +4,9 @@
 //! The host workspace is not mounted or writable by the analyzer.
 #![cfg(windows)]
 
+#[path = "windows_lsp_runtime.rs"]
+mod runtime_bundle;
+
 use super::windows_sandbox::{
     send_bounded, OperationBudget, SandboxChild, SandboxProcess, SandboxProfile,
 };
@@ -346,7 +349,7 @@ fn rustup_home_with_budget(operation: &OperationBudget) -> Result<Option<PathBuf
         Err(_) => Err("LSP_RUSTUP_SETTINGS_UNREADABLE".into()),
     }
 }
-fn rustup_analyzer_binary_with_budget(
+fn rustup_compiler_binary_with_budget(
     rustup_home: &Path,
     operation: &OperationBudget,
 ) -> Result<PathBuf, String> {
@@ -382,26 +385,43 @@ fn rustup_analyzer_binary_with_budget(
         .join("toolchains")
         .join(&toolchain)
         .join("bin")
-        .join("rust-analyzer.exe");
-    if !candidate.is_file() {
-        return Err("LSP_RUST_ANALYZER_TOOLCHAIN_MISSING".into());
-    }
-    no_reparse_with_budget(&candidate, operation)?;
-    candidate
-        .canonicalize()
-        .map_err(|_| "LSP_RUST_ANALYZER_TOOLCHAIN_MISSING".into())
+        .join("rustc.exe");
+    rustc_cfg_peer_with_budget(&candidate, operation).map_err(|error| {
+        if error == "LSP_RUSTC_CFG_PEER_MISSING" {
+            "LSP_RUSTC_TOOLCHAIN_MISSING".into()
+        } else {
+            error
+        }
+    })
 }
-fn runtime() -> Result<PathBuf, String> {
+
+struct SelectedRuntime {
+    analyzer: runtime_bundle::VerifiedBundle,
+    rustc: PinnedReadFile,
+}
+
+fn runtime() -> Result<SelectedRuntime, String> {
     runtime_with_budget(&new_operation(30))
 }
-fn runtime_with_budget(operation: &OperationBudget) -> Result<PathBuf, String> {
+
+fn runtime_with_budget(operation: &OperationBudget) -> Result<SelectedRuntime, String> {
     check_operation(operation)?;
-    // Prefer the installed toolchain image. Staging a rustup shim, or staging
-    // the shim's cargo/rustc peers, cannot work inside the sandbox.
+    let compiler = installed_compiler_with_budget(operation)?;
+    let rustc = PinnedReadFile::open(&compiler, operation)
+        .map_err(|_| "LSP_RUSTC_CFG_PEER_UNSAFE")?;
+    let analyzer = runtime_bundle::open(operation)?;
+    check_operation(operation)?;
+    Ok(SelectedRuntime { analyzer, rustc })
+}
+
+fn installed_compiler_with_budget(operation: &OperationBudget) -> Result<PathBuf, String> {
+    check_operation(operation)?;
+    // Only rustc is selected from the installed toolchain. The analyzer must
+    // come from the verified BrowserOS bundle, never a rustup shim or PATH.
     let missing_toolchain = if let Some(home) = rustup_home_with_budget(operation)? {
-        match rustup_analyzer_binary_with_budget(&home, operation) {
-            Ok(analyzer) => return Ok(analyzer),
-            Err(error) if error == "LSP_RUST_ANALYZER_TOOLCHAIN_MISSING" => Some(error),
+        match rustup_compiler_binary_with_budget(&home, operation) {
+            Ok(compiler) => return Ok(compiler),
+            Err(error) if error == "LSP_RUSTC_TOOLCHAIN_MISSING" => Some(error),
             // Invalid or unreadable configured toolchains must not silently
             // fall back to an unrelated executable later on PATH.
             Err(error) => return Err(error),
@@ -418,8 +438,8 @@ fn runtime_with_budget(operation: &OperationBudget) -> Result<PathBuf, String> {
             if index >= 128 {
                 return Err("LSP_RUNTIME_SEARCH_LIMIT".into());
             }
-            let candidate = directory.join("rust-analyzer.exe");
-            if !candidate.is_file() {
+            let candidate = directory.join("rustc.exe");
+            if !candidate.exists() {
                 continue;
             }
             // A shim directory also ships rustup.exe; a real toolchain bin
@@ -427,17 +447,14 @@ fn runtime_with_budget(operation: &OperationBudget) -> Result<PathBuf, String> {
             if directory.join("rustup.exe").is_file() {
                 continue;
             }
-            no_reparse_with_budget(&candidate, operation)?;
-            return candidate
-                .canonicalize()
-                .map_err(|_| "LSP_RUST_ANALYZER_NOT_FOUND".into());
+            return rustc_cfg_peer_with_budget(&candidate, operation);
         }
     }
-    Err(missing_toolchain.unwrap_or_else(|| "LSP_RUST_ANALYZER_NOT_FOUND".into()))
+    Err(missing_toolchain.unwrap_or_else(|| "LSP_RUSTC_CFG_PEER_MISSING".into()))
 }
 
-/// A real rustc beside the selected analyzer is required for cfg/data-layout
-/// probes. Missing, reparse or non-file peers are explicit preflight failures.
+/// A real rustc in the selected installed toolchain is required for cfg/data-layout
+/// probes. Missing, reparse or non-file entries are explicit preflight failures.
 fn rustc_cfg_peer(analyzer: &Path) -> Result<PathBuf, String> {
     rustc_cfg_peer_with_budget(analyzer, &new_operation(30))
 }
@@ -460,12 +477,11 @@ fn rustc_cfg_peer_with_budget(
 
 fn rustc_cfg_environment(
     profile: &SandboxProfile,
-    analyzer: &Path,
+    selected: &SelectedRuntime,
 ) -> Result<Vec<(String, String)>, String> {
     check_operation(profile.budget())?;
-    let peer = rustc_cfg_peer_with_budget(analyzer, profile.budget())?;
     let staged = profile
-        .stage_runtime_peer(&peer)
+        .stage_runtime_peer(selected.rustc.path())
         .map_err(|error| format!("LSP_RUSTC_CFG_STAGE_FAILED:{error}"))?;
     check_operation(profile.budget())?;
     let path = staged.to_str().ok_or("LSP_RUSTC_CFG_PATH_NOT_UNICODE")?;
@@ -1373,7 +1389,7 @@ impl Session {
         root: &Path,
         documents: &[(String, String)],
         operation: OperationBudget,
-        selected_server: Option<PathBuf>,
+        selected_server: Option<SelectedRuntime>,
     ) -> Result<Self, String> {
         check_operation(&operation)?;
         no_reparse_with_budget(root, &operation)?;
@@ -1434,7 +1450,7 @@ impl Session {
         profile: SandboxProfile,
         snapshot: PathBuf,
         operation: OperationBudget,
-        selected_server: Option<PathBuf>,
+        selected_server: Option<SelectedRuntime>,
     ) -> Result<Self, String> {
         check_operation(&operation)?;
         let server = match selected_server {
@@ -1451,7 +1467,7 @@ impl Session {
         // initialization options to disable proc macros and check-on-save.
         check_operation(&operation)?;
         let child = profile
-            .spawn(&server, &[], &environment, &state)
+            .spawn_standalone(server.analyzer.path(), &[], &environment, &state)
             .map_err(|error| {
                 #[cfg(test)]
                 {
@@ -1881,7 +1897,7 @@ fn one_shot_document_request(
         let requested = Path::new(selected)
             .canonicalize()
             .map_err(|_| "LSP_SERVER_UNAVAILABLE")?;
-        if requested != real {
+        if requested != real.analyzer.path() {
             return Err("LSP_SERVER_NOT_TRUSTED_PROFILE".into());
         }
         check_operation(&operation)?;
@@ -2046,14 +2062,11 @@ pub fn execute(root: &Path, request: Value) -> Result<Value, String> {
             // created/deleted a Windows AppContainer OS profile on EVERY call.
             // Report prerequisites separately from native launch verification.
             let sandbox_available = super::windows_sandbox::sandbox_prerequisites_available();
-            let toolchain = runtime_with_budget(&operation).and_then(|analyzer| {
-                rustc_cfg_peer_with_budget(&analyzer, &operation)?;
-                Ok(analyzer)
-            });
+            let toolchain = runtime_with_budget(&operation);
             Ok(json!({
                 "profiles":[{"id":"rust_analyzer","name":"Rust Analyzer","language":"rust",
                     "available":toolchain.is_ok(),"command":"rust-analyzer.exe",
-                    "path":toolchain.as_ref().ok().map(|path| path.to_string_lossy().into_owned()),
+                    "path":toolchain.as_ref().ok().map(|selected| selected.analyzer.path().to_string_lossy().into_owned()),
                     "unavailable_reason":toolchain.as_ref().err()}],
                 "toolchain":lsp_toolchain_contract(),
                 "sandbox_available":sandbox_available,
@@ -2488,7 +2501,7 @@ mod tests {
                 return;
             }
         };
-        let bin = match server.parent() {
+        let bin = match server.rustc.path().parent() {
             Some(parent) => parent.to_path_buf(),
             None => {
                 eprintln!("::error::LSP_CARGO_PROBE_{label} TOOLCHAIN_BIN");
@@ -2728,9 +2741,12 @@ mod tests {
         );
         let state_profile = SandboxProfile::create().expect("state read profile");
         let state = state_profile.state_dir().expect("writable lowbox state");
-        let state_file = state.join("state-read-control.txt");
-        fs::write(&state_file, b"__BOS_LOWBOX_STATE_READ_OK__")
-            .expect("write sandbox state fixture");
+        let state_file = state_profile
+            .stage_state_file(
+                std::ffi::OsStr::new("state-read-control.txt"),
+                b"__BOS_LOWBOX_STATE_READ_OK__",
+            )
+            .expect("write sandbox state fixture with the profile owner and DACL");
         let (state_exit, state_out, state_error) = run_private_command_in_profile(
             state_profile,
             format!("type \"{}\"", plain_path_for_shell(&state_file)),
@@ -3066,7 +3082,7 @@ mod tests {
         .unwrap();
         fs::write(
             root.join("src/lib.rs"),
-            "pub fn helper() -> i32 { 42 }\npub fn fixture() -> i32 { helper() }\nmod broken;\n",
+            "#[cfg(all(windows, target_os = \"windows\", target_pointer_width = \"64\"))] pub fn helper() -> i32 { 42 }\npub fn fixture() -> i32 { helper() }\nmod broken;\n",
         )
         .unwrap();
         fs::write(root.join("src/broken.rs"), "pub fn broken( {\n").unwrap();
@@ -3107,8 +3123,10 @@ mod tests {
                 && symbols["result"].to_string().contains("helper"),
             "symbols missing local Rust functions: {symbols}"
         );
-        // A definition and hover on a local function must work without a
-        // Cargo build or sysroot discovery. The returned file URI must be
+        // The cfg-gated helper must resolve using real rustc metadata inside
+        // this AppContainer, without a Cargo build or sysroot discovery.
+        // A failed cfg probe cannot pass as a no-metadata language service.
+        // The returned file URI must be
         // remapped from private snapshot to the approved host workspace.
         let line = "pub fn fixture() -> i32 { helper() }";
         let character = line.find("helper").expect("fixture call position") as u64 + 2;

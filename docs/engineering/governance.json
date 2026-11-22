@@ -31,7 +31,7 @@
       "id": "windows-linux-v2-experimental",
       "path": ".github/workflows/windows-linux-v2-experimental.yml",
       "role": "experimental_platform_feedback",
-      "scope": "reusable workflow_call only; registered Developer Feedback dispatch on explicit selected ref with matching source_sha; host binary, host core and Agent Foundation production features checked on Windows/Linux; manifest-required names must enumerate and pass individually; Windows execution uses atomic Job supervision and verified empty accounting; source wiring alone is NOT_RUN"
+      "scope": "reusable workflow_call only; registered Developer Feedback dispatch on explicit selected ref with matching source_sha; host binary, host core and Agent Foundation production features checked on Windows/Linux; manifest-required names must enumerate and pass individually; Windows execution uses atomic Job supervision and verified empty accounting; source wiring alone is NOT_RUN; Windows Rust LSP is built from pinned source and checked as a bundled payload; optional NSIS installation verifies installed bytes and retains GUI_PENDING"
     },
     {
       "id": "ui-safety",
@@ -43,7 +43,7 @@
       "id": "full-validation",
       "path": ".github/workflows/capability-v2-validation.yml",
       "role": "blocking_quality_gate",
-      "scope": "master and ready-PR fast/static validation, including complete managed workbench UI; optional rust-tests/packaged-gui/packaged-resource by manual dispatch, PR label or repository variable; SHA-bound Debian artifact from the selected package build; no native compile by default"
+      "scope": "master and ready-PR fast/static validation, including complete managed workbench UI; optional rust-tests/packaged-gui/packaged-resource by manual dispatch, PR label or repository variable; SHA-bound Debian artifact from the selected package build; no native compile by default; packaged modes also execute five optimized GLib backport behavior tests without a second application build"
     },
     {
       "id": "developer-feedback",
@@ -73,7 +73,7 @@
       "id": "supply-chain",
       "path": ".github/workflows/supply-chain-assurance.yml",
       "role": "blocking_supply_chain_gate",
-      "scope": "all branch pushes + PR to master; full Node dependency audit including build tools, Rust audit and Node/Rust SBOM"
+      "scope": "all branch pushes + PR to master; full Node dependency audit including build tools, Rust audit and Node/Rust SBOM; source-pinned GLib backport provenance plus registry-origin advisory projection and bundled Rust LSP lockfile audit"
     },
     {
       "id": "mysql-runtime-e2e",
@@ -181,7 +181,9 @@
       "entrypoint": "cargo fmt/check/test",
       "paths": [
         "src-tauri/Cargo.toml",
-        "tauri-browser-tabs/Cargo.toml"
+        "tauri-browser-tabs/Cargo.toml",
+        "scripts/check-vendored-glib.mjs",
+        "tauri-browser-tabs/crates/tauri-plugin-browser-tabs/tests/glib_variant_iter.rs"
       ]
     },
     {
@@ -264,7 +266,11 @@
         ".github/workflows/supply-chain-assurance.yml",
         "scripts/generate-sbom.mjs",
         "package-lock.json",
-        "src-tauri/Cargo.lock"
+        "src-tauri/Cargo.lock",
+        "scripts/check-vendored-glib.mjs",
+        "src-tauri/vendor/glib/BROWSEROS-SOURCE.json",
+        "vendor/windows-rust-analyzer/source.json",
+        "vendor/windows-rust-analyzer/Cargo.lock"
       ]
     },
     {
@@ -331,7 +337,11 @@
         "scripts/windows-native-test-supervisor.cs",
         "scripts/windows-native-required-tests.json",
         "tests/check-windows-linux-v2-source-contract.mjs",
-        "scripts/check-native-required-results.py"
+        "scripts/check-native-required-results.py",
+        "scripts/build-windows-lsp-runtime.ps1",
+        "vendor/windows-rust-analyzer/source.json",
+        "src-tauri/tauri.windows.conf.json",
+        "scripts/windows/verify-installed-browseros.ps1"
       ]
     }
   ],

@@ -3,6 +3,7 @@
 
 The default PR/push path must never compile native Rust or build/install
 packages. Exactly one optional native job owns Rust tests OR Release packaging.
+Packaged modes also execute a bounded optimized dependency regression.
 The exact-commit frontend archive is shared rather than recompiled.
 """
 from pathlib import Path
@@ -58,7 +59,11 @@ def check() -> None:
         require(forbidden not in validate, f"mandatory validate job runs native build: {forbidden}")
 
     require(native.count("cargo test --locked --manifest-path src-tauri/Cargo.toml") == 1,
-            "Rust tests must have exactly one native cargo compilation command")
+            "Rust tests must have exactly one application cargo compilation command")
+    require(native.count("cargo test --locked --release --manifest-path src-tauri/Cargo.toml -p tauri-plugin-browser-tabs --test glib_variant_iter") == 1,
+            "packaged modes must exercise the GLib backport with optimized code")
+    require("check-vendored-glib.mjs --check-regression-log" in native,
+            "optimized dependency tests need executed-name and release-profile evidence")
     require("cargo check --manifest-path" not in native,
             "duplicate Rust cargo check plus test compilation")
     require(native.count("scripts/verify-installed-client.sh --install --prebuilt-frontend") == 2,
@@ -90,7 +95,7 @@ def check() -> None:
     require("\n  schedule:\n" not in perf and "\n  workflow_dispatch:\n" in perf,
             "sustained benchmark still runs on a default schedule")
 
-    print("CI_OPTIONAL_NATIVE_POLICY=PASS; native default OFF; one compile path; SHA-bound reuse")
+    print("CI_OPTIONAL_NATIVE_POLICY=PASS; native default OFF; one application build path; optimized dependency regression; SHA-bound reuse")
 
 
 if __name__ == "__main__":

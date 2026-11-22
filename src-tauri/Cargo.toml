@@ -103,3 +103,7 @@ strip = true
 
 [dev-dependencies]
 tokio = { version = "1.53.3", features = ["macros", "rt-multi-thread"] }
+
+# Exact GLib 0.18.5 soundness backport; see vendor/glib/BROWSEROS-PATCHES.md.
+[patch.crates-io]
+glib = { path = "vendor/glib" }

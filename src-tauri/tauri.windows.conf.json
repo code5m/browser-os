@@ -1,4 +1,7 @@
 {
+  "build": {
+    "beforeBuildCommand": "npm run build && pwsh -NoProfile -File scripts/build-windows-lsp-runtime.ps1"
+  },
   "bundle": {
     "targets": [
       "nsis"
@@ -15,6 +18,13 @@
         "type": "downloadBootstrapper",
         "silent": true
       }
+    },
+    "resources": {
+      "resources/windows-lsp/rust-analyzer.exe": "windows-lsp/rust-analyzer.exe",
+      "resources/windows-lsp/runtime.json": "windows-lsp/runtime.json",
+      "resources/windows-lsp/LICENSE-MIT": "windows-lsp/LICENSE-MIT",
+      "resources/windows-lsp/LICENSE-APACHE": "windows-lsp/LICENSE-APACHE",
+      "resources/windows-lsp/Cargo.lock": "windows-lsp/Cargo.lock"
     }
   }
 }

@@ -1,0 +1,14 @@
+diff --git a/src/tools/rust-analyzer/crates/project-model/src/lib.rs b/src/tools/rust-analyzer/crates/project-model/src/lib.rs
+--- a/src/tools/rust-analyzer/crates/project-model/src/lib.rs
++++ b/src/tools/rust-analyzer/crates/project-model/src/lib.rs
+@@ -211,6 +211,10 @@
+ }
+ 
+ fn utf8_stdout(cmd: &mut Command) -> anyhow::Result<String> {
++    // AppContainer may deny the global NUL device. Command::output closes the
++    // parent pipe writer before collecting output, so the child still gets EOF.
++    #[cfg(windows)]
++    cmd.stdin(std::process::Stdio::piped());
+     let output = cmd.output().with_context(|| format!("{cmd:?} failed"))?;
+     if !output.status.success() {
+         match String::from_utf8(output.stderr) {

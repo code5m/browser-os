@@ -67,11 +67,40 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - uses: dtolnay/rust-toolchain@stable
+      - name: Verify vendored sources and retain registry advisory origins
+        id: origins
+        run: |
+          node scripts/check-vendored-glib.mjs --self-test
+          node scripts/check-vendored-glib.mjs --audit-origin-dir artifacts/supply-chain
+          node scripts/generate-sbom.mjs --self-test
+          node scripts/generate-sbom.mjs --output-dir artifacts/supply-chain/sbom
       - name: Install Rust advisory scanner
         run: cargo install cargo-audit --locked
       - name: Rust dependency advisory scan
-        run: cargo audit --file src-tauri/Cargo.lock
+        run: |
+          set -o pipefail
+          cargo audit --file src-tauri/Cargo.lock 2>&1 | tee artifacts/supply-chain/host.audit.log
+      - name: GLib upstream registry-origin advisory scan (not the build lock)
+        if: ${{ !cancelled() && steps.origins.outcome == 'success' }}
+        run: |
+          set -o pipefail
+          cargo audit --file artifacts/supply-chain/registry-origin.Cargo.lock 2>&1 | tee artifacts/supply-chain/registry-origin.audit.log
+      - name: Packaged Windows rust-analyzer dependency advisory scan
+        if: ${{ !cancelled() && steps.origins.outcome == 'success' }}
+        run: |
+          set -o pipefail
+          cargo audit --file vendor/windows-rust-analyzer/Cargo.lock 2>&1 | tee artifacts/supply-chain/rust-analyzer.audit.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rust-advisory-evidence-${{ github.run_id }}
+          path: artifacts/supply-chain/
+          retention-days: 14
+          if-no-files-found: warn
   dependency-review:
     needs: impact
     if: github.event_name == 'pull_request' && (needs.impact.outputs.supply_node == 'true' || needs.impact.outputs.supply_rust == 'true')
@@ -89,3 +118,64 @@ jobs:
         run: |
           echo "DEPENDENCY_REVIEW_RESULT=NON_BLOCKING_REPOSITORY_SUPPORT_GATED"
           echo "Dependency Review requires GitHub Dependency Graph support; npm audit, cargo audit and SBOM gates remain authoritative."
+
+  # Temporary review-only lock generation. It is removed when the generated
+  # candidate is imported; the regular audit jobs keep the committed lock.
+  maintenance-lock-candidate:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/fix/windows-owner-integrity-complete-20261122'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Resolve the reviewed compatible maintenance candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/maintenance-lock-candidate
+          printf '%s\n' "$GITHUB_SHA" > artifacts/maintenance-lock-candidate/source-sha.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          manifest = Path("src-tauri/vendor/portable-pty/Cargo.toml")
+          text = manifest.read_text(encoding="utf-8")
+          before = 'nix = {version="0.25", features=["term"]}'
+          after = 'nix = { version = "0.25", default-features = false, features = ["fs", "term"] }'
+          if text.count(before) != 1:
+              raise SystemExit("MAINTENANCE_NIX_SOURCE_MISMATCH")
+          manifest.write_text(text.replace(before, after), encoding="utf-8")
+          PY
+          cargo update --manifest-path src-tauri/Cargo.toml -p tauri-utils --precise 2.10.4 2>&1 | tee artifacts/maintenance-lock-candidate/cargo-update.log
+          cargo metadata --locked --format-version=1 --manifest-path src-tauri/Cargo.toml > artifacts/maintenance-lock-candidate/metadata.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          folder = Path("artifacts/maintenance-lock-candidate")
+          metadata = json.loads((folder / "metadata.json").read_text())
+          packages = metadata["packages"]
+          selected = [p for p in packages if p["name"] == "tauri-utils"]
+          if len(selected) != 1 or selected[0]["version"] != "2.10.4":
+              raise SystemExit("MAINTENANCE_TAURI_UTILS_NOT_SELECTED")
+          retired = {"pin-utils", "unic-char-property", "unic-char-range", "unic-common", "unic-ucd-ident", "unic-ucd-version"}
+          remaining = sorted({p["name"] for p in packages} & retired)
+          if remaining:
+              raise SystemExit("MAINTENANCE_DEPENDENCIES_RETAINED:" + ",".join(remaining))
+          if any(p["name"] == "memoffset" and p["version"] == "0.6.5" for p in packages):
+              raise SystemExit("MAINTENANCE_UNUSED_NIX_MEMOFFSET_RETAINED")
+          (folder / "status.txt").write_text(
+              "LOCK_CANDIDATE_ONLY; compiler/runtime/GUI acceptance NOT_RUN\n",
+              encoding="utf-8",
+          )
+          PY
+          cp src-tauri/Cargo.lock artifacts/maintenance-lock-candidate/Cargo.lock
+          cp src-tauri/vendor/portable-pty/Cargo.toml artifacts/maintenance-lock-candidate/portable-pty.Cargo.toml
+          git diff -- src-tauri/Cargo.lock src-tauri/vendor/portable-pty/Cargo.toml > artifacts/maintenance-lock-candidate/candidate.diff
+          sha256sum artifacts/maintenance-lock-candidate/Cargo.lock artifacts/maintenance-lock-candidate/portable-pty.Cargo.toml > artifacts/maintenance-lock-candidate/SHA256SUMS
+          echo 'LOCK_CANDIDATE_ONLY; final committed lock still requires same-SHA native and package validation' >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve the candidate and actual resolver evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: maintenance-lock-candidate-${{ github.sha }}
+          path: artifacts/maintenance-lock-candidate/
+          if-no-files-found: error
+          retention-days: 7

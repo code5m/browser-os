@@ -64,6 +64,15 @@ export function lspFailureHint(error) {
     LSP_DIAGNOSTICS_CAPABILITY_INVALID:'语言服务的诊断能力信息无效，请重新检测或更新 rust-analyzer',
     LSP_DIAGNOSTICS_REPORT_INVALID:'语言服务返回的诊断不完整，本次结果不可用，请重新检测',
     LSP_DOCUMENT_VERSION_EXHAUSTED:'语言服务文档版本已失效，请关闭并重新开启语言服务',
+    LSP_BUNDLE_DIRECTORY_UNAVAILABLE:'Windows 语言服务运行目录不可用，请修复或重新安装 BrowserOS',
+    LSP_BUNDLE_MANIFEST_UNAVAILABLE:'Windows 语言服务资源不完整，请修复或重新安装 BrowserOS',
+    LSP_BUNDLE_MANIFEST_INVALID:'Windows 语言服务完整性校验未通过，请修复或重新安装 BrowserOS',
+    LSP_BUNDLE_MANIFEST_MISMATCH:'Windows 语言服务完整性校验未通过，请修复或重新安装 BrowserOS',
+    LSP_BUNDLE_EXECUTABLE_UNAVAILABLE:'Windows 语言服务资源不完整，请修复或重新安装 BrowserOS',
+    LSP_BUNDLE_EXECUTABLE_MISMATCH:'Windows 语言服务完整性校验未通过，请修复或重新安装 BrowserOS',
+    LSP_RUSTC_TOOLCHAIN_MISSING:'所选 Rust 工具链缺少 rustc，请安装或修复该工具链',
+    LSP_RUSTC_CFG_PEER_MISSING:'所选 Rust 工具链缺少 rustc，请安装或修复该工具链',
+    LSP_RUSTC_CFG_PEER_UNSAFE:'Rust 编译器路径未通过安全检查，请修复工具链路径',
   })[code] || '语言服务请求失败，请检查配置或重新检测';
 }
 /** Fixed, non-sensitive recovery wording shared by the native status panel. */

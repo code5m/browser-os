@@ -233,7 +233,7 @@
       "id": "appcontainer",
       "package": "mvp-browser-os",
       "filter": "capabilities::agent::windows_sandbox::tests",
-      "required_count": 12,
+      "required_count": 14,
       "required_names": [
         "appcontainer_runs_without_host_workspace_or_loopback_access",
         "state_directory_stays_pinned_until_profile_teardown",
@@ -246,7 +246,9 @@
         "repeated_runtime_component_compares_bytes_without_mutating_open",
         "cancelled_budget_stops_before_profile_creation_and_keeps_cleanup_observable",
         "stderr_diagnostics_are_bounded_sticky_and_path_free",
-        "appcontainer_other_package_cannot_list_private_snapshot"
+        "appcontainer_other_package_cannot_list_private_snapshot",
+        "state_file_staging_rejects_non_component_names",
+        "standalone_runtime_never_stages_unselected_adjacent_dll"
       ],
       "allow_additional_tests": true,
       "allow_ignored": false,
@@ -316,6 +318,21 @@
       "allow_additional_tests": true,
       "allow_ignored": false,
       "timeout_seconds": 600,
+      "role": "required"
+    },
+    {
+      "id": "windows-lsp-runtime-bundle",
+      "package": "mvp-browser-os",
+      "filter": "capabilities::agent::coding_lsp::runtime_bundle::tests",
+      "required_count": 3,
+      "required_names": [
+        "capabilities::agent::coding_lsp::runtime_bundle::tests::verified_bundle_pins_manifest_and_executable_until_staging",
+        "capabilities::agent::coding_lsp::runtime_bundle::tests::altered_bundle_source_manifest_binary_and_size_are_rejected",
+        "capabilities::agent::coding_lsp::runtime_bundle::tests::missing_bundle_and_cancelled_preparation_fail_closed"
+      ],
+      "allow_additional_tests": false,
+      "allow_ignored": false,
+      "timeout_seconds": 240,
       "role": "required"
     },
     {
@@ -814,7 +831,7 @@
       "id": "windows-full-suite",
       "package": "mvp-browser-os",
       "filter": "",
-      "required_count": 99,
+      "required_count": 104,
       "required_names": [
         "a_running_process_can_be_adopted_but_is_not_used_for_spawn_paths",
         "abandoned_bound_profile_is_recovered_by_native_identity",
@@ -914,7 +931,12 @@
         "grid_process::lifecycle::tests::grid_shutdown_does_not_wait_for_an_admitted_operation",
         "grid_process::lifecycle::tests::ordinary_grid_retirement_does_not_close_admission",
         "windows_pipe::tests::cancellation_interrupts_the_shared_native_reader_and_rejects_late_writes",
-        "windows_pipe::tests::listener_cancellation_releases_a_pending_native_accept"
+        "windows_pipe::tests::listener_cancellation_releases_a_pending_native_accept",
+        "state_file_staging_rejects_non_component_names",
+        "standalone_runtime_never_stages_unselected_adjacent_dll",
+        "capabilities::agent::coding_lsp::runtime_bundle::tests::verified_bundle_pins_manifest_and_executable_until_staging",
+        "capabilities::agent::coding_lsp::runtime_bundle::tests::altered_bundle_source_manifest_binary_and_size_are_rejected",
+        "capabilities::agent::coding_lsp::runtime_bundle::tests::missing_bundle_and_cancelled_preparation_fail_closed"
       ],
       "allow_additional_tests": true,
       "allow_ignored": true,

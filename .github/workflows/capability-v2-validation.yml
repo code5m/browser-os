@@ -373,8 +373,9 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # Exactly ONE mutually exclusive native build invocation per opted-in run:
+  # Exactly ONE application build path per opted-in run:
   # rust-tests = cargo test; packaged-gui/resource = one Tauri release build.
+  # Packaged modes also run a bounded optimized GLib dependency regression.
   # The validated prebuilt frontend is reused, not rebuilt by Tauri.
   native-regression:
     needs: [impact, frontend-build]
@@ -464,6 +465,28 @@ jobs:
       - name: Build/install/cold-start/sample one Release (packaged-resource mode)
         if: needs.impact.outputs.native_mode == 'packaged-resource'
         run: dbus-run-session -- xvfb-run -a bash scripts/verify-installed-client.sh --install --prebuilt-frontend --resource-minutes 5
+      - name: Verify GLib variant iteration in the same Release profile
+        id: glib_release
+        if: needs.impact.outputs.native_mode == 'packaged-gui' || needs.impact.outputs.native_mode == 'packaged-resource'
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/check-vendored-glib.mjs
+          cargo metadata --locked --format-version=1 --manifest-path src-tauri/Cargo.toml > "$RUNNER_TEMP/browseros-glib-metadata.json"
+          node scripts/check-vendored-glib.mjs --check-cargo-metadata "$RUNNER_TEMP/browseros-glib-metadata.json"
+          cargo test --locked --release --manifest-path src-tauri/Cargo.toml -p tauri-plugin-browser-tabs --test glib_variant_iter -- --show-output --color never --test-threads=1 2>&1 | tee "$RUNNER_TEMP/browseros-glib-release.log"
+          node scripts/check-vendored-glib.mjs --check-regression-log "$RUNNER_TEMP/browseros-glib-release.log"
+      - name: Preserve GLib optimized regression evidence
+        if: ${{ always() && steps.glib_release.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: browseros-glib-release-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/browseros-glib-release.log
+            ${{ runner.temp }}/browseros-glib-metadata.json
+          if-no-files-found: error
+          retention-days: 14
       - name: Verify installer provenance without recompilation
         if: needs.impact.outputs.native_mode == 'packaged-gui' || needs.impact.outputs.native_mode == 'packaged-resource'
         run: |
@@ -547,4 +570,4 @@ jobs:
           NATIVE_MODE: ${{ needs.impact.outputs.native_mode }}
         run: |
           echo "Optional native mode: $NATIVE_MODE" >> "$GITHUB_STEP_SUMMARY"
-          echo "Only one Rust compilation path was selected; native outcome must be checked separately." >> "$GITHUB_STEP_SUMMARY"
+          echo "One application build path was selected; packaged modes also verify the GLib backport in optimized dependency tests." >> "$GITHUB_STEP_SUMMARY"

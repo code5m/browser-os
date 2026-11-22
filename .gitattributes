@@ -1,0 +1,4 @@
+# Pinned upstream sources and patches are verified byte for byte.
+# Preserve their exact bytes on Windows instead of converting LF to CRLF.
+/vendor/windows-rust-analyzer/** -text
+/src-tauri/vendor/glib/** -text

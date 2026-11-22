@@ -9,6 +9,17 @@ assert.match(lspFailureHint('LSP_DIAGNOSTICS_REPORT_INVALID'),/不完整.*结果
 assert.match(lspFailureHint('LSP_DOCUMENT_VERSION_EXHAUSTED'),/关闭并重新开启/);
 assert.doesNotMatch(lspFailureHint('LSP_DIAGNOSTICS_REPORT_INVALID secret-value'),/secret-value/);
 
+for (const code of ['LSP_BUNDLE_DIRECTORY_UNAVAILABLE','LSP_BUNDLE_MANIFEST_UNAVAILABLE','LSP_BUNDLE_EXECUTABLE_UNAVAILABLE']) {
+  assert.match(lspFailureHint(code),/修复或重新安装 BrowserOS/);
+}
+for (const code of ['LSP_BUNDLE_MANIFEST_INVALID','LSP_BUNDLE_MANIFEST_MISMATCH','LSP_BUNDLE_EXECUTABLE_MISMATCH']) {
+  assert.match(lspFailureHint(code),/完整性校验未通过.*BrowserOS/);
+  assert.doesNotMatch(lspFailureHint(code+' private-path secret-value'),/private-path|secret-value/);
+}
+assert.match(lspFailureHint('LSP_RUSTC_TOOLCHAIN_MISSING'),/工具链缺少 rustc/);
+assert.match(lspFailureHint('LSP_RUSTC_CFG_PEER_MISSING'),/工具链缺少 rustc/);
+assert.match(lspFailureHint('LSP_RUSTC_CFG_PEER_UNSAFE'),/路径未通过安全检查/);
+
 import {editorRange,completionItems,diagnosticMarkers,definitionRanges,plainHover,mappedDefinitionTargets,diagnosticContext} from '../src/capabilities/agent/model/codingLsp.mjs';
 const range={start:{line:0,character:2},end:{line:0,character:5}};
 assert.deepEqual(editorRange(range),{startLineNumber:1,startColumn:3,endLineNumber:1,endColumn:6});

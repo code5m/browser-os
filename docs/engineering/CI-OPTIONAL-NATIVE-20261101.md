@@ -4,7 +4,7 @@
 
 Pull Request 和 master 的 **默认 Full Validation 只进行静态/安全/前端/体积预算/快速 Pre-merge 检查**，不编译 Rust、不构建或安装 Debian 包、不启动安装版 GUI，也不做 5/30 分钟持续资源采样。
 
-当用户明确启用一种模式时，**一次工作流最多有一条 Rust 构建路径**。前端针对同一源码提交仅构建一次，结果作为带有 SHA 标识的 GitHub artifact 提供给后续检查。现有同一轮中的 master 基线体积比较仍会独立构建 **另一个提交** 的前端：它属于回归比较，不是重复构建当前提交。
+当用户明确启用一种模式时，**一次工作流最多有一条应用程序 Rust 构建路径**。前端针对同一源码提交仅构建一次，结果作为带有 SHA 标识的 GitHub artifact 提供给后续检查。现有同一轮中的 master 基线体积比较仍会独立构建 **另一个提交** 的前端：它属于回归比较，不是重复构建当前提交。
 
 ## 选择模式
 
@@ -12,10 +12,10 @@ Pull Request 和 master 的 **默认 Full Validation 只进行静态/安全/前�
 | --- | --- | --- | --- |
 | `off` | **默认** | 现有工程治理、UI/架构/运行时/前端/大小预算、Git、快速 Pre-merge | **Rust check/test、Release deb、安装版 GUI、持续资源采样** |
 | `rust-tests` | 按需 | 复用当前前端产物，执行 **一次** `cargo test --locked`（包含编译和运行测试），Rust 格式检查 | 不额外 `cargo check`；不构建 Release、不做 GUI 或资源采样 |
-| `packaged-gui` | 按需 | 复用当前前端产物，执行 **一次** Tauri Release 构建、deb 安装、GUI 冷启动和完整 GUI 回归 | 不重复执行 Tauri 的 frontend beforeBuild，不做 5 分钟持续资源采样，也不额外运行 Rust 单元测试 |
-| `packaged-resource` | 按需 | 与 `packaged-gui` 相同的**一次** Release 构建，另外执行 5 分钟 RSS/PSS/CPU 采样 | 不重复编译第二个 Release，不额外运行 `cargo test` |
+| `packaged-gui` | 按需 | 复用当前前端产物，执行 **一次** Tauri Release 构建、deb 安装、GUI 冷启动和完整 GUI 回归 | 不重复执行 Tauri 的 frontend beforeBuild，不做 5 分钟持续资源采样；另执行同一依赖图的 5 项 GLib Release 行为回归 |
+| `packaged-resource` | 按需 | 与 `packaged-gui` 相同的**一次** Release 构建，另外执行 5 分钟 RSS/PSS/CPU 采样 | 不重复编译第二个应用 Release；另执行同一依赖图的 5 项 GLib Release 行为回归 |
 
-因为 Rust 测试二进制和 Release 安装包是**不同构建目标/配置**，不能诚实地声称一次编译覆盖两者。需要发行级全套证明时，在相同 Git SHA 分别运行 `rust-tests` 与 `packaged-resource` 两次手动工作流，分别要求通过。**单次只选择一种构建**，不把多个 Cargo 编译堆在同一次 CI 中。
+因为 Rust 测试二进制和 Release 安装包是**不同构建目标/配置**，不能诚实地声称一次编译覆盖两者。需要发行级全套证明时，在相同 Git SHA 分别运行 `rust-tests` 与 `packaged-resource` 两次手动工作流，分别要求通过。**单次只选择一种应用构建**。打包模式额外执行 `tauri-plugin-browser-tabs` 的 `glib_variant_iter` 优化测试目标，用于验证实际链接的 GLib 修复；它复用同一 Release 依赖图，既不重建第二个应用安装包，也不代替完整 Rust 测试。
 
 手动工作流的并发组按分支及显式 `native_mode` 区分，因此分别发起的 `rust-tests` 与 `packaged-resource` 可以独立完成。同一分支、同一模式的新运行仍会取消旧运行。没有手动输入的 Push 和 PR 继续共用 `off` 并发组；PR 标签或仓库变量不会改变这个分组。
 
@@ -46,3 +46,7 @@ Pull Request 和 master 的 **默认 Full Validation 只进行静态/安全/前�
 - 修改 CI 后必须看真实 PR 的 `impact`、`frontend-build`、`validate` 三个 Job，以及默认 `native-regression=SKIPPED`；再单独触发一个原生模式验证其真实行为。不能以 YAML 解析成功代替 GitHub 的真实验收。
 
 **风险提示**：选择 `off` 的绿色 Full Validation 只能说明“快速/静态检查通过”，**不证明 Rust 编译、安装版 GUI 或资源测试通过**。若 master 或 Release 的正式验收仍要求原生结果，请额外在相同 SHA 选择运行相应模式并审查 artifact。是否把这些原生结果设为 GitHub Branch Protection 的硬性合并条件，需要仓库管理员另行配置；本次不会擅自更改该设置。
+
+## 兼容依赖修复的优化回归
+
+GLib 0.18.5 的 VariantStrIter 官方修复已按来源固定到 `src-tauri/vendor/glib`。打包模式在同一 Release 依赖图下执行 5 项真实字符串迭代测试，并核对测试名称、零失败、零忽略和 Release 标识。源码清单和补丁可追溯性由 `check-vendored-glib.mjs` 单独验证。依赖来源审计继续保留上游 registry 身份，不把路径依赖未出现在 cargo-audit 告警中当成修复证明。

@@ -216,7 +216,8 @@ jobs:
       BROWSEROS_NATIVE_CLEANUP_BLOCKED: '0'
       BROWSEROS_SOURCE_SHA: ${{ needs.source.outputs.sha }}
     runs-on: windows-latest
-    timeout-minutes: 75
+    # Includes the bounded 45-minute source-runtime build and installer payload check.
+    timeout-minutes: 105
     steps:
       - uses: actions/checkout@v4
         with:
@@ -253,6 +254,24 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Windows native AI import regression failed' }
           python scripts/check-local-ai-secrets.py
           if ($LASTEXITCODE -ne 0) { throw 'Windows AI secret safety regression failed' }
+      - name: Build the pinned Windows Rust LSP runtime
+        id: windows_lsp_runtime
+        timeout-minutes: 45
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.100.0 --profile minimal
+          if ($LASTEXITCODE -ne 0) { throw 'WINDOWS_LSP_BUILD_TOOLCHAIN_UNAVAILABLE' }
+          ./scripts/build-windows-lsp-runtime.ps1 -WorkDirectory (Join-Path $env:RUNNER_TEMP 'browseros-windows-lsp')
+      - name: Preserve Windows LSP runtime bytes and provenance
+        if: ${{ always() && !cancelled() && steps.windows_lsp_runtime.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: browseros-windows-lsp-UNVERIFIED-${{ needs.source.outputs.sha }}
+          path: |
+            src-tauri/resources/windows-lsp/
+            vendor/windows-rust-analyzer/
+          if-no-files-found: error
+          retention-days: 7
       - name: 'Windows native compile (experimental: do not hide failure)'
         id: windows_native_compile
         shell: pwsh
@@ -421,6 +440,59 @@ jobs:
             }
           }
           $lines | Write-Output
+      - name: Install NSIS in the disposable runner and verify bundled runtime
+        id: nsis_payload
+        if: ${{ always() && !cancelled() && steps.nsis_hashes.outcome == 'success' && env.BROWSEROS_NATIVE_CLEANUP_BLOCKED != '1' }}
+        timeout-minutes: 8
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_ACTIONS -ne 'true') { throw 'NSIS_INSTALL_REQUIRES_DISPOSABLE_CI' }
+          $installers = @(Get-ChildItem -LiteralPath 'src-tauri/target/release/bundle/nsis' -Filter '*.exe' -File)
+          if ($installers.Count -ne 1) { throw 'NSIS_INSTALLER_AMBIGUOUS' }
+          $defaultInstallRoot = Join-Path $env:LOCALAPPDATA 'mvp-browser-os'
+          $priorInstall = @(Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue | Where-Object {
+            $_.PSObject.Properties.Name -contains 'DisplayName' -and $_.DisplayName -ceq 'mvp-browser-os'
+          })
+          if ((Test-Path -LiteralPath $defaultInstallRoot) -or $priorInstall.Count -ne 0) {
+            throw 'NSIS_INSTALL_REQUIRES_FRESH_RUNNER'
+          }
+          . ./scripts/windows-native-test-runner.ps1
+          $installation = Invoke-SupervisedNativeProcess -Executable $installers[0].FullName -Arguments @('/S') -LogPrefix (Join-Path $env:RUNNER_TEMP 'browseros-nsis-install') -TimeoutSeconds 300
+          Assert-NativeSupervision -Run $installation -Phase 'nsis-install'
+          if ($installation.supervision.ExitCode -ne 0) { throw 'NSIS_INSTALL_FAILED' }
+          $installedRoot = Join-Path $env:LOCALAPPDATA 'mvp-browser-os'
+          $installedExe = Join-Path $installedRoot 'mvp-browser-os.exe'
+          if (-not (Test-Path -LiteralPath $installedExe -PathType Leaf)) {
+            $entries = @(Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue | Where-Object {
+              $_.PSObject.Properties.Name -contains 'DisplayName' -and $_.DisplayName -ceq 'mvp-browser-os' -and
+              $_.PSObject.Properties.Name -contains 'InstallLocation' -and -not [string]::IsNullOrWhiteSpace($_.InstallLocation)
+            })
+            if ($entries.Count -ne 1) { throw 'NSIS_INSTALL_LOCATION_UNRESOLVED' }
+            $location = [string]$entries[0].InstallLocation
+            if ($location.StartsWith('"') -or $location.EndsWith('"')) {
+              if ($location.Length -lt 3 -or -not ($location.StartsWith('"') -and $location.EndsWith('"'))) {
+                throw 'NSIS_INSTALL_LOCATION_QUOTING'
+              }
+              $location = $location.Substring(1, $location.Length - 2)
+            }
+            if ($location.Contains('"') -or -not [IO.Path]::IsPathFullyQualified($location) -or
+                -not (Test-Path -LiteralPath $location -PathType Container)) {
+              throw 'NSIS_INSTALL_LOCATION_INVALID'
+            }
+            $installedExe = Join-Path $location 'mvp-browser-os.exe'
+          }
+          ./scripts/windows/verify-installed-browseros.ps1 -ExePath $installedExe -PayloadOnly -ExpectedReleaseDirectory 'src-tauri/target/release' -ExpectedRuntimeDirectory 'src-tauri/resources/windows-lsp' -SourceSha $env:BROWSEROS_SOURCE_SHA -EvidenceDir (Join-Path $env:RUNNER_TEMP 'browseros-nsis-payload')
+      - name: Preserve NSIS installed payload evidence
+        if: ${{ always() && !cancelled() && steps.nsis_payload.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: browseros-windows-nsis-payload-${{ needs.source.outputs.sha }}
+          path: |
+            ${{ runner.temp }}/browseros-nsis-payload/
+            ${{ runner.temp }}/browseros-nsis-install.out.log
+            ${{ runner.temp }}/browseros-nsis-install.err.log
+          if-no-files-found: warn
+          retention-days: 7
       - name: Upload NSIS experimental installer and hashes
         if: ${{ always() && !cancelled() && steps.nsis_hashes.outcome == 'success' }}
         uses: actions/upload-artifact@v4

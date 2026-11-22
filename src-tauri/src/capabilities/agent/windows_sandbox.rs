@@ -188,6 +188,7 @@ fn current_user_sid() -> Result<String, String> {
 const PRIVATE_TREE_MAX_ENTRIES: usize = 8192;
 const PRIVATE_TREE_MAX_DEPTH: usize = 32;
 
+pub(super) const MAX_STATE_PAYLOAD_BYTES: usize = 8 * 1024 * 1024;
 const MAX_RUNTIME_FILE: u64 = 256 * 1024 * 1024;
 const MAX_TOTAL_RUNTIME: u64 = 384 * 1024 * 1024;
 const STDERR_TAIL: usize = 8 * 1024;
@@ -642,6 +643,39 @@ impl SandboxProfile {
         })
     }
 
+    /// Create one new payload under this profile's retained state handle.
+    /// Native single-component validation and FILE_CREATE reject paths and
+    /// collisions; OS default owners and path-based writes are never used.
+    pub fn stage_state_file(
+        &self,
+        name: &std::ffi::OsStr,
+        bytes: &[u8],
+    ) -> Result<PathBuf, String> {
+        self.preparing(|| {
+            if bytes.len() > MAX_STATE_PAYLOAD_BYTES {
+                return Err("SANDBOX_STATE_FILE_SIZE_LIMIT".into());
+            }
+            self.state_dir()?;
+            let guard = self.state_guard.lock().map_err(|_| "SANDBOX_STATE_LOCK")?;
+            let directory = guard.as_ref().ok_or("SANDBOX_STATE_NOT_PREPARED")?;
+            let policy = self.policy(AppContainerAccess::Modify, false)?;
+            directory
+                .audit_root(&policy, &self.budget)
+                .map_err(|error| format!("SANDBOX_STATE_AUDIT:{error}"))?;
+            let mut file = directory
+                .create_file(name, &policy, &self.budget)
+                .map_err(|error| format!("SANDBOX_STATE_FILE_CREATE:{error}"))?;
+            for chunk in bytes.chunks(64 * 1024) {
+                self.budget.check().map_err(|error| error.to_string())?;
+                file.write_all(chunk)
+                    .map_err(|_| "SANDBOX_STATE_FILE_WRITE")?;
+            }
+            file.sync_all().map_err(|_| "SANDBOX_STATE_FILE_SYNC")?;
+            self.budget.check().map_err(|error| error.to_string())?;
+            Ok(directory.path().join(name))
+        })
+    }
+
     pub fn snapshot_dir(&self) -> Result<PathBuf, String> {
         self.preparing(|| {
             let mut guard = self
@@ -825,6 +859,14 @@ impl SandboxProfile {
     }
 
     fn stage_runtime(&self, runtime: &Path) -> Result<PathBuf, String> {
+        self.stage_runtime_with_peers(runtime, true)
+    }
+
+    fn stage_runtime_with_peers(
+        &self,
+        runtime: &Path,
+        include_peers: bool,
+    ) -> Result<PathBuf, String> {
         self.preparing(|| {
             no_reparse_path(runtime)?;
             let source = PinnedReadFile::open(runtime, &self.budget)
@@ -877,39 +919,47 @@ impl SandboxProfile {
             let staged = directory.path().join(filename);
             // Acquire the parent while the source file's complete chain is
             // still pinned; the DLL enumeration cannot switch to another dir.
-            let source_directory = PinnedReadDirectory::open(
-                canonical.parent().ok_or("SANDBOX_RUNTIME_NOT_EXECUTABLE")?,
-                &self.budget,
-            )
-            .map_err(|error| format!("SANDBOX_RUNTIME_DIRECTORY:{error}"))?;
+            let source_directory = if include_peers {
+                Some(
+                    PinnedReadDirectory::open(
+                        canonical.parent().ok_or("SANDBOX_RUNTIME_NOT_EXECUTABLE")?,
+                        &self.budget,
+                    )
+                    .map_err(|error| format!("SANDBOX_RUNTIME_DIRECTORY:{error}"))?,
+                )
+            } else {
+                None
+            };
             let pinned = self.copy_component(source, directory, filename, &policy)?;
             let mut pins = self
                 .runtime_pins
                 .lock()
                 .map_err(|_| "SANDBOX_RUNTIME_PIN_LOCK")?;
             pins.push(pinned);
-            let entries = source_directory
-                .entries(PRIVATE_TREE_MAX_ENTRIES, &self.budget)
-                .map_err(|error| format!("SANDBOX_RUNTIME_ENUMERATE:{error}"))?;
-            let mut dll_count = 0usize;
-            for entry in entries {
-                self.budget.check().map_err(|error| error.to_string())?;
-                if Path::new(&entry.name)
-                    .extension()
-                    .and_then(|value| value.to_str())
-                    .is_some_and(|value| value.eq_ignore_ascii_case("dll"))
-                {
-                    if entry.directory {
-                        return Err("SANDBOX_RUNTIME_DLL_NOT_FILE".into());
+            if let Some(source_directory) = source_directory {
+                let entries = source_directory
+                    .entries(PRIVATE_TREE_MAX_ENTRIES, &self.budget)
+                    .map_err(|error| format!("SANDBOX_RUNTIME_ENUMERATE:{error}"))?;
+                let mut dll_count = 0usize;
+                for entry in entries {
+                    self.budget.check().map_err(|error| error.to_string())?;
+                    if Path::new(&entry.name)
+                        .extension()
+                        .and_then(|value| value.to_str())
+                        .is_some_and(|value| value.eq_ignore_ascii_case("dll"))
+                    {
+                        if entry.directory {
+                            return Err("SANDBOX_RUNTIME_DLL_NOT_FILE".into());
+                        }
+                        dll_count += 1;
+                        if dll_count > 32 {
+                            return Err("SANDBOX_RUNTIME_DLL_LIMIT".into());
+                        }
+                        let source = source_directory
+                            .child_file(&entry, &self.budget)
+                            .map_err(|error| format!("SANDBOX_RUNTIME_SOURCE:{error}"))?;
+                        pins.push(self.copy_component(source, directory, &entry.name, &policy)?);
                     }
-                    dll_count += 1;
-                    if dll_count > 32 {
-                        return Err("SANDBOX_RUNTIME_DLL_LIMIT".into());
-                    }
-                    let source = source_directory
-                        .child_file(&entry, &self.budget)
-                        .map_err(|error| format!("SANDBOX_RUNTIME_SOURCE:{error}"))?;
-                    pins.push(self.copy_component(source, directory, &entry.name, &policy)?);
                 }
             }
             directory
@@ -1079,6 +1129,29 @@ impl SandboxProfile {
         environment: &[(String, String)],
         current_directory: &Path,
     ) -> Result<SandboxChild, String> {
+        self.spawn_with_runtime_peers(runtime, args, environment, current_directory, true)
+    }
+
+    /// Stage only the selected executable; no adjacent DLL is discovered or
+    /// copied. All admission, audit, Job and cleanup contracts stay shared.
+    pub fn spawn_standalone(
+        self,
+        runtime: &Path,
+        args: &[String],
+        environment: &[(String, String)],
+        current_directory: &Path,
+    ) -> Result<SandboxChild, String> {
+        self.spawn_with_runtime_peers(runtime, args, environment, current_directory, false)
+    }
+
+    fn spawn_with_runtime_peers(
+        self,
+        runtime: &Path,
+        args: &[String],
+        environment: &[(String, String)],
+        current_directory: &Path,
+        include_peers: bool,
+    ) -> Result<SandboxChild, String> {
         self.check_preparation()?;
         if !runtime
             .extension()
@@ -1093,7 +1166,7 @@ impl SandboxProfile {
         {
             return Err("SANDBOX_WORKDIR_OUTSIDE_PRIVATE_STATE".into());
         }
-        let staged = self.stage_runtime(runtime)?;
+        let staged = self.stage_runtime_with_peers(runtime, include_peers)?;
         {
             let state_guard = self.state_guard.lock().map_err(|_| "SANDBOX_STATE_LOCK")?;
             let policy = self.policy(AppContainerAccess::Modify, false)?;
@@ -1862,7 +1935,10 @@ mod tests {
     fn state_directory_stays_pinned_until_profile_teardown() {
         let profile = SandboxProfile::create().expect("create AppContainer profile");
         let state = profile.state_dir().expect("initialize private state");
-        std::fs::write(state.join("retained-data"), b"retain").unwrap();
+        let staged = profile
+            .stage_state_file(std::ffi::OsStr::new("retained-data"), b"retain")
+            .unwrap();
+        assert_eq!(staged, state.join("retained-data"));
         assert_eq!(profile.state_dir().unwrap(), state);
         assert_eq!(
             std::fs::read(state.join("retained-data")).unwrap(),
@@ -1873,6 +1949,10 @@ mod tests {
             std::fs::rename(&state, &moved).is_err(),
             "live state must not be renamed away from its retained handle"
         );
+        assert!(profile
+            .stage_state_file(std::ffi::OsStr::new("retained-data"), b"must not replace")
+            .is_err());
+        assert_eq!(std::fs::read(&staged).unwrap(), b"retain");
         let budget = profile.budget().clone();
         drop(profile);
         wait_cleanup(&budget);
@@ -1883,16 +1963,63 @@ mod tests {
     }
 
     #[test]
+    fn state_file_staging_rejects_non_component_names() {
+        for name in [
+            "..",
+            r"..\outside",
+            "../outside",
+            r"C:\outside",
+            r"\outside",
+            "stream:data",
+            r"payload\file",
+            "trailing.",
+        ] {
+            let profile = SandboxProfile::create().unwrap();
+            let state = profile.state_dir().unwrap();
+            let error = profile
+                .stage_state_file(std::ffi::OsStr::new(name), b"must not escape")
+                .unwrap_err();
+            assert!(error.contains("COMPONENT_INVALID"), "{error}");
+            assert!(std::fs::read_dir(&state).unwrap().next().is_none());
+            let budget = profile.budget().clone();
+            drop(profile);
+            wait_cleanup(&budget);
+        }
+    }
+
+    #[test]
     fn native_private_tree_depth_limit_preserves_existing_data() {
+        struct OverDepthFixture {
+            directories: Vec<PathBuf>,
+            marker: Option<PathBuf>,
+        }
+        impl Drop for OverDepthFixture {
+            fn drop(&mut self) {
+                if let Some(marker) = self.marker.take() {
+                    let _ = std::fs::remove_file(marker);
+                }
+                for path in self.directories.iter().rev() {
+                    let _ = std::fs::remove_dir(path);
+                }
+            }
+        }
         let profile = SandboxProfile::create().unwrap();
         let root = profile.folder.join("preexisting");
+        let mut fixture = OverDepthFixture {
+            directories: Vec::new(),
+            marker: None,
+        };
         std::fs::create_dir(&root).unwrap();
+        fixture.directories.push(root.clone());
         let mut deepest = root.clone();
         for _ in 0..=PRIVATE_TREE_MAX_DEPTH {
             deepest.push("d");
             std::fs::create_dir(&deepest).unwrap();
+            fixture.directories.push(deepest.clone());
         }
-        std::fs::write(deepest.join("keep"), b"preserve").unwrap();
+        let marker = deepest.join("keep");
+        fixture.marker = Some(marker.clone());
+        std::fs::write(&marker, b"preserve").unwrap();
         let policy = profile.policy(AppContainerAccess::Modify, false).unwrap();
         let error = match profile.root_guard().unwrap().ensure_child(
             std::ffi::OsStr::new("preexisting"),
@@ -1904,7 +2031,12 @@ mod tests {
             Ok(_) => panic!("native traversal accepted an over-depth tree"),
         };
         assert!(error.to_string().contains("PACKAGE_TREE_BUDGET"));
-        assert_eq!(std::fs::read(deepest.join("keep")).unwrap(), b"preserve");
+        assert_eq!(std::fs::read(&marker).unwrap(), b"preserve");
+        // The test created an intentionally over-budget tree. Retract only
+        // its recorded leaf-to-root paths before asking the same bounded
+        // production cleanup owner to finish; never relax its depth policy.
+        drop(fixture);
+        assert!(!root.exists(), "the over-depth fixture must be fully retracted");
         let budget = profile.budget().clone();
         drop(profile);
         wait_cleanup(&budget);
@@ -2116,6 +2248,50 @@ mod tests {
     }
 
     #[test]
+    fn standalone_runtime_never_stages_unselected_adjacent_dll() {
+        let source = std::env::temp_dir().join(format!(
+            "browseros-standalone-runtime-{}",
+            uuid::Uuid::new_v4()
+        ));
+        browseros_platform_security::windows::ensure_private_directory(
+            &source,
+            &PrivateTreeOptions::default(),
+        )
+        .unwrap();
+        let executable = source.join("selected.exe");
+        std::fs::copy(system_binary("cmd.exe").unwrap(), &executable).unwrap();
+        let adjacent = source.join("unreviewed.dll");
+        std::fs::write(&adjacent, b"synthetic-adjacent-dll").unwrap();
+
+        let standalone = SandboxProfile::create().unwrap();
+        let staged = standalone
+            .stage_runtime_with_peers(&executable, false)
+            .unwrap();
+        assert_eq!(
+            std::fs::read(&staged).unwrap(),
+            std::fs::read(&executable).unwrap()
+        );
+        assert!(!staged.parent().unwrap().join("unreviewed.dll").exists());
+        assert_eq!(std::fs::read_dir(staged.parent().unwrap()).unwrap().count(), 1);
+
+        // The existing runtime path still stages selected-runtime DLL peers.
+        // Neither branch executes this deliberately synthetic DLL.
+        let ordinary = SandboxProfile::create().unwrap();
+        let ordinary_executable = ordinary.stage_runtime(&executable).unwrap();
+        assert_eq!(
+            std::fs::read(ordinary_executable.parent().unwrap().join("unreviewed.dll")).unwrap(),
+            b"synthetic-adjacent-dll"
+        );
+        let standalone_budget = standalone.budget().clone();
+        let ordinary_budget = ordinary.budget().clone();
+        drop(standalone);
+        drop(ordinary);
+        wait_cleanup(&standalone_budget);
+        wait_cleanup(&ordinary_budget);
+        std::fs::remove_dir_all(source).unwrap();
+    }
+
+    #[test]
     fn cancelled_budget_stops_before_profile_creation_and_keeps_cleanup_observable() {
         let budget = OperationBudget::new(Duration::from_secs(10));
         budget.cancel();
@@ -2142,31 +2318,76 @@ mod tests {
 
     #[test]
     fn appcontainer_other_package_cannot_list_private_snapshot() {
+        // Exercise enumeration and reading as distinct operations. The old
+        // cmd chain returned only its final type status; it did not prove
+        // which operation failed or establish FILE_LIST_DIRECTORY behavior.
+        let node = std::env::split_paths(&std::env::var_os("PATH").expect("Node.js PATH"))
+            .filter(|directory| directory.is_absolute())
+            .map(|directory| directory.join("node.exe"))
+            .find(|candidate| candidate.is_file())
+            .expect("Node.js is required for native AppContainer acceptance");
+        let probe = r#"const fs = require('node:fs');
+const path = require('node:path');
+let operation = 'list';
+try {
+  const names = fs.readdirSync(process.argv[1]);
+  operation = 'read';
+  const data = fs.readFileSync(path.join(process.argv[1], process.argv[2]), 'utf8');
+  process.stdout.write(JSON.stringify({ names, data }));
+} catch (error) {
+  process.stderr.write(operation + ':' + String(error.code));
+  process.exitCode = operation === 'list' ? 23 : 24;
+}"#;
         let profile = SandboxProfile::create().unwrap();
         let snapshot = profile.snapshot_dir().unwrap();
-        let file = snapshot.join("visible-only-to-own-package.rs");
+        let filename = "visible-only-to-own-package.rs";
+        let file = snapshot.join(filename);
         std::fs::write(&file, b"own-list-read-marker").unwrap();
         profile.protect_lsp_snapshot(&snapshot).unwrap();
-        let cmd = system_binary("cmd.exe").unwrap();
-        let own_command = format!(
-            "dir /b \"{}\" & type \"{}\"",
-            snapshot.display(),
-            file.display()
+        let args: [String; 4] = [
+            "--eval".into(),
+            probe.into(),
+            snapshot.to_str().unwrap().to_owned(),
+            filename.into(),
+        ];
+        let check_probe = |stdout: &[u8]| {
+            let result: serde_json::Value = serde_json::from_slice(stdout).unwrap();
+            assert!(result["names"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|name| name.as_str() == Some(filename)));
+            assert_eq!(result["data"], "own-list-read-marker");
+        };
+        let baseline = std::process::Command::new(&node)
+            .args(&args)
+            .output()
+            .unwrap();
+        assert!(
+            baseline.status.success(),
+            "host list/read probe failed: {:?}",
+            String::from_utf8_lossy(&baseline.stderr[..baseline.stderr.len().min(4096)])
         );
+        check_probe(&baseline.stdout);
         let (stdout, stderr, exit, retained) =
-            run_profile_retained(profile, &cmd, &["/D".into(), "/C".into(), own_command], &[])
-                .unwrap();
-        assert_eq!(exit, 0, "own package list/read failed: {stderr}");
-        assert!(stdout.contains("visible-only-to-own-package.rs"));
-        assert!(stdout.contains("own-list-read-marker"));
-        let other_command = format!("dir /b \"{}\"", snapshot.display());
-        let (stdout, stderr, exit) =
-            run_isolated(&cmd, &["/D".into(), "/C".into(), other_command], &[]).unwrap();
-        assert_ne!(
-            exit, 0,
-            "another package enumerated the private snapshot: {stdout} {stderr}"
+            run_profile_retained(profile, &node, &args, &[]).unwrap();
+        assert_eq!(exit, 0, "own package list/read probe failed: {stderr:?}");
+        check_probe(stdout.as_bytes());
+        let other = SandboxProfile::create().unwrap();
+        let other_budget = other.budget().clone();
+        let (stdout, stderr, exit, other_retained) =
+            run_profile_retained(other, &node, &args, &[]).unwrap();
+        assert_eq!(
+            exit, 23,
+            "foreign list/read probe did not report a filesystem denial: {stderr:?}"
         );
-        assert!(!stdout.contains("visible-only-to-own-package.rs"));
+        assert!(
+            matches!(stderr.trim(), "list:EACCES" | "list:EPERM"),
+            "foreign list/read probe failed for an unrelated reason: {stderr:?}"
+        );
+        assert!(stdout.is_empty(), "another package exposed snapshot contents");
+        drop(other_retained);
+        wait_cleanup(&other_budget);
         let budget = retained.profile().budget().clone();
         drop(retained);
         wait_cleanup(&budget);

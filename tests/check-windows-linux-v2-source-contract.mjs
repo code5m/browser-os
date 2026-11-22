@@ -267,7 +267,7 @@ assert.match(windowsSandbox, /SANDBOX_CREATE_PROCESS/);
 assert.match(windowsSandbox, /OwnedSecurityDescriptor/);
 assert.match(windowsSandbox, /pub fn stderr_diagnostic/);
 assert.match(windowsSandbox, /LSP_RUSTC_CFG_PROBE_FAILED/);
-assert.match(windowsLsp, /rustup_analyzer_binary/);
+assert.match(windowsLsp, /rustup_compiler_binary/);
 assert.match(windowsLsp, /LSP_SANDBOX_START_FAILED:\{error\}/);
 assert.match(windowsMcp, /MCP_START_FAILED:\{error\}/);
 assert.match(windowsMcp, /MCP_PAYLOAD_NOT_FOUND/);
@@ -379,6 +379,55 @@ assert.match(windowsSandbox, /existing\s*\.read_exact\(&mut actual/);
 const v2Workflow = read('../.github/workflows/windows-linux-v2-experimental.yml');
 assert.match(v2Workflow, /Generate and verify NSIS SHA256SUMS/);
 assert.match(v2Workflow, /Get-FileHash -LiteralPath .* -Algorithm SHA256/);
+const windowsConfig = JSON.parse(read('../src-tauri/tauri.windows.conf.json'));
+for (const name of ['rust-analyzer.exe', 'runtime.json', 'LICENSE-MIT', 'LICENSE-APACHE', 'Cargo.lock']) {
+  assert.equal(windowsConfig.bundle.resources['resources/windows-lsp/' + name], 'windows-lsp/' + name);
+}
+assert.equal(windowsConfig.build.beforeBuildCommand, 'npm run build && pwsh -NoProfile -File scripts/build-windows-lsp-runtime.ps1');
+const nativeBuild = read('../src-tauri/build.rs');
+const runtimePreparation = sourceRegion(nativeBuild, 'fn prepare_windows_lsp_runtime()', 'fn main()');
+assert.match(runtimePreparation, /CARGO_CFG_TARGET_OS/);
+assert.match(runtimePreparation, /!= Ok\("windows"\)/);
+assert.match(runtimePreparation, /Command::new\("pwsh"\)/);
+assert.match(runtimePreparation, /\.arg\("-ExecutableDirectory"\)/);
+assert.match(runtimePreparation, /output\.is_absolute\(\)/);
+assert.match(runtimePreparation, /OsStr::new\("out"\)/);
+assert.match(runtimePreparation, /OsStr::new\("build"\)/);
+assert.match(nativeBuild, /prepare_windows_lsp_runtime\(\);\s*tauri_build::build\(\)/);
+const runtimeBuilder = read('../scripts/build-windows-lsp-runtime.ps1');
+assert.match(runtimeBuilder, /WINDOWS_LSP_SOURCE_COMMIT_MISMATCH/);
+assert.match(runtimeBuilder, /WINDOWS_LSP_UNEXPECTED_SOURCE_CHANGE/);
+assert.match(runtimeBuilder, /WINDOWS_LSP_COMPILER_IDENTITY_MISMATCH/);
+assert.match(runtimeBuilder, /"build", "--manifest-path",[\s\S]*?"--locked"/);
+assert.match(runtimeBuilder, /"RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER"/);
+assert.match(runtimeBuilder, /"CARGO_MAKEFLAGS", "MAKEFLAGS"/);
+assert.match(runtimeBuilder, /\$env:CARGO_HOME = Join-Path \$WorkDirectory "cargo-home"/);
+assert.match(runtimeBuilder, /--target-dir", \$TargetDirectory/);
+assert.match(runtimeBuilder, /Assert-Hash \$MetadataSource \$Source\.patched_metadata_sha256 "metadata after build"/);
+assert.match(runtimeBuilder, /Assert-Hash \$BuildLockFile \$Source\.lock_sha256 "lock after build"/);
+assert.match(runtimeBuilder, /WINDOWS_LSP_BUNDLE=VERIFIED_CACHED"\s*Publish-ForExecutable/);
+assert.match(runtimeBuilder, /WINDOWS_LSP_PUBLISHED_BUNDLE_INVALID/);
+assert.match(runtimeBuilder, /WINDOWS_LSP_PROFILE_OUTPUT_INVALID/);
+assert.match(runtimeBuilder, /"LICENSE-MIT", "LICENSE-APACHE", "Cargo\.lock", "rust-analyzer\.exe", "runtime\.json"/);
+const runtimeBuilderStep = v2Workflow.indexOf('id: windows_lsp_runtime');
+const windowsCompileStep = v2Workflow.indexOf('id: windows_native_compile');
+assert.ok(runtimeBuilderStep > 0 && windowsCompileStep > runtimeBuilderStep);
+assert.match(v2Workflow, /build-windows-lsp-runtime\.ps1 -WorkDirectory/);
+assert.match(v2Workflow, /NSIS_INSTALL_REQUIRES_FRESH_RUNNER/);
+assert.match(v2Workflow, /Assert-NativeSupervision -Run \$installation -Phase 'nsis-install'/);
+assert.match(v2Workflow, /\$installation\.supervision\.ExitCode -ne 0/);
+assert.match(v2Workflow, /verify-installed-browseros\.ps1 -ExePath \$installedExe -PayloadOnly/);
+assert.match(v2Workflow, /-SourceSha \$env:BROWSEROS_SOURCE_SHA/);
+const installedVerifier = read('../scripts/windows/verify-installed-browseros.ps1');
+const payloadVerification = sourceRegion(installedVerifier, 'if ($PayloadOnly) {', '$existing = @(Get-Process');
+assert.match(payloadVerification, /NSIS_PAYLOAD_EXPECTS_INSTALLED_COPY/);
+assert.match(payloadVerification, /NSIS_PAYLOAD_DIRECTORY_INVALID/);
+assert.match(payloadVerification, /NSIS_PAYLOAD_REPARSE_POINT/);
+assert.match(payloadVerification, /Get-FileHash -LiteralPath \$installed -Algorithm SHA256/);
+assert.match(payloadVerification, /\$actualHash -cne \$expectedHash -or \$installedItem\.Length -ne \$sourceItem\.Length/);
+assert.match(payloadVerification, /PACKAGE_PAYLOAD_PASS_GUI_PENDING/);
+assert.match(payloadVerification, /gui_pass = \$false/);
+assert.doesNotMatch(payloadVerification, /Start-Process/);
 // Native jobs are opt-in and all evidence is bound to one requested commit.
 assert.match(v2Workflow, /workflow_call:/);
 assert.doesNotMatch(v2Workflow, /workflow_dispatch:/);
@@ -547,11 +596,11 @@ assert.match(platformSecurity, /native_path_identity_rejects_a_sibling_and_accep
 // AppContainer SID isolation, and ConPTY creation/child lifetime.
 const nativeLspStart = sourceRegion(windowsLsp, "fn start_with_snapshot(", "fn begin_request(");
 assert.match(nativeLspStart, /"linkedProjects":\[reviewed_graph\]/);
-assert.match(nativeLspStart, /\.spawn\(&server, &\[\], &environment, &state\)/);
+assert.match(nativeLspStart, /\.spawn_standalone\(server\.analyzer\.path\(\), &\[\], &environment, &state\)/);
 assert.match(nativeLspStart, /rustc_cfg_environment\(&profile, &server\)\?/);
 const rustcCfgEnvironment = sourceRegion(windowsLsp, "fn rustc_cfg_peer(", "fn lsp_toolchain_contract(");
 assert.ok(rustcCfgEnvironment.includes('directory.join("rustc.exe")'));
-assert.match(rustcCfgEnvironment, /stage_runtime_peer\(&peer\)/);
+assert.match(rustcCfgEnvironment, /stage_runtime_peer\(selected\.rustc\.path\(\)\)/);
 assert.match(rustcCfgEnvironment, /LSP_RUSTC_CFG_STAGE_FAILED:\{error\}/);
 assert.doesNotMatch(rustcCfgEnvironment, /"cargo(?:\.exe)?"/);
 assert.match(windowsLsp, /LSP_RUSTC_CFG_STAGE_FAILED/);
@@ -563,6 +612,50 @@ assert.ok(windowsLsp.includes('"rustc_cfg_probe":"required"'));
 assert.ok(nativeLspStart.includes('"buildScripts":{"enable":false}'));
 assert.ok(nativeLspStart.includes('"procMacro":{"enable":false}'));
 assert.match(windowsLsp, /cfg_peer_missing_or_directory_fails_before_runtime_spawn/);
+// The shipped analyzer is checked independently of the installed compiler.
+const selectedRuntime = sourceRegion(windowsLsp, "fn runtime_with_budget(", "fn installed_compiler_with_budget(");
+assert.match(selectedRuntime, /PinnedReadFile::open\(&compiler, operation\)/);
+assert.match(selectedRuntime, /runtime_bundle::open\(operation\)\?/);
+assert.match(selectedRuntime, /Ok\(SelectedRuntime \{ analyzer, rustc \}\)/);
+const compilerSearch = sourceRegion(windowsLsp, "fn installed_compiler_with_budget(", "/// A real rustc in the selected installed toolchain");
+assert.match(compilerSearch, /directory\.join\("rustc.exe"\)/);
+assert.doesNotMatch(compilerSearch, /join\("rust-analyzer.exe"\)/);
+assert.match(windowsLsp, /#\[path = "windows_lsp_runtime\.rs"\]\s*mod runtime_bundle;/);
+const runtimeBundle = read('../src-tauri/src/capabilities/agent/windows_lsp_runtime.rs');
+const runtimeProduction = beforeRustTests(runtimeBundle);
+assert.match(runtimeProduction, /const EMBEDDED_MANIFEST: &\[u8\] = include_bytes!/);
+assert.match(runtimeProduction, /\/resources\/windows-lsp\/runtime\.json/);
+assert.match(runtimeProduction, /manifest\.source != source/);
+assert.match(runtimeProduction, /manifest\.artifact\.file != "rust-analyzer\.exe"/);
+assert.match(runtimeProduction, /manifest\.artifact\.size > MAX_EXECUTABLE_BYTES/);
+assert.match(runtimeProduction, /open_directory\(&bundle_directory\(\)\?, EMBEDDED_MANIFEST, operation\)/);
+assert.match(runtimeProduction, /observed\.as_slice\(\) != expected_manifest/);
+assert.match(runtimeProduction, /PinnedReadFile::open\(&directory\.join\("runtime\.json"\), operation\)/);
+assert.match(runtimeProduction, /PinnedReadFile::open\(&directory\.join\(&expected\.artifact\.file\), operation\)/);
+assert.match(runtimeProduction, /loop \{\s*check_operation\(operation\)\?/);
+assert.match(runtimeProduction, /format!\("\{:x\}", hash\.finalize\(\)\) != expected\.artifact\.sha256/);
+assert.match(runtimeProduction, /_manifest: manifest/);
+assert.match(runtimeProduction, /#\[cfg\(not\(any\(test, debug_assertions\)\)\)\]/);
+assert.match(runtimeProduction, /std::env::current_exe\(\)/);
+assert.match(runtimeProduction, /\.join\("windows-lsp"\)/);
+assert.doesNotMatch(runtimeProduction, /var(?:_os)?\("PATH"\)|Command::new|spawn\(/);
+for (const name of [
+  'verified_bundle_pins_manifest_and_executable_until_staging',
+  'altered_bundle_source_manifest_binary_and_size_are_rejected',
+  'missing_bundle_and_cancelled_preparation_fail_closed',
+]) {
+  assert.ok(runtimeBundle.includes('fn ' + name + '('));
+}
+const runtimeSource = JSON.parse(read('../vendor/windows-rust-analyzer/source.json'));
+assert.equal(runtimeSource.source_repository, 'https://github.com/rust-lang/rust');
+assert.equal(runtimeSource.source_commit, '0ef1bc386059596dada8fb65b50425aab2ea637a');
+assert.equal(runtimeSource.rust_release, '1.100.0');
+assert.equal(runtimeSource.target, 'x86_64-pc-windows-msvc');
+const metadataPatch = read('../vendor/windows-rust-analyzer/metadata-stdin.patch');
+assert.match(metadataPatch, /\+\s+#\[cfg\(windows\)\]/);
+assert.match(metadataPatch, /\+\s+cmd\.stdin\(std::process::Stdio::piped\(\)\);/);
+assert.doesNotMatch(metadataPatch, /SetSecurityInfo|icacls|cfg\s*:\s*Vec::new/);
+
 assert.match(windowsLsp, /fn shutdown\(&mut self\)/);
 assert.match(windowsLsp, /LSP_CLEANUP_TIMEOUT/);
 assert.match(windowsLsp, /LSP_PROCESS_CLEANUP_INCOMPLETE/);
@@ -585,6 +678,74 @@ assert.match(windowsSandbox, /PRIVATE_TREE_MAX_DEPTH/);
 assert.match(windowsSandbox, /SANDBOX_PRIVATE_TREE_OUTSIDE_PROFILE/);
 assert.match(windowsSandbox, /state_guard/);
 assert.match(windowsSandbox, /state_directory_stays_pinned_until_profile_teardown/);
+
+const stateStaging = sourceRegion(windowsSandbox, "pub fn stage_state_file(", "pub fn snapshot_dir(");
+const assertNativeStateStaging = (source) => {
+  assert.match(source, /bytes\.len\(\)\s*>\s*MAX_STATE_PAYLOAD_BYTES/);
+  assert.match(source, /self\.state_dir\(\)\?;/);
+  assert.match(source, /self\.state_guard\.lock\(\)/);
+  assert.match(source, /AppContainerAccess::Modify,\s*false/);
+  assert.match(source, /\.audit_root\(&policy,\s*&self\.budget\)/);
+  assert.match(source, /\.create_file\(name,\s*&policy,\s*&self\.budget\)/);
+  assert.match(source, /for chunk in bytes\.chunks\(64\s*\*\s*1024\)\s*\{\s*self\.budget\.check\(\)/);
+  assert.match(source, /file\.write_all\(chunk\)/);
+  assert.match(source, /directory\.path\(\)\.join\(name\)/);
+  assert.doesNotMatch(source, /std::fs::|fs::write|fs::create|SetSecurityInfo|icacls/);
+};
+assertNativeStateStaging(stateStaging);
+for (const [from, to] of [
+  ['self.state_dir()?;', 'let _ = self.state_dir();'],
+  ['.create_file(name, &policy, &self.budget)', '.create_file(std::ffi::OsStr::new("fixed"), &policy, &self.budget)'],
+]) {
+  const unsafeStaging = stateStaging.replace(from, to);
+  assert.notEqual(unsafeStaging, stateStaging, 'state staging negative fixture must mutate source');
+  assert.throws(() => assertNativeStateStaging(unsafeStaging));
+}
+const mcpPayloadStaging = sourceRegion(windowsMcp, "let profile = SandboxProfile::create()", "let mut environment =");
+assert.match(mcpPayloadStaging, /read_regular\(/);
+assert.match(mcpPayloadStaging, /staged_name\.push\(name\)/);
+assert.match(mcpPayloadStaging, /profile\.stage_state_file\(&staged_name,\s*&bytes\)\?/);
+assert.doesNotMatch(mcpPayloadStaging, /fs::write|fs::create_dir|to_string_lossy/);
+assert.match(windowsMcp, /PAYLOAD_LIMIT:\s*usize\s*=\s*super::windows_sandbox::MAX_STATE_PAYLOAD_BYTES/);
+for (const [id, count] of [['appcontainer', 14], ['windows-full-suite', 104]]) {
+  const selection = nativeRequired.selections.find((entry) => entry.id === id);
+  assert.equal(selection.required_count, count);
+  assert.ok(selection.required_names.includes('state_file_staging_rejects_non_component_names'));
+  assert.ok(selection.required_names.includes('standalone_runtime_never_stages_unselected_adjacent_dll'));
+}
+
+// A verified standalone payload must not discover unrelated adjacent DLLs.
+const standaloneRuntime = sourceRegion(windowsSandbox, "pub fn spawn_standalone(", "fn spawn_with_runtime_peers(");
+assert.match(standaloneRuntime, /spawn_with_runtime_peers\(runtime, args, environment, current_directory, false\)/);
+const commonRuntimeSpawn = sourceRegion(windowsSandbox, "fn spawn_with_runtime_peers(", "\n}\n\nimpl Drop for SandboxProfile");
+assert.match(commonRuntimeSpawn, /self\.check_preparation\(\)\?/);
+assert.match(commonRuntimeSpawn, /stage_runtime_with_peers\(runtime, include_peers\)\?/);
+assert.match(commonRuntimeSpawn, /\.audit_tree\(&policy, &self\.tree_options\(\), &self\.budget\)/);
+assert.match(commonRuntimeSpawn, /spawn_inner\(self, &staged, args, environment, &state\)/);
+const componentStaging = sourceRegion(windowsSandbox, "fn stage_runtime_with_peers(", "/// Bounded source-tree staging.");
+assert.match(componentStaging, /let source_directory = if include_peers\s*\{/);
+assert.match(componentStaging, /if let Some\(source_directory\) = source_directory\s*\{/);
+assert.match(componentStaging, /PinnedReadFile::open\(runtime, &self\.budget\)/);
+assert.match(componentStaging, /self\.copy_component\(source, directory, filename, &policy\)\?/);
+assert.match(componentStaging, /\.audit_tree\(&policy, &self\.tree_options\(\), &self\.budget\)/);
+
+// This is additional required native coverage; static wiring is not execution.
+const bundleSelection = nativeRequired.selections.find((entry) => entry.id === 'windows-lsp-runtime-bundle');
+assert.equal(bundleSelection.required_count, 3);
+assert.equal(bundleSelection.allow_additional_tests, false);
+assert.equal(bundleSelection.allow_ignored, false);
+assert.equal(bundleSelection.filter, 'capabilities::agent::coding_lsp::runtime_bundle::tests');
+const fullNativeSelection = nativeRequired.selections.find((entry) => entry.id === 'windows-full-suite');
+for (const name of [
+  'verified_bundle_pins_manifest_and_executable_until_staging',
+  'altered_bundle_source_manifest_binary_and_size_are_rejected',
+  'missing_bundle_and_cancelled_preparation_fail_closed',
+]) {
+  const qualified = 'capabilities::agent::coding_lsp::runtime_bundle::tests::' + name;
+  assert.ok(bundleSelection.required_names.includes(qualified));
+  assert.ok(fullNativeSelection.required_names.includes(qualified));
+}
+
 assert.match(ptyWinSpawn, /fn is_live_pipe_handle/);
 assert.match(ptyWinSpawn, /creation_pipes: Mutex<Option/);
 assert.match(ptyWinSpawn, /self\.creation_pipes/);

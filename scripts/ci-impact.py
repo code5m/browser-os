@@ -16,9 +16,14 @@ RELEASE_SENSITIVE = (
 NATIVE_OR_BRIDGE = ("bridge", "webview", "window", "runtime", "overlay", "startup", "drag", "browserhost")
 NODE_MANIFESTS = {"package.json", "package-lock.json", "npm-shrinkwrap.json"}
 RUST_MANIFESTS = {"Cargo.toml", "Cargo.lock"}
+RUST_VENDOR_PREFIXES = ("src-tauri/vendor/glib/", "vendor/windows-rust-analyzer/")
+RUST_PROVENANCE_SCRIPTS = {"scripts/generate-sbom.mjs", "scripts/check-vendored-glib.mjs", "scripts/ci-impact.py"}
 
 
 def documentation(path: str) -> bool:
+    # Vendored manifests, licenses and provenance participate in source integrity.
+    if path.startswith(RUST_VENDOR_PREFIXES):
+        return False
     p = PurePosixPath(path)
     # Only narrative files count. YAML/JSON/HTML in docs can affect behavior.
     return path == "LICENSE" or p.suffix.lower() in {".md", ".markdown", ".txt"} and (
@@ -57,11 +62,11 @@ def classify(paths: list[str], *, event: str = "pull_request", force_full: bool 
 
     node = event in {"schedule", "workflow_dispatch"} or force_full or any(
         f in NODE_MANIFESTS or f.startswith(".github/workflows/") or
-        f == "scripts/generate-sbom.mjs" for f in files
+        f in RUST_PROVENANCE_SCRIPTS or f.startswith(RUST_VENDOR_PREFIXES) for f in files
     )
     rust = event in {"schedule", "workflow_dispatch"} or force_full or any(
         PurePosixPath(f).name in RUST_MANIFESTS or f.startswith(".github/workflows/") or
-        f == "scripts/generate-sbom.mjs" for f in files
+        f in RUST_PROVENANCE_SCRIPTS or f.startswith(RUST_VENDOR_PREFIXES) for f in files
     )
     # When comparison is uncertain, NEVER silently skip a security check.
     if not files:
@@ -129,7 +134,28 @@ def self_test() -> None:
     assert safe_ui("src/capabilities/home/ui/HomePanel.vue")
     assert not safe_ui("src/capabilities/browser/ui/Webview.vue")
     assert documentation("src/capabilities/home/README.md")
-    print(f"CI_IMPACT_SELF_TEST=PASS cases={len(cases)}")
+    vendor_cases = [
+        "src-tauri/vendor/glib/src/variant_iter.rs",
+        "src-tauri/vendor/glib/Cargo.toml",
+        "src-tauri/vendor/glib/README.md",
+        "src-tauri/vendor/glib/LICENSE",
+        "src-tauri/vendor/glib/BROWSEROS-SOURCE.json",
+        "vendor/windows-rust-analyzer/source.json",
+        "vendor/windows-rust-analyzer/metadata-stdin.patch",
+        "vendor/windows-rust-analyzer/Cargo.lock",
+        "vendor/windows-rust-analyzer/README.md",
+        "scripts/check-vendored-glib.mjs",
+        "scripts/ci-impact.py",
+    ]
+    for changed in vendor_cases:
+        result = classify([changed], event="push")
+        assert result["mode"] == "full", changed
+        assert result["run_native"] == "true", changed
+        assert result["supply_rust"] == "true", changed
+        assert result["supply_node"] == "true", changed
+        assert classify([changed, "README.md"])["mode"] == "full", changed
+    assert classify(["src-tauri/vendor/glib-other/README.md"])["supply_rust"] == "false"
+    print(f"CI_IMPACT_SELF_TEST=PASS cases={len(cases)} vendor_cases={len(vendor_cases)}")
 
 
 def main() -> int:

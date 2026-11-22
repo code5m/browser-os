@@ -51,3 +51,6 @@ vite.config.ts.timestamp-*
 
 # Rust -> TypeScript code-derived contract output (regenerated before dev/build/check)
 /src/generated/native-contracts.ts
+
+# Verified Windows Rust LSP resources are built from pinned source.
+/src-tauri/resources/windows-lsp/

@@ -1,4 +1,4 @@
-# BrowserOS Windows native release-window smoke test (read-only).
+# BrowserOS Windows installed payload verification or release-window smoke test.
 # Not proof of Bilibili login or a full interactive GUI acceptance.
 [CmdletBinding()]
 param(
@@ -6,7 +6,11 @@ param(
   [string]$EvidenceDir = (Join-Path $env:TEMP 'browseros-windows-gui-smoke'),
   [int]$TimeoutSeconds = 45,
   [switch]$CaptureScreenshot,
-  [switch]$StopLaunched
+  [switch]$StopLaunched,
+  [switch]$PayloadOnly,
+  [string]$ExpectedReleaseDirectory,
+  [string]$ExpectedRuntimeDirectory,
+  [string]$SourceSha
 )
 $ErrorActionPreference = 'Stop'
 if (-not (Test-Path -LiteralPath $ExePath -PathType Leaf)) {
@@ -14,6 +18,67 @@ if (-not (Test-Path -LiteralPath $ExePath -PathType Leaf)) {
 }
 $exe = (Resolve-Path -LiteralPath $ExePath).Path
 $hash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash
+if ($PayloadOnly) {
+  if ($SourceSha -notmatch '^[0-9a-f]{40}$' -or
+      [string]::IsNullOrWhiteSpace($ExpectedReleaseDirectory) -or
+      [string]::IsNullOrWhiteSpace($ExpectedRuntimeDirectory)) {
+    throw 'NSIS_PAYLOAD_EXPECTED_SOURCE_REQUIRED'
+  }
+  $installedRoot = Split-Path -Parent $exe
+  $expectedExe = [IO.Path]::GetFullPath((Join-Path $ExpectedReleaseDirectory 'mvp-browser-os.exe'))
+  if ([StringComparer]::OrdinalIgnoreCase.Equals($exe, $expectedExe)) {
+    throw 'NSIS_PAYLOAD_EXPECTS_INSTALLED_COPY'
+  }
+  foreach ($directory in @($installedRoot, (Join-Path $installedRoot 'windows-lsp'), $ExpectedReleaseDirectory, $ExpectedRuntimeDirectory)) {
+    if (-not (Test-Path -LiteralPath $directory -PathType Container) -or
+        ((Get-Item -LiteralPath $directory).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+      throw 'NSIS_PAYLOAD_DIRECTORY_INVALID'
+    }
+  }
+  $expectedFiles = [ordered]@{
+    'mvp-browser-os.exe' = Join-Path $ExpectedReleaseDirectory 'mvp-browser-os.exe'
+  }
+  foreach ($name in @('rust-analyzer.exe', 'runtime.json', 'LICENSE-MIT', 'LICENSE-APACHE', 'Cargo.lock')) {
+    $expectedFiles[('windows-lsp/' + $name)] = Join-Path $ExpectedRuntimeDirectory $name
+  }
+  $verified = [ordered]@{}
+  foreach ($entry in $expectedFiles.GetEnumerator()) {
+    $installed = Join-Path $installedRoot $entry.Key
+    if (-not (Test-Path -LiteralPath $entry.Value -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $installed -PathType Leaf)) {
+      throw "NSIS_PAYLOAD_FILE_MISSING:$($entry.Key)"
+    }
+    $sourceItem = Get-Item -LiteralPath $entry.Value
+    $installedItem = Get-Item -LiteralPath $installed
+    if (($sourceItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+        ($installedItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+      throw "NSIS_PAYLOAD_REPARSE_POINT:$($entry.Key)"
+    }
+    $expectedHash = (Get-FileHash -LiteralPath $entry.Value -Algorithm SHA256).Hash.ToLowerInvariant()
+    $actualHash = (Get-FileHash -LiteralPath $installed -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actualHash -cne $expectedHash -or $installedItem.Length -ne $sourceItem.Length) {
+      throw "NSIS_PAYLOAD_HASH_MISMATCH:$($entry.Key)"
+    }
+    $verified[$entry.Key] = $actualHash
+  }
+  New-Item -ItemType Directory -Path $EvidenceDir -Force | Out-Null
+  $payloadReport = [ordered]@{
+    status = 'PACKAGE_PAYLOAD_PASS_GUI_PENDING'
+    source_sha = $SourceSha
+    gui_pass = $false
+    real_bfc_login_verified = $false
+    files = $verified
+  }
+  $json = $payloadReport | ConvertTo-Json -Depth 5
+  [IO.File]::WriteAllText(
+    (Join-Path $EvidenceDir 'package-payload.json'),
+    $json + [Environment]::NewLine,
+    [Text.UTF8Encoding]::new($false)
+  )
+  Write-Host 'NSIS_INSTALLED_PAYLOAD=PASS files=6 GUI=GUI_PENDING'
+  Write-Host $json
+  return
+}
 $existing = @(Get-Process -Name 'mvp-browser-os' -ErrorAction SilentlyContinue)
 if ($existing.Count -gt 0) {
   throw 'BrowserOS is already running. Close the application normally before this isolated smoke test.'
