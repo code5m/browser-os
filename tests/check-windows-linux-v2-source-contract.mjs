@@ -638,6 +638,46 @@ assert.match(platformSecurity, /result\s*\.reopen_directory\(\s*FILE_ADD_SUBDIRE
 assert.match(packageAcl, /self\.opened\s*\.reopen_directory\(\s*FILE_ADD_SUBDIRECTORY\s*,?\s*\)/);
 assert.match(packageAcl, /self\.opened\s*\.reopen_directory\(\s*2\s*\/\* FILE_ADD_FILE \*\/\s*,?\s*\)/);
 assert.match(nativeRecovery, /self\.opened\s*\.reopen_directory\(\s*2\s*\/\* FILE_ADD_FILE \*\/\s*,?\s*\)/);
+// A successful OS create authorizes only its new package/AC directories.
+// Existing namespace parents and every DACL remain outside this repair.
+const createdOwner = sourceRegion(nativeRecovery, "pub(super) fn prepare_created_profile_owner(", "pub(super) fn profile_scope(");
+const assertCreatedOwnerScope = (source) => {
+  assert.match(source, /audit_namespace_writers\(&opened\.chain\[parent\],\s*&package\)\?/);
+  assert.match(source, /for index in parent\s*\+\s*1\.\.opened\.chain\.len\(\)/);
+  assert.match(source, /reopen_directory\(WRITE_OWNER\s*\|\s*READ_CONTROL\)/);
+  assert.match(source, /SetSecurityInfo\(\s*writable\.as_raw_handle\(\) as _,\s*SE_FILE_OBJECT,\s*OWNER_SECURITY_INFORMATION,\s*policy\.owner\.as_ptr\(\)/);
+  assert.match(source, /!current_owner\(original,\s*&policy\)\?\s*\|\|\s*file_identity\(original\)\?\s*!=\s*identity/);
+  assert.doesNotMatch(source, /DACL_SECURITY_INFORMATION|SeTakeOwnershipPrivilege|SetTokenInformation/);
+};
+assertCreatedOwnerScope(createdOwner);
+for (const [from, to] of [
+  [/parent\s*\+\s*1\.\.opened\.chain/, 'parent..opened.chain'],
+  ['OWNER_SECURITY_INFORMATION,', 'OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,'],
+]) {
+  const unsafeCreatedOwner = createdOwner.replace(from, to);
+  assert.notEqual(unsafeCreatedOwner, createdOwner);
+  assert.throws(() => assertCreatedOwnerScope(unsafeCreatedOwner));
+}
+const createProfile = sourceRegion(windowsSandbox, "pub fn create_with_budget(", "fn finish_create(");
+assert.match(createProfile, /if result != 0\s*\{[\s\S]*?return Err\(format!\("SANDBOX_PROFILE_CREATE:\{result:x\}"\)\);/);
+assert.match(createProfile, /profile\.finish_create\(\)/);
+const finishProfile = sourceRegion(windowsSandbox, "fn finish_create(", "pub fn budget(");
+assert.match(finishProfile, /\.prepare_created_owner\(&self\.name,\s*&self\.sid_string,\s*&self\.budget\)[\s\S]*?\.identity_record\(\)[\s\S]*?\.recovery_scope/);
+assert.match(nativeRecovery, /fn current_owner[\s\S]*?EqualSid\(owner,\s*policy\.owner\.as_ptr\(\)\)/);
+
+const privateReadWrite = sourceRegion(platformSecurity, "pub fn open_private_read_write_file(", "fn private_object(");
+assert.match(privateReadWrite, /policy\.descriptor\(false\)/);
+assert.match(privateReadWrite, /audit_private_file\(&file\)\?/);
+assert.match(privateReadWrite, /_parents:\s*parent/);
+assert.doesNotMatch(privateReadWrite, /\brepair_object\s*\(|\bSetSecurityInfo\s*\(|\.truncate\s*\(/);
+assert.match(auditLock, /open_private_read_write_file\(&lock_path\)/);
+assert.match(platformSecurity, /private_read_write_file_preserves_identity_and_rejects_existing_extra_aces/);
+const platformSelection = nativeRequired.selections.find((selection) => selection.id === 'platform-security');
+assert.equal(platformSelection.required_count, 37);
+assert.equal(platformSelection.allow_additional_tests, false);
+assert.equal(platformSelection.allow_ignored, false);
+assert.ok(platformSelection.required_names.includes('windows::tests::private_read_write_file_preserves_identity_and_rejects_existing_extra_aces'));
+
 const privateRepair = sourceRegion(platformSecurity, "fn repair_object(", "#[derive(Debug)]\nstruct DirectoryEntry");
 assert.ok(privateRepair.length > 0);
 assert.match(privateRepair, /let writable = file/);

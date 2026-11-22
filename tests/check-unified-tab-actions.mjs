@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import vm from "node:vm";
 import ts from "typescript";
+import { parse as parseSfc } from "@vue/compiler-sfc";
 import { createTabCoordinator } from "../src/application/tabCoordinator.mjs";
 import { projectTabResources } from "../src/application/tabResourceProjection.mjs";
 import * as documentPaths from "../src/application/documentPaths.mjs";
@@ -85,8 +86,143 @@ function fixture() {
     "../capabilities/browser/public": { useBrowserStore: () => browser },
     "../stores/useLayoutStore": { useLayoutStore: () => layout },
   });
-  return { layout, browser, native, calls, actions, resources, lifecycle, navigation, availability };
+  return { layout, browser, native, calls, actions, resources, lifecycle, navigation, availability, loadModule: owner };
 }
+
+
+// Run real template click expressions against the actual owners. Read-only
+// caller views make an assignment from a component or host adapter fail here;
+// these tests do not claim a rendered/installed native GUI.
+function callerView(store) {
+  return new Proxy(store, {
+    set(_target, key) { throw Error("Caller wrote owner state directly: " + String(key)); },
+  });
+}
+function templateClick(path, select) {
+  const source = fs.readFileSync(new URL("../" + path, import.meta.url), "utf8");
+  const parsed = parseSfc(source, { filename: path });
+  assert.equal(parsed.errors.length, 0, path + " must parse");
+  assert.ok(parsed.descriptor.template, path + " must have a template");
+  const buttons = [...parsed.descriptor.template.content.matchAll(/<button\b(?:[^"'<>]|"[^"]*"|'[^']*')*>/g)]
+    .map(match => match[0]).filter(select);
+  assert.equal(buttons.length, 1, path + " must identify one tested button");
+  const expression = buttons[0].match(/@click="([^"]+)"/)?.[1];
+  assert.ok(expression, path + " must have a click expression");
+  return bindings => vm.runInNewContext('"use strict";\n' + expression, bindings, { filename: path });
+}
+
+for (const path of [
+  "src/capabilities/apps/ui/AppPanel.vue",
+  "src/capabilities/browser/ui/ResourcePanel.vue",
+  "src/capabilities/database/ui/DatabasePanel.vue",
+  "src/capabilities/script/ui/CommandSnippetPanel.vue",
+  "src/capabilities/script/ui/ScriptPanel.vue",
+  "src/capabilities/workspace/ui/AuditPanel.vue",
+]) {
+  const { layout, calls } = fixture();
+  layout.setSidebarOpen(true);
+  const close = templateClick(path, tag => tag.includes('class="close"'));
+  const bindings = { layout: callerView(layout) };
+  close(bindings);
+  close(bindings);
+  assert.equal(layout.sidebarOpen, false, path + " repeated close remains closed");
+  assert.equal(layout.mainView, "home", "closing a sidebar does not navigate");
+  layout.toggleSidebar();
+  assert.equal(layout.sidebarOpen, true, "the existing toggle still opens a closed sidebar");
+  assert.equal(calls.length, 0, "panel preferences do not create native resources");
+}
+{
+  const { layout, calls } = fixture();
+  const path = "src/components/layout/MainArea.vue";
+  const select = templateClick(path, tag => tag.includes('v-for="t in dockTabs"'));
+  const close = templateClick(path, tag => tag.includes('class="close"'));
+  const bindings = { layout: callerView(layout), t: { view: "contributed-panel" } };
+  layout.setBrowserDockOpen(true);
+  select(bindings);
+  select(bindings);
+  assert.equal(layout.browserDockTab, "contributed-panel", "contributed views remain valid dock choices");
+  assert.equal(layout.browserDockOpen, true, "reselecting the visible dock tab must not close it");
+  close(bindings);
+  close(bindings);
+  assert.equal(layout.browserDockOpen, false, "repeated dock close is idempotent");
+  assert.equal(layout.browserDockTab, "contributed-panel", "closing remembers the selected tab");
+  bindings.t.view = "another-panel";
+  select(bindings);
+  assert.equal(layout.browserDockTab, "another-panel");
+  assert.equal(layout.browserDockOpen, false, "selection alone does not reopen a closed dock");
+  layout.toggleBrowserDock("another-panel");
+  assert.equal(layout.browserDockOpen, true, "menu toggle opens the selected dock");
+  layout.toggleBrowserDock("another-panel");
+  assert.equal(layout.browserDockOpen, false, "menu toggle retains same-tab collapse semantics");
+  layout.toggleBrowserDock("files");
+  assert.equal(layout.browserDockTab, "files");
+  assert.equal(layout.browserDockOpen, true);
+  assert.equal(layout.mainView, "home");
+  assert.equal(calls.length, 0);
+}
+{
+  const { browser, calls } = fixture();
+  browser.setAiNavOpen(true);
+  const close = templateClick("src/capabilities/browser/ui/AINavPanel.vue", tag => tag.includes('class="close"'));
+  const bindings = { browser: callerView(browser) };
+  close(bindings);
+  close(bindings);
+  assert.equal(browser.aiNavOpen, false, "repeated AI panel close remains closed");
+  browser.toggleAiNav();
+  assert.equal(browser.aiNavOpen, true, "AI menu toggle remains available");
+  assert.equal(calls.length, 0, "AI panel visibility alone does not launch a browser");
+}
+{
+  const { layout, browser, native, calls, loadModule } = fixture();
+  const registered = new Map();
+  const services = {
+    register(key, value) { registered.set(key, value); },
+    require(key) { assert.ok(registered.has(key), "unregistered host service: " + key); return registered.get(key); },
+  };
+  const contributions = { registerContribution() {} };
+  // Pinia unwraps setup-store refs on its public instance.
+  const workbench = { collapsed: false };
+  const { createLegacyHostAdapters } = loadModule("src/capability/platform/legacy-host-adapters.ts", {
+    "@browser-os/capability-clipboard": {
+      createClipboardCapability: () => ({ clipboardCapability: { lifecycle: {} } }),
+      clipboardContribution: {},
+    },
+    "@browser-os/capability-vault": {
+      createVaultCapability: () => ({ vaultCapability: { lifecycle: {} } }),
+      vaultContribution: {},
+    },
+    "../../bridge": { bridge: native },
+    "../../stores/useLayoutStore": { useLayoutStore: () => callerView(layout) },
+    "../../capabilities/workbench/public": { useWorkbenchStore: () => workbench },
+    "../../capabilities/browser/public": { useBrowserStore: () => callerView(browser) },
+    "../../capabilities/grid/public": { useGridStore: () => ({ activateGrid() { throw Error("Unexpected Grid activation"); } }) },
+    "../../utils/graphUi": { layoutPositions() { throw Error("Unexpected graph layout"); } },
+    "../../utils/redact": { redactSecrets: text => text },
+    "../contribution/registry": { contributionRegistry: contributions },
+    "./host-services": { hostServices: services },
+  });
+  const adapters = createLegacyHostAdapters(services, contributions);
+  assert.equal(adapters.vaultPorts.shell.isWorkbenchCollapsed(), false, "vault reads the unwrapped Pinia boolean");
+  workbench.collapsed = true;
+  assert.equal(adapters.vaultPorts.shell.isWorkbenchCollapsed(), true, "vault sees the current Workbench state");
+  workbench.collapsed = false;
+  assert.equal(adapters.vaultPorts.shell.isWorkbenchCollapsed(), false, "restoration is not cached in the host adapter");
+  const context = services.require("browser-context");
+  context.setAiNavOpen(true);
+  assert.equal(browser.aiNavOpen, true);
+  context.setAiNavOpen(false);
+  context.setAiNavOpen(false);
+  assert.equal(context.aiNavOpen, false, "host context uses the same Browser owner state");
+  layout.toggleClipboard();
+  assert.equal(layout.clipOpen, true);
+  assert.equal(layout.mainView, "clip");
+  adapters.clipboardPorts.ui.requestClose();
+  adapters.clipboardPorts.ui.requestClose();
+  assert.equal(layout.clipOpen, false, "clipboard close is an idempotent Layout owner action");
+  assert.equal(layout.mainView, "clip", "closing a panel preserves the existing navigation contract");
+  assert.equal(calls.length, 0);
+}
+console.log("PANEL_OWNER_ACTIONS=PASS");
 
 {
   const { layout, browser, calls, actions } = fixture();

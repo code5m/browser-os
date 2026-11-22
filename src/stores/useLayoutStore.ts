@@ -149,7 +149,7 @@ export const useLayoutStore = defineStore("layout", () => {
   // UI-4：Dock 页签由**能力贡献**动态提供（见 ContributionRegistry.getDockTabContributions），
   // 因此这里不再硬编码 files/term/net/session 联合类型 —— 那是把「有哪些 Dock 面板」
   // 这份业务知识放进了 Shell。Shell 只持「当前选中哪个 view」这一份 UI 选择状态。
-  // owner 不变（仍为 useLayoutStore.toggleBrowserDock），语义真源唯一。
+  // 选择状态由 selectBrowserDockTab 写入，开关由 setBrowserDockOpen 写入。
   const browserDockTab = ref<string>("files");
   // 地址栏模式：🌐网址（默认）/ 📁目录（输入本地路径浏览目录）
   const addrMode = ref<"auto" | "url" | "dir">("auto");
@@ -252,13 +252,20 @@ export const useLayoutStore = defineStore("layout", () => {
   // 语义别名：Workspace = 文件工作区视图
   function activateWorkspace() { return setView("files"); }
 
+  // Explicit close/restore intents are idempotent; menu toggles keep their own semantics.
+  function setSidebarOpen(open: boolean) {
+    sidebarOpen.value = open;
+  }
   function toggleSidebar() {
-    sidebarOpen.value = !sidebarOpen.value;
+    setSidebarOpen(!sidebarOpen.value);
   }
 
   function toggleClipboard() {
     clipOpen.value = !clipOpen.value;
     if (clipOpen.value) setView("clip");
+  }
+  function closeClipboard() {
+    clipOpen.value = false;
   }
 
   // ===== H-G RELEASE BLOCKER 修复：Shell 只持有 UI 偏好，不做资源生命周期 =====
@@ -465,17 +472,24 @@ export const useLayoutStore = defineStore("layout", () => {
     return prepared ? prepared.publish() : false;
   }
 
+  function setBrowserDockOpen(open: boolean) {
+    browserDockOpen.value = open;
+  }
+  // Dock 内选页不改变开关；view 来自能力贡献，不在 Shell 硬编码业务标签。
+  function selectBrowserDockTab(tab: string) {
+    browserDockTab.value = tab;
+  }
   // 浏览器视图右侧 Dock：指定 tab 时做"切到该 tab/再点收起"语义
   function toggleBrowserDock(tab?: string) {
     if (tab) {
       if (browserDockOpen.value && browserDockTab.value === tab) {
-        browserDockOpen.value = false;
+        setBrowserDockOpen(false);
         return;
       }
-      browserDockTab.value = tab;
-      browserDockOpen.value = true;
+      selectBrowserDockTab(tab);
+      setBrowserDockOpen(true);
     } else {
-      browserDockOpen.value = !browserDockOpen.value;
+      setBrowserDockOpen(!browserDockOpen.value);
     }
   }
 
@@ -522,11 +536,15 @@ export const useLayoutStore = defineStore("layout", () => {
     activateTerm,
     activateEditor,
     activateWorkspace,
+    setSidebarOpen,
     toggleSidebar,
     toggleClipboard,
+    closeClipboard,
     toggleGridToolbar,
     setSidebarWidth,
     setFileTreeWidth,
+    setBrowserDockOpen,
+    selectBrowserDockTab,
     toggleBrowserDock,
     toggleAddrMode,
     setShellMode,

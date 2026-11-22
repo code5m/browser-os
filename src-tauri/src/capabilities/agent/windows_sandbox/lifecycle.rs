@@ -1470,16 +1470,18 @@ mod tests {
                 &mut sid,
             )
         };
-        assert!(
-            result >= 0 && !sid.is_null(),
-            "native profile fixture failed: {result:x}"
-        );
+        assert_eq!(result, 0, "native profile fixture failed: {result:x}");
+        assert!(!sid.is_null(), "native profile fixture returned no SID");
         unsafe {
             FreeSid(sid);
         }
         lease.registered();
         let folder = os_profile_folder(lease.expected_sid()).unwrap();
-        let pin = PinnedReadDirectory::open(&folder, &budget).unwrap();
+        let access = AppContainerAccess::ReadExecute;
+        let policy = AppContainerPolicy::new(lease.expected_sid(), access, false).unwrap();
+        let pin = AppContainerDirectory::open_profile(&folder, &policy, false, &budget).unwrap();
+        pin.prepare_created_owner(lease.name(), lease.expected_sid(), &budget)
+            .unwrap();
         lease
             .bind(
                 pin.identity_record().unwrap(),

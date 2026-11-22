@@ -10,7 +10,7 @@ const layout = useLayoutStore();
   <div class="side-inner">
     <div class="tabs">
       <span>📜 审计日志</span>
-      <button class="close" @click="layout.sidebarOpen = false" title="收起">✕</button>
+      <button class="close" @click="layout.setSidebarOpen(false)" title="收起">✕</button>
     </div>
     <ul class="audit-list">
       <li v-for="(e, i) in ws.audit.slice().reverse()" :key="i">

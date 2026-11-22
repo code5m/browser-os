@@ -13,18 +13,38 @@ const browser={aiNavOpen:false,setAiNavOpen(value){this.aiNavOpen=value;},activa
 hostServices.register('browser-context',browser);
 setActivePinia(createPinia());
 let layout=useLayoutStore(),workbench=useWorkbenchStore();
-layout.sidebarOpen=false;layout.browserDockOpen=true;browser.aiNavOpen=true;
+layout.setSidebarOpen(false);layout.setBrowserDockOpen(true);browser.setAiNavOpen(true);
+layout.selectBrowserDockTab('contributed-panel');
+const ownerCalls=[];
+function observeOwnerActions(store) {
+  store.$onAction(({name,args})=>{
+    if (name==='setSidebarOpen'||name==='setBrowserDockOpen') ownerCalls.push([name,args[0]]);
+  });
+}
+observeOwnerActions(layout);
 workbench.toggleTools();
 await nextTick();
 assert.equal(workbench.collapsed,true);
+assert.equal(layout.sidebarOpen,false);
+assert.equal(layout.browserDockOpen,false);
+assert.equal(browser.aiNavOpen,false);
+assert.equal(layout.browserDockTab,'contributed-panel','folding preserves the selected contributed tab');
+assert.deepEqual(ownerCalls,[['setSidebarOpen',false],['setBrowserDockOpen',false]],'collapse enters the Layout owner');
+ownerCalls.length=0;
 setActivePinia(createPinia());
-browser.aiNavOpen=false;
-layout=useLayoutStore();workbench=useWorkbenchStore();
+browser.setAiNavOpen(false);
+layout=useLayoutStore();observeOwnerActions(layout);workbench=useWorkbenchStore();
 assert.equal(workbench.collapsed,true,'collapsed preference survives restart');
+assert.equal(layout.sidebarOpen,false,'restored collapsed preference closes the new owner sidebar');
+assert.equal(layout.browserDockOpen,false);
+assert.equal(browser.aiNavOpen,false);
+assert.deepEqual(ownerCalls,[['setSidebarOpen',false],['setBrowserDockOpen',false]],'startup collapse enters the Layout owner');
+ownerCalls.length=0;
 workbench.toggleTools();
 assert.equal(layout.sidebarOpen,false,'restores original closed sidebar');
 assert.equal(layout.browserDockOpen,true,'restores original open dock');
 assert.equal(browser.aiNavOpen,true,'restores original open AI panel');
+assert.deepEqual(ownerCalls,[['setSidebarOpen',false],['setBrowserDockOpen',true]],'restore uses explicit values through the same owner');
 workbench.toggleTools();
 assert.equal(layout.browserDockOpen,false,'second collapse closes the restored dock');
 workbench.toggleTools();

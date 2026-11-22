@@ -41,7 +41,7 @@ export function createLegacyHostAdapters(
       return typeof text === 'string' ? text : ''
     },
     activateGrid() { return useGridStore().activateGrid() },
-    setAiNavOpen(value: boolean) { useBrowserStore().aiNavOpen = value },
+    setAiNavOpen(value: boolean) { useBrowserStore().setAiNavOpen(value) },
     adoptRestoredTab(tab: unknown) {
       const browser = useBrowserStore()
       const restored = tab as { id: string; url?: string }
@@ -54,7 +54,7 @@ export function createLegacyHostAdapters(
 
   const vaultPorts: VaultPorts = {
     native: { openVault: (path: string) => services.require<typeof bridge>('bridge').vaultOpen(path), saveNote: (root, relativePath, expectedText, content) => services.require<typeof bridge>('bridge').vaultSaveNote(root, relativePath, expectedText, content), syncGraph: (root) => services.require<typeof bridge>('bridge').graphSyncVault(root) },
-    shell: { isWorkbenchCollapsed: () => services.require<typeof useWorkbenchStore>('workbench')().collapsed.value },
+    shell: { isWorkbenchCollapsed: () => services.require<typeof useWorkbenchStore>('workbench')().collapsed },
     graphLayout: { layoutGraph: (nodes, edges) => services.require<(nodes: unknown[], edges: unknown[]) => unknown>('graph-layout')(nodes as any, edges as any) },
   }
   const vault = createVaultCapability(vaultPorts)
@@ -66,8 +66,8 @@ export function createLegacyHostAdapters(
       clipboardWrite: (text: string) => services.require<typeof bridge>('bridge').clipboardWrite(text),
     },
     ui: {
-      showToast: (message: string) => services.require<ReturnType<typeof useLayoutStore>>('layout')().showToast(message),
-      requestClose: () => { services.require<ReturnType<typeof useLayoutStore>>('layout')().clipOpen = false },
+      showToast: (message: string) => services.require<typeof useLayoutStore>('layout')().showToast(message),
+      requestClose: () => services.require<typeof useLayoutStore>('layout')().closeClipboard(),
       redactSecrets: (text: string) => services.require<(text: string) => string>('redact-secrets')(text),
     },
   }

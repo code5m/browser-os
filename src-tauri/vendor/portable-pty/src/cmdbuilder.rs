@@ -768,10 +768,20 @@ mod tests {
 
     #[test]
     fn test_env() {
+        // A prebuilt libtest binary need not inherit Cargo's build-time variables.
+        // Exercise actual process inheritance without changing the global environment.
+        let inherited_key = if cfg!(windows) { "USERNAME" } else { "HOME" };
+        let inherited_value = std::env::var_os(inherited_key)
+            .expect("test runner must provide the platform login environment");
+        assert!(
+            !inherited_value.is_empty(),
+            "inherited fixture must be nonempty"
+        );
         let mut cmd = CommandBuilder::new("dummy");
-        let package_authors = cmd.get_env("CARGO_PKG_AUTHORS");
-        println!("package_authors: {:?}", package_authors);
-        assert!(package_authors == Some(OsStr::new("Wez Furlong")));
+        assert!(
+            cmd.get_env(inherited_key) == Some(inherited_value.as_os_str()),
+            "builder must inherit the current process environment"
+        );
 
         cmd.env("foo key", "foo value");
         cmd.env("bar key", "bar value");

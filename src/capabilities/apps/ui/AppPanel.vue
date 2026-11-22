@@ -11,7 +11,7 @@ const layout = useLayoutStore();
   <div class="side-inner">
     <div class="tabs">
       <span>🚀 系统应用</span>
-      <button class="close" @click="layout.sidebarOpen = false">✕</button>
+      <button class="close" @click="layout.setSidebarOpen(false)">✕</button>
     </div>
     <div class="apps-panel">
       <input v-model="apps.appFilter" class="app-filter" placeholder="搜索应用" />

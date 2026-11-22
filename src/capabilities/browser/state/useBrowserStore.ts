@@ -325,14 +325,17 @@ export const useBrowserStore = defineStore("browser", () => {
   }
 
   async function gotoAI(site: AISite) {
-    aiNavOpen.value = false;
+    setAiNavOpen(false);
     url.value = site.url;
     await openBrowser();
   }
   // Phase 6A：AI 导航面板开关唯一写入点（owner: useBrowserStore；见 ADR-SEM-P6A-1）。
   // 此前 useLayoutStore 曾重复声明 aiNavOpen（死代码），已删除，唯一真源在此。
+  function setAiNavOpen(open: boolean) {
+    aiNavOpen.value = open;
+  }
   function toggleAiNav() {
-    aiNavOpen.value = !aiNavOpen.value;
+    setAiNavOpen(!aiNavOpen.value);
   }
   // Omnibox navigation is intentionally different from explicitly opening a
   // NEW tab (tabNew/openBrowser). A current tab must retain its ID and WebView.
@@ -505,6 +508,7 @@ export const useBrowserStore = defineStore("browser", () => {
     setResources,
     clearResources,
     gotoAI,
+    setAiNavOpen,
     toggleAiNav,
     openBrowser,
     openBrowserAt,

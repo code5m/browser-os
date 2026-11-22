@@ -314,6 +314,16 @@ impl AppContainerDirectory {
     pub fn identity(&self) -> io::Result<FileIdentity> {
         file_identity(self.opened.target())
     }
+    /// Called only after this operation successfully created the OS profile.
+    /// Keep existing namespace owners and every DACL unchanged.
+    pub fn prepare_created_owner(
+        &self,
+        name: &str,
+        package_sid: &str,
+        budget: &OperationBudget,
+    ) -> io::Result<()> {
+        super::recovery::prepare_created_profile_owner(&self.opened, name, package_sid, budget)
+    }
     pub fn identity_record(&self) -> io::Result<NativeProfileIdentity> {
         super::recovery::profile_identity(self.opened.target())
     }
@@ -1272,14 +1282,14 @@ mod tests {
             .into_iter()
             .map(|(sid, mask, flags)| (sid, false, mask, flags))
             .collect();
-        for variant in 0..3 {
+        for variant in 0..2 {
             let mut entries = expected.clone();
             let package = entries.iter_mut().find(|(sid, _, _, _)|
                 unsafe { EqualSid(sid.as_ptr(), policy.package.as_ptr()) } != 0).unwrap();
-            match variant {
-                0 => package.1 = true,
-                1 => package.2 |= FILE_GENERIC_WRITE,
-                _ => package.3 = OBJECT_INHERIT_ACE,
+            if variant == 0 {
+                package.1 = true;
+            } else {
+                package.2 |= FILE_GENERIC_WRITE;
             }
             set_acl(opened.target(), &entries);
             assert!(!exact_app_descriptor(opened.target(), &policy, false, false).unwrap());
@@ -1298,6 +1308,45 @@ mod tests {
         assert!(!exact_app_descriptor(opened.target(), &policy, false, false).unwrap());
         set_app_descriptor(opened.target(), &policy, false, &budget).unwrap();
         drop(opened);
+
+        // Windows may discard inheritance flags on a regular file. Use a
+        // directory where inheritable generic-package traversal is a real,
+        // retained ACL defect and verify the native ACE before auditing it.
+        let directory = open_path(&root, None, true, MAXIMUM_ALLOWED).unwrap();
+        set_app_descriptor(directory.target(), &policy, true, &budget).unwrap();
+        let mut inherited_traversal: Vec<_> = policy
+            .entries(true)
+            .into_iter()
+            .map(|(sid, mask, flags)| (sid, false, mask, flags))
+            .collect();
+        let generic = inherited_traversal
+            .iter_mut()
+            .find(|(sid, _, _, _)| unsafe {
+                EqualSid(sid.as_ptr(), policy.all_packages.as_ptr()) != 0
+            })
+            .unwrap();
+        generic.3 = DIRECTORY_FLAGS;
+        set_acl(directory.target(), &inherited_traversal);
+        {
+            let (_allocation, _, acl, _) = native_descriptor(directory.target()).unwrap();
+            assert!(!acl.is_null() && unsafe { IsValidAcl(acl) } != 0);
+            let mut retained_flags = None;
+            for index in 0..u32::from(unsafe { (*acl).AceCount }) {
+                let mut ace = ptr::null_mut();
+                assert_ne!(unsafe { GetAce(acl, index, &mut ace) }, 0);
+                let header = unsafe { ptr::read_unaligned(ace as *const ACE_HEADER) };
+                assert_eq!(header.AceType, ACCESS_ALLOWED_TYPE);
+                let sid = unsafe { (ace as *mut u8).add(offset_of!(ACCESS_ALLOWED_ACE, SidStart)) };
+                if unsafe { EqualSid(sid.cast(), policy.all_packages.as_ptr()) } != 0 {
+                    retained_flags = Some(header.AceFlags);
+                }
+            }
+            assert_eq!(retained_flags, Some(DIRECTORY_FLAGS as u8));
+        }
+        assert!(!exact_app_descriptor(directory.target(), &policy, true, false).unwrap());
+        set_app_descriptor(directory.target(), &policy, true, &budget).unwrap();
+        assert!(exact_app_descriptor(directory.target(), &policy, true, true).unwrap());
+        drop(directory);
         std::fs::remove_dir_all(root).unwrap();
     }
 

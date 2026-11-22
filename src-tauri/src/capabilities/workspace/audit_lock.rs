@@ -4,40 +4,47 @@
 //! replaced atomically). Each operation opens its own non-inheritable handle;
 //! no process-wide mutex is held while waiting for another process.
 
-use std::fs::{File, OpenOptions};
+use std::fs::File;
+#[cfg(not(target_os = "windows"))]
+use std::fs::OpenOptions;
 use std::io;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
 const LOCK_WAIT: Duration = Duration::from_secs(2);
 
-pub(super) struct AuditLock(File);
+#[cfg(target_os = "windows")]
+type AuditFile = browseros_platform_security::windows::PrivateReadWriteFile;
+#[cfg(not(target_os = "windows"))]
+type AuditFile = File;
+
+pub(super) struct AuditLock(AuditFile);
 impl AuditLock {
     pub(super) fn acquire(audit_path: &Path) -> io::Result<Self> {
         let parent = audit_path
             .parent()
             .ok_or_else(|| io::Error::other("AUDIT_PARENT_UNAVAILABLE"))?;
         let lock_path = parent.join("audit-write.lock");
-        let mut options = OpenOptions::new();
-        options.read(true).write(true).create(true).truncate(false);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options
-                .mode(0o600)
-                .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
-        }
+        #[cfg(not(target_os = "windows"))]
+        let owned_file = {
+            let mut options = OpenOptions::new();
+            options.read(true).write(true).create(true).truncate(false);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options
+                    .mode(0o600)
+                    .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+            }
+            options.open(lock_path)?
+        };
         #[cfg(target_os = "windows")]
-        {
-            use std::os::windows::fs::OpenOptionsExt;
-            use windows_sys::Win32::Storage::FileSystem::{
-                FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ, FILE_SHARE_WRITE,
-            };
-            options
-                .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
-                .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE);
-        }
-        let file = options.open(lock_path)?;
+        let owned_file =
+            browseros_platform_security::windows::open_private_read_write_file(&lock_path)?;
+        #[cfg(not(target_os = "windows"))]
+        let file = &owned_file;
+        #[cfg(target_os = "windows")]
+        let file = owned_file.file();
         let metadata = file.metadata()?;
         if !metadata.is_file() {
             return Err(io::Error::other("AUDIT_LOCK_NOT_REGULAR"));
@@ -52,12 +59,10 @@ impl AuditLock {
                 return Err(io::Error::other("AUDIT_LOCK_NOT_PRIVATE"));
             }
         }
-        #[cfg(target_os = "windows")]
-        browseros_platform_security::windows::audit_private_file(&file)?;
         let started = Instant::now();
         loop {
-            match try_lock(&file) {
-                Ok(true) => return Ok(Self(file)),
+            match try_lock(file) {
+                Ok(true) => return Ok(Self(owned_file)),
                 Ok(false) if started.elapsed() < LOCK_WAIT => {
                     std::thread::sleep(Duration::from_millis(5));
                 }
@@ -66,6 +71,17 @@ impl AuditLock {
                 }
                 Err(error) => return Err(error),
             }
+        }
+    }
+
+    fn file(&self) -> &File {
+        #[cfg(target_os = "windows")]
+        {
+            self.0.file()
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            &self.0
         }
     }
 }
@@ -128,7 +144,7 @@ impl Drop for AuditLock {
         {
             use std::os::fd::AsRawFd;
             unsafe {
-                libc::flock(self.0.as_raw_fd(), libc::LOCK_UN);
+                libc::flock(self.file().as_raw_fd(), libc::LOCK_UN);
             }
         }
         #[cfg(target_os = "windows")]
@@ -138,7 +154,7 @@ impl Drop for AuditLock {
             use windows_sys::Win32::System::IO::OVERLAPPED;
             let mut position: OVERLAPPED = unsafe { std::mem::zeroed() };
             unsafe {
-                UnlockFileEx(self.0.as_raw_handle() as _, 0, 1, 0, &mut position);
+                UnlockFileEx(self.file().as_raw_handle() as _, 0, 1, 0, &mut position);
             }
         }
         // Closing the owned descriptor also releases OS locks after an error.

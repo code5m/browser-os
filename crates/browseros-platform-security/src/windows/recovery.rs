@@ -131,6 +131,14 @@ fn audit_namespace_writers(file: &File, package: &AppContainerPolicy) -> io::Res
     if !private_object(file)? || !current_owner(file, &policy)? {
         return Err(failure("RECOVERY_NAMESPACE_OWNER", 0));
     }
+    audit_namespace_dacl(file, &policy, package)
+}
+
+fn audit_namespace_dacl(
+    file: &File,
+    policy: &Policy,
+    package: &AppContainerPolicy,
+) -> io::Result<()> {
     let mut administrators = OwnedSid {
         words: vec![0; 17],
         bytes: 68,
@@ -216,12 +224,11 @@ fn audit_namespace_writers(file: &File, package: &AppContainerPolicy) -> io::Res
     Ok(())
 }
 
-pub(super) fn profile_scope(
+fn profile_layout(
     opened: &OpenedPath,
     name: &str,
     package_sid: &str,
-) -> io::Result<NativeProfileScope> {
-    let package = AppContainerPolicy::new(package_sid, AppContainerAccess::ReadExecute, false)?;
+) -> io::Result<(usize, String)> {
     let native = final_path(opened.target())?;
     let parts: Vec<_> = native
         .components()
@@ -258,6 +265,75 @@ pub(super) fn profile_scope(
     {
         return Err(failure("RECOVERY_PROFILE_LAYOUT", 0));
     }
+    let component = parts[parent]
+        .to_str()
+        .ok_or_else(|| failure("RECOVERY_PROFILE_LAYOUT", 0))?
+        .to_owned();
+    Ok((parent, component))
+}
+
+/// Only the owner of a successful CreateAppContainerProfile call may invoke
+/// this preparation. The existing Packages directory is never changed.
+pub(super) fn prepare_created_profile_owner(
+    opened: &OpenedPath,
+    name: &str,
+    package_sid: &str,
+    budget: &OperationBudget,
+) -> io::Result<()> {
+    budget.check()?;
+    let policy = Policy::new()?;
+    let package = AppContainerPolicy::new(package_sid, AppContainerAccess::ReadExecute, false)?;
+    let (parent, _) = profile_layout(opened, name, package_sid)?;
+    audit_namespace_writers(&opened.chain[parent], &package)?;
+    for index in parent + 1..opened.chain.len() {
+        budget.check()?;
+        let original = &opened.chain[index];
+        if !private_object(original)? {
+            return Err(failure("RECOVERY_CREATED_PROFILE_NOT_DIRECTORY", 0));
+        }
+        audit_namespace_dacl(original, &policy, &package)?;
+        if current_owner(original, &policy)? {
+            continue;
+        }
+        let identity = file_identity(original)?;
+        let pinned = OpenedPath {
+            chain: opened.chain[..=index]
+                .iter()
+                .map(File::try_clone)
+                .collect::<io::Result<Vec<_>>>()?,
+        };
+        const WRITE_OWNER: u32 = 0x0008_0000;
+        let writable = pinned.reopen_directory(WRITE_OWNER | READ_CONTROL)?;
+        budget.check()?;
+        let code = unsafe {
+            SetSecurityInfo(
+                writable.as_raw_handle() as _,
+                SE_FILE_OBJECT,
+                OWNER_SECURITY_INFORMATION,
+                policy.owner.as_ptr(),
+                ptr::null_mut(),
+                ptr::null(),
+                ptr::null(),
+            )
+        };
+        if code != 0 {
+            return Err(failure("RECOVERY_CREATED_PROFILE_OWNER_SET", code));
+        }
+        if !current_owner(original, &policy)? || file_identity(original)? != identity {
+            return Err(failure("RECOVERY_CREATED_PROFILE_OWNER_READBACK", 0));
+        }
+        audit_namespace_writers(original, &package)?;
+    }
+    Ok(())
+}
+
+pub(super) fn profile_scope(
+    opened: &OpenedPath,
+    name: &str,
+    package_sid: &str,
+) -> io::Result<NativeProfileScope> {
+    let package = AppContainerPolicy::new(package_sid, AppContainerAccess::ReadExecute, false)?;
+    let (parent, component) = profile_layout(opened, name, package_sid)?;
     // This Packages namespace parent is outside the profile that userenv may delete.
     // Keep it fixed across the final name-based API, and disallow any writer
     // other than the owner, SYSTEM, administrators or this inactive package.
@@ -268,10 +344,6 @@ pub(super) fn profile_scope(
         .as_os_str()
         .encode_wide()
         .collect();
-    let component = parts[parent]
-        .to_str()
-        .ok_or_else(|| failure("RECOVERY_PROFILE_LAYOUT", 0))?
-        .to_owned();
     Ok(NativeProfileScope {
         parent: profile_identity(&opened.chain[parent])?,
         parent_path,

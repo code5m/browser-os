@@ -66,7 +66,7 @@ function openRun(m: ScriptMeta) {
   <div class="side-inner script-panel">
     <div class="tabs">
       <span>📜 脚本库</span>
-      <button class="close" @click="layout.sidebarOpen = false">✕</button>
+      <button class="close" @click="layout.setSidebarOpen(false)">✕</button>
     </div>
 
     <!-- 列表态 -->

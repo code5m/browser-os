@@ -300,48 +300,99 @@ def fields_without_default(body: str, required: frozenset[str]) -> list[str]:
 # ----------------------------- 检测规则 -----------------------------
 
 
-def strip_test_fns(source: str) -> str:
-    """剔除 `#[test]` / `#[tokio::test]` 标注的测试函数体。
-
-    契约守护的是**产品行为**，不是「拒绝测试向量」。A7 的 `tasks.rs` 在测试里用
-    `"@daily"` 作为「应被拒绝」的样例（断言 macro 不被支持）；这种出现不应触发
-    `SCHED_CRON_MACRO_SUPPORT`。同理，测试代码里出现 `std::process::Command` /
-    裸时钟也算测试桩，不反映运行时产品路径。
-    """
-    lines = source.splitlines()
-    out: list[str] = []
-    i, n = 0, len(lines)
-    while i < n:
-        line = lines[i]
-        if re.match(r"^\s*#\[(?:tokio::)?test\b", line):
-            # 跳到紧随其后的 fn 签名
-            j = i
-            while j < n and not re.match(r"^\s*(?:pub\s+)?fn\s+", lines[j]):
-                j += 1
-            if j >= n:
-                break
-            # 括号匹配跳过整个函数（含签名与结尾 `}`）
-            body = "\n".join(lines[j:])
-            start = body.find("{")
-            if start < 0:
-                i = j + 1
-                continue
-            depth = 0
-            end = len(body)
-            for k in range(start, len(body)):
-                if body[k] == "{":
+def _rust_structure_view(source: str) -> str:
+    """Mask comments/literals without moving offsets used for test-body braces."""
+    view = list(source)
+    raw_string = re.compile(r'(?:br|cr|r)(#*)"')
+    char_literal = re.compile(
+        r"'(?:\\(?:u\{[0-9a-fA-F_]+\}|x[0-9a-fA-F]{2}|[^\r\n])|[^\\'\r\n])'"
+    )
+    index, size = 0, len(source)
+    while index < size:
+        start = index
+        raw = raw_string.match(source, index)
+        char = char_literal.match(source, index) if source[index] == "'" else None
+        if source.startswith("//", index):
+            end = source.find("\n", index + 2)
+            index = size if end < 0 else end
+        elif source.startswith("/*", index):
+            index += 2
+            depth = 1
+            while index < size and depth:
+                if source.startswith("/*", index):
                     depth += 1
-                elif body[k] == "}":
+                    index += 2
+                elif source.startswith("*/", index):
                     depth -= 1
-                    if depth == 0:
-                        end = k + 1
-                        break
-            consumed = body[:end].count("\n") + 1
-            i = j + consumed
+                    index += 2
+                else:
+                    index += 1
+            if depth:
+                raise ValueError("SCHED_RUST_TEST_BOUNDARY_UNTERMINATED_COMMENT")
+        elif raw:
+            closing = '"' + raw.group(1)
+            end = source.find(closing, raw.end())
+            if end < 0:
+                raise ValueError("SCHED_RUST_TEST_BOUNDARY_UNTERMINATED_RAW_STRING")
+            index = end + len(closing)
+        elif source[index] == '"':
+            index += 1
+            while index < size:
+                if source[index] == "\\":
+                    index += 2
+                elif source[index] == '"':
+                    index += 1
+                    break
+                else:
+                    index += 1
+            else:
+                raise ValueError("SCHED_RUST_TEST_BOUNDARY_UNTERMINATED_STRING")
+        elif char:
+            index = char.end()
+        else:
+            index += 1
             continue
-        out.append(line)
-        i += 1
-    return "\n".join(out)
+        for offset in range(start, index):
+            if source[offset] != "\n":
+                view[offset] = " "
+    return "".join(view)
+
+
+def strip_test_fns(source: str) -> str:
+    """Exclude test functions while retaining every following production item."""
+    structure = _rust_structure_view(source)
+    test_attribute = re.compile(r"(?m)^[ \t]*#\[(?:tokio::)?test\b[^\n]*?\]")
+    test_header = re.compile(
+        r"\s*(?:#\[[^\]]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?"
+        r"(?:async\s+)?fn\s+\w+\s*\("
+    )
+    parts: list[str] = []
+    cursor = 0
+    for attribute in test_attribute.finditer(structure):
+        if attribute.start() < cursor:
+            continue
+        signature = test_header.match(structure, attribute.end())
+        if not signature:
+            raise ValueError("SCHED_RUST_TEST_BOUNDARY_SIGNATURE_MISSING")
+        start = structure.find("{", signature.end())
+        if start < 0:
+            raise ValueError("SCHED_RUST_TEST_BOUNDARY_BODY_MISSING")
+        depth = 1
+        end = start + 1
+        while end < len(structure) and depth:
+            if structure[end] == "{":
+                depth += 1
+            elif structure[end] == "}":
+                depth -= 1
+            end += 1
+        if depth:
+            raise ValueError("SCHED_RUST_TEST_BOUNDARY_UNTERMINATED_BODY")
+        parts.append(source[cursor:attribute.start()])
+        parts.append("".join("\n" if char == "\n" else " "
+                             for char in source[attribute.start():end]))
+        cursor = end
+    parts.append(source[cursor:])
+    return "".join(parts)
 
 
 def detect_hits(files: dict) -> dict[str, list[str]]:
@@ -365,8 +416,8 @@ def detect_hits(files: dict) -> dict[str, list[str]]:
     domain_code = strip_comments(domain)
 
     # 产品行为专用视图：剔除测试函数体（见 strip_test_fns）
-    tasks_prod = strip_test_fns(tasks_code)
-    sched_prod = strip_test_fns(sched_code)
+    tasks_prod = strip_comments(strip_test_fns(tasks))
+    sched_prod = strip_comments(strip_test_fns(sched))
 
     taskdef_body = rust_struct_body(domain_code, "TaskDef")
     has_taskdef = bool(taskdef_body)
@@ -1090,6 +1141,37 @@ def run_self_test(root: Path) -> int:
     foreign_runtime["cargo_toml"] += '\n# unrelated capability\ntokio = "1"\n'
     if "SCHED_TOKIO_PROMOTED" in detect_hits(foreign_runtime):
         failures.append("其他Owner的tokio依赖被误报为scheduler runtime")
+
+    # String/comment braces inside a test must never consume later Owner code.
+    # The first case is the real corrupt-JSON regression that hid both tail mutations.
+    boundary_cases = (
+        ('ordinary JSON', 'let a = "{ this is not json"; let b = b"{ this is not json";'),
+        ('raw JSON', 'let a = r##"{ "unterminated": {"##;'),
+        ('escaped quote', r'let a = "\"{ still text";'),
+        ('character and comments', "let a = '{'; let b = '}'; /* { /* } */ { */ // {\n"),
+        ('URL literal', 'let a = "https://example.invalid/{";'),
+    )
+    tail = '\nconst MACROS: [&str; 1] = ["@daily"];\nuse tokio as hidden_runtime;\n'
+    for label, fixture_body in boundary_cases:
+        test_source = '#[test]\nfn fixture() {\n    ' + fixture_body + '\n}\n'
+        filtered = strip_test_fns(test_source + tail)
+        if tail not in filtered or fixture_body in filtered:
+            failures.append(f"测试体边界丢失生产尾部或保留测试字面量：{label}")
+        mutated = dict(read_repo(root))
+        mutated["tasks_rs"] += test_source + tail
+        got = detect_hits(mutated)
+        for code in ("SCHED_CRON_MACRO_SUPPORT", "SCHED_TOKIO_PROMOTED"):
+            if code not in got:
+                failures.append(f"测试体后的生产变异未检出 {code}：{label}")
+    inline = '#[test]\nfn fixture() { let text = "{"; }\n'
+    if tail not in strip_test_fns(inline + tail):
+        failures.append("单行测试函数吞掉生产尾部")
+    try:
+        strip_test_fns('#[test]\nfn fixture() {\n')
+    except ValueError:
+        pass
+    else:
+        failures.append("不完整测试边界被静默接受")
 
     # 2) 好样本 B：合成参考实现（产物齐备 → 仍必须零违规，证明无误报）
     good = reference_impl()

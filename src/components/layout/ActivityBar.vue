@@ -272,7 +272,7 @@ async function openDirCenter() {
   catch { layout.showToast("目录路径无效或不受支持"); return; }
   if (!publish || !await fs.enterDir(p, publish)) return;
   browser.url = p;
-  layout.browserDockOpen = false;
+  layout.setBrowserDockOpen(false);
   layout.leftTab = "files";
   recordRecentDir(p);
   if (blankId) {

@@ -516,6 +516,77 @@ pub fn audit_private_file(file: &File) -> io::Result<()> {
     Ok(())
 }
 
+/// A regular owner/SYSTEM-only file and its pinned native parent chain.
+/// Creation carries an explicit owner SID; an existing file is only audited.
+pub struct PrivateReadWriteFile {
+    file: File,
+    _parents: OpenedPath,
+}
+impl PrivateReadWriteFile {
+    pub fn file(&self) -> &File {
+        &self.file
+    }
+}
+
+pub fn open_private_read_write_file(path: &Path) -> io::Result<PrivateReadWriteFile> {
+    let parent_path = path
+        .parent()
+        .ok_or_else(|| failure("PRIVATE_FILE_PARENT", 0))?;
+    let name = path
+        .file_name()
+        .ok_or_else(|| failure("PRIVATE_FILE_NAME", 0))?;
+    if !name_is_valid(name) {
+        return Err(failure("PRIVATE_FILE_NAME", 0));
+    }
+    let policy = Policy::new()?;
+    let parent = open_path(parent_path, None, true, READ_CONTROL | FILE_READ_ATTRIBUTES)?;
+    if !private_object(parent.target())?
+        || !descriptor_is_private(parent.target(), &policy, true, true)?
+    {
+        return Err(failure("PRIVATE_FILE_PARENT_POLICY", 0));
+    }
+    const READ_WRITE_ACCESS: u32 = READ_CONTROL | FILE_READ_ATTRIBUTES | 1 | 2;
+    let open_existing = || {
+        open_relative(
+            parent.target(),
+            name,
+            READ_WRITE_ACCESS,
+            false,
+            false,
+            ptr::null_mut(),
+            true,
+        )
+    };
+    let file = match open_existing() {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            let writable_parent = parent.reopen_directory(2 /* FILE_ADD_FILE */)?;
+            let mut descriptor = policy.descriptor(false)?;
+            match open_relative(
+                &writable_parent,
+                name,
+                READ_WRITE_ACCESS,
+                false,
+                true,
+                descriptor.as_ptr(),
+                true,
+            ) {
+                Ok(file) => file,
+                // Another writer may have atomically created the stable lock.
+                // Reopen that exact child; never truncate, repair or replace it.
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => open_existing()?,
+                Err(error) => return Err(error),
+            }
+        }
+        Err(error) => return Err(error),
+    };
+    audit_private_file(&file)?;
+    Ok(PrivateReadWriteFile {
+        file,
+        _parents: parent,
+    })
+}
+
 fn private_object(file: &File) -> io::Result<bool> {
     let info = file_information(file)?;
     let directory = info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0;
@@ -1424,6 +1495,90 @@ mod tests {
             },
             0
         );
+        // A negative fixture must prove Windows retained the requested ACEs;
+        // normalized-away flags or merged entries cannot count as rejection.
+        let mut actual = ptr::null_mut();
+        let mut raw = ptr::null_mut();
+        assert_eq!(
+            unsafe {
+                GetSecurityInfo(
+                    file.as_raw_handle() as _,
+                    SE_FILE_OBJECT,
+                    DACL_SECURITY_INFORMATION,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    &mut actual,
+                    ptr::null_mut(),
+                    &mut raw,
+                )
+            },
+            0
+        );
+        let _allocation = NativeAllocation(raw);
+        assert!(!actual.is_null() && unsafe { IsValidAcl(actual) } != 0);
+        assert_eq!(usize::from(unsafe { (*actual).AceCount }), entries.len());
+        for (index, (sid, denied, mask, flags)) in entries.iter().enumerate() {
+            let mut ace = ptr::null_mut();
+            assert_ne!(unsafe { GetAce(actual, index as u32, &mut ace) }, 0);
+            let header = unsafe { ptr::read_unaligned(ace as *const ACE_HEADER) };
+            let expected_type = if *denied {
+                ACCESS_DENIED_TYPE
+            } else {
+                ACCESS_ALLOWED_TYPE
+            };
+            assert_eq!(header.AceType, expected_type);
+            assert_eq!(u32::from(header.AceFlags), *flags);
+            let mask_pointer = unsafe { (ace as *const u8).add(4).cast::<u32>() };
+            let actual_mask = unsafe { ptr::read_unaligned(mask_pointer) };
+            assert_eq!(actual_mask, *mask);
+            let offset = offset_of!(ACCESS_ALLOWED_ACE, SidStart);
+            assert!(usize::from(header.AceSize) >= offset + sid.bytes as usize);
+            let actual_sid = unsafe { (ace as *mut u8).add(offset) };
+            assert_ne!(unsafe { EqualSid(actual_sid.cast(), sid.as_ptr()) }, 0);
+        }
+    }
+
+    // Windows chooses a new object's owner from TokenOwner, which can be
+    // Administrators for an elevated runner. These DACL tests require the
+    // current user as their starting owner; never repair or replace the DACL.
+    fn set_fixture_owner(file: &File, policy: &Policy) {
+        let identity = file_identity(file).unwrap();
+        assert_eq!(
+            unsafe {
+                SetSecurityInfo(
+                    file.as_raw_handle() as _,
+                    SE_FILE_OBJECT,
+                    OWNER_SECURITY_INFORMATION,
+                    policy.owner.as_ptr(),
+                    ptr::null_mut(),
+                    ptr::null(),
+                    ptr::null(),
+                )
+            },
+            0
+        );
+        let mut owner = ptr::null_mut();
+        let mut raw = ptr::null_mut();
+        let result = unsafe {
+            GetSecurityInfo(
+                file.as_raw_handle() as _,
+                SE_FILE_OBJECT,
+                OWNER_SECURITY_INFORMATION,
+                &mut owner,
+                ptr::null_mut(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+                &mut raw,
+            )
+        };
+        let _allocation = NativeAllocation(raw);
+        assert_eq!(result, 0);
+        assert!(
+            !owner.is_null()
+                && unsafe { IsValidSid(owner) } != 0
+                && unsafe { EqualSid(owner, policy.owner.as_ptr()) } != 0
+        );
+        assert_eq!(file_identity(file).unwrap(), identity);
     }
 
     fn test_file(label: &str, policy: &Policy) -> (PathBuf, OpenedPath) {
@@ -1431,6 +1586,7 @@ mod tests {
         ensure_private_directory(&root, &PrivateTreeOptions::default()).unwrap();
         std::fs::write(root.join("data"), b"private bytes").unwrap();
         let opened = open_path(&root.join("data"), None, true, MAXIMUM_ALLOWED).unwrap();
+        set_fixture_owner(opened.target(), policy);
         assert!(descriptor_is_private(opened.target(), policy, false, false).unwrap());
         (root, opened)
     }
@@ -1491,6 +1647,13 @@ mod tests {
         ensure_private_directory(&root, &PrivateTreeOptions::default()).unwrap();
         std::fs::create_dir(root.join("cache")).unwrap();
         std::fs::write(root.join("cache/entry"), b"cache").unwrap();
+        let policy = Policy::new().unwrap();
+        // Owner selection is separate from ACE inheritance. Keep the native
+        // inherited DACL bytes/flags under test instead of calling repair.
+        for path in [root.join("cache"), root.join("cache/entry")] {
+            let opened = open_path(&path, None, true, MAXIMUM_ALLOWED).unwrap();
+            set_fixture_owner(opened.target(), &policy);
+        }
         let result = audit_private_directory(&root, true, &PrivateTreeOptions::default()).unwrap();
         assert_eq!(result.checked_objects, 3);
         assert_eq!(
@@ -1506,6 +1669,66 @@ mod tests {
             5
         );
         std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn private_read_write_file_preserves_identity_and_rejects_existing_extra_aces() {
+        use std::io::Write;
+
+        let root = fixture("read-write");
+        ensure_private_directory(&root, &PrivateTreeOptions::default()).unwrap();
+        let path = root.join("audit-write.lock");
+        let first = open_private_read_write_file(&path).unwrap();
+        let mut writer = first.file();
+        writer.write_all(b"preserved").unwrap();
+        first.file().sync_all().unwrap();
+        audit_private_file(first.file()).unwrap();
+        let identity = file_identity(first.file()).unwrap();
+        let second = open_private_read_write_file(&path).unwrap();
+        assert_eq!(file_identity(second.file()).unwrap(), identity);
+        assert_eq!(std::fs::read(&path).unwrap(), b"preserved");
+        let moved = root.with_extension("moved");
+        assert!(
+            std::fs::rename(&root, &moved).is_err(),
+            "the private file must keep its parent namespace pinned"
+        );
+        drop(second);
+        drop(first);
+        std::fs::rename(&root, &moved).unwrap();
+        std::fs::rename(&moved, &root).unwrap();
+
+        let policy = Policy::new().unwrap();
+        let opened = open_path(&path, None, true, MAXIMUM_ALLOWED).unwrap();
+        let mut world = OwnedSid {
+            words: vec![0; 17],
+            bytes: 68,
+        };
+        assert_ne!(
+            unsafe {
+                CreateWellKnownSid(
+                    WinWorldSid,
+                    ptr::null_mut(),
+                    world.as_mut_ptr(),
+                    &mut world.bytes,
+                )
+            },
+            0
+        );
+        let mut entries = owner_entries(&policy, false, FILE_ALL_ACCESS);
+        entries.push((&world, false, READ_CONTROL | FILE_READ_ATTRIBUTES | 1, 0));
+        set_test_dacl(opened.target(), &entries);
+        drop(opened);
+        let error = match open_private_read_write_file(&path) {
+            Ok(_) => panic!("an existing broad ACL must not be accepted or repaired"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("PRIVATE_FILE_ACL_NOT_PRIVATE"));
+        let unchanged = open_path(&path, None, true, MAXIMUM_ALLOWED).unwrap();
+        assert_eq!(file_identity(unchanged.target()).unwrap(), identity);
+        assert!(!descriptor_is_private(unchanged.target(), &policy, false, false).unwrap());
+        assert_eq!(std::fs::read(&path).unwrap(), b"preserved");
+        drop(unchanged);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -1647,8 +1870,18 @@ mod tests {
     #[test]
     fn owner_and_system_counts_are_checked_per_object() {
         let policy = Policy::new().unwrap();
-        // The distinct-user condition is inherent in this two-trustee case.
         if policy.owner_is_system() {
+            // SYSTEM is the sole trustee in this policy. Exercise its exact
+            // one-ACE count instead of silently skipping the negative case.
+            let (root, file) = test_file("single-trustee-count", &policy);
+            set_test_dacl(
+                file.target(),
+                &[
+                    (&policy.owner, false, FILE_ALL_ACCESS, 0),
+                    (&policy.owner, false, FILE_ALL_ACCESS, 0),
+                ],
+            );
+            assert_bad_file_then_restore(root, file, &policy);
             return;
         }
         let root = fixture("per-object");
@@ -1657,6 +1890,10 @@ mod tests {
         std::fs::write(root.join("b"), b"b").unwrap();
         let a = open_path(&root.join("a"), None, true, MAXIMUM_ALLOWED).unwrap();
         let b = open_path(&root.join("b"), None, true, MAXIMUM_ALLOWED).unwrap();
+        set_fixture_owner(a.target(), &policy);
+        set_fixture_owner(b.target(), &policy);
+        assert!(descriptor_is_private(a.target(), &policy, false, false).unwrap());
+        assert!(descriptor_is_private(b.target(), &policy, false, false).unwrap());
         // Across both files the totals are exactly two owner and two SYSTEM
         // ACEs, but neither individual object has its required pair.
         set_test_dacl(
@@ -1686,12 +1923,26 @@ mod tests {
     fn directory_inheritance_flags_are_required_and_file_flags_are_empty() {
         let policy = Policy::new().unwrap();
         let (root, file) = test_file("flags", &policy);
-        let mut entries = owner_entries(&policy, false, FILE_ALL_ACCESS);
-        for entry in &mut entries {
-            entry.3 = OBJECT_INHERIT_ACE;
+        // The file's actual inherited ACEs have no propagation flags. Do not
+        // fabricate OI/CI on a file: Windows can normalize those flags away.
+        assert!(descriptor_is_private(file.target(), &policy, false, false).unwrap());
+        drop(file);
+        let directory = open_path(&root, None, true, MAXIMUM_ALLOWED).unwrap();
+        for flags in [0, OBJECT_INHERIT_ACE, CONTAINER_INHERIT_ACE] {
+            let mut entries = owner_entries(&policy, false, FILE_ALL_ACCESS);
+            for entry in &mut entries {
+                entry.3 = flags;
+            }
+            // set_test_dacl reads every native ACE back before the policy test.
+            set_test_dacl(directory.target(), &entries);
+            assert!(!descriptor_is_private(directory.target(), &policy, true, true).unwrap());
+            assert!(audit_private_directory(&root, true, &PrivateTreeOptions::default()).is_err());
+            repair_object(directory.target(), &policy, true).unwrap();
+            assert!(descriptor_is_private(directory.target(), &policy, true, true).unwrap());
         }
-        set_test_dacl(file.target(), &entries);
-        assert_bad_file_then_restore(root, file, &policy);
+        drop(directory);
+        assert_eq!(std::fs::read(root.join("data")).unwrap(), b"private bytes");
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -1731,6 +1982,10 @@ mod tests {
         let root = fixture("live");
         ensure_private_directory(&root, &PrivateTreeOptions::default()).unwrap();
         std::fs::write(root.join("active"), b"active").unwrap();
+        {
+            let opened = open_path(&root.join("active"), None, true, MAXIMUM_ALLOWED).unwrap();
+            set_fixture_owner(opened.target(), &Policy::new().unwrap());
+        }
         let active = OpenOptions::new()
             .read(true)
             .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)

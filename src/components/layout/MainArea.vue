@@ -158,9 +158,9 @@ watch(
               v-for="t in dockTabs"
               :key="t.id"
               :class="{ active: layout.browserDockTab === t.view }"
-              @click="layout.browserDockTab = t.view"
+              @click="layout.selectBrowserDockTab(t.view)"
             >{{ t.icon + " " + t.label }}</button>
-            <button class="close" @click="layout.browserDockOpen = false" title="收起">✕</button>
+            <button class="close" @click="layout.setBrowserDockOpen(false)" title="收起">✕</button>
           </div>
           <!-- UI-4：单一动态渲染点。Dock 面板仍由能力提供（文件/终端/资源/会话）。
                Terminal absent → term 贡献不在 → 页签消失、此处无 PTY 出生点。 -->

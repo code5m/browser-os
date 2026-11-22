@@ -16,7 +16,7 @@ const aiFiltered = computed(() => browser.aiFiltered);
         <button :class="{ active: browser.aiFilter === '国内' }" @click="browser.aiFilter = '国内'">国内</button>
         <button :class="{ active: browser.aiFilter === '海外' }" @click="browser.aiFilter = '海外'">海外</button>
       </div>
-      <button class="close" @click="browser.aiNavOpen = false" title="收起">✕</button>
+      <button class="close" @click="browser.setAiNavOpen(false)" title="收起">✕</button>
     </div>
     <ul class="ai-list">
       <li v-for="s in aiFiltered" :key="s.url" class="ai-item" @click="browser.gotoAI(s)">

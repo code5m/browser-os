@@ -466,7 +466,7 @@ impl SandboxProfile {
                 &mut sid,
             )
         };
-        if result < 0 {
+        if result != 0 {
             if !sid.is_null() {
                 unsafe {
                     FreeSid(sid);
@@ -545,18 +545,25 @@ impl SandboxProfile {
             AppContainerDirectory::open_profile(&self.folder, &policy, true, &self.budget)
                 .map_err(|error| format!("SANDBOX_PROFILE_TRAVERSE_ACL:{error}"))?,
         );
+        // Only finish_create after this operation's successful native create
+        // may establish the new package/AC owners. Recovery never repairs them.
+        self.root_guard
+            .as_ref()
+            .expect("pinned profile")
+            .prepare_created_owner(&self.name, &self.sid_string, &self.budget)
+            .map_err(|error| format!("SANDBOX_PROFILE_OWNER_PREPARE:{error}"))?;
         let identity = self
             .root_guard
             .as_ref()
             .expect("pinned profile")
             .identity_record()
-            .map_err(|_| "SANDBOX_PROFILE_NATIVE_IDENTITY")?;
+            .map_err(|error| format!("SANDBOX_PROFILE_NATIVE_IDENTITY:{error}"))?;
         let scope = self
             .root_guard
             .as_ref()
             .expect("pinned profile")
             .recovery_scope(&self.name, &self.sid_string)
-            .map_err(|_| "SANDBOX_PROFILE_NAMESPACE_IDENTITY")?;
+            .map_err(|error| format!("SANDBOX_PROFILE_NAMESPACE_IDENTITY:{error}"))?;
         self.recovery_lease
             .as_mut()
             .expect("owned intent")

@@ -17,7 +17,7 @@ export const useWorkbenchStore = defineStore('workbench', () => {
       snapshot = { sidebar: saved.snapshot.sidebar, dock: saved.snapshot.dock, ai: saved.snapshot.ai };
     }
     if (collapsed.value) {
-      layout.sidebarOpen = false; layout.browserDockOpen = false; browser.setAiNavOpen(false);
+      layout.setSidebarOpen(false); layout.setBrowserDockOpen(false); browser.setAiNavOpen(false);
     }
   } catch {}
   watch(collapsed, value => {
@@ -35,10 +35,10 @@ export const useWorkbenchStore = defineStore('workbench', () => {
     if (!collapsed.value) {
       snapshot = { sidebar: layout.sidebarOpen, dock: layout.browserDockOpen, ai: browser.aiNavOpen };
       previous = layout.mainView;
-      layout.sidebarOpen = false; layout.browserDockOpen = false; browser.setAiNavOpen(false);
-      layout.navSection = '';
+      layout.setSidebarOpen(false); layout.setBrowserDockOpen(false); browser.setAiNavOpen(false);
+      layout.closeNavSection();
     } else {
-      layout.sidebarOpen = snapshot.sidebar; layout.browserDockOpen = snapshot.dock; browser.setAiNavOpen(snapshot.ai);
+      layout.setSidebarOpen(snapshot.sidebar); layout.setBrowserDockOpen(snapshot.dock); browser.setAiNavOpen(snapshot.ai);
     }
     collapsed.value = !collapsed.value;
   }

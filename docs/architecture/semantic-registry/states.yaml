@@ -259,7 +259,7 @@ states:
     kind: stored
     derived: false
     canonical_writer:
-      - useLayoutStore.toggleSidebar
+      - useLayoutStore.setSidebarOpen
     forbidden_writers:
       - components/**
     duplicate_names: []
@@ -276,6 +276,7 @@ states:
     derived: false
     canonical_writer:
       - useLayoutStore.toggleClipboard
+      - useLayoutStore.closeClipboard
     forbidden_writers:
       - components/**
     duplicate_names: []
@@ -324,7 +325,7 @@ states:
     kind: stored
     derived: false
     canonical_writer:
-      - useLayoutStore.toggleBrowserDock
+      - useLayoutStore.setBrowserDockOpen
     forbidden_writers:
       - components/**
     duplicate_names: []
@@ -334,12 +335,12 @@ states:
   browserDockTab:
     owner: useLayoutStore
     single_owner_required: true
-    meaning: 右侧 Dock 当前子页签（files/term/net/session）
+    meaning: 右侧 Dock 当前选中的能力贡献 view；选页本身不改变 Dock 开关
     not_meaning: []
     kind: stored
     derived: false
     canonical_writer:
-      - useLayoutStore.toggleBrowserDock
+      - useLayoutStore.selectBrowserDockTab
     forbidden_writers:
       - components/**
     duplicate_names: []
@@ -467,11 +468,10 @@ states:
     kind: stored
     derived: false
     canonical_writer:
-      - useBrowserStore.toggleAiNav
-      - useBrowserStore.gotoAI
+      - useBrowserStore.setAiNavOpen
     forbidden_writers:
       - useLayoutStore（曾重复声明 aiNavOpen 死代码，Phase 6A 已删除；见 ADR-SEM-P6A-1）
-      - components/**（应经 toggleAiNav；AINavPanel 关闭按钮直写 = false 为 owner 字段内写，可接受）
+      - components/**（显式开关经 setAiNavOpen，菜单切换经 toggleAiNav；禁止直接写入）
     duplicate_names: []
     adr_required: true
     adr: ADR-SEM-P6A-1

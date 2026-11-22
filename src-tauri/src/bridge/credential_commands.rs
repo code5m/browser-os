@@ -696,7 +696,10 @@ mod browser_credential_tests {
                     KeyringStore::get_token_result(key),
                     Err(keyring::Error::NoEntry)
                 );
-                assert!(removed, "synthetic keyring entry must be absent after deletion");
+                assert!(
+                    removed,
+                    "synthetic keyring entry must be absent after deletion"
+                );
             }
             self.0.clear();
         }
@@ -738,7 +741,10 @@ mod browser_credential_tests {
                 .collect(),
         );
         let out = import_browser_credentials_inner(&rows);
-        assert_eq!(out.saved, 2, "真实密钥库不可用或写入失败；显式往返测试不得跳过");
+        assert_eq!(
+            out.saved, 2,
+            "真实密钥库不可用或写入失败；显式往返测试不得跳过"
+        );
         assert_eq!(out.failed, 0, "两条虚构凭据都应写入 keyring");
         assert_eq!(out.metas.len(), 2, "每条成功凭据产生一条非敏感元数据");
         for (m, row) in out.metas.iter().zip(&rows) {

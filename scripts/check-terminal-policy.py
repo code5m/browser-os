@@ -29,6 +29,11 @@ from pathlib import Path
 from native_bridge_owner_sources import read_native_bridge_owners
 
 
+SHUTDOWN_REMAINING_RE = re.compile(
+    r"\bdeadline\s*\.\s*saturating_duration_since\s*\(\s*now\s*\)"
+)
+
+
 def rust_function_body(source: str, name: str) -> str:
     """Read the top-level function's source contract, not a Rust execution test."""
     found = re.search(
@@ -204,7 +209,7 @@ def detect_violations(files: dict) -> list[str]:
             or "self.closed.store(true, Ordering::Release)" not in term
             or "let stop = permit.stop()" not in spawn_body
             or 'Err("TERM_SHUTTING_DOWN".into())' not in spawn_body
-            or "deadline.saturating_duration_since(now)" not in shutdown_body
+            or not SHUTDOWN_REMAINING_RE.search(shutdown_body)
             or "active == 0 && pending == 0" not in shutdown_body
             or "worker.is_none()" not in shutdown_body
             or "TERM_CLEANUP_PENDING" not in shutdown_body):
@@ -366,6 +371,17 @@ def run_self_test(root: Path) -> int:
         print("self-test FAIL: 当前仓库自身存在违规（应为空）")
         for x in base:
             print(f"  x {x}")
+        return 1
+
+    # Rustfmt may split the remaining-budget call across lines. Both layouts
+    # must retain the same shutdown contract; removing the call still fails.
+    inline_deadline = dict(good)
+    inline_deadline["terminal_rs"] = SHUTDOWN_REMAINING_RE.sub(
+        "deadline.saturating_duration_since(now)", good["terminal_rs"], count=1,
+    )
+    inline_hits = detect_violations(inline_deadline)
+    if inline_hits:
+        print(f"self-test FAIL: 等价单行deadline被误报：{inline_hits}")
         return 1
 
     samples: list[tuple[str, dict, str, str]] = []
@@ -727,8 +743,8 @@ def run_self_test(root: Path) -> int:
     )
     add(
         "shutdown绕过统一deadline",
-        mutate(terminal_rs=good["terminal_rs"].replace(
-            "deadline.saturating_duration_since(now)", "Duration::from_secs(60)", 1)),
+        mutate(terminal_rs=SHUTDOWN_REMAINING_RE.sub(
+            "Duration::from_secs(60)", good["terminal_rs"], count=1)),
         "terminal_rs",
         "TERM_SHUTDOWN_DEADLINE_MISSING",
     )

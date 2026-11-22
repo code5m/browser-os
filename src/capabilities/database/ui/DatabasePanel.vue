@@ -472,7 +472,7 @@ function deleteConnection() {
       <button class="db-disclosure" data-testid="db-dock-side" @click="moveDatabaseNavigator(dockSide==='left'?'right':'left')" :title="dockSide==='right'?'移到左侧':'移到右侧'">⇄ 移至{{dockSide==='right'?'左侧':'右侧'}}</button>
       <button class="db-disclosure" @click="resetDatabaseDock" title="恢复默认宽度和位置">恢复布局</button>
       <button class="conn-toggle" @click="openConnectionSettings">连接设置</button>
-      <button class="close" @click="layout.sidebarOpen = false">✕</button>
+      <button class="close" @click="layout.setSidebarOpen(false)">✕</button>
     </div>
 
     <div v-if="!db.backendReady" class="gate">后端数据库命令未就绪，连接与查询暂不可用</div>

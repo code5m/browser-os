@@ -610,7 +610,7 @@
       "id": "platform-security",
       "package": "browseros-platform-security",
       "filter": "",
-      "required_count": 36,
+      "required_count": 37,
       "required_names": [
         "native_private_tree_is_idempotent_and_preserves_bytes",
         "new_children_inherit_only_native_owner_and_system",
@@ -647,9 +647,10 @@
         "native_recovery_namespace_survives_profile_removal",
         "native_recovery_namespace_rejects_untrusted_writer",
         "windows::recovery::tests::native_recovery_store_initialization_does_not_traverse_unrelated_children",
-        "windows::recovery::tests::native_recovery_readonly_diagnostic_observes_active_journal"
+        "windows::recovery::tests::native_recovery_readonly_diagnostic_observes_active_journal",
+        "windows::tests::private_read_write_file_preserves_identity_and_rejects_existing_extra_aces"
       ],
-      "allow_additional_tests": true,
+      "allow_additional_tests": false,
       "allow_ignored": false,
       "timeout_seconds": 240,
       "role": "required"

@@ -79,7 +79,7 @@ function openRun(m: CommandSnippet) {
   <div class="side-inner snippet-panel">
     <div class="tabs">
       <span>⚡ 命令库</span>
-      <button class="close" @click="layout.sidebarOpen = false">✕</button>
+      <button class="close" @click="layout.setSidebarOpen(false)">✕</button>
     </div>
 
     <div v-if="!editing" class="list-pane">

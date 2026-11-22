@@ -24,7 +24,7 @@ const resFiltered = computed(() => {
     <div class="tabs">
       <span>🕸 网页资源</span>
       <span v-if="browser.resources" class="res-count">{{ browser.resources.items.length }} 项</span>
-      <button class="close" @click="layout.sidebarOpen = false" title="收起">✕</button>
+      <button class="close" @click="layout.setSidebarOpen(false)" title="收起">✕</button>
     </div>
     <div v-if="!browser.resources" class="empty">
       <p>打开网页后，这里会列出它引用的</p>
