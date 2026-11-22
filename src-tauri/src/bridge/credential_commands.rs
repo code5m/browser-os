@@ -99,7 +99,7 @@ fn merge_credential_index_at(
         std::fs::create_dir_all(dir).ok();
     }
     let mut list: Vec<BrowserCredentialMeta> =
-        workspace::load_json_list_at(path, "browser-credentials");
+        workspace::load_json_list_at(path, "browser-credentials")?;
     merge_credential_metas(&mut list, metas);
     workspace::save_json_list_at(path, &list, "browser-credentials")
 }
@@ -183,7 +183,7 @@ pub fn import_browser_credentials(
 pub fn list_browser_credentials(app: AppHandle) -> Result<Vec<BrowserCredentialItem>, String> {
     let path = browser_credential_index_file(&app);
     let list: Vec<BrowserCredentialMeta> =
-        workspace::load_json_list_at(&path, "browser-credentials");
+        workspace::load_json_list_at(&path, "browser-credentials")?;
     // 句柄每次列班重建：一次性、会话级、不落盘，旧句柄自动失效。
     let state = app.state::<AppState>();
     let mut handles = state
@@ -680,7 +680,7 @@ mod browser_credential_tests {
         );
         assert!(!raw.contains("FakePassword"), "索引文件不得出现任何密码值");
         let list: Vec<BrowserCredentialMeta> =
-            workspace::load_json_list_at(&path, "browser-credentials");
+            workspace::load_json_list_at(&path, "browser-credentials").expect("load credential index");
         assert_eq!(list.len(), 2, "按 key 去重后仍应为 2 条");
         let _ = std::fs::remove_dir_all(&dir);
     }

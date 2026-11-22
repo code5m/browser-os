@@ -265,13 +265,20 @@ async function openDirCenter() {
     layout.showToast("请输入目录路径");
     return;
   }
-  await fs.enterDir(p);
-  await browser.consumeActiveBlankTab();
+  const blankId = layout.mainView === "browser" && browser.activeTab?.url === "about:blank"
+    ? browser.activeTabId : undefined;
+  let publish;
+  try { publish = layout.prepareDirTab(p, true); }
+  catch { layout.showToast("目录路径无效或不受支持"); return; }
+  if (!publish || !await fs.enterDir(p, publish)) return;
+  browser.url = p;
   layout.browserDockOpen = false;
-  layout.openDirTab(p, true);
   layout.leftTab = "files";
   recordRecentDir(p);
-  layout.showToast("📁 " + p);
+  if (blankId) {
+    try { await browser.consumeActiveBlankTab(blankId); }
+    catch { layout.showToast("目录已打开，但空白页尚未关闭，可稍后重试"); }
+  }
 }
 </script>
 

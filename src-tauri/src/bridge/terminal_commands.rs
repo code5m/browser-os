@@ -82,8 +82,13 @@ pub fn term_write(app: AppHandle, id: String, data: String) -> Result<(), String
 /// 调整终端大小（列/行）——M3.a 起真实生效（F5）。
 #[tauri::command]
 pub async fn term_resize(app: AppHandle, id: String, cols: u16, rows: u16) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || term_resize_sync(app, id, cols, rows))
-        .await.map_err(|error| format!("TERM_RESIZE_WORKER_FAILED: {error}"))?
+    let control = {
+        let state = app.state::<AppState>();
+        let terms = state.terminals.lock().unwrap_or_else(|e| e.into_inner());
+        terms.get(&id).ok_or("终端不存在")?.control()
+    };
+    control.enqueue_resize(cols, rows)?.await
+        .map_err(|_| "TERM_RESIZE_WORKER_FAILED".to_string())?
 }
 
 /// Rust-internal callers already running off the UI thread use this helper.

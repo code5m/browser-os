@@ -508,8 +508,8 @@ export const bridge = {
   snippetRemove: (id: string, intent: string) => invoke("snippet_remove", { id, intent }),
 
   // M2-6.c 命令片段执行：复用脚本执行态事件和运行历史。
-  runCommand: (id: string, values: Record<string, string>) =>
-    invoke<RunSnapshot>("run_command", { id, values }),
+  runCommand: (id: string, values: Record<string, string>, expectedRevision: string) =>
+    invoke<RunSnapshot>("run_command", { id, values, expectedRevision }),
 
   // ====== M4-8 定时任务（命令名沿用 A1 冻结的 5 条，A6 契约 §6 定义 DTO）======
   // 后端实现归 A7（M4-6.b）；前端只在 TASK_COMMANDS_AVAILABLE 为 true 时调用。
@@ -733,6 +733,20 @@ export const bridge = {
     invoke<void>("editor_draft_save", { path, sessionId, baseline, content }),
   editorDraftList: (path: string) => invoke<Array<{session_id: string; path: string; baseline: string; content: string; updated_at_ms: number}>>("editor_draft_list", { path }),
   editorDraftClear: (path: string, sessionId: string) => invoke<void>("editor_draft_clear", { path, sessionId }),
+  editorDraftCatalog: (cursor?: string) => invoke<{
+    items: Array<{recovery_id: string; revision?: string; path: string; session_id: string; updated_at_ms: number; error?: string}>;
+    next_cursor: string | null;
+  }>("editor_draft_catalog", { cursor: cursor ?? null }),
+  editorDraftRead: (recoveryId: string, fork = false) => invoke<{
+    recovery_id: string; revision: string; path: string; session_id: string;
+    baseline: string; content: string; updated_at_ms: number;
+  }>("editor_draft_read", { recoveryId, fork }),
+  editorDraftUpdateRecovered: (recoveryId: string, revision: string, content: string) =>
+    invoke<{revision: string}>("editor_draft_update_recovered", { recoveryId, revision, content }),
+  editorDraftRemove: (recoveryId: string, revision: string) =>
+    invoke<void>("editor_draft_remove", { recoveryId, revision }),
+  editorDraftSaveAs: (recoveryId: string, targetPath: string, content: string) =>
+    invoke<{path: string; content: string}>("editor_draft_save_as", { recoveryId, targetPath, content }),
 
   wechatAccountSave: (appId: string, appSecret: string) =>
     invoke<string>("wechat_account_save", { appId, appSecret }),

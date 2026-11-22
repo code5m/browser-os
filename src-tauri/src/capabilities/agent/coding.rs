@@ -7,7 +7,7 @@ use std::{
     fs,
     io::{Read, Write},
     path::{Component, Path, PathBuf},
-    sync::{Arc, Mutex, OnceLock, Weak},
+    sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex, OnceLock, Weak},
 };
 
 const MAX_FILE: usize = 256 * 1024;
@@ -15,7 +15,71 @@ const MAX_SESSION: usize = 4 * 1024 * 1024;
 static WORKSPACE_LOCKS: OnceLock<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>> = OnceLock::new();
 type SessionKey = (PathBuf, String);
 static SESSION_LOCKS: OnceLock<Mutex<HashMap<SessionKey, Weak<Mutex<()>>>>> = OnceLock::new();
-static RUNNING: OnceLock<Mutex<HashMap<SessionKey, bool>>> = OnceLock::new();
+static RUNNING: OnceLock<Mutex<HashMap<SessionKey, Arc<AtomicBool>>>> = OnceLock::new();
+struct RunRequestSlot {
+    signal: Arc<AtomicBool>,
+    registered: bool,
+    created: std::time::Instant,
+}
+static RUN_REQUESTS: OnceLock<Mutex<HashMap<uuid::Uuid, RunRequestSlot>>> = OnceLock::new();
+fn run_requests() -> &'static Mutex<HashMap<uuid::Uuid, RunRequestSlot>> {
+    RUN_REQUESTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+fn run_id(value: &str) -> Result<uuid::Uuid, String> {
+    let id = uuid::Uuid::parse_str(value).map_err(|_| "AGENT_RUN_ID_INVALID")?;
+    if id.get_version_num() != 4 { return Err("AGENT_RUN_ID_INVALID".into()); }
+    Ok(id)
+}
+fn prune_run_requests(slots: &mut HashMap<uuid::Uuid, RunRequestSlot>) {
+    slots.retain(|_, slot| slot.registered || slot.created.elapsed() < std::time::Duration::from_secs(60));
+}
+pub(crate) struct RunRequestGuard { id: uuid::Uuid, signal: Arc<AtomicBool> }
+impl RunRequestGuard {
+    pub(crate) fn cancelled(&self) -> bool { self.signal.load(Ordering::SeqCst) }
+}
+impl Drop for RunRequestGuard {
+    fn drop(&mut self) {
+        if let Ok(mut slots) = run_requests().lock() { slots.remove(&self.id); }
+    }
+}
+pub(crate) fn register_run_request(value: &str) -> Result<RunRequestGuard, String> {
+    let id = run_id(value)?;
+    let mut slots = run_requests().lock().map_err(|_| "AGENT_BUSY")?;
+    prune_run_requests(&mut slots);
+    if let Some(slot) = slots.get_mut(&id) {
+        if slot.registered { return Err("AGENT_RUN_ALREADY_REGISTERED".into()); }
+        slot.registered = true;
+        return Ok(RunRequestGuard { id, signal: slot.signal.clone() });
+    }
+    if slots.len() >= 64 { return Err("AGENT_RUN_CAPACITY".into()); }
+    let signal = Arc::new(AtomicBool::new(false));
+    slots.insert(id, RunRequestSlot { signal: signal.clone(), registered: true, created: std::time::Instant::now() });
+    Ok(RunRequestGuard { id, signal })
+}
+pub(crate) fn cancel_run_request(value: &str) -> Result<bool, String> {
+    let id = run_id(value)?;
+    let mut slots = run_requests().lock().map_err(|_| "AGENT_BUSY")?;
+    prune_run_requests(&mut slots);
+    if let Some(slot) = slots.get(&id) {
+        slot.signal.store(true, Ordering::SeqCst);
+    } else {
+        if slots.len() >= 64 { return Err("AGENT_RUN_CAPACITY".into()); }
+        slots.insert(id, RunRequestSlot { signal: Arc::new(AtomicBool::new(true)),
+            registered: false, created: std::time::Instant::now() });
+    }
+    Ok(true)
+}
+fn request_signal(request: &Value) -> Result<Arc<AtomicBool>, String> {
+    match request["run_id"].as_str() {
+        None | Some("") => Ok(Arc::new(AtomicBool::new(false))), // Rust-internal legacy callers.
+        Some(value) => {
+            let id = run_id(value)?;
+            run_requests().lock().map_err(|_| "AGENT_BUSY")?.get(&id)
+                .filter(|slot| slot.registered).map(|slot| slot.signal.clone())
+                .ok_or_else(|| "AGENT_RUN_NOT_REGISTERED".into())
+        }
+    }
+}
 
 fn session_lock(root: &Path, id: &str) -> Arc<Mutex<()>> {
     let mut locks = SESSION_LOCKS.get_or_init(|| Mutex::new(HashMap::new()))
@@ -43,7 +107,7 @@ fn workspace_lock(root: &Path) -> Arc<Mutex<()>> {
     lock
 }
 
-fn running_map() -> &'static Mutex<HashMap<SessionKey, bool>> {
+fn running_map() -> &'static Mutex<HashMap<SessionKey, Arc<AtomicBool>>> {
     RUNNING.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -60,7 +124,7 @@ impl Drop for RunningGuard {
 }
 pub(crate) fn cancelled(root: &Path, id: &str) -> bool {
     running_map().lock().map_or(true, |running| {
-        running.get(&(root.to_path_buf(), id.to_owned())).copied().unwrap_or(false)
+        running.get(&(root.to_path_buf(), id.to_owned())).is_some_and(|signal| signal.load(Ordering::SeqCst))
     })
 }
 
@@ -69,6 +133,22 @@ struct Change {
     path: String,
     content: String,
     expected_hash: Option<String>,
+    #[serde(default)]
+    target_proof: Option<ChangeTargetProof>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+struct ChangeTargetProof { ancestor: String, suffix: Vec<String> }
+impl ChangeTargetProof {
+    fn capture(target: &Path) -> Result<Self, String> {
+        let key = apply_target_key(target, "")?;
+        Ok(Self { ancestor: key.ancestor, suffix: key.suffix.iter()
+            .map(|part| part.to_str().map(str::to_owned).ok_or_else(|| "AGENT_PATH_DENIED".to_string()))
+            .collect::<Result<Vec<_>, _>>()? })
+    }
+    fn matches(&self, key: &ApplyTargetKey) -> bool {
+        same_apply_target(key, &ApplyTargetKey { ancestor: self.ancestor.clone(),
+            suffix: self.suffix.iter().map(std::ffi::OsString::from).collect() })
+    }
 }
 #[derive(Serialize, Deserialize)]
 struct Session {
@@ -636,6 +716,7 @@ fn stage(root: &Path, session: &mut Session, request: &Value) -> Result<Value, S
         return Err("AGENT_CONTENT_DENIED".into());
     }
     let target = resolve(root, path, true)?;
+    let target_proof = ChangeTargetProof::capture(&target)?;
     let expected = if target.exists() {
         Some(
             read_file(root, path)?["hash"]
@@ -670,6 +751,7 @@ fn stage(root: &Path, session: &mut Session, request: &Value) -> Result<Value, S
         change.content = content.into();
         if request.get("expected_hash").is_some() || request.get("expected_content").is_some() {
             change.expected_hash = expected;
+            change.target_proof = Some(target_proof);
         }
     } else {
         if session.changes.len() >= 32 {
@@ -679,6 +761,7 @@ fn stage(root: &Path, session: &mut Session, request: &Value) -> Result<Value, S
             path: path.into(),
             content: content.into(),
             expected_hash: expected,
+            target_proof: Some(target_proof),
         });
     }
     Ok(json!({"path":path,"pending":true}))
@@ -1017,6 +1100,8 @@ fn apply_changes_transactional(
         }
         let target = resolve(root, &change.path, true)?;
         let key = apply_target_key(&target, &storage_identity)?;
+        let proof = change.target_proof.as_ref().ok_or("AGENT_CHANGE_REVIEW_REQUIRED")?;
+        if !proof.matches(&key) { return Err("AGENT_CHANGE_PATH_CHANGED".into()); }
         if keys.iter().any(|other| same_apply_target(&key, other)) {
             return Err("AGENT_DUPLICATE_FILE".into());
         }
@@ -1247,12 +1332,15 @@ pub fn execute(
     }
     let action = request["action"].as_str().unwrap_or("");
     if action == "cancel" {
+        if let Some(run_id) = request["run_id"].as_str().filter(|id| !id.is_empty()) {
+            return Ok(json!({"cancel_requested":cancel_run_request(run_id)?}));
+        }
         let id = request["session_id"]
             .as_str()
             .ok_or("AGENT_SESSION_REQUIRED")?;
         let mut running = running_map().lock().map_err(|_| "AGENT_BUSY")?;
         if let Some(cancel) = running.get_mut(&(root.clone(), id.to_owned())) {
-            *cancel = true;
+            cancel.store(true, Ordering::SeqCst);
             return Ok(json!({"cancel_requested":true}));
         }
         return Ok(json!({"cancel_requested":false}));
@@ -1363,7 +1451,7 @@ pub fn execute(
             running_map()
                 .lock()
                 .map_err(|_| "AGENT_BUSY")?
-                .insert((root.clone(), session.session_id.clone()), false);
+                .insert((root.clone(), session.session_id.clone()), request_signal(&request)?);
             let _running_guard = RunningGuard {
                 root: root.clone(),
                 session_id: session.session_id.clone(),
@@ -1775,6 +1863,22 @@ mod tests {
             assert!(propose_operation(&mut session, &input).is_err());
         }
         assert!(session.operations.is_empty());
+    }
+    #[test]
+    fn cancellation_before_registration_stops_only_its_exact_run() {
+        let f = Fixture::new();
+        let id = uuid::Uuid::new_v4().to_string();
+        assert!(cancel_run_request(&id).unwrap());
+        let guard = register_run_request(&id).unwrap();
+        assert!(guard.cancelled());
+        let response = execute(&f.0, &f.0.join("state"),
+            json!({"action":"chat","run_id":id,"message":"must not call model"}),
+            |_, _| panic!("pre-cancelled run reached provider")).unwrap();
+        assert_eq!(response["status"], "cancelled");
+        assert!(response["changes"].as_array().unwrap().is_empty());
+        drop(guard);
+        let next = register_run_request(&uuid::Uuid::new_v4().to_string()).unwrap();
+        assert!(!next.cancelled());
     }
     #[test]
     fn cancellation_is_session_scoped_and_skips_returned_write_calls() {
@@ -2532,6 +2636,32 @@ mod apply_preflight_tests {
         fn drop(&mut self) { let _ = fs::remove_dir_all(&self.root); }
     }
 
+    #[test]
+    fn persisted_new_file_proposal_cannot_resurrect_a_renamed_parent() {
+        let fixture = Fixture::new();
+        fs::create_dir(fixture.root.join("original")).unwrap();
+        let first = fixture.run(json!({"action":"propose","path":"original/new.txt","content":"reviewed"})).unwrap();
+        let id = first["session_id"].as_str().unwrap();
+        fs::rename(fixture.root.join("original"), fixture.root.join("moved")).unwrap();
+        assert_eq!(fixture.run(json!({"action":"apply","session_id":id})).unwrap_err(), "AGENT_CHANGE_PATH_CHANGED");
+        assert!(!fixture.root.join("original").exists());
+        assert!(!fixture.root.join("moved/new.txt").exists());
+        assert_eq!(fixture.run(json!({"action":"session","session_id":id})).unwrap()["changes"].as_array().unwrap().len(), 1);
+    }
+    #[test]
+    fn legacy_proposal_requires_review_and_reproposal_rebinds_target() {
+        let fixture = Fixture::new();
+        let first = fixture.run(json!({"action":"propose","path":"new.txt","content":"reviewed"})).unwrap();
+        let id = first["session_id"].as_str().unwrap();
+        let mut session = load(&fixture.root, &fixture.storage, Some(id)).unwrap();
+        session.changes[0].target_proof = None;
+        save(&fixture.storage, &session).unwrap();
+        assert_eq!(fixture.run(json!({"action":"apply","session_id":id})).unwrap_err(), "AGENT_CHANGE_REVIEW_REQUIRED");
+        assert!(!fixture.root.join("new.txt").exists());
+        fixture.run(json!({"action":"propose","session_id":id,"path":"new.txt","content":"reviewed again","expected_hash":null})).unwrap();
+        fixture.run(json!({"action":"apply","session_id":id})).unwrap();
+        assert_eq!(fs::read_to_string(fixture.root.join("new.txt")).unwrap(), "reviewed again");
+    }
     #[test]
     fn duplicate_new_paths_fail_before_any_project_write() {
         let fixture = Fixture::new();

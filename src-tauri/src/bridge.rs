@@ -452,6 +452,9 @@ fn close_tab(app: &AppHandle, id: &str) -> Result<(), String> {
             .close_tab(&id.to_string())
             .map_err(|e| format!("关闭子 webview {id} 失败: {e}"))
     };
+    // A failed close keeps every owner record and draft available for retry.
+    // Do not issue a successful cleanup receipt while the WebView still exists.
+    close_result?;
     app.state::<AppState>()
         .child_layouts
         .lock()
@@ -471,7 +474,7 @@ fn close_tab(app: &AppHandle, id: &str) -> Result<(), String> {
     if active.as_deref() == Some(id) {
         *active = state.tabs.lock().unwrap().keys().next().cloned();
     }
-    close_result
+    Ok(())
 }
 
 /// 注册主进程统一退出清理任务（M0-2.c）。

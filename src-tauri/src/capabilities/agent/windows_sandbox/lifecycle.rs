@@ -14,6 +14,9 @@ use std::sync::{Weak, atomic::AtomicUsize};
 const PROFILE_PREFIX: &str = "BrowserOS.Coding.";
 const JOB_PREFIX: &str = r"Global\BrowserOS.Coding.Job.v1.";
 const MAX_RECORDS: usize = 512;
+// Includes startup, live processes, pipe owners and deferred profile cleanup.
+// Recovery may adopt older records above this limit but never admits new work.
+const MAX_NATIVE_OWNERS: usize = 32;
 const MAX_JOURNAL_BYTES: usize = 16 * 1024;
 const MAX_FRAME_BYTES: usize = 4096;
 const MAX_STATUS_RECORDS: usize = 64;
@@ -87,15 +90,21 @@ impl Registry {
         *self.observation.lock().unwrap_or_else(|poison| poison.into_inner()) =
             RecoveryObservation { report: report.clone(), code: code.map(str::to_owned) };
     }
-    fn can_start(&self) -> bool {
+    fn gate_open(&self) -> bool {
         !STOPPING.load(Ordering::Acquire) && !self.stopping.load(Ordering::Acquire)
             && !self.recovering.load(Ordering::Acquire) && !self.rejected.load(Ordering::Acquire)
             && self.pending_recovery.load(Ordering::Acquire) == 0
     }
+    fn can_start(&self) -> bool {
+        self.gate_open() && self.active_count() < MAX_NATIVE_OWNERS
+    }
     fn track(&self, budget: &OperationBudget, starting: bool) -> Result<Arc<Control>, String> {
         let mut owners = self.controls.lock().map_err(|_| "SANDBOX_OWNER_LOCK")?;
         owners.retain(|owner| owner.strong_count() != 0);
-        if STOPPING.load(Ordering::Acquire) || self.stopping.load(Ordering::Acquire) || (starting && !self.can_start()) { return Err("SANDBOX_ADMISSION_CLOSED".into()); }
+        if STOPPING.load(Ordering::Acquire) || self.stopping.load(Ordering::Acquire) || (starting && !self.gate_open()) { return Err("SANDBOX_ADMISSION_CLOSED".into()); }
+        if starting && owners.len() >= MAX_NATIVE_OWNERS {
+            return Err("SANDBOX_CAPACITY_BUSY".into());
+        }
         let control = Arc::new(Control {
             operation: budget.clone(), job: Mutex::new(None), cleanup_budget: Mutex::new(None),
         });
@@ -145,6 +154,13 @@ impl Registry {
         budget
     }
 }
+/// Pipe workers retain the same native admission slot after their request
+/// returns, until the actual blocking I/O and profile cleanup both finish.
+pub(crate) struct NativeIoOwner {
+    _control: Arc<Control>,
+    _cleanup: OperationCleanupGuard,
+}
+
 struct Control {
     operation: OperationBudget,
     job: Mutex<Option<NamedPrivateJob>>,
@@ -431,6 +447,12 @@ pub(super) struct ProfileLease {
     cleaned: bool,
 }
 impl ProfileLease {
+    pub(super) fn hold_io_owner(&self) -> NativeIoOwner {
+        NativeIoOwner {
+            _control: Arc::clone(&self.control),
+            _cleanup: self.control.operation.hold_cleanup(),
+        }
+    }
     pub(super) fn name(&self) -> &str { &self.journal.as_ref().expect("owned journal").value.name }
     pub(super) fn expected_sid(&self) -> &str { &self.journal.as_ref().expect("owned journal").value.package_sid }
     pub(super) fn registered(&mut self) { self.registered = true; }
@@ -897,6 +919,31 @@ mod tests {
             file.mark_deleted().unwrap();
             drop(file);
         }
+    }
+
+    #[test]
+    fn admission_counts_native_io_after_the_profile_owner_returns() {
+        let (parent, registry, budget) = local_registry("capacity");
+        let mut owners = Vec::new();
+        for _ in 0..MAX_NATIVE_OWNERS {
+            owners.push(registry.track(&budget, true).unwrap());
+        }
+        assert!(!registry.can_start());
+        assert!(matches!(registry.track(&budget, true), Err(code) if code == "SANDBOX_CAPACITY_BUSY"));
+        let io = NativeIoOwner {
+            _control: Arc::clone(&owners[0]),
+            _cleanup: budget.hold_cleanup(),
+        };
+        drop(owners.remove(0));
+        assert!(registry.track(&budget, true).is_err());
+        drop(io);
+        let replacement = registry.track(&budget, true).unwrap();
+        assert_eq!(registry.active_count(), MAX_NATIVE_OWNERS);
+        drop(replacement);
+        drop(owners);
+        assert!(registry.can_start());
+        drop(registry);
+        std::fs::remove_dir_all(parent).unwrap();
     }
 
     #[test]

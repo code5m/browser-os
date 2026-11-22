@@ -823,7 +823,7 @@ mod script_persistence_tests {
     #[test]
     fn empty_library_is_empty() {
         let root = temp_root("empty");
-        assert!(crate::workspace::load_scripts_at(&root.join("scripts.json")).is_empty());
+        assert!(crate::workspace::load_scripts_at(&root.join("scripts.json")).unwrap().is_empty());
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -839,7 +839,7 @@ mod script_persistence_tests {
         crate::workspace::write_body_at(&root, &meta.path, "#!/bin/bash\necho hi")
             .expect("正文落盘");
 
-        let loaded = crate::workspace::load_scripts_at(&file);
+        let loaded = crate::workspace::load_scripts_at(&file).expect("load scripts");
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].id, id);
         assert_eq!(
@@ -906,7 +906,7 @@ mod script_persistence_tests {
         meta.updated_at = chrono::Utc::now();
         crate::workspace::save_scripts_at(&file, std::slice::from_ref(&meta)).expect("更新");
 
-        let loaded = crate::workspace::load_scripts_at(&file);
+        let loaded = crate::workspace::load_scripts_at(&file).expect("load scripts");
         assert_eq!(loaded[0].id, id, "id 不得变化");
         assert_eq!(loaded[0].created_at, created, "created_at 不得变化");
         assert_eq!(loaded[0].name, "改名后");
@@ -925,7 +925,7 @@ mod script_persistence_tests {
         );
         fs::write(&file, legacy).expect("写历史 JSON");
 
-        let loaded = crate::workspace::load_scripts_at(&file);
+        let loaded = crate::workspace::load_scripts_at(&file).expect("load scripts");
         assert_eq!(loaded.len(), 1, "缺字段的历史数据不得被静默丢弃");
         assert!(loaded[0].params.is_empty());
         assert!(loaded[0].description.is_empty());

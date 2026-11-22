@@ -539,10 +539,10 @@ impl TabManager {
 
     pub fn close_tab(&self, id: &TabId) -> Result<()> {
         let mut tabs = self.tabs.write();
-        let webview = tabs
-            .get(id)
-            .ok_or_else(|| BrowserTabError::TabNotFound(id.clone()))?;
-
+        // A successful native close may outlive its IPC reply. Retrying an
+        // already-closed or hibernated tab is successful and creates no resource.
+        let Some(webview) = tabs.get(id) else { return Ok(()); };
+        // Retain native ownership if close fails, so deactivation can retry.
         webview.close()?;
         tabs.remove(id);
         platform::forget_native_layout(id);

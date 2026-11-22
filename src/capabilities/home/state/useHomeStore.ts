@@ -256,17 +256,16 @@ export const useHomeStore = defineStore("home", () => {
   // 打开快捷方式：url → 内嵌浏览器；app → 启动系统应用；dir → 文件视图（IDE 树）
   async function open(s: HomeShortcut) {
     if (s.type === "url") {
-      browser.url = s.target;
-      layout.setView("browser");
-      await browser.openBrowser();
+      if (!await browser.openBrowserAt(s.target)) return;
     } else if (s.type === "dir") {
       // M0-4.b：改为静态引入。useWorkspaceStore 已被 App.vue 等十余处静态引入，
       // 这里的动态 import 既不会分包（Vite 会报 mix 告警），也不构成循环依赖。
       // Files owner 接管 enterDir（见 useFileStore）；useWorkspaceStore 已不含文件态
-      browser.url = s.target; // 地址栏同步显示目录路径
-      layout.openDirTab(s.target);
-      await fs.enterDir(s.target); // enterDir 内部会同步文件树根
-      layout.showToast("📁 " + s.name);
+      let publish;
+      try { publish = layout.prepareDirTab(s.target); }
+      catch { layout.showToast("目录路径无效或不受支持"); return; }
+      if (!publish || !await fs.enterDir(s.target, publish)) return;
+      browser.url = s.target;
     } else {
       try {
         await bridge.launchApp(s.target);

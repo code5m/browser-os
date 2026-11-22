@@ -446,6 +446,8 @@ export interface ScriptMeta {
 // 无 path/正文文件，不含 token/cookie/authorization/body。
 export interface CommandSnippet {
   id: string;
+  /** Native definition revision required to execute a reviewed snapshot. */
+  revision?: string;
   name: string;
   category: string;
   interpreter: ScriptInterpreter;
@@ -668,6 +670,7 @@ export interface DbConnectionConfig {
 export interface DbConnectResult {
   conn_id: string;
   kind: DbKind;
+  credential_cleanup_pending?: boolean;
 }
 
 // db_query 返回（与 domain.rs::DbQueryResult 一致；rows 内为带标签 DbValue）。

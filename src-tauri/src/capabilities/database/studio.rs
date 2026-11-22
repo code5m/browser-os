@@ -4,18 +4,18 @@
 use super::table_data::{self, TableRequest, TableState};
 // DEVELOPER_STUDIO_TABLE_ACTOR
 use super::{
-    commands::{ensure_profiles_loaded, DbConnectionRegistry},
-    database::{credential_key, DbError, DbPool, DbQueryResult as DriverQueryResult, QueryCancel},
+    commands::{connection_snapshot, connection_revision},
+    database::{DbError, DbPool, DbQueryResult as DriverQueryResult, QueryCancel},
 };
 use crate::{
-    domain::{DbConnectionConfig, DbErrorCode, SupportedDb},
-    keyring_store::KeyringStore,
+    domain::{DbConnectionConfig, DbErrorCode},
     security_policy as sp,
     shared::invocation::check_invocation_source,
 };
 use mysql::prelude::Queryable;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+#[cfg(test)]
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
@@ -84,27 +84,21 @@ impl Drop for DatabaseStudioRuntime {
         }
     }
 }
+#[cfg(test)]
 fn digest(cfg: &DbConnectionConfig) -> Result<String, String> {
     let bytes = serde_json::to_vec(cfg).map_err(|_| "DB_SESSION_CONFIG_INVALID")?;
     Ok(format!("{:x}", Sha256::digest(bytes)))
 }
-fn config(app: &AppHandle, id: &str) -> Result<DbConnectionConfig, String> {
-    ensure_profiles_loaded(app)?;
-    app.state::<DbConnectionRegistry>()
-        .configs
-        .lock()
-        .map_err(|_| "DB_SESSION_LOCK_FAILED")?
-        .get(id)
-        .filter(|cfg| cfg.enabled)
-        .cloned()
-        .ok_or_else(|| "DB_SESSION_SOURCE_DISABLED_OR_REMOVED".into())
+pub(super) fn profile_in_use(app: &AppHandle, id: &str) -> Result<bool, String> {
+    let runtime = app.state::<DatabaseStudioRuntime>();
+    let sessions = runtime.sessions.lock().map_err(|_| "DB_SESSION_LOCK_FAILED")?;
+    Ok(sessions.values().any(|handle| handle.conn_id == id && !handle.closed.load(Ordering::Acquire)))
 }
-fn verify_config(app: &AppHandle, handle: &SessionHandle) -> Result<DbConnectionConfig, String> {
-    let cfg = config(app, &handle.conn_id)?;
-    if digest(&cfg)? != handle.config_digest {
+fn verify_config(app: &AppHandle, handle: &SessionHandle) -> Result<(), String> {
+    if connection_revision(app, &handle.conn_id)? != handle.config_digest {
         return Err("DB_SESSION_SOURCE_CHANGED_REOPEN_REQUIRED".into());
     }
-    Ok(cfg)
+    Ok(())
 }
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -525,17 +519,14 @@ fn actor(
     app: AppHandle,
     id: String,
     cfg: DbConnectionConfig,
+    password: Option<String>,
     handle: Arc<SessionHandle>,
     receiver: mpsc::Receiver<Envelope>,
     ready: SyncSender<Result<Value, String>>,
     sessions: Arc<Mutex<HashMap<String, Arc<SessionHandle>>>>,
 ) {
     let run = || -> Result<(), String> {
-        let password = if cfg.kind == SupportedDb::Sqlite {
-            None
-        } else {
-            KeyringStore::get_token(&credential_key(&cfg.id)).ok()
-        };
+        verify_config(&app, &handle)?;
         let pool = DbPool::connect(
             &cfg,
             password.as_deref(),
@@ -607,13 +598,15 @@ pub async fn db_studio_open(
 ) -> Result<Value, String> {
     check_invocation_source(&webview, "db_studio_open", None, &app)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let cfg = config(&app, &conn_id)?;
+        let snapshot = connection_snapshot(&app, &conn_id)?;
+        let cfg = snapshot.config;
+        let password = snapshot.password;
         let id = uuid::Uuid::new_v4().to_string();
         let (sender, receiver) = mpsc::sync_channel(1);
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
         let handle = Arc::new(SessionHandle {
             conn_id,
-            config_digest: digest(&cfg)?,
+            config_digest: snapshot.revision,
             sender,
             busy: AtomicBool::new(false),
             closing: AtomicBool::new(false),
@@ -639,6 +632,7 @@ pub async fn db_studio_open(
                     app,
                     worker_id,
                     cfg,
+                    password,
                     worker_handle,
                     receiver,
                     ready_tx,

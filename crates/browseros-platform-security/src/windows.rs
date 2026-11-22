@@ -322,6 +322,24 @@ impl Policy {
     }
 }
 
+/// Owner/SYSTEM-only protected descriptor for a newly-created ordinary file.
+/// Keep this value alive through the native create call: the descriptor's
+/// owner pointer refers to the retained policy, and its ACL owns its SID bytes.
+pub struct PrivateFileSecurity {
+    descriptor: Descriptor,
+    _policy: Policy,
+}
+impl PrivateFileSecurity {
+    pub fn new() -> io::Result<Self> {
+        let policy = Policy::new()?;
+        let descriptor = policy.descriptor(false)?;
+        Ok(Self { descriptor, _policy: policy })
+    }
+    pub fn as_ptr(&mut self) -> PSECURITY_DESCRIPTOR {
+        self.descriptor.as_ptr()
+    }
+}
+
 /// Ordinal Unicode comparison of Windows path spellings. This is not a file
 /// authorization predicate; security-sensitive callers use native identities.
 pub fn same_path_component(a: &OsStr, b: &OsStr) -> bool {

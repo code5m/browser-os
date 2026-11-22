@@ -14,7 +14,6 @@ use std::collections::HashMap;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::domain::*;
-use crate::keyring_store::KeyringStore;
 use crate::shared::invocation::check_invocation_source;
 use crate::sync;
 use crate::workspace;
@@ -552,13 +551,8 @@ fn execute_git_write(app: &AppHandle, job: &GitWriteJob) -> Result<usize, String
         GitWriteOp::Push => {
             // 凭据仅在推送瞬间从系统密钥库读取（与 push_artifacts 同一思路），
             // 不持久化、不复制到任务结构；错误串先脱敏再向上传递。
-            let repos = workspace::load_repos(app);
-            let cfg = repos
-                .iter()
-                .find(|r| r.id == job.repo_id)
-                .ok_or_else(|| "仓库未配置".to_string())?;
-            let token = KeyringStore::get_token(&cfg.id)?;
-            sync::write_push(&repo, &cfg.username, &token)
+            let (cfg, token) = workspace::repo_execution_snapshot(app, &job.repo_id)?;
+            sync::write_push_bound(&repo, &cfg.username, &token, &cfg.remote_url)
                 .map(|_| 0)
                 .map_err(|e| sync::scrub_sensitive_error(&e, &token))
         }
@@ -567,18 +561,20 @@ fn execute_git_write(app: &AppHandle, job: &GitWriteJob) -> Result<usize, String
 
 /// 第一步：生成"待确认"SyncJob（不真正推送）。校验仓库与凭据存在。
 #[tauri::command]
-pub fn request_sync(
+pub async fn request_sync(
     app: AppHandle,
     artifact_ids: Vec<String>,
     repo_id: String,
 ) -> Result<SyncPreview, String> {
-    let repos = workspace::load_repos(&app);
-    let repo = repos
-        .iter()
-        .find(|r| r.id == repo_id)
-        .ok_or("仓库未配置".to_string())?;
-    // 提前校验凭据存在，避免确认后才失败
-    KeyringStore::get_token(&repo.id)?;
+    GIT_READ_WORKERS.run(move || request_sync_blocking(app, artifact_ids, repo_id)).await
+}
+
+fn request_sync_blocking(
+    app: AppHandle, artifact_ids: Vec<String>, repo_id: String,
+) -> Result<SyncPreview, String> {
+    // Snapshot only for preview validation; execution captures its own immutable
+    // endpoint/credential pair under the native repository owner.
+    let (repo, _token) = workspace::repo_execution_snapshot(&app, &repo_id)?;
 
     let arts: Vec<Artifact> = workspace::load_artifacts(&app)
         .into_iter()

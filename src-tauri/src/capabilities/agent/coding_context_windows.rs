@@ -218,7 +218,7 @@ pub fn execute(root: &Path, storage: &Path, request: Value) -> Result<Value, Str
             Ok(json!({"hits":hits,"limited":incomplete,"read_only":true}))
         }
         "mcp_list" => Ok(super::coding_mcp_windows::discover(&root, storage)),
-        "mcp_tools" | "mcp_call" => super::coding_mcp_windows::execute(&root, storage, request),
+        "mcp_review" | "mcp_tools" | "mcp_call" => super::coding_mcp_windows::execute(&root, storage, request),
         _ => Err("CONTEXT_ACTION_UNKNOWN".into()),
     }
 }

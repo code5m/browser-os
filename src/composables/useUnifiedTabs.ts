@@ -27,8 +27,9 @@ function bindUnifiedTabs(layout: ReturnType<typeof useLayoutStore>) {
       if (!publish) return false;
       // Directory reading/discard may refuse too. Publish selection only after
       // that owner accepts, without bypassing or re-running the view guard.
-      if (tab.path && !await useFileStore().enterDir(tab.path, publish.isCurrent)) return false;
-      if (!publish()) return false;
+      if (tab.path) {
+        if (!await useFileStore().enterDir(tab.path, publish)) return false;
+      } else if (!publish()) return false;
       if (tab.view === "apps") await useAppsStore().loadApps();
       return true;
     },
@@ -38,9 +39,9 @@ function bindUnifiedTabs(layout: ReturnType<typeof useLayoutStore>) {
       const prepared = layout.prepareModTabClose(tab.id);
       if (!prepared) return false;
       const { publish, next, wasVisible } = prepared;
-      if (wasVisible && next?.path
-          && !await useFileStore().enterDir(next.path, publish.isCurrent)) return false;
-      if (!publish()) return false;
+      if (wasVisible && next?.path) {
+        if (!await useFileStore().enterDir(next.path, publish)) return false;
+      } else if (!publish()) return false;
       if (wasVisible && next?.path) browser.url = next.path;
       if (wasVisible && next?.view === "apps") await useAppsStore().loadApps();
       return true;

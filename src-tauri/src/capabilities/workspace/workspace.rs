@@ -90,9 +90,9 @@ fn ensure(dir: &PathBuf) {
 // 契约：
 //   - 落盘一律走**唯一**原子写原语 `crate::session::atomic_write`（tmp + rename），
 //     不新造第二条写路径、不 `fs::write` 直接覆盖目标文件；
-//   - 文件不存在 / 读不到 → 空列表（正常首次启动，不是数据丢失）；
-//   - **解析失败绝不静默清空**：备份为 `<file>.corrupt` + 告警后返回空
-//     （对齐 `tasks.rs` O-A6-7 范式，保证原字节可人工取回）。
+//   - 仅文件不存在时返回空列表；无法读取或超过容量时返回错误；
+//   - 解析失败保留原文件，并按内容哈希保存私有备份后返回错误；
+//     错误绝不成为后续读改写的空基线，重复读取也不会重复占用备份空间。
 // ---------------------------------------------------------------------------
 
 /// 列表落盘（原子写：tmp + rename）。
@@ -106,22 +106,87 @@ pub fn save_json_list_at<T: serde::Serialize>(
     crate::session::atomic_write(path, &content)
 }
 
-/// 列表读取：缺失 → 空；**损坏 → `.corrupt` 备份 + 告警 → 空**（不静默丢弃）。
-pub fn load_json_list_at<T: serde::de::DeserializeOwned>(path: &Path, tag: &str) -> Vec<T> {
-    let Ok(content) = fs::read_to_string(path) else {
-        return Vec::new();
+/// A missing store is empty; an unreadable or corrupt store is never a write baseline.
+const MAX_LIST_STORE_BYTES: u64 = 32 * 1024 * 1024;
+
+fn corrupt_store_backup_path(path: &Path, bytes: &[u8]) -> PathBuf {
+    use sha2::{Digest, Sha256};
+    let mut name = path.as_os_str().to_os_string();
+    name.push(format!(".corrupt-{:x}", Sha256::digest(bytes)));
+    PathBuf::from(name)
+}
+
+fn preserve_corrupt_store(path: &Path, bytes: &[u8]) -> Result<PathBuf, String> {
+    use std::io::Read;
+    let backup = corrupt_store_backup_path(path, bytes);
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+    }
+    match options.open(&backup) {
+        Ok(mut file) => {
+            if file.write_all(bytes).and_then(|_| file.sync_all()).is_err() {
+                let _ = fs::remove_file(&backup);
+                return Err("WORKSPACE_STORE_BACKUP_FAILED".into());
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let metadata = fs::symlink_metadata(&backup)
+                .map_err(|_| "WORKSPACE_STORE_BACKUP_FAILED")?;
+            if !metadata.is_file() || metadata.file_type().is_symlink() {
+                return Err("WORKSPACE_STORE_BACKUP_FAILED".into());
+            }
+            #[cfg(windows)]
+            {
+                use std::os::windows::fs::MetadataExt;
+                if metadata.file_attributes() & 0x400 != 0 {
+                    return Err("WORKSPACE_STORE_BACKUP_FAILED".into());
+                }
+            }
+            let mut existing = Vec::new();
+            fs::File::open(&backup).map_err(|_| "WORKSPACE_STORE_BACKUP_FAILED")?
+                .take(MAX_LIST_STORE_BYTES + 1).read_to_end(&mut existing)
+                .map_err(|_| "WORKSPACE_STORE_BACKUP_FAILED")?;
+            if existing != bytes { return Err("WORKSPACE_STORE_BACKUP_FAILED".into()); }
+        }
+        Err(_) => return Err("WORKSPACE_STORE_BACKUP_FAILED".into()),
+    }
+    #[cfg(unix)]
+    if let Some(parent) = path.parent() {
+        fs::File::open(parent).and_then(|dir| dir.sync_all())
+            .map_err(|_| "WORKSPACE_STORE_BACKUP_FAILED")?;
+    }
+    Ok(backup)
+}
+
+pub fn load_json_list_at<T: serde::de::DeserializeOwned>(
+    path: &Path,
+    tag: &str,
+) -> Result<Vec<T>, String> {
+    use std::io::Read;
+    let file = match fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(_) => return Err(format!("WORKSPACE_STORE_READ_FAILED: {tag}")),
     };
-    match serde_json::from_str::<Vec<T>>(&content) {
-        Ok(list) => list,
-        Err(e) => {
-            eprintln!(
-                "[workspace] {tag} 文件损坏，已备份为 .corrupt（不会静默清空后被覆盖写回）：{}（{e}）",
-                path.display()
-            );
-            let mut backup = path.as_os_str().to_os_string();
-            backup.push(".corrupt");
-            let _ = fs::rename(path, PathBuf::from(backup));
-            Vec::new()
+    let mut bytes = Vec::new();
+    file.take(MAX_LIST_STORE_BYTES + 1).read_to_end(&mut bytes)
+        .map_err(|_| format!("WORKSPACE_STORE_READ_FAILED: {tag}"))?;
+    if bytes.len() as u64 > MAX_LIST_STORE_BYTES {
+        return Err(format!("WORKSPACE_STORE_SIZE_LIMIT: {tag}"));
+    }
+    match serde_json::from_slice::<Vec<T>>(&bytes) {
+        Ok(list) => Ok(list),
+        Err(_) => {
+            // Copy the original bytes without moving or replacing the live store.
+            // A content-addressed, create-new backup preserves distinct failures
+            // while repeated reads of the same bad file do not consume more disk.
+            let backup = preserve_corrupt_store(path, &bytes)
+                .map_err(|_| format!("WORKSPACE_STORE_CORRUPT_BACKUP_FAILED: {tag}"))?;
+            Err(format!("WORKSPACE_STORE_CORRUPT: {tag}; backup={}", backup.display()))
         }
     }
 }
@@ -345,8 +410,8 @@ pub fn save_scripts_at(path: &Path, list: &[ScriptMeta]) -> Result<(), String> {
     save_json_list_at(path, list, "脚本库")
 }
 
-/// 脚本库读取。B4-2：损坏 → `.corrupt` 备份 + 告警（不再 `unwrap_or_default()` 静默清空）。
-pub fn load_scripts_at(path: &Path) -> Vec<ScriptMeta> {
+/// 脚本库读取。读取失败返回错误，损坏原件与按内容命名的备份均保留。
+pub fn load_scripts_at(path: &Path) -> Result<Vec<ScriptMeta>, String> {
     load_json_list_at(path, "脚本库")
 }
 
@@ -354,7 +419,7 @@ pub fn save_scripts(app: &AppHandle, list: &[ScriptMeta]) -> Result<(), String> 
     save_scripts_at(&scripts_file(app), list)
 }
 
-pub fn load_scripts(app: &AppHandle) -> Vec<ScriptMeta> {
+pub fn load_scripts(app: &AppHandle) -> Result<Vec<ScriptMeta>, String> {
     load_scripts_at(&scripts_file(app))
 }
 
@@ -376,8 +441,8 @@ pub fn save_snippets_at(path: &Path, list: &[CommandSnippet]) -> Result<(), Stri
     save_json_list_at(path, list, "命令片段库")
 }
 
-/// 命令片段读取。B4-2：损坏 → `.corrupt` 备份 + 告警。
-pub fn load_snippets_at(path: &Path) -> Vec<CommandSnippet> {
+/// 命令片段读取。读取失败返回错误，禁止用空列表覆盖原库。
+pub fn load_snippets_at(path: &Path) -> Result<Vec<CommandSnippet>, String> {
     load_json_list_at(path, "命令片段库")
 }
 
@@ -385,7 +450,7 @@ pub fn save_snippets(app: &AppHandle, list: &[CommandSnippet]) -> Result<(), Str
     save_snippets_at(&snippets_file(app), list)
 }
 
-pub fn load_snippets(app: &AppHandle) -> Vec<CommandSnippet> {
+pub fn load_snippets(app: &AppHandle) -> Result<Vec<CommandSnippet>, String> {
     load_snippets_at(&snippets_file(app))
 }
 
@@ -485,23 +550,111 @@ pub fn delete_script_body(app: &AppHandle, file_name: &str) -> Result<(), String
     delete_body_at(&scripts_dir(app), file_name)
 }
 
-/// 仓库配置（不含 token）持久化
+/// Repository metadata keeps versioned credential references native-only.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct StoredRepoConfig {
+    #[serde(flatten)]
+    config: RepoConfig,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    credential_ref: Option<String>,
+}
+static REPO_CONFIG_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 pub fn repos_file(app: &AppHandle) -> PathBuf {
     data_dir(app).join("repos.json")
 }
-/// 仓库配置读取（`_at` 便于无 AppHandle 单测）。B4-2：损坏 → `.corrupt` 备份 + 告警。
-pub fn load_repos_at(path: &Path) -> Vec<RepoConfig> {
+fn repo_key(record: &StoredRepoConfig) -> Result<String, String> {
+    let id = &record.config.id;
+    if id.is_empty() || id.len() > 128
+        || !id.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+    { return Err("REPO_ID_INVALID".into()); }
+    match &record.credential_ref {
+        None => Ok(id.clone()),
+        Some(reference) if reference == id => Ok(reference.clone()),
+        Some(reference) => {
+            let prefix = format!("git:{id}:");
+            if reference.strip_prefix(&prefix).is_some_and(|version| uuid::Uuid::parse_str(version).is_ok()) {
+                Ok(reference.clone())
+            } else { Err("REPO_CREDENTIAL_REF_INVALID".into()) }
+        }
+    }
+}
+fn repo_live_keys(records: &[StoredRepoConfig]) -> Result<std::collections::HashSet<String>, String> {
+    records.iter().map(repo_key).collect()
+}
+fn load_stored_repos(path: &Path) -> Result<Vec<StoredRepoConfig>, String> {
     load_json_list_at(path, "仓库配置")
 }
-/// 仓库配置落盘（`_at` 便于无 AppHandle 单测）。B4-1：原子写，不再 `fs::write` 直接覆盖。
-pub fn save_repos_at(path: &Path, repos: &[RepoConfig]) -> Result<(), String> {
-    save_json_list_at(path, repos, "仓库配置")
+pub fn load_repos_at(path: &Path) -> Result<Vec<RepoConfig>, String> {
+    Ok(load_stored_repos(path)?.into_iter().map(|record| record.config).collect())
 }
-pub fn load_repos(app: &AppHandle) -> Vec<RepoConfig> {
+/// Metadata-only updates retain each existing reference, including legacy records.
+pub fn save_repos_at(path: &Path, repos: &[RepoConfig]) -> Result<(), String> {
+    let existing = load_stored_repos(path)?;
+    let records: Vec<_> = repos.iter().map(|config| StoredRepoConfig {
+        config: config.clone(),
+        credential_ref: existing.iter().find(|record| record.config.id == config.id)
+            .and_then(|record| record.credential_ref.clone()),
+    }).collect();
+    save_json_list_at(path, &records, "仓库配置")
+}
+pub fn load_repos(app: &AppHandle) -> Result<Vec<RepoConfig>, String> {
+    let _guard = REPO_CONFIG_LOCK.lock().map_err(|_| "REPO_CONFIG_LOCK_FAILED")?;
     load_repos_at(&repos_file(app))
 }
 pub fn save_repos(app: &AppHandle, repos: &[RepoConfig]) -> Result<(), String> {
+    let _guard = REPO_CONFIG_LOCK.lock().map_err(|_| "REPO_CONFIG_LOCK_FAILED")?;
     save_repos_at(&repos_file(app), repos)
+}
+
+/// Capture the endpoint and secret in one short native-owner critical section.
+/// No lock or mutable Keyring name is carried into a queued/network operation.
+pub fn repo_execution_snapshot(app: &AppHandle, id: &str) -> Result<(RepoConfig, String), String> {
+    let _guard = REPO_CONFIG_LOCK.lock().map_err(|_| "REPO_CONFIG_LOCK_FAILED")?;
+    let records = load_stored_repos(&repos_file(app))?;
+    let record = records.into_iter().find(|record| record.config.id == id)
+        .ok_or("仓库未配置")?;
+    let reference = repo_key(&record)?;
+    let token = crate::keyring_store::KeyringStore::get_token(&reference)
+        .map_err(|_| "REPO_CREDENTIAL_UNAVAILABLE")?;
+    Ok((record.config, token))
+}
+
+pub fn configure_repo_credentials(app: &AppHandle, config: RepoConfig, token: &str) -> Result<(), String> {
+    use crate::shared::credential_versions;
+    let _guard = REPO_CONFIG_LOCK.lock().map_err(|_| "REPO_CONFIG_LOCK_FAILED")?;
+    let path = repos_file(app);
+    let mut records = load_stored_repos(&path)?;
+    let proposed = StoredRepoConfig { config: config.clone(), credential_ref: None };
+    repo_key(&proposed)?;
+    let endpoint = url::Url::parse(&config.remote_url).map_err(|_| "REPO_ENDPOINT_INVALID")?;
+    if !matches!(endpoint.scheme(), "https" | "http") || endpoint.host_str().is_none()
+        || endpoint.password().is_some()
+    { return Err("REPO_ENDPOINT_INVALID".into()); }
+    if token.trim().is_empty() || token.len() > 16 * 1024 || token.contains(['\r', '\n', '\0']) {
+        return Err("REPO_CREDENTIAL_INVALID".into());
+    }
+    if records.len() >= 256 && !records.iter().any(|record| record.config.id == config.id) {
+        return Err("REPO_CONFIG_LIMIT".into());
+    }
+    let live = repo_live_keys(&records)?;
+    let _ = credential_versions::reconcile(&path, "git", &live);
+    let retired: Vec<String> = records.iter().filter(|record| record.config.id == config.id)
+        .map(repo_key).collect::<Result<_, _>>()?;
+    let reference = credential_versions::stage(&path, "git", &config.id, token, &retired)?;
+    records.retain(|record| record.config.id != config.id);
+    records.push(StoredRepoConfig { config, credential_ref: Some(reference) });
+    let saved = save_json_list_at(&path, &records, "仓库配置");
+    // An atomic replacement can publish before a durability error. Reconcile
+    // against the persisted file even on Err; never guess which key is live.
+    if let Ok(persisted) = load_stored_repos(&path) {
+        if let Ok(live) = repo_live_keys(&persisted) {
+            if credential_versions::reconcile(&path, "git", &live).is_err() {
+                eprintln!("[workspace] repository credential cleanup pending");
+            }
+        }
+    }
+    saved
 }
 
 /// 审计日志
@@ -628,15 +781,15 @@ pub fn sessions_dir(app: &AppHandle) -> PathBuf {
     ensure(&d);
     d
 }
-/// 收藏读取（`_at` 便于无 AppHandle 单测）。B4-2：损坏 → `.corrupt` 备份 + 告警。
-pub fn load_bookmarks_at(path: &Path) -> Vec<Bookmark> {
+/// 收藏读取（`_at` 便于无 AppHandle 单测）。读取失败返回错误，禁止用空列表覆盖原库。
+pub fn load_bookmarks_at(path: &Path) -> Result<Vec<Bookmark>, String> {
     load_json_list_at(path, "收藏")
 }
 /// 收藏落盘（`_at` 便于无 AppHandle 单测）。B4-1：原子写。
 pub fn save_bookmarks_at(path: &Path, list: &[Bookmark]) -> Result<(), String> {
     save_json_list_at(path, list, "收藏")
 }
-pub fn load_bookmarks(app: &AppHandle) -> Vec<Bookmark> {
+pub fn load_bookmarks(app: &AppHandle) -> Result<Vec<Bookmark>, String> {
     load_bookmarks_at(&bookmarks_file(app))
 }
 pub fn save_bookmarks(app: &AppHandle, list: &[Bookmark]) -> Result<(), String> {
@@ -650,7 +803,7 @@ pub fn add_bookmark(
     title: String,
     category: String,
 ) -> Result<Bookmark, String> {
-    let mut list = load_bookmarks(app);
+    let mut list = load_bookmarks(app)?;
     if let Some(existing) = list.iter_mut().find(|b| b.url == url) {
         existing.title = title;
         existing.category = category;
@@ -667,7 +820,7 @@ pub fn add_bookmark(
 
 /// 按 id 删除收藏；不存在不报错（幂等）。
 pub fn remove_bookmark(app: &AppHandle, id: &str) -> Result<(), String> {
-    let mut list = load_bookmarks(app);
+    let mut list = load_bookmarks(app)?;
     let before = list.len();
     list.retain(|b| b.id != id);
     if list.len() != before {
@@ -729,7 +882,7 @@ mod snippet_persistence_tests {
         let list = vec![snippet()];
 
         save_snippets_at(&path, &list).expect("save snippets");
-        let loaded = load_snippets_at(&path);
+        let loaded = load_snippets_at(&path).expect("load snippets");
 
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].argv, vec!["grep", "-r", "{PATTERN}"]);
@@ -739,20 +892,40 @@ mod snippet_persistence_tests {
     }
 
     #[test]
-    fn corrupt_or_missing_snippets_file_is_empty() {
+    fn missing_store_is_empty_but_corrupt_store_blocks_mutation() {
         let missing = temp_path("snippets-missing");
-        assert!(load_snippets_at(&missing).is_empty());
-
-        let corrupt = temp_path("snippets-corrupt");
-        fs::write(&corrupt, "{not json").expect("write corrupt snippets");
-        assert!(load_snippets_at(&corrupt).is_empty());
-        // B4-2：损坏文件改备份为 `.corrupt`（原字节可人工取回），不再无痕蒸发。
-        let mut backup = corrupt.as_os_str().to_os_string();
-        backup.push(".corrupt");
-        let backup = PathBuf::from(backup);
-        assert!(backup.exists(), "损坏文件应备份为 .corrupt");
-        let _ = fs::remove_file(&backup);
+        assert!(load_snippets_at(&missing).unwrap().is_empty());
+        let path = temp_path("snippets-corrupt");
+        let bytes = b"[{\"name\":\"old\"},\xff]";
+        fs::write(&path, bytes).unwrap();
+        let add = || -> Result<(), String> {
+            let mut records = load_snippets_at(&path)?;
+            records.push(snippet());
+            save_snippets_at(&path, &records)
+        };
+        assert!(add().unwrap_err().starts_with("WORKSPACE_STORE_CORRUPT"));
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        let backup = corrupt_store_backup_path(&path, bytes);
+        assert_eq!(fs::read(&backup).unwrap(), bytes);
+        assert!(load_snippets_at(&path).is_err());
+        assert_eq!(fs::read(&backup).unwrap(), bytes);
+        fs::remove_file(backup).unwrap();
+        fs::remove_file(path).unwrap();
     }
+
+    #[test]
+    fn backup_failure_never_returns_a_writable_empty_store() {
+        let path = temp_path("snippets-backup-failure");
+        let bytes = b"not valid JSON";
+        fs::write(&path, bytes).unwrap();
+        let backup = corrupt_store_backup_path(&path, bytes);
+        fs::create_dir(&backup).unwrap();
+        assert!(load_snippets_at(&path).unwrap_err().contains("BACKUP_FAILED"));
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        fs::remove_dir(backup).unwrap();
+        fs::remove_file(path).unwrap();
+    }
+
 }
 
 // ---------------------------------------------------------------------------
@@ -807,7 +980,7 @@ mod b4_atomic_persistence_tests {
     fn repos_roundtrip_is_atomic_without_tmp_leftover() {
         let path = temp_path("repos");
         save_repos_at(&path, &[repo()]).expect("save repos");
-        let back = load_repos_at(&path);
+        let back = load_repos_at(&path).expect("load repos");
         assert_eq!(back.len(), 1);
         assert_eq!(back[0].name, "demo");
         assert!(!tmp_of(&path).exists(), "atomic_write 后不得残留 .tmp");
@@ -823,7 +996,7 @@ mod b4_atomic_persistence_tests {
             "work".to_string(),
         )];
         save_bookmarks_at(&path, &list).expect("save bookmarks");
-        let back = load_bookmarks_at(&path);
+        let back = load_bookmarks_at(&path).expect("load bookmarks");
         assert_eq!(back.len(), 1);
         assert_eq!(back[0].title, "Example");
         assert!(!tmp_of(&path).exists(), "atomic_write 后不得残留 .tmp");
@@ -846,31 +1019,17 @@ mod b4_atomic_persistence_tests {
     }
 
     #[test]
-    fn corrupt_file_is_backed_up_not_silently_dropped() {
+    fn corrupt_file_is_backed_up_and_original_stays_blocked() {
         let path = temp_path("corrupt-repos");
-        // 先写有效数据，再模拟「崩溃把文件写坏」。
-        save_repos_at(&path, &[repo()]).expect("seed repos");
-        fs::write(&path, "{not json at all").expect("simulate corruption");
-
-        assert!(
-            load_repos_at(&path).is_empty(),
-            "损坏时返回空，避免把坏数据当真的用"
-        );
-
-        // B4-2 核心：原字节必须仍在（.corrupt 备份），不会被下次保存的空列表覆盖蒸发。
-        let backup = corrupt_backup_of(&path);
-        assert!(backup.exists(), "损坏文件必须备份为 .corrupt");
-        assert!(
-            !path.exists(),
-            "损坏文件已被 rename 走，不会被空列表覆盖写回"
-        );
-        let raw = fs::read_to_string(&backup).unwrap_or_default();
-        assert!(
-            raw.contains("not json at all"),
-            "备份保留原始字节，可人工取回"
-        );
-
-        let _ = fs::remove_file(&backup);
+        save_repos_at(&path, &[repo()]).unwrap();
+        let bytes = b"{not json at all";
+        fs::write(&path, bytes).unwrap();
+        assert!(load_repos_at(&path).is_err());
+        let backup = corrupt_store_backup_path(&path, bytes);
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        assert_eq!(fs::read(&backup).unwrap(), bytes);
+        fs::remove_file(backup).unwrap();
+        fs::remove_file(path).unwrap();
     }
 
     #[test]
@@ -898,7 +1057,7 @@ mod b4_atomic_persistence_tests {
     #[test]
     fn missing_file_stays_empty_without_backup() {
         let path = temp_path("missing");
-        assert!(load_repos_at(&path).is_empty());
+        assert!(load_repos_at(&path).expect("missing store").is_empty());
         assert!(
             !corrupt_backup_of(&path).exists(),
             "文件不存在属正常首次启动，不应产生 .corrupt"

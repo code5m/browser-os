@@ -15,6 +15,7 @@
 //! - **§3.3 R-3**：`ScriptParam.secret` 参数值一律不得落盘（定义期拒绝）。
 
 use std::collections::HashMap;
+#[cfg(test)]
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, OnceLock};
@@ -466,27 +467,10 @@ pub fn save_tasks_at(path: &Path, list: &[TaskDef]) -> Result<(), String> {
     crate::session::atomic_write(path, &content)
 }
 
-/// 任务列表读取。
-///
-/// **损坏处理（O-A6-7）**：解析失败**不得静默清空**（既有 `load_scripts_at` 就是静默丢弃，
-/// 等于定时任务全丢且无痕）。此处把损坏文件 rename 为 `.corrupt` 并打日志后返回空列表。
-pub fn load_tasks_at(path: &Path) -> Vec<TaskDef> {
-    let Ok(content) = fs::read_to_string(path) else {
-        return Vec::new();
-    };
-    match serde_json::from_str::<Vec<TaskDef>>(&content) {
-        Ok(list) => list,
-        Err(e) => {
-            eprintln!(
-                "[tasks] 任务文件损坏，已备份为 .corrupt（任务将全部停用，需人工介入）：{}（{e}）",
-                path.display()
-            );
-            let mut backup = path.as_os_str().to_os_string();
-            backup.push(".corrupt");
-            let _ = fs::rename(path, PathBuf::from(backup));
-            Vec::new()
-        }
-    }
+/// Missing files are an empty initial store. Any unreadable or corrupt
+/// existing store is an error; callers must not publish a replacement baseline.
+pub fn load_tasks_at(path: &Path) -> Result<Vec<TaskDef>, String> {
+    crate::workspace::load_json_list_at(path, "任务列表")
 }
 
 /// 运行历史落盘（原子写 + 容量 FIFO）。
@@ -501,29 +485,17 @@ pub fn save_task_runs_at(path: &Path, list: &[TaskRunRecord]) -> Result<(), Stri
     crate::session::atomic_write(path, &content)
 }
 
-/// 运行历史读取（损坏同样走 `.corrupt` 备份，不静默丢弃）。
-pub fn load_task_runs_at(path: &Path) -> Vec<TaskRunRecord> {
-    let Ok(content) = fs::read_to_string(path) else {
-        return Vec::new();
-    };
-    match serde_json::from_str::<Vec<TaskRunRecord>>(&content) {
-        Ok(list) => list,
-        Err(e) => {
-            eprintln!(
-                "[tasks] 运行历史损坏，已备份为 .corrupt：{}（{e}）",
-                path.display()
-            );
-            let mut backup = path.as_os_str().to_os_string();
-            backup.push(".corrupt");
-            let _ = fs::rename(path, PathBuf::from(backup));
-            Vec::new()
-        }
-    }
+/// Preserve corrupt history and propagate the shared recovery error.
+pub fn load_task_runs_at(path: &Path) -> Result<Vec<TaskRunRecord>, String> {
+    crate::workspace::load_json_list_at(path, "任务运行历史")
 }
 
 /// 追加一条运行记录（读 → 追加 → 容量裁剪 → 原子落盘）。
 pub fn append_task_run(path: &Path, record: &TaskRunRecord) -> Result<(), String> {
-    let mut list = load_task_runs_at(path);
+    let mut list = load_task_runs_at(path)?;
+    // Retrying a terminal receipt after a failed directory sync must not add
+    // another copy of the same run to the durable history.
+    list.retain(|existing| existing.run_id != record.run_id);
     list.push(record.clone());
     save_task_runs_at(path, &list)
 }
@@ -933,7 +905,7 @@ mod task_domain_tests {
             .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
             .collect();
         assert!(leftovers.is_empty(), "atomic_write 后不得残留 .tmp");
-        let back = load_tasks_at(&path);
+        let back = load_tasks_at(&path).expect("读取任务");
         assert_eq!(back.len(), 1);
         assert_eq!(back[0].id, list[0].id);
         assert!(!back[0].enabled, "往返后默认仍为 false");
@@ -945,19 +917,15 @@ mod task_domain_tests {
         let dir = temp_dir("corrupt");
         let path = dir.join("tasks.json");
         fs::write(&path, "{ this is not json").expect("写入损坏文件");
-        let loaded = load_tasks_at(&path);
-        assert!(loaded.is_empty(), "损坏文件不得产出任务");
-        assert!(
-            dir.join("tasks.json.corrupt").exists(),
-            "损坏文件必须备份为 .corrupt（O-A6-7，不得静默丢弃）"
-        );
+        assert!(load_tasks_at(&path).is_err(), "损坏文件不得伪装成空任务列表");
+        assert_eq!(fs::read(&path).unwrap(), b"{ this is not json");
         let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn t_task_missing_file_loads_empty_without_backup() {
         let dir = temp_dir("missing");
-        let loaded = load_tasks_at(&dir.join("tasks.json"));
+        let loaded = load_tasks_at(&dir.join("tasks.json")).expect("首次读取");
         assert!(loaded.is_empty());
         assert!(
             !dir.join("tasks.json.corrupt").exists(),
@@ -986,7 +954,7 @@ mod task_domain_tests {
             };
             append_task_run(&path, &rec).expect("追加记录");
         }
-        let list = load_task_runs_at(&path);
+        let list = load_task_runs_at(&path).expect("读取历史");
         assert_eq!(list.len(), SCHED_MAX_HISTORY, "历史必须按容量裁剪");
         // FIFO：保留最新
         assert_eq!(
@@ -1001,7 +969,32 @@ mod task_domain_tests {
         let dir = temp_dir("history-corrupt");
         let path = dir.join("task-runs.json");
         fs::write(&path, "[]]]").expect("写入损坏文件");
-        assert!(load_task_runs_at(&path).is_empty());
+        assert!(load_task_runs_at(&path).is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"[]]]");
         let _ = fs::remove_dir_all(&dir);
     }
+    #[test]
+    fn task_history_read_failure_preserves_pending_record_and_original_bytes() {
+        let dir = temp_dir("history-invalid-utf8");
+        let path = dir.join("task-runs.json");
+        let original = [0xff, 0xfe, b'[', b']'];
+        fs::write(&path, original).unwrap();
+        let now = Utc::now();
+        let record = TaskRunRecord {
+            task_id: "task".into(), run_id: "run".into(),
+            trigger: TaskRunTrigger::Manual, scheduled_at: now,
+            attempt: 1, started_at: now, finished_at: Some(now),
+            status: RunStatus::Succeeded, exit_code: Some(0), error_code: None,
+        };
+        assert!(append_task_run(&path, &record).is_err());
+        assert_eq!(fs::read(&path).unwrap(), original);
+        fs::write(&path, b"[]").unwrap();
+        append_task_run(&path, &record).unwrap();
+        append_task_run(&path, &record).unwrap();
+        let history = load_task_runs_at(&path).unwrap();
+        assert_eq!(history.len(), 1, "retry must preserve one receipt per run");
+        assert_eq!(history[0].run_id, "run");
+        let _ = fs::remove_dir_all(dir);
+    }
+
 }

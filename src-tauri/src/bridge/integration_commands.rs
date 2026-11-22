@@ -89,7 +89,7 @@ fn plugin_set_state(
     action: &str,
 ) -> Result<crate::domain::PluginSummary, String> {
     let file = crate::plugin::plugins_file(app);
-    let mut list = crate::plugin::load_plugins_at(&file);
+    let mut list = crate::plugin::load_plugins_at(&file)?;
     let id_safe = plugin_id_for_audit(id);
     match crate::plugin::set_plugin_state(&mut list, id, next, &plugin_now()) {
         Ok(rec) => {
@@ -144,7 +144,7 @@ pub fn plugin_install(
     };
     let id_safe = plugin_id_for_audit(&manifest.id);
     let file = crate::plugin::plugins_file(&app);
-    let mut list = crate::plugin::load_plugins_at(&file);
+    let mut list = crate::plugin::load_plugins_at(&file)?;
     match crate::plugin::install_record(&mut list, manifest, resource_ok, &plugin_now()) {
         Ok(rec) => {
             crate::plugin::save_plugins_at(&file, &list)?;
@@ -209,7 +209,7 @@ pub fn plugin_list(
 ) -> Result<Vec<crate::domain::PluginSummary>, String> {
     check_invocation_source(&webview, "plugin_list", None, &app)?;
     let filter = parse_plugin_state(state)?;
-    let list = crate::plugin::load_plugins_at(&crate::plugin::plugins_file(&app));
+    let list = crate::plugin::load_plugins_at(&crate::plugin::plugins_file(&app))?;
     Ok(crate::plugin::filter_by_state(&list, filter))
 }
 
@@ -220,7 +220,7 @@ pub fn plugin_get(
     id: String,
 ) -> Result<crate::domain::PluginDetail, String> {
     check_invocation_source(&webview, "plugin_get", None, &app)?;
-    let list = crate::plugin::load_plugins_at(&crate::plugin::plugins_file(&app));
+    let list = crate::plugin::load_plugins_at(&crate::plugin::plugins_file(&app))?;
     match crate::plugin::find_record(&list, &id) {
         Some(rec) => Ok(crate::plugin::detail_of(rec)),
         None => Err("PLUGIN_NOT_FOUND".to_string()),
@@ -237,7 +237,7 @@ pub fn plugin_keys_add(
 ) -> Result<Vec<crate::domain::TrustedKeyRecord>, String> {
     check_invocation_source(&webview, "plugin_keys_add", None, &app)?;
     let file = crate::plugin::trusted_keys_file(&app);
-    let mut keys = crate::plugin::load_trusted_keys_at(&file);
+    let mut keys = crate::plugin::load_trusted_keys_at(&file)?;
     let key_safe: String = key_id.chars().take(64).collect();
     let result = crate::plugin::add_trusted_key(
         &mut keys,
@@ -274,9 +274,7 @@ pub fn plugin_keys_list(
     webview: tauri::Webview,
 ) -> Result<Vec<crate::domain::TrustedKeyRecord>, String> {
     check_invocation_source(&webview, "plugin_keys_list", None, &app)?;
-    Ok(crate::plugin::load_trusted_keys_at(
-        &crate::plugin::trusted_keys_file(&app),
-    ))
+    crate::plugin::load_trusted_keys_at(&crate::plugin::trusted_keys_file(&app))
 }
 
 #[tauri::command]
@@ -287,7 +285,7 @@ pub fn plugin_keys_remove(
 ) -> Result<Vec<crate::domain::TrustedKeyRecord>, String> {
     check_invocation_source(&webview, "plugin_keys_remove", None, &app)?;
     let file = crate::plugin::trusted_keys_file(&app);
-    let mut keys = crate::plugin::load_trusted_keys_at(&file);
+    let mut keys = crate::plugin::load_trusted_keys_at(&file)?;
     let key_safe: String = key_id.chars().take(64).collect();
     match crate::plugin::remove_trusted_key(&mut keys, &key_id) {
         Ok(_) => {

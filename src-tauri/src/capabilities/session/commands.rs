@@ -18,6 +18,8 @@ use tauri::{AppHandle, Manager};
 // A second caller receives a visible busy result rather than blocking the UI
 // or racing a successful write with capacity cleanup.
 static SESSION_WRITES: Mutex<()> = Mutex::new(());
+static SESSION_IO: crate::shared::blocking::BlockingLane =
+    crate::shared::blocking::BlockingLane::new(4, "SESSION_IO_BUSY", "SESSION_IO_WORKER_FAILED");
 
 fn session_write_guard() -> Result<MutexGuard<'static, ()>, &'static str> {
     match SESSION_WRITES.try_lock() {
@@ -317,7 +319,7 @@ fn reconcile_snapshot_changes(
 /// 保存当前 tab 为会话（立即落盘）。`preview` 为前端采集的最小文本预览
 /// （可为空），落盘前由 `build_session` 做 URL 脱敏与 512B 截断。
 #[tauri::command]
-pub fn session_save(
+pub async fn session_save(
     app: AppHandle,
     webview: tauri::Webview,
     tab_id: String,
@@ -331,37 +333,39 @@ pub fn session_save(
 
     check_invocation_source(&webview, "session_save", None, &app)?;
     check_tab_id(&tab_id)?;
-    let _write = session_write_guard().map_err(str::to_string)?;
-    if app.state::<crate::AppState>().shutdown_requested.load(Ordering::Acquire) {
-        return Err("SESSION_EXIT_ALREADY_ACCEPTED".to_string());
-    }
-    let text = preview.unwrap_or_default();
-    let snapshot = build_session_for_tab(&app, &tab_id, &text, CLOSE_REASON_SAVED)
-        .ok_or_else(|| "页签不存在".to_string())?;
-    let session = &snapshot.session;
-    persist_session(&app, session)?;
-    // Explicit save is a point-in-time snapshot. A newer draft remains available.
-    let _ = remove_matching_draft(
-        &mut app.state::<crate::AppState>().session_drafts.lock().unwrap(),
-        &tab_id,
-        snapshot.draft.as_ref(),
-    );
-    workspace::log_audit(
-        &app,
-        "session_save",
-        format!(
-            "tab_id={} resources={} preview_bytes={}",
-            tab_id,
-            session.resource_count,
-            session.preview.len()
-        ),
-    );
-    Ok(crate::session::summarize(session))
+    SESSION_IO.run(move || {
+        let _write = session_write_guard().map_err(str::to_string)?;
+        if app.state::<crate::AppState>().shutdown_requested.load(Ordering::Acquire) {
+            return Err("SESSION_EXIT_ALREADY_ACCEPTED".to_string());
+        }
+        let text = preview.unwrap_or_default();
+        let snapshot = build_session_for_tab(&app, &tab_id, &text, CLOSE_REASON_SAVED)
+            .ok_or_else(|| "页签不存在".to_string())?;
+        let session = &snapshot.session;
+        persist_session(&app, session)?;
+        // Explicit save is a point-in-time snapshot. A newer draft remains available.
+        let _ = remove_matching_draft(
+            &mut app.state::<crate::AppState>().session_drafts.lock().unwrap(),
+            &tab_id,
+            snapshot.draft.as_ref(),
+        );
+        workspace::log_audit(
+            &app,
+            "session_save",
+            format!(
+                "tab_id={} resources={} preview_bytes={}",
+                tab_id,
+                session.resource_count,
+                session.preview.len()
+            ),
+        );
+        Ok(crate::session::summarize(session))
+    }).await
 }
 
 /// 显式丢弃内存草稿：不落盘。普通 Tab 关闭不调用保存或确认协议。
 #[tauri::command]
-pub fn session_discard(
+pub async fn session_discard(
     app: AppHandle,
     webview: tauri::Webview,
     tab_id: String,
@@ -371,38 +375,42 @@ pub fn session_discard(
 
     check_invocation_source(&webview, "session_discard", None, &app)?;
     check_tab_id(&tab_id)?;
-    let existed = app
-        .state::<crate::AppState>()
-        .session_drafts
-        .lock()
-        .unwrap()
-        .remove(&tab_id)
-        .is_some();
-    workspace::log_audit(
-        &app,
-        "session_discard",
-        format!("tab_id={tab_id} draft_existed={existed}"),
-    );
-    Ok(())
+    SESSION_IO.run(move || {
+        let existed = app
+            .state::<crate::AppState>()
+            .session_drafts
+            .lock()
+            .unwrap()
+            .remove(&tab_id)
+            .is_some();
+        workspace::log_audit(
+            &app,
+            "session_discard",
+            format!("tab_id={tab_id} draft_existed={existed}"),
+        );
+        Ok(())
+    }).await
 }
 
 /// 列出本地会话存档（按 updated_at 倒序；损坏文件跳过）。
 #[tauri::command]
-pub fn session_list(
+pub async fn session_list(
     app: AppHandle,
     webview: tauri::Webview,
 ) -> Result<Vec<SessionSummary>, String> {
     crate::shared::native_legacy_policy::require_main(&webview, "session_list")?;
 
     check_invocation_source(&webview, "session_list", None, &app)?;
-    Ok(crate::session::list_sessions(&workspace::sessions_dir(
-        &app,
-    )))
+    SESSION_IO.run(move || {
+        Ok(crate::session::list_sessions(&workspace::sessions_dir(
+            &app,
+        )))
+    }).await
 }
 
 /// 读取单个会话详情（含已脱敏资源列表）。
 #[tauri::command]
-pub fn session_get(
+pub async fn session_get(
     app: AppHandle,
     webview: tauri::Webview,
     id: String,
@@ -412,12 +420,14 @@ pub fn session_get(
 
     check_invocation_source(&webview, "session_get", None, &app)?;
     crate::images::check_id(&id, "会话 id")?;
-    crate::session::load_session(&workspace::sessions_dir(&app), &id)
+    SESSION_IO.run(move || {
+        crate::session::load_session(&workspace::sessions_dir(&app), &id)
+    }).await
 }
 
 /// 删除会话存档（幂等）。删除的是存档，不影响仍打开的同名页签。
 #[tauri::command]
-pub fn session_delete(
+pub async fn session_delete(
     app: AppHandle,
     webview: tauri::Webview,
     id: String,
@@ -428,27 +438,29 @@ pub fn session_delete(
 
     check_invocation_source(&webview, "session_delete", None, &app)?;
     crate::images::check_id(&id, "会话 id")?;
-    let _write = session_write_guard().map_err(str::to_string)?;
-    if app.state::<crate::AppState>().shutdown_requested.load(Ordering::Acquire) {
-        return Err("SESSION_EXIT_ALREADY_ACCEPTED".to_string());
-    }
-    app.state::<crate::security_policy::IntentRegistry>()
-        .consume(
-            &format!("session_delete:{id}"),
-            intent
-                .as_deref()
-                .ok_or("NATIVE_USER_CONFIRMATION_REQUIRED")?,
-        )
-        .map_err(|_| "NATIVE_USER_CONFIRMATION_DENIED")?;
-    let removed = crate::session::delete_session(&workspace::sessions_dir(&app), &id)?;
-    workspace::log_audit(&app, "session_delete", format!("id={id} removed={removed}"));
-    Ok(removed)
+    SESSION_IO.run(move || {
+        let _write = session_write_guard().map_err(str::to_string)?;
+        if app.state::<crate::AppState>().shutdown_requested.load(Ordering::Acquire) {
+            return Err("SESSION_EXIT_ALREADY_ACCEPTED".to_string());
+        }
+        app.state::<crate::security_policy::IntentRegistry>()
+            .consume(
+                &format!("session_delete:{id}"),
+                intent
+                    .as_deref()
+                    .ok_or("NATIVE_USER_CONFIRMATION_REQUIRED")?,
+            )
+            .map_err(|_| "NATIVE_USER_CONFIRMATION_DENIED")?;
+        let removed = crate::session::delete_session(&workspace::sessions_dir(&app), &id)?;
+        workspace::log_audit(&app, "session_delete", format!("id={id} removed={removed}"));
+        Ok(removed)
+    }).await
 }
 
 /// 导出会话为脱敏 JSON 文本（**不写磁盘**：不引入新的路径写入面，
 /// 由前端自行决定保存位置）。
 #[tauri::command]
-pub fn session_export(
+pub async fn session_export(
     app: AppHandle,
     webview: tauri::Webview,
     id: String,
@@ -458,21 +470,23 @@ pub fn session_export(
 
     check_invocation_source(&webview, "session_export", None, &app)?;
     crate::images::check_id(&id, "会话 id")?;
-    let session = crate::session::load_session(&workspace::sessions_dir(&app), &id)?;
-    let json = serde_json::to_string_pretty(&session).map_err(|e| e.to_string())?;
-    workspace::log_audit(
-        &app,
-        "session_export",
-        format!("id={id} bytes={}", json.len()),
-    );
-    Ok(json)
+    SESSION_IO.run(move || {
+        let session = crate::session::load_session(&workspace::sessions_dir(&app), &id)?;
+        let json = serde_json::to_string_pretty(&session).map_err(|e| e.to_string())?;
+        workspace::log_audit(
+            &app,
+            "session_export",
+            format!("id={id} bytes={}", json.len()),
+        );
+        Ok(json)
+    }).await
 }
 
 /// 用会话中**已脱敏**的 URL 新建页签（重启/回看场景）。
 /// 边界：URL 在落盘时已脱敏，一次性 token / 登录态参数不会恢复，
 /// 因此还原出的页面可能需要重新登录——这是隐私红线的必然代价，不伪造原 URL。
 #[tauri::command]
-pub fn session_restore(
+pub async fn session_restore(
     app: AppHandle,
     webview: tauri::Webview,
     id: String,
@@ -482,30 +496,39 @@ pub fn session_restore(
 
     check_invocation_source(&webview, "session_restore", None, &app)?;
     crate::images::check_id(&id, "会话 id")?;
-    let session = crate::session::load_session(&workspace::sessions_dir(&app), &id)?;
-    let tab = create_tab(app.clone(), &session.url)?;
-    workspace::log_audit(
-        &app,
-        "session_restore",
-        format!(
-            "id={id} tab_id={} resources={}",
-            tab.id, session.resource_count
-        ),
-    );
-    Ok(tab)
+    // Disk access and audit remain in the bounded owner. Native creation retains
+    // the original main-thread boundary; no session/tab mutex crosses the wait.
+    SESSION_IO.run(move || {
+        let session = crate::session::load_session(&workspace::sessions_dir(&app), &id)?;
+        let url = session.url.clone();
+        let native_app = app.clone();
+        let (send, receive) = std::sync::mpsc::sync_channel(1);
+        app.run_on_main_thread(move || {
+            let _ = send.send(create_tab(native_app, &url));
+        }).map_err(|_| "SESSION_RESTORE_DISPATCH_FAILED")?;
+        let tab = receive.recv().map_err(|_| "SESSION_RESTORE_REPLY_LOST")??;
+        workspace::log_audit(
+            &app,
+            "session_restore",
+            format!("id={id} tab_id={} resources={}", tab.id, session.resource_count),
+        );
+        Ok(tab)
+    }).await
 }
 
 /// Explicit flush keeps the existing Tauri result shape. A partial save or a
 /// concurrent state change is an Err, never a successful count-only response.
 #[tauri::command]
-pub fn flush_sessions(
+pub async fn flush_sessions(
     app: AppHandle,
     webview: tauri::Webview,
 ) -> Result<SessionFlushReport, String> {
     crate::shared::native_legacy_policy::require_main(&webview, "flush_sessions")?;
 
     check_invocation_source(&webview, "flush_sessions", None, &app)?;
-    flush_sessions_inner(&app).into_public_report()
+    SESSION_IO.run(move || {
+        flush_sessions_inner(&app).into_public_report()
+    }).await
 }
 
 /// Ordinary flush only reports persistence; it never accepts application exit.
@@ -642,7 +665,7 @@ pub fn get_session_policy(
 
 /// 设置会话策略（审计记录开关变化，不含任何 URL/预览内容）。
 #[tauri::command]
-pub fn set_session_policy(
+pub async fn set_session_policy(
     app: AppHandle,
     webview: tauri::Webview,
     close_prompt: Option<bool>,
@@ -651,30 +674,32 @@ pub fn set_session_policy(
     crate::shared::native_legacy_policy::require_main(&webview, "set_session_policy")?;
 
     check_invocation_source(&webview, "set_session_policy", None, &app)?;
-    let _write = session_write_guard().map_err(str::to_string)?;
-    let state = app.state::<crate::AppState>();
-    if state.shutdown_requested.load(Ordering::Acquire) {
-        return Err("SESSION_EXIT_ALREADY_ACCEPTED".to_string());
-    }
-    if let Some(v) = close_prompt {
-        state.session_close_prompt.store(v, Ordering::SeqCst);
-    }
-    if let Some(v) = auto_save_on_exit {
-        state.session_auto_save_on_exit.store(v, Ordering::SeqCst);
-    }
-    let policy = SessionPolicy {
-        close_prompt: state.session_close_prompt.load(Ordering::SeqCst),
-        auto_save_on_exit: state.session_auto_save_on_exit.load(Ordering::SeqCst),
-    };
-    workspace::log_audit(
-        &app,
-        "session_policy",
-        format!(
-            "close_prompt={} auto_save_on_exit={}",
-            policy.close_prompt, policy.auto_save_on_exit
-        ),
-    );
-    Ok(policy)
+    SESSION_IO.run(move || {
+        let _write = session_write_guard().map_err(str::to_string)?;
+        let state = app.state::<crate::AppState>();
+        if state.shutdown_requested.load(Ordering::Acquire) {
+            return Err("SESSION_EXIT_ALREADY_ACCEPTED".to_string());
+        }
+        if let Some(v) = close_prompt {
+            state.session_close_prompt.store(v, Ordering::SeqCst);
+        }
+        if let Some(v) = auto_save_on_exit {
+            state.session_auto_save_on_exit.store(v, Ordering::SeqCst);
+        }
+        let policy = SessionPolicy {
+            close_prompt: state.session_close_prompt.load(Ordering::SeqCst),
+            auto_save_on_exit: state.session_auto_save_on_exit.load(Ordering::SeqCst),
+        };
+        workspace::log_audit(
+            &app,
+            "session_policy",
+            format!(
+                "close_prompt={} auto_save_on_exit={}",
+                policy.close_prompt, policy.auto_save_on_exit
+            ),
+        );
+        Ok(policy)
+    }).await
 }
 
 #[cfg(test)]

@@ -213,6 +213,11 @@ export const useLayoutStore = defineStore("layout", () => {
   // reserve a guarded navigation, perform its work, then publish only if no
   // newer navigation has taken over. A rejected/failed action never changes UI.
   let navigationRevision = 0;
+  // Background initialization may observe an epoch, but cannot publish a view.
+  function captureNavigation(): () => boolean {
+    const revision = navigationRevision;
+    return () => revision === navigationRevision;
+  }
   function commitView(v: MainView): boolean {
     mainView.value = v;
     navigationRevision += 1;
@@ -496,6 +501,7 @@ export const useLayoutStore = defineStore("layout", () => {
     isBrowserView,
     setView,
     prepareViewChange,
+    captureNavigation,
     prepareModTabActivation,
     prepareModTabClose,
     prepareDirTab,

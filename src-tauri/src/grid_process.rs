@@ -26,7 +26,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::grid_ipc::{GridCmd, IpcRect, Wire};
 #[path = "grid_lifecycle.rs"]
 mod lifecycle;
-use lifecycle::GridLifecycle;
+use lifecycle::{GridLifecycle, LatestVisibility, VisibilityMode};
 
 /// 单个子进程的通信通道（跨重启复用：writer 随连接替换，seq 单调递增）。
 
@@ -322,6 +322,8 @@ pub struct GridProcessManager {
     // The version is a latest-value notification, never an unbounded channel.
     reposition_pending: AtomicU64,
     reposition_running: AtomicBool,
+    visibility: LatestVisibility,
+    visibility_dispatch: Mutex<()>,
 }
 
 impl GridProcessManager {
@@ -340,27 +342,61 @@ impl GridProcessManager {
         self.lifecycle.spawn(name, work)
     }
 
-    /// Keep the existing focus delay and visibility policy, but retain every
-    /// callback thread in the same application shutdown owner registry.
+    /// All focus/minimize sources publish to one latest-value sender. A
+    /// delayed hide can never overtake a later show from another worker.
     pub fn request_hide_for_blur_async(&self) {
-        let Some(app) = self.app() else { return; };
-        let lifecycle = Arc::clone(&self.lifecycle);
-        if let Err(error) = self.spawn_worker("grid-focus-hide", move || {
-            if lifecycle.wait_or_stop(std::time::Duration::from_millis(150)) { return; }
-            app.state::<crate::bridge::AppState>().grid_manager.hide_for_blur_if_no_child_focus();
-        }) {
-            eprintln!("[grid-manager] focus hide worker unavailable: {error}");
-        }
+        self.request_visibility(VisibilityMode::Blur, std::time::Duration::from_millis(150));
     }
 
     pub fn request_show_for_focus_async(&self) {
-        let Some(app) = self.app() else { return; };
-        let lifecycle = Arc::clone(&self.lifecycle);
-        if let Err(error) = self.spawn_worker("grid-focus-show", move || {
-            if lifecycle.is_stopping() { return; }
-            app.state::<crate::bridge::AppState>().grid_manager.show_for_focus();
-        }) {
-            eprintln!("[grid-manager] focus show worker unavailable: {error}");
+        self.request_visibility(VisibilityMode::Show, std::time::Duration::ZERO);
+    }
+
+    fn request_visibility(&self, mode: VisibilityMode, delay: std::time::Duration) {
+        if self.lifecycle.is_stopping() { return; }
+        if self.visibility.request(mode, delay) { self.start_visibility_worker(); }
+    }
+
+    fn retry_visibility_worker(&self) {
+        if !self.lifecycle.is_stopping() && self.visibility.reserve_pending() {
+            self.start_visibility_worker();
+        }
+    }
+
+    fn start_visibility_worker(&self) {
+        let Some(app) = self.app() else {
+            self.visibility.spawn_failed();
+            return;
+        };
+        let started = self.spawn_worker("grid-visibility", move || {
+            let state = app.state::<crate::bridge::AppState>();
+            let manager = &state.grid_manager;
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                while let Some(intent) = manager.visibility.next(&manager.lifecycle) {
+                    {
+                        // Relocation also sends UpdateRect (which shows the
+                        // native window), so it shares this publication order.
+                        let _dispatch = manager.visibility_dispatch.lock().unwrap_or_else(|p| p.into_inner());
+                        match intent.mode {
+                            VisibilityMode::Show => manager.apply_show_for_focus(),
+                            VisibilityMode::Blur => manager.apply_hide_for_blur_if_no_child_focus(),
+                            VisibilityMode::Minimized => manager.apply_hide_for_blur(),
+                        }
+                    }
+                    if !manager.visibility.finish(intent.revision) { break; }
+                }
+            }));
+            if let Err(panic) = outcome {
+                // A panic must not strand the reservation. The monitor can
+                // retry the retained latest intent, and the lifecycle owner
+                // still observes the real thread failure when it joins.
+                manager.visibility.spawn_failed();
+                std::panic::resume_unwind(panic);
+            }
+        });
+        if let Err(error) = started {
+            self.visibility.spawn_failed();
+            eprintln!("[grid-manager] visibility worker unavailable: {error}");
         }
     }
 
@@ -468,18 +504,7 @@ impl GridProcessManager {
                                                 state.grid_manager.set_child_focus(index, false);
                                                 // 从宫格切到其它应用时主窗不会再次 blur，
                                                 // 子窗口 blur 后若主窗也无焦点 → 隐藏防幽灵浮层
-                                                let app2 = app.clone();
-                                                let blur_owner = Arc::clone(&reader_owner);
-                                                let started_blur = reader_owner.spawn("grid-blur", move || {
-                                                    if blur_owner.wait_or_stop(std::time::Duration::from_millis(150)) { return; }
-                                                    let st =
-                                                        app2.state::<crate::bridge::AppState>();
-                                                    st.grid_manager
-                                                        .hide_for_blur_if_no_child_focus();
-                                                });
-                                                if started_blur.is_err() {
-                                                    eprintln!("[grid-manager] GRID_BLUR_WORKER_UNAVAILABLE");
-                                                }
+                                                state.grid_manager.request_hide_for_blur_async();
                                             }
                                             "tab-navigated" => {
                                                 // Keep the native memory guard in sync with
@@ -1075,6 +1100,7 @@ impl GridProcessManager {
     /// Worker thread only: recompute latest CSS→screen rectangles and emit UDS
     /// writes in sequence. Visibility checks remain the source of truth.
     pub fn reposition_visible(&self) {
+        let _dispatch = self.visibility_dispatch.lock().unwrap_or_else(|p| p.into_inner());
         let items: Vec<(u32, (f64, f64, f64, f64))> = self
             .children
             .lock()
@@ -1108,6 +1134,10 @@ impl GridProcessManager {
     /// 主窗失焦（或子窗口失焦）后的统一入口：若焦点在任一宫格子窗口内则不动，
     /// 否则主窗也无焦点时才隐藏（用户点了宫格 ≠ 切走应用）。
     pub fn hide_for_blur_if_no_child_focus(&self) {
+        self.request_hide_for_blur_async();
+    }
+
+    fn apply_hide_for_blur_if_no_child_focus(&self) {
         if self.any_child_focused() {
             return;
         }
@@ -1119,11 +1149,15 @@ impl GridProcessManager {
         if main_focused {
             return;
         }
-        self.hide_for_blur();
+        self.apply_hide_for_blur();
     }
 
     /// 主窗失焦：隐藏所有可见宫格子进程窗口（标记 blur_hidden，聚焦时恢复）。
     pub fn hide_for_blur(&self) {
+        self.request_visibility(VisibilityMode::Minimized, std::time::Duration::ZERO);
+    }
+
+    fn apply_hide_for_blur(&self) {
         let indices = self.indices();
         for index in indices {
             let need = {
@@ -1149,11 +1183,15 @@ impl GridProcessManager {
 
     /// 主窗重新聚焦：恢复因失焦隐藏的宫格（显式 hidden 的不动）。
     pub fn show_for_focus(&self) {
+        self.request_show_for_focus_async();
+    }
+
+    fn apply_show_for_focus(&self) {
         let items: Vec<(u32, (f64, f64, f64, f64))> = {
             let mut children = self.children.lock().unwrap();
             children
                 .iter_mut()
-                .filter(|(_, h)| h.blur_hidden)
+                .filter(|(_, h)| h.blur_hidden && !h.hidden)
                 .filter_map(|(i, h)| {
                     h.blur_hidden = false;
                     h.last_rect.map(|r| (*i, r))
@@ -1191,6 +1229,7 @@ impl GridProcessManager {
                 if monitor_owner.wait_or_stop(std::time::Duration::from_millis(500)) { break; }
                 let state = app.state::<crate::bridge::AppState>();
                 let manager = &state.grid_manager;
+                manager.retry_visibility_worker();
                 // Preserve the existing window visibility behavior.
                 if let Some(win) = app.get_window("main") {
                     let minimized = win.is_minimized().unwrap_or(false);

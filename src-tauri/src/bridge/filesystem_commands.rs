@@ -27,14 +27,11 @@ pub fn add_bookmark(
 
 /// M1-2: 列出全部收藏，按 created_at 倒序。
 #[tauri::command]
-pub fn list_bookmarks(webview: tauri::Webview, app: AppHandle) -> Vec<Bookmark> {
-    if crate::shared::native_legacy_policy::require_main(&webview, "list_bookmarks").is_err() {
-        return Vec::new();
-    }
-
-    let mut list = workspace::load_bookmarks(&app);
+pub fn list_bookmarks(webview: tauri::Webview, app: AppHandle) -> Result<Vec<Bookmark>, String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "list_bookmarks")?;
+    let mut list = workspace::load_bookmarks(&app)?;
     list.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-    list
+    Ok(list)
 }
 
 /// M1-2: 按 id 删除收藏（幂等）。

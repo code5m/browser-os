@@ -110,7 +110,31 @@ onMounted(async () => {
         <button @click="ws.locateCurrent();fileActionsOpen=false"><Crosshair :size="14" /> 定位当前目录</button>
         <button @click="ws.expandAllTree();fileActionsOpen=false"><ChevronsUpDown :size="14" /> 全部展开</button>
         <button @click="ws.collapseAllTree();fileActionsOpen=false"><ChevronsDownUp :size="14" /> 全部折叠</button>
+        <button @click="ws.toggleRecoveryPanel();fileActionsOpen=false">恢复加密草稿</button>
       </div>
+      <section v-if="ws.recoveryPanelOpen" class="draft-recovery" aria-label="加密草稿恢复">
+        <div class="draft-recovery-heading">
+          <strong>加密草稿</strong>
+          <button :disabled="ws.recoveryLoading" @click="ws.loadRecoverableDrafts()">刷新</button>
+          <button aria-label="关闭草稿列表" @click="ws.toggleRecoveryPanel()">✕</button>
+        </div>
+        <p>原文件被移动或删除后也可恢复。打开后编辑独立副本，再另存为新文件。</p>
+        <p v-if="ws.recoveryError" role="status">{{ ws.recoveryError }}</p>
+        <p v-if="ws.recoveryLoading" role="status">正在读取…</p>
+        <p v-else-if="!ws.recoverableDrafts.length">没有可恢复的草稿</p>
+        <ul>
+          <li v-for="draft in ws.recoverableDrafts" :key="draft.recovery_id">
+            <span class="draft-recovery-path" :title="draft.path">{{ draft.path || draft.recovery_id }}</span>
+            <small v-if="draft.updated_at_ms">{{ new Date(draft.updated_at_ms).toLocaleString() }}</small>
+            <small v-if="draft.error">{{ draft.error }}</small>
+            <div>
+              <button :disabled="ws.recoveryActionBusy || !!draft.error" @click="ws.openRecoveredDraft(draft.recovery_id)">打开恢复副本</button>
+              <button :disabled="ws.recoveryActionBusy || !draft.revision || ws.editorRecoveryId === draft.recovery_id" @click="ws.discardRecoverableDraft(draft.recovery_id)">删除记录</button>
+            </div>
+          </li>
+        </ul>
+        <button v-if="ws.recoveryNextCursor" :disabled="ws.recoveryLoading" @click="ws.loadRecoverableDrafts(true)">加载更多</button>
+      </section>
       <div class="ftree-body" ref="ftreeBody">
         <FileTreeNode
           v-for="r in ws.treeRoots"
@@ -483,4 +507,19 @@ onMounted(async () => {
   padding: 6px 8px;
   font-size: 12px;
 }
+.draft-recovery {
+  flex: 0 1 auto;
+  max-height: 340px;
+  overflow: auto;
+  padding: 10px;
+  border-bottom: 1px solid #e5e6eb;
+  font-size: 12px;
+}
+.draft-recovery-heading { display: flex; align-items: center; gap: 6px; }
+.draft-recovery-heading strong { flex: 1; }
+.draft-recovery ul { list-style: none; padding: 0; margin: 8px 0; }
+.draft-recovery li { padding: 8px 0; border-top: 1px solid #e5e6eb; }
+.draft-recovery-path { display: block; overflow-wrap: anywhere; }
+.draft-recovery small { display: block; margin: 4px 0; color: #4e5969; }
+.draft-recovery li div { display: flex; flex-wrap: wrap; gap: 4px; }
 </style>

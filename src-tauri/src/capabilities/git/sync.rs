@@ -8,85 +8,109 @@ use git2::{
 use tauri::{AppHandle, Manager};
 
 use crate::domain::*;
-use crate::keyring_store::KeyringStore;
 use crate::workspace;
 
 /// 把待确认任务真正推送到 git / gitee。
 /// 凭据仅在此时从系统密钥库读取，用于 HTTPS 鉴权（token 作为密码）。
 pub fn push_artifacts(app: &AppHandle, job: &SyncJob) -> Result<(), String> {
-    let repos = workspace::load_repos(app);
-    let repo = repos
-        .iter()
-        .find(|r| r.id == job.repo_id)
-        .ok_or("仓库未配置".to_string())?;
-    let token = KeyringStore::get_token(&repo.id)?;
+    let (repo, token) = workspace::repo_execution_snapshot(app, &job.repo_id)?;
 
-    let base = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?
-        .join("mvp-browser-os")
-        .join("repos")
-        .join(&repo.id);
-    fs::create_dir_all(&base).map_err(|e| e.to_string())?;
-
-    let repository = if base.join(".git").exists() {
-        Repository::open(&base).map_err(|e| e.to_string())?
-    } else {
-        clone_repo(&repo.remote_url, &base, &repo.username, &token)?
-    };
-
-    pull(&repository, &repo.branch, &repo.username, &token)?;
-
-    let arts: Vec<Artifact> = workspace::load_artifacts(app)
-        .into_iter()
-        .filter(|a| job.artifact_ids.contains(&a.id))
-        .collect();
-    if arts.is_empty() {
-        return Err("没有可同步的成果".into());
-    }
-
-    for art in &arts {
-        let dir = base.join("artifacts");
-        fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-        // 正文 Markdown（带溯源），便于阅读/检索
-        let md_path = dir.join(format!("{}.md", art.id));
-        fs::write(&md_path, render_markdown(art)).map_err(|e| e.to_string())?;
-        // 富文本保真 HTML（保留选区排版/图片/链接），带溯源头信息
-        if !art.html.trim().is_empty() {
-            let html_path = dir.join(format!("{}.html", art.id));
-            fs::write(&html_path, render_html(art)).map_err(|e| e.to_string())?;
+    let result: Result<(), String> = (|| {
+        let base = app
+            .path()
+            .app_data_dir()
+            .map_err(|e| e.to_string())?
+            .join("mvp-browser-os")
+            .join("repos")
+            .join(&repo.id);
+        fs::create_dir_all(&base).map_err(|e| e.to_string())?;
+    
+        let repository = if base.join(".git").exists() {
+            Repository::open(&base).map_err(|e| e.to_string())?
+        } else {
+            clone_repo(&repo.remote_url, &base, &repo.username, &token)?
+        };
+    
+        pull(&repository, &repo.branch, &repo.username, &token, &repo.remote_url)?;
+    
+        let arts: Vec<Artifact> = workspace::load_artifacts(app)
+            .into_iter()
+            .filter(|a| job.artifact_ids.contains(&a.id))
+            .collect();
+        if arts.is_empty() {
+            return Err("没有可同步的成果".into());
         }
-    }
-
-    commit(
-        &repository,
-        &format!("sync {} artifact(s) via 极智简单", arts.len()),
-    )?;
-    push(&repository, &repo.branch, &repo.username, &token)?;
-    Ok(())
+    
+        for art in &arts {
+            let dir = base.join("artifacts");
+            fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+            // 正文 Markdown（带溯源），便于阅读/检索
+            let md_path = dir.join(format!("{}.md", art.id));
+            fs::write(&md_path, render_markdown(art)).map_err(|e| e.to_string())?;
+            // 富文本保真 HTML（保留选区排版/图片/链接），带溯源头信息
+            if !art.html.trim().is_empty() {
+                let html_path = dir.join(format!("{}.html", art.id));
+                fs::write(&html_path, render_html(art)).map_err(|e| e.to_string())?;
+            }
+        }
+    
+        commit(
+            &repository,
+            &format!("sync {} artifact(s) via 极智简单", arts.len()),
+        )?;
+        push(&repository, &repo.branch, &repo.username, &token, &repo.remote_url)?;
+        Ok(())
+    })();
+    // The artifact-sync caller persists errors to both task state and audit.
+    // Apply the same token/userinfo redaction as manual Push at this owner.
+    result.map_err(|error| scrub_sensitive_error(&error, &token))
 }
 
 /// 凭据回调：复用同一 (username, token)。token 作为密码用于 HTTPS。
-fn cred_cb(username: String, token: String) -> RemoteCallbacks<'static> {
+fn credential_endpoint_matches(expected: &str, actual: &str) -> bool {
+    let (Ok(expected), Ok(actual)) = (url::Url::parse(expected), url::Url::parse(actual)) else {
+        return false;
+    };
+    matches!(expected.scheme(), "https" | "http")
+        && expected.scheme() == actual.scheme()
+        && expected.host_str() == actual.host_str()
+        && expected.port_or_known_default() == actual.port_or_known_default()
+        && expected.path() == actual.path() && expected.query() == actual.query()
+}
+
+fn require_remote_endpoint(remote: &git2::Remote<'_>, expected: &str, for_push: bool) -> Result<(), String> {
+    let actual = if for_push { remote.pushurl().or_else(|| remote.url()) } else { remote.url() }
+        .ok_or("REPO_REMOTE_URL_UNAVAILABLE")?;
+    // Local repositories in internal operations need no credential callback.
+    if actual == expected || credential_endpoint_matches(expected, actual) { Ok(()) }
+    else { Err("REPO_REMOTE_CONFIG_CHANGED".into()) }
+}
+
+fn cred_cb(username: String, token: String, endpoint: String) -> RemoteCallbacks<'static> {
     let mut cb = RemoteCallbacks::new();
-    cb.credentials(move |_url, _user, _allowed| Cred::userpass_plaintext(&username, &token));
+    cb.credentials(move |actual, _user, _allowed| {
+        if !credential_endpoint_matches(&endpoint, actual) {
+            return Err(git2::Error::from_str("REPO_CREDENTIAL_ENDPOINT_MISMATCH"));
+        }
+        Cred::userpass_plaintext(&username, &token)
+    });
     cb
 }
 
 fn clone_repo(url: &str, dest: &Path, username: &str, token: &str) -> Result<Repository, String> {
     let mut fo = FetchOptions::new();
-    fo.remote_callbacks(cred_cb(username.to_string(), token.to_string()));
+    fo.remote_callbacks(cred_cb(username.to_string(), token.to_string(), url.to_string()));
     RepoBuilder::new()
         .fetch_options(fo)
         .clone(url, dest)
         .map_err(|e| format!("clone 失败: {e}"))
 }
 
-fn pull(repo: &Repository, branch: &str, username: &str, token: &str) -> Result<(), String> {
+fn pull(repo: &Repository, branch: &str, username: &str, token: &str, endpoint: &str) -> Result<(), String> {
     let mut remote = repo.find_remote("origin").map_err(|e| e.to_string())?;
+    require_remote_endpoint(&remote, endpoint, false)?;
     let mut fo = FetchOptions::new();
-    fo.remote_callbacks(cred_cb(username.to_string(), token.to_string()));
+    fo.remote_callbacks(cred_cb(username.to_string(), token.to_string(), endpoint.to_string()));
     // 远端可能是空仓库（首次推送），fetch 失败不视为致命错误
     if let Err(e) = remote.fetch(&[branch], Some(&mut fo), None) {
         // 空仓库 / 分支不存在：无可合并，直接返回让后续 commit+push 建立分支
@@ -238,10 +262,11 @@ fn commit(repo: &Repository, message: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn push(repo: &Repository, branch: &str, username: &str, token: &str) -> Result<(), String> {
+fn push(repo: &Repository, branch: &str, username: &str, token: &str, endpoint: &str) -> Result<(), String> {
     let mut remote = repo.find_remote("origin").map_err(|e| e.to_string())?;
+    require_remote_endpoint(&remote, endpoint, true)?;
     let mut po = PushOptions::new();
-    po.remote_callbacks(cred_cb(username.to_string(), token.to_string()));
+    po.remote_callbacks(cred_cb(username.to_string(), token.to_string(), endpoint.to_string()));
     let refspec = format!("refs/heads/{branch}:refs/heads/{branch}");
     remote
         .push(&[refspec.as_str()], Some(&mut po))
@@ -314,7 +339,7 @@ pub(crate) fn is_valid_repo_id(id: &str) -> bool {
 }
 
 pub fn repo_dir(app: &AppHandle, repo_id: &str) -> Result<std::path::PathBuf, String> {
-    let cfg = workspace::load_repos(app)
+    let cfg = workspace::load_repos(app)?
         .into_iter()
         .find(|r| r.id == repo_id)
         .ok_or_else(|| "仓库未配置".to_string())?;
@@ -951,7 +976,14 @@ pub(crate) fn build_push_refspec(branch: &str) -> Result<String, String> {
 ///
 /// 凭据回调复用既有 `cred_cb`（与 `push_artifacts` 同一思路：token 作为
 /// HTTPS 密码），但 token 本身由调用方在推送瞬间传入，本函数不接触密钥库。
-pub fn write_push(repo: &Repository, username: &str, token: &str) -> Result<String, String> {
+#[cfg(test)]
+fn write_push(repo: &Repository, username: &str, token: &str) -> Result<String, String> {
+    let endpoint = repo.find_remote(GIT_PUSH_REMOTE).ok()
+        .and_then(|remote| remote.url().map(str::to_owned)).unwrap_or_default();
+    write_push_bound(repo, username, token, &endpoint)
+}
+
+pub fn write_push_bound(repo: &Repository, username: &str, token: &str, endpoint: &str) -> Result<String, String> {
     let head = repo.head().map_err(|e| e.to_string())?;
     if !head.is_branch() {
         return Err("当前为 detached HEAD，禁止推送".to_string());
@@ -964,8 +996,9 @@ pub fn write_push(repo: &Repository, username: &str, token: &str) -> Result<Stri
     let mut remote = repo
         .find_remote(GIT_PUSH_REMOTE)
         .map_err(|_| format!("远端未配置: {GIT_PUSH_REMOTE}"))?;
+    require_remote_endpoint(&remote, endpoint, true)?;
     let mut po = PushOptions::new();
-    po.remote_callbacks(cred_cb(username.to_string(), token.to_string()));
+    po.remote_callbacks(cred_cb(username.to_string(), token.to_string(), endpoint.to_string()));
     // 非 force：refspec 无 `+` 前缀，远端对非 fast-forward 会直接拒绝（fail-closed）
     remote
         .push(&[refspec.as_str()], Some(&mut po))
@@ -1985,5 +2018,18 @@ mod git_write_tests {
         // 空 token 不产生误替换
         let untouched = scrub_sensitive_error("push 失败: *** already here", "");
         assert!(untouched.contains("*** already here"));
+    }
+}
+
+#[cfg(test)]
+mod credential_endpoint_tests {
+    use super::credential_endpoint_matches;
+    #[test]
+    fn credentials_follow_the_captured_repository_endpoint() {
+        assert!(credential_endpoint_matches("https://EXAMPLE.com/team/repo.git", "https://user@example.com/team/repo.git"));
+        assert!(!credential_endpoint_matches("https://a.example/team/repo.git", "https://b.example/team/repo.git"));
+        assert!(!credential_endpoint_matches("https://example.com/team/repo.git", "https://example.com/other/repo.git"));
+        assert!(!credential_endpoint_matches("https://example.com/team/repo.git", "http://example.com/team/repo.git"));
+        assert!(!credential_endpoint_matches("/tmp/repository", "/tmp/repository"));
     }
 }

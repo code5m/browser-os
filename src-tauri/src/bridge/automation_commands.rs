@@ -10,7 +10,7 @@ use super::*;
 #[tauri::command]
 pub fn script_list(app: AppHandle, webview: tauri::Webview) -> Result<Vec<ScriptMeta>, String> {
     check_invocation_source(&webview, "script_list", None, &app)?;
-    Ok(workspace::load_scripts(&app))
+    workspace::load_scripts(&app)
 }
 
 /// 新增脚本：先校验后落盘；元数据保存失败时回滚已写的正文，不留孤儿文件。
@@ -29,7 +29,7 @@ pub fn script_add(
 ) -> Result<ScriptMeta, String> {
     check_invocation_source(&webview, "script_add", None, &app)?;
 
-    let mut list = workspace::load_scripts(&app);
+    let mut list = workspace::load_scripts(&app)?;
     if list.len() >= crate::scripts::MAX_SCRIPTS {
         return Err(crate::scripts::ScriptError::TooManyScripts.to_string());
     }
@@ -94,7 +94,7 @@ pub fn script_update(
     check_invocation_source(&webview, "script_update", None, &app)?;
     crate::images::check_id(&id, "脚本 id")?;
 
-    let mut list = workspace::load_scripts(&app);
+    let mut list = workspace::load_scripts(&app)?;
     let existing = list
         .iter()
         .find(|s| s.id == id)
@@ -146,7 +146,7 @@ pub fn script_remove(app: AppHandle, webview: tauri::Webview, id: String) -> Res
     check_invocation_source(&webview, "script_remove", None, &app)?;
     crate::images::check_id(&id, "脚本 id")?;
 
-    let mut list = workspace::load_scripts(&app);
+    let mut list = workspace::load_scripts(&app)?;
     let existing = list
         .iter()
         .find(|s| s.id == id)
@@ -176,18 +176,36 @@ pub fn script_remove(app: AppHandle, webview: tauri::Webview, id: String) -> Res
 // secret 参数，写盘即等于泄露；F7）。
 // ---------------------------------------------------------------------------
 
-/// 列出全部命令片段。
+#[derive(serde::Serialize)]
+pub struct ReviewedSnippet {
+    #[serde(flatten)]
+    snippet: CommandSnippet,
+    revision: String,
+}
+fn snippet_revision(snippet: &CommandSnippet) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    let mut descriptor = serde_json::to_value(snippet).map_err(|_| "SNIPPET_REVIEW_ENCODE_FAILED")?;
+    // Built-in catalog timestamps are synthesized on every read. Bind all
+    // definition fields, excluding only these non-execution timestamps.
+    if let Some(object) = descriptor.as_object_mut() {
+        object.remove("created_at"); object.remove("updated_at");
+    }
+    let bytes = serde_json::to_vec(&descriptor).map_err(|_| "SNIPPET_REVIEW_ENCODE_FAILED")?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+/// 列出全部命令片段，附原生定义版本；执行必须回传该版本。
 #[tauri::command]
 pub fn snippet_list(
     app: AppHandle,
     webview: tauri::Webview,
-) -> Result<Vec<CommandSnippet>, String> {
+) -> Result<Vec<ReviewedSnippet>, String> {
     crate::shared::native_legacy_policy::require_main(&webview, "snippet_list")?;
-
     check_invocation_source(&webview, "snippet_list", None, &app)?;
-    Ok(crate::snippets::merge_builtin_snippets(
-        workspace::load_snippets(&app),
-    ))
+    crate::snippets::merge_builtin_snippets(workspace::load_snippets(&app)?)
+        .into_iter().map(|snippet| {
+            let revision = snippet_revision(&snippet)?;
+            Ok(ReviewedSnippet { snippet, revision })
+        }).collect()
 }
 
 /// 新增命令片段。
@@ -223,7 +241,7 @@ pub fn snippet_add(
 
     check_invocation_source(&webview, "snippet_add", None, &app)?;
 
-    let mut list = workspace::load_snippets(&app);
+    let mut list = workspace::load_snippets(&app)?;
     if list.len() >= crate::snippets::MAX_SNIPPETS {
         return Err(crate::snippets::SnippetError::TooManySnippets.to_string());
     }
@@ -300,7 +318,7 @@ pub fn snippet_update(
         return Err("内置片段不可修改".to_string());
     }
 
-    let mut list = workspace::load_snippets(&app);
+    let mut list = workspace::load_snippets(&app)?;
     let pos = list
         .iter()
         .position(|s| s.id == id)
@@ -352,7 +370,7 @@ pub fn snippet_remove(
     check_invocation_source(&webview, "snippet_remove", None, &app)?;
     crate::images::check_id(&id, "命令片段 id")?;
 
-    let mut list = workspace::load_snippets(&app);
+    let mut list = workspace::load_snippets(&app)?;
     let existing = list
         .iter()
         .find(|s| s.id == id)
@@ -390,7 +408,7 @@ fn map_run_error(e: RunError) -> String {
 
 fn get_enabled_script(app: &AppHandle, id: &str) -> Result<ScriptMeta, String> {
     crate::images::check_id(id, "脚本 id")?;
-    let script = workspace::load_scripts(app)
+    let script = workspace::load_scripts(app)?
         .into_iter()
         .find(|s| s.id == id)
         .ok_or_else(|| "SCRIPT_NOT_FOUND".to_string())?;
@@ -403,7 +421,7 @@ fn get_enabled_script(app: &AppHandle, id: &str) -> Result<ScriptMeta, String> {
 
 fn get_enabled_snippet(app: &AppHandle, id: &str) -> Result<CommandSnippet, String> {
     crate::images::check_id(id, "命令片段 id")?;
-    let snippet = workspace::load_snippets(app)
+    let snippet = crate::snippets::merge_builtin_snippets(workspace::load_snippets(app)?)
         .into_iter()
         .find(|s| s.id == id)
         .ok_or_else(|| "SNIPPET_NOT_FOUND".to_string())?;
@@ -422,10 +440,15 @@ pub fn run_command(
     webview: tauri::Webview,
     id: String,
     values: HashMap<String, String>,
+    expected_revision: String,
 ) -> Result<RunSnapshot, String> {
     check_invocation_source(&webview, "run_command", None, &app)?;
     crate::images::check_id(&id, "命令片段 id")?;
     let snippet = get_enabled_snippet(&app, &id)?;
+    if expected_revision.len() != 64 || !expected_revision.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("SNIPPET_REVIEW_REQUIRED".into());
+    }
+    if expected_revision != snippet_revision(&snippet)? { return Err("SNIPPET_REVIEW_CHANGED".into()); }
     let count = snippet.params.len();
     let roots = crate::workspace::allowed_roots(&app);
     let home = app.path().home_dir().map_err(|e| e.to_string())?;
@@ -588,4 +611,23 @@ pub fn script_runs_list(
         ),
     );
     Ok(records)
+}
+
+#[cfg(test)]
+mod snippet_review_tests {
+    use super::*;
+    #[test]
+    fn definition_revision_ignores_catalog_time_but_binds_execution_fields() {
+        let catalog = crate::snippets::merge_builtin_snippets(Vec::new());
+        let snippet = catalog.first().expect("built-in command fixture").clone();
+        let baseline = snippet_revision(&snippet).unwrap();
+        let mut changed = serde_json::to_value(&snippet).unwrap();
+        changed["created_at"] = serde_json::json!("2000-01-01T00:00:00Z");
+        changed["updated_at"] = serde_json::json!("2000-01-02T00:00:00Z");
+        let same: CommandSnippet = serde_json::from_value(changed.clone()).unwrap();
+        assert_eq!(baseline, snippet_revision(&same).unwrap());
+        changed["argv"] = serde_json::json!(["different-program", "different-argument"]);
+        let different: CommandSnippet = serde_json::from_value(changed).unwrap();
+        assert_ne!(baseline, snippet_revision(&different).unwrap());
+    }
 }

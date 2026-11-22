@@ -63,8 +63,19 @@ fn scrub(value: &mut Value, secrets: &[String]) {
             }
         }
         Value::Object(items) => {
-            for item in items.values_mut() {
-                scrub(item, secrets);
+            // JSON keys are untrusted MCP output too. A server can embed
+            // credentials in a property name, bypassing value-only masking.
+            let previous = std::mem::take(items);
+            for (index, (name, mut item)) in previous.into_iter().enumerate() {
+                scrub(&mut item, secrets);
+                let sensitive_name = sensitive(&name) || secrets.iter()
+                    .any(|secret| !secret.is_empty() && name.contains(secret));
+                let safe_name = if sensitive_name {
+                    format!("[redacted-key-{index}]")
+                } else {
+                    name
+                };
+                items.insert(safe_name, item);
             }
         }
         _ => {}
@@ -197,6 +208,7 @@ fn resolved_config(root: &Path, storage: &Path, request: &Value) -> Result<Value
             .into_iter()
             .find(|s| s.0 == id)
             .ok_or("MCP_SERVER_NOT_FOUND")?;
+        if !item.is_object() { return Err("MCP_CONFIG_INVALID".into()); }
         if item.get("url").is_some() {
             return Err("MCP_HTTP_NOT_IMPLEMENTED".into());
         }
@@ -223,12 +235,15 @@ fn resolved_config(root: &Path, storage: &Path, request: &Value) -> Result<Value
         if source.starts_with(root) && item.get("env").is_some() {
             return Err("MCP_PROJECT_ENV_REQUIRES_KEYRING_REFS".into());
         }
+        item["_browseros_source"] = json!(source);
         Ok(item)
     } else {
-        let item = request["server"].clone();
+        let mut item = request["server"].clone();
+        if !item.is_object() { return Err("MCP_CONFIG_INVALID".into()); }
         if item.get("env").is_some() || item.get("environment").is_some() {
             return Err("MCP_PLAINTEXT_ENV_REJECTED".into());
         }
+        item["_browseros_source"] = json!("inline");
         Ok(item)
     }
 }
@@ -250,7 +265,14 @@ impl Drop for Session {
     }
 }
 impl Session {
+    #[cfg(test)]
     fn start(root: &Path, config: &Value, seconds: u64) -> Result<Self, String> {
+        Self::start_with_credentials(root, config, seconds, std::collections::BTreeMap::new())
+    }
+    fn start_with_credentials(
+        root: &Path, config: &Value, seconds: u64,
+        mut credentials: std::collections::BTreeMap<String, String>,
+    ) -> Result<Self, String> {
         let command = config["command"].as_str().ok_or("MCP_COMMAND_REQUIRED")?;
         let path = PathBuf::from(command);
         if !path.is_absolute() || !path.is_file() {
@@ -296,8 +318,8 @@ impl Session {
                     .as_str()
                     .filter(|s| s.starts_with("ai:") && s.len() < 180)
                     .ok_or("MCP_CREDENTIAL_REF_INVALID")?;
-                let value = crate::keyring_store::KeyringStore::get_token(reference)
-                    .map_err(|_| "MCP_CREDENTIAL_MISSING")?;
+                let _ = reference; // Already bound and captured by the credential Owner.
+                let value = credentials.remove(name).ok_or("MCP_CREDENTIAL_MISSING")?;
                 secrets.push(value.clone());
                 cmd.env(name, value);
             }
@@ -480,15 +502,23 @@ pub fn execute(root: &Path, storage: &Path, request: Value) -> Result<Value, Str
             Ok(json!({"hits":hits,"limited":incomplete}))
         }
         "mcp_list" => Ok(discover(&root, storage)),
+        "mcp_review" => {
+            let config = resolved_config(&root, storage, &request)?;
+            Ok(super::mcp_review::prepare(&root, storage, &request, config)?.review)
+        }
         action @ ("mcp_tools" | "mcp_call") => {
             if request["approved"] != true {
                 return Err("MCP_EXPLICIT_APPROVAL_REQUIRED".into());
             }
             let config = resolved_config(&root, storage, &request)?;
-            let mut session = Session::start(
+            let prepared = super::mcp_review::prepare(&root, storage, &request, config)?;
+            super::mcp_review::authorize(&prepared, &request)?;
+            let credentials = crate::framework::ai::mcp_credential_snapshot(storage, prepared.config["env_refs"].as_object())?;
+            let mut session = Session::start_with_credentials(
                 &root,
-                &config,
+                &prepared.config,
                 request["timeout_seconds"].as_u64().unwrap_or(20),
+                credentials,
             )?;
             session.rpc(1,"initialize",json!({"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"BrowserOS","version":"0.1.0"}}))?;
             session.send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}))?;
@@ -512,6 +542,45 @@ pub fn execute(root: &Path, storage: &Path, request: Value) -> Result<Value, Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Exercise the same read-only review and exact grant round trip as the UI.
+    fn execute_reviewed(root: &Path, storage: &Path, mut request: Value) -> Result<Value, String> {
+        if request["approved"] == true
+            && matches!(request["action"].as_str(), Some("mcp_tools" | "mcp_call")) {
+            let mut review_request = request.clone();
+            review_request["review_action"] = request["action"].clone();
+            review_request["action"] = json!("mcp_review");
+            let review = super::execute(root, storage, review_request)?;
+            request["review_revision"] = review["revision"].clone();
+            request["approved_credential_refs"] = review["credential_refs"].clone();
+            request["approved_environment_names"] = review["environment_names"].clone();
+        }
+        super::execute(root, storage, request)
+    }
+
+    #[test]
+    fn changing_saved_config_after_review_is_rejected_before_start() {
+        let root = std::env::temp_dir().join(format!("browseros-mcp-review-root-{}", uuid::Uuid::new_v4()));
+        let storage = std::env::temp_dir().join(format!("browseros-mcp-review-store-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap(); fs::create_dir_all(&storage).unwrap();
+        let file = storage.join("coding-mcp.json");
+        let server = json!({"command":std::env::current_exe().unwrap(),"args":["old"]});
+        fs::write(&file, json!({"servers":{"fixture":server}}).to_string()).unwrap();
+        let id = discover(&root, &storage)["servers"][0]["id"].clone();
+        let review = super::execute(&root, &storage, json!({"action":"mcp_review","review_action":"mcp_tools","server_id":id})).unwrap();
+        let request = json!({"action":"mcp_tools","server_id":id,"approved":true,
+            "review_revision":review["revision"],"approved_credential_refs":review["credential_refs"],
+            "approved_environment_names":review["environment_names"]});
+        fs::write(&file, json!({"servers":{"fixture":{"command":std::env::current_exe().unwrap(),"args":["new"]}}}).to_string()).unwrap();
+        assert_eq!(super::execute(&root, &storage, request).unwrap_err(), "MCP_REVIEW_CHANGED");
+        fs::remove_dir_all(root).unwrap(); fs::remove_dir_all(storage).unwrap();
+    }
+    #[test]
+    fn credential_property_names_are_scrubbed_recursively() {
+        let mut response = json!({"nested":{"fixture-opaque-secret":"value"},"text":"fixture-opaque-secret"});
+        scrub(&mut response, &["fixture-opaque-secret".into()]);
+        assert!(!response.to_string().contains("fixture-opaque-secret"));
+    }
     fn config() -> Value {
         json!({"command":"/usr/bin/python3","args":[Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/fixtures/coding-mcp/server.py")]})
     }
@@ -524,10 +593,10 @@ mod tests {
             .unwrap()
             .push(json!("blocked"));
         let start = Instant::now();
-        let error=execute(root,root,json!({"action":"mcp_call","approved":true,"server":server,"tool":"echo","arguments":{"text":"a".repeat(100_000)},"timeout_seconds":1})).unwrap_err();
+        let error=execute_reviewed(root,root,json!({"action":"mcp_call","approved":true,"server":server,"tool":"echo","arguments":{"text":"a".repeat(100_000)},"timeout_seconds":1})).unwrap_err();
         assert_eq!(error, "MCP_WRITE_TIMEOUT");
         assert!(start.elapsed() < Duration::from_secs(3));
-        let called = execute(
+        let called = execute_reviewed(
             root,
             root,
             json!({"action":"mcp_call","approved":true,"server":config(),"tool":"descendant"}),
@@ -571,14 +640,14 @@ mod tests {
             .find(|s| s["name"] == "fixture")
             .unwrap()["id"]
             .clone();
-        let called = execute(
+        let called = execute_reviewed(
             root,
             &temp,
             json!({"action":"mcp_tools","approved":true,"server_id":id.clone()}),
         )
         .unwrap();
         assert_eq!(called["result"]["tools"][0]["name"], "echo");
-        let echoed = execute(
+        let echoed = execute_reviewed(
             root,
             &temp,
             json!({"action":"mcp_call","approved":true,"server_id":id,"tool":"echo_env"}),
@@ -591,14 +660,14 @@ mod tests {
     #[test]
     fn real_stdio_initializes_lists_and_calls() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let listed = execute(
+        let listed = execute_reviewed(
             root,
             root,
             json!({"action":"mcp_tools","approved":true,"server":config()}),
         )
         .unwrap();
         assert_eq!(listed["result"]["tools"][0]["name"], "echo");
-        let called=execute(root,root,json!({"action":"mcp_call","approved":true,"server":config(),"tool":"echo","arguments":{"text":"fixture output"}})).unwrap();
+        let called=execute_reviewed(root,root,json!({"action":"mcp_call","approved":true,"server":config(),"tool":"echo","arguments":{"text":"fixture output"}})).unwrap();
         assert_eq!(called["result"]["content"][0]["text"], "fixture output");
         assert!(called["untrusted"].as_bool().unwrap());
     }
@@ -606,7 +675,7 @@ mod tests {
     fn errors_and_timeouts_do_not_leak_remote_output() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         assert_eq!(
-            execute(
+            execute_reviewed(
                 root,
                 root,
                 json!({"action":"mcp_call","approved":true,"server":config(),"tool":"error"})
@@ -621,7 +690,7 @@ mod tests {
             .push(json!("timeout"));
         let start = Instant::now();
         assert_eq!(
-            execute(
+            execute_reviewed(
                 root,
                 root,
                 json!({"action":"mcp_tools","approved":true,"server":server,"timeout_seconds":1})
@@ -635,10 +704,10 @@ mod tests {
     fn approval_paths_and_secret_filters() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         assert_eq!(
-            execute(root, root, json!({"action":"mcp_tools","server":config()})).unwrap_err(),
+            execute_reviewed(root, root, json!({"action":"mcp_tools","server":config()})).unwrap_err(),
             "MCP_EXPLICIT_APPROVAL_REQUIRED"
         );
-        assert!(execute(
+        assert!(execute_reviewed(
             root,
             root,
             json!({"action":"skill_read","path":"/etc/passwd"})
@@ -657,7 +726,7 @@ mod tests {
         fs::create_dir_all(&docs).unwrap();
         fs::write(docs.join("good.md"), "fixture needle\n").unwrap();
         fs::write(docs.join("not-text.md"), [0xff, 0xfe]).unwrap();
-        let result = execute(
+        let result = execute_reviewed(
             &root,
             &root,
             json!({"action":"knowledge_search","query":"needle"}),
@@ -669,7 +738,7 @@ mod tests {
         let deep = docs.join("a/b/c/d/e/f/g");
         fs::create_dir_all(&deep).unwrap();
         fs::write(deep.join("hidden.md"), "fixture needle\n").unwrap();
-        let result = execute(
+        let result = execute_reviewed(
             &root,
             &root,
             json!({"action":"knowledge_search","query":"needle"}),

@@ -1,7 +1,8 @@
 //! Durable connection METADATA, never credentials.
-//! Passwords are held exclusively in the OS keyring under db:<conn_id>.
+//! Passwords are held exclusively in the OS keyring under immutable db:<conn_id>:<version> references; legacy keys remain readable.
 //! File is user-only (0700 parent / 0600 file) and atomically replaced.
 use crate::domain::DbConnectionConfig;
+use serde::{Deserialize, Serialize};
 use std::{
     fs,
     io::Write,
@@ -10,6 +11,23 @@ use std::{
 use tauri::{AppHandle, Manager};
 const MAX_BYTES: u64 = 256 * 1024;
 const MAX_COUNT: usize = 64;
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct StoredProfile {
+    #[serde(flatten)]
+    pub config: DbConnectionConfig,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub credential_ref: String,
+}
+impl StoredProfile {
+    pub fn reference(&self) -> Result<String, String> {
+        let legacy = crate::database::credential_key(&self.config.id);
+        if self.credential_ref.is_empty() || self.credential_ref == legacy { return Ok(legacy); }
+        let version = self.credential_ref.strip_prefix(&format!("{legacy}:"))
+            .ok_or("DB_CREDENTIAL_REF_INVALID")?;
+        uuid::Uuid::parse_str(version).map_err(|_| "DB_CREDENTIAL_REF_INVALID")?;
+        Ok(self.credential_ref.clone())
+    }
+}
 
 pub fn path_for(app: &AppHandle) -> Result<PathBuf, String> {
     // The shared workspace data_dir enforces the Windows owner/SYSTEM ACL
@@ -26,7 +44,7 @@ fn assert_regular_or_missing(path: &Path) -> Result<(), String> {
         Err(_) => Err("DB_PROFILE_METADATA_FAILED".into()),
     }
 }
-pub fn read_file(path: &Path) -> Result<Vec<DbConnectionConfig>, String> {
+pub(crate) fn read_records(path: &Path) -> Result<Vec<StoredProfile>, String> {
     assert_regular_or_missing(path)?;
     if !path.exists() {
         return Ok(Vec::new());
@@ -38,14 +56,15 @@ pub fn read_file(path: &Path) -> Result<Vec<DbConnectionConfig>, String> {
         return Err("DB_PROFILE_OVERSIZE".into());
     }
     let bytes = fs::read(path).map_err(|_| "DB_PROFILE_READ_FAILED")?;
-    let configs: Vec<DbConnectionConfig> =
+    let configs: Vec<StoredProfile> =
         serde_json::from_slice(&bytes).map_err(|_| "DB_PROFILE_INVALID_FORMAT")?;
     if configs.len() > MAX_COUNT {
         return Err("DB_PROFILE_OVER_LIMIT".into());
     }
+    for profile in &configs { profile.reference()?; }
     Ok(configs)
 }
-pub fn write_file(path: &Path, configs: &[DbConnectionConfig]) -> Result<(), String> {
+pub(crate) fn write_records(path: &Path, configs: &[StoredProfile]) -> Result<(), String> {
     if configs.len() > MAX_COUNT {
         return Err("DB_PROFILE_OVER_LIMIT".into());
     }
@@ -76,6 +95,9 @@ pub fn write_file(path: &Path, configs: &[DbConnectionConfig]) -> Result<(), Str
         f.sync_all().map_err(|_| "DB_PROFILE_SYNC_FAILED")?;
         crate::session::atomic_replace_file(&temp, path)
             .map_err(|_| "DB_PROFILE_RENAME_FAILED")?;
+        #[cfg(unix)]
+        fs::File::open(dir).and_then(|directory| directory.sync_all())
+            .map_err(|_| "DB_PROFILE_SYNC_FAILED")?;
         Ok::<(), String>(())
     })();
     if result.is_err() {
@@ -84,8 +106,41 @@ pub fn write_file(path: &Path, configs: &[DbConnectionConfig]) -> Result<(), Str
     result
 }
 #[cfg(test)]
+pub(crate) fn read_file(path: &Path) -> Result<Vec<DbConnectionConfig>, String> {
+    Ok(read_records(path)?.into_iter().map(|record| record.config).collect())
+}
+#[cfg(test)]
+pub(crate) fn write_file(path: &Path, configs: &[DbConnectionConfig]) -> Result<(), String> {
+    let previous = read_records(path)?;
+    let records = configs.iter().map(|config| StoredProfile {
+        config: config.clone(),
+        credential_ref: previous.iter().find(|p| p.config.id == config.id)
+            .map(|p| p.credential_ref.clone()).unwrap_or_default(),
+    }).collect::<Vec<_>>();
+    write_records(path, &records)
+}
+#[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn legacy_metadata_and_immutable_credential_versions_roundtrip() {
+        let id = uuid::Uuid::new_v4().to_string();
+        let value = serde_json::json!({"id":id,"name":"fixture","kind":"mysql","host":"example.invalid",
+            "port":3306,"database":"fixture","username":"reader","ssl_mode":"require","allow_write":false,
+            "production_hint":true,"enabled":true,"created_at":"2026-11-22T00:00:00Z","updated_at":"2026-11-22T00:00:00Z"});
+        let mut record: StoredProfile = serde_json::from_value(value).unwrap();
+        assert_eq!(record.reference().unwrap(), format!("db:{id}"));
+        let root = std::env::temp_dir().join(format!("browseros-db-version-{}", uuid::Uuid::new_v4()));
+        let path = root.join("profiles.json");
+        record.credential_ref = format!("db:{id}:{}", uuid::Uuid::new_v4());
+        write_records(&path, &[record.clone()]).unwrap();
+        let restored = read_records(&path).unwrap();
+        assert_eq!(restored[0].reference().unwrap(), record.credential_ref);
+        assert!(!fs::read_to_string(&path).unwrap().contains("password"));
+        record.credential_ref = format!("db:{}:{}", uuid::Uuid::new_v4(), uuid::Uuid::new_v4());
+        assert!(record.reference().is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn profiles_roundtrip_empty_without_credentials() {
         let root =

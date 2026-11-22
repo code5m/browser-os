@@ -35,7 +35,7 @@ fn task_target_params(
 ) -> Result<Vec<ScriptParam>, String> {
     match kind {
         TaskKind::Script => {
-            let script = workspace::load_scripts(app)
+            let script = workspace::load_scripts(app)?
                 .into_iter()
                 .find(|s| s.id == target_id)
                 .ok_or_else(|| crate::tasks::TASK_TARGET_NOT_FOUND.to_string())?;
@@ -45,7 +45,7 @@ fn task_target_params(
             Ok(script.params)
         }
         TaskKind::Command => {
-            let snippet = workspace::load_snippets(app)
+            let snippet = workspace::load_snippets(app)?
                 .into_iter()
                 .find(|s| s.id == target_id)
                 .ok_or_else(|| crate::tasks::TASK_TARGET_NOT_FOUND.to_string())?;
@@ -62,7 +62,7 @@ fn task_target_params(
 pub fn task_list(app: AppHandle, webview: Webview) -> Result<Vec<TaskDef>, String> {
     check_invocation_source(&webview, "task_list", None, &app)?;
     let _store_guard = crate::tasks::task_store_lock();
-    let list = crate::tasks::load_tasks_at(&crate::tasks::tasks_file(&app));
+    let list = crate::tasks::load_tasks_at(&crate::tasks::tasks_file(&app))?;
     let count = list.len();
     workspace::log_audit(&app, "task.runs.list", format!("count={count}"));
     Ok(list)
@@ -91,7 +91,7 @@ pub fn task_add(
     let _store_guard = crate::tasks::task_store_lock();
     let supplied = params.unwrap_or_default();
     let path = crate::tasks::tasks_file(&app);
-    let mut list = crate::tasks::load_tasks_at(&path);
+    let mut list = crate::tasks::load_tasks_at(&path)?;
     crate::tasks::check_capacity(list.len()).map_err(|e| e.code().to_string())?;
     let meta = task_target_params(&app, kind, &target_id)?;
     crate::tasks::validate_params(&meta, &supplied).map_err(|e| e.code().to_string())?;
@@ -139,7 +139,7 @@ pub fn task_update(app: AppHandle, webview: Webview, task: TaskDef) -> Result<Ta
     check_invocation_source(&webview, "task_update", None, &app)?;
     let _store_guard = crate::tasks::task_store_lock();
     let path = crate::tasks::tasks_file(&app);
-    let mut list = crate::tasks::load_tasks_at(&path);
+    let mut list = crate::tasks::load_tasks_at(&path)?;
     let index = list
         .iter()
         .position(|t| t.id == task.id)
@@ -179,7 +179,7 @@ pub fn task_remove(app: AppHandle, webview: Webview, id: String) -> Result<bool,
     let _store_guard = crate::tasks::task_store_lock();
     check_id(&id, "任务 id")?;
     let path = crate::tasks::tasks_file(&app);
-    let mut list = crate::tasks::load_tasks_at(&path);
+    let mut list = crate::tasks::load_tasks_at(&path)?;
     let before = list.len();
     let cancelled = crate::scheduler::cancel_in_flight(&app, &id);
     list.retain(|t| t.id != id);

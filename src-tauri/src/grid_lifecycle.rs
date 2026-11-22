@@ -7,6 +7,80 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+
+const MAX_GRID_WORKERS: usize = 64;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum VisibilityMode { Show, Blur, Minimized }
+
+#[derive(Clone, Copy)]
+pub(super) struct VisibilityIntent {
+    pub(super) revision: u64,
+    pub(super) mode: VisibilityMode,
+    ready_at: Instant,
+}
+#[derive(Default)]
+struct VisibilityState {
+    revision: u64,
+    pending: Option<VisibilityIntent>,
+    running: bool,
+}
+/// One pending desired state and one sender, regardless of native focus rate.
+#[derive(Default)]
+pub(super) struct LatestVisibility {
+    state: Mutex<VisibilityState>,
+    wake: Condvar,
+}
+impl LatestVisibility {
+    pub(super) fn request(&self, mode: VisibilityMode, delay: Duration) -> bool {
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        state.revision = state.revision.wrapping_add(1);
+        state.pending = Some(VisibilityIntent {
+            revision: state.revision, mode, ready_at: Instant::now() + delay,
+        });
+        let start = !state.running;
+        state.running = true;
+        self.wake.notify_one();
+        start
+    }
+    pub(super) fn next(&self, lifecycle: &GridLifecycle) -> Option<VisibilityIntent> {
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        loop {
+            if lifecycle.is_stopping() {
+                state.pending = None;
+                state.running = false;
+                return None;
+            }
+            let Some(intent) = state.pending else {
+                state.running = false;
+                return None;
+            };
+            let remaining = intent.ready_at.saturating_duration_since(Instant::now());
+            if remaining.is_zero() { return Some(intent); }
+            // The existing 150 ms focus policy is interruptible by a newer
+            // intent. A short bound also observes application shutdown.
+            state = self.wake.wait_timeout(state, remaining.min(Duration::from_millis(20)))
+                .unwrap_or_else(|p| p.into_inner()).0;
+        }
+    }
+    pub(super) fn finish(&self, revision: u64) -> bool {
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        if state.pending.is_some_and(|intent| intent.revision != revision) { return true; }
+        state.pending = None;
+        state.running = false;
+        false
+    }
+    pub(super) fn spawn_failed(&self) {
+        self.state.lock().unwrap_or_else(|p| p.into_inner()).running = false;
+    }
+    pub(super) fn reserve_pending(&self) -> bool {
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        if state.running || state.pending.is_none() { return false; }
+        state.running = true;
+        true
+    }
+}
+
 type Children = Arc<Mutex<HashMap<u32, GridChildHandle>>>;
 type Listeners = Arc<Mutex<HashMap<u32, Arc<ChildComms>>>>;
 
@@ -80,11 +154,17 @@ impl GridLifecycle {
         work: impl FnOnce() + Send + 'static,
     ) -> Result<(), String> {
         let _permit = self.enter()?;
+        self.reap_workers();
+        let mut workers = self.workers.lock().unwrap_or_else(|p| p.into_inner());
+        if workers.len() >= MAX_GRID_WORKERS {
+            return Err("GRID_WORKER_CAPACITY_BUSY".into());
+        }
         let handle = std::thread::Builder::new().name(name.to_owned()).spawn(work)
             .map_err(|error| format!("GRID_WORKER_START_FAILED:{name}:{error}"))?;
         // Even if shutdown won after enter(), retain the actual thread. The
         // worker observes the same stop gate; its handle is never detached.
-        self.workers.lock().unwrap().push(handle);
+        workers.push(handle);
+        drop(workers);
         self.wake.notify_all();
         Ok(())
     }
@@ -308,6 +388,36 @@ mod tests {
 
     fn registries() -> (Children, Listeners) {
         (Arc::new(Mutex::new(HashMap::new())), Arc::new(Mutex::new(HashMap::new())))
+    }
+
+    #[test]
+    fn focus_intents_coalesce_and_replay_the_latest_after_an_inflight_send() {
+        let lifecycle = GridLifecycle::default();
+        let pending = LatestVisibility::default();
+        assert!(pending.request(VisibilityMode::Blur, Duration::ZERO));
+        let old = pending.next(&lifecycle).unwrap();
+        assert!(!pending.request(VisibilityMode::Show, Duration::ZERO));
+        assert!(pending.finish(old.revision));
+        let current = pending.next(&lifecycle).unwrap();
+        assert_eq!(current.mode, VisibilityMode::Show);
+        assert!(!pending.finish(current.revision));
+        assert!(pending.request(VisibilityMode::Minimized, Duration::ZERO));
+        assert!(!pending.request(VisibilityMode::Show, Duration::ZERO));
+        assert_eq!(pending.next(&lifecycle).unwrap().mode, VisibilityMode::Show);
+    }
+
+    #[test]
+    fn failed_visibility_start_keeps_one_retryable_intent() {
+        let pending = LatestVisibility::default();
+        assert!(pending.request(VisibilityMode::Blur, Duration::from_millis(150)));
+        pending.spawn_failed();
+        assert!(pending.reserve_pending());
+        assert!(!pending.reserve_pending());
+        assert!(!pending.request(VisibilityMode::Show, Duration::ZERO));
+        let lifecycle = GridLifecycle::default();
+        let latest = pending.next(&lifecycle).unwrap();
+        assert_eq!(latest.mode, VisibilityMode::Show);
+        assert!(!pending.finish(latest.revision));
     }
 
     #[test]

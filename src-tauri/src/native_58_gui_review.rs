@@ -205,14 +205,12 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                 .any(|item| item.id == session_id);
         let snippet_id = report["snippetId"].as_str().unwrap_or("");
         let snippet_deleted = !snippet_id.is_empty()
-            && !crate::workspace::load_snippets(&report_app)
-                .iter()
-                .any(|item| item.id == snippet_id);
+            && crate::workspace::load_snippets(&report_app)
+                .is_ok_and(|items| !items.iter().any(|item| item.id == snippet_id));
         let bookmark_id = report["bookmarkId"].as_str().unwrap_or("");
         let bookmark_deleted = !bookmark_id.is_empty()
-            && !crate::workspace::load_bookmarks(&report_app)
-                .iter()
-                .any(|item| item.id == bookmark_id);
+            && crate::workspace::load_bookmarks(&report_app)
+                .is_ok_and(|items| !items.iter().any(|item| item.id == bookmark_id));
         let xdg_log = std::env::var("NATIVE_58_XDG_LOG").unwrap_or_default();
         let xdg_settings_stubbed = !xdg_log.is_empty() && PathBuf::from(&xdg_log).is_file();
         let postconditions = serde_json::json!({

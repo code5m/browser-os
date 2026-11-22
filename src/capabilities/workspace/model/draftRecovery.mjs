@@ -1,12 +1,11 @@
 /**
- * Retire only the journals involved in a successful recovered-document save.
- * The recovered session is cleared only after the current process journal is
- * either cleared (clean document) or durably replaced (new unsaved edits).
+ * Update only this editor surface's own encrypted journal after native save.
+ * A recovered source can still belong to another live process. Keep it until
+ * an explicit catalog deletion binds the selected recovery id and revision.
  */
 export async function persistDraftAfterSave({
   path,
   currentSessionId,
-  recoveredSessionId,
   savedText,
   currentText,
   save,
@@ -23,7 +22,4 @@ export async function persistDraftAfterSave({
     await save(path, currentSessionId, savedText, currentText);
   }
 
-  if (recoveredSessionId && recoveredSessionId !== currentSessionId) {
-    await clear(path, recoveredSessionId);
-  }
 }

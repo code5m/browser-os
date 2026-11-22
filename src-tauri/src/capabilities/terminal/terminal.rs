@@ -819,15 +819,120 @@ impl TerminalInput {
     }
 }
 
+struct ResizeRequest {
+    size: PtySize,
+    reply: tokio::sync::oneshot::Sender<Result<(), String>>,
+}
+#[derive(Default)]
+struct ResizeOwner {
+    // The running native call owns one request; only the latest next size is retained.
+    pending: Mutex<Option<ResizeRequest>>,
+    wake: Condvar,
+    worker: Mutex<Option<JoinHandle<()>>>,
+}
+
 /// A clone never duplicates the master/HPCON. Cleanup takes the sole master
 /// out of this slot; concurrent resize callers then observe a closed session.
 #[derive(Clone)]
 pub struct TerminalControl {
     master: Arc<Mutex<Option<Box<dyn MasterPty + Send>>>>,
     stop: Arc<AtomicBool>,
+    resize_owner: Arc<ResizeOwner>,
+    admission: Weak<TerminalPermitLease>,
 }
 
 impl TerminalControl {
+    /// Bound async resize by the existing native session admission. Replies
+    /// for replaced pending sizes finish immediately, so callers cannot form
+    /// another unbounded wait queue behind a blocked ConPTY call.
+    pub fn enqueue_resize(&self, cols: u16, rows: u16)
+        -> Result<tokio::sync::oneshot::Receiver<Result<(), String>>, String>
+    {
+        if cols == 0 || rows == 0 { return Err("TERM_SIZE_INVALID".into()); }
+        if self.stop.load(Ordering::Acquire) { return Err("TERM_CLOSED".into()); }
+        let mut worker = self.resize_owner.worker.lock().unwrap_or_else(|e| e.into_inner());
+        if worker.as_ref().is_some_and(|handle| handle.is_finished()) {
+            if worker.take().expect("finished resize owner").join().is_err() {
+                self.stop_resize();
+                return Err("TERM_RESIZE_WORKER_PANICKED".into());
+            }
+        }
+        let (reply, receiver) = tokio::sync::oneshot::channel();
+        {
+            let mut pending = self.resize_owner.pending.lock().unwrap_or_else(|e| e.into_inner());
+            if self.stop.load(Ordering::Acquire) { return Err("TERM_CLOSED".into()); }
+            if let Some(previous) = pending.replace(ResizeRequest {
+                size: PtySize { rows, cols, pixel_width: 0, pixel_height: 0 }, reply,
+            }) {
+                let _ = previous.reply.send(Err("TERM_RESIZE_SUPERSEDED".into()));
+            }
+        }
+        if worker.is_none() {
+            let lease = match self.admission.upgrade() {
+                Some(lease) => lease,
+                None => { self.stop_resize(); return Err("TERM_CLOSED".into()); }
+            };
+            let control = self.clone();
+            match thread::Builder::new().name("terminal-resize".into()).spawn(move || {
+                // This lease survives the IPC future and covers real native I/O.
+                let _permit = TerminalPermit { _lease: lease };
+                control.run_resize_owner();
+            }) {
+                Ok(handle) => *worker = Some(handle),
+                Err(_) => {
+                    if let Some(pending) = self.resize_owner.pending.lock().unwrap_or_else(|e| e.into_inner()).take() {
+                        let _ = pending.reply.send(Err("TERM_RESIZE_WORKER_START_FAILED".into()));
+                    }
+                    return Err("TERM_RESIZE_WORKER_START_FAILED".into());
+                }
+            }
+        }
+        self.resize_owner.wake.notify_one();
+        Ok(receiver)
+    }
+
+    fn run_resize_owner(&self) {
+        loop {
+            let request = {
+                let mut pending = self.resize_owner.pending.lock().unwrap_or_else(|e| e.into_inner());
+                while pending.is_none() && !self.stop.load(Ordering::Acquire) {
+                    pending = self.resize_owner.wake.wait_timeout(
+                        pending, Duration::from_millis(TERM_CANCEL_POLL_MS),
+                    ).unwrap_or_else(|e| e.into_inner()).0;
+                }
+                if self.stop.load(Ordering::Acquire) {
+                    if let Some(request) = pending.take() {
+                        let _ = request.reply.send(Err("TERM_CLOSED".into()));
+                    }
+                    return;
+                }
+                pending.take().expect("pending size or stopped")
+            };
+            let result = self.resize(request.size.cols, request.size.rows);
+            let _ = request.reply.send(result);
+        }
+    }
+
+    fn stop_resize(&self) {
+        self.stop.store(true, Ordering::Release);
+        if let Some(request) = self.resize_owner.pending.lock().unwrap_or_else(|e| e.into_inner()).take() {
+            let _ = request.reply.send(Err("TERM_CLOSED".into()));
+        }
+        self.resize_owner.wake.notify_all();
+    }
+
+    fn reap_resize(&self) -> Result<bool, String> {
+        let handle = {
+            let mut worker = self.resize_owner.worker.lock().unwrap_or_else(|e| e.into_inner());
+            if worker.as_ref().is_some_and(|handle| !handle.is_finished()) { return Ok(false); }
+            worker.take()
+        };
+        if handle.is_some_and(|handle| handle.join().is_err()) {
+            return Err("TERM_RESIZE_WORKER_PANICKED".into());
+        }
+        Ok(true)
+    }
+
     pub fn resize(&self, cols: u16, rows: u16) -> Result<(), String> {
         if self.stop.load(Ordering::Acquire) { return Err("TERM_CLOSED".into()); }
         let guard = self.master.lock().unwrap_or_else(|e| e.into_inner());
@@ -925,7 +1030,7 @@ impl TerminalSession {
 
     fn begin_cleanup(&mut self) -> Arc<CleanupCompletion> {
         if let Some(completion) = &self.cleanup { return Arc::clone(completion); }
-        self.stop.store(true, Ordering::Release);
+        self.control.stop_resize();
         let completion = Arc::new(CleanupCompletion::new(self.id.clone()));
         if let Some(resources) = self.resources.take() {
             cleanup_registry().register(self.id.clone(), resources, Arc::clone(&completion));
@@ -993,6 +1098,7 @@ pub(crate) fn spawn_terminal_with_command(
     }).map_err(|e| format!("无法创建 PTY: {e}"))?;
     let control = TerminalControl {
         master: Arc::new(Mutex::new(Some(pair.master))), stop: Arc::clone(&stop),
+        resize_owner: Arc::new(ResizeOwner::default()), admission: Arc::downgrade(&permit._lease),
     };
     // From this point every early return, including a spawn failure, hands
     // native close to the same retained cleanup owner. No foreground error
@@ -1392,6 +1498,7 @@ fn record_cleanup_error(errors: &mut Vec<String>, error: String) {
 
 impl CleanupResources {
     fn run(mut self, completion: &CleanupCompletion) -> Result<(), String> {
+        self.control.stop_resize();
         let mut errors = Vec::new();
         #[cfg(windows)]
         if let Some(job) = &self.job {
@@ -1531,7 +1638,11 @@ impl CleanupResources {
             }
             let output_reaped = worker.as_ref()
                 .map(|(reader, pump)| reader.is_none() && pump.is_none()).unwrap_or(true);
-            if master_closed && self.writer.is_none() && output_reaped && child_reaped && job_empty {
+            let resize_reaped = match self.control.reap_resize() {
+                Ok(done) => done,
+                Err(error) => { record_cleanup_error(&mut errors, error); true }
+            };
+            if master_closed && resize_reaped && self.writer.is_none() && output_reaped && child_reaped && job_empty {
                 return if errors.is_empty() { Ok(()) } else {
                     // Every owned resource is now reaped, but preserve the
                     // diagnostic outcome separately from pending/uncertain.
@@ -2044,6 +2155,85 @@ mod tests {
         }
     }
 
+    struct BlockedResizeMaster {
+        gate: Arc<Gate>,
+        entered: Arc<AtomicBool>,
+        sizes: Arc<Mutex<Vec<(u16, u16)>>>,
+    }
+    impl MasterPty for BlockedResizeMaster {
+        fn resize(&self, size: PtySize) -> Result<(), portable_pty::Error> {
+            self.entered.store(true, Ordering::Release);
+            self.gate.wait();
+            self.sizes.lock().unwrap().push((size.cols, size.rows));
+            Ok(())
+        }
+        fn get_size(&self) -> Result<PtySize, portable_pty::Error> { Ok(PtySize::default()) }
+        fn try_clone_reader(&self) -> Result<Box<dyn Read + Send>, portable_pty::Error> { Ok(Box::new(io::empty())) }
+        fn take_writer(&self) -> Result<Box<dyn Write + Send>, portable_pty::Error> { Ok(Box::new(io::sink())) }
+        #[cfg(unix)]
+        fn process_group_leader(&self) -> Option<libc::pid_t> { None }
+        #[cfg(unix)]
+        fn as_raw_fd(&self) -> Option<portable_pty::unix::RawFd> { None }
+        #[cfg(unix)]
+        fn tty_name(&self) -> Option<std::path::PathBuf> { None }
+    }
+
+    #[test]
+    fn native_resize_keeps_only_the_latest_pending_size() {
+        let admission = Arc::new(TerminalAdmission::default());
+        let permit = admission.acquire().unwrap();
+        let gate = Arc::new(Gate::default());
+        let _release = ReleaseGate(Arc::clone(&gate));
+        let entered = Arc::new(AtomicBool::new(false));
+        let sizes = Arc::new(Mutex::new(Vec::new()));
+        let control = TerminalControl {
+            master: Arc::new(Mutex::new(Some(Box::new(BlockedResizeMaster {
+                gate: Arc::clone(&gate), entered: Arc::clone(&entered), sizes: Arc::clone(&sizes),
+            })))),
+            stop: permit.stop(), resize_owner: Arc::new(ResizeOwner::default()),
+            admission: Arc::downgrade(&permit._lease),
+        };
+        let first = control.enqueue_resize(80, 24).unwrap();
+        wait_flag(&entered);
+        let obsolete = control.enqueue_resize(90, 25).unwrap();
+        let latest = control.enqueue_resize(120, 40).unwrap();
+        assert_eq!(obsolete.blocking_recv().unwrap().unwrap_err(), "TERM_RESIZE_SUPERSEDED");
+        gate.release();
+        first.blocking_recv().unwrap().unwrap();
+        latest.blocking_recv().unwrap().unwrap();
+        assert_eq!(*sizes.lock().unwrap(), vec![(80, 24), (120, 40)]);
+        control.stop_resize();
+        let handle = control.resize_owner.worker.lock().unwrap().take().unwrap();
+        handle.join().unwrap();
+        assert!(control.enqueue_resize(100, 30).is_err());
+    }
+
+    #[test]
+    fn blocked_resize_retains_global_native_capacity_until_real_completion() {
+        let admission = Arc::new(TerminalAdmission::default());
+        let permit = admission.acquire().unwrap();
+        let gate = Arc::new(Gate::default());
+        let _release = ReleaseGate(Arc::clone(&gate));
+        let entered = Arc::new(AtomicBool::new(false));
+        let control = TerminalControl {
+            master: Arc::new(Mutex::new(Some(Box::new(BlockedResizeMaster {
+                gate: Arc::clone(&gate), entered: Arc::clone(&entered), sizes: Arc::new(Mutex::new(Vec::new())),
+            })))),
+            stop: permit.stop(), resize_owner: Arc::new(ResizeOwner::default()),
+            admission: Arc::downgrade(&permit._lease),
+        };
+        let request = control.enqueue_resize(80, 24).unwrap();
+        wait_flag(&entered);
+        control.stop_resize();
+        drop(permit);
+        assert_eq!(admission.active.load(Ordering::Acquire), 1);
+        gate.release();
+        request.blocking_recv().unwrap().unwrap();
+        let handle = control.resize_owner.worker.lock().unwrap().take().unwrap();
+        handle.join().unwrap();
+        assert_eq!(admission.active.load(Ordering::Acquire), 0);
+    }
+
     #[test]
     fn terminal_shutdown_deadline_retains_pending_owners_until_all_reaped() {
         let admission = Arc::new(TerminalAdmission::default());
@@ -2061,6 +2251,7 @@ mod tests {
                     io_gate: Arc::new(Gate::default()), closed: flag,
                 })))),
                 stop: permit.stop(),
+                resize_owner: Arc::new(ResizeOwner::default()), admission: Arc::downgrade(&permit._lease),
             };
             let id = format!("local-shutdown-{index}");
             registry.register(id.clone(), CleanupResources {
@@ -2107,6 +2298,7 @@ mod tests {
                 closed: Arc::clone(&master_closed),
             })))),
             stop: Arc::clone(&stop),
+            resize_owner: Arc::new(ResizeOwner::default()), admission: Weak::new(),
         };
         let handles = start_pipeline(Box::new(BlockedReader {
             gate: Arc::clone(&io_gate), entered: Arc::clone(&reader_entered),
@@ -2157,6 +2349,7 @@ mod tests {
                 closed: Arc::clone(&closed),
             })))),
             stop: Arc::new(AtomicBool::new(false)),
+            resize_owner: Arc::new(ResizeOwner::default()), admission: Weak::new(),
         };
         let owner = SpawnCleanupGuard {
             id: id.clone(),

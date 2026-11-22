@@ -59,6 +59,18 @@ export function operationResultText(value) {
   return limitUtf8Text(serialized);
 }
 const mcpFailureHints={
+    MCP_RESOURCE_CAPACITY:'沙箱资源已达到上限或仍在回收，请稍后重新审核并重试',
+    MCP_ADMISSION_CLOSED:'沙箱恢复尚未完成，请先处理恢复面板中的阻塞项',
+    MCP_CREDENTIAL_INVALID:'MCP 凭据格式无效，请在模型配置中重新保存',
+    MCP_REVIEW_CHANGED:'MCP 配置或调用参数已变化，本次未执行；请重新读取并审核执行范围',
+    MCP_CREDENTIAL_PROFILE_UNAVAILABLE:'凭据所属模型配置已不可用，请重新选择凭据',
+    MCP_CREDENTIAL_REVISION_CHANGED:'凭据已更新，本次未执行；请重新审核凭据范围',
+    MCP_CREDENTIAL_SCOPE_REQUIRED:'请明确批准本次 MCP 请求可使用的凭据',
+    MCP_CREDENTIAL_SCOPE_CHANGED:'本次凭据范围与审核不一致，请重新审核',
+    MCP_ENV_SCOPE_REQUIRED:'请明确批准本次 MCP 请求可使用的环境项',
+    MCP_ENV_SCOPE_CHANGED:'本次环境范围与审核不一致，请重新审核',
+    MCP_STDIN_THREAD_START:'无法启动 MCP 输入处理，请稍后重新审核并重试',
+    MCP_STDOUT_THREAD_START:'无法启动 MCP 输出处理，请稍后重新审核并重试',
     MCP_SERVER_NOT_FOUND:'找不到该 MCP 服务，请刷新服务列表并检查配置',
     MCP_HTTP_NOT_IMPLEMENTED:'当前尚不支持 HTTP MCP 服务',
     MCP_EXECUTABLE_NOT_FOUND:'找不到 MCP 服务程序，请检查配置',

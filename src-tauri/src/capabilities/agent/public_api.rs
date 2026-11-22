@@ -3,6 +3,12 @@
 //! helpers are Rust-internal and are never registered as Tauri commands.
 use serde_json::Value;
 use tauri::{AppHandle, Webview};
+pub(crate) fn register_coding_run(id: &str) -> Result<super::coding::RunRequestGuard, String> {
+    super::coding::register_run_request(id)
+}
+pub(crate) fn cancel_coding_run(id: &str) -> Result<bool, String> {
+    super::coding::cancel_run_request(id)
+}
 pub(crate) fn coding_lsp_summary(
     app: AppHandle,
     webview: Webview,
@@ -93,6 +99,7 @@ pub(crate) fn dispatch_coding_request(
         "skill_read",
         "knowledge_search",
         "mcp_list",
+        "mcp_review",
         "mcp_tools",
         "mcp_call",
     ]

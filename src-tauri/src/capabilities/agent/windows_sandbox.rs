@@ -7,7 +7,7 @@ use crate::windows_process::CREATE_SUSPENDED;
 mod lifecycle;
 pub(crate) use lifecycle::{
     initialize_recovery_store, recover_abandoned_profiles, recovery_status, retry_recovery,
-    request_shutdown, shutdown_until, RecoveryReport,
+    request_shutdown, shutdown_until, RecoveryReport, NativeIoOwner,
 };
 pub use browseros_platform_security::windows::OperationBudget;
 use browseros_platform_security::windows::{
@@ -874,6 +874,11 @@ impl SandboxProcess {
         self.resources().job.terminate().map_err(|_| "SANDBOX_JOB_TERMINATE".into())
     }
     pub fn profile(&self) -> &SandboxProfile { &self.resources().profile }
+    pub(crate) fn hold_io_owner(&self) -> Result<NativeIoOwner, String> {
+        self.profile().recovery_lease.as_ref()
+            .map(lifecycle::ProfileLease::hold_io_owner)
+            .ok_or_else(|| "SANDBOX_JOURNAL_CLOSED".into())
+    }
     pub fn cleanup_complete(&self) -> bool { self.resources().is_complete() }
 }
 impl Drop for SandboxProcess {

@@ -34,6 +34,7 @@ mod hang_diagnostics;
 #[path = "hang_diagnostics_windows.rs"]
 mod hang_diagnostics;
 mod shared {
+    pub(crate) mod credential_versions;
     pub mod blocking;
     pub mod clipboard;
     pub mod images;
@@ -1885,6 +1886,11 @@ fn main() {
             capabilities::workspace::draft_journal::editor_draft_save,
             capabilities::workspace::draft_journal::editor_draft_list,
             capabilities::workspace::draft_journal::editor_draft_clear,
+            capabilities::workspace::draft_journal::editor_draft_catalog,
+            capabilities::workspace::draft_journal::editor_draft_read,
+            capabilities::workspace::draft_journal::editor_draft_update_recovered,
+            capabilities::workspace::draft_journal::editor_draft_remove,
+            capabilities::workspace::draft_journal::editor_draft_save_as,
             capabilities::workspace::weixin_drafts::wechat_account_save,
             capabilities::workspace::weixin_drafts::wechat_account_status,
             capabilities::workspace::weixin_drafts::wechat_draft_permission_check,

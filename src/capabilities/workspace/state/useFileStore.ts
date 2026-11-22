@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { ref, reactive, computed, watch, nextTick } from "vue";
 import { bridge } from "../../../bridge";
-import { useLayoutStore } from "../../../stores/useLayoutStore";
+import { useLayoutStore, type ViewChangeCommit } from "../../../stores/useLayoutStore";
 import { openTerminalAt } from "../../../composables/terminalNav";
 import { renderMd } from "../../../utils/markdown";
 import { documentOwnership } from "../../../application/documentOwnership.mjs";
@@ -43,8 +43,13 @@ export const useFileStore = defineStore("files", () => {
   // Directory navigation must not own editor identity. This is a separate document snapshot.
   const editorFilePath = ref("");
   const editorSavedContent = ref("");
-  const editorDirty = computed(() => !!editorFilePath.value && fileContent.value !== editorSavedContent.value);
+  type RecoveryEditSession = { id: string; revision: string };
+  const editorRecoverySession = ref<RecoveryEditSession | null>(null);
+  const editorRecoveryId = computed(() => editorRecoverySession.value?.id ?? "");
+  const editorDirty = computed(() => !!editorFilePath.value &&
+    (!!editorRecoverySession.value || fileContent.value !== editorSavedContent.value));
   let editorReadRequest = 0;
+  let editorDocumentRevision = 0;
   function canDiscardEditor(): boolean {
     return !editorDirty.value || confirm("主编辑器有未保存的修改，确定放弃修改吗？");
   }
@@ -109,14 +114,13 @@ export const useFileStore = defineStore("files", () => {
   // ===== 目录图片预览：加载内部状态（实现细节，非公开治理态） =====
   let previewRequest = 0;
   let inlineReadRequest = 0;
+  let inlineDocumentRevision = 0;
   // Each editor surface gets its own encrypted journal. BrowserOS does not
   // persist user text in localStorage or share one journal between processes.
   const editorDraftSession = crypto.randomUUID().replaceAll("-", "");
   const inlineDraftSession = crypto.randomUUID().replaceAll("-", "");
-  // The selected source journal belongs to the recovered document, not this process.
-  // Keep that identity per path so saving one document never clears another session.
-  const editorRecoveredSessionByPath = new Map<string, string>();
-  const inlineRecoveredSessionByPath = new Map<string, string>();
+  // Recovered source journals remain owned by their original session. Normal
+  // saves update only this surface's journal; catalog deletion is version-bound.
   let editorJournalTimer: ReturnType<typeof setTimeout> | null = null;
   let inlineJournalTimer: ReturnType<typeof setTimeout> | null = null;
   let journalChain: Promise<void> = Promise.resolve();
@@ -133,9 +137,131 @@ export const useFileStore = defineStore("files", () => {
     });
     return task;
   }
+  type RecoverableDraft = {
+    recovery_id: string; path: string; session_id: string; updated_at_ms: number; revision?: string; error?: string;
+  };
+  const recoverableDrafts = ref<RecoverableDraft[]>([]);
+  const recoveryNextCursor = ref<string | null>(null);
+  const recoveryLoading = ref(false);
+  const recoveryActionBusy = ref(false);
+  const recoverySaving = ref(false);
+  const recoveryError = ref("");
+  const recoveryPanelOpen = ref(false);
+  async function loadRecoverableDrafts(more = false) {
+    if (recoveryLoading.value || (more && !recoveryNextCursor.value)) return;
+    recoveryLoading.value = true;
+    recoveryError.value = "";
+    try {
+      const page = await bridge.editorDraftCatalog(more ? recoveryNextCursor.value! : undefined);
+      recoverableDrafts.value = more
+        ? [...recoverableDrafts.value, ...page.items.filter(item =>
+            !recoverableDrafts.value.some(existing => existing.recovery_id === item.recovery_id))]
+        : page.items;
+      recoveryNextCursor.value = page.next_cursor;
+    } catch (error) {
+      recoveryError.value = "无法读取加密草稿目录: " + String(error).slice(0, 100);
+    } finally { recoveryLoading.value = false; }
+  }
+  async function toggleRecoveryPanel() {
+    recoveryPanelOpen.value = !recoveryPanelOpen.value;
+    if (recoveryPanelOpen.value) await loadRecoverableDrafts();
+  }
+  async function openRecoveredDraft(recoveryId: string): Promise<boolean> {
+    if (recoveryActionBusy.value || !canDiscardEditor()) return false;
+    const publish = layout.prepareViewChange("editor", true);
+    if (!publish) return false;
+    const request = ++editorReadRequest;
+    const oldPath = editorFilePath.value, oldContent = fileContent.value;
+    recoveryActionBusy.value = true;
+    let fork: Awaited<ReturnType<typeof bridge.editorDraftRead>> | null = null;
+    let published = false;
+    try {
+      // The native fork is isolated from an original process still autosaving.
+      // Neither this read nor catalog enumeration requires the source to exist.
+      fork = await bridge.editorDraftRead(recoveryId, true);
+      documentPathKey("", fork.path);
+      if (request !== editorReadRequest || editorFilePath.value !== oldPath ||
+          fileContent.value !== oldContent || !publish()) return false;
+      ++editorDocumentRevision;
+      editorFilePath.value = fork.path;
+      editorSavedContent.value = fork.baseline;
+      fileContent.value = fork.content;
+      editorRecoverySession.value = { id: fork.recovery_id, revision: fork.revision };
+      mdPreview.value = false;
+      mdHtml.value = "";
+      editingFile.value = true;
+      layout.fileEditorOpen = true;
+      published = true;
+      return true;
+    } catch (error) {
+      recoveryError.value = "草稿无法恢复，原加密记录仍保留: " + String(error).slice(0, 100);
+      return false;
+    } finally {
+      recoveryActionBusy.value = false;
+      // An unpublished fork has no user edits. Conditional cleanup cannot
+      // remove an updated record or the original source journal.
+      if (fork && !published) {
+        try { await bridge.editorDraftRemove(fork.recovery_id, fork.revision); }
+        catch { recoveryError.value = "未打开的恢复副本仍保留在草稿目录，可稍后处理"; }
+      }
+    }
+  }
+  async function discardRecoverableDraft(recoveryId: string) {
+    if (recoveryActionBusy.value) return;
+    if (editorRecoveryId.value === recoveryId) {
+      recoveryError.value = "请先关闭正在编辑的恢复副本，再删除该记录";
+      return;
+    }
+    const revision = recoverableDrafts.value.find(item => item.recovery_id === recoveryId)?.revision;
+    if (!revision) { recoveryError.value = "请刷新草稿目录后再删除该记录"; return; }
+    if (!confirm("永久删除这份加密草稿？此操作不会删除原文件。")) return;
+    recoveryActionBusy.value = true;
+    try {
+      await journalChain;
+      // Bind deletion to the exact catalog version the user selected. Native
+      // ownership/version checks also allow explicit removal of corrupt records.
+      await bridge.editorDraftRemove(recoveryId, revision);
+      recoverableDrafts.value = recoverableDrafts.value.filter(item => item.recovery_id !== recoveryId);
+      await loadRecoverableDrafts();
+    } catch (error) {
+      recoveryError.value = "草稿未删除: " + String(error).slice(0, 100);
+    } finally { recoveryActionBusy.value = false; }
+  }
+  async function saveRecoveredDraftAs(targetPath: string): Promise<boolean> {
+    const recovery = editorRecoverySession.value;
+    const target = targetPath.trim();
+    if (!recovery || recoverySaving.value) return false;
+    const text = fileContent.value;
+    let release: (() => void) | undefined;
+    recoverySaving.value = true;
+    try {
+      documentPathKey("", target);
+      release = documentOwnership.beginSave("workspace-overlay", target);
+      if (editorJournalTimer) { clearTimeout(editorJournalTimer); editorJournalTimer = null; }
+      await queueJournalStrict(async () => {
+        const saved = await bridge.editorDraftUpdateRecovered(recovery.id, recovery.revision, text);
+        recovery.revision = saved.revision;
+      });
+      // Native no-replace publication rejects an existing destination. It never
+      // reuses the missing source's baseline to authorize another file.
+      const saved = await bridge.editorDraftSaveAs(recovery.id, target, text);
+      if (editorRecoverySession.value === recovery) {
+        ++editorDocumentRevision;
+        editorRecoverySession.value = null;
+        editorFilePath.value = saved.path;
+        editorSavedContent.value = saved.content;
+      }
+      // Keep the encrypted recovery source even after publishing a new file.
+      if (recoveryPanelOpen.value) void loadRecoverableDrafts();
+      return true;
+    } catch (error) {
+      layout.showToast("另存未完成，恢复草稿仍保留；目标须为尚不存在的新文件: " + String(error).slice(0, 80));
+      return false;
+    } finally { release?.(); recoverySaving.value = false; }
+  }
   // Serialize same-process saves and clears; otherwise a late debounced save
   // could recreate a discarded or already-saved draft after successful save.
-  watch([editorFilePath, fileContent, editorSavedContent], () => {
+  watch([editorFilePath, fileContent, editorSavedContent, editorRecoverySession], () => {
     documentOwnership.replace("workspace-overlay", editorFilePath.value
       ? [{path:editorFilePath.value, dirty:editorDirty.value}] : []);
     if (editorJournalTimer) clearTimeout(editorJournalTimer);
@@ -143,8 +269,19 @@ export const useFileStore = defineStore("files", () => {
     const path = editorFilePath.value;
     const content = fileContent.value;
     const baseline = editorSavedContent.value;
+    // Capture the recovery edit session as well as the content. A later file
+    // switch cannot redirect this queued write to another encrypted journal.
+    const recovery = editorRecoverySession.value;
     editorJournalTimer = setTimeout(() => {
-      void queueJournal(() => bridge.editorDraftSave(path, editorDraftSession, baseline, content));
+      editorJournalTimer = null;
+      void queueJournal(async () => {
+        if (recovery) {
+          const saved = await bridge.editorDraftUpdateRecovered(recovery.id, recovery.revision, content);
+          recovery.revision = saved.revision;
+        } else {
+          await bridge.editorDraftSave(path, editorDraftSession, baseline, content);
+        }
+      });
     }, 650);
   }, { flush: "sync" });
   watch([inlineFile, inlineText, inlineSavedText], () => {
@@ -405,8 +542,7 @@ export const useFileStore = defineStore("files", () => {
     if (entry.is_dir) {
       try {
         const publish = layout.prepareDirTab(entry.path);
-        if (!publish || !await enterDir(entry.path, publish.isCurrent)) return;
-        publish();
+        if (!publish || !await enterDir(entry.path, publish)) return;
       } catch { layout.showToast("目录路径无效或目录切换未完成"); }
     } else {
       await openFileInline(entry);
@@ -651,44 +787,51 @@ export const useFileStore = defineStore("files", () => {
   async function openFileInline(entry: DirEntry) {
     if (entry.is_dir) {
       toggleTreeDir(entry.path);
-      openDirPreview(entry);
-      return;
+      return openDirPreview(entry);
     }
     const ext = entry.name.split(".").pop()?.toLowerCase() || "";
     const isMd = ext === "md" || ext === "markdown";
     if (!isMd && !TEXT_EXTS.includes(ext)) {
       layout.showToast(`非文本文件 (${entry.name})，暂不支持预览`);
-      return;
+      return false;
     }
-    if (!canDiscardInline()) return;
+    if (layout.mainView !== "files" && !canDiscardInline()) return false;
+    const publish = layout.prepareViewChange("files", true);
+    if (!publish) return false;
     const request = ++inlineReadRequest;
+    ++previewRequest;
     const oldFile = inlineFile.value;
     const oldText = inlineText.value;
+    const ownsRead = () => request === inlineReadRequest && inlineFile.value === oldFile &&
+      inlineText.value === oldText && publish.isCurrent();
     try {
       documentPathKey("", entry.path);
       const text = await bridge.readFile(entry.path);
+      if (!ownsRead()) return false;
       let recovered: { session_id: string; baseline: string; content: string } | null = null;
       try {
         const drafts = await bridge.editorDraftList(entry.path);
+        if (!ownsRead()) return false;
         if (drafts.length && confirm("检测到未完成的加密行内草稿，是否恢复？")) recovered = drafts[0];
       } catch (error) {
-        layout.showToast("草稿恢复检查失败，请勿删除原有草稿: " + String(error).slice(0, 70));
+        if (ownsRead()) layout.showToast("草稿恢复检查失败，请勿删除原有草稿: " + String(error).slice(0, 70));
       }
-      if (request !== inlineReadRequest || inlineFile.value !== oldFile || inlineText.value !== oldText) return;
+      if (!ownsRead() || !publish()) return false;
+      ++inlineDocumentRevision;
       inlineFile.value = entry.path;
       filePath.value = documentPathParent(entry.path);
       pathInput.value = filePath.value;
       inlineText.value = recovered?.content ?? text;
       inlineSavedText.value = recovered?.baseline ?? text;
-      if (recovered?.session_id) inlineRecoveredSessionByPath.set(entry.path, recovered.session_id);
-      else inlineRecoveredSessionByPath.delete(entry.path);
       inlineIsMd.value = isMd;
-      inlineEdit.value = !isMd; // md 默认预览，其它文本直接编辑
+      inlineEdit.value = !isMd;
       inlineHtml.value = isMd ? renderMd(inlineText.value) : "";
-      const { useWorkspaceStore } = await import("./useWorkspaceStore");
-      useWorkspaceStore().addRecentFile(entry.path, entry.name);
+      previewLoading.value = false;
+      await rememberOpenedFile(entry);
+      return true;
     } catch (e: any) {
-      layout.showToast("读取失败: " + (e?.message ?? e));
+      if (ownsRead()) layout.showToast("读取失败: " + (e?.message ?? e));
+      return false;
     }
   }
   function inlineToggleEdit() {
@@ -698,6 +841,7 @@ export const useFileStore = defineStore("files", () => {
   async function saveInline() {
     if (!inlineFile.value) return;
     const path = inlineFile.value, text = inlineText.value;
+    const documentRevision = inlineDocumentRevision;
     let releaseSave: (() => void) | undefined;
     try {
       releaseSave = documentOwnership.beginSave("workspace-inline", path);
@@ -710,23 +854,28 @@ export const useFileStore = defineStore("files", () => {
     } finally {
       releaseSave?.();
     }
-    const stillSameInlineFile = inlineFile.value === path;
+    const stillSameInlineFile = inlineFile.value === path && inlineDocumentRevision === documentRevision;
     if (stillSameInlineFile) {
       inlineSavedText.value = text;
       if (inlineJournalTimer) { clearTimeout(inlineJournalTimer); inlineJournalTimer = null; }
     }
-    const recoveredSessionId = inlineRecoveredSessionByPath.get(path);
+    // Snapshot before enqueueing; global inlineText can belong to another file
+    // by the time an earlier encrypted journal operation finishes.
+    const currentText = stillSameInlineFile ? inlineText.value : text;
     try {
-      await queueJournalStrict(() => persistDraftAfterSave({
-        path,
-        currentSessionId: inlineDraftSession,
-        recoveredSessionId,
-        savedText: text,
-        currentText: stillSameInlineFile ? inlineText.value : text,
-        save: (filePath, sessionId, baseline, content) => bridge.editorDraftSave(filePath, sessionId, baseline, content),
-        clear: (filePath, sessionId) => bridge.editorDraftClear(filePath, sessionId),
-      }));
-      inlineRecoveredSessionByPath.delete(path);
+      await queueJournalStrict(() => {
+        // A reopened instance of the same path owns the surface journal now.
+        // Older CAS completion must not clear that instance's recovery record.
+        if (inlineFile.value === path && inlineDocumentRevision !== documentRevision) return Promise.resolve();
+        return persistDraftAfterSave({
+          path,
+          currentSessionId: inlineDraftSession,
+          savedText: text,
+          currentText,
+          save: (filePath, sessionId, baseline, content) => bridge.editorDraftSave(filePath, sessionId, baseline, content),
+          clear: (filePath, sessionId) => bridge.editorDraftClear(filePath, sessionId),
+        });
+      });
     } catch (error) {
       layout.showToast("文件已写入，但草稿恢复记录未能安全更新；请勿关闭当前编辑器: " + String(error).slice(0, 70));
       return;
@@ -737,6 +886,7 @@ export const useFileStore = defineStore("files", () => {
   function closeInline() {
     if (!canDiscardInline()) return;
     ++inlineReadRequest;
+    ++inlineDocumentRevision;
     inlineFile.value = "";
   }
 
@@ -799,27 +949,33 @@ export const useFileStore = defineStore("files", () => {
     drainPreviewImageQueue();
   }
   async function openDirPreview(entry: DirEntry) {
-    if (!entry.is_dir) return;
+    if (!entry.is_dir) return false;
     try { documentPathKey("", entry.path); }
-    catch { layout.showToast("目录路径无效或不受支持"); return; }
-    if (!canDiscardInline()) return;
+    catch { layout.showToast("目录路径无效或不受支持"); return false; }
+    if (layout.mainView !== "files" && !canDiscardInline()) return false;
+    const publish = layout.prepareViewChange("files", true);
+    if (!publish) return false;
     ++inlineReadRequest;
     const request = ++previewRequest;
-    clearPreviewImageQueue();
-    previewDir.value = entry.path;
-    previewEntries.value = [];
-    previewImages.value = {};
-    previewImageErrors.value = {};
-    compareImages.value = [];
-    previewError.value = "";
+    const oldFile = inlineFile.value, oldText = inlineText.value;
     previewLoading.value = true;
-    inlineFile.value = "";
     try {
       const entries = await bridge.listDir(entry.path);
-      if (request !== previewRequest) return;
+      if (request !== previewRequest || inlineFile.value !== oldFile ||
+          inlineText.value !== oldText || !publish()) return false;
+      clearPreviewImageQueue();
+      previewDir.value = entry.path;
       previewEntries.value = entries;
+      previewImages.value = {};
+      previewImageErrors.value = {};
+      compareImages.value = [];
+      previewError.value = "";
+      ++inlineDocumentRevision;
+      inlineFile.value = "";
+      return true;
     } catch (e: any) {
-      if (request === previewRequest) previewError.value = e?.message ?? String(e);
+      if (request === previewRequest && publish.isCurrent()) previewError.value = e?.message ?? String(e);
+      return false;
     } finally {
       if (request === previewRequest) previewLoading.value = false;
     }
@@ -852,28 +1008,75 @@ export const useFileStore = defineStore("files", () => {
   async function loadStartDirs() {
     startDirs.value = await bridge.getStartDirs();
   }
-  async function enterDir(path: string, canPublish: () => boolean = () => true): Promise<boolean> {
-    if (!canPublish()) return false;
+  async function initializeDirectory(path: string): Promise<boolean> {
+    if (filePath.value || editorFilePath.value || inlineFile.value || previewDir.value) return false;
+    const isCurrent = layout.captureNavigation();
+    const editorRequest = editorReadRequest, inlineRequest = inlineReadRequest, preview = previewRequest;
+    try {
+      documentPathKey("", path);
+      const entries = await bridge.listDir(path);
+      if (!isCurrent() || editorRequest !== editorReadRequest || inlineRequest !== inlineReadRequest ||
+          preview !== previewRequest || filePath.value || editorFilePath.value || inlineFile.value || previewDir.value) return false;
+      // Startup warms the Files owner only. It never creates a tab or changes
+      // Home/Browser/Terminal selection and cannot replace a user's directory.
+      filePath.value = path;
+      pathInput.value = path;
+      fileEntries.value = entries;
+      treeChildren.set(path, entries);
+      treeErrors.delete(path);
+      treeRoots.value = [{ name: documentPathName(path), path, is_dir: true, size: 0 }];
+      treeExpanded.add(path);
+      return true;
+    } catch (error) {
+      if (isCurrent()) layout.showToast("初始目录未载入，可在文件面板重新打开: " + String(error).slice(0, 80));
+      return false;
+    }
+  }
+  async function enterDir(path: string, navigation?: ViewChangeCommit): Promise<boolean> {
     try { documentPathKey("", path); }
     catch { layout.showToast("目录路径无效或不受支持"); return false; }
-    if (!canDiscardEditor()) return false;
+    const publish = navigation ?? layout.prepareDirTab(path, true);
+    if (!publish || !publish.isCurrent()) return false;
+    // The Layout permit already guarded the visible editor. Directory changes
+    // also replace retained editors that may currently be behind another view.
+    if (layout.mainView !== "editor" && !canDiscardEditor()) return false;
+    if (layout.mainView !== "files" && !canDiscardInline()) return false;
     const request = ++editorReadRequest;
+    ++inlineReadRequest;
+    ++previewRequest;
     const previousEditor = editorFilePath.value;
     const previousContent = fileContent.value;
+    const previousInline = inlineFile.value;
+    const previousInlineText = inlineText.value;
     let entries: DirEntry[];
     try {
       entries = await bridge.listDir(path);
     } catch (error: any) {
-      if (request === editorReadRequest) layout.showToast("无法读取目录: " + (error?.message ?? error));
+      if (request === editorReadRequest && publish.isCurrent()) {
+        layout.showToast("无法读取目录: " + (error?.message ?? error));
+      }
       return false;
     }
-    // A later navigation or an edit while the read was pending owns the view.
-    // Do not discard that newer state when an older directory response arrives.
+    // Commit the visible intent and all directory state in one synchronous
+    // turn. No caller publishes a tab after an already-mutated FileStore.
     if (request !== editorReadRequest || editorFilePath.value !== previousEditor ||
-        fileContent.value !== previousContent || !canPublish()) return false;
+        fileContent.value !== previousContent || inlineFile.value !== previousInline ||
+        inlineText.value !== previousInlineText || !publish()) return false;
+    ++editorDocumentRevision;
+    ++inlineDocumentRevision;
+    editorRecoverySession.value = null;
     editorFilePath.value = "";
     editorSavedContent.value = "";
     fileContent.value = "";
+    inlineFile.value = "";
+    clearPreviewImageQueue();
+    previewDir.value = "";
+    previewEntries.value = [];
+    previewImages.value = {};
+    previewImageErrors.value = {};
+    compareImages.value = [];
+    previewLoading.value = false;
+    previewError.value = "";
     filePath.value = path;
     pathInput.value = path;
     fileEntries.value = entries;
@@ -894,23 +1097,27 @@ export const useFileStore = defineStore("files", () => {
     if (!p) return;
     enterDir(p);
   }
+  async function rememberOpenedFile(entry: DirEntry) {
+    try {
+      const { useWorkspaceStore } = await import("./useWorkspaceStore");
+      useWorkspaceStore().addRecentFile(entry.path, entry.name);
+    } catch {
+      layout.showToast("文件已打开，但最近文件记录未能更新");
+    }
+  }
   async function openFile(entry: DirEntry) {
-    if (entry.is_dir) {
-      enterDir(entry.path);
-      return;
-    }
-    const { useWorkspaceStore } = await import("./useWorkspaceStore");
-    useWorkspaceStore().addRecentFile(entry.path, entry.name);
+    if (entry.is_dir) return enterDir(entry.path);
     const ext = entry.name.split(".").pop()?.toLowerCase() || "";
-    if (ext === "md" || ext === "markdown") {
-      await openMd(entry);
-      return;
-    }
-    if (!TEXT_EXTS.includes(ext)) {
+    const markdown = ext === "md" || ext === "markdown";
+    if (!markdown && !TEXT_EXTS.includes(ext)) {
       layout.showToast(`非文本文件 (${entry.name})，暂不支持预览`);
-      return;
+      return false;
     }
-    return openEditorDocument(entry.path, false, entry.name, entry.size);
+    // Reserve navigation before the first await, including lazy recent-file
+    // imports; a later Home/Browser intent must supersede this file opening.
+    const opened = await openEditorDocument(entry.path, markdown, entry.name, entry.size);
+    if (opened) await rememberOpenedFile(entry);
+    return opened;
   }
   async function openMd(entry: DirEntry) {
     const ext = entry.name.split(".").pop()?.toLowerCase();
@@ -919,71 +1126,81 @@ export const useFileStore = defineStore("files", () => {
   }
   async function openEditorDocument(path: string, markdown: boolean, name: string, size: number) {
     if (!canDiscardEditor()) return false;
+    const publish = layout.prepareViewChange("editor", true);
+    if (!publish) return false;
     const request = ++editorReadRequest;
     const currentPath = editorFilePath.value;
     const currentContent = fileContent.value;
+    const ownsRead = () => request === editorReadRequest && editorFilePath.value === currentPath &&
+      fileContent.value === currentContent && publish.isCurrent();
     try {
       documentPathKey("", path);
       const text = await bridge.readFile(path);
+      if (!ownsRead()) return false;
       let recovered: { session_id: string; baseline: string; content: string } | null = null;
       try {
         const drafts = await bridge.editorDraftList(path);
+        if (!ownsRead()) return false;
         if (drafts.length && confirm("检测到未完成的加密编辑草稿，是否恢复？外部磁盘修改不会被覆盖。")) {
           recovered = drafts[0];
         }
       } catch (error) {
-        layout.showToast("草稿恢复检查失败，请勿删除原有草稿: " + String(error).slice(0, 70));
+        if (ownsRead()) layout.showToast("草稿恢复检查失败，请勿删除原有草稿: " + String(error).slice(0, 70));
       }
-      if (request !== editorReadRequest || editorFilePath.value !== currentPath || fileContent.value !== currentContent) return false;
+      if (!ownsRead() || !publish()) return false;
+      ++editorDocumentRevision;
+      editorRecoverySession.value = null;
       editorFilePath.value = path;
-      if (recovered?.session_id) editorRecoveredSessionByPath.set(path, recovered.session_id);
-      else editorRecoveredSessionByPath.delete(path);
       editorSavedContent.value = recovered?.baseline ?? text;
       fileContent.value = recovered?.content ?? text;
       mdHtml.value = markdown ? renderMd(fileContent.value) : "";
       mdPreview.value = markdown;
       editingFile.value = !markdown;
       layout.fileEditorOpen = true;
-      layout.setView("editor");
-      if (!markdown) layout.showToast(`已加载: ${name} (${size.toLocaleString()} bytes)`);
       return true;
     } catch (error: any) {
-      layout.showToast("读取失败: " + (error?.message ?? error));
+      if (ownsRead()) layout.showToast("读取失败: " + (error?.message ?? error));
       return false;
     }
   }
   async function saveFile() {
+    if (editorRecoverySession.value) {
+      layout.showToast("恢复草稿请使用“另存为新文件”；原文件不会被重新创建或覆盖");
+      return;
+    }
     const path = editorFilePath.value;
     if (!path) return;
     const text = fileContent.value;
     const baseline = editorSavedContent.value;
+    const documentRevision = editorDocumentRevision;
     let releaseSave: (() => void) | undefined;
     try {
       releaseSave = documentOwnership.beginSave("workspace-overlay", path);
       // The native command serializes cooperating BrowserOS processes and
       // validates the baseline inside the same critical section as atomic rename.
       await bridge.writeFileCas(path, baseline, text);
-      const stillSameEditorFile = editorFilePath.value === path;
+      const stillSameEditorFile = editorFilePath.value === path && editorDocumentRevision === documentRevision;
       if (stillSameEditorFile) {
         editorSavedContent.value = text;
         if (editorJournalTimer) { clearTimeout(editorJournalTimer); editorJournalTimer = null; }
       }
-      const recoveredSessionId = editorRecoveredSessionByPath.get(path);
+      const currentText = stillSameEditorFile ? fileContent.value : text;
       try {
-        await queueJournalStrict(() => persistDraftAfterSave({
-          path,
-          currentSessionId: editorDraftSession,
-          recoveredSessionId,
-          savedText: text,
-          currentText: stillSameEditorFile ? fileContent.value : text,
+        await queueJournalStrict(() => {
+          if (editorFilePath.value === path && editorDocumentRevision !== documentRevision) return Promise.resolve();
+          return persistDraftAfterSave({
+            path,
+            currentSessionId: editorDraftSession,
+            savedText: text,
+            currentText,
             save: (filePath, sessionId, baseline, content) => bridge.editorDraftSave(filePath, sessionId, baseline, content),
             clear: (filePath, sessionId) => bridge.editorDraftClear(filePath, sessionId),
-          }));
-          editorRecoveredSessionByPath.delete(path);
-        } catch (journalError) {
-          layout.showToast("文件已写入，但草稿恢复记录未能安全更新；请勿关闭当前编辑器: " + String(journalError).slice(0, 70));
-          return;
-        }
+          });
+        });
+      } catch (journalError) {
+        layout.showToast("文件已写入，但草稿恢复记录未能安全更新；请勿关闭当前编辑器: " + String(journalError).slice(0, 70));
+        return;
+      }
       layout.showToast("已保存: " + documentPathName(path));
     } catch (error: any) {
       layout.showToast(String(error).includes("DOCUMENT_PATH_CHANGED")
@@ -1010,7 +1227,20 @@ export const useFileStore = defineStore("files", () => {
     pathInput,
     fileContent,
     editorFilePath,
+    editorRecoveryId,
     editorDirty,
+    recoverableDrafts,
+    recoveryNextCursor,
+    recoveryLoading,
+    recoveryActionBusy,
+    recoverySaving,
+    recoveryError,
+    recoveryPanelOpen,
+    loadRecoverableDrafts,
+    toggleRecoveryPanel,
+    openRecoveredDraft,
+    discardRecoverableDraft,
+    saveRecoveredDraftAs,
     canDiscardEditor,
     editingFile,
     mdPreview,
@@ -1080,6 +1310,7 @@ export const useFileStore = defineStore("files", () => {
     openDirPreview,
     loadStartDirs,
     enterDir,
+    initializeDirectory,
     goUp,
     goPath,
     openFile,

@@ -86,12 +86,15 @@ async function run() {
   status.value = null;
   errorMsg.value = null;
   pendingChunks.value = [];
+  running.value = true;
   try {
+    const revision = (props.script as CommandSnippet).revision;
+    if (props.kind === "command" && !revision) throw new Error("SNIPPET_REVIEW_REQUIRED: 请刷新命令后重新打开");
     const snap = props.kind === "command"
-      ? await bridge.runCommand(props.script.id, { ...values })
+      ? await bridge.runCommand(props.script.id, { ...values }, revision!)
       : await bridge.runScript(props.script.id, { ...values });
     runId.value = snap.run_id;
-    running.value = true;
+    running.value = snap.status === 'running';
     status.value = snap.status;
     trackScriptRun(snap.run_id, async () => {
       const current = await bridge.scriptStatus(snap.run_id);
@@ -118,6 +121,9 @@ async function cancel() {
         <button class="x" @click="emit('close')">✕</button>
       </div>
 
+      <pre v-if="kind==='command'" class="command-preview">程序类型：{{script.interpreter}}
+参数模板：{{JSON.stringify((script as CommandSnippet).argv)}}
+超时：{{script.timeout_secs||60}} 秒</pre>
       <div v-if="script.params.length" class="params">
         <div v-for="p in script.params" :key="p.name" class="p-row">
           <label :for="`rp-${p.name}`">{{ p.label || p.name }}<em v-if="p.required">*</em></label>

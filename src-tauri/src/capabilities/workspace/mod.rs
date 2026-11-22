@@ -13,7 +13,7 @@
 //!
 //! 设计红线（承 BUG-HUNT B4-1/B4-2 修复）：
 //! - 落盘一律走**唯一**原子写原语 `crate::session::atomic_write`，不新造第二写路径、不 `fs::write` 直接覆盖；
-//! - **解析失败绝不静默清空**：备份为 `<file>.corrupt` + 告警后返回空（保证原字节可人工取回）。
+//! - **解析失败绝不静默清空**：保留原件并按内容摘要备份，返回错误阻止读改写；只有文件不存在才返回空列表。
 //!
 //! `workspace.rs` 迁移自 `src-tauri/src/workspace.rs`
 //! （Native Physical Boundary Matrix Pilot 7，见

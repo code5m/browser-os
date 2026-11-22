@@ -41,6 +41,8 @@ const STOP_POLL_MS: u64 = 50;
 
 /// 同任务正在收尾（stop 已置位）时的跳过原因。
 const SKIP_STOPPING: &str = "stopping";
+static TASK_STORE_ERROR_REPORTED: AtomicBool = AtomicBool::new(false);
+static TASK_HISTORY_ERROR_REPORTED: AtomicBool = AtomicBool::new(false);
 
 // ----------------------------- 时钟（契约 §4.1） -----------------------------
 
@@ -204,6 +206,9 @@ struct InFlight {
     scheduled_at: DateTime<Utc>,
     attempt: u32,
     trigger: TaskRunTrigger,
+    // Freeze terminal evidence before the process table can evict its snapshot.
+    // The entry stays occupied until this exact receipt reaches durable history.
+    receipt: Option<TaskRunRecord>,
 }
 
 /// 等待重试的运行。
@@ -306,8 +311,20 @@ fn run_loop(app: &AppHandle) {
 /// ⚠️ 契约 §7：本函数体内**不得**直接写审计（审计下沉到 `record_*`）。
 fn tick(app: &AppHandle, now: DateTime<Utc>, retries: &mut Vec<PendingRetry>) {
     let _store_guard = tasks::task_store_lock();
+    retain_terminal_receipts(app, now);
     let path = tasks::tasks_file(app);
-    let mut list = tasks::load_tasks_at(&path);
+    let mut list = match tasks::load_tasks_at(&path) {
+        Ok(list) => {
+            TASK_STORE_ERROR_REPORTED.store(false, Ordering::Release);
+            list
+        }
+        Err(_) => {
+            if !TASK_STORE_ERROR_REPORTED.swap(true, Ordering::AcqRel) {
+                eprintln!("[scheduler] TASK_STORE_UNAVAILABLE: scheduling paused; existing bytes preserved");
+            }
+            return;
+        }
+    };
     let mut dirty = false;
 
     // 1) 回收已结束的运行，并挑出需要自动禁用的任务（持久性错误）
@@ -507,8 +524,31 @@ fn mark_in_flight(
             scheduled_at,
             attempt,
             trigger,
+            receipt: None,
         },
     );
+}
+
+fn retain_terminal_receipts(app: &AppHandle, now: DateTime<Utc>) {
+    let table = Arc::clone(&app.state::<AppState>().script_runs);
+    let mut guard = in_flight().lock().unwrap_or_else(|p| p.into_inner());
+    for (task_id, flight) in guard.iter_mut() {
+        if flight.receipt.is_some() { continue; }
+        let snapshot = table.snapshot(&flight.run_id);
+        if snapshot.as_ref().is_some_and(|run| !run.status.is_terminal()) { continue; }
+        flight.receipt = Some(TaskRunRecord {
+            task_id: task_id.clone(),
+            run_id: flight.run_id.clone(),
+            trigger: flight.trigger,
+            scheduled_at: flight.scheduled_at,
+            attempt: flight.attempt,
+            started_at: snapshot.as_ref().map(|run| run.started_at).unwrap_or(flight.scheduled_at),
+            finished_at: Some(now),
+            status: snapshot.as_ref().map(|run| run.status).unwrap_or(RunStatus::Failed),
+            exit_code: snapshot.as_ref().and_then(|run| run.exit_code),
+            error_code: snapshot.as_ref().and_then(|run| run.error.clone()),
+        });
+    }
 }
 
 /// 回收已结束的运行：写 `task-runs.json` + 审计，并安排重试。
@@ -519,51 +559,27 @@ fn reap_finished(
     retries: &mut Vec<PendingRetry>,
     now: DateTime<Utc>,
 ) -> Vec<String> {
-    let table = Arc::clone(&app.state::<AppState>().script_runs);
-    let mut finished: Vec<(String, InFlight, Option<RunSnapshot>)> = Vec::new();
-    {
+    let finished: Vec<(String, InFlight, TaskRunRecord)> = {
         let guard = in_flight().lock().unwrap_or_else(|p| p.into_inner());
-        for (task_id, flight) in guard.iter() {
-            let snapshot = table.snapshot(&flight.run_id);
-            let done = match &snapshot {
-                Some(s) => s.status.is_terminal(),
-                // 进程表按容量淘汰终态记录：查不到即视为已结束
-                None => true,
-            };
-            if done {
-                finished.push((task_id.clone(), flight.clone(), snapshot));
-            }
-        }
-    }
+        guard.iter().filter_map(|(task_id, flight)| flight.receipt.as_ref()
+            .map(|record| (task_id.clone(), flight.clone(), record.clone()))).collect()
+    };
     let mut to_disable = Vec::new();
-    for (task_id, flight, snapshot) in finished {
+    for (task_id, flight, record) in finished {
+        let status = record.status;
+        let error_code = record.error_code.clone();
+        if tasks::append_task_run(&tasks::task_runs_file(app), &record).is_err() {
+            if !TASK_HISTORY_ERROR_REPORTED.swap(true, Ordering::AcqRel) {
+                eprintln!("[scheduler] TASK_HISTORY_UNAVAILABLE: terminal receipts retained for retry");
+            }
+            continue;
+        }
+        TASK_HISTORY_ERROR_REPORTED.store(false, Ordering::Release);
         let mut guard = in_flight().lock().unwrap_or_else(|p| p.into_inner());
-        guard.remove(&task_id);
+        if guard.get(&task_id).is_some_and(|current| current.run_id == flight.run_id) {
+            guard.remove(&task_id);
+        }
         drop(guard);
-
-        let status = snapshot
-            .as_ref()
-            .map(|s| s.status)
-            .unwrap_or(RunStatus::Failed);
-        let exit_code = snapshot.as_ref().and_then(|s| s.exit_code);
-        let error_code = snapshot.as_ref().and_then(|s| s.error.clone());
-        let started_at = snapshot
-            .as_ref()
-            .map(|s| s.started_at)
-            .unwrap_or(flight.scheduled_at);
-        let record = TaskRunRecord {
-            task_id: task_id.clone(),
-            run_id: flight.run_id.clone(),
-            trigger: flight.trigger,
-            scheduled_at: flight.scheduled_at,
-            attempt: flight.attempt,
-            started_at,
-            finished_at: Some(now),
-            status,
-            exit_code,
-            error_code: error_code.clone(),
-        };
-        let _ = tasks::append_task_run(&tasks::task_runs_file(app), &record);
 
         // 重试判定（契约 §5.2 / §5.3）
         let failed = matches!(status, RunStatus::Failed | RunStatus::Timeout);
@@ -655,8 +671,11 @@ fn fire(
 
     let result = match task.kind {
         crate::domain::TaskKind::Script => {
-            let script = match crate::workspace::load_scripts(app)
-                .into_iter()
+            let scripts = match crate::workspace::load_scripts(app) {
+                Ok(scripts) => scripts,
+                Err(_) => return FireOutcome::Retryable("TASK_STORE_UNAVAILABLE"),
+            };
+            let script = match scripts.into_iter()
                 .find(|s| s.id == task.target_id)
             {
                 Some(s) => s,
@@ -691,8 +710,11 @@ fn fire(
             )
         }
         crate::domain::TaskKind::Command => {
-            let snippet = match crate::workspace::load_snippets(app)
-                .into_iter()
+            let snippets = match crate::workspace::load_snippets(app) {
+                Ok(snippets) => snippets,
+                Err(_) => return FireOutcome::Retryable("TASK_STORE_UNAVAILABLE"),
+            };
+            let snippet = match snippets.into_iter()
                 .find(|s| s.id == task.target_id)
             {
                 Some(s) => s,
@@ -763,10 +785,13 @@ fn fire(
 /// **不推进** `last_fired_at` / `next_run_at`（契约 §5.4：不干扰计划）。
 pub fn fire_now(app: &AppHandle, id: &str) -> Result<RunSnapshot, String> {
     crate::images::validate_id(id).map_err(|_| tasks::TASK_NOT_FOUND.to_string())?;
-    let task = tasks::load_tasks_at(&tasks::tasks_file(app))
+    let task = tasks::load_tasks_at(&tasks::tasks_file(app))?
         .into_iter()
         .find(|t| t.id == id)
         .ok_or_else(|| tasks::TASK_NOT_FOUND.to_string())?;
+    if is_occupied(id) {
+        return Err(tasks::TASK_ALREADY_RUNNING.to_string());
+    }
     let now = SystemClock.now_utc();
     match fire(app, &task, now, TaskRunTrigger::Manual, 1) {
         FireOutcome::Started(run_id) => app
@@ -791,13 +816,9 @@ pub fn cancel_in_flight(app: &AppHandle, id: &str) -> usize {
     };
     let table = Arc::clone(&app.state::<AppState>().script_runs);
     let ok = table.cancel(&run_id).is_ok();
-    if ok {
-        let mut guard = in_flight().lock().unwrap_or_else(|p| p.into_inner());
-        guard.remove(id);
-        1
-    } else {
-        0
-    }
+    // Cancellation requests do not erase ownership. Reaping records the
+    // eventual terminal outcome durably before retiring this in-flight entry.
+    if ok { 1 } else { 0 }
 }
 
 // ----------------------------- 审计（契约 §7，低频动作级） -----------------------------

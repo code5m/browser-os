@@ -201,7 +201,7 @@ onMounted(async () => {
   await fs.loadStartDirs();
   if (fs.startDirs.length > 0) {
     const wsDir = fs.startDirs.find((d) => d.name.includes("成果工作区"));
-    fs.enterDir(wsDir ? wsDir.path : fs.startDirs[0].path);
+    void fs.initializeDirectory(wsDir ? wsDir.path : fs.startDirs[0].path);
   }
 
   bridge.onSyncCompleted((j) => rp.onSyncCompleted(j));

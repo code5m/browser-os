@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
-import type { PermissionPreview, ValidationReport } from "../../types";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import type { CommandSnippet, PermissionPreview, ValidationReport } from "../../types";
 import { createStudioDraft, parseStudioList, saveStudioList, studioKey, studioProgress, validateStudioDraft, type StudioDraft, type StudioKind } from "../../utils/studioDrafts";
-const props = defineProps<{ kind: StudioKind; validateDefinition: (text: string) => Promise<void>; validation: ValidationReport | null; preview: PermissionPreview | null; backendReady: boolean; busy: boolean; runSafeReference?: (text:string)=>Promise<string>; localChat?: (model:string,message:string,system:string)=>Promise<{content:string;model:string;provider:string}>; legacyAgentChat?: (definition:string,message:string,requestId:string)=>Promise<{content:string;model:string;agent_id:string;tools_executed:boolean}>; cancelLegacyChat?: (requestId:string)=>Promise<{cancelled:boolean}>; legacyAgentList?: ()=>Promise<{id:string;version:string;display_name:string}[]>; legacyAgentInstall?: (definition:string)=>Promise<{installed:boolean;id:string;changed:boolean}>; legacyAgentUninstall?: (id:string)=>Promise<{removed:boolean;id:string}>; legacyAgentRun?: (id:string,message:string,requestId:string)=>Promise<{content:string;model:string;agent_id:string;tools_executed:boolean}> }>();
+const props = defineProps<{ kind: StudioKind; validateDefinition: (text: string) => Promise<void>; validation: ValidationReport | null; preview: PermissionPreview | null; backendReady: boolean; busy: boolean; runSafeReference?: (text:string,expectedRevision?:string)=>Promise<string>; previewCommandReference?: (text:string)=>Promise<CommandSnippet|null>; localChat?: (model:string,message:string,system:string)=>Promise<{content:string;model:string;provider:string}>; legacyAgentChat?: (definition:string,message:string,requestId:string)=>Promise<{content:string;model:string;agent_id:string;tools_executed:boolean}>; cancelLegacyChat?: (requestId:string)=>Promise<{cancelled:boolean}>; legacyAgentList?: ()=>Promise<{id:string;version:string;display_name:string}[]>; legacyAgentInstall?: (definition:string)=>Promise<{installed:boolean;id:string;changed:boolean}>; legacyAgentUninstall?: (id:string)=>Promise<{removed:boolean;id:string}>; legacyAgentRun?: (id:string,message:string,requestId:string)=>Promise<{content:string;model:string;agent_id:string;tools_executed:boolean}> }>();
 const records = ref<StudioDraft[]>([]);
 const chosen = ref<string | null>(null);
 const search = ref("");
@@ -168,15 +168,27 @@ async function verify(){
 }
 const runningId=ref("");
 const runFeedback=ref("");
+const referenceBusy=ref(false);
+let disposed=false;
+onBeforeUnmount(()=>{disposed=true;});
 async function runReference(){
-  if(!props.runSafeReference || !current.value || verifiedText.value!==definitionText.value || !props.validation?.valid) return;
-  if(!window.confirm("确认执行现有已启用脚本/命令？这会在本机真实运行；运行时安全边界由现有脚本执行器负责。")) return;
-  runFeedback.value="正在启动已存在的脚本或命令…";
+  if(!props.runSafeReference || !current.value || referenceBusy.value || verifiedText.value!==definitionText.value || !props.validation?.valid) return;
+  const definition=definitionText.value, owner=current.value.id;
+  referenceBusy.value=true;
   try {
-    const id=await props.runSafeReference(definitionText.value);
+    const command=props.previewCommandReference ? await props.previewCommandReference(definition) : null;
+    if(disposed||current.value?.id!==owner||definitionText.value!==definition||verifiedText.value!==definition) return;
+    const description=command
+      ? `确认执行命令「${command.name}」？\n程序类型：${command.interpreter}\n参数模板：${JSON.stringify(command.argv)}\n超时：${command.timeout_secs||60} 秒\n${command.dangerous?'此命令被标记为危险操作。\n':''}命令定义变化时本次执行会拒绝，需要重新审核。`
+      : "确认执行现有已启用脚本？这会在本机真实运行；运行时安全边界由现有脚本执行器负责。";
+    if(!window.confirm(description))return;
+    runFeedback.value="正在启动已审核的脚本或命令…";
+    const id=await props.runSafeReference(definition,command?.revision);
+    if(disposed)return;
     runningId.value=id;
     runFeedback.value="已提交真实执行，运行 ID："+id+"。请在脚本/命令面板查看输出和状态。";
-  } catch(e) { runFeedback.value="执行拒绝或失败："+String(e); }
+  } catch(e) { if(!disposed)runFeedback.value="执行拒绝或失败："+String(e); }
+  finally { referenceBusy.value=false; }
 }
 function saveDefinition(){
   if(!current.value||!props.validation?.valid||verifiedText.value!==definitionText.value){notice.value="请先通过原生校验，才允许保存定义";return;}
@@ -243,7 +255,7 @@ async function importFile(e:Event){
           </div>
           <div v-else-if="activeTab==='definition'" class="studio-content">
             <div class="section-intro"><strong>原生定义校验</strong><span>解析与权限预览可用</span></div><p class="help">粘贴符合 BrowserOS 契约的 JSON 定义。这里只校验，不会安装或执行。</p><textarea v-model="definitionText" class="json-editor" rows="14" spellcheck="false" placeholder="粘贴 JSON 定义（不包含任何口令或密钥）"></textarea>
-            <div class="action-row"><button class="primary" :disabled="!definitionText.trim()||busy" @click="verify">验证定义</button><button :disabled="!validation?.valid||verifiedText!==definitionText||busy" @click="saveDefinition">保存已验证定义</button><button v-if="runSafeReference" :disabled="!validation?.valid||verifiedText!==definitionText||busy" @click="runReference">▶ 运行安全引用</button></div>
+            <div class="action-row"><button class="primary" :disabled="!definitionText.trim()||busy" @click="verify">验证定义</button><button :disabled="!validation?.valid||verifiedText!==definitionText||busy" @click="saveDefinition">保存已验证定义</button><button v-if="runSafeReference" :disabled="!validation?.valid||verifiedText!==definitionText||busy||referenceBusy" @click="runReference">▶ 运行安全引用</button></div>
             <p v-if="runFeedback" class="help" role="status">{{runFeedback}}</p><div v-if="validation" class="result" :class="{invalid:!validation.valid}">{{validation.valid?'✓ 定义通过原生验证':'定义尚未通过验证'}}<ul v-if="!validation.valid"><li v-for="(err,i) in validation.errors" :key="i">{{err}}</li></ul></div>
           </div>
           <div v-else-if="activeTab==='chat'" class="studio-content">

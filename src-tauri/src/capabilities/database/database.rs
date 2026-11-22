@@ -1903,16 +1903,18 @@ mod tests {
     fn mysql_auto_tls_readonly_e2e() {
         let profile_path = std::env::var("BROWSEROS_MYSQL_READONLY_PROFILE_PATH").unwrap();
         let profile_id = std::env::var("BROWSEROS_MYSQL_READONLY_PROFILE_ID").unwrap();
-        let cfg =
-            crate::capabilities::database::profiles::read_file(std::path::Path::new(&profile_path))
+        let record =
+            crate::capabilities::database::profiles::read_records(std::path::Path::new(&profile_path))
                 .unwrap()
                 .into_iter()
-                .find(|item| item.id == profile_id)
+                .find(|item| item.config.id == profile_id)
                 .expect("read-only profile must exist");
+        let reference = record.reference().unwrap();
+        let cfg = record.config;
         assert_eq!(cfg.kind, SupportedDb::MySql);
         assert_eq!(cfg.ssl_mode, DbSslMode::Prefer);
         assert!(!cfg.allow_write);
-        let password = crate::keyring_store::KeyringStore::get_token(&credential_key(&cfg.id))
+        let password = crate::keyring_store::KeyringStore::get_token(&reference)
             .expect("profile credential must exist in OS keyring");
         for attempt in 0..6 {
             let mut pool = DbPool::connect(&cfg, Some(&password), &[])

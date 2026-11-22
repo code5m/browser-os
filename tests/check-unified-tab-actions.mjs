@@ -46,7 +46,7 @@ function fixture() {
     }, { filename: path });
     return exports;
   }
-  let browser;
+  let browser, lifecycle;
   const layoutModule = owner("src/stores/useLayoutStore.ts", {
     "../application/documentPaths.mjs": documentPaths,
     "../capabilities/browser/public": { useBrowserStore: () => browser },
@@ -70,7 +70,7 @@ function fixture() {
     "../../../stores/useLayoutStore": { useLayoutStore: () => layout },
     "../model/nativeTabLoadFailure.mjs": { classifyNativeTabLoadFailure: () => null, recentNativeTabLoadFailure: () => null },
     "../../../composables/recentsNav": { recordRecentUrl() {} },
-    "../lifecycle": { registerBrowserLifecycleBinding() {} },
+    "../lifecycle": { registerBrowserLifecycleBinding(binding) { lifecycle = binding; } },
   });
   browser = browserModule.useBrowserStore();
   const resources = () => projectTabResources(browser.tabs, layout.modTabs, layout.mainView, browser.activeTabId, layout.activeModTab);
@@ -79,7 +79,7 @@ function fixture() {
     activate: (tab) => tab.kind === "web" ? browser.tabSwitch(tab.id) : layout.activateModTab(tab.id),
     close: (tab) => tab.kind === "web" ? browser.tabClose(tab.id) : layout.closeModTab(tab.id),
   });
-  return { layout, browser, native, calls, actions, resources };
+  return { layout, browser, native, calls, actions, resources, lifecycle };
 }
 
 {
@@ -249,4 +249,40 @@ function fixture() {
   assert.equal(layout.mainView, "home");
 }
 
+{
+  const { browser, native, lifecycle } = fixture();
+  browser.tabs.push({ id: "closed", url: "https://closed.test" }, { id: "retry", url: "https://retry.test" });
+  browser.activeTabId = "closed";
+  native.tabClose = async (id) => { if (id === "retry") throw Error("native close unavailable"); };
+  await assert.rejects(lifecycle.deactivate(), /BROWSER_CLEANUP_FAILED/);
+  assert.deepEqual(Array.from(browser.tabs, tab => tab.id), ["retry"]);
+  assert.equal(browser.activeTabId, "retry");
+  native.tabClose = async () => {};
+  await lifecycle.deactivate();
+  assert.equal(browser.tabs.length, 0, "a failed cleanup remains retryable");
+}
+{
+  const { layout, browser, native } = fixture();
+  browser.tabs.push({ id: "placeholder", url: "about:blank" });
+  browser.activeTabId = "placeholder";
+  layout.activateBrowser();
+  const placeholder = browser.activeTabId;
+  layout.openDirTab("/work");
+  assert.equal(await browser.consumeActiveBlankTab(placeholder), true,
+    "a placeholder is consumed only after the directory has published");
+  browser.tabs.push({ id: "changed", url: "https://occupied.test" });
+  assert.equal(await browser.consumeActiveBlankTab("changed"), false,
+    "an occupied page is never consumed as a stale placeholder");
+}
+{
+  const { layout, browser, native } = fixture();
+  browser.tabs.push({ id: "queued", url: "https://queued.test" });
+  let activations = 0;
+  native.tabActivate = async () => { activations++; };
+  const switching = browser.tabSwitch("queued");
+  layout.activateHome();
+  assert.equal(await switching, false);
+  assert.equal(activations, 0, "navigation is reserved before entering the native mutation queue");
+  assert.equal(layout.mainView, "home");
+}
 console.log("UNIFIED_TAB_ACTIONS=PASS");

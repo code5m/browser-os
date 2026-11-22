@@ -70,14 +70,15 @@ export const useBrowserStore = defineStore("browser", () => {
   }
 
   async function tabNew(target?: string): Promise<boolean> {
+    if (!isBrowserResourceAllowed()) {
+      bridge.debugLog("tabNew refused: browser capability not ACTIVE");
+      return false;
+    }
+    const publish = layout.prepareViewChange("browser");
+    if (!publish) return false;
+    const u = target === undefined ? "about:blank" : target.trim() || "about:blank";
     return mutateTabs(async () => {
-      if (!isBrowserResourceAllowed()) {
-        bridge.debugLog("tabNew refused: browser capability not ACTIVE");
-        return false;
-      }
-      const u = target === undefined ? "about:blank" : target.trim() || "about:blank";
-      const publish = layout.prepareViewChange("browser");
-      if (!publish) return false;
+      if (!isBrowserResourceAllowed() || !publish.isCurrent()) return false;
       let t: TabInfo;
       try {
         t = await bridge.tabNew(u);
@@ -86,7 +87,13 @@ export const useBrowserStore = defineStore("browser", () => {
         throw error;
       }
       if (!isBrowserResourceAllowed()) {
-        await bridge.tabClose(t.id);
+        try { await bridge.tabClose(t.id); }
+        catch {
+          // A native creation that loses activation still has an Owner until
+          // cleanup succeeds. Deactivation/retry must be able to find its id.
+          tabs.push(t);
+          throw new Error(`BROWSER_CLEANUP_FAILED:${t.id}`);
+        }
         return false;
       }
       tabs.push(t);
@@ -109,27 +116,27 @@ export const useBrowserStore = defineStore("browser", () => {
   }
   // A fresh about:blank tab is a disposable placeholder when the user chooses
   // a different surface (directory/Grid). Never discard an occupied web page.
-  let blankTabReplacement: Promise<boolean> | null = null;
-  async function consumeActiveBlankTab(): Promise<boolean> {
-    if (blankTabReplacement) return blankTabReplacement;
-    if (layout.mainView !== "browser" || activeTab.value?.url !== "about:blank") return false;
-    const id = activeTabId.value;
-    blankTabReplacement = (async () => {
-      return tabClose(id);
-    })();
-    try {
-      return await blankTabReplacement;
-    } finally {
-      blankTabReplacement = null;
-    }
+  const blankTabReplacements = new Map<string, Promise<boolean>>();
+  async function consumeActiveBlankTab(expectedId?: string): Promise<boolean> {
+    const id = expectedId ?? (layout.mainView === "browser" ? activeTabId.value : "");
+    if (!id || tabs.find(tab => tab.id === id)?.url !== "about:blank") return false;
+    const existing = blankTabReplacements.get(id);
+    if (existing) return existing;
+    // Directory navigation captures its disposable placeholder before awaiting
+    // I/O, but consumes it only after committing the successful new view.
+    const pending = closeTabNow(id, true);
+    blankTabReplacements.set(id, pending);
+    try { return await pending; }
+    finally { if (blankTabReplacements.get(id) === pending) blankTabReplacements.delete(id); }
   }
 
   async function tabSwitch(id: string): Promise<boolean> {
+    if (!tabs.some(tab => tab.id === id) || !isBrowserResourceAllowed()) return false;
+    const publish = layout.prepareViewChange("browser");
+    if (!publish) return false;
     return mutateTabs(async () => {
       const t = tabs.find((x) => x.id === id);
-      if (!t || !isBrowserResourceAllowed()) return false;
-      const publish = layout.prepareViewChange("browser");
-      if (!publish) return false;
+      if (!t || !isBrowserResourceAllowed() || !publish.isCurrent()) return false;
       try {
         await bridge.tabActivate(id);
       } catch (error) {
@@ -162,9 +169,10 @@ export const useBrowserStore = defineStore("browser", () => {
   }
   // 真正执行关闭：先 recordClose 写入 recentlyClosed 内存栈，再完成 WebView 生命周期关闭。
   // 普通 Tab 关闭（tabClose）与手动恢复入口均复用此路径，无可绕过。
-  async function closeTabNow(id: string): Promise<boolean> {
+  async function closeTabNow(id: string, onlyBlank = false): Promise<boolean> {
     return mutateTabs(async () => {
-      if (!tabs.some((t) => t.id === id)) return false;
+      const target = tabs.find((t) => t.id === id);
+      if (!target || (onlyBlank && target.url !== "about:blank")) return false;
       recordClose(id);
       await bridge.tabClose(id);
       nativeTabFailures.delete(id);
@@ -354,10 +362,13 @@ export const useBrowserStore = defineStore("browser", () => {
     });
   }
 
-  async function openBrowser() {
-    const target = url.value.trim() || "https://www.baidu.com";
-    if (await tabNew(target)) recordRecentUrl(target);
+  async function openBrowserAt(requestedUrl: string): Promise<boolean> {
+    const target = requestedUrl.trim() || "https://www.baidu.com";
+    const opened = await tabNew(target);
+    if (opened) recordRecentUrl(target);
+    return opened;
   }
+  async function openBrowser(): Promise<boolean> { return openBrowserAt(url.value); }
 
   // 定位调度器从 composable 注入（避免 store 直接依赖 DOM）
   let schedulePosition: () => void = () => {};
@@ -427,12 +438,31 @@ export const useBrowserStore = defineStore("browser", () => {
     deactivate: async () => {
       if (layout.mainView === "browser") layout.setView("home");
       hideAllWebviews();
-      await Promise.all(tabs.map(({ id }) => bridge.tabClose(id).catch(() => {})));
-      tabs.splice(0);
-      nativeTabFailures.clear();
-      activeTabId.value = "";
-      resources.value = null;
-      url.value = "";
+      await mutateTabs(async () => {
+        const closing = tabs.map(({ id }) => id);
+        const results = await Promise.allSettled(closing.map(id => bridge.tabClose(id)));
+        const failed: string[] = [];
+        for (let index = 0; index < results.length; index++) {
+          const id = closing[index];
+          if (results[index].status === "rejected") {
+            failed.push(id);
+            continue;
+          }
+          const row = tabs.findIndex(tab => tab.id === id);
+          if (row >= 0) tabs.splice(row, 1);
+          nativeTabFailures.delete(id);
+        }
+        if (!tabs.some(tab => tab.id === activeTabId.value)) activeTabId.value = tabs[0]?.id ?? "";
+        if (failed.length) {
+          // Keep both native failure metadata and logical records for retry.
+          // Runtime must not issue a successful Owner cleanup receipt.
+          throw new Error(`BROWSER_CLEANUP_FAILED:${failed.join(",")}`);
+        }
+        nativeTabFailures.clear();
+        activeTabId.value = "";
+        resources.value = null;
+        url.value = "";
+      });
     },
   });
 
@@ -470,6 +500,7 @@ export const useBrowserStore = defineStore("browser", () => {
     gotoAI,
     toggleAiNav,
     openBrowser,
+    openBrowserAt,
     navigateCurrent,
     bindPositionScheduler,
     relocate,

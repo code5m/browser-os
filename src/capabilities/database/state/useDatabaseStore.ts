@@ -389,6 +389,7 @@ export const useDatabaseStore = defineStore("database", () => {
       result.value = null;
       await refreshConnections();
       await refreshSchema();
+      if (res.credential_cleanup_pending) error.value='连接已保存并验证；旧凭据清理尚未完成，后续连接管理操作会重试。';
       return !!activeId.value;
     } catch (e) {
       const current = databaseLifecycleSnapshot();
@@ -434,10 +435,13 @@ export const useDatabaseStore = defineStore("database", () => {
       const bound=documents.value.filter(d=>d.connId===id);
       const released=await Promise.all(bound.map(doc=>releaseSession(doc)));
       if(released.some(ok=>!ok)) throw new Error('仍有数据库会话未释放，不能删除连接');
-      await bridge.dbDisconnect(id);
+      let cleanupPending=false;
+      try { await bridge.dbDisconnect(id); }
+      catch (error) { if(String(error).includes('DB_DISCONNECTED_CREDENTIAL_CLEANUP_PENDING')) cleanupPending=true; else throw error; }
       for (const doc of documents.value) if (doc.connId === id) { doc.connId = null; doc.pending = null; }
       schema.value = [];
       resetForm();
+      if(cleanupPending) error.value='连接已删除；系统密钥库中的旧凭据清理待重试。';
     } catch (e) {
       const current = databaseLifecycleSnapshot();
       if (current.active && current.generation === lifecycle.generation) error.value = describeError(e);

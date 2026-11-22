@@ -308,12 +308,9 @@ pub fn save_plugins_at(path: &Path, list: &[PluginRecord]) -> Result<(), String>
     crate::session::atomic_write(path, &content)
 }
 
-/// 读取登记簿：缺失 / 损坏 → 空列表（fail-closed，不猜内容）。
-pub fn load_plugins_at(path: &Path) -> Vec<PluginRecord> {
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|c| serde_json::from_str::<Vec<PluginRecord>>(&c).ok())
-        .unwrap_or_default()
+/// Only a missing registry is empty. Corruption blocks metadata mutations.
+pub fn load_plugins_at(path: &Path) -> Result<Vec<PluginRecord>, String> {
+    crate::workspace::load_json_list_at(path, "插件登记簿")
 }
 
 /// 受信任公钥落盘（同 `atomic_write`）。
@@ -322,12 +319,9 @@ pub fn save_trusted_keys_at(path: &Path, list: &[TrustedKeyRecord]) -> Result<()
     crate::session::atomic_write(path, &content)
 }
 
-/// 读取受信任公钥：缺失 / 损坏 → 空列表。
-pub fn load_trusted_keys_at(path: &Path) -> Vec<TrustedKeyRecord> {
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|c| serde_json::from_str::<Vec<TrustedKeyRecord>>(&c).ok())
-        .unwrap_or_default()
+/// Never turn an unreadable trust registry into an empty replacement.
+pub fn load_trusted_keys_at(path: &Path) -> Result<Vec<TrustedKeyRecord>, String> {
+    crate::workspace::load_json_list_at(path, "插件受信任公钥")
 }
 
 /// 稳定错误码：审计**只记码**，不记消息正文（防凭据 / 路径 / 签名回显）。
@@ -970,7 +964,7 @@ mod tests {
         let path = temp_path("registry");
         let list = vec![record_with("com.example.myplugin", PluginState::Enabled)];
         save_plugins_at(&path, &list).unwrap();
-        let back = load_plugins_at(&path);
+        let back = load_plugins_at(&path).unwrap();
         assert_eq!(back.len(), 1);
         assert_eq!(back[0].id, "com.example.myplugin");
         assert!(
@@ -981,14 +975,16 @@ mod tests {
     }
 
     #[test]
-    fn corrupt_registry_recovers_to_empty() {
+    fn corrupt_registry_is_preserved_and_blocks_mutations() {
         let path = temp_path("corrupt");
         std::fs::write(&path, "{ not json").unwrap();
-        assert!(
-            load_plugins_at(&path).is_empty(),
-            "损坏登记簿须 fail-closed 归空"
-        );
-        assert!(load_trusted_keys_at(&path).is_empty());
+        assert!(load_plugins_at(&path).is_err(), "损坏登记簿不得被伪装成空列表");
+        assert!(load_trusted_keys_at(&path).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"{ not json");
+        std::fs::write(&path, [0xff, 0xfe]).unwrap();
+        assert!(load_plugins_at(&path).is_err());
+        assert!(load_trusted_keys_at(&path).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), [0xff, 0xfe]);
         let _ = std::fs::remove_file(&path);
     }
 
@@ -998,7 +994,7 @@ mod tests {
         let mut keys = Vec::new();
         add_trusted_key(&mut keys, "key-1", "PUB-A", "note", "now").unwrap();
         save_trusted_keys_at(&path, &keys).unwrap();
-        let back = load_trusted_keys_at(&path);
+        let back = load_trusted_keys_at(&path).unwrap();
         assert_eq!(back.len(), 1);
         assert_eq!(back[0].fingerprint, keys[0].fingerprint);
         let _ = std::fs::remove_file(&path);

@@ -15,6 +15,13 @@ use std::time::{Duration, Instant};
 const LIMIT: u64 = 128 * 1024;
 const CONFIG_LIMIT: usize = 256 * 1024;
 const PAYLOAD_LIMIT: usize = 8 * 1024 * 1024;
+fn admission_error(error: String) -> String {
+    match error.as_str() {
+        "SANDBOX_CAPACITY_BUSY" => "MCP_RESOURCE_CAPACITY".into(),
+        "SANDBOX_ADMISSION_CLOSED" => "MCP_ADMISSION_CLOSED".into(),
+        _ => error,
+    }
+}
 
 fn sensitive(text: &str) -> bool {
     let lower = text.to_ascii_lowercase();
@@ -169,6 +176,7 @@ fn resolved_config(root: &Path, storage: &Path, request: &Value) -> Result<Value
             .into_iter()
             .find(|server| server.0 == id)
             .ok_or("MCP_SERVER_NOT_FOUND")?;
+        if !item.is_object() { return Err("MCP_CONFIG_INVALID".into()); }
         if item.get("url").is_some() {
             return Err("MCP_HTTP_NOT_IMPLEMENTED".into());
         }
@@ -185,12 +193,18 @@ fn resolved_config(root: &Path, storage: &Path, request: &Value) -> Result<Value
         if source.starts_with(root) && item.get("env").is_some() {
             return Err("MCP_PROJECT_ENV_REQUIRES_KEYRING_REFS".into());
         }
+        item["_browseros_source"] = json!(source);
         Ok(item)
     } else {
-        let item = request["server"].clone();
+        let mut item = request["server"].clone();
+        if !item.is_object() { return Err("MCP_CONFIG_INVALID".into()); }
         if item.get("env").is_some() || item.get("environment").is_some() {
             return Err("MCP_PLAINTEXT_ENV_REJECTED".into());
         }
+        if let Some(command) = item["command"].as_str() {
+            item["command"] = json!(resolve_executable(command)?);
+        }
+        item["_browseros_source"] = json!("inline");
         Ok(item)
     }
 }
@@ -210,7 +224,14 @@ impl Drop for Session {
     }
 }
 impl Session {
+    #[cfg(test)]
     fn start(root: &Path, config: &Value, seconds: u64) -> Result<Self, String> {
+        Self::start_with_credentials(root, config, seconds, std::collections::BTreeMap::new())
+    }
+    fn start_with_credentials(
+        root: &Path, config: &Value, seconds: u64,
+        mut credentials: std::collections::BTreeMap<String, String>,
+    ) -> Result<Self, String> {
         let command = config["command"].as_str().ok_or("MCP_COMMAND_REQUIRED")?;
         let executable = resolve_executable(command)?;
         // Reject a known wrapper even if the path does not exist on a
@@ -234,7 +255,7 @@ impl Session {
         {
             return Err("MCP_ARGS_INVALID".into());
         }
-        let profile = SandboxProfile::create()?;
+        let profile = SandboxProfile::create().map_err(admission_error)?;
         let state = profile.state_dir()?;
         let payload = state.join("payload");
         fs::create_dir(&payload).map_err(|_| "MCP_PAYLOAD_CREATE")?;
@@ -297,8 +318,8 @@ impl Session {
                     .as_str()
                     .filter(|value| value.starts_with("ai:") && value.len() < 180)
                     .ok_or("MCP_CREDENTIAL_REF_INVALID")?;
-                let value = crate::keyring_store::KeyringStore::get_token(reference)
-                    .map_err(|_| "MCP_CREDENTIAL_MISSING")?;
+                let _ = reference; // Already bound and captured by the credential Owner.
+                let value = credentials.remove(name).ok_or("MCP_CREDENTIAL_MISSING")?;
                 secrets.push(value.clone());
                 environment.push((name.clone(), value));
             }
@@ -327,6 +348,7 @@ impl Session {
         let child = profile
             .spawn(&executable, &args, &environment, &state)
             .map_err(|error| {
+                if matches!(error.as_str(), "SANDBOX_CAPACITY_BUSY" | "SANDBOX_ADMISSION_CLOSED") { return admission_error(error); }
                 // Native test panics include the concrete Win32 operation and
                 // code; production retains an opaque error with no file paths,
                 // credential contents, or process-internal diagnostics.
@@ -347,7 +369,9 @@ impl Session {
         } = child;
         let (writer, write_rx) = mpsc::sync_channel::<Vec<u8>>(4);
         let (write_tx, write_result) = mpsc::channel();
-        thread::spawn(move || {
+        let write_owner = process.hold_io_owner()?;
+        thread::Builder::new().name("mcp-stdin".into()).spawn(move || {
+            let _owner = write_owner;
             let mut input = std::io::BufWriter::new(stdin);
             while let Ok(bytes) = write_rx.recv() {
                 let result = input
@@ -359,11 +383,13 @@ impl Session {
                     break;
                 }
             }
-        });
+        }).map_err(|_| "MCP_STDIN_THREAD_START")?;
         let (reader_tx, reader) = mpsc::sync_channel(32);
         let reader_fault = Arc::new(Mutex::new(None));
         let on_read_failure = Arc::clone(&reader_fault);
-        thread::spawn(move || {
+        let read_owner = process.hold_io_owner()?;
+        thread::Builder::new().name("mcp-stdout".into()).spawn(move || {
+            let _owner = read_owner;
             let mut reader = BufReader::new(stdout);
             loop {
                 let mut bytes = Vec::new();
@@ -389,7 +415,7 @@ impl Session {
                     break;
                 }
             }
-        });
+        }).map_err(|_| "MCP_STDOUT_THREAD_START")?;
         Ok(Self {
             process,
             writer,
@@ -486,6 +512,11 @@ impl Session {
 }
 
 pub fn execute(root: &Path, storage: &Path, request: Value) -> Result<Value, String> {
+    if request["action"] == "mcp_review" {
+        let root = root.canonicalize().map_err(|_| "CONTEXT_ROOT_INVALID")?;
+        let config = resolved_config(&root, storage, &request)?;
+        return Ok(super::mcp_review::prepare(&root, storage, &request, config)?.review);
+    }
     if request["approved"] != true {
         return Err("MCP_EXPLICIT_APPROVAL_REQUIRED".into());
     }
@@ -495,10 +526,14 @@ pub fn execute(root: &Path, storage: &Path, request: Value) -> Result<Value, Str
     }
     let root = root.canonicalize().map_err(|_| "CONTEXT_ROOT_INVALID")?;
     let config = resolved_config(&root, storage, &request)?;
-    let mut session = Session::start(
+    let prepared = super::mcp_review::prepare(&root, storage, &request, config)?;
+    super::mcp_review::authorize(&prepared, &request)?;
+    let credentials = crate::framework::ai::mcp_credential_snapshot(storage, prepared.config["env_refs"].as_object())?;
+    let mut session = Session::start_with_credentials(
         &root,
-        &config,
+        &prepared.config,
         request["timeout_seconds"].as_u64().unwrap_or(20),
+        credentials,
     )?;
     let initialized = session.rpc(1, "initialize", json!({"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"BrowserOS","version":"0.1.0"}}));
     #[cfg(test)]
@@ -536,6 +571,39 @@ pub fn execute(root: &Path, storage: &Path, request: Value) -> Result<Value, Str
 mod tests {
     use super::*;
 
+    // Exercise the same read-only review and exact grant round trip as the UI.
+    fn execute_reviewed(root: &Path, storage: &Path, mut request: Value) -> Result<Value, String> {
+        if request["approved"] == true
+            && matches!(request["action"].as_str(), Some("mcp_tools" | "mcp_call")) {
+            let mut review_request = request.clone();
+            review_request["review_action"] = request["action"].clone();
+            review_request["action"] = json!("mcp_review");
+            let review = super::execute(root, storage, review_request)?;
+            request["review_revision"] = review["revision"].clone();
+            request["approved_credential_refs"] = review["credential_refs"].clone();
+            request["approved_environment_names"] = review["environment_names"].clone();
+        }
+        super::execute(root, storage, request)
+    }
+
+
+    #[test]
+    fn changing_saved_config_after_review_is_rejected_before_start() {
+        let root = std::env::temp_dir().join(format!("browseros-mcp-review-root-{}", uuid::Uuid::new_v4()));
+        let storage = std::env::temp_dir().join(format!("browseros-mcp-review-store-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap(); fs::create_dir_all(&storage).unwrap();
+        let file = storage.join("coding-mcp.json");
+        let server = json!({"command":std::env::current_exe().unwrap(),"args":["old"]});
+        fs::write(&file, json!({"servers":{"fixture":server}}).to_string()).unwrap();
+        let id = discover(&root, &storage)["servers"][0]["id"].clone();
+        let review = super::execute(&root, &storage, json!({"action":"mcp_review","review_action":"mcp_tools","server_id":id})).unwrap();
+        let request = json!({"action":"mcp_tools","server_id":id,"approved":true,
+            "review_revision":review["revision"],"approved_credential_refs":review["credential_refs"],
+            "approved_environment_names":review["environment_names"]});
+        fs::write(&file, json!({"servers":{"fixture":{"command":std::env::current_exe().unwrap(),"args":["new"]}}}).to_string()).unwrap();
+        assert_eq!(super::execute(&root, &storage, request).unwrap_err(), "MCP_REVIEW_CHANGED");
+        fs::remove_dir_all(root).unwrap(); fs::remove_dir_all(storage).unwrap();
+    }
     fn root() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("..")
@@ -551,14 +619,14 @@ mod tests {
     #[test]
     fn real_appcontainer_stdio_initializes_lists_calls_and_scrubs_secrets() {
         let root = root();
-        let listed = execute(
+        let listed = execute_reviewed(
             &root,
             &root,
             json!({"action":"mcp_tools","approved":true,"server":config()}),
         )
         .unwrap();
         assert_eq!(listed["result"]["tools"][0]["name"], "echo");
-        let called = execute(&root, &root, json!({"action":"mcp_call","approved":true,"server":config(),"tool":"echo","arguments":{"text":"fixture output"}})).unwrap();
+        let called = execute_reviewed(&root, &root, json!({"action":"mcp_call","approved":true,"server":config(),"tool":"echo","arguments":{"text":"fixture output"}})).unwrap();
         assert_eq!(called["result"]["content"][0]["text"], "fixture output");
         assert_eq!(called["sandbox"], "appcontainer-no-network");
 
@@ -575,7 +643,7 @@ mod tests {
         let discovered = discover(&root, &storage);
         assert!(!discovered.to_string().contains("fixture-opaque-value"));
         let id = discovered["servers"][0]["id"].clone();
-        let secret = execute(
+        let secret = execute_reviewed(
             &root,
             &storage,
             json!({"action":"mcp_call","approved":true,"server_id":id,"tool":"echo_env"}),
@@ -613,7 +681,7 @@ mod tests {
     #[test]
     fn shell_commands_are_rejected_before_profile_creation() {
         let root = root();
-        let error = execute(&root, &root, json!({"action":"mcp_tools","approved":true,"server":{"command":"C:\\Windows\\System32\\cmd.exe","args":[]}})).unwrap_err();
+        let error = execute_reviewed(&root, &root, json!({"action":"mcp_tools","approved":true,"server":{"command":"C:\\Windows\\System32\\cmd.exe","args":[]}})).unwrap_err();
         assert_eq!(error, "MCP_SHELL_COMMAND_REJECTED");
         // Direct invocation of Session exposes the specific contract without
         // turning the public error into a sandbox implementation disclosure.

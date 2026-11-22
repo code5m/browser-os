@@ -13,30 +13,21 @@ pub fn list_artifacts(app: AppHandle) -> Vec<Artifact> {
 
 /// 配置仓库：token 仅写入系统密钥库，绝不回传前端。
 #[tauri::command]
-pub fn configure_repo(app: AppHandle, config: RepoConfig, token: String) -> Result<(), String> {
-    if token.trim().is_empty() {
-        return Err("token 不能为空".into());
-    }
-    KeyringStore::save_token(&config.id, &token)?;
-    let mut repos = workspace::load_repos(&app);
-    repos.retain(|r| r.id != config.id);
-    repos.push(config);
-    workspace::save_repos(&app, &repos)?;
-    workspace::log_audit(
-        &app,
-        "configure_repo",
-        format!(
-            "{} ({:?})",
-            repos.last().unwrap().name,
-            repos.last().unwrap().provider
-        ),
-    );
+pub async fn configure_repo(app: AppHandle, config: RepoConfig, token: String) -> Result<(), String> {
+    crate::capabilities::workspace::FILESYSTEM_IO.run(move || configure_repo_blocking(app, config, token)).await
+}
+
+fn configure_repo_blocking(app: AppHandle, config: RepoConfig, token: String) -> Result<(), String> {
+    let name = config.name.clone();
+    let provider = config.provider.clone();
+    workspace::configure_repo_credentials(&app, config, &token)?;
+    workspace::log_audit(&app, "configure_repo", format!("{name} ({provider:?})"));
     Ok(())
 }
 
 #[tauri::command]
-pub fn list_repos(app: AppHandle) -> Vec<RepoConfig> {
-    workspace::load_repos(&app)
+pub async fn list_repos(app: AppHandle) -> Result<Vec<RepoConfig>, String> {
+    crate::capabilities::workspace::FILESYSTEM_IO.run(move || workspace::load_repos(&app)).await
 }
 
 /// 读取单个成果完整内容（预览/编辑用）

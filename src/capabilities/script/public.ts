@@ -11,9 +11,9 @@ function requireCommandCapability(){if(!isCapabilityActive('script'))throw new E
 // Controlled workbench adapter: existing snippet execution, never arbitrary shell text.
 export const commandWorkbench = {
   list: (): Promise<CommandSnippet[]> => { requireCommandCapability(); return bridge.snippetList(); },
-  run: async (id: string, values: Record<string,string>): Promise<RunSnapshot> => {
+  run: async (id: string, values: Record<string,string>, revision: string): Promise<RunSnapshot> => {
     requireCommandCapability();
-    const run=await bridge.runCommand(id, values);
+    const run=await bridge.runCommand(id, values, revision);
     if(run.status==='running'){
       trackScriptRun(run.run_id,async()=> (await bridge.scriptStatus(run.run_id)).status==='running');
       if(!isCapabilityActive('script'))await bridge.cancelScript(run.run_id);
@@ -27,7 +27,8 @@ export async function runExistingScriptRef(id: string): Promise<string> {
   const run = await bridge.runScript(id, {});
   return run.run_id;
 }
-export async function runExistingCommandRef(id: string): Promise<string> {
-  const run = await bridge.runCommand(id, {});
+export async function runExistingCommandRef(id: string, revision: string): Promise<string> {
+  if (!revision) throw new Error("SNIPPET_REVIEW_REQUIRED");
+  const run = await commandWorkbench.run(id, {}, revision);
   return run.run_id;
 }
