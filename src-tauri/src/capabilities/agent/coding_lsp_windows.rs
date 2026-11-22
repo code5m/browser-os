@@ -29,6 +29,30 @@ const MAX_FILES: usize = 2000;
 const MAX_TOTAL_BYTES: usize = 16 * 1024 * 1024;
 const MAX_FILE_BYTES: usize = 1024 * 1024;
 const REPARSE: u32 = 0x0000_0400;
+// The bundled rust-analyzer and its staged rustc are pinned to this target.
+// An explicit target and cfg set are required for non-Cargo projects: an empty
+// cfg list hides #[cfg(windows)] symbols even when the LSP itself launches.
+const REVIEWED_WINDOWS_TARGET: &str = "x86_64-pc-windows-msvc";
+const REVIEWED_WINDOWS_CFG: &[&str] = &[
+    "windows",
+    "target_os=\"windows\"",
+    "target_family=\"windows\"",
+    "target_arch=\"x86_64\"",
+    "target_pointer_width=\"64\"",
+    "target_env=\"msvc\"",
+    "target_endian=\"little\"",
+];
+
+fn reviewed_target() -> Result<&'static str, String> {
+    if cfg!(target_arch = "x86_64")
+        && cfg!(target_env = "msvc")
+        && cfg!(target_pointer_width = "64")
+    {
+        Ok(REVIEWED_WINDOWS_TARGET)
+    } else {
+        Err("LSP_TARGET_UNSUPPORTED".into())
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ReservationPhase {
@@ -519,6 +543,7 @@ fn write_reviewed_rust_project_with_budget(
     operation: &OperationBudget,
 ) -> Result<PathBuf, String> {
     check_operation(operation)?;
+    let target = reviewed_target()?;
     let mut pending = vec![(snapshot.to_path_buf(), 0usize)];
     let mut crate_roots = Vec::<PathBuf>::new();
     let mut other_sources = Vec::<PathBuf>::new();
@@ -601,7 +626,8 @@ fn write_reviewed_rust_project_with_budget(
             "root_module":absolute,
             "edition":edition,
             "deps":[],
-            "cfg":[],
+            "cfg":REVIEWED_WINDOWS_CFG,
+            "target":target,
             "env":{},
             "is_proc_macro":false,
             "is_workspace_member":true
@@ -686,6 +712,7 @@ fn reviewed_project_for_initialize_with_budget(
                 "edition",
                 "deps",
                 "cfg",
+                "target",
                 "env",
                 "is_proc_macro",
                 "is_workspace_member",
@@ -693,7 +720,8 @@ fn reviewed_project_for_initialize_with_budget(
             .contains(&name.as_str())
         }) || krate["deps"].as_array().is_none_or(|deps| !deps.is_empty())
             || krate["env"].as_object().is_none_or(|env| !env.is_empty())
-            || krate["cfg"].as_array().is_none_or(|cfg| !cfg.is_empty())
+            || krate["cfg"] != json!(REVIEWED_WINDOWS_CFG)
+            || krate["target"] != REVIEWED_WINDOWS_TARGET
             || krate["is_proc_macro"] != false
             || krate["is_workspace_member"] != true
         {
@@ -3023,6 +3051,8 @@ mod tests {
         let manifest = write_reviewed_rust_project(&root).unwrap();
         let accepted = reviewed_project_for_initialize(&root).unwrap();
         assert_eq!(accepted["crates"].as_array().unwrap().len(), 1);
+        assert_eq!(accepted["crates"][0]["target"], REVIEWED_WINDOWS_TARGET);
+        assert_eq!(accepted["crates"][0]["cfg"], json!(REVIEWED_WINDOWS_CFG));
         assert!(accepted["crates"][0]["root_module"]
             .as_str()
             .unwrap()
@@ -3039,6 +3069,20 @@ mod tests {
             "program":"cmd.exe", "args":["/c","echo insecure"], "kind":"flycheck"
         }]);
         fs::write(&manifest, serde_json::to_vec(&runnable).unwrap()).unwrap();
+        assert_eq!(
+            reviewed_project_for_initialize(&root).unwrap_err(),
+            "LSP_PROJECT_INVALID"
+        );
+        let mut foreign_cfg = accepted.clone();
+        foreign_cfg["crates"][0]["cfg"] = json!(["unix"]);
+        fs::write(&manifest, serde_json::to_vec(&foreign_cfg).unwrap()).unwrap();
+        assert_eq!(
+            reviewed_project_for_initialize(&root).unwrap_err(),
+            "LSP_PROJECT_INVALID"
+        );
+        let mut foreign_target = accepted.clone();
+        foreign_target["crates"][0]["target"] = json!("x86_64-unknown-linux-gnu");
+        fs::write(&manifest, serde_json::to_vec(&foreign_target).unwrap()).unwrap();
         assert_eq!(
             reviewed_project_for_initialize(&root).unwrap_err(),
             "LSP_PROJECT_INVALID"
