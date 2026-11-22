@@ -48,7 +48,7 @@ def check() -> None:
             "full acceptance needs an explicit reusable complete-mode entry point")
     require("CI_NATIVE_MODE_EXPLICIT_PUSH:" in text and "[run-full-validation]" in preview,
             "reusable native execution is not gated by an explicit feature-branch push marker")
-    require('fail-fast: false' in native and 'matrix.native_mode:' in native and
+    require('fail-fast: false' in native and 'native_mode: ${{ fromJSON(' in native and
             '["rust-tests","packaged-resource"]' in native,
             "complete native acceptance must run independent Rust and packaged resource jobs")
     require("Require fresh installed resource evidence" in native and
