@@ -7,18 +7,23 @@
   "rust_release": "1.100.0",
   "target": "x86_64-pc-windows-msvc",
   "patch_file": "metadata-stdin.patch",
-  "patch_sha256": "1eb0bd17a8fc53d6ef3e7f19869e8512fe70d54e3cf2406c4f845a1f13d86d7f",
+  "patch_sha256": "626a733ead50825183a7bfd9571d83146b9ea9d711ad566ce96643259864ad9e",
   "metadata_source_file": "src/tools/rust-analyzer/crates/project-model/src/lib.rs",
   "upstream_metadata_sha256": "6eeed4441b61d803e3b8d14612641faf8be03317fadb9707ae9e242d320e8cd5",
   "patched_metadata_sha256": "c18c1971cbaff1155f56802c21a297ed9018bee3979c52344dbe6117e1f599ec",
   "upstream_lock_sha256": "947e5ba712e9970658f7bafb90096d227d579711917408690cb9b8009fdb5bde",
   "lock_file": "Cargo.lock",
-  "lock_sha256": "7015b174181643b2dc27c4ff8c281b599699d794e89c69dde1cb8f9bd16803e7",
+  "lock_sha256": "7a1f64bf1e28213ed2de2733ba3804d47fdd132db90e06910a79b22b0434057a",
   "lock_updates": [
     {
-      "name": "url",
-      "from": "2.5.8",
-      "to": "2.5.9"
+      "name": "anyhow",
+      "from": "1.0.102",
+      "to": "1.0.103"
+    },
+    {
+      "name": "crossbeam-epoch",
+      "from": "0.9.18",
+      "to": "0.9.20"
     },
     {
       "name": "form_urlencoded",
@@ -29,6 +34,36 @@
       "name": "rustix",
       "from": "1.1.4",
       "to": "1.1.6"
+    },
+    {
+      "name": "salsa",
+      "from": "0.28.2",
+      "to": "0.28.5"
+    },
+    {
+      "name": "salsa-macro-rules",
+      "from": "0.28.2",
+      "to": "0.28.5"
+    },
+    {
+      "name": "salsa-macros",
+      "from": "0.28.2",
+      "to": "0.28.5"
+    },
+    {
+      "name": "typed-path",
+      "from": "",
+      "to": "0.12.4"
+    },
+    {
+      "name": "url",
+      "from": "2.5.8",
+      "to": "2.5.9"
+    },
+    {
+      "name": "zip",
+      "from": "4.6.1",
+      "to": "9.0.5"
     }
   ],
   "licenses": [
@@ -42,5 +77,11 @@
       "file": "LICENSE-APACHE",
       "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a"
     }
-  ]
+  ],
+  "xtask_manifest_file": "src/tools/rust-analyzer/xtask/Cargo.toml",
+  "upstream_xtask_manifest_sha256": "31f58662e9be197079eca81be8abc6dea3ddb58c37f9a525b255596dbf72b6db",
+  "patched_xtask_manifest_sha256": "0c1fe3e13d049b5b0cf20c55133bed8a53528ed61348ff473dc9f515229c1558",
+  "xtask_dist_source_file": "src/tools/rust-analyzer/xtask/src/dist.rs",
+  "upstream_xtask_dist_sha256": "e2b16f0ac6f4b2a53f1ff8b678504f112245a53ae17f9e7c6c2b85c274254472",
+  "patched_xtask_dist_sha256": "384043641d91029af77f7f903533e429c30e8fb4d3186b97e4fec7f59c0864d9"
 }

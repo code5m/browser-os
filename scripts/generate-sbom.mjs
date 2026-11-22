@@ -76,6 +76,12 @@ function verifySidecar(source, lock, patch) {
   assert.equal(source.target, "x86_64-pc-windows-msvc", "SBOM_RA_TARGET");
   assert.equal(source.lock_file, "Cargo.lock", "SBOM_RA_LOCK_PATH");
   assert.equal(source.patch_file, "metadata-stdin.patch", "SBOM_RA_PATCH_PATH");
+  assert.equal(source.xtask_manifest_file, "src/tools/rust-analyzer/xtask/Cargo.toml", "SBOM_RA_XTASK_MANIFEST_PATH");
+  assert.equal(source.xtask_dist_source_file, "src/tools/rust-analyzer/xtask/src/dist.rs", "SBOM_RA_XTASK_DIST_PATH");
+  for (const field of ["upstream_xtask_manifest_sha256", "patched_xtask_manifest_sha256",
+    "upstream_xtask_dist_sha256", "patched_xtask_dist_sha256"]) {
+    assert.ok(typeof source[field] === "string" && /^[a-f0-9]{64}$/.test(source[field]), "SBOM_RA_XTASK_DIGEST:" + field);
+  }
   assert.equal(source.lock_sha256, sha256(lock), "SBOM_RA_LOCK_DIGEST");
   assert.equal(source.patch_sha256, sha256(patch), "SBOM_RA_PATCH_DIGEST");
   assert.ok(typeof source.runtime_id === "string" && source.runtime_id.length > 0, "SBOM_RA_RUNTIME");
@@ -146,6 +152,10 @@ if (process.argv.includes("--self-test")) {
     source_commit: RA_COMMIT, source_subdirectory: "src/tools/rust-analyzer",
     runtime_id: "fixture-runtime", target: "x86_64-pc-windows-msvc",
     lock_file: "Cargo.lock", patch_file: "metadata-stdin.patch",
+    xtask_manifest_file: "src/tools/rust-analyzer/xtask/Cargo.toml",
+    xtask_dist_source_file: "src/tools/rust-analyzer/xtask/src/dist.rs",
+    upstream_xtask_manifest_sha256: "b".repeat(64), patched_xtask_manifest_sha256: "c".repeat(64),
+    upstream_xtask_dist_sha256: "d".repeat(64), patched_xtask_dist_sha256: "e".repeat(64),
     lock_sha256: sha256(lock), patch_sha256: sha256(patch),
     licenses: ["LICENSE-MIT", "LICENSE-APACHE"].map(file => ({
       file, source: "src/tools/rust-analyzer/" + file, sha256: "a".repeat(64),
@@ -157,6 +167,12 @@ if (process.argv.includes("--self-test")) {
   assert.throws(() => verifySidecar({ ...source, lock_file: "../Cargo.lock" }, lock, patch), /SBOM_RA_LOCK_PATH/);
   assert.throws(() => verifySidecar({ ...source, source_commit: "0".repeat(40) }, lock, patch), /SBOM_RA_SOURCE/);
   assert.throws(() => verifySidecar({ ...source, licenses: source.licenses.slice(0, 1) }, lock, patch), /SBOM_RA_LICENSES/);
+  assert.throws(() => verifySidecar({ ...source, xtask_manifest_file: "../Cargo.toml" }, lock, patch), /SBOM_RA_XTASK_MANIFEST_PATH/);
+  assert.throws(() => verifySidecar({ ...source, xtask_dist_source_file: "../dist.rs" }, lock, patch), /SBOM_RA_XTASK_DIST_PATH/);
+  for (const field of ["upstream_xtask_manifest_sha256", "patched_xtask_manifest_sha256",
+    "upstream_xtask_dist_sha256", "patched_xtask_dist_sha256"]) {
+    assert.throws(() => verifySidecar({ ...source, [field]: "invalid" }, lock, patch), /SBOM_RA_XTASK_DIGEST/);
+  }
   const local = cargoComponents('\n[[package]]\nname = "glib"\nversion = "0.18.5"\n');
   annotateGlib(local, {
     provenance: { upstream: { repository: "https://example.invalid", commit: "source" },
@@ -167,7 +183,7 @@ if (process.argv.includes("--self-test")) {
   assert.equal(local[0].hashes, undefined);
   assert.ok(local[0].properties.some(property => property.name === "browseros:modified" && property.value === "true"));
   assert.ok(local[0].properties.some(property => property.name === "browseros:upstream-advisory"));
-  console.log("SBOM_SELF_TEST=PASS sidecar_negative=5 glib_origin=visible cargo_distinct_origins=2");
+  console.log("SBOM_SELF_TEST=PASS sidecar_negative=11 glib_origin=visible cargo_distinct_origins=2");
   process.exit(0);
 }
 
@@ -192,6 +208,12 @@ const analyzerBom = bom("BrowserOS rust-analyzer lockfile SBOM generator", cargo
     { name: "browseros:build-target", value: sidecar.source.target },
     { name: "browseros:lock-sha256", value: sidecar.source.lock_sha256 },
     { name: "browseros:patch-sha256", value: sidecar.source.patch_sha256 },
+    { name: "browseros:xtask-manifest-file", value: sidecar.source.xtask_manifest_file },
+    { name: "browseros:upstream-xtask-manifest-sha256", value: sidecar.source.upstream_xtask_manifest_sha256 },
+    { name: "browseros:patched-xtask-manifest-sha256", value: sidecar.source.patched_xtask_manifest_sha256 },
+    { name: "browseros:xtask-dist-source-file", value: sidecar.source.xtask_dist_source_file },
+    { name: "browseros:upstream-xtask-dist-sha256", value: sidecar.source.upstream_xtask_dist_sha256 },
+    { name: "browseros:patched-xtask-dist-sha256", value: sidecar.source.patched_xtask_dist_sha256 },
     { name: "browseros:licenses", value: JSON.stringify(sidecar.source.licenses) },
     { name: "browseros:license-byte-validation", value: "Pinned source metadata; actual license bytes verified by runtime build/package gate" },
   ],

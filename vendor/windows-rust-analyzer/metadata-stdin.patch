@@ -1,9 +1,10 @@
 diff --git a/src/tools/rust-analyzer/crates/project-model/src/lib.rs b/src/tools/rust-analyzer/crates/project-model/src/lib.rs
+index 3414b52d4514f90a02edab6451ab3373c56df111..9f991d4970650fb45ee8125db2f195f38663df31 100644
 --- a/src/tools/rust-analyzer/crates/project-model/src/lib.rs
 +++ b/src/tools/rust-analyzer/crates/project-model/src/lib.rs
-@@ -211,6 +211,10 @@
+@@ -211,6 +211,10 @@ fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
  }
- 
+
  fn utf8_stdout(cmd: &mut Command) -> anyhow::Result<String> {
 +    // AppContainer may deny the global NUL device. Command::output closes the
 +    // parent pipe writer before collecting output, so the child still gets EOF.
@@ -12,3 +13,56 @@ diff --git a/src/tools/rust-analyzer/crates/project-model/src/lib.rs b/src/tools
      let output = cmd.output().with_context(|| format!("{cmd:?} failed"))?;
      if !output.status.success() {
          match String::from_utf8(output.stderr) {
+diff --git a/src/tools/rust-analyzer/xtask/Cargo.toml b/src/tools/rust-analyzer/xtask/Cargo.toml
+index 9d8a1956d0ad0b9d4a2224d958034acd31248d1e..ce9ec600d175b7e559deed03bfa586d8ecd041ee 100644
+--- a/src/tools/rust-analyzer/xtask/Cargo.toml
++++ b/src/tools/rust-analyzer/xtask/Cargo.toml
+@@ -13,7 +13,7 @@ write-json = "0.1.4"
+ xshell.workspace = true
+ xflags = "0.3.2"
+ time = { version = "0.3", default-features = false }
+-zip = { version = "4.0", default-features = false, features = ["deflate-flate2", "time"] }
++zip = { version = "=9.0.5", default-features = false, features = ["deflate-flate2", "time"] }
+ stdx.workspace = true
+ proc-macro2 = "1.0.95"
+ quote = "1.0.40"
+diff --git a/src/tools/rust-analyzer/xtask/src/dist.rs b/src/tools/rust-analyzer/xtask/src/dist.rs
+index 0b8b14cb227173c155c7249455ef5ffdb930c245..121cf1e77f8fcb4970763bbf02243444cbb5b309 100644
+--- a/src/tools/rust-analyzer/xtask/src/dist.rs
++++ b/src/tools/rust-analyzer/xtask/src/dist.rs
+@@ -171,15 +171,17 @@ fn gzip(src_path: &Path, dest_path: &Path) -> anyhow::Result<()> {
+ }
+
+ fn zip(src_path: &Path, symbols_path: Option<&PathBuf>, dest_path: &Path) -> anyhow::Result<()> {
++    let modified = OffsetDateTime::from(std::fs::metadata(src_path)?.modified()?);
++    let modified = DateTime::try_from(time::PrimitiveDateTime::new(
++        modified.date(),
++        modified.time(),
++    ))?;
+     let file = File::create(dest_path)?;
+     let mut writer = ZipWriter::new(BufWriter::new(file));
+     writer.start_file(
+         src_path.file_name().unwrap().to_str().unwrap(),
+         SimpleFileOptions::default()
+-            .last_modified_time(
+-                DateTime::try_from(OffsetDateTime::from(std::fs::metadata(src_path)?.modified()?))
+-                    .unwrap(),
+-            )
++            .last_modified_time(modified)
+             .unix_permissions(0o755)
+             .compression_method(zip::CompressionMethod::Deflated)
+             .compression_level(Some(9)),
+@@ -190,12 +192,7 @@ fn zip(src_path: &Path, symbols_path: Option<&PathBuf>, dest_path: &Path) -> any
+         writer.start_file(
+             symbols_path.file_name().unwrap().to_str().unwrap(),
+             SimpleFileOptions::default()
+-                .last_modified_time(
+-                    DateTime::try_from(OffsetDateTime::from(
+-                        std::fs::metadata(src_path)?.modified()?,
+-                    ))
+-                    .unwrap(),
+-                )
++                .last_modified_time(modified)
+                 .compression_method(zip::CompressionMethod::Deflated)
+                 .compression_level(Some(9)),
+         )?;

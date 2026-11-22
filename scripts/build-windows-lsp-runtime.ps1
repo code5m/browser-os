@@ -165,6 +165,8 @@ if ($Source.schema_version -ne 1 -or
     $Source.target -cne "x86_64-pc-windows-msvc" -or
     $Source.patch_file -cne "metadata-stdin.patch" -or
     $Source.metadata_source_file -cne "src/tools/rust-analyzer/crates/project-model/src/lib.rs" -or
+    $Source.xtask_manifest_file -cne "src/tools/rust-analyzer/xtask/Cargo.toml" -or
+    $Source.xtask_dist_source_file -cne "src/tools/rust-analyzer/xtask/src/dist.rs" -or
     $Source.lock_file -cne "Cargo.lock" -or
     @($Source.licenses).Count -ne 2 -or
     $Source.licenses[0].file -cne "LICENSE-MIT" -or
@@ -222,15 +224,19 @@ try {
     Invoke-Checked "git" @("-C", $Checkout, "config", "core.autocrlf", "false")
     Invoke-Checked "git" @("-C", $Checkout, "sparse-checkout", "init", "--cone")
     Invoke-Checked "git" @("-C", $Checkout, "sparse-checkout", "set", $Source.source_subdirectory)
+    Invoke-Checked "git" @("-C", $Checkout, "checkout", "--detach", $Source.source_commit)
     $ActualCommit = Read-CheckedOutput "git" @("-C", $Checkout, "rev-parse", "HEAD")
     if ($ActualCommit -cne $Source.source_commit) {
         throw "WINDOWS_LSP_SOURCE_COMMIT_MISMATCH"
     }
-    Invoke-Checked "git" @("-C", $Checkout, "checkout", "--detach", $Source.source_commit)
     $Project = Join-Path $Checkout $Source.source_subdirectory
     $MetadataSource = Join-Path $Checkout $Source.metadata_source_file
+    $XtaskManifest = Join-Path $Checkout $Source.xtask_manifest_file
+    $XtaskDistribution = Join-Path $Checkout $Source.xtask_dist_source_file
     $BuildLockFile = Join-Path $Project "Cargo.lock"
     Assert-Hash $MetadataSource $Source.upstream_metadata_sha256 "upstream metadata"
+    Assert-Hash $XtaskManifest $Source.upstream_xtask_manifest_sha256 "upstream xtask manifest"
+    Assert-Hash $XtaskDistribution $Source.upstream_xtask_dist_sha256 "upstream xtask distribution"
     Assert-Hash $BuildLockFile $Source.upstream_lock_sha256 "upstream lock"
     foreach ($License in $Source.licenses) {
         Assert-Hash (Join-Path $Checkout $License.source) $License.sha256 "upstream license"
@@ -240,12 +246,16 @@ try {
     Invoke-Checked "git" @("-C", $Checkout, "apply", "--whitespace=error-all", $PatchPath)
     Copy-Item -LiteralPath (Join-Path $Assets "Cargo.lock") -Destination $BuildLockFile -Force
     Assert-Hash $MetadataSource $Source.patched_metadata_sha256 "patched metadata"
+    Assert-Hash $XtaskManifest $Source.patched_xtask_manifest_sha256 "patched xtask manifest"
+    Assert-Hash $XtaskDistribution $Source.patched_xtask_dist_sha256 "patched xtask distribution"
     Assert-Hash $BuildLockFile $Source.lock_sha256 "security lock"
     $Changed = @((
         Read-CheckedOutput "git" @("-C", $Checkout, "diff", "--name-only")
     ) -split "\r?\n" | Where-Object { $_ })
-    $ExpectedChanged = @($Source.metadata_source_file, $Source.source_subdirectory + "/Cargo.lock") |
-        Sort-Object
+    $ExpectedChanged = @(
+        $Source.metadata_source_file, $Source.source_subdirectory + "/Cargo.lock",
+        $Source.xtask_manifest_file, $Source.xtask_dist_source_file
+    ) | Sort-Object
     if ((($Changed | Sort-Object) -join "|") -cne ($ExpectedChanged -join "|")) {
         throw "WINDOWS_LSP_UNEXPECTED_SOURCE_CHANGE"
     }
@@ -313,6 +323,8 @@ try {
     }
     Assert-Hash $Rustc $CompilerHash "compiler after build"
     Assert-Hash $MetadataSource $Source.patched_metadata_sha256 "metadata after build"
+    Assert-Hash $XtaskManifest $Source.patched_xtask_manifest_sha256 "xtask manifest after build"
+    Assert-Hash $XtaskDistribution $Source.patched_xtask_dist_sha256 "xtask distribution after build"
     Assert-Hash $BuildLockFile $Source.lock_sha256 "lock after build"
 
     $Executable = Join-Path $TargetDirectory ($Source.target + "/release/rust-analyzer.exe")
