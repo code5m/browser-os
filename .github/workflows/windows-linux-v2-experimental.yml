@@ -258,10 +258,11 @@ jobs:
         id: windows_lsp_runtime
         timeout-minutes: 45
         shell: pwsh
+        # The preparation script installs and identity-checks its exact pinned
+        # toolchain itself. Do not reinstall the same toolchain in this step.
         run: |
-          rustup toolchain install 1.100.0 --profile minimal
-          if ($LASTEXITCODE -ne 0) { throw 'WINDOWS_LSP_BUILD_TOOLCHAIN_UNAVAILABLE' }
           ./scripts/build-windows-lsp-runtime.ps1 -WorkDirectory (Join-Path $env:RUNNER_TEMP 'browseros-windows-lsp')
+          if ($LASTEXITCODE -ne 0) { throw 'WINDOWS_LSP_PREPARATION_FAILED' }
       - name: Preserve Windows LSP runtime bytes and provenance
         if: ${{ always() && !cancelled() && steps.windows_lsp_runtime.outcome == 'success' }}
         uses: actions/upload-artifact@v4
@@ -409,12 +410,24 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
       # A separately requested diagnostic installer is never a release or GUI PASS.
-      # It can be built after native failures only when explicitly opted in.
+      # This runner already ran npm run build and prepared the pinned LSP.
+      # Reuse THOSE exact-job outputs instead of rerunning the costly
+      # beforeBuildCommand; build.rs still rechecks/publishes the LSP bundle.
       - name: Build experimental NSIS (UNVERIFIED if native tests are red)
         id: nsis_build
-        if: ${{ always() && !cancelled() && steps.windows_native_compile.outcome == 'success' && env.BROWSEROS_NATIVE_CLEANUP_BLOCKED != '1' && inputs.build_installer == true }}
+        if: ${{ always() && !cancelled() && steps.windows_native_compile.outcome == 'success' && steps.windows_lsp_runtime.outcome == 'success' && env.BROWSEROS_NATIVE_CLEANUP_BLOCKED != '1' && inputs.build_installer == true }}
         shell: pwsh
-        run: npx tauri build --bundles nsis --ci
+        run: |
+          if (-not (Test-Path -LiteralPath 'dist/index.html' -PathType Leaf)) {
+            throw 'WINDOWS_NSIS_FRONTEND_DIST_MISSING'
+          }
+          if (-not (Test-Path -LiteralPath 'src-tauri/resources/windows-lsp/runtime.json' -PathType Leaf)) {
+            throw 'WINDOWS_NSIS_VERIFIED_LSP_MANIFEST_MISSING'
+          }
+          # Use the reviewed, minimal overlay: only beforeBuildCommand is
+          # suppressed. It does not disable build.rs or resource hash checks.
+          node node_modules/@tauri-apps/cli/tauri.js build --bundles nsis --ci --config src-tauri/tauri.local-prebuilt.windows.conf.json
+          if ($LASTEXITCODE -ne 0) { throw 'WINDOWS_NSIS_BUILD_FAILED' }
       - name: Generate and verify NSIS SHA256SUMS
         id: nsis_hashes
         if: ${{ always() && !cancelled() && steps.nsis_build.outcome == 'success' }}
