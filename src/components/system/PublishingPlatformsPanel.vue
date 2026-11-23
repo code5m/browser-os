@@ -20,7 +20,10 @@ async function openOfficial(id:string) {
   const url=officialPublisherUrl(id);
   if(!url || opening.value)return;
   opening.value=id;notice.value="";
-  try{if(!await browser.openBrowserAt(url))notice.value="官方后台未能打开，请检查浏览器能力。";}
+  try {
+    if (!await browser.openBrowserAt(url)) notice.value="官方后台未能打开，请检查浏览器能力。";
+    else if (id === "wechat") void inspectWechat();
+  }
   catch{notice.value="打开官方后台失败，请检查网络与登录状态。";}
   finally{opening.value="";}
 }

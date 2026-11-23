@@ -5,6 +5,8 @@ import { useLayoutStore } from "../../../stores/useLayoutStore";
 import { contributionRegistry } from "../../../capability/contribution/registry";
 import { CONTRIBUTION_SLOTS } from "../../../capability/contribution/types";
 import { WECHAT_WORKBENCH_VIEW } from "../../wechat/public";
+import { useBrowserStore } from "../../browser/public";
+import { officialPublisherUrl } from "../../wechat/model/publishingPlatforms.mjs";
 import HomeLaunchers from "./HomeLaunchers.vue";
 import HomeRecents from "./HomeRecents.vue";
 import HomeShortcuts from "./HomeShortcuts.vue";
@@ -13,6 +15,14 @@ import HomeChangelog from "./HomeChangelog.vue";
 
 const home = useHomeStore();
 const layout = useLayoutStore();
+const browser = useBrowserStore();
+async function openWechatOfficial() {
+  const url = officialPublisherUrl("wechat");
+  if (!url) return;
+  try {
+    if (!await browser.openBrowserAt(url)) layout.showToast("公众号后台打开失败");
+  } catch { layout.showToast("公众号后台打开失败"); }
+}
 function openWechatWorkbench() {
   const available = contributionRegistry
     .getSurfaceContributions(CONTRIBUTION_SLOTS.WORKBENCH_MAIN)
@@ -43,6 +53,7 @@ const state = computed(() => home.panelState);
         <button type="button" title="打开多平台内容工作台，支持微信、百度、头条、小红书、B站等官方后台（不自动发布）" @click="openWechatWorkbench">
           📣 多平台内容工作台
         </button>
+        <button type="button" title="直接打开微信公众号官方后台" @click="openWechatOfficial">↗ 微信公众号后台</button>
         <button type="button" title="把当前网页收藏到主页" @click="home.favoriteCurrentPage">
           ☆ 收藏网页
         </button>

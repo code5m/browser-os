@@ -21,6 +21,8 @@ assert.match(ui,/bridge\.wechatDraftPermissionCheck\(\)/);
 assert.doesNotMatch(ui,/document\.cookie|localStorage|sessionStorage|evalInTab|access_token/);
 assert.match(read("../src/components/system/WechatWorkbenchPanel.vue"),/v-model:selected-id="selectedPlatformId"/);
 assert.match(read("../src/capabilities/home/ui/HomePanel.vue"),/📣 多平台内容工作台/);
+assert.match(read("../src/capabilities/home/ui/HomePanel.vue"),/openWechatOfficial/);
+assert.match(ui,/void inspectWechat\(\)/);
 assert.match(read("../src/App.vue"),/layout\.activateHome\(\);\s*ready\.value = true/);
 assert.match(read("../src/capabilities/wechat/manifest.ts"),/publishing\.platform\.directory/);
 console.log("PUBLISHING_HOME=PASS");
