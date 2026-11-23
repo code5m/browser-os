@@ -21,6 +21,8 @@ commands.allow = [
     "bfc_readback_cancel",
     "bfc_readback_finish",
     "bfc_service_status",
+    "bfc_service_start",
+    "bfc_service_stop",
     "report_title",
     "collect_selection",
     "request_open_terminal",

@@ -27,6 +27,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": {
+      "../scripts/windows/start-bfc-local.ps1": "scripts/windows/start-bfc-local.ps1"
+    },
     "category": "Utility",
     "shortDescription": "BrowserOS",
     "longDescription": "BrowserOS 浏览器与本地工作台融合客户端：多页签浏览、宫格同屏对比、终端、成果库与本地工具箱。",

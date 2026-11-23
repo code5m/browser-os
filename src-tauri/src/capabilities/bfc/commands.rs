@@ -74,7 +74,7 @@ fn configured_windows_bfc_data_dir() -> Result<Option<PathBuf>, &'static str> {
     Ok(Some(path))
 }
 
-fn bfc_data_dir() -> Result<PathBuf, &'static str> {
+pub(super) fn bfc_data_dir() -> Result<PathBuf, &'static str> {
     if let Some(path) = std::env::var_os("BILIBILI_FAVORITES_DATA_DIR")
         .or_else(|| std::env::var_os("BROWSEROS_BFC_DATA_DIR"))
         .filter(|path| !path.is_empty())
@@ -604,6 +604,65 @@ pub async fn bfc_service_status(
             message_code: Some(code.into()),
         }),
     }
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct BfcServiceLaunch {
+    pub started: bool,
+    pub managed: bool,
+}
+
+/// A user gesture in the BFC module is the only normal spawn path. A verified
+/// externally launched BFC remains external; an untrusted occupied port fails
+/// closed instead of being killed or replaced.
+#[tauri::command]
+pub async fn bfc_service_start(
+    app: AppHandle,
+    webview: Webview,
+) -> Result<BfcServiceLaunch, String> {
+    main_only(&app, &webview, "bfc_service_start")?;
+    let verified = bfc_service_status(app.clone(), webview.clone()).await?;
+    if verified.online {
+        return Ok(BfcServiceLaunch {
+            started: false,
+            managed: app
+                .state::<super::managed_service::ManagedBfcService>()
+                .is_owned(),
+        });
+    }
+    // Detect a foreign listener before spawning; never terminate by PID/port.
+    if matches!(
+        tokio::time::timeout(Duration::from_millis(400), TcpStream::connect(bfc_addr())).await,
+        Ok(Ok(_))
+    ) {
+        return Err("BFC_SERVICE_PORT_OCCUPIED_UNTRUSTED".into());
+    }
+    let owned_app = app.clone();
+    let started = tauri::async_runtime::spawn_blocking(move || {
+        owned_app
+            .state::<super::managed_service::ManagedBfcService>()
+            .start(&owned_app)
+    })
+    .await
+    .map_err(|_| "BFC_SERVICE_START_WORKER_FAILED")??;
+    Ok(BfcServiceLaunch {
+        started,
+        managed: true,
+    })
+}
+
+/// Only the process tree spawned by this BrowserOS instance may be stopped.
+#[tauri::command]
+pub async fn bfc_service_stop(app: AppHandle, webview: Webview) -> Result<bool, String> {
+    main_only(&app, &webview, "bfc_service_stop")?;
+    let owned_app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        owned_app
+            .state::<super::managed_service::ManagedBfcService>()
+            .stop_until(std::time::Instant::now() + Duration::from_secs(4))
+    })
+    .await
+    .map_err(|_| "BFC_SERVICE_STOP_WORKER_FAILED")?
 }
 
 #[tauri::command]

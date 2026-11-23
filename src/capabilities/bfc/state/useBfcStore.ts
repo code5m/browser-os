@@ -102,6 +102,10 @@ export const useBfcStore = defineStore("bfc", () => {
   const busy = ref(false);
   const message = ref("尚未读取 B站收藏。只有用户主动开始后，才会检查当前已打开的 B站页面。");
   const serviceStatus = ref<BfcServiceStatus | null>(null);
+  const serviceBusy = ref(false);
+  const serviceManaged = ref(false);
+  const serviceMessage = ref("");
+  let launchServicePromise: Promise<void> | null = null;
   const readbackStatus = ref<BfcReadbackStatus | null>(null);
   const importResult = ref<BfcImportResult | null>(null);
   const activeTabId = ref("");
@@ -114,6 +118,72 @@ export const useBfcStore = defineStore("bfc", () => {
     const result = await bridge.bfcServiceStatus();
     serviceStatus.value = result;
     return result;
+  }
+
+
+  // Mounted only after the user enters the BFC view; never part of app boot.
+  async function startService(): Promise<void> {
+    if (launchServicePromise) return launchServicePromise;
+    const attempt = async () => {
+      serviceBusy.value = true;
+      serviceMessage.value = "";
+      try {
+        const result = await bridge.bfcServiceStart();
+        serviceManaged.value = result.managed;
+        // The Windows launcher must finish ACL validation before Node binds.
+        // Only the existing authenticated health API proves readiness.
+        for (let i = 0; i < (result.managed ? 60 : 1); i++) {
+          const status = await refreshService();
+          if (status.online && status.local_only === true
+            && status.read_snapshot_only === true
+            && status.bilibili_network_requests === 0) {
+            serviceMessage.value = result.managed
+              ? "BFC 已按需启动，由 BrowserOS 管理；退出 BrowserOS 时会停止服务。"
+              : "已连接独立运行的可信 BFC；该服务不归 BrowserOS 管理，也不会被关闭。";
+            return;
+          }
+          if (i < 59 && result.managed) await wait(500);
+        }
+        const code = serviceStatus.value?.message_code || "BFC_SERVICE_NOT_READY";
+        serviceMessage.value = "本地 BFC 尚未就绪：" + code + "。请检查本机安装。";
+      } catch (error) {
+        const code = String(error).match(/BFC_[A-Z0-9_]+/)?.[0] || "BFC_SERVICE_START_FAILED";
+        serviceMessage.value = code === "BFC_SERVICE_NOT_INSTALLED"
+          ? "本机尚未安装 BFC 服务源码，请先安装固定版本的 bfc-workbench。"
+          : "启动 BFC 失败：" + code;
+        serviceManaged.value = false;
+        await refreshService().catch(() => {});
+      } finally {
+        serviceBusy.value = false;
+      }
+    };
+    const pending = attempt();
+    launchServicePromise = pending;
+    try {
+      await pending;
+    } finally {
+      if (launchServicePromise === pending) launchServicePromise = null;
+    }
+  }
+
+  async function stopService(): Promise<void> {
+    if (serviceBusy.value || busy.value) return;
+    serviceBusy.value = true;
+    serviceMessage.value = "";
+    try {
+      const stopped = await bridge.bfcServiceStop();
+      serviceManaged.value = false;
+      await refreshService();
+      serviceMessage.value = stopped
+        ? "BrowserOS 启动的 BFC 服务已停止；本机收藏数据仍保留。"
+        : "没有 BrowserOS 拥有的 BFC 进程；独立启动的服务不受影响。";
+    } catch (error) {
+      const code = String(error).match(/BFC_[A-Z0-9_]+/)?.[0] || "BFC_SERVICE_STOP_FAILED";
+      serviceMessage.value = "停止 BFC 失败：" + code;
+      await refreshService().catch(() => {});
+    } finally {
+      serviceBusy.value = false;
+    }
   }
 
   async function ensureBilibiliTab(): Promise<string> {
@@ -214,11 +284,21 @@ export const useBfcStore = defineStore("bfc", () => {
   }
 
   async function openLocalUpdates(): Promise<void> {
+    if (!serviceStatus.value?.online) await startService();
+    if (!serviceStatus.value?.online) {
+      layout.showToast("BFC 服务未就绪，无法打开工作台");
+      return;
+    }
     layout.activateView("browser");
     await browser.tabNew(BFC_UPDATES);
   }
 
   async function openManualImport(): Promise<void> {
+    if (!serviceStatus.value?.online) await startService();
+    if (!serviceStatus.value?.online) {
+      layout.showToast("BFC 服务未就绪，无法打开离线导入");
+      return;
+    }
     layout.activateView("browser");
     await browser.tabNew(BFC_IMPORT);
   }
@@ -441,6 +521,9 @@ export const useBfcStore = defineStore("bfc", () => {
     busy,
     message,
     serviceStatus,
+    serviceBusy,
+    serviceManaged,
+    serviceMessage,
     readbackStatus,
     importResult,
     activeTabId,
@@ -448,6 +531,8 @@ export const useBfcStore = defineStore("bfc", () => {
     lastErrorCode,
     partialSnapshotWarning,
     refreshService,
+    startService,
+    stopService,
     openBiliPage,
     openLocalUpdates,
     openManualImport,

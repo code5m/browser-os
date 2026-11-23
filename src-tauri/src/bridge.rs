@@ -511,6 +511,21 @@ pub fn register_shutdown_tasks(app: &AppHandle) -> Result<(), String> {
         })?;
     }
 
+    // BFC is opt-in, and only its app-owned Job/Child is stopped. Any external
+    // independently launched service is never touched during BrowserOS exit.
+    {
+        let app = app.clone();
+        coordinator.register_with_deadline(
+            "shutdown-bfc-service",
+            &["stop-background-workers"],
+            move |deadline| {
+                app.state::<crate::capabilities::bfc::managed_service::ManagedBfcService>()
+                    .stop_until(deadline)
+                    .map(|_| ())
+            },
+        )?;
+    }
+
     // Optional exit saving already succeeded in main's reversible preflight.
     // Cleanup errors cannot veto teardown, so saving never belongs in this list.
     {

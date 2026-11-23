@@ -1869,6 +1869,7 @@ fn main() {
         .manage(AppState::default())
         .manage(startup::PendingOpenUrls::default())
         .manage(capabilities::bfc::runtime::BfcRuntime::default())
+        .manage(capabilities::bfc::managed_service::ManagedBfcService::default())
         // M0-2.b：注入统一生命周期核心。本检查点只提供核心，不迁移任何退出路径
         // （M0-2.c 负责把窗口关闭/菜单退出/系统退出与 grid/PTY/tab/线程调用方切到它）。
         .manage(shutdown::ShutdownCoordinator::new())
@@ -1893,6 +1894,8 @@ fn main() {
             capabilities::bfc::commands::bfc_readback_cancel,
             capabilities::bfc::commands::bfc_readback_finish,
             capabilities::bfc::commands::bfc_service_status,
+            capabilities::bfc::commands::bfc_service_start,
+            capabilities::bfc::commands::bfc_service_stop,
             capabilities::git::studio::git_studio_cancel,
             capabilities::git::studio::git_studio_confirm,
             capabilities::git::studio::git_studio_preview,

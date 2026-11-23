@@ -1,8 +1,14 @@
-# Windows BFC local service: pinned dependency and manual foreground start
+# Windows BFC local service: pinned dependency and user-started managed lifecycle
 
 BrowserOS BFC reads user-visible Bilibili favorites DOM and sends the snapshot to a separate
 loopback-only service at `127.0.0.1:4198`. Windows BrowserOS alone **cannot save a snapshot**
 unless the separate service is running. This is a release dependency, not an online Bilibili API.
+
+Entering the BFC module now starts the already-installed local service on demand
+through the packaged ACL-preparing PowerShell script. BrowserOS owns PowerShell
+and its Node descendant in a Windows Job Object and stops the owned process tree
+on accepted app shutdown or explicit Stop. A manually launched trusted BFC remains
+external and is never stopped by BrowserOS. Nothing starts at BrowserOS boot.
 
 ## Pinned source (review before distribution)
 
@@ -23,7 +29,9 @@ pwsh -File scripts/windows/start-bfc-local.ps1
 ```
 
 The script intentionally does **not** download arbitrary code, obtain Bilibili credentials,
-register a scheduled startup task or run in the background. It checks for a local Node.js
+register a scheduled startup task or run in the background. Manual foreground use is
+still supported. BrowserOS only owns processes that it explicitly spawned.
+An already-installed pinned service checkout and packaged script are required. It checks for a local Node.js
 runtime and runs the pinned service in the foreground until Ctrl+C.
 
 ## Verification
@@ -39,6 +47,16 @@ BrowserOS verifies health/capabilities, then proves the service identity with a 
 the localhost service is **not** a system-wide privileged service.
 
 ## Failure and lifecycle
+
+- Click **BFC 内容库** to start the service, then open **本地 BFC 工作台**.
+- **停止 BFC 服务** only terminates the managed service, never independent ones.
+- BrowserOS exit stops only the owned service; the BFC data directory is preserved.
+- An occupied untrusted localhost port is rejected rather than killed or replaced.
+- There is no automatic download, scheduled task, or background autostart.
+- Linux uses an installed checkout at `~/.local/share/BrowserOS/bfc-workbench`
+  (or `BROWSEROS_BFC_SERVICE_DIR`) and parent-death cleanup.
+- Unsupported systems fail explicitly instead of claiming to start a service.
+
 
 - Service unavailable → show `BFC_LOCAL_SERVICE_UNAVAILABLE`, do not claim import.
 - Port 4198 occupied by different app → stop, do not send personal snapshots to unknown server;

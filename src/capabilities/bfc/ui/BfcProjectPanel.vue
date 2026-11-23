@@ -27,7 +27,8 @@ const phaseIsError = computed(() =>
 );
 
 onMounted(() => {
-  void bfc.refreshService().catch(() => {});
+  // BFC icon mounts this view on demand; do not launch during browser boot.
+  void bfc.startService();
 });
 </script>
 
@@ -76,8 +77,12 @@ onMounted(() => {
           当前 BFC 服务尚未声明完整快照能力。导入结果会保留为待核实 / 不完整快照，不能据此宣称账号已完整同步。
         </p>
         <div class="bfc-actions">
-          <button type="button" class="bfc-secondary" :disabled="bfc.busy" @click="bfc.refreshService">重新检查服务</button>
+          <button type="button" class="bfc-primary" :disabled="bfc.busy || bfc.serviceBusy" @click="bfc.startService">启动 / 重新连接 BFC</button>
+          <button type="button" class="bfc-secondary" :disabled="bfc.serviceBusy" @click="bfc.refreshService">重新检查服务</button>
+          <button v-if="bfc.serviceManaged" type="button" class="bfc-danger" :disabled="bfc.busy || bfc.serviceBusy" @click="bfc.stopService">停止 BFC 服务</button>
         </div>
+        <p v-if="bfc.serviceMessage" class="bfc-description" role="status" aria-live="polite">{{ bfc.serviceMessage }}</p>
+        <p class="bfc-description">进入 BFC 时按需启动本地服务；退出 BrowserOS 时回收其启动的服务。独立运行的服务不会被强制关闭。</p>
       </section>
 
       <section class="bfc-section" aria-labelledby="bfc-read-title">

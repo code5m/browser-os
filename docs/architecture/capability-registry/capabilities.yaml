@@ -24,7 +24,7 @@ capabilities:
     governanceStatus: GOVERNED
     status: COMPATIBILITY_WRAPPED
     maturity: C3
-    provides: [bfc.web, bfc.workbench]
+    provides: [bfc.web, bfc.workbench, bfc.service.lifecycle]
     dependsOn: [bridge, browser]
     optionalDependencies: []
     lifecycle:
@@ -33,7 +33,7 @@ capabilities:
       activatable: true
       resident: false
     resources:
-      class: [LIGHT]
+      class: [LIGHT, PROCESS, NETWORK]
       suspendable: true
       destroyable: true
     permissions: []

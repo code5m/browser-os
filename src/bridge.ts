@@ -175,6 +175,11 @@ export interface BfcReadbackStatus {
   imported: BfcImportResult | null;
 }
 
+export interface BfcServiceLaunch {
+  started: boolean;
+  managed: boolean;
+}
+
 export interface BfcServiceStatus {
   online: boolean;
   local_only: boolean | null;
@@ -505,6 +510,8 @@ export const bridge = {
   bfcReadbackFinish: (ticket: string) =>
     invoke<BfcImportResult>("bfc_readback_finish", { ticket }),
   bfcServiceStatus: () => invoke<BfcServiceStatus>("bfc_service_status"),
+  bfcServiceStart: () => invoke<BfcServiceLaunch>("bfc_service_start"),
+  bfcServiceStop: () => invoke<boolean>("bfc_service_stop"),
   snippetRemove: (id: string, intent: string) => invoke("snippet_remove", { id, intent }),
 
   // M2-6.c 命令片段执行：复用脚本执行态事件和运行历史。
