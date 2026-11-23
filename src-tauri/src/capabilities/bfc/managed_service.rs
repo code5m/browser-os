@@ -195,9 +195,7 @@ fn spawn_managed_bfc(app: &AppHandle) -> Result<OwnedBfcChild, String> {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .creation_flags(crate::windows_process::CREATE_SUSPENDED | 0x0800_0000);
-    let mut child = command
-        .spawn()
-        .map_err(|_| "BFC_SERVICE_SPAWN_FAILED")?;
+    let mut child = command.spawn().map_err(|_| "BFC_SERVICE_SPAWN_FAILED")?;
     let job = match crate::windows_process::JobObject::attach_suspended_pid(child.id()) {
         Ok(job) => job,
         Err(_) => {
@@ -216,17 +214,14 @@ fn spawn_managed_bfc(_app: &AppHandle) -> Result<OwnedBfcChild, String> {
     let root = std::env::var_os("BROWSEROS_BFC_SERVICE_DIR")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| {
-            std::path::PathBuf::from(home)
-                .join(".local/share/BrowserOS/bfc-workbench")
+            std::path::PathBuf::from(home).join(".local/share/BrowserOS/bfc-workbench")
         });
-    let source = std::fs::symlink_metadata(&root)
-        .map_err(|_| "BFC_SERVICE_NOT_INSTALLED")?;
+    let source = std::fs::symlink_metadata(&root).map_err(|_| "BFC_SERVICE_NOT_INSTALLED")?;
     if !source.file_type().is_dir() {
         return Err("BFC_SERVICE_SOURCE_UNTRUSTED".into());
     }
     let entry = root.join("server.mjs");
-    let script = std::fs::symlink_metadata(&entry)
-        .map_err(|_| "BFC_SERVICE_NOT_INSTALLED")?;
+    let script = std::fs::symlink_metadata(&entry).map_err(|_| "BFC_SERVICE_NOT_INSTALLED")?;
     if !script.file_type().is_file() {
         return Err("BFC_SERVICE_SOURCE_UNTRUSTED".into());
     }
@@ -236,7 +231,10 @@ fn spawn_managed_bfc(_app: &AppHandle) -> Result<OwnedBfcChild, String> {
     command
         .arg(entry)
         .env("BILIBILI_FAVORITES_DATA_DIR", data_dir)
-        .env("BROWSEROS_BFC_DATA_DIR", super::commands::bfc_data_dir().map_err(str::to_string)?)
+        .env(
+            "BROWSEROS_BFC_DATA_DIR",
+            super::commands::bfc_data_dir().map_err(str::to_string)?,
+        )
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -252,9 +250,7 @@ fn spawn_managed_bfc(_app: &AppHandle) -> Result<OwnedBfcChild, String> {
             Ok(())
         });
     }
-    let child = command
-        .spawn()
-        .map_err(|_| "BFC_SERVICE_SPAWN_FAILED")?;
+    let child = command.spawn().map_err(|_| "BFC_SERVICE_SPAWN_FAILED")?;
     Ok(OwnedBfcChild { child })
 }
 

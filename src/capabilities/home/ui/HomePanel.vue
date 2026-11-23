@@ -6,7 +6,7 @@ import { contributionRegistry } from "../../../capability/contribution/registry"
 import { CONTRIBUTION_SLOTS } from "../../../capability/contribution/types";
 import { WECHAT_WORKBENCH_VIEW } from "../../wechat/public";
 import { useBrowserStore } from "../../browser/public";
-import { officialPublisherUrl } from "../../wechat/model/publishingPlatforms.mjs";
+import { officialPublisherUrl } from "../../wechat/public";
 import HomeLaunchers from "./HomeLaunchers.vue";
 import HomeRecents from "./HomeRecents.vue";
 import HomeShortcuts from "./HomeShortcuts.vue";

@@ -710,7 +710,11 @@ impl TabManager {
                     },
                 ));
                 if unsafe {
-                    core.CallDevToolsProtocolMethod(PCWSTR(method.as_ptr()), PCWSTR(params.as_ptr()), &completion)
+                    core.CallDevToolsProtocolMethod(
+                        PCWSTR(method.as_ptr()),
+                        PCWSTR(params.as_ptr()),
+                        &completion,
+                    )
                 }
                 .is_err()
                 {
