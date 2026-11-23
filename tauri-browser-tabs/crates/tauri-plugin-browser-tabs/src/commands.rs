@@ -674,24 +674,40 @@ impl TabManager {
                     }
                 };
                 let method = pwstr_from_str("Page.captureScreenshot");
-                let params = pwstr_from_str(r#"{"format":"png","captureBeyondViewport":true,"fromSurface":true}"#);
-                let completion = CallDevToolsProtocolMethodCompletedHandler::create(Box::new(move |status, json| {
-                    let data = status.map_err(|_| "CAPTURE_ENGINE_FAILED".to_string())
-                        .and_then(|_| {
-                            if json.len() > 45 * 1024 * 1024 { return Err("CAPTURE_SIZE_LIMIT".into()); }
-                            let response: serde_json::Value = serde_json::from_str(&json)
-                                .map_err(|_| "CAPTURE_RESPONSE_INVALID".to_string())?;
-                            let image = response.get("data").and_then(|v| v.as_str())
-                                .ok_or_else(|| "CAPTURE_NO_IMAGE".to_string())?;
-                            if image.len() > 44 * 1024 * 1024 { return Err("CAPTURE_SIZE_LIMIT".into()); }
-                            use base64::Engine;
-                            base64::engine::general_purpose::STANDARD.decode(image)
-                                .map_err(|_| "CAPTURE_PNG_DECODE_FAILED".into())
-                        });
-                    callback(data);
-                    Ok(())
-                }));
-                if unsafe { core.CallDevToolsProtocolMethod(PCWSTR(method.0), PCWSTR(params.0), &completion) }.is_err() {
+                let params = pwstr_from_str(
+                    r#"{"format":"png","captureBeyondViewport":true,"fromSurface":true}"#,
+                );
+                let completion = CallDevToolsProtocolMethodCompletedHandler::create(Box::new(
+                    move |status, json| {
+                        let data = status
+                            .map_err(|_| "CAPTURE_ENGINE_FAILED".to_string())
+                            .and_then(|_| {
+                                if json.len() > 45 * 1024 * 1024 {
+                                    return Err("CAPTURE_SIZE_LIMIT".into());
+                                }
+                                let response: serde_json::Value = serde_json::from_str(&json)
+                                    .map_err(|_| "CAPTURE_RESPONSE_INVALID".to_string())?;
+                                let image = response
+                                    .get("data")
+                                    .and_then(|v| v.as_str())
+                                    .ok_or_else(|| "CAPTURE_NO_IMAGE".to_string())?;
+                                if image.len() > 44 * 1024 * 1024 {
+                                    return Err("CAPTURE_SIZE_LIMIT".into());
+                                }
+                                use base64::Engine;
+                                base64::engine::general_purpose::STANDARD
+                                    .decode(image)
+                                    .map_err(|_| "CAPTURE_PNG_DECODE_FAILED".into())
+                            });
+                        callback(data);
+                        Ok(())
+                    },
+                ));
+                if unsafe {
+                    core.CallDevToolsProtocolMethod(PCWSTR(method.0), PCWSTR(params.0), &completion)
+                }
+                .is_err()
+                {
                     // The callback normally receives errors; a synchronous failure
                     // is surfaced as bounded timeout by the caller.
                 }
