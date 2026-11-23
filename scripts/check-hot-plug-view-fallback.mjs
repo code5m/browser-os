@@ -19,6 +19,7 @@ try {
 
   assert.equal(resolve("files", ["home", "files"]), "files");
   assert.equal(resolve("files", ["home", "graph"]), "home");
+  assert.equal(resolve("home", ["settings"]), "home");
   assert.equal(resolve("files", ["graph", "apps"]), "graph");
   assert.equal(resolve("browser", ["home"]), "browser");
   assert.equal(resolve("grid", ["home"]), "grid");

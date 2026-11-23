@@ -12,9 +12,13 @@ from urllib.parse import urlsplit, urlunsplit
 
 PROTOCOL = 'browseros-ai-import-v1'
 MAX_FILE_BYTES = 1024 * 1024
-MAX_SCAN_BYTES = 8 * 1024 * 1024
-MAX_SCAN_FILES = 512
-MAX_SCAN_ENTRIES = 8192
+# CodeBuddy/WorkBuddy installations can contain many vendor skill files. Keep
+# the bounded read-only scan finite, but leave enough headroom to inspect the
+# configured plugin/skill manifests before the pre-commit secret check fails
+# solely because of inventory size.
+MAX_SCAN_BYTES = 32 * 1024 * 1024
+MAX_SCAN_FILES = 2048
+MAX_SCAN_ENTRIES = 32768
 MAX_SCAN_DEPTH = 12
 MAX_OUTPUT_BYTES = 256 * 1024
 MAX_PROFILES = 256
