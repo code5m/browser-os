@@ -140,24 +140,81 @@ if ($LASTEXITCODE -eq 0 -and [System.IO.Directory]::Exists($GitExecPath)) {
 $ViteCli = Join-Path $Root "node_modules/vite/bin/vite.js"
 $TauriCli = Join-Path $Root "node_modules/@tauri-apps/cli/tauri.js"
 $BuildConfig = Join-Path $Root "src-tauri/tauri.local-prebuilt.windows.conf.json"
-foreach ($Required in @($ViteCli, $TauriCli, $BuildConfig)) {
-    if (-not [System.IO.File]::Exists($Required)) {
-        throw "WINDOWS_LOCAL_BUILD_DEPENDENCY_MISSING:$Required"
-    }
+$DependencyChecker = Join-Path $Root "scripts/check-locked-npm-deps.mjs"
+$NpmCli = Join-Path (Split-Path -Parent $Node) "node_modules/npm/bin/npm-cli.js"
+
+function Test-LockedDependencies {
+    # A quick prerequisite probe, not a project test/gate.
+    $ErrorActionPreference = "Continue"
+    $PSNativeCommandUseErrorActionPreference = $false
+    & $Node $DependencyChecker *> $null
+    return ($LASTEXITCODE -eq 0)
 }
 
 $PriorLocation = Get-Location
 try {
     Set-Location -LiteralPath $Root
+    # Restore the exact lockfile in a new checkout; calling npm-cli.js
+    # through node avoids the WindowsApps npm alias / forbidden WSL route.
+    if (-not (Test-LockedDependencies)) {
+        if (-not [System.IO.File]::Exists($NpmCli)) {
+            throw "WINDOWS_LOCAL_BUILD_NPM_CLI_MISSING:$NpmCli"
+        }
+        Write-Host "WINDOWS_LOCAL_BUILD: restoring locked npm dependencies"
+        Invoke-External $Node @($NpmCli, "ci", "--no-audit", "--no-fund") "npm_ci"
+        if (-not (Test-LockedDependencies)) {
+            throw "WINDOWS_LOCAL_BUILD_NPM_LOCK_MISMATCH_AFTER_INSTALL"
+        }
+    }
+    foreach ($Required in @($ViteCli, $TauriCli, $BuildConfig)) {
+        if (-not [System.IO.File]::Exists($Required)) {
+            throw "WINDOWS_LOCAL_BUILD_DEPENDENCY_MISSING:$Required"
+        }
+    }
+
+    # Share a validated LSP bundle between independent checkouts. The key
+    # includes all pinned supply-chain inputs in source.json. The prepare
+    # script revalidates the bundle on EVERY reuse (fail closed).
+    $SourceContract = Join-Path $Root "vendor/windows-rust-analyzer/source.json"
+    $SourceKey = (Get-FileHash -LiteralPath $SourceContract -Algorithm SHA256).Hash.ToLowerInvariant()
+    $BundleCacheRoot = Join-Path $CacheDirectory "windows-lsp-bundles"
+    [System.IO.Directory]::CreateDirectory($BundleCacheRoot) | Out-Null
+    $CachedBundle = Join-Path $BundleCacheRoot $SourceKey
+    $SelectedBundle = $ReuseBundleDirectory
+    if (-not $SelectedBundle -and [System.IO.Directory]::Exists($CachedBundle)) {
+        $SelectedBundle = $CachedBundle
+    }
     $LspArguments = @(
         "-NoProfile", "-File", (Join-Path $Root "scripts/build-windows-lsp-runtime.ps1"),
         "-WorkDirectory", (Join-Path $CacheDirectory "lsp")
     )
-    if ($ReuseBundleDirectory) {
-        $LspArguments += @("-ReuseBundleDirectory", $ReuseBundleDirectory)
+    if ($SelectedBundle) {
+        $LspArguments += @("-ReuseBundleDirectory", $SelectedBundle)
     }
     Write-Host "WINDOWS_LOCAL_BUILD: prepare pinned LSP"
     Invoke-External (Join-Path $PSHOME "pwsh.exe") $LspArguments "lsp"
+
+    # Publish a successful, checked bundle into local cache. Never mutate a
+    # previously published bundle; copying manifest last and atomic rename
+    # keep interrupted writes from producing a reusable partial cache.
+    if (-not [System.IO.Directory]::Exists($CachedBundle)) {
+        $SourceBundle = Join-Path $Root "src-tauri/resources/windows-lsp"
+        $Staging = Join-Path $BundleCacheRoot ($SourceKey + ".stage-" + [guid]::NewGuid().ToString("N"))
+        [System.IO.Directory]::CreateDirectory($Staging) | Out-Null
+        try {
+            foreach ($Name in @("LICENSE-MIT", "LICENSE-APACHE", "Cargo.lock", "rust-analyzer.exe", "runtime.json")) {
+                Copy-Item -LiteralPath (Join-Path $SourceBundle $Name) -Destination (Join-Path $Staging $Name)
+            }
+            if (-not [System.IO.Directory]::Exists($CachedBundle)) {
+                Move-Item -LiteralPath $Staging -Destination $CachedBundle -ErrorAction Stop
+            }
+        } finally {
+            if ([System.IO.Directory]::Exists($Staging)) {
+                try { Remove-Item -LiteralPath $Staging -Recurse -Force -ErrorAction Stop }
+                catch { Write-Warning "WINDOWS_LOCAL_BUILD_CACHE_CLEANUP_FAILED: $($_.Exception.Message)" }
+            }
+        }
+    }
     Write-Host "WINDOWS_LOCAL_BUILD: refresh frontend contracts"
     Invoke-External $Python.Source ($PythonArgs + @(
         "scripts/generate-rust-crosslayer-contracts-dedup.py", "--generate")) "contracts"
@@ -174,8 +231,10 @@ try {
     $Logs = Join-Path $CacheDirectory "logs"
     [System.IO.Directory]::CreateDirectory($Logs) | Out-Null
 
+    $BuildRun = [DateTime]::UtcNow.ToString("yyyyMMddTHHmmssZ") + "-" +
+        [guid]::NewGuid().ToString("N").Substring(0, 8)
     for ($Attempt = 1; $Attempt -le $RetryCount; $Attempt++) {
-        $LogFile = Join-Path $Logs ("nsis-attempt-" + $Attempt + ".log")
+        $LogFile = Join-Path $Logs ("nsis-" + $BuildRun + "-attempt-" + $Attempt + ".log")
         Write-Host "WINDOWS_LOCAL_BUILD: NSIS attempt $Attempt/$RetryCount; jobs=$CargoJobs"
         $ErrorActionPreference = "Continue"
         $PSNativeCommandUseErrorActionPreference = $false
@@ -184,7 +243,15 @@ try {
         $ExitCode = $LASTEXITCODE
         $ErrorActionPreference = "Stop"
         if ($ExitCode -eq 0) {
-            Write-Host "WINDOWS_LOCAL_BUILD_NSIS_CREATED: $(Join-Path $TargetDirectory 'release/bundle/nsis')"
+            $InstallerDirectory = Join-Path $TargetDirectory "release/bundle/nsis"
+            $Installers = @(Get-ChildItem -LiteralPath $InstallerDirectory -Filter "*-setup.exe" -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.Length -gt 0 })
+            if ($Installers.Count -lt 1) {
+                throw "WINDOWS_LOCAL_BUILD_NSIS_MISSING: exit=0 but no installer; log=$LogFile"
+            }
+            foreach ($Installer in $Installers) {
+                Write-Host "WINDOWS_LOCAL_BUILD_NSIS_CREATED: $($Installer.FullName)"
+            }
             Write-Host "WINDOWS_LOCAL_BUILD_UNVERIFIED: no CI, tests, installation or GUI check ran"
             return
         }
