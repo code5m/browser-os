@@ -663,7 +663,6 @@ impl TabManager {
         #[cfg(target_os = "windows")]
         {
             webview.with_webview(move |native| {
-                use webview2_com::pwstr::pwstr_from_str;
                 use webview2_com::CallDevToolsProtocolMethodCompletedHandler;
                 use windows::core::PCWSTR;
                 let core = match unsafe { native.controller().CoreWebView2() } {
@@ -673,10 +672,17 @@ impl TabManager {
                         return;
                     }
                 };
-                let method = pwstr_from_str("Page.captureScreenshot");
-                let params = pwstr_from_str(
-                    r#"{"format":"png","captureBeyondViewport":true,"fromSurface":true}"#,
-                );
+                // webview2-com 0.38 keeps its pwstr helper private. Pass
+                // public Windows PCWSTR values backed by live UTF-16 arrays.
+                let method: Vec<u16> = "Page.captureScreenshot"
+                    .encode_utf16()
+                    .chain(std::iter::once(0))
+                    .collect();
+                let params: Vec<u16> =
+                    r#"{"format":"png","captureBeyondViewport":true,"fromSurface":true}"#
+                        .encode_utf16()
+                        .chain(std::iter::once(0))
+                        .collect();
                 let completion = CallDevToolsProtocolMethodCompletedHandler::create(Box::new(
                     move |status, json| {
                         let data = status
@@ -704,7 +710,7 @@ impl TabManager {
                     },
                 ));
                 if unsafe {
-                    core.CallDevToolsProtocolMethod(PCWSTR(method.0), PCWSTR(params.0), &completion)
+                    core.CallDevToolsProtocolMethod(PCWSTR(method.as_ptr()), PCWSTR(params.as_ptr()), &completion)
                 }
                 .is_err()
                 {
