@@ -10,6 +10,11 @@ const manifest=read("../src/capabilities/browser/manifest.ts");
 assert.match(manager,/SnapshotRegion::FullDocument/);
 assert.match(manager,/Page\.captureScreenshot/);
 assert.match(manager,/captureBeyondViewport/);
+// The Windows screenshot path must not import webview2-com's private pwstr
+// module. Keep UTF-16 storage live while passing public PCWSTR arguments.
+assert.doesNotMatch(manager,/webview2_com::pwstr/);
+assert.match(manager,/PCWSTR\(method\.as_ptr\(\)\)/);
+assert.match(manager,/PCWSTR\(params\.as_ptr\(\)\)/);
 assert.match(manager,/callback: impl FnOnce/);
 assert.match(native,/webview\.label\(\) != "main"/);
 assert.match(native,/CAPTURE_BUSY/);
