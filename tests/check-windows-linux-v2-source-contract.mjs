@@ -600,6 +600,11 @@ assert.match(windowsLsp, /"linkedProjects":\[reviewed_graph\]/);
 // snapshots must never depend on ReadDirectoryChangesW.
 assert.match(windowsLsp, /"workspace":\{"didChangeWatchedFiles":\{"dynamicRegistration":true\}\}/);
 assert.match(windowsLsp, /"files":\{"watcher":"client"\}/);
+assert.match(windowsLsp, /"cargo":\{"sysroot":null,"autoreload":true,"buildScripts":\{"enable":false\}\}/);
+assert.doesNotMatch(windowsLsp, /"autoreload":false/);
+assert.match(windowsLsp, /fn reviewed_crate_graph_ready/);
+assert.match(windowsLsp, /"rust-analyzer\/viewCrateGraph"/);
+assert.match(windowsLsp, /semantic_ready_requires_a_loaded_reviewed_crate/);
 assert.match(windowsLsp, /fn immutable_snapshot_watcher_registration/);
 assert.match(windowsLsp, /fn answer_server_request/);
 assert.match(windowsLsp, /immutable_snapshot_registration_rejects_non_watcher_operations/);

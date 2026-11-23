@@ -1347,6 +1347,18 @@ fn server_status_ready(value: &Value) -> Result<bool, String> {
     }
 }
 
+// rust-analyzer can report quiescent before the initial VFS source import has
+// rebuilt the crate graph. Source text may answer documentSymbol syntactically
+// in this state, while hover/definition return null. Require a real workspace
+// crate owned by our pinned inline graph before publishing a session.
+fn reviewed_crate_graph_ready(value: &Value) -> Result<bool, String> {
+    let graph = value.as_str().ok_or("LSP_CRATE_GRAPH_INVALID")?;
+    if !graph.starts_with("digraph rust_analyzer_crate_graph {") {
+        return Err("LSP_CRATE_GRAPH_INVALID".into());
+    }
+    Ok(graph.contains("reviewed_crate_0"))
+}
+
 struct OpenDocument {
     uri: String,
     version: i32,
@@ -1697,7 +1709,10 @@ impl Session {
                     "linkedProjects":[reviewed_graph],
                     // No disk watcher is needed for an immutable private copy.
                     "files":{"watcher":"client"},
-                    "cargo":{"sysroot":null,"autoreload":false,"buildScripts":{"enable":false}},
+                    // Only the preapproved inline rust-project is loaded; this flag
+                    // permits VFS's initial source import to rebuild its crate
+                    // graph. It never authorizes cargo metadata/build scripts.
+                    "cargo":{"sysroot":null,"autoreload":true,"buildScripts":{"enable":false}},
                     "procMacro":{"enable":false},
                     "checkOnSave":{"enable":false},
                     "check":{"enable":false}
@@ -1858,7 +1873,22 @@ impl Session {
                 && value.get("id").is_none()
                 && server_status_ready(&value)?
             {
-                return Ok(());
+                // A ready notification alone is not semantic readiness. With
+                // the immutable client watcher, the VFS initially loads files
+                // after the first crate-graph build. Wait for that reload under
+                // this same startup budget; never return syntax-only success.
+                loop {
+                    check_operation(&self.operation)?;
+                    let graph = self.rpc_next(
+                        "rust-analyzer/viewCrateGraph",
+                        json!({"full":false}),
+                    )?;
+                    if reviewed_crate_graph_ready(&graph)? {
+                        return Ok(());
+                    }
+                    let remaining = self.operation.remaining().map_err(operation_error)?;
+                    thread::sleep(remaining.min(Duration::from_millis(100)));
+                }
             }
             if value.get("method").is_some() && value.get("id").is_some() {
                 self.answer_server_request(&value)?;
@@ -3396,6 +3426,24 @@ mod tests {
             assert_eq!(
                 server_status_ready(&malformed).unwrap_err(),
                 "LSP_SERVER_STATUS_INVALID"
+            );
+        }
+    }
+
+    #[test]
+    fn semantic_ready_requires_a_loaded_reviewed_crate() {
+        assert!(!reviewed_crate_graph_ready(
+            &json!("digraph rust_analyzer_crate_graph {\n}\n")
+        )
+        .unwrap());
+        assert!(reviewed_crate_graph_ready(
+            &json!("digraph rust_analyzer_crate_graph {\n  _0[label=\"reviewed_crate_0\"];\n}\n")
+        )
+        .unwrap());
+        for invalid in [json!(null), json!({}), json!("not a crate graph")] {
+            assert_eq!(
+                reviewed_crate_graph_ready(&invalid).unwrap_err(),
+                "LSP_CRATE_GRAPH_INVALID"
             );
         }
     }
