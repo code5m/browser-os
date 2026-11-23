@@ -210,6 +210,16 @@ commands:
     permission: "tauri.default-commands(main); tauri.remote-collect(telemetry-only)"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "capability-owned native adapter module (declare + gate)"
+  capture_full_page:
+    file: "src-tauri/src/capabilities/browser/commands.rs"
+    owner: "browser"
+    category: "CAPABILITY_NATIVE_ADAPTER"
+    callers: "src/components/layout/ActivityBar.vue via src/bridge.ts"
+    side_effect: "capture app-owned tab's full document PNG into private local screenshots directory"
+    resource: "FILE"
+    permission: "tauri.default-commands(main-only); current tab ID; bounded PNG and timeout"
+    current_boundary: "browser capability owner through tab manager native engine"
+    target_boundary: "browser-owned native capture API with no remote page IPC"
   list_tab_resources:
     file: "src-tauri/src/capabilities/browser/commands.rs"
     owner: "browser"

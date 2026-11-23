@@ -94,6 +94,7 @@ commands.allow = [
     "tab_go_forward",
     "tab_reload",
     "eval_in_tab",
+    "capture_full_page",
     "set_tab_hibernation",
     "resource_stats",
     "term_spawn",

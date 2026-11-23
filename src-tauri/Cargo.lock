@@ -5247,7 +5247,9 @@ dependencies = [
 name = "tauri-plugin-browser-tabs"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "browseros-platform-security",
+ "cairo-rs",
  "gtk",
  "javascriptcore-rs",
  "log",
@@ -5258,6 +5260,8 @@ dependencies = [
  "tauri-plugin",
  "thiserror 1.0.69",
  "webkit2gtk",
+ "webview2-com",
+ "windows",
  "windows-sys 0.60.2",
 ]
 
