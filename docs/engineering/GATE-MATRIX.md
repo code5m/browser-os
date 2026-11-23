@@ -53,3 +53,21 @@ A fast green check never substitutes for a slower gate covering another failure 
 - Windows Rust LSP requires the bundled executable, deterministic manifest and pinned source/patch/lock contract. Missing, changed, oversized or cancelled preparation fails closed before sandbox launch. The actual Rust diagnostic test remains mandatory.
 - Optional NSIS installation verifies six installed payload files against the same run's generated artifacts. Its status retains `GUI_PENDING`; package integrity does not establish interactive desktop behavior.
 - The GLib backport source check and five optimized iteration tests are distinct gates. A source-only check reports no runtime acceptance. Registry-origin advisory auditing remains enabled for the local path dependency; upstream maintenance warnings remain visible.
+
+## 2026-11-23 Windows validation-cost review (static only; NOT_RUN)
+
+This review changes **no quality-gate pass criteria**, and invokes no checkers. Evidence layers remain distinct:
+
+| Layer | Trigger | Cost and evidence boundary |
+| --- | --- | --- |
+| Developer Quick Gate | ordinary branch push unless GitHub skips CI per commit message | bounded source/config checks, never release/GUI evidence |
+| Full Validation | master, eligible PR, explicit manual request | same-SHA frontend dist reused by pre-merge; independent asset/security/contract audits remain blocking |
+| Windows/Linux native | explicit native request | pinned LSP, host and native tests; compiled binaries do not imply desktop GUI acceptance |
+| Optional Windows diagnostic NSIS | explicitly requested build_installer | reuses dist built in same Windows job and already prepared LSP; Tauri build.rs still validates resources |
+| Installed GUI/release | separately requested | installer hash/payload and real desktop acceptance must be independently recorded |
+
+The opt-in Windows native job has bounded timeouts of 165 minutes overall and 65 minutes for its pinned LSP step. This prevents premature timeout in cold builds; it is not a performance guarantee. No default branch push is newly opted into native CI.
+
+Do **not** delete independent gates simply because their command names overlap. gate:merge, pre-merge.sh, npm run check and Full Validation enforce different concerns: exact dist hashes, native compile, source governance, policy fixtures, merge hygiene and runtime evidence. Any removal needs an invariant-level evidence map first.
+
+A skipped check must report SKIPPED or NOT_RUN, never PASS. The Windows local build changes are detailed in [WINDOWS-LOCAL-BUILD.md](./WINDOWS-LOCAL-BUILD.md). This change is source-only; no build, CI, test or GUI evidence has been collected.
