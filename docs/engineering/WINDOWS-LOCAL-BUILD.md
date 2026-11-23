@@ -39,3 +39,7 @@ LSP 脚本不再先克隆 Rust 1.100.0 tag 再跨 commit checkout，而是直接
 - Windows 可选原生流程的总时间上限和 LSP 步骤上限已经调整为更符合冷构建的有限值。这仅避免超时误判，不减少安全测试数量。
 - `pre-merge.sh` 与完整 `npm run check` 有重叠，但也负责独立的 release 产物完整性、源码治理、Rust 跨层和边界检查。未在没有验证证据的情况下删减这些门禁。
 - 本轮只对代码和配置做了静态审查与修改；没有运行 `npm run check`、`cargo test`、`pre-merge.sh`、GitHub Actions、构建或安装。功能和性能改进需要后续实机证据才能确认。
+
+## Historical blocker: WebView2 private API
+
+The previously available Windows native job log for source commit `449b9949` reports `E0603` in `tauri-browser-tabs/crates/tauri-plugin-browser-tabs/src/commands.rs` after successful pinned LSP/hygiene preparation. The Windows full-page screenshot call now constructs public `windows::core::PCWSTR` arguments from live UTF-16 arrays instead of importing the private `webview2_com::pwstr` module. The existing `tests/check-full-page-screenshot.mjs` records that narrow source invariant and is included in Quick Gate, but the actual Windows build remains **NOT_RUN** for this branch revision.
