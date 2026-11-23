@@ -1303,6 +1303,31 @@ fn rpc_response(value: &Value, expected_id: u64) -> Result<Option<Value>, String
         .ok_or_else(|| "LSP_RESPONSE_INVALID".into())
 }
 
+// The approved private snapshot is immutable after startup. A no-op watcher
+// registration is sufficient: didOpen/didChange carry later in-memory edits.
+// Reject every unrelated server-requested operation.
+fn immutable_snapshot_watcher_registration(value: &Value) -> bool {
+    let (field, registering) = match value["method"].as_str() {
+        Some("client/registerCapability") => ("registrations", true),
+        Some("client/unregisterCapability") => ("unregisterations", false),
+        _ => return false,
+    };
+    if value["jsonrpc"] != "2.0" || value.get("id").is_none() {
+        return false;
+    }
+    value["params"][field].as_array().is_some_and(|entries| {
+        !entries.is_empty()
+            && entries.len() <= 16
+            && entries.iter().all(|entry| {
+                entry["method"] == "workspace/didChangeWatchedFiles"
+                    && entry["id"]
+                        .as_str()
+                        .is_some_and(|id| !id.is_empty() && id.len() <= 128)
+                    && (!registering || entry["registerOptions"]["watchers"].is_array())
+            })
+    })
+}
+
 fn server_status_ready(value: &Value) -> Result<bool, String> {
     if value["jsonrpc"] != "2.0"
         || value["method"] != "experimental/serverStatus"
@@ -1658,6 +1683,7 @@ impl Session {
                 "workspaceFolders":[{"uri":root_uri,"name":"reviewed-snapshot"}],
                 "capabilities":{
                     "experimental":{"serverStatusNotification":true},
+                    "workspace":{"didChangeWatchedFiles":{"dynamicRegistration":true}},
                     "textDocument":{
                         "synchronization":{},"definition":{},"references":{},"hover":{},
                         "completion":{},"documentSymbol":{},
@@ -1669,6 +1695,8 @@ impl Session {
                     // A file-path entry triggered file-watcher errors on the
                     // isolated Windows profile even when the host file existed.
                     "linkedProjects":[reviewed_graph],
+                    // No disk watcher is needed for an immutable private copy.
+                    "files":{"watcher":"client"},
                     "cargo":{"sysroot":null,"autoreload":false,"buildScripts":{"enable":false}},
                     "procMacro":{"enable":false},
                     "checkOnSave":{"enable":false},
@@ -1787,6 +1815,16 @@ impl Session {
             }
         }
     }
+    fn answer_server_request(&mut self, value: &Value) -> Result<(), String> {
+        let response = if immutable_snapshot_watcher_registration(value) {
+            json!({"jsonrpc":"2.0","id":value["id"],"result":null})
+        } else {
+            json!({"jsonrpc":"2.0","id":value["id"],"error":{
+                "code":-32601,"message":"Client operations are disabled"
+            }})
+        };
+        self.send(response)
+    }
     fn rpc(&mut self, id: u64, method: &str, params: Value) -> Result<Value, String> {
         self.send(json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}))?;
         loop {
@@ -1795,7 +1833,7 @@ impl Session {
                 return Ok(result);
             }
             if value.get("method").is_some() && value.get("id").is_some() {
-                self.send(json!({"jsonrpc":"2.0","id":value["id"],"error":{"code":-32601,"message":"Client operations are disabled"}}))?;
+                self.answer_server_request(&value)?;
             }
         }
     }
@@ -1823,9 +1861,7 @@ impl Session {
                 return Ok(());
             }
             if value.get("method").is_some() && value.get("id").is_some() {
-                self.send(json!({"jsonrpc":"2.0","id":value["id"],"error":{
-                    "code":-32601,"message":"Client operations are disabled"
-                }}))?;
+                self.answer_server_request(&value)?;
             }
         }
     }
@@ -3362,6 +3398,36 @@ mod tests {
                 "LSP_SERVER_STATUS_INVALID"
             );
         }
+    }
+
+    #[test]
+    fn immutable_snapshot_registration_rejects_non_watcher_operations() {
+        let watch = json!({
+            "jsonrpc":"2.0","id":7,"method":"client/registerCapability",
+            "params":{"registrations":[{
+                "id":"workspace/didChangeWatchedFiles",
+                "method":"workspace/didChangeWatchedFiles",
+                "registerOptions":{"watchers":[{"globPattern":"**/*.rs"}]}
+            }]}
+        });
+        assert!(immutable_snapshot_watcher_registration(&watch));
+        let mut foreign = watch.clone();
+        foreign["params"]["registrations"][0]["method"] = json!("workspace/executeCommand");
+        assert!(!immutable_snapshot_watcher_registration(&foreign));
+        let mut missing_watchers = watch.clone();
+        missing_watchers["params"]["registrations"][0]["registerOptions"] = json!({});
+        assert!(!immutable_snapshot_watcher_registration(&missing_watchers));
+        let mut absent_id = watch.clone();
+        absent_id.as_object_mut().unwrap().remove("id");
+        assert!(!immutable_snapshot_watcher_registration(&absent_id));
+        let unregistration = json!({
+            "jsonrpc":"2.0","id":8,"method":"client/unregisterCapability",
+            "params":{"unregisterations":[{
+                "id":"workspace/didChangeWatchedFiles",
+                "method":"workspace/didChangeWatchedFiles"
+            }]}
+        });
+        assert!(immutable_snapshot_watcher_registration(&unregistration));
     }
 
     #[test]
