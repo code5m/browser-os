@@ -216,8 +216,9 @@ jobs:
       BROWSEROS_NATIVE_CLEANUP_BLOCKED: '0'
       BROWSEROS_SOURCE_SHA: ${{ needs.source.outputs.sha }}
     runs-on: windows-latest
-    # Includes the bounded 45-minute source-runtime build and installer payload check.
-    timeout-minutes: 105
+    # Opt-in only: pinned LSP cold build, native suites and NSIS release can
+    # exceed the old 105-minute aggregate cap; keep a bounded realistic limit.
+    timeout-minutes: 165
     steps:
       - uses: actions/checkout@v4
         with:
@@ -256,7 +257,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Windows AI secret safety regression failed' }
       - name: Build the pinned Windows Rust LSP runtime
         id: windows_lsp_runtime
-        timeout-minutes: 45
+        timeout-minutes: 65
         shell: pwsh
         # The preparation script installs and identity-checks its exact pinned
         # toolchain itself. Do not reinstall the same toolchain in this step.
