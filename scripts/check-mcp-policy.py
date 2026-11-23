@@ -166,8 +166,13 @@ def c_npm_cargo(rel, text, repo):
 
 
 def c_node_runtime(rel, text, repo):
-    if _is_src_rs(rel) and _CODE_REX["MCP_NODE_RUNTIME_PRESENT"].search(text):
-        return ["src 内 Command::new(\"node\"|\"npx\")（禁 Node 运行时，必须纯 Rust）"]
+    # This is an MCP policy, not a repository-wide ban on Node. BFC owns a
+    # separate, user-initiated local process with independent ACL/lifecycle
+    # checks. Only the MCP stdio/registry or actual mcp_* command bodies may
+    # spawn a Node/npx runtime. A shared bridge file is scoped by function.
+    for section in _mcp_owner_sections(rel, text):
+        if _CODE_REX["MCP_NODE_RUNTIME_PRESENT"].search(section):
+            return [f"{rel} 的 MCP Owner 含 Command::new(\"node\"|\"npx\")（MCP 必须纯 Rust）"]
     return None
 
 
@@ -585,6 +590,10 @@ def _run_self_test() -> int:
         "async fn exchange() { let _ = TcpStream::connect(\"127.0.0.1:1\").await; }\n"
         "#[cfg(test)] mod tests { use std::net::TcpListener; }\n"
     )
+    owned_good["src-tauri/src/capabilities/bfc/managed_service.rs"] = (
+        '#[cfg(target_os = "linux")]\n'
+        'fn spawn_managed_bfc() { let child = Command::new("node").spawn(); }\n'
+    )
     commands = ("mcp_policy_get", "mcp_registry_list", "mcp_capability_preview")
     owned_good["src-tauri/src/bridge.rs"] = (
         "mod integration_commands;\npub use self::integration_commands::*;\n"
@@ -626,8 +635,16 @@ def _run_self_test() -> int:
         mutate(**{"package.json": '{"dependencies":{"@modelcontextprotocol/sdk":"^1"}}'}), "package.json")
     add("MCP_NPM_IN_CARGO", "Cargo.toml 含 npm",
         mutate(**{"src-tauri/Cargo.toml": "[dependencies]\nmcp_js = { path = \"crates/mcp\", npm = true }\n"}), "src-tauri/Cargo.toml")
-    add("MCP_NODE_RUNTIME_PRESENT", "src 内 Command::new(\"node\")",
-        mutate(**{"src-tauri/src/bridge.rs": 'fn run() { std::process::Command::new("node").spawn(); }\n'}), "src-tauri/src/bridge.rs")
+    add("MCP_NODE_RUNTIME_PRESENT", "MCP bridge Command::new(\"node\")",
+        mutate(**{"src-tauri/src/bridge.rs":
+                  '#[tauri::command]\npub fn mcp_policy_get() { '
+                  'std::process::Command::new("node").spawn(); }\n'}),
+        "src-tauri/src/bridge.rs")
+    add("MCP_NODE_RUNTIME_PRESENT", "MCP stdio Command::new(\"npx\")",
+        mutate(**{"src-tauri/src/mcp_server.rs":
+                  '#![cfg(feature = "mcp")]\n'
+                  'fn run_stdio() { std::process::Command::new("npx").spawn(); }\n'}),
+        "src-tauri/src/mcp_server.rs")
     add("MCP_FS_TOOL_PATH_POLICY", "注册表 touches_fs 缺 check_path_within_roots",
         mutate(**{"src-tauri/src/mcp_tools/registry.rs": "pub const MCP_COMMAND_REGISTRY: &[McpCommandDef] = &[ McpCommandDef { capability: \"file_read\", touches_fs: true, returns_url: true } ];\n"}),
         "src-tauri/src/mcp_tools/registry.rs")
