@@ -8,6 +8,9 @@ case "${1:-}" in
     npm run check:engineering-governance
     npm run check:ai-config
     npm run check:coding-workbench
+    # Cheap source contract before a costly opt-in Windows Rust native build.
+    # This is only a static smoke check, never Windows compile/GUI evidence.
+    node tests/check-full-page-screenshot.mjs
     git diff --check
     git diff --cached --check
     echo 'QUICK_CHECKS=PASS (subset only; not merge or GUI acceptance)'
