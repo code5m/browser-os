@@ -262,8 +262,9 @@ jobs:
         # The preparation script installs and identity-checks its exact pinned
         # toolchain itself. Do not reinstall the same toolchain in this step.
         run: |
+          # PowerShell script failures already throw and fail this step.
+          # A cache hit runs no native commands, leaving LASTEXITCODE unset.
           ./scripts/build-windows-lsp-runtime.ps1 -WorkDirectory (Join-Path $env:RUNNER_TEMP 'browseros-windows-lsp')
-          if ($LASTEXITCODE -ne 0) { throw 'WINDOWS_LSP_PREPARATION_FAILED' }
       - name: Preserve Windows LSP runtime bytes and provenance
         if: ${{ always() && !cancelled() && steps.windows_lsp_runtime.outcome == 'success' }}
         uses: actions/upload-artifact@v4
