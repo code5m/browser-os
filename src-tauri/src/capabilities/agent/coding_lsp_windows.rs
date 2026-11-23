@@ -1808,7 +1808,9 @@ impl Session {
         loop {
             let value = self.recv_frame("LSP_READY_TIMEOUT")?;
             #[cfg(test)]
-            if value["method"] == "experimental/serverStatus" && value["params"]["quiescent"] == true {
+            if value["method"] == "experimental/serverStatus"
+                && value["params"]["quiescent"] == true
+            {
                 let health = value["params"]["health"].as_str().unwrap_or("invalid");
                 let detail = value["params"]["message"].as_str().unwrap_or("");
                 let brief = detail.lines().take(8).collect::<Vec<_>>().join(" ");
