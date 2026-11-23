@@ -154,17 +154,28 @@ function Test-LockedDependencies {
 $PriorLocation = Get-Location
 try {
     Set-Location -LiteralPath $Root
-    # Restore the exact lockfile in a new checkout; calling npm-cli.js
-    # through node avoids the WindowsApps npm alias / forbidden WSL route.
-    if (-not (Test-LockedDependencies)) {
+    # The existing dependency checker covers direct dependency versions.
+    # A private stamp additionally binds the ENTIRE package-lock.json and
+    # package.json bytes to an npm-ci performed by this script. Without the
+    # stamp, even a seemingly compatible node_modules must be restored once.
+    # This avoids stale transitive packages after a branch switch.
+    $LockPath = Join-Path $Root "package-lock.json"
+    $ManifestPath = Join-Path $Root "package.json"
+    $LockFingerprint = ((Get-FileHash -LiteralPath $LockPath -Algorithm SHA256).Hash +
+        ":" + (Get-FileHash -LiteralPath $ManifestPath -Algorithm SHA256).Hash).ToLowerInvariant()
+    $InstallStamp = Join-Path $Root "node_modules/.browseros-local-build-lock"
+    $Stamped = [System.IO.File]::Exists($InstallStamp) -and
+        [System.IO.File]::ReadAllText($InstallStamp).Trim() -ceq $LockFingerprint
+    if (-not $Stamped -or -not (Test-LockedDependencies)) {
         if (-not [System.IO.File]::Exists($NpmCli)) {
             throw "WINDOWS_LOCAL_BUILD_NPM_CLI_MISSING:$NpmCli"
         }
-        Write-Host "WINDOWS_LOCAL_BUILD: restoring locked npm dependencies"
+        Write-Host "WINDOWS_LOCAL_BUILD: restoring exact npm lockfile"
         Invoke-External $Node @($NpmCli, "ci", "--no-audit", "--no-fund") "npm_ci"
         if (-not (Test-LockedDependencies)) {
             throw "WINDOWS_LOCAL_BUILD_NPM_LOCK_MISMATCH_AFTER_INSTALL"
         }
+        [System.IO.File]::WriteAllText($InstallStamp, $LockFingerprint + [Environment]::NewLine)
     }
     foreach ($Required in @($ViteCli, $TauriCli, $BuildConfig)) {
         if (-not [System.IO.File]::Exists($Required)) {
@@ -252,7 +263,7 @@ try {
             foreach ($Installer in $Installers) {
                 Write-Host "WINDOWS_LOCAL_BUILD_NSIS_CREATED: $($Installer.FullName)"
             }
-            Write-Host "WINDOWS_LOCAL_BUILD_UNVERIFIED: no CI, tests, installation or GUI check ran"
+            Write-Host "WINDOWS_LOCAL_BUILD_UNVERIFIED: no app test suite, CI, installation or GUI acceptance ran"
             return
         }
         $Tail = (Get-Content -LiteralPath $LogFile -Tail 160) -join "`n"
