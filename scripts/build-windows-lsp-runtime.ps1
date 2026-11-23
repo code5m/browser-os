@@ -270,13 +270,21 @@ try {
     Invoke-Checked "git" @("init", "--quiet", $Checkout)
     Invoke-Checked "git" @("-C", $Checkout, "config", "core.autocrlf", "false")
     Invoke-Checked "git" @("-C", $Checkout, "remote", "add", "origin", $Source.source_repository)
-    Invoke-Checked "git" @("-C", $Checkout, "sparse-checkout", "init", "--cone")
-    Invoke-Checked "git" @("-C", $Checkout, "sparse-checkout", "set", $Source.source_subdirectory)
+    # A manually initialized partial clone must register the promisor remote
+    # so checkout can lazily fetch the pinned subtree's missing blob objects.
+    Invoke-Checked "git" @("-C", $Checkout, "config", "remote.origin.promisor", "true")
+    Invoke-Checked "git" @("-C", $Checkout, "config", "remote.origin.partialclonefilter", "blob:none")
     Invoke-Checked "git" @(
         "-C", $Checkout, "-c", "protocol.version=2", "fetch",
         "--no-tags", "--filter=blob:none", "--depth", "1",
         "origin", $Source.source_commit)
-    Invoke-Checked "git" @("-C", $Checkout, "checkout", "--detach", "FETCH_HEAD")
+    # Give the new repository a real HEAD without checking out its full tree.
+    # This preserves the original --no-checkout + sparse-checkout behavior.
+    Invoke-Checked "git" @("-C", $Checkout, "update-ref", "refs/heads/browseros-pinned-source", $Source.source_commit)
+    Invoke-Checked "git" @("-C", $Checkout, "symbolic-ref", "HEAD", "refs/heads/browseros-pinned-source")
+    Invoke-Checked "git" @("-C", $Checkout, "sparse-checkout", "init", "--cone")
+    Invoke-Checked "git" @("-C", $Checkout, "sparse-checkout", "set", $Source.source_subdirectory)
+    Invoke-Checked "git" @("-C", $Checkout, "checkout", "--detach", $Source.source_commit)
     $ActualCommit = Read-CheckedOutput "git" @("-C", $Checkout, "rev-parse", "HEAD")
     if ($ActualCommit -cne $Source.source_commit) {
         throw "WINDOWS_LSP_SOURCE_COMMIT_MISMATCH"
