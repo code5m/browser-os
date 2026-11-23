@@ -595,6 +595,14 @@ assert.match(windowsLsp, /LSP_SNAPSHOT_ROOT_ACES/);
 assert.match(windowsLsp, /own lowbox could not read source\/manifest/);
 
 assert.match(windowsLsp, /"linkedProjects":\[reviewed_graph\]/);
+// The pinned rust-analyzer falls back to native OS file watching when client
+// didChangeWatchedFiles dynamic registration is absent. Read-only lowbox
+// snapshots must never depend on ReadDirectoryChangesW.
+assert.match(windowsLsp, /"workspace":\{"didChangeWatchedFiles":\{"dynamicRegistration":true\}\}/);
+assert.match(windowsLsp, /"files":\{"watcher":"client"\}/);
+assert.match(windowsLsp, /fn immutable_snapshot_watcher_registration/);
+assert.match(windowsLsp, /fn answer_server_request/);
+assert.match(windowsLsp, /immutable_snapshot_registration_rejects_non_watcher_operations/);
 assert.match(windowsLsp, /"sysroot":null/);
 assert.match(windowsLsp, /reviewed_rust_project_requires_local_sources_and_excludes_cargo_spawns/);
 assert.match(windowsLsp, /private_snapshot_requires_own_package_sid_and_rejects_other_profiles/);
