@@ -41,6 +41,54 @@ if ($PayloadOnly) {
   foreach ($name in @('rust-analyzer.exe', 'runtime.json', 'LICENSE-MIT', 'LICENSE-APACHE', 'Cargo.lock')) {
     $expectedFiles[('windows-lsp/' + $name)] = Join-Path $ExpectedRuntimeDirectory $name
   }
+  # Tauri v2's bundler patches the *in-installer* executable token from
+  # __TAURI_BUNDLE_TYPE_VAR_UNK to __TAURI_BUNDLE_TYPE_VAR_NSS and then restores
+  # target/release's unsigned, unpatched executable (tauri-bundler bundle.rs).
+  # Thus hashing the installed NSIS exe against the restored release exe is
+  # provably wrong. Derive the exact 27-byte patched payload hash in memory,
+  # permitting no other byte, length, or resource changes.
+  function Get-ExpectedNsisExecutableHash([string]$ReleaseExecutable) {
+    $metadata = Get-Item -LiteralPath $ReleaseExecutable
+    if ($metadata.Length -le 0 -or $metadata.Length -gt 268435456) {
+      throw 'NSIS_PAYLOAD_SOURCE_BINARY_SIZE_INVALID'
+    }
+    [byte[]]$bytes = [IO.File]::ReadAllBytes($ReleaseExecutable)
+    [byte[]]$old = [Text.Encoding]::ASCII.GetBytes('__TAURI_BUNDLE_TYPE_VAR_UNK')
+    [byte[]]$new = [Text.Encoding]::ASCII.GetBytes('__TAURI_BUNDLE_TYPE_VAR_NSS')
+    if ($old.Length -ne $new.Length) {
+      throw 'NSIS_PAYLOAD_PATCH_TOKEN_LENGTH_INVALID'
+    }
+    $found = -1
+    $cursor = 0
+    while ($cursor -le $bytes.Length - $old.Length) {
+      $candidate = [Array]::IndexOf($bytes, $old[0], $cursor)
+      if ($candidate -lt 0 -or $candidate -gt $bytes.Length - $old.Length) {
+        break
+      }
+      $same = $true
+      for ($index = 1; $index -lt $old.Length; $index++) {
+        if ($bytes[$candidate + $index] -ne $old[$index]) {
+          $same = $false
+          break
+        }
+      }
+      if ($same) {
+        if ($found -ge 0) {
+          throw 'NSIS_PAYLOAD_SOURCE_PATCH_TOKEN_AMBIGUOUS'
+        }
+        $found = $candidate
+      }
+      $cursor = $candidate + 1
+    }
+    if ($found -lt 0) {
+      throw 'NSIS_PAYLOAD_SOURCE_PATCH_TOKEN_MISSING'
+    }
+    [Array]::Copy($new, 0, $bytes, $found, $new.Length)
+    return [Convert]::ToHexString(
+      [Security.Cryptography.SHA256]::HashData($bytes)
+    ).ToLowerInvariant()
+  }
+
   $verified = [ordered]@{}
   $inventory = [ordered]@{}
   $mismatches = [System.Collections.Generic.List[string]]::new()
@@ -56,11 +104,17 @@ if ($PayloadOnly) {
         ($installedItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
       throw "NSIS_PAYLOAD_REPARSE_POINT:$($entry.Key)"
     }
-    $expectedHash = (Get-FileHash -LiteralPath $entry.Value -Algorithm SHA256).Hash.ToLowerInvariant()
+    $releaseHash = (Get-FileHash -LiteralPath $entry.Value -Algorithm SHA256).Hash.ToLowerInvariant()
+    $expectedHash = if ($entry.Key -ceq 'mvp-browser-os.exe') {
+      Get-ExpectedNsisExecutableHash $entry.Value
+    } else {
+      $releaseHash
+    }
     $actualHash = (Get-FileHash -LiteralPath $installed -Algorithm SHA256).Hash.ToLowerInvariant()
     $match = $actualHash -ceq $expectedHash -and $installedItem.Length -eq $sourceItem.Length
     $inventory[$entry.Key] = [ordered]@{
-      expected_sha256 = $expectedHash
+      restored_release_sha256 = $releaseHash
+      expected_nsis_sha256 = $expectedHash
       installed_sha256 = $actualHash
       expected_bytes = [int64]$sourceItem.Length
       installed_bytes = [int64]$installedItem.Length
