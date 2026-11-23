@@ -620,7 +620,6 @@ impl TabManager {
         Ok(())
     }
 
-
     /// Capture the entire document through its native engine. No page scroll,
     /// remote script, authentication state or image bytes cross the IPC bridge.
     /// The callback is bound to the requested, app-owned tab and is size limited.
@@ -629,7 +628,11 @@ impl TabManager {
         id: &TabId,
         callback: impl FnOnce(std::result::Result<Vec<u8>, String>) + Send + 'static,
     ) -> Result<()> {
-        let webview = self.tabs.read().get(id).cloned()
+        let webview = self
+            .tabs
+            .read()
+            .get(id)
+            .cloned()
             .ok_or_else(|| BrowserTabError::TabNotFound(id.clone()))?;
         #[cfg(target_os = "linux")]
         {
@@ -640,10 +643,12 @@ impl TabManager {
                     webkit2gtk::SnapshotOptions::NONE,
                     None::<&webkit2gtk::gio::Cancellable>,
                     move |result| {
-                        let image = result.map_err(|_| "CAPTURE_ENGINE_FAILED".to_string())
+                        let image = result
+                            .map_err(|_| "CAPTURE_ENGINE_FAILED".to_string())
                             .and_then(|surface| {
                                 let mut png = Vec::new();
-                                surface.write_to_png(&mut png)
+                                surface
+                                    .write_to_png(&mut png)
                                     .map_err(|_| "CAPTURE_PNG_ENCODE_FAILED".to_string())?;
                                 if png.len() > 32 * 1024 * 1024 {
                                     return Err("CAPTURE_SIZE_LIMIT".into());
@@ -663,7 +668,10 @@ impl TabManager {
                 use windows::core::PCWSTR;
                 let core = match unsafe { native.controller().CoreWebView2() } {
                     Ok(core) => core,
-                    Err(_) => { callback(Err("CAPTURE_ENGINE_UNAVAILABLE".into())); return; }
+                    Err(_) => {
+                        callback(Err("CAPTURE_ENGINE_UNAVAILABLE".into()));
+                        return;
+                    }
                 };
                 let method = pwstr_from_str("Page.captureScreenshot");
                 let params = pwstr_from_str(r#"{"format":"png","captureBeyondViewport":true,"fromSurface":true}"#);
