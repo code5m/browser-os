@@ -3,7 +3,8 @@
 [CmdletBinding()]
 param(
     [string]$WorkDirectory = "",
-    [string]$ExecutableDirectory = ""
+    [string]$ExecutableDirectory = "",
+    [string]$ReuseBundleDirectory = ""
 )
 
 Set-StrictMode -Version Latest
@@ -29,19 +30,46 @@ function Assert-Hash([string]$Path, [string]$Expected, [string]$Stage) {
 }
 
 function Invoke-Checked([string]$Program, [string[]]$ToolArguments) {
+    # Native tools emit progress/warnings on stderr: only the exit code fails.
+    Get-Command $Program -ErrorAction Stop | Out-Null
+    $ErrorActionPreference = "Continue"
+    $PSNativeCommandUseErrorActionPreference = $false
     & $Program @ToolArguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "WINDOWS_LSP_TOOL_FAILED:$Program exit=$LASTEXITCODE"
+    $ToolExitCode = $LASTEXITCODE
+    if ($ToolExitCode -ne 0) {
+        throw "WINDOWS_LSP_TOOL_FAILED:$Program exit=$ToolExitCode"
     }
 }
 
 function Read-CheckedOutput([string]$Program, [string[]]$ToolArguments) {
-    $ToolOutput = & $Program @ToolArguments 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        $ToolOutput | ForEach-Object { Write-Host $_ }
-        throw "WINDOWS_LSP_TOOL_FAILED:$Program exit=$LASTEXITCODE"
+    # Keep stderr out of SHA, filename and diff-inventory values. Drain both
+    # pipes concurrently so a child process cannot block on a full buffer.
+    $StartInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $StartInfo.FileName = $Program
+    $StartInfo.UseShellExecute = $false
+    $StartInfo.RedirectStandardOutput = $true
+    $StartInfo.RedirectStandardError = $true
+    foreach ($Argument in $ToolArguments) {
+        [void]$StartInfo.ArgumentList.Add($Argument)
     }
-    return ($ToolOutput -join $LineFeed).Trim()
+    $Process = [System.Diagnostics.Process]::new()
+    $Process.StartInfo = $StartInfo
+    try {
+        if (-not $Process.Start()) { throw "WINDOWS_LSP_TOOL_START_FAILED:$Program" }
+        $StdoutTask = $Process.StandardOutput.ReadToEndAsync()
+        $StderrTask = $Process.StandardError.ReadToEndAsync()
+        $Process.WaitForExit()
+        $StandardOutput = $StdoutTask.GetAwaiter().GetResult()
+        $StandardError = $StderrTask.GetAwaiter().GetResult()
+        if ($Process.ExitCode -ne 0) {
+            if ($StandardOutput) { Write-Host $StandardOutput }
+            if ($StandardError) { Write-Host $StandardError }
+            throw "WINDOWS_LSP_TOOL_FAILED:$Program exit=$($Process.ExitCode)"
+        }
+        return $StandardOutput.Trim()
+    } finally {
+        $Process.Dispose()
+    }
 }
 
 function Exact-Properties($Value, [string[]]$Names) {
@@ -207,6 +235,24 @@ try {
         return
     }
 
+    # This is opt-in: use only a trusted bundle previously built on this
+    # workstation. Recheck its entire manifest, declared files and digests.
+    if (-not [string]::IsNullOrWhiteSpace($ReuseBundleDirectory)) {
+        $ReusePath = [System.IO.Path]::GetFullPath($ReuseBundleDirectory)
+        if (-not (Valid-Bundle $ReusePath)) {
+            throw "WINDOWS_LSP_REUSE_BUNDLE_INVALID"
+        }
+        foreach ($FileName in @("LICENSE-MIT", "LICENSE-APACHE", "Cargo.lock", "rust-analyzer.exe", "runtime.json")) {
+            Copy-Item -LiteralPath (Join-Path $ReusePath $FileName) -Destination (Join-Path $Bundle $FileName) -Force
+        }
+        if (-not (Valid-Bundle $Bundle)) {
+            throw "WINDOWS_LSP_REUSED_BUNDLE_INVALID"
+        }
+        Write-Host "WINDOWS_LSP_BUNDLE=VERIFIED_REUSED"
+        Publish-ForExecutable
+        return
+    }
+
     if ([string]::IsNullOrWhiteSpace($WorkDirectory)) {
         $WorkDirectory = Join-Path ([System.IO.Path]::GetTempPath()) "browseros-windows-lsp"
     }
@@ -218,16 +264,19 @@ try {
         "-" + $Source.lock_sha256.Substring(0, 12))
     Assert-PlainDirectory $TargetDirectory
 
-    # The tag is only a transport selector; the commit and every changed input
-    # are checked before applying a patch or invoking Cargo.
-    Invoke-Checked "git" @(
-        "-c", "core.autocrlf=false", "clone", "--filter=blob:none", "--no-checkout",
-        "--depth", "1", "--branch", $Source.rust_release,
-        $Source.source_repository, $Checkout)
+    # Fetch the reviewed commit directly. Fetching the release tag first and
+    # then checking out a different commit can download enormous history.
+    # The Git object identity, six upstream hashes and patch audit remain.
+    Invoke-Checked "git" @("init", "--quiet", $Checkout)
     Invoke-Checked "git" @("-C", $Checkout, "config", "core.autocrlf", "false")
+    Invoke-Checked "git" @("-C", $Checkout, "remote", "add", "origin", $Source.source_repository)
     Invoke-Checked "git" @("-C", $Checkout, "sparse-checkout", "init", "--cone")
     Invoke-Checked "git" @("-C", $Checkout, "sparse-checkout", "set", $Source.source_subdirectory)
-    Invoke-Checked "git" @("-C", $Checkout, "checkout", "--detach", $Source.source_commit)
+    Invoke-Checked "git" @(
+        "-C", $Checkout, "-c", "protocol.version=2", "fetch",
+        "--no-tags", "--filter=blob:none", "--depth", "1",
+        "origin", $Source.source_commit)
+    Invoke-Checked "git" @("-C", $Checkout, "checkout", "--detach", "FETCH_HEAD")
     $ActualCommit = Read-CheckedOutput "git" @("-C", $Checkout, "rev-parse", "HEAD")
     if ($ActualCommit -cne $Source.source_commit) {
         throw "WINDOWS_LSP_SOURCE_COMMIT_MISMATCH"
@@ -455,12 +504,20 @@ try {
             [Environment]::SetEnvironmentVariable($EnvironmentName, $SavedEnvironment[$EnvironmentName], "Process")
         }
         if ($null -ne $Checkout -and [System.IO.Directory]::Exists($Checkout)) {
-            Remove-Item -LiteralPath $Checkout -Recurse -Force
+            try {
+                Remove-Item -LiteralPath $Checkout -Recurse -Force
+            } catch {
+                Write-Warning ("WINDOWS_LSP_CHECKOUT_CLEANUP_FAILED: " + $_.Exception.Message)
+            }
         }
     } finally {
         if ($null -ne $BuildLock) {
             $BuildLock.Dispose()
-            Remove-Item -LiteralPath $BuildLockPath -Force -ErrorAction SilentlyContinue
+            try {
+                Remove-Item -LiteralPath $BuildLockPath -Force -ErrorAction Stop
+            } catch {
+                Write-Warning ("WINDOWS_LSP_LOCK_CLEANUP_FAILED: " + $_.Exception.Message)
+            }
         }
     }
 }
