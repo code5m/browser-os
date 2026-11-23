@@ -40,8 +40,8 @@ const state = computed(() => home.panelState);
         <span>主页</span>
       </h1>
       <div class="home-actions">
-        <button type="button" title="在独立页签打开公众号个人工作台（不自动发布或群发）" @click="openWechatWorkbench">
-          📣 公众号工作台
+        <button type="button" title="打开多平台内容工作台，支持微信、百度、头条、小红书、B站等官方后台（不自动发布）" @click="openWechatWorkbench">
+          📣 多平台内容工作台
         </button>
         <button type="button" title="把当前网页收藏到主页" @click="home.favoriteCurrentPage">
           ☆ 收藏网页

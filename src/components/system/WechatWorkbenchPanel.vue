@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue';
 import { bridge } from '../../bridge';
 import WechatDraftPanel from './WechatDraftPanel.vue';
+import PublishingPlatformsPanel from './PublishingPlatformsPanel.vue';
 
 // No simulated provider metrics. Only the existing WeChat draft/material bridge is live.
 type Section = 'overview' | 'topics' | 'draft' | 'layout' | 'calendar' | 'analytics' | 'messages' | 'assets' | 'viral';
@@ -17,6 +18,7 @@ const navigation: {id:Section; name:string; icon:string; subtitle:string; englis
   {id:'viral',name:'爆文拆解',icon:'✦',subtitle:'拆解标题结构，不生成虚假数据',english:'HIT ARTICLE ANALYSIS'}
 ];
 const current = ref<Section>('overview');
+const selectedPlatformId=ref('wechat');
 const selected = computed(() => navigation.find(item=>item.id===current.value) ?? navigation[0]!);
 const pageNo = computed(() => String(navigation.findIndex(item=>item.id===current.value)+1).padStart(2,'0'));
 const account = ref('检查中');
@@ -80,16 +82,20 @@ onMounted(()=>{void refreshAccount();});
 </script>
 
 <template>
-  <section class="wxwb" aria-label="公众号个人工作台">
+  <section class="wxwb" aria-label="多平台内容工作台">
     <header class="wxwb-hero">
-      <div class="wxwb-brand">✦ AI WORKBENCH <span>/ WECHAT</span></div>
+      <div class="wxwb-brand">✦ AI WORKBENCH <span>/ MULTI PLATFORM</span></div>
       <div class="wxwb-hero-line">
-        <div><h2>公众号<span>个人工作台</span></h2><p>{{selected.subtitle}}</p></div>
+        <div><h2>多平台<span>内容工作台</span></h2><p>{{selected.subtitle}}</p></div>
         <div class="wxwb-counter"><strong>{{pageNo}}</strong><span> / 09</span><small>{{selected.english}}</small></div>
       </div>
       <div class="wxwb-art" aria-hidden="true"><span>◈</span><span>▤</span></div>
     </header>
-    <div class="wxwb-layout">
+    <PublishingPlatformsPanel v-model:selected-id="selectedPlatformId" />
+    <div v-if="selectedPlatformId !== 'wechat'" class="wxwb-alternate" role="status">
+      <h3>已选择其他内容平台</h3><p>在上方点击“打开官方后台”并登录，该平台的账号、权限与草稿由其自身管理。当前仅微信提供真实草稿 API，其他平台不会伪造连接状态或自动发布。</p>
+    </div>
+    <div v-else class="wxwb-layout">
       <aside class="wxwb-rail">
         <div class="wxwb-profile"><span class="wxwb-avatar">☏</span><div><strong>我的公众号</strong><small>{{account}}</small></div></div>
         <nav aria-label="公众号工作台导航" class="wxwb-nav">

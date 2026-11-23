@@ -10,7 +10,7 @@ const wechat = createLifecycleContributionCapability(
     type: "surface",
     slot: "workbench-main",
     view: "wechat",
-    label: "公众号工作台",
+    label: "多平台内容工作台",
     icon: "📣",
     panelState: true,
     load: () => import("../../components/system/WechatWorkbenchPanel.vue"),

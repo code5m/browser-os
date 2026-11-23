@@ -4,11 +4,11 @@ import { WECHAT_CAPABILITY_ID, WECHAT_WORKBENCH_VIEW } from "./public"
 
 export const wechatManifest: CapabilityDefinition = defineIntegratedCapability({
   id: WECHAT_CAPABILITY_ID,
-  name: "微信公众号工作台",
+  name: "多平台内容工作台",
   semanticOwner: "WechatWorkbenchPanel",
   maturity: "C3",
-  version: "1.0.0",
-  provides: ["wechat.workbench", "wechat.material.upload", "wechat.draft"],
+  version: "1.1.0",
+  provides: ["wechat.workbench", "wechat.material.upload", "wechat.draft", "publishing.platform.directory"],
   dependencies: ["bridge"],
   resident: false,
   supported: ["ACTIVE", "SUSPENDED"],

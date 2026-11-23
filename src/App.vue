@@ -149,6 +149,9 @@ async function syncWindowSize() {
 }
 
 onMounted(async () => {
+  // Cold startup always paints Home before native configuration or workspace IO.
+  // External URL intents still open their requested tabs after initialization.
+  layout.activateHome();
   ready.value = true;
   window.addEventListener("keydown", shellKeydown, true);
   window.addEventListener("browseros:set-shell-mode", onShellModeRequest);
