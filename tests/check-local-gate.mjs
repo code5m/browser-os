@@ -10,6 +10,7 @@ const invalid = spawnSync('bash', ['scripts/gate-local.sh', 'not-a-gate'], { enc
 assert.equal(invalid.status, 2, 'unknown gate names must not silently pass');
 const script = readFileSync('scripts/gate-local.sh', 'utf8');
 assert.match(script, /set -euo pipefail/);
+assert.match(script, /quick\)[\s\S]*check-full-page-screenshot\.mjs[\s\S]*QUICK_CHECKS=PASS/);
 for (const required of ['npm run check', 'cargo test', 'check-coding-ui-managed.mjs', 'scripts/pre-merge.sh', 'REAL_PROVIDER_MCP=NOT_VERIFIED PACKAGE=NOT_VERIFIED GUI=GUI_PENDING']) assert.ok(script.includes(required), `missing ${required}`);
 assert.match(readFileSync('.githooks/pre-merge-commit', 'utf8'), /gate-local\.sh.*merge/);
 assert.match(script, /coding\)[\s\S]*check:coding-workbench[\s\S]*check-coding-ui-managed\.mjs[\s\S]*CODING_CHECKS=PASS/);
