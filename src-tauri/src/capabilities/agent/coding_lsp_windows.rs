@@ -1807,6 +1807,13 @@ impl Session {
     fn await_ready(&mut self) -> Result<(), String> {
         loop {
             let value = self.recv_frame("LSP_READY_TIMEOUT")?;
+            #[cfg(test)]
+            if value["method"] == "experimental/serverStatus" && value["params"]["quiescent"] == true {
+                let health = value["params"]["health"].as_str().unwrap_or("invalid");
+                let detail = value["params"]["message"].as_str().unwrap_or("");
+                let brief = detail.lines().take(8).collect::<Vec<_>>().join(" ");
+                eprintln!("LSP_READY_STATUS health={health} message={brief}");
+            }
             if value["method"] == "experimental/serverStatus"
                 && value.get("id").is_none()
                 && server_status_ready(&value)?
@@ -3431,6 +3438,41 @@ mod tests {
                 }),
             ),
         );
+        if hover["result"].is_null() {
+            // A syntax-only documentSymbol response can pass even when the
+            // private crate graph never loaded. Ask the SAME pinned analyzer
+            // for direct graph evidence before reporting a semantic failure.
+            // These diagnostics only execute in the Windows native test.
+            let entry = get_session(&root.canonicalize().unwrap(), id).unwrap();
+            let mut native = entry.lock().unwrap();
+            native.begin_request(new_operation(30));
+            let private_uri = uri_for(&native.snapshot.join("src/lib.rs")).unwrap();
+            for (label, method, params) in [
+                (
+                    "ANALYZER_STATUS",
+                    "rust-analyzer/analyzerStatus",
+                    json!({"textDocument":{"uri":private_uri}}),
+                ),
+                (
+                    "CRATE_GRAPH",
+                    "rust-analyzer/viewCrateGraph",
+                    json!({"full":false}),
+                ),
+            ] {
+                match native.rpc_next(method, params) {
+                    Ok(response) => {
+                        let raw = response.as_str().unwrap_or("UNEXPECTED_NON_STRING");
+                        let sanitized = raw.replace(
+                            &native.snapshot.to_string_lossy().to_string(),
+                            "[private-snapshot]",
+                        );
+                        let summary = sanitized.lines().take(60).collect::<Vec<_>>().join("\n");
+                        eprintln!("LSP_SEMANTIC_PROBE_{label}={summary}");
+                    }
+                    Err(error) => eprintln!("LSP_SEMANTIC_PROBE_{label}_ERROR={error}"),
+                }
+            }
+        }
         assert!(!hover["result"].is_null(), "hover returned null: {hover}");
         assert!(
             hover["result"].to_string().contains("helper"),
