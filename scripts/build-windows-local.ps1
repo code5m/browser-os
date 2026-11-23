@@ -132,11 +132,31 @@ $env:LIBPATH = (@($LibPaths) + @($env:LIBPATH | Where-Object { $_ })) -join ";"
 $env:CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER = $Linker
 $env:CARGO_BUILD_JOBS = [string]$CargoJobs
 
-$Git = Get-Command git.exe -ErrorAction Stop
-$GitExecPath = (& $Git.Source --exec-path | Out-String).Trim()
-if ($LASTEXITCODE -eq 0 -and [System.IO.Directory]::Exists($GitExecPath)) {
-    $env:GIT_EXEC_PATH = $GitExecPath
+$GitCommand = Get-Command git.exe -ErrorAction SilentlyContinue
+$GitPath = if ($null -ne $GitCommand) { $GitCommand.Source } else { "" }
+if (-not $GitPath) {
+    $GitFallback = Join-Path $env:ProgramFiles "Git/cmd/git.exe"
+    if (-not [System.IO.File]::Exists($GitFallback)) {
+        throw "WINDOWS_LOCAL_BUILD_GIT_NOT_FOUND: add Git for Windows to PATH"
+    }
+    $GitPath = $GitFallback
+    $env:PATH = (Split-Path -Parent $GitPath) + ";" + $env:PATH
 }
+$GitExecPath = (& $GitPath --exec-path | Out-String).Trim()
+if ($LASTEXITCODE -ne 0) { throw "WINDOWS_LOCAL_BUILD_GIT_EXEC_PATH_FAILED" }
+$GitRoot = Split-Path -Parent (Split-Path -Parent $GitPath)
+$GitHelpers = @(
+    $GitExecPath,
+    (Join-Path $GitRoot "mingw64/bin"),
+    (Join-Path $GitRoot "mingw64/libexec/git-core")
+)
+$GitHelperDirectory = $GitHelpers | Where-Object {
+    [System.IO.File]::Exists((Join-Path $_ "git-remote-https.exe"))
+} | Select-Object -First 1
+if (-not $GitHelperDirectory) {
+    throw "WINDOWS_LOCAL_BUILD_GIT_HTTPS_HELPER_MISSING: check Git for Windows installation"
+}
+$env:GIT_EXEC_PATH = $GitHelperDirectory
 $ViteCli = Join-Path $Root "node_modules/vite/bin/vite.js"
 $TauriCli = Join-Path $Root "node_modules/@tauri-apps/cli/tauri.js"
 $BuildConfig = Join-Path $Root "src-tauri/tauri.local-prebuilt.windows.conf.json"
