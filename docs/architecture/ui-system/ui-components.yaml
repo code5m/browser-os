@@ -8,7 +8,7 @@
 
 version: 1
 generated_from_head: 3f57a92e5fb7d9a6bc978f1572964d3c14fb8caf
-total: 100
+total: 101
 
 components:
   - { id: agent.mcp-execution-review, name: McpExecutionReview, layer: CAPABILITY_UI, owner: agent, file: src/capabilities/agent/ui/McpExecutionReview.vue, public: false, business_semantics: "Displays the exact MCP invocation and emits explicit credential/environment approval without reading secret values", capability_specific: true, dependencies: [Vue props/emits], consumers: [CodingWorkbench], status: OBSERVED }
@@ -19,6 +19,7 @@ components:
   - { id: agent.coding-workbench, name: CodingWorkbench, layer: CAPABILITY_UI, owner: agent, file: src/capabilities/agent/ui/CodingWorkbench.vue, public: false, business_semantics: "Project editing and reviewed agent changes", capability_specific: true, dependencies: [bridge, aiService, CodingCodeEditor], consumers: [AgentManagerPanel], status: OBSERVED }
   - { id: agent.coding-editor, name: CodingCodeEditor, layer: CAPABILITY_UI, owner: agent, file: src/capabilities/agent/ui/CodingCodeEditor.vue, public: false, business_semantics: "Monaco editing and diff with no language server claim", capability_specific: true, dependencies: [monaco-editor], consumers: [CodingWorkbench], status: OBSERVED }
   - { id: wechat.draft, name: WechatDraftPanel, layer: CAPABILITY_UI, owner: wechat, file: src/components/system/WechatDraftPanel.vue, public: false, business_semantics: "Manual WeChat Official Account image upload and draft-only workflow, no publish or send", capability_specific: true, dependencies: [bridge, system-keyring], consumers: [WechatWorkbenchPanel, SettingsPanel], status: OBSERVED }
+  - { id: wechat.platforms, name: PublishingPlatformsPanel, layer: CAPABILITY_UI, owner: wechat, file: src/components/system/PublishingPlatformsPanel.vue, public: false, business_semantics: "Allowlisted creator consoles and authorized WeChat status checks; no credential scraping or simulated publishing", capability_specific: true, dependencies: [browser public, bridge WeChat API], consumers: [WechatWorkbenchPanel], status: OBSERVED }
   - { id: wechat.workbench, name: WechatWorkbenchPanel, layer: CAPABILITY_UI, owner: wechat, file: src/components/system/WechatWorkbenchPanel.vue, public: false, business_semantics: "Nine-view neon workbench opened as a first-class module tab; genuine WeChat draft-only flow without fake analytics or publishing", capability_specific: true, dependencies: [bridge, WechatDraftPanel], consumers: [wechat.main.panel], status: OBSERVED }
   - { id: framework.ai-config, name: AiConfiguration, layer: WORKBENCH, owner: framework, file: src/components/system/AiConfiguration.vue, public: true, business_semantics: "Unified AI provider configuration with OS credential references", capability_specific: false, dependencies: [aiService], consumers: [SettingsPanel], status: OBSERVED }
   - { id: framework.ai-assistant, name: AiAssistant, layer: WORKBENCH, owner: framework, file: src/components/system/AiAssistant.vue, public: true, business_semantics: "Explicit user prompt and context submission through configured AI", capability_specific: false, dependencies: [aiService], consumers: [DatabaseWorkspace, GitStudio, AINavPanel], status: OBSERVED }
