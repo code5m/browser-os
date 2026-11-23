@@ -861,6 +861,9 @@ export const bridge = {
   // 在指定子 webview 中执行 JavaScript（用于 AI 模式向宫格注入问题）
   evalInTab: (id: string, js: string) => invoke<string>("eval_in_tab", { id, js }),
 
+  // Native full-document PNG capture, returns the saved local path (not image bytes).
+  captureFullPage: (id: string) => invoke<string>("capture_full_page", { id }),
+
   // 页签休眠开关（默认关；开启后非激活超 10 分钟的页签销毁 webview 仅留 URL，激活时重建）
   setTabHibernation: (enabled: boolean) =>
     invoke("set_tab_hibernation", { enabled }),

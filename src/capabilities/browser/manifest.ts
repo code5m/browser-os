@@ -8,7 +8,7 @@ export const browserManifest: CapabilityDefinition = defineIntegratedCapability(
   semanticOwner: "useBrowserStore",
   maturity: "C3",
   version: "1.0.0",
-  provides: ["browser.navigate", "browser.tab.open", "browser.tab.close", "browser.host"],
+  provides: ["browser.navigate", "browser.tab.open", "browser.tab.close", "browser.host", "browser.capture.full-page"],
   dependencies: ["bridge"],
   v1Dependencies: [],
   resident: false,

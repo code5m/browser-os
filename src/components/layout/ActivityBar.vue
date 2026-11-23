@@ -16,11 +16,24 @@ import { filterOmnibox, isLocalPath, safeRecentDirs, type OmniboxItem } from "..
 import { bridge } from "../../bridge";
 import { contributionRegistry } from "../../capability/contribution/registry";
 import { CONTRIBUTION_SLOTS } from "../../capability/contribution/types";
-import { ArrowLeft, ArrowRight, RotateCw, House, Ellipsis, SlidersHorizontal, ChevronDown } from '@lucide/vue';
+import { ArrowLeft, ArrowRight, RotateCw, House, Ellipsis, SlidersHorizontal, ChevronDown, Camera } from '@lucide/vue';
 import { createNativeMenu, menuAnchor, type NativeMenuEntry } from '../../composables/nativeMenu';
 
 const layout = useLayoutStore();
 const browser = useBrowserStore();
+const capturingPage = ref(false);
+async function captureCurrentPage() {
+  const id = browser.activeTabId;
+  if (!id || capturingPage.value || layout.mainView !== 'browser') return;
+  capturingPage.value = true;
+  try {
+    const path = await bridge.captureFullPage(id);
+    layout.showToast('整页截图已保存：' + path);
+  } catch (error) {
+    const code = String(error).match(/CAPTURE_[A-Z_]+/)?.[0] ?? 'CAPTURE_FAILED';
+    layout.showToast('整页截图失败：' + code);
+  } finally { capturingPage.value = false; }
+}
 const appsStore = useAppsStore();
 const term = useTerminalStore();
 const ws = useWorkspaceStore();
@@ -82,6 +95,7 @@ async function toggleMoreActions(event:MouseEvent) {
     {text:'沉浸全屏 · F11',action:toggleImmersive},
     {text:'AI 导航',enabled:layout.mainView==='browser',action:()=>browser.toggleAiNav()},
     {text:'采集选中内容',action:()=>art.collectSelection()},
+    {text:'整页截图 (PNG)',enabled:layout.mainView==='browser' && !!browser.activeTabId,action:()=>void captureCurrentPage()},
     {text:'设置',action:()=>onItem('settings')},
   ];
   await nativeMenu.open(items,menuAnchor(event.currentTarget as Element));
@@ -291,6 +305,7 @@ async function openDirCenter() {
         <button class="tbtn" aria-label="后退" :disabled="!layout.isBrowserView()" @click="browser.goBack" title="后退"><ArrowLeft :size="18"/></button>
         <button class="tbtn" aria-label="前进" :disabled="!layout.isBrowserView()" @click="browser.goForward" title="前进"><ArrowRight :size="18"/></button>
         <button class="tbtn" aria-label="刷新" :disabled="!layout.isBrowserView()" @click="browser.reloadActive" title="刷新"><RotateCw :size="17"/></button>
+        <button class="tbtn" type="button" data-nav-item aria-label="整页截图" title="不滚动页面，截取完整网页 PNG" :disabled="layout.mainView !== 'browser' || !browser.activeTabId || capturingPage" @click="captureCurrentPage"><Camera :size="18"/></button>
         <button class="tbtn" data-nav-item aria-label="主页" title="主页" :aria-current="layout.mainView === 'home' ? 'page' : undefined" @click="onItem('home')"><House :size="18"/></button>
         <div ref="omniAnchor" class="omni-wrap">
           <button type="button" class="omni-mode" aria-label="切换地址栏模式" :title="'地址栏模式：' + (layout.addrMode === 'auto' ? '自动' : layout.addrMode === 'url' ? '网页' : '文件')"

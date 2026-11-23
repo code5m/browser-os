@@ -1975,6 +1975,7 @@ fn main() {
             bridge::tab_go_forward,
             bridge::tab_reload,
             bridge::eval_in_tab,
+            crate::capabilities::browser::commands::capture_full_page,
             bridge::set_tab_hibernation,
             bridge::resource_stats,
             bridge::term_spawn,
