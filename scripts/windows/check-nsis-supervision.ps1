@@ -63,7 +63,15 @@ $echoPath = Join-Path $EvidenceDirectory 'argument echo.ps1'
 $echoSource = @'
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-[Console]::Out.WriteLine((ConvertTo-Json -InputObject @($args) -Compress))
+# CREATE_NO_WINDOW gives the test child redirected file handles, not a
+# Unicode console. Console.Out can silently use the active ANSI/OEM code page
+# and turn valid Unicode argv into '?' before the parent reads the evidence.
+# Encode the child response explicitly as UTF-8, without cmd.exe or a shell.
+$json = ConvertTo-Json -InputObject @($args) -Compress
+$bytes = [Text.UTF8Encoding]::new($false).GetBytes($json + [Environment]::NewLine)
+$stdout = [Console]::OpenStandardOutput()
+$stdout.Write($bytes, 0, $bytes.Length)
+$stdout.Flush()
 '@
 [IO.File]::WriteAllText($echoPath, $echoSource + [Environment]::NewLine, $utf8)
 [string[]]$expected = @(
