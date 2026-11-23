@@ -192,6 +192,12 @@ export const useHomeStore = defineStore("home", () => {
     return true;
   }
 
+  function addDirectoryShortcut(path: string, name = "截图目录") {
+    const target = path.trim();
+    if (!looksLikeDir(target)) return false;
+    return addShortcut({ type: "dir", name, target, icon: "📸", silent: true });
+  }
+
   // Home remains the only owner of homepage shortcuts. Cross-capability
   // URL bookmark actions consume these intents through home/public.ts.
   function matchingShortcut(type: "url" | "dir", target: string) {
@@ -357,6 +363,7 @@ export const useHomeStore = defineStore("home", () => {
     favoriteCurrentPage,
     favoriteCurrentDir,
     favoriteDirectory,
+    addDirectoryShortcut,
     isFavorite,
     addUrlFavorite,
     removeFavorite,

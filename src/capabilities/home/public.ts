@@ -44,3 +44,8 @@ export function removeHomeFavorite(type: "url" | "dir", target: string): void {
 export function toggleHomeDirectoryFavorite(path: string): boolean {
   return useHomeStore().toggleDirectoryFavorite(path);
 }
+
+/** 公开意图：把运行时生成的本地目录加入主页（例如截图目录）。 */
+export function addHomeDirectoryShortcut(path: string, name = "截图目录"): boolean {
+  return useHomeStore().addDirectoryShortcut(path, name);
+}

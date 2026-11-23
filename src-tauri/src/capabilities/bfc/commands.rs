@@ -12,7 +12,7 @@ use serde_json::Value;
 use std::{collections::HashSet, net::SocketAddr, path::PathBuf, time::Duration};
 use tauri::{AppHandle, Manager, Webview};
 use tokio::{
-    io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
+    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     net::TcpStream,
 };
 use url::Url;

@@ -22,7 +22,7 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
-use tauri::{AppHandle, Manager, Webview};
+use tauri::{AppHandle, Webview};
 
 static CONFIG_LOCK: Mutex<()> = Mutex::new(());
 const CONFIG_FILE: &str = "agent-runtime-experiment.json";

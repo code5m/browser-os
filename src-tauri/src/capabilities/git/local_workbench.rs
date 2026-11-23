@@ -876,7 +876,7 @@ pub async fn git_local_conflict(
             index
                 .get_path(rel, s)
                 .map(|e| e.id)
-                .unwrap_or_else(git2::Oid::zero)
+                .unwrap_or_else(|| git2::Oid::from_bytes(&[0; 20]).expect("zero OID is valid"))
         });
         if ids.iter().all(|o| o.is_zero()) {
             return Err("GIT_LOCAL_NO_FILE_CONFLICT".into());

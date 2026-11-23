@@ -8,7 +8,9 @@ use std::collections::HashMap;
 use std::os::unix::fs::PermissionsExt;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+#[cfg(not(target_os = "linux"))]
+use std::sync::Mutex;
 #[cfg(target_os = "windows")]
 use std::time::Duration;
 #[cfg(not(target_os = "linux"))]

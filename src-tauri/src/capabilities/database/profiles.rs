@@ -8,7 +8,7 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
 };
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 const MAX_BYTES: u64 = 256 * 1024;
 const MAX_COUNT: usize = 64;
 #[derive(Clone, Serialize, Deserialize)]

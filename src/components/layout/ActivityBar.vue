@@ -11,6 +11,7 @@ import { useTerminalStore } from "../../capabilities/terminal/public";
 import { useWorkspaceStore } from "../../capabilities/workspace/public";
 import { useArtifactStore } from "../../capabilities/workspace/public";
 import { useFileStore } from "../../capabilities/workspace/public";
+import { addHomeDirectoryShortcut } from "../../capabilities/home/public";
 import { redactSecrets } from "../../utils/redact";
 import { filterOmnibox, isLocalPath, safeRecentDirs, type OmniboxItem } from "../../utils/omniboxSuggestions";
 import { bridge } from "../../bridge";
@@ -28,7 +29,9 @@ async function captureCurrentPage() {
   capturingPage.value = true;
   try {
     const path = await bridge.captureFullPage(id);
-    layout.showToast('整页截图已保存：' + path);
+    const directory = path.replace(/[\\/]webpage-[^\\/]+\.png$/, '');
+    addHomeDirectoryShortcut(directory);
+    layout.showToast('整页截图已保存；主页已加入“截图目录”');
   } catch (error) {
     const code = String(error).match(/CAPTURE_[A-Z_]+/)?.[0] ?? 'CAPTURE_FAILED';
     layout.showToast('整页截图失败：' + code);

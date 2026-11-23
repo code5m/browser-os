@@ -349,6 +349,9 @@ pub fn get_start_dirs(app: AppHandle, webview: tauri::Webview) -> Vec<DirEntry> 
     add("💾 成果工作区", &ws);
     let notes = crate::workspace::notes_dir(&app);
     add("📝 笔记目录", &notes);
+    if let Ok(data) = app.path().app_data_dir() {
+        add("📸 截图目录", &data.join("screenshots"));
+    }
     dirs
 }
 
