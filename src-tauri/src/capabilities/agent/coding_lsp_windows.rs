@@ -1879,10 +1879,8 @@ impl Session {
                 // this same startup budget; never return syntax-only success.
                 loop {
                     check_operation(&self.operation)?;
-                    let graph = self.rpc_next(
-                        "rust-analyzer/viewCrateGraph",
-                        json!({"full":false}),
-                    )?;
+                    let graph =
+                        self.rpc_next("rust-analyzer/viewCrateGraph", json!({"full":false}))?;
                     if reviewed_crate_graph_ready(&graph)? {
                         return Ok(());
                     }
@@ -3432,13 +3430,13 @@ mod tests {
 
     #[test]
     fn semantic_ready_requires_a_loaded_reviewed_crate() {
-        assert!(!reviewed_crate_graph_ready(
-            &json!("digraph rust_analyzer_crate_graph {\n}\n")
-        )
-        .unwrap());
-        assert!(reviewed_crate_graph_ready(
-            &json!("digraph rust_analyzer_crate_graph {\n  _0[label=\"reviewed_crate_0\"];\n}\n")
-        )
+        assert!(
+            !reviewed_crate_graph_ready(&json!("digraph rust_analyzer_crate_graph {\n}\n"))
+                .unwrap()
+        );
+        assert!(reviewed_crate_graph_ready(&json!(
+            "digraph rust_analyzer_crate_graph {\n  _0[label=\"reviewed_crate_0\"];\n}\n"
+        ))
         .unwrap());
         for invalid in [json!(null), json!({}), json!("not a crate graph")] {
             assert_eq!(
