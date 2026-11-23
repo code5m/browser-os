@@ -42,6 +42,8 @@ if ($PayloadOnly) {
     $expectedFiles[('windows-lsp/' + $name)] = Join-Path $ExpectedRuntimeDirectory $name
   }
   $verified = [ordered]@{}
+  $inventory = [ordered]@{}
+  $mismatches = [System.Collections.Generic.List[string]]::new()
   foreach ($entry in $expectedFiles.GetEnumerator()) {
     $installed = Join-Path $installedRoot $entry.Key
     if (-not (Test-Path -LiteralPath $entry.Value -PathType Leaf) -or
@@ -56,12 +58,41 @@ if ($PayloadOnly) {
     }
     $expectedHash = (Get-FileHash -LiteralPath $entry.Value -Algorithm SHA256).Hash.ToLowerInvariant()
     $actualHash = (Get-FileHash -LiteralPath $installed -Algorithm SHA256).Hash.ToLowerInvariant()
-    if ($actualHash -cne $expectedHash -or $installedItem.Length -ne $sourceItem.Length) {
-      throw "NSIS_PAYLOAD_HASH_MISMATCH:$($entry.Key)"
+    $match = $actualHash -ceq $expectedHash -and $installedItem.Length -eq $sourceItem.Length
+    $inventory[$entry.Key] = [ordered]@{
+      expected_sha256 = $expectedHash
+      installed_sha256 = $actualHash
+      expected_bytes = [int64]$sourceItem.Length
+      installed_bytes = [int64]$installedItem.Length
+      match = [bool]$match
     }
-    $verified[$entry.Key] = $actualHash
+    if ($actualHash -cne $expectedHash -or $installedItem.Length -ne $sourceItem.Length) {
+      $mismatches.Add([string]$entry.Key)
+    } else {
+      $verified[$entry.Key] = $actualHash
+    }
   }
   New-Item -ItemType Directory -Path $EvidenceDir -Force | Out-Null
+  if ($mismatches.Count -gt 0) {
+    # Report ALL six verified payload files before rejecting the install.
+    # A digest and byte count distinguish a stale source, signing, and wrong
+    # install origin; failure evidence is produced without copying executables.
+    $mismatchReport = [ordered]@{
+      status = 'NSIS_PAYLOAD_MISMATCH'
+      source_sha = $SourceSha
+      payload_pass = $false
+      gui_pass = $false
+      mismatched_files = @($mismatches.ToArray())
+      files = $inventory
+    }
+    [IO.File]::WriteAllText(
+      (Join-Path $EvidenceDir 'payload-mismatch.json'),
+      ($mismatchReport | ConvertTo-Json -Depth 6) + [Environment]::NewLine,
+      [Text.UTF8Encoding]::new($false)
+    )
+    Write-Host ('NSIS_PAYLOAD_MISMATCH_EVIDENCE=' + ($mismatchReport | ConvertTo-Json -Depth 6 -Compress))
+    throw "NSIS_PAYLOAD_HASH_MISMATCH:$($mismatches -join ',')"
+  }
   $payloadReport = [ordered]@{
     status = 'PACKAGE_PAYLOAD_PASS_GUI_PENDING'
     source_sha = $SourceSha
