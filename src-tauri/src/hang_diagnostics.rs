@@ -48,7 +48,29 @@ fn append_bounded(path: &Path, event: &Value) {
         return;
     };
     let Ok(meta) = file.metadata() else { return };
-    if meta.len().saturating_add(bytes.len() as u64 + 1) > DIAGNOSTIC_MAX_BYTES {
+    if !meta.is_file() {
+        return;
+    }
+    let recent = path.with_extension("recent.jsonl");
+    if fs::symlink_metadata(&recent).is_ok()
+        || meta.len().saturating_add(bytes.len() as u64 + 1) > DIAGNOSTIC_MAX_BYTES
+    {
+        // Preserve the initial incident segment and roll only this run's
+        // recent segment. Earlier incident files are never removed here.
+        let Ok(mut tail) = options.open(recent) else {
+            return;
+        };
+        let Ok(meta) = tail.metadata() else { return };
+        if !meta.is_file() {
+            return;
+        }
+        if meta.len().saturating_add(bytes.len() as u64 + 1) > DIAGNOSTIC_MAX_BYTES
+            && tail.set_len(0).is_err()
+        {
+            return;
+        }
+        let _ = tail.write_all(&bytes);
+        let _ = tail.write_all(b"\n");
         return;
     }
     let _ = file.write_all(&bytes);
@@ -212,6 +234,29 @@ pub fn start(app: AppHandle) {
         }),
     );
 
+    // A blocked disk may lose bounded diagnostics, but cannot stop heartbeat
+    // sampling or allow an unbounded queue of snapshots to accumulate.
+    let (event_tx, event_rx) = std::sync::mpsc::sync_channel::<Value>(16);
+    let dropped_events = Arc::new(AtomicU64::new(0));
+    let writer_dropped = Arc::clone(&dropped_events);
+    if thread::Builder::new()
+        .name("browseros-ui-diagnostic-writer".into())
+        .spawn(move || {
+            for mut event in event_rx {
+                event["diagnostic_dropped_events"] = json!(writer_dropped.load(Ordering::Relaxed));
+                append_bounded(&path, &event);
+            }
+        })
+        .is_err()
+    {
+        return;
+    }
+    let record = move |event: Value| {
+        if event_tx.try_send(event).is_err() {
+            dropped_events.fetch_add(1, Ordering::Relaxed);
+        }
+    };
+
     let start = Instant::now();
     let last_callback = Arc::new(AtomicU64::new(1));
     let pending_callback = Arc::new(AtomicBool::new(false));
@@ -267,15 +312,16 @@ pub fn start(app: AppHandle) {
                 if dispatch_failed.load(Ordering::Acquire) {
                     let age = (start.elapsed().as_millis().min((u64::MAX - 1) as u128) as u64 + 1)
                         .saturating_sub(last_callback.load(Ordering::Acquire));
-                    append_bounded(&path, &snapshot("gtk_probe_dispatch_failed", age));
+                    record(snapshot("gtk_probe_dispatch_failed", age));
                     break;
                 }
                 if !pending_callback.swap(true, Ordering::SeqCst) {
                     if probe_tx.try_send(()).is_err() {
                         pending_callback.store(false, Ordering::Release);
-                        let age = (start.elapsed().as_millis().min((u64::MAX - 1) as u128) as u64 + 1)
-                            .saturating_sub(last_callback.load(Ordering::Acquire));
-                        append_bounded(&path, &snapshot("gtk_probe_dispatch_failed", age));
+                        let age = (start.elapsed().as_millis().min((u64::MAX - 1) as u128) as u64
+                            + 1)
+                        .saturating_sub(last_callback.load(Ordering::Acquire));
+                        record(snapshot("gtk_probe_dispatch_failed", age));
                         break;
                     }
                 }
@@ -283,12 +329,12 @@ pub fn start(app: AppHandle) {
                 let age_ms = now_ms.saturating_sub(last_callback.load(Ordering::Acquire));
                 if age_ms >= SUSPECT_AFTER_MS {
                     if !stalled || now_ms.saturating_sub(last_snapshot_ms) >= 15_000 {
-                        append_bounded(&path, &snapshot("gtk_unresponsive_suspected", age_ms));
+                        record(snapshot("gtk_unresponsive_suspected", age_ms));
                         last_snapshot_ms = now_ms;
                     }
                     stalled = true;
                 } else if stalled {
-                    append_bounded(&path, &snapshot("gtk_responsive_again", age_ms));
+                    record(snapshot("gtk_responsive_again", age_ms));
                     stalled = false;
                 }
             }
@@ -298,6 +344,24 @@ pub fn start(app: AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn full_diagnostic_keeps_latest_recovery_in_bounded_recent_segment() {
+        let dir = std::env::temp_dir().join(format!("browseros-diag-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&dir).unwrap();
+        let path = dir.join("hang.jsonl");
+        let event = json!({"event":"fixture", "payload":"x".repeat(30_000)});
+        for _ in 0..100 {
+            append_bounded(&path, &event);
+        }
+        append_bounded(&path, &json!({"event":"gtk_responsive_again"}));
+        let recent = path.with_extension("recent.jsonl");
+        assert!(fs::metadata(&path).unwrap().len() <= DIAGNOSTIC_MAX_BYTES);
+        assert!(fs::metadata(&recent).unwrap().len() <= DIAGNOSTIC_MAX_BYTES);
+        assert!(fs::read_to_string(&recent)
+            .unwrap()
+            .contains("gtk_responsive_again"));
+        fs::remove_dir_all(dir).unwrap();
+    }
     #[test]
     fn snapshots_exclude_browser_content_and_are_size_bounded() {
         let snap = snapshot("unit_test", 6000);

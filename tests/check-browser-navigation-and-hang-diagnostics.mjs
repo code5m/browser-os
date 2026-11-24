@@ -66,7 +66,7 @@ assert.match(crashlog, /ECHO_QUEUE_CHUNKS: usize = 32/);
 assert.match(watchdog, /browseros-ui-probe-submit/);
 assert.match(watchdog, /probe_tx\.try_send\(\(\)\)/);
 assert.match(watchdog, /stderr_session_dropped_bytes/);
-assert.match(plugin, /fn reserve_tab_access\(/);
+assert.match(plugin, /fn reserve_tab_access(?:<'a>)?\(/);
 assert.match(plugin, /TabAccessKind::Lifecycle if access\.lifecycle \|\| access\.operations > 0/);
 assert.match(plugin, /let \(_operation, tab\) = self\.get_tab\(id, TabAccessKind::Operation\)\?/);
 assert.match(plugin, /fn reconcile_rect\(/);

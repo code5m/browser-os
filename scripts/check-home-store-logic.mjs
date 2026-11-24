@@ -62,6 +62,22 @@ function eq(name, a, b) {
 
 const SECRET_RE = /token|secret|api[_-]?key|password|Bearer|sk-|AKIA/i;
 
+for (const target of [
+  "https://user:credential@example.test/path",
+  "https://example.test/path?access_token=fixture",
+  "https://example.test/path#access_token=fixture",
+  "https://example.test/path?client_secret=fixture",
+  "https://example.test/path?%61ccess_token=fixture",
+  "https://example.test/#/callback?client_secret=fixture",
+]) {
+  eq("credential-bearing URL stays session-only", homeUi.toPersisted([
+    { id: "fixture", type: "url", name: "fixture", target, icon: "" },
+  ]), []);
+}
+ok("ordinary URL parameters remain navigable after persistence", homeUi.isStorageSafe({
+  id: "safe", type: "url", name: "Search", target: "https://example.test/?q=typescript", icon: "",
+}));
+
 // ---------------------------------------------------------------------------
 // 最近访问有界，快捷方式由用户决定数量
 // ---------------------------------------------------------------------------
@@ -364,5 +380,6 @@ ok("HOME_APP_SESSION_ONLY_NOTICE 零敏感", !SECRET_RE.test(homeUi.HOME_APP_SES
 ok("HOME_APP_SESSION_ONLY_NOTICE 明示会话内有效", homeUi.HOME_APP_SESSION_ONLY_NOTICE.includes("会话"));
 
 // 结果
+await import("../tests/check-home-storage-migration.mjs");
 console.log(`\n主页 Home 逻辑测试：通过 ${passed}，失败 ${failed}`);
 process.exit(failed === 0 ? 0 : 1);

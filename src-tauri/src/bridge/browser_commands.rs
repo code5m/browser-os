@@ -351,9 +351,9 @@ fn enforce_layout_once(app: &AppHandle) {
         for id in ids {
             let _ = manager.reconcile_rect(&id, || {
                 let layouts = state.child_layouts.try_lock().ok()?;
-                layouts.get(&id).map(|&(x, y, w, h)| {
-                    LogicalRect::new(x, y, w.max(1.0), h.max(1.0))
-                })
+                layouts
+                    .get(&id)
+                    .map(|&(x, y, w, h)| LogicalRect::new(x, y, w.max(1.0), h.max(1.0)))
             });
         }
     }

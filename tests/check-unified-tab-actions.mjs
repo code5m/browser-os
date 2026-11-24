@@ -98,6 +98,37 @@ function callerView(store) {
     set(_target, key) { throw Error("Caller wrote owner state directly: " + String(key)); },
   });
 }
+
+{
+  const { browser, native } = fixture();
+  browser.tabs.push({ id: "busy-close", url: "https://fixture.test" });
+  let attempts = 0;
+  native.tabClose = async () => { if (++attempts < 3) throw Error("TAB_LIFECYCLE_BUSY"); };
+  await browser.tabClose("busy-close");
+  assert.equal(attempts, 3);
+  assert.equal(browser.tabs.length, 0);
+  assert.equal(browser.recentlyClosed.length, 1);
+}
+{
+  const { browser, native } = fixture();
+  browser.tabs.push({ id: "still-busy", url: "https://fixture.test" });
+  let attempts = 0;
+  native.tabClose = async () => { attempts++; throw Error("TAB_LAYOUT_BUSY"); };
+  await assert.rejects(browser.tabClose("still-busy"), /TAB_LAYOUT_BUSY/);
+  assert.equal(attempts, 3, "temporary failure retries are bounded");
+  assert.equal(browser.tabs.length, 1);
+  assert.equal(browser.recentlyClosed.length, 0);
+}
+{
+  const { browser, native, lifecycle } = fixture();
+  browser.tabs.push({ id: "busy-deactivate", url: "https://fixture.test" });
+  let attempts = 0;
+  native.tabClose = async () => { if (++attempts === 1) throw Error("TAB_LIFECYCLE_BUSY"); };
+  await lifecycle.deactivate();
+  assert.equal(attempts, 2, "capability cleanup shares the bounded BUSY retry path");
+  assert.equal(browser.tabs.length, 0);
+  assert.equal(browser.recentlyClosed.length, 0, "unloading must not fabricate user-close history");
+}
 function templateClick(path, select) {
   const source = fs.readFileSync(new URL("../" + path, import.meta.url), "utf8");
   const parsed = parseSfc(source, { filename: path });
@@ -550,6 +581,10 @@ console.log("PANEL_OWNER_ACTIONS=PASS");
   assert.equal(layout.mainView, "browser");
   assert.equal(layout.modTabs.length, 0);
   assert.equal(browser.tabs.length, 1, "a failed native close keeps its owner record retryable");
+  assert.equal(browser.recentlyClosed.length, 0, "a failed close must not publish a recently closed entry");
+  native.tabClose = async () => {};
+  await browser.tabClose("failed-placeholder");
+  assert.equal(browser.recentlyClosed.length, 1, "successful retry publishes exactly one closed entry");
 }
 {
   const { layout, browser, calls, navigation } = fixture();

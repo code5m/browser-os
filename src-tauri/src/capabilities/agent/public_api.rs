@@ -3,6 +3,8 @@
 //! helpers are Rust-internal and are never registered as Tauri commands.
 use serde_json::Value;
 use tauri::{AppHandle, Webview};
+
+pub(crate) use super::execution_owner::ProductionExecution;
 pub(crate) fn register_coding_run(id: &str) -> Result<super::coding::RunRequestGuard, String> {
     super::coding::register_run_request(id)
 }

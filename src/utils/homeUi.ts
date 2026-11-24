@@ -228,7 +228,21 @@ export const HOME_PERSISTED_TYPES: readonly HomeShortcutType[] = Object.freeze([
 
 /** 该条目可否安全落库：app 的 target 是命令体 → 否。 */
 export function isStorageSafe<T extends HomeShortcut>(s: T): boolean {
-  return s.type !== "app";
+  if (s.type === "app" || looksSensitive(s.name) || looksSensitive(s.target)) return false;
+  if (s.type === "url") {
+    try {
+      const url = new URL(s.target);
+      if (url.username || url.password) return false;
+      // OAuth credentials can also arrive in a fragment (including hash routes).
+      const fragment = url.hash.slice(1).split("?").at(-1) ?? "";
+      for (const parameters of [url.searchParams, new URLSearchParams(fragment)]) {
+        for (const key of parameters.keys()) {
+          if (/^(?:access[_-]?token|refresh[_-]?token|id[_-]?token|private[_-]?token|token|password|passwd|secret|client[_-]?secret|app[_-]?secret|api[_-]?key|authorization|credential|signature|code)$/i.test(key)) return false;
+        }
+      }
+    } catch { return false; }
+  }
+  return true;
 }
 
 /** 落库前过滤：只保留非敏感主页元数据；app 命令体仅驻留内存（会话内）。 */

@@ -268,7 +268,7 @@ pub fn create_tab(app: AppHandle, url: &str) -> Result<TabInfo, String> {
     });
     eprintln!("[create_tab] run_on_main_thread 已排队 label={}", id);
 
-    eprintln!("[create_tab] 页签已创建 label={} url={}", id, target);
+    eprintln!("[create_tab] tab created label={}", id);
     Ok(info)
 }
 
@@ -406,35 +406,34 @@ pub async fn capture_full_page(
     app: AppHandle,
     id: String,
 ) -> Result<String, String> {
-    use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
-    static CAPTURE_BUSY: AtomicBool = AtomicBool::new(false);
+    static CAPTURE_LANE: crate::shared::blocking::BlockingLane =
+        crate::shared::blocking::BlockingLane::new(1, "CAPTURE_BUSY", "CAPTURE_WORKER_FAILED");
     if webview.label() != "main" {
         return Err("CAPTURE_MAIN_ONLY".into());
     }
     crate::shared::invocation::check_tab_id(&id)?;
-    if CAPTURE_BUSY.swap(true, AtomicOrdering::AcqRel) {
-        return Err("CAPTURE_BUSY".into());
-    }
-    struct CaptureGuard(&'static AtomicBool);
-    impl Drop for CaptureGuard {
-        fn drop(&mut self) {
-            self.0.store(false, AtomicOrdering::Release);
-        }
-    }
-    let _guard = CaptureGuard(&CAPTURE_BUSY);
+    let permit = CAPTURE_LANE.reserve()?;
     let manager = app.state::<tauri_plugin_browser_tabs::TabManagerState>();
     let (send, recv) = std::sync::mpsc::channel();
     manager
         .capture_full_page(&id, move |result| {
-            let _ = send.send(result);
+            // The native callback owns admission, even after the IPC waiter
+            // times out or is dropped. Successful delivery transfers that
+            // ownership to validation/storage; failed delivery releases it.
+            let _ = send.send(result.map(|bytes| (bytes, permit)));
         })
         .map_err(|_| "CAPTURE_TAB_UNAVAILABLE".to_string())?;
-    let bytes = tauri::async_runtime::spawn_blocking(move || {
+    let (bytes, permit) = tauri::async_runtime::spawn_blocking(move || {
         recv.recv_timeout(std::time::Duration::from_secs(30))
             .map_err(|_| "CAPTURE_TIMEOUT".to_string())?
     })
     .await
     .map_err(|_| "CAPTURE_WORKER_FAILED".to_string())??;
+    let base = crate::workspace::data_dir(&app);
+    permit.run(move || save_capture(&base, &bytes)).await
+}
+
+fn save_capture(base: &std::path::Path, bytes: &[u8]) -> Result<String, String> {
     const MAX_BYTES: usize = 32 * 1024 * 1024;
     if bytes.len() < 24 || bytes.len() > MAX_BYTES || !bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
         return Err("CAPTURE_INVALID_PNG".into());
@@ -449,26 +448,52 @@ pub async fn capture_full_page(
     {
         return Err("CAPTURE_DIMENSION_LIMIT".into());
     }
-    let base = app
-        .path()
-        .app_data_dir()
-        .map_err(|_| "CAPTURE_STORAGE_UNAVAILABLE")?;
+    use crate::capabilities::workspace::safe_paths;
+    let roots = vec![base.to_path_buf()];
     let directory = base.join("screenshots");
-    std::fs::create_dir_all(&directory).map_err(|_| "CAPTURE_STORAGE_UNAVAILABLE")?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))
-            .map_err(|_| "CAPTURE_STORAGE_UNAVAILABLE")?;
-    }
-    let file = directory.join(format!("webpage-{}.png", uuid::Uuid::new_v4()));
-    let mut out = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&file)
+    safe_paths::create_directory_all(&directory, &roots)
         .map_err(|_| "CAPTURE_STORAGE_UNAVAILABLE")?;
-    use std::io::Write;
-    out.write_all(&bytes).map_err(|_| "CAPTURE_SAVE_FAILED")?;
-    out.sync_all().map_err(|_| "CAPTURE_SAVE_FAILED")?;
+    safe_paths::ensure_private_directory(&directory).map_err(|_| "CAPTURE_STORAGE_UNAVAILABLE")?;
+    let file = directory.join(format!("webpage-{}.png", uuid::Uuid::new_v4()));
+    safe_paths::create_new_file(&file, &roots, bytes).map_err(|_| "CAPTURE_SAVE_FAILED")?;
     Ok(file.to_string_lossy().into_owned())
+}
+
+#[cfg(test)]
+mod capture_storage_tests {
+    use super::*;
+
+    fn image_header(width: u32, height: u32) -> Vec<u8> {
+        let mut bytes = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
+        bytes.extend_from_slice(&width.to_be_bytes());
+        bytes.extend_from_slice(&height.to_be_bytes());
+        bytes
+    }
+
+    #[test]
+    fn rejects_oversized_images_before_creating_storage() {
+        let base = std::env::temp_dir().join(format!("browseros-capture-{}", uuid::Uuid::new_v4()));
+        assert_eq!(
+            save_capture(&base, &image_header(16_385, 1)),
+            Err("CAPTURE_DIMENSION_LIMIT".into())
+        );
+        assert_eq!(
+            save_capture(&base, &image_header(10_000, 10_000)),
+            Err("CAPTURE_DIMENSION_LIMIT".into())
+        );
+        assert!(!base.exists());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn screenshot_storage_rejects_symlink_directory() {
+        let base = std::env::temp_dir().join(format!("browseros-capture-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&base).unwrap();
+        let elsewhere = base.join("elsewhere");
+        std::fs::create_dir(&elsewhere).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, base.join("screenshots")).unwrap();
+        assert!(save_capture(&base, &image_header(2, 2)).is_err());
+        assert_eq!(std::fs::read_dir(&elsewhere).unwrap().count(), 0);
+        std::fs::remove_dir_all(base).unwrap();
+    }
 }

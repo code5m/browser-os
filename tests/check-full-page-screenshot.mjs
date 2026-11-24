@@ -20,7 +20,7 @@ assert.match(native,/webview\.label\(\) != "main"/);
 assert.match(native,/CAPTURE_BUSY/);
 assert.match(native,/CAPTURE_TIMEOUT/);
 assert.match(native,/CAPTURE_DIMENSION_LIMIT/);
-assert.match(native,/create_new\(true\)/);
+assert.match(native,/safe_paths::create_new_file\(/);
 assert.match(main,/browser::commands::capture_full_page/);
 assert.match(bridge,/captureFullPage/);
 assert.match(ui,/aria-label="整页截图"/);

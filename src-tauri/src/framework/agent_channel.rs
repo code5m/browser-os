@@ -190,7 +190,7 @@ pub async fn agent_runtime_run_fixture(
         .restore_config_for_host(cfg)
         .map_err(|_| "AGENT_EXPERIMENT_ROUTE_INVALID")?;
     let execution =
-        crate::capabilities::agent::execution_owner::ProductionExecution::begin("agent_channel")?;
+        crate::capabilities::agent::public_api::ProductionExecution::begin("agent_channel")?;
     let task_id = execution.id();
     let assignment = router
         .assign(task_id)
@@ -376,7 +376,7 @@ pub async fn agent_runtime_read_tool(
         ContextGrant::ExplicitSelection,
     )
     .map_err(|_| "AGENT_EXPERIMENT_RESOURCE_INVALID")?;
-    let execution = crate::capabilities::agent::execution_owner::ProductionExecution::begin_scoped(
+    let execution = crate::capabilities::agent::public_api::ProductionExecution::begin_scoped(
         "agent_channel",
         workspace,
         session,

@@ -69,6 +69,18 @@ export const useBrowserStore = defineStore("browser", () => {
     return result;
   }
 
+  async function closeNativeTab(id: string) {
+    for (let attempt = 0; ; attempt++) {
+      try { return await bridge.tabClose(id); }
+      catch (error) {
+        // BUSY means admission was refused before native destruction. Other
+        // errors have no safe retry guarantee and must retain the Owner.
+        if (attempt >= 2 || !/\bTAB_(?:LIFECYCLE|LAYOUT)_BUSY\b/.test(String(error))) throw error;
+        await new Promise(resolve => window.setTimeout(resolve, 60 * (attempt + 1)));
+      }
+    }
+  }
+
   async function tabNew(target?: string): Promise<boolean> {
     if (!isBrowserResourceAllowed()) {
       bridge.debugLog("tabNew refused: browser capability not ACTIVE");
@@ -87,7 +99,7 @@ export const useBrowserStore = defineStore("browser", () => {
         throw error;
       }
       if (!isBrowserResourceAllowed()) {
-        try { await bridge.tabClose(t.id); }
+        try { await closeNativeTab(t.id); }
         catch {
           // A native creation that loses activation still has an Owner until
           // cleanup succeeds. Deactivation/retry must be able to find its id.
@@ -162,19 +174,18 @@ export const useBrowserStore = defineStore("browser", () => {
   }
   // ===== 普通 Tab 关闭 =====
   // Owner 最终裁决（2026-09-12）：普通 Tab 关闭 = 不弹确认框 + 不持久化 + 直接关闭。
-  // 直接走 closeTabNow（其内部先 recordClose 写入 recentlyClosed 内存栈，再完成
-  // WebView 生命周期关闭）。不再挂接任何关闭拦截器 / 确认框（M1-9 关闭协议已撤销）。
+  // 直接走 closeTabNow，原生关闭成功后提交内存历史；不挂接关闭确认或持久化。
   async function tabClose(id: string): Promise<boolean> {
     return closeTabNow(id);
   }
-  // 真正执行关闭：先 recordClose 写入 recentlyClosed 内存栈，再完成 WebView 生命周期关闭。
+  // 原生关闭失败时保留 Owner，且不生成虚假的最近关闭记录。
   // 普通 Tab 关闭（tabClose）与手动恢复入口均复用此路径，无可绕过。
   async function closeTabNow(id: string, onlyBlank = false): Promise<boolean> {
     return mutateTabs(async () => {
       const target = tabs.find((t) => t.id === id);
       if (!target || (onlyBlank && target.url !== "about:blank")) return false;
+      await closeNativeTab(id);
       recordClose(id);
-      await bridge.tabClose(id);
       nativeTabFailures.delete(id);
       const idx = tabs.findIndex((t) => t.id === id);
       if (idx < 0) return true;
@@ -450,7 +461,7 @@ export const useBrowserStore = defineStore("browser", () => {
       hideAllWebviews();
       await mutateTabs(async () => {
         const closing = tabs.map(({ id }) => id);
-        const results = await Promise.allSettled(closing.map(id => bridge.tabClose(id)));
+        const results = await Promise.allSettled(closing.map(id => closeNativeTab(id)));
         const failed: string[] = [];
         for (let index = 0; index < results.length; index++) {
           const id = closing[index];

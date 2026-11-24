@@ -84,11 +84,9 @@ export const useHomeStore = defineStore("home", () => {
         const all = normalizeShortcuts(JSON.parse(raw));
         // 迁移期清理：旧数据里的 app 条目（命令体）不进内存，并随即从浏览器存储中抹除。
         const safe = all.filter(isStorageSafe);
-        if (safe.length !== all.length) {
-          try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(safe));
-          } catch {}
-        }
+        // Rewrite the normalized payload too: invalid/duplicate legacy entries
+        // may have been removed before filtering, yet still contain secrets.
+        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(safe)); } catch {}
         if (safe.length) return safe;
       }
     } catch {}
@@ -98,7 +96,12 @@ export const useHomeStore = defineStore("home", () => {
     try {
       const raw = localStorage.getItem(RECENTS_KEY);
       // 最近访问同理：app 条目的 target 也是命令体，不还原、不落库。
-      if (raw) return normalizeRecents(JSON.parse(raw)).filter(isStorageSafe);
+      if (raw) {
+        const all = normalizeRecents(JSON.parse(raw));
+        const safe = toPersisted(all);
+        try { localStorage.setItem(RECENTS_KEY, JSON.stringify(safe)); } catch {}
+        return safe;
+      }
     } catch {}
     return [];
   }

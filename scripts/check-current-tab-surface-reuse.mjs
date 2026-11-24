@@ -23,7 +23,8 @@ function blankOnly(source) {
   return /const id = expectedId \?\? \(layout\.mainView === "browser" \? activeTabId\.value : ""\);/.test(consume)
     && /if \(!id \|\| tabs\.find\(tab => tab\.id === id\)\?\.url !== "about:blank"\) return false;/.test(consume)
     && /closeTabNow\(id, true\)/.test(consume)
-    && /return mutateTabs\(async \(\) => \{[\s\S]*?if \(!target \|\| \(onlyBlank && target\.url !== "about:blank"\)\) return false;[\s\S]*?await bridge\.tabClose\(id\)/.test(close);
+    && /return mutateTabs\(async \(\) => \{[\s\S]*?if \(!target \|\| \(onlyBlank && target\.url !== "about:blank"\)\) return false;[\s\S]*?await closeNativeTab\(id\)/.test(close)
+    && /await bridge\.tabClose\(id\)/.test(ownerFunction(source, "closeNativeTab"));
 }
 function commitsReadableDirectory(source) {
   const body = ownerFunction(source, "openDirCenter", "");

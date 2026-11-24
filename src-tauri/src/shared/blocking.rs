@@ -128,4 +128,19 @@ mod tests {
         assert_eq!(result, Err("OWNER_WORKER_FAILED".to_string()));
         assert_eq!(LANE.run(|| Ok(7)).await, Ok(7));
     }
+
+    #[test]
+    fn callback_retains_capacity_after_waiter_timeout() {
+        static LANE: BlockingLane = BlockingLane::new(1, "CAPTURE_BUSY", "CAPTURE_WORKER_FAILED");
+        let permit = LANE.reserve().unwrap();
+        let (send, recv) = mpsc::channel();
+        let native_callback = move || {
+            let _ = send.send((vec![1_u8], permit));
+        };
+        assert!(recv.recv_timeout(Duration::from_millis(1)).is_err());
+        drop(recv);
+        assert!(matches!(LANE.reserve(), Err(error) if error == "CAPTURE_BUSY"));
+        native_callback();
+        assert!(LANE.reserve().is_ok());
+    }
 }

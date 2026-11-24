@@ -135,14 +135,11 @@ pub fn report_tab_load_failed(app: &AppHandle, id: &str, url: &str, message: &st
 fn plugin_eval(app: &AppHandle, id: &str, js: &str) -> Result<(), String> {
     use tauri_plugin_browser_tabs::TabManagerState;
     let manager = app.state::<TabManagerState>();
-    if let Err(e) = manager.eval(&id.to_string(), js) {
-        let initial_error = format!("webview {id} 执行 JS 失败: {e}");
-        recover_tab_webview(app, id, "eval", &initial_error)?;
-        app.state::<TabManagerState>()
-            .eval(&id.to_string(), js)
-            .map_err(|retry| format!("{initial_error}; 恢复后重试 JS 失败: {retry}"))?;
-    }
-    Ok(())
+    // Background freeze/probe failures are not proof of engine corruption.
+    // Propagate the error without discarding a live document or its forms.
+    manager
+        .eval(&id.to_string(), js)
+        .map_err(|error| format!("webview {id} JS dispatch failed: {error}"))
 }
 
 fn navigate_tab_webview(app: &AppHandle, id: &str, url: &str) -> Result<(), String> {
@@ -551,6 +548,42 @@ pub fn register_shutdown_tasks(app: &AppHandle) -> Result<(), String> {
                 if let Err(error) = manager.close_tab(&id.to_string()) {
                     errors.push(format!("{id}: {error}"));
                 }
+            }
+            // A failed native close remains owned and inspectable. Only
+            // records whose actual native resources are gone may be retired.
+            let retained = manager.get_tab_ids();
+            if !errors.is_empty() {
+                state
+                    .child_layouts
+                    .lock()
+                    .unwrap()
+                    .retain(|id, _| retained.contains(id));
+                state
+                    .last_position_at
+                    .lock()
+                    .unwrap()
+                    .retain(|id, _| retained.contains(id));
+                state
+                    .tab_idle_since
+                    .lock()
+                    .unwrap()
+                    .retain(|id, _| retained.contains(id));
+                state.hibernated_tabs.lock().unwrap().clear();
+                state
+                    .tabs
+                    .lock()
+                    .unwrap()
+                    .retain(|id, _| retained.contains(id));
+                for id in &ids {
+                    if !retained.contains(id) {
+                        state.resource_buffer.lock().unwrap().clear_tab(id);
+                    }
+                }
+                let mut active = state.active_tab.lock().unwrap();
+                if active.as_ref().is_some_and(|id| !retained.contains(id)) {
+                    *active = None;
+                }
+                return Err(format!("tab close errors: {}", errors.join("; ")));
             }
             state.child_layouts.lock().unwrap().clear();
             state.last_position_at.lock().unwrap().clear();

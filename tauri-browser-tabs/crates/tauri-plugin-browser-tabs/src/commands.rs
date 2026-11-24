@@ -749,11 +749,7 @@ impl TabManager {
     /// A missing bridge layout must not cause a guessed 800x600 resize of a
     /// live Linux viewport. Return the real parked rectangle to the caller.
     #[cfg(target_os = "linux")]
-    pub fn hide_offscreen(
-        &self,
-        id: &TabId,
-        publish: impl FnOnce(LogicalRect),
-    ) -> Result<()> {
+    pub fn hide_offscreen(&self, id: &TabId, publish: impl FnOnce(LogicalRect)) -> Result<()> {
         let (_operation, tab) = self.get_tab(id, TabAccessKind::Layout)?;
         let rect = Self::park_tab(&tab)?;
         publish(rect);
@@ -1032,8 +1028,7 @@ mod offscreen_layout_tests {
         let busy = RwLock::new(HashMap::new());
         let id = "tab-test".to_string();
         {
-            let _reservation =
-                reserve_tab_access(&busy, &id, TabAccessKind::Lifecycle).unwrap();
+            let _reservation = reserve_tab_access(&busy, &id, TabAccessKind::Lifecycle).unwrap();
             assert!(reserve_tab_access(&busy, &id, TabAccessKind::Operation).is_err());
             assert!(busy.read().contains_key(&id));
         }

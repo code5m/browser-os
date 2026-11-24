@@ -26,6 +26,7 @@ static ECHO_DROPPED_BYTES: AtomicU64 = AtomicU64::new(0);
 const LOG_CHUNK_BYTES: usize = 8192;
 const SESSION_QUEUE_CHUNKS: usize = 128;
 const ECHO_QUEUE_CHUNKS: usize = 32;
+const SESSION_MAX_BYTES: u64 = 8 * 1024 * 1024;
 type LogChunk = Arc<[u8]>;
 
 /// Counters only; never return any log text to hang diagnostics.
@@ -162,23 +163,70 @@ fn write_session_log(chunks: Receiver<LogChunk>, mut file: fs::File) {
     let mut last_report = Instant::now();
     let mut reported = (0, 0);
     for chunk in chunks {
-        if file.write_all(&chunk).is_err() {
+        if write_session_chunk(&mut file, &chunk, SESSION_MAX_BYTES).is_err() {
             SESSION_DROPPED_BYTES.fetch_add(chunk.len() as u64, Ordering::Relaxed);
         }
         let lost = log_loss_counters();
         if lost != reported && last_report.elapsed() >= Duration::from_secs(5) {
             // Rate limit this marker; do not amplify a log flood.
             last_report = Instant::now();
-            if writeln!(
-                file,
-                "\n[crashlog] dropped_session_bytes={} dropped_echo_bytes={}",
+            let marker = format!(
+                "\n[crashlog] dropped_session_bytes={} dropped_echo_bytes={}\n",
                 lost.0, lost.1
-            )
-            .is_ok()
-            {
+            );
+            if write_session_chunk(&mut file, marker.as_bytes(), SESSION_MAX_BYTES).is_ok() {
                 reported = lost;
             }
         }
+    }
+}
+
+/// Reuse the same inode so the fatal-signal descriptor remains valid. Once
+/// full, retain the newest bounded segment with an explicit rollover marker.
+/// This runs exclusively on the disk worker, never on GTK or the pipe pump.
+fn write_session_chunk(file: &mut fs::File, bytes: &[u8], limit: u64) -> std::io::Result<()> {
+    const MARKER: &[u8] = b"[crashlog] session byte limit reached; older segment discarded\n";
+    if bytes.len() as u64 + MARKER.len() as u64 > limit {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "LOG_CHUNK_TOO_LARGE",
+        ));
+    }
+    if file.metadata()?.len().saturating_add(bytes.len() as u64) > limit {
+        file.set_len(0)?;
+        file.write_all(MARKER)?;
+    }
+    file.write_all(bytes)
+}
+
+#[cfg(test)]
+mod bounded_log_tests {
+    use super::*;
+
+    #[test]
+    fn log_flood_keeps_latest_segment_and_same_inode() {
+        let path = std::env::temp_dir().join(format!("browseros-log-{}", uuid::Uuid::new_v4()));
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .append(true)
+            .open(&path)
+            .unwrap();
+        let fatal = file.try_clone().unwrap();
+        for _ in 0..20 {
+            write_session_chunk(&mut file, &[b'x'; 80], 256).unwrap();
+            assert!(file.metadata().unwrap().len() <= 256);
+        }
+        write_session_chunk(&mut file, b"latest-event\n", 256).unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains("older segment discarded"));
+        assert!(text.ends_with("latest-event\n"));
+        assert_eq!(
+            fatal.metadata().unwrap().len(),
+            file.metadata().unwrap().len()
+        );
+        drop(file);
+        drop(fatal);
+        fs::remove_file(path).unwrap();
     }
 }
 

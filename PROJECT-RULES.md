@@ -6,7 +6,7 @@
 
 [CURRENT]
 普通 Tab 关闭 = 不弹确认框 + 不持久化 + 直接关闭。
-关闭流程：写入 recentlyClosed 内存栈（仅 {url,title}） → 调用既有 closeTabNow 完成 WebView 生命周期关闭。
+关闭流程：调用既有 closeTabNow 完成 WebView 生命周期关闭 → 原生关闭成功后写入 recentlyClosed 内存栈（仅 {url,title}）。关闭失败保留页签且不写入历史；仅对明确未准入的 BUSY 错误有限重试。
 禁止：close tab → prompt；禁止：close tab → sessionSave；禁止：close tab → sessionSave → closeTabNow。
 
 [APPROVED_TARGET]

@@ -108,8 +108,9 @@ pub fn report_grid_load_failed(
 ) -> Result<(), String> {
     let index = std::env::var("GRID_CHILD_INDEX").unwrap_or_default();
     eprintln!(
-        "[grid] 加载失败上报 grid-{} url={} snippet={:?}",
-        index, url, snippet
+        "[grid] load failure grid-{} snippet_present={}",
+        index,
+        snippet.is_some()
     );
     let _ = app.emit(
         "grid-load-failed",
@@ -149,7 +150,7 @@ pub fn start_grid_load_retry(app: AppHandle) {
             }
             entry.1 += 1;
         }
-        eprintln!("[grid] grid-{index} 加载失败，3s 后自动重试导航 {url}");
+        eprintln!("[grid] grid-{index} load failed; retry scheduled in 3s");
         let app3 = app2.clone();
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_secs(3));
@@ -931,7 +932,7 @@ pub fn tab_activate(webview: tauri::Webview, app: AppHandle, id: String) -> Resu
             .lock()
             .unwrap()
             .remove(&id);
-        eprintln!("[hibernation] 页签 {} 已从休眠重建 url={}", id, url);
+        eprintln!("[hibernation] tab {} restored", id);
     }
     // Keep scroll metadata until the restored WebView accepts the command. If
     // the first load is still racing, a later activation can retry restoration.

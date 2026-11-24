@@ -212,6 +212,27 @@ impl ChangeTargetProof {
             },
         )
     }
+    fn matches_approved_ancestor(&self, target: &Path) -> bool {
+        // A batch may create missing suffix directories itself. Recheck the
+        // ancestor that existed at review time, not a newly created parent.
+        let Some(ancestor) = target.ancestors().nth(self.suffix.len()) else {
+            return false;
+        };
+        let Ok(identity) = crate::capabilities::workspace::safe_paths::directory_identity(ancestor)
+        else {
+            return false;
+        };
+        let Ok(suffix) = target.strip_prefix(ancestor) else {
+            return false;
+        };
+        self.matches(&ApplyTargetKey {
+            ancestor: identity,
+            suffix: suffix
+                .components()
+                .map(|component| component.as_os_str().to_os_string())
+                .collect(),
+        })
+    }
 }
 #[derive(Serialize, Deserialize)]
 struct Session {
@@ -1235,6 +1256,18 @@ fn apply_changes_transactional(
     // Fault injection remains Rust-internal; not accepted from the model or IPC.
     fault_at: Option<usize>,
 ) -> Result<Value, String> {
+    apply_changes_with_write_hook(root, storage, session, fault_at, |_| Ok(()))
+}
+
+// Rust-internal hook makes preflight/write interleavings deterministic in
+// regression tests. The production route supplies a no-op; IPC cannot set it.
+fn apply_changes_with_write_hook(
+    root: &Path,
+    storage: &Path,
+    session: &mut Session,
+    fault_at: Option<usize>,
+    mut before_write: impl FnMut(usize) -> Result<(), String>,
+) -> Result<Value, String> {
     if session.changes.is_empty() {
         session.status = "applied".into();
         let mut result = save(storage, session)?;
@@ -1333,8 +1366,16 @@ fn apply_changes_transactional(
             if fault_at == Some(index) {
                 return Err("AGENT_INJECTED_WRITE_FAILURE".into());
             }
+            before_write(index)?;
             let target = resolve(root, &change.path, true)?;
             apply_target_key(&target, &storage_identity)?;
+            if !change
+                .target_proof
+                .as_ref()
+                .is_some_and(|proof| proof.matches_approved_ancestor(&target))
+            {
+                return Err("AGENT_CHANGE_PATH_CHANGED".into());
+            }
             ensure_target_parent(root, &target)?;
             crate::capabilities::workspace::safe_paths::write_versioned(
                 &target,
@@ -2399,6 +2440,54 @@ mod tests {
         let reloaded = run(&f, json!({"action":"session","session_id":id})).unwrap();
         assert_eq!(reloaded["status"], "review");
         assert_eq!(reloaded["changes"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn changed_parent_between_preflight_and_write_is_not_approved() {
+        let f = Fixture::new();
+        fs::create_dir(f.0.join("reviewed")).unwrap();
+        let proposed = run(
+            &f,
+            json!({"action":"propose","path":"reviewed/new.txt","content":"proposal"}),
+        )
+        .unwrap();
+        let id = proposed["session_id"].as_str().unwrap();
+        let mut session = load(&f.0, &f.0.join("state"), Some(id)).unwrap();
+        let result =
+            apply_changes_with_write_hook(&f.0, &f.0.join("state"), &mut session, None, |_| {
+                fs::rename(f.0.join("reviewed"), f.0.join("original")).unwrap();
+                fs::create_dir(f.0.join("reviewed")).unwrap();
+                Ok(())
+            });
+        assert!(
+            result.is_err(),
+            "a replacement directory cannot inherit approval"
+        );
+        assert!(!f.0.join("reviewed/new.txt").exists());
+        assert!(!f.0.join("original/new.txt").exists());
+        assert_eq!(session.changes.len(), 1);
+    }
+
+    #[test]
+    fn batch_can_create_sibling_files_under_new_parent() {
+        let f = Fixture::new();
+        let proposed = run(
+            &f,
+            json!({"action":"propose","path":"new/sub/one.txt","content":"one"}),
+        )
+        .unwrap();
+        let id = proposed["session_id"].as_str().unwrap();
+        run(
+            &f,
+            json!({"action":"propose","session_id":id,"path":"new/two.txt","content":"two"}),
+        )
+        .unwrap();
+        run(&f, json!({"action":"apply","session_id":id})).unwrap();
+        assert_eq!(
+            fs::read_to_string(f.0.join("new/sub/one.txt")).unwrap(),
+            "one"
+        );
+        assert_eq!(fs::read_to_string(f.0.join("new/two.txt")).unwrap(), "two");
     }
     fn interrupted_apply(f: &Fixture) -> (String, PathBuf) {
         let storage = f.0.join("state");
