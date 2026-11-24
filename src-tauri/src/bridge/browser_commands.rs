@@ -242,19 +242,77 @@ pub fn start_layout_enforcer(app: AppHandle) {
         if state.shutdown_requested.load(Ordering::SeqCst) {
             break;
         }
-        // GTK can redistribute the main widget when a native tab is added or
-        // removed. Keep the shell viewport full-sized as well as the tabs.
-        if let Some(main) = app.get_webview("main") {
-            let _ = tauri_plugin_browser_tabs::ensure_native_layout(&main);
+        #[cfg(target_os = "linux")]
+        {
+            // A blocked GTK loop must never collect one correction per
+            // timer tick. Snapshot the newest geometry only when the
+            // queued sweep actually executes, not when it was requested.
+            if LAYOUT_SWEEP_IN_FLIGHT.swap(true, Ordering::AcqRel) {
+                continue;
+            }
+            let sweep_app = app.clone();
+            if app
+                .run_on_main_thread(move || {
+                    LAYOUT_SWEEP_RUNNING.store(true, Ordering::Release);
+                    if !sweep_app
+                        .state::<AppState>()
+                        .shutdown_requested
+                        .load(Ordering::Acquire)
+                    {
+                        enforce_layout_once(&sweep_app);
+                    }
+                    LAYOUT_SWEEP_RUNNING.store(false, Ordering::Release);
+                    LAYOUT_SWEEP_IN_FLIGHT.store(false, Ordering::Release);
+                })
+                .is_err()
+            {
+                LAYOUT_SWEEP_IN_FLIGHT.store(false, Ordering::Release);
+                break;
+            }
         }
-        let layouts = state.child_layouts.lock().unwrap().clone();
-        if layouts.is_empty() {
-            continue;
-        }
-        use tauri_plugin_browser_tabs::{LogicalRect, TabManagerState};
-        let manager = app.state::<TabManagerState>();
-        for (id, (x, y, w, h)) in layouts {
-            let _ = manager.update_rect(&id, LogicalRect::new(x, y, w.max(1.0), h.max(1.0)));
-        }
+        #[cfg(not(target_os = "linux"))]
+        enforce_layout_once(&app);
     });
+}
+
+#[cfg(target_os = "linux")]
+static LAYOUT_SWEEP_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
+#[cfg(target_os = "linux")]
+static LAYOUT_SWEEP_RUNNING: AtomicBool = AtomicBool::new(false);
+
+/// Fixed diagnostic state: no tab identifiers, URLs, or browser content.
+#[cfg(target_os = "linux")]
+pub(crate) fn layout_enforcer_status() -> &'static str {
+    if LAYOUT_SWEEP_RUNNING.load(Ordering::Acquire) {
+        "running"
+    } else if LAYOUT_SWEEP_IN_FLIGHT.load(Ordering::Acquire) {
+        "queued"
+    } else {
+        "idle"
+    }
+}
+
+fn enforce_layout_once(app: &AppHandle) {
+    // Preserve the tested GTK allocation/coordinate behavior. Only the
+    // scheduling and lock boundaries change.
+    if let Some(main) = app.get_webview("main") {
+        let _ = tauri_plugin_browser_tabs::ensure_native_layout(&main);
+    }
+    let state = app.state::<AppState>();
+    #[cfg(target_os = "linux")]
+    let layouts = {
+        // Never wait on application metadata from a GTK callback.
+        // A contended snapshot is retried by the next periodic sweep.
+        let Ok(layouts) = state.child_layouts.try_lock() else {
+            return;
+        };
+        layouts.clone()
+    };
+    #[cfg(not(target_os = "linux"))]
+    let layouts = state.child_layouts.lock().unwrap().clone();
+    use tauri_plugin_browser_tabs::{LogicalRect, TabManagerState};
+    let manager = app.state::<TabManagerState>();
+    for (id, (x, y, w, h)) in layouts {
+        let _ = manager.update_rect(&id, LogicalRect::new(x, y, w.max(1.0), h.max(1.0)));
+    }
 }

@@ -125,23 +125,61 @@ fn children_snapshot() -> Vec<Value> {
     result
 }
 
-fn snapshot(event: &str, stalled_ms: u64) -> Value {
-    let memory_pressure = fs::read_to_string("/proc/pressure/memory")
+fn read_pressure(path: &str) -> Vec<String> {
+    fs::read_to_string(path)
         .unwrap_or_default()
         .lines()
         .take(2)
         .map(|line| line.chars().take(160).collect::<String>())
-        .collect::<Vec<_>>();
+        .collect()
+}
+
+fn swap_counters() -> Value {
+    let text = fs::read_to_string("/proc/vmstat").unwrap_or_default();
+    let mut counters = serde_json::Map::new();
+    for line in text.lines() {
+        let mut fields = line.split_whitespace();
+        if let (Some(key @ ("pswpin" | "pswpout" | "pgmajfault")), Some(raw)) =
+            (fields.next(), fields.next())
+        {
+            if let Ok(value) = raw.parse::<u64>() {
+                counters.insert(key.to_string(), json!(value));
+            }
+        }
+    }
+    Value::Object(counters)
+}
+
+fn snapshot(event: &str, stalled_ms: u64) -> Value {
+    // The process leader is GTK's main thread. Always record it explicitly
+    // even when the bounded thread inventory contains more than MAX_THREADS.
+    let pid = std::process::id();
+    let main_thread = format!("/proc/self/task/{pid}");
+    let main_wait = fs::read_to_string(format!("{main_thread}/wchan"))
+        .unwrap_or_default()
+        .trim()
+        .chars()
+        .take(80)
+        .collect::<String>();
     json!({
         "schema": "browseros-ui-hang-v1",
         "time": chrono::Utc::now().to_rfc3339(),
         "event": event,
-        "pid": std::process::id(),
+        "pid": pid,
         "gtk_callback_age_ms": stalled_ms,
         "process": read_status("/proc/self/status"),
+        "main_thread": {
+            "tid": pid,
+            "wait_channel": main_wait,
+            "status": read_status(&format!("{main_thread}/status"))
+        },
         "threads": threads_snapshot(),
         "children": children_snapshot(),
-        "memory_pressure": memory_pressure
+        "memory_pressure": read_pressure("/proc/pressure/memory"),
+        "io_pressure": read_pressure("/proc/pressure/io"),
+        "cpu_pressure": read_pressure("/proc/pressure/cpu"),
+        "swap_counters": swap_counters(),
+        "layout_sweep": crate::bridge::layout_enforcer_status()
     })
 }
 

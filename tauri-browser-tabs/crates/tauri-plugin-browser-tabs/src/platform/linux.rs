@@ -48,15 +48,25 @@ pub fn ensure_size_allocated<R: Runtime>(webview: &Webview<R>, rect: LogicalRect
                 // 同一签名会无限刷屏。按 label 分别记录签名，只在签名变化时输出
                 // （全局单槽去重会让两个页签交替纠正时刷屏/或互相吞掉，无法定案）。
                 let sig = (x, y, w, h, a.x(), a.y(), a.width(), a.height());
-                let mut last = LAST_SIG.get_or_init(|| Mutex::new(HashMap::new())).lock().unwrap();
-                if last.get(&label) != Some(&sig) {
+                let changed = {
+                    let mut last = LAST_SIG
+                        .get_or_init(|| Mutex::new(HashMap::new()))
+                        .lock()
+                        .unwrap();
+                    if last.get(&label) == Some(&sig) {
+                        false
+                    } else {
+                        last.insert(label.clone(), sig);
+                        true
+                    }
+                };
+                // Do not hold the dedup mutex while stderr may wait on I/O.
+                if changed {
                     eprintln!(
                         "[browser-tabs] drift-correct label={} target=({},{},{}x{}) alloc_before=({},{},{}x{})",
                         label, x, y, w, h, a.x(), a.y(), a.width(), a.height()
                     );
-                    last.insert(label.clone(), sig);
                 }
-                drop(last);
                 // 血泪教训（详见 PROJECT-RULES.md）：
                 // GtkFixed 子控件必须【位置 + 尺寸一起定死】，且【绝不 queue_resize】。
                 // 1) gtk_fixed_move 固定位置 —— wry 的 set_bounds/set_position 对 GtkFixed

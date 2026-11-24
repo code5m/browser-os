@@ -158,7 +158,9 @@ fn recover_tab_webview(
     reason: &str,
     source_error: &str,
 ) -> Result<(), String> {
-    if !is_tab_label(id) {
+    // Creation/closure already in progress is not an engine failure. Do not
+    // consume recovery budget or recursively destroy a live WebView.
+    if !is_tab_label(id) || source_error.contains("TAB_LIFECYCLE_BUSY") {
         return Err(source_error.to_string());
     }
     let state = app.state::<AppState>();
@@ -193,7 +195,11 @@ fn recover_tab_webview(
     emit_tab_recovery_event(app, id, &url, reason, "attempting", attempt, source_error);
     use tauri_plugin_browser_tabs::TabManagerState;
     let manager = app.state::<TabManagerState>();
-    let _ = manager.close_tab(&id.to_string());
+    if let Err(error) = manager.close_tab(&id.to_string()) {
+        let detail = format!("native close failed: {error}");
+        emit_tab_recovery_event(app, id, &url, reason, "failed", attempt, &detail);
+        return Err(format!("{source_error}; {detail}"));
+    }
     let (x, y, w, h) = layout.unwrap_or((
         0.0,
         0.0,

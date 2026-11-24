@@ -3,7 +3,7 @@ use crate::models::{
 };
 use crate::platform;
 use parking_lot::RwLock;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 #[cfg(target_os = "linux")]
 use std::os::unix::fs::PermissionsExt;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
@@ -151,13 +151,48 @@ mod browser_profile_tests {
     }
 }
 
+// A reservation protects only the identity/lifecycle of one tab. Its set
+// lock is released before native creation or destruction. Native callbacks
+// can therefore inspect the registry without waiting for GTK to finish.
+struct TabLifecycleReservation<'a> {
+    busy: &'a RwLock<HashSet<TabId>>,
+    id: TabId,
+}
+
+impl Drop for TabLifecycleReservation<'_> {
+    fn drop(&mut self) {
+        self.busy.write().remove(&self.id);
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy)]
+struct TabLayout {
+    rect: LogicalRect,
+    // Only the explicit plugin visibility API restores this rectangle.
+    // Ordinary BrowserOS offscreen positioning stays authoritative.
+    restore_rect: Option<LogicalRect>,
+}
+
+#[cfg(target_os = "linux")]
+fn offscreen_rect(rect: LogicalRect) -> LogicalRect {
+    LogicalRect::new(-30000.0, rect.y, rect.width, rect.height)
+}
+
+struct ManagedTab {
+    webview: Webview<Wry>,
+    #[cfg(target_os = "linux")]
+    layout: RwLock<TabLayout>,
+}
+
 /// Internal state for managing tabs.
 ///
 /// The host window is resolved lazily on every operation, so the plugin works
 /// even when the host window is created after the plugin's `setup` hook runs
 /// (e.g. apps that build their main window manually inside `.setup()`).
 pub struct TabManager {
-    tabs: RwLock<HashMap<TabId, Webview<Wry>>>,
+    tabs: RwLock<HashMap<TabId, Arc<ManagedTab>>>,
+    lifecycle_busy: RwLock<HashSet<TabId>>,
     app: AppHandle<Wry>,
     host_label: String,
     #[cfg(target_os = "windows")]
@@ -168,6 +203,7 @@ impl TabManager {
     pub fn new(app: AppHandle<Wry>, host_label: impl Into<String>) -> Self {
         Self {
             tabs: RwLock::new(HashMap::new()),
+            lifecycle_busy: RwLock::new(HashSet::new()),
             app,
             host_label: host_label.into(),
             #[cfg(target_os = "windows")]
@@ -235,6 +271,31 @@ impl TabManager {
             .ok_or(BrowserTabError::WindowNotFound)
     }
 
+    fn reserve_lifecycle(&self, id: &TabId) -> Result<TabLifecycleReservation<'_>> {
+        if !self.lifecycle_busy.write().insert(id.clone()) {
+            return Err(BrowserTabError::Platform("TAB_LIFECYCLE_BUSY".into()));
+        }
+        Ok(TabLifecycleReservation {
+            busy: &self.lifecycle_busy,
+            id: id.clone(),
+        })
+    }
+
+    fn get_tab(&self, id: &TabId) -> Result<Arc<ManagedTab>> {
+        // Lock order is lifecycle -> registry, and neither lock survives
+        // this handle lookup. A closing/creating tab is a transient state,
+        // not evidence that the native engine crashed.
+        let busy = self.lifecycle_busy.read();
+        if busy.contains(id) {
+            return Err(BrowserTabError::Platform("TAB_LIFECYCLE_BUSY".into()));
+        }
+        self.tabs
+            .read()
+            .get(id)
+            .cloned()
+            .ok_or_else(|| BrowserTabError::TabNotFound(id.clone()))
+    }
+
     pub fn create_tab(&self, options: CreateTabOptions) -> Result<()> {
         if options.rect.is_empty() {
             return Err(BrowserTabError::InvalidRect(options.rect));
@@ -250,8 +311,8 @@ impl TabManager {
         #[cfg(target_os = "linux")]
         let profile = ensure_private_browser_profile(&self.app)?;
 
-        let mut tabs = self.tabs.write();
-        if tabs.contains_key(&options.id) {
+        let _reservation = self.reserve_lifecycle(&options.id)?;
+        if self.tabs.read().contains_key(&options.id) {
             return Err(BrowserTabError::TabAlreadyExists(options.id));
         }
 
@@ -327,7 +388,17 @@ impl TabManager {
         }
 
         let host = self.host_window()?;
-        let webview = platform::create_child_webview(&host, builder, options.rect)?;
+        // Linux hidden children start offscreen at their real viewport.
+        // Never hide a newly rendering WebKit view or resize it to 1x1.
+        #[cfg(target_os = "linux")]
+        let native_rect = if options.visible {
+            options.rect
+        } else {
+            offscreen_rect(options.rect)
+        };
+        #[cfg(not(target_os = "linux"))]
+        let native_rect = options.rect;
+        let webview = platform::create_child_webview(&host, builder, native_rect)?;
 
         // Main-frame navigation truth on Linux. Gtk/WebKit's WebView.uri
         // property changes for the top-level document, not its iframe
@@ -533,11 +604,20 @@ impl TabManager {
             });
         }
 
+        #[cfg(not(target_os = "linux"))]
         if !options.visible {
             webview.hide()?;
         }
 
-        tabs.insert(options.id, webview);
+        let entry = Arc::new(ManagedTab {
+            webview,
+            #[cfg(target_os = "linux")]
+            layout: RwLock::new(TabLayout {
+                rect: native_rect,
+                restore_rect: (!options.visible).then_some(options.rect),
+            }),
+        });
+        self.tabs.write().insert(options.id, entry);
         Ok(())
     }
 
@@ -546,24 +626,48 @@ impl TabManager {
             return Err(BrowserTabError::InvalidRect(rect));
         }
 
-        let tabs = self.tabs.read();
-        let webview = tabs
-            .get(id)
-            .ok_or_else(|| BrowserTabError::TabNotFound(id.clone()))?;
-
-        platform::apply_rect(webview, rect)
+        let tab = self.get_tab(id)?;
+        platform::apply_rect(&tab.webview, rect)?;
+        #[cfg(target_os = "linux")]
+        {
+            *tab.layout.write() = TabLayout {
+                rect,
+                restore_rect: None,
+            };
+        }
+        Ok(())
     }
 
     pub fn set_visible(&self, id: &TabId, visible: bool) -> Result<()> {
-        let tabs = self.tabs.read();
-        let webview = tabs
-            .get(id)
-            .ok_or_else(|| BrowserTabError::TabNotFound(id.clone()))?;
-
+        let tab = self.get_tab(id)?;
+        #[cfg(target_os = "linux")]
+        {
+            let layout = *tab.layout.read();
+            if visible {
+                if let Some(rect) = layout.restore_rect {
+                    platform::apply_rect(&tab.webview, rect)?;
+                    *tab.layout.write() = TabLayout {
+                        rect,
+                        restore_rect: None,
+                    };
+                }
+                tab.webview.show()?;
+            } else if layout.rect.x >= -1000.0 {
+                // PROJECT-RULES 3.5: preserve the existing viewport size
+                // and move it outside the visible area instead of hide().
+                let rect = offscreen_rect(layout.rect);
+                platform::apply_rect(&tab.webview, rect)?;
+                *tab.layout.write() = TabLayout {
+                    rect,
+                    restore_rect: Some(layout.rect),
+                };
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
         if visible {
-            webview.show()?;
+            tab.webview.show()?;
         } else {
-            webview.hide()?;
+            tab.webview.hide()?;
         }
         Ok(())
     }
@@ -571,38 +675,34 @@ impl TabManager {
     /// 设置子 webview 内容缩放（WebKitGTK set_zoom_level）。
     /// 用于宫格小窗按比例缩小网页内容，实现"自适应"展示。
     pub fn set_zoom(&self, id: &TabId, scale_factor: f64) -> Result<()> {
-        let tabs = self.tabs.read();
-        let webview = tabs
-            .get(id)
-            .ok_or_else(|| BrowserTabError::TabNotFound(id.clone()))?;
-        webview.set_zoom(scale_factor)?;
+        let tab = self.get_tab(id)?;
+        tab.webview.set_zoom(scale_factor)?;
         Ok(())
     }
 
     pub fn close_tab(&self, id: &TabId) -> Result<()> {
-        let mut tabs = self.tabs.write();
+        let _reservation = self.reserve_lifecycle(id)?;
         // A successful native close may outlive its IPC reply. Retrying an
         // already-closed or hibernated tab is successful and creates no resource.
-        let Some(webview) = tabs.get(id) else {
+        let tab = self.tabs.read().get(id).cloned();
+        let Some(tab) = tab else {
             return Ok(());
         };
-        // Retain native ownership if close fails, so deactivation can retry.
-        webview.close()?;
-        tabs.remove(id);
+        // Keep ownership on failure. The reservation prevents duplicate
+        // create/close, but no registry lock is held inside the engine.
+        tab.webview.close()?;
+        self.tabs.write().remove(id);
         platform::forget_native_layout(id);
         Ok(())
     }
 
     pub fn navigate(&self, id: &TabId, url: &str) -> Result<()> {
-        let tabs = self.tabs.read();
-        let webview = tabs
-            .get(id)
-            .ok_or_else(|| BrowserTabError::TabNotFound(id.clone()))?;
+        let tab = self.get_tab(id)?;
 
         let url: tauri::Url = url
             .parse()
             .map_err(|_| BrowserTabError::InvalidUrl(url.to_string()))?;
-        webview.navigate(url)?;
+        tab.webview.navigate(url)?;
         Ok(())
     }
 
@@ -614,11 +714,8 @@ impl TabManager {
     /// 注意：子 webview 由本插件持有，app.get_webview 找不到它们，
     /// 宿主应用必须走这个方法（否则 eval 静默空转，AI 群发/前进后退全失效）。
     pub fn eval(&self, id: &TabId, js: &str) -> Result<()> {
-        let tabs = self.tabs.read();
-        let webview = tabs
-            .get(id)
-            .ok_or_else(|| BrowserTabError::TabNotFound(id.clone()))?;
-        webview.eval(js)?;
+        let tab = self.get_tab(id)?;
+        tab.webview.eval(js)?;
         Ok(())
     }
 
@@ -630,12 +727,7 @@ impl TabManager {
         id: &TabId,
         callback: impl FnOnce(std::result::Result<Vec<u8>, String>) + Send + 'static,
     ) -> Result<()> {
-        let webview = self
-            .tabs
-            .read()
-            .get(id)
-            .cloned()
-            .ok_or_else(|| BrowserTabError::TabNotFound(id.clone()))?;
+        let webview = self.get_tab(id)?.webview.clone();
         #[cfg(target_os = "linux")]
         {
             webview.with_webview(move |native| {
@@ -738,12 +830,7 @@ impl TabManager {
         js: String,
         callback: impl FnOnce(std::result::Result<String, String>) + Send + 'static,
     ) -> Result<()> {
-        let webview = self
-            .tabs
-            .read()
-            .get(id)
-            .cloned()
-            .ok_or_else(|| BrowserTabError::TabNotFound(id.clone()))?;
+        let webview = self.get_tab(id)?.webview.clone();
         #[cfg(target_os = "linux")]
         webview.with_webview(move |native| {
             use java_script_core::ValueExt;
@@ -787,6 +874,36 @@ impl TabManager {
             })?;
         }
         Ok(())
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod offscreen_layout_tests {
+    use super::*;
+
+    #[test]
+    fn linux_hide_preserves_real_viewport() {
+        let original = LogicalRect::new(25.0, 80.0, 1200.0, 640.0);
+        let hidden = offscreen_rect(original);
+        assert_eq!(hidden.x, -30000.0);
+        assert_eq!(hidden.y, original.y);
+        assert_eq!(hidden.width, original.width);
+        assert_eq!(hidden.height, original.height);
+    }
+
+    #[test]
+    fn lifecycle_reservation_releases_its_id_on_drop() {
+        let busy = RwLock::new(HashSet::new());
+        let id = "tab-test".to_string();
+        assert!(busy.write().insert(id.clone()));
+        {
+            let _reservation = TabLifecycleReservation {
+                busy: &busy,
+                id: id.clone(),
+            };
+            assert!(busy.read().contains(&id));
+        }
+        assert!(!busy.read().contains(&id));
     }
 }
 

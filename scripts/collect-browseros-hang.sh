@@ -17,26 +17,37 @@ printf 'Review all files before sharing outside this computer.\n' >> "$out/READM
   date -Ins
   uptime
   free -h
-  printf '\nMemory pressure:\n'
-  cat /proc/pressure/memory 2>/dev/null || true
+  for resource in memory io cpu; do
+    printf '\n%s pressure:\n' "$resource"
+    cat "/proc/pressure/$resource" 2>/dev/null || true
+  done
+  printf '\nCumulative swap and major-fault counters:\n'
+  grep -E '^(pswpin|pswpout|pgmajfault) ' /proc/vmstat 2>/dev/null || true
 } > "$out/system.txt"
 
 # Exact process name, never command-line arguments (can contain URLs/tokens).
 ps -eo pid,ppid,etimes,stat,pcpu,pmem,rss,vsz,comm   | awk 'NR==1 || $9=="mvp-browser-os" || $9=="WebKitWebProces" || $9=="WebKitNetworkPr"'   > "$out/processes.txt" || true
 
-pid="$(pgrep -n -x mvp-browser-os || true)"
-if [ -n "$pid" ]; then
-  ps -T -p "$pid" -o tid,stat,pcpu,time,wchan:32,comm > "$out/main-threads.txt" 2>/dev/null || true
-  grep -E '^(Name|State|Pid|PPid|Threads|VmRSS|VmSize|VmSwap|RssAnon|RssFile|FDSize):'     "/proc/$pid/status" > "$out/main-process.txt" 2>/dev/null || true
+# The newest matching process can be a Grid child. Capture every matching
+# BrowserOS process (bounded) rather than mislabelling one child as MAIN.
+# No command lines or environment variables are inspected.
+for pid in $(pgrep -x mvp-browser-os 2>/dev/null | head -32 || true); do
+  case "$pid" in *[!0-9]*|'') continue ;; esac
+  ps -T -p "$pid" -o tid,stat,pcpu,time,wchan:32,comm > "$out/pid-$pid-threads.txt" 2>/dev/null || true
+  grep -E '^(Name|State|Pid|PPid|Threads|VmRSS|VmSize|VmSwap|RssAnon|RssFile|FDSize):' \
+    "/proc/$pid/status" > "$out/pid-$pid-process.txt" 2>/dev/null || true
+  count=0
   for task in "/proc/$pid"/task/*; do
     [ -d "$task" ] || continue
     tid="${task##*/}"
     [ -r "$task/wchan" ] || continue
-    printf '%s ' "$tid" >> "$out/main-wchans.txt"
-    cat "$task/wchan" >> "$out/main-wchans.txt" 2>/dev/null || true
-    printf '\n' >> "$out/main-wchans.txt"
+    printf '%s ' "$tid" >> "$out/pid-$pid-wchans.txt"
+    cat "$task/wchan" >> "$out/pid-$pid-wchans.txt" 2>/dev/null || true
+    printf '\n' >> "$out/pid-$pid-wchans.txt"
+    count=$((count + 1))
+    [ "$count" -lt 128 ] || break
   done
-fi
+done
 
 # Kernel evidence is limited to memory pressure, blocked threads and graphics
 # driver failures, avoiding unrelated kernel messages/device paths.
@@ -46,12 +57,18 @@ journalctl -b -k --since '90 minutes ago' --no-pager 2>/dev/null   | grep -Ei 'o
 # SQLite, cookies, page HTML, request/response bodies, localStorage, or secrets.
 python3 - "$base" "$out" <<'PY'
 from pathlib import Path
+from collections import deque
 import re,sys
 base=Path(sys.argv[1]); output=Path(sys.argv[2])
 files=sorted((base/'logs').glob('session-*.log'),key=lambda p:p.stat().st_mtime,reverse=True)[:3]
 for index,path in enumerate(files,1):
     lines=[]
-    for raw in path.read_text(errors='replace').splitlines()[-1000:]:
+    # Keep only a bounded tail, even if a long-running session log is huge.
+    # A binary tail limit also bounds exceptionally long native log lines.
+    with path.open('rb') as stream:
+        stream.seek(max(0, path.stat().st_size - 2 * 1024 * 1024))
+        recent=deque(stream.read(2 * 1024 * 1024).decode(errors='replace').splitlines(),maxlen=1000)
+    for raw in recent:
         if not raw.startswith('['):continue
         if any(mark in raw for mark in ('bodyText=','text="','content=','prompt=','message="','document=','payload=','sql=')):continue
         line=re.sub(r'(?i)\b(?:https?|ftp|file)://[^\s"\'<>)]+','[URL]',raw)

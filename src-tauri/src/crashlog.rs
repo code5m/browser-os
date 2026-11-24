@@ -1,6 +1,6 @@
 //! 崩溃与运行日志捕获：
-//! 1) stderr 全量镜像到日志文件 —— Rust eprintln、WebKitGTK / GStreamer 原生报错
-//!    都走 stderr，从桌面图标启动时终端不可见，必须落盘才能排查
+//! 1) stderr 镜像到会话日志 —— Rust eprintln、WebKitGTK / GStreamer 原生报错
+//!    都走 stderr；会话文件优先，终端回显使用有界队列，避免慢终端阻塞主线程
 //! 2) Rust panic 钩子：panic 信息 + 完整堆栈写入 crash.log
 //! 3) SIGSEGV / SIGABRT / SIGBUS / SIGILL 信号捕获：WebKitGTK 原生崩溃（段错误）
 //!    不经过 panic 钩子，用信号处理器直写日志后恢复默认处理重新抛出
@@ -10,8 +10,9 @@
 //!   crash.log           panic / 致命信号专用（追加）
 
 use std::fs::{self, OpenOptions};
-use std::io::Write;
-use std::os::unix::io::RawFd;
+use std::io::{Read, Write};
+use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI32, Ordering};
 
@@ -48,40 +49,17 @@ pub fn init() {
         std::process::id()
     ));
 
-    // ===== stderr 镜像：pipe + 转发线程（原始终端与日志文件各一份） =====
-    unsafe {
-        let mut fds = [0i32; 2];
-        if libc::pipe(fds.as_mut_ptr()) == 0 {
-            let reader = fds[0];
-            let writer = fds[1];
-            let orig_err = libc::dup(2); // 原 stderr，线程回显用
-            libc::dup2(writer, 2); // stderr → pipe（此后所有 stderr 输出都进管道）
-            libc::close(writer);
-            if let Ok(file) = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&session_path)
-            {
-                use std::os::unix::io::IntoRawFd;
-                match file.try_clone() {
-                    Ok(cloned) => {
-                        LOG_FD.store(cloned.into_raw_fd(), Ordering::SeqCst);
-                        std::thread::spawn(move || pump(reader, orig_err, file));
-                    }
-                    Err(_) => {
-                        LOG_FD.store(file.into_raw_fd(), Ordering::SeqCst);
-                    }
-                }
-            }
-        }
+    // Publish a stderr redirection ONLY after the file, pipe and reader
+    // are ready. A failed open/clone/thread spawn must leave stderr intact.
+    match start_stderr_mirror(&session_path) {
+        Ok(()) => eprintln!(
+            "[crashlog] 会话日志: {} (role={} pid={})",
+            session_path.display(),
+            role_tag(),
+            std::process::id()
+        ),
+        Err(error) => eprintln!("[crashlog] stderr mirror unavailable: {error}"),
     }
-
-    eprintln!(
-        "[crashlog] 会话日志: {} (role={} pid={})",
-        session_path.display(),
-        role_tag(),
-        std::process::id()
-    );
 
     // ===== Rust panic 钩子 =====
     let crash_dir = dir.clone();
@@ -109,20 +87,72 @@ pub fn init() {
     prune_old_logs(&dir, 10);
 }
 
-/// pipe 读端 → 原始终端 stderr + 会话日志文件
-fn pump(reader: RawFd, orig_err: RawFd, mut file: fs::File) {
+/// Prepare all resources before changing fd 2. The original stderr echo
+/// has its own bounded queue: a terminal/journal that stops reading cannot
+/// block the session-log drain. The session file remains the primary sink.
+fn start_stderr_mirror(path: &Path) -> std::io::Result<()> {
+    let file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(path)?;
+    let fatal_log = file.try_clone()?;
+    let original_fd = unsafe { libc::fcntl(2, libc::F_DUPFD_CLOEXEC, 3) };
+    if original_fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let mut original = unsafe { fs::File::from_raw_fd(original_fd) };
+    let mut fds = [-1; 2];
+    if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let reader = unsafe { fs::File::from_raw_fd(fds[0]) };
+    let writer = unsafe { fs::File::from_raw_fd(fds[1]) };
+
+    // At most 32 x 8 KiB chunks can wait for the secondary echo sink.
+    // Under terminal backpressure only the echo may be dropped; session
+    // records and the independent fatal-signal descriptor are retained.
+    let (echo_tx, echo_rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(32);
+    std::thread::Builder::new()
+        .name("browseros-stderr-echo".into())
+        .spawn(move || {
+            for chunk in echo_rx {
+                if original.write_all(&chunk).is_err() {
+                    break;
+                }
+            }
+        })?;
+    std::thread::Builder::new()
+        .name("browseros-stderr-pump".into())
+        .spawn(move || pump(reader, echo_tx, file))?;
+
+    // The reader now owns its resources and waits for input. If dup2 fails,
+    // writer drops, the reader sees EOF, and both worker threads can exit.
+    if unsafe { libc::dup2(writer.as_raw_fd(), 2) } < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    LOG_FD.store(fatal_log.into_raw_fd(), Ordering::SeqCst);
+    Ok(())
+}
+
+fn pump(
+    mut reader: fs::File,
+    echo: std::sync::mpsc::SyncSender<Vec<u8>>,
+    mut file: fs::File,
+) {
     let mut buf = [0u8; 8192];
     loop {
-        let n = unsafe { libc::read(reader, buf.as_mut_ptr() as *mut _, buf.len()) };
-        if n <= 0 {
-            break;
-        }
-        let chunk = &buf[..n as usize];
-        unsafe {
-            libc::write(orig_err, chunk.as_ptr() as *const _, chunk.len());
-        }
+        let n = match reader.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => break,
+        };
+        let chunk = &buf[..n];
         let _ = file.write_all(chunk);
-        let _ = file.flush();
+        // Do not block on the optional console/journal echo.
+        let _ = echo.try_send(chunk.to_vec());
     }
 }
 
