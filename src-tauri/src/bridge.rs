@@ -160,7 +160,10 @@ fn recover_tab_webview(
 ) -> Result<(), String> {
     // Creation/closure already in progress is not an engine failure. Do not
     // consume recovery budget or recursively destroy a live WebView.
-    if !is_tab_label(id) || source_error.contains("TAB_LIFECYCLE_BUSY") {
+    if !is_tab_label(id)
+        || source_error.contains("TAB_LIFECYCLE_BUSY")
+        || source_error.contains("TAB_LAYOUT_BUSY")
+    {
         return Err(source_error.to_string());
     }
     let state = app.state::<AppState>();

@@ -121,7 +121,9 @@ pub fn normalize_url(input: &str) -> String {
 /// WebKitGTK 子 webview 调 hide 会阻塞主线程事件循环导致死锁（实测新建第二个
 /// 页签时卡在 hide(tab-1)）。改为把子 webview 移到屏幕外（等价隐藏，不卡死）。
 pub fn hide_bounds(app: &AppHandle, id: &str) {
-    use tauri_plugin_browser_tabs::{LogicalRect, TabManagerState};
+    #[cfg(not(target_os = "linux"))]
+    use tauri_plugin_browser_tabs::LogicalRect;
+    use tauri_plugin_browser_tabs::TabManagerState;
     let manager = app.state::<TabManagerState>();
     // 隐藏 = 只移到屏幕外，【保持原尺寸不变】。
     // 关键教训：对正在渲染的 WebKitGTK 子 webview，把尺寸缩到 1x1 会触发 WebKit
@@ -134,6 +136,25 @@ pub fn hide_bounds(app: &AppHandle, id: &str) {
         .unwrap()
         .get(id)
         .copied();
+    // Prefer the plugin's last submitted real viewport, including the
+    // initial offscreen geometry when the bridge has no layout record.
+    #[cfg(target_os = "linux")]
+    {
+        match manager.hide_offscreen(&id.to_string(), |rect| {
+            remember_layout(app, id, rect.x, rect.y, rect.width, rect.height);
+        }) {
+            Ok(()) => return,
+            Err(e) => {
+                eprintln!("[hide_bounds] id={} park failed: {e}", id);
+                // Preserve a known hide intent for the next bounded sweep
+                // if a same-tab dispatch was temporarily busy.
+                if let Some((_x, y, w, h)) = cur {
+                    remember_layout(app, id, -30000.0, y, w, h);
+                }
+            }
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
     if let Some((_x, y, w, h)) = cur {
         // 诊断：移出失败（TabNotFound 等）时留日志，排查"切视图后残留"问题
         if let Err(e) = manager.update_rect(&id.to_string(), LogicalRect::new(-30000.0, y, w, h)) {
@@ -230,8 +251,16 @@ pub fn create_tab(app: AppHandle, url: &str) -> Result<TabInfo, String> {
     let active_id = id.clone();
     let _ = app.run_on_main_thread(move || {
         let st = app_hide.state::<crate::AppState>();
+        if st.shutdown_requested.load(Ordering::Acquire)
+            || st.active_tab.lock().unwrap().as_deref() != Some(active_id.as_str())
+        {
+            return;
+        }
         let ids: Vec<String> = st.tabs.lock().unwrap().keys().cloned().collect();
         for k in ids {
+            if st.active_tab.lock().unwrap().as_deref() != Some(active_id.as_str()) {
+                return;
+            }
             if k != active_id {
                 hide_bounds(&app_hide, &k);
             }

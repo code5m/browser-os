@@ -890,6 +890,16 @@ pub fn tab_activate(webview: tauri::Webview, app: AppHandle, id: String) -> Resu
     crate::shared::native_legacy_policy::require_main(&webview, "tab_activate")?;
     crate::shared::native_legacy_policy::bound_text("tab_activate", "id", &id)?;
 
+    {
+        let state = app.state::<AppState>();
+        if state.shutdown_requested.load(Ordering::Acquire) {
+            return Err("TAB_APPLICATION_SHUTTING_DOWN".into());
+        }
+        if !state.tabs.lock().unwrap().contains_key(&id) {
+            return Err("TAB_NOT_FOUND".into());
+        }
+    }
+
     // 休眠重建：webview 已销毁的页签先按原 URL 重建（稳定初始视口隐藏，前端 tab_position 定位）
     let was_hibernated = app
         .state::<AppState>()
@@ -981,6 +991,11 @@ pub fn tab_activate(webview: tauri::Webview, app: AppHandle, id: String) -> Resu
     let active_id = id.clone();
     let _ = app.run_on_main_thread(move || {
         let st = app_act.state::<AppState>();
+        if st.shutdown_requested.load(Ordering::Acquire)
+            || st.active_tab.lock().unwrap().as_deref() != Some(active_id.as_str())
+        {
+            return;
+        }
         let ids: Vec<String> = st.tabs.lock().unwrap().keys().cloned().collect();
         eprintln!(
             "[tab_activate] active={} others={:?}",
@@ -988,9 +1003,15 @@ pub fn tab_activate(webview: tauri::Webview, app: AppHandle, id: String) -> Resu
             ids.iter().filter(|k| **k != active_id).collect::<Vec<_>>()
         );
         for k in ids {
+            if st.active_tab.lock().unwrap().as_deref() != Some(active_id.as_str()) {
+                return;
+            }
             if k != active_id {
                 hide_bounds(&app_act, &k);
             }
+        }
+        if st.active_tab.lock().unwrap().as_deref() != Some(active_id.as_str()) {
+            return;
         }
         let layout = st.child_layouts.lock().unwrap().get(&active_id).copied();
         drop(st);

@@ -3,7 +3,7 @@ use crate::models::{
 };
 use crate::platform;
 use parking_lot::RwLock;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 #[cfg(target_os = "linux")]
 use std::os::unix::fs::PermissionsExt;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
@@ -151,18 +151,78 @@ mod browser_profile_tests {
     }
 }
 
-// A reservation protects only the identity/lifecycle of one tab. Its set
-// lock is released before native creation or destruction. Native callbacks
-// can therefore inspect the registry without waiting for GTK to finish.
-struct TabLifecycleReservation<'a> {
-    busy: &'a RwLock<HashSet<TabId>>,
-    id: TabId,
+// Admission protects the native identity until a synchronous dispatcher
+// call returns. No registry or admission lock is held inside that call.
+// Ordinary calls may overlap; layout mutations are serialized separately.
+// A lifecycle change fails fast while any call for the same identity is active.
+#[derive(Default)]
+struct TabAccess {
+    lifecycle: bool,
+    operations: usize,
+    layout: bool,
 }
 
-impl Drop for TabLifecycleReservation<'_> {
+#[derive(Clone, Copy)]
+enum TabAccessKind {
+    Lifecycle,
+    Operation,
+    Layout,
+}
+
+struct TabReservation<'a> {
+    busy: &'a RwLock<HashMap<TabId, TabAccess>>,
+    id: TabId,
+    kind: TabAccessKind,
+}
+
+impl Drop for TabReservation<'_> {
     fn drop(&mut self) {
-        self.busy.write().remove(&self.id);
+        let mut busy = self.busy.write();
+        if let Some(access) = busy.get_mut(&self.id) {
+            match self.kind {
+                TabAccessKind::Lifecycle => access.lifecycle = false,
+                TabAccessKind::Operation => access.operations -= 1,
+                TabAccessKind::Layout => {
+                    access.operations -= 1;
+                    access.layout = false;
+                }
+            }
+            if !access.lifecycle && access.operations == 0 {
+                busy.remove(&self.id);
+            }
+        }
     }
+}
+
+fn reserve_tab_access<'a>(
+    busy: &'a RwLock<HashMap<TabId, TabAccess>>,
+    id: &TabId,
+    kind: TabAccessKind,
+) -> Result<TabReservation<'a>> {
+    let mut entries = busy.write();
+    let access = entries.entry(id.clone()).or_default();
+    match kind {
+        TabAccessKind::Lifecycle if access.lifecycle || access.operations > 0 => {
+            return Err(BrowserTabError::Platform("TAB_LIFECYCLE_BUSY".into()));
+        }
+        TabAccessKind::Operation | TabAccessKind::Layout if access.lifecycle => {
+            return Err(BrowserTabError::Platform("TAB_LIFECYCLE_BUSY".into()));
+        }
+        TabAccessKind::Layout if access.layout => {
+            return Err(BrowserTabError::Platform("TAB_LAYOUT_BUSY".into()));
+        }
+        TabAccessKind::Lifecycle => access.lifecycle = true,
+        TabAccessKind::Operation => access.operations += 1,
+        TabAccessKind::Layout => {
+            access.operations += 1;
+            access.layout = true;
+        }
+    }
+    Ok(TabReservation {
+        busy,
+        id: id.clone(),
+        kind,
+    })
 }
 
 #[cfg(target_os = "linux")]
@@ -192,7 +252,7 @@ struct ManagedTab {
 /// (e.g. apps that build their main window manually inside `.setup()`).
 pub struct TabManager {
     tabs: RwLock<HashMap<TabId, Arc<ManagedTab>>>,
-    lifecycle_busy: RwLock<HashSet<TabId>>,
+    lifecycle_busy: RwLock<HashMap<TabId, TabAccess>>,
     app: AppHandle<Wry>,
     host_label: String,
     #[cfg(target_os = "windows")]
@@ -203,7 +263,7 @@ impl TabManager {
     pub fn new(app: AppHandle<Wry>, host_label: impl Into<String>) -> Self {
         Self {
             tabs: RwLock::new(HashMap::new()),
-            lifecycle_busy: RwLock::new(HashSet::new()),
+            lifecycle_busy: RwLock::new(HashMap::new()),
             app,
             host_label: host_label.into(),
             #[cfg(target_os = "windows")]
@@ -271,29 +331,23 @@ impl TabManager {
             .ok_or(BrowserTabError::WindowNotFound)
     }
 
-    fn reserve_lifecycle(&self, id: &TabId) -> Result<TabLifecycleReservation<'_>> {
-        if !self.lifecycle_busy.write().insert(id.clone()) {
-            return Err(BrowserTabError::Platform("TAB_LIFECYCLE_BUSY".into()));
-        }
-        Ok(TabLifecycleReservation {
-            busy: &self.lifecycle_busy,
-            id: id.clone(),
-        })
+    fn reserve_lifecycle(&self, id: &TabId) -> Result<TabReservation<'_>> {
+        reserve_tab_access(&self.lifecycle_busy, id, TabAccessKind::Lifecycle)
     }
 
-    fn get_tab(&self, id: &TabId) -> Result<Arc<ManagedTab>> {
-        // Lock order is lifecycle -> registry, and neither lock survives
-        // this handle lookup. A closing/creating tab is a transient state,
-        // not evidence that the native engine crashed.
-        let busy = self.lifecycle_busy.read();
-        if busy.contains(id) {
-            return Err(BrowserTabError::Platform("TAB_LIFECYCLE_BUSY".into()));
-        }
-        self.tabs
+    fn get_tab(
+        &self,
+        id: &TabId,
+        kind: TabAccessKind,
+    ) -> Result<(TabReservation<'_>, Arc<ManagedTab>)> {
+        let reservation = reserve_tab_access(&self.lifecycle_busy, id, kind)?;
+        let tab = self
+            .tabs
             .read()
             .get(id)
             .cloned()
-            .ok_or_else(|| BrowserTabError::TabNotFound(id.clone()))
+            .ok_or_else(|| BrowserTabError::TabNotFound(id.clone()))?;
+        Ok((reservation, tab))
     }
 
     pub fn create_tab(&self, options: CreateTabOptions) -> Result<()> {
@@ -626,7 +680,7 @@ impl TabManager {
             return Err(BrowserTabError::InvalidRect(rect));
         }
 
-        let tab = self.get_tab(id)?;
+        let (_operation, tab) = self.get_tab(id, TabAccessKind::Layout)?;
         platform::apply_rect(&tab.webview, rect)?;
         #[cfg(target_os = "linux")]
         {
@@ -638,8 +692,91 @@ impl TabManager {
         Ok(())
     }
 
+    /// Bridge positioning is one admission transaction: geometry, show
+    /// and the host's short metadata publication cannot interleave with a
+    /// periodic sweep. The callback must not call back into native code.
+    pub fn position_visible(
+        &self,
+        id: &TabId,
+        rect: LogicalRect,
+        publish: impl FnOnce(),
+    ) -> Result<()> {
+        if rect.is_empty() {
+            return Err(BrowserTabError::InvalidRect(rect));
+        }
+        let (_operation, tab) = self.get_tab(id, TabAccessKind::Layout)?;
+        platform::apply_rect(&tab.webview, rect)?;
+        #[cfg(target_os = "linux")]
+        {
+            *tab.layout.write() = TabLayout {
+                rect,
+                restore_rect: None,
+            };
+        }
+        tab.webview.show()?;
+        publish();
+        Ok(())
+    }
+
+    /// Read the latest host target *after* acquiring the layout reservation,
+    /// so a periodic sweep cannot overwrite a completed position command
+    /// with geometry captured before that command.
+    #[cfg(target_os = "linux")]
+    pub fn reconcile_rect(
+        &self,
+        id: &TabId,
+        target: impl FnOnce() -> Option<LogicalRect>,
+    ) -> Result<()> {
+        let (_operation, tab) = self.get_tab(id, TabAccessKind::Layout)?;
+        let Some(rect) = target() else {
+            return Ok(());
+        };
+        if rect.is_empty() {
+            return Err(BrowserTabError::InvalidRect(rect));
+        }
+        let current = *tab.layout.read();
+        if current.rect == rect {
+            return platform::linux::ensure_size_allocated(&tab.webview, rect);
+        }
+        platform::apply_rect(&tab.webview, rect)?;
+        *tab.layout.write() = TabLayout {
+            rect,
+            restore_rect: None,
+        };
+        Ok(())
+    }
+
+    /// A missing bridge layout must not cause a guessed 800x600 resize of a
+    /// live Linux viewport. Return the real parked rectangle to the caller.
+    #[cfg(target_os = "linux")]
+    pub fn hide_offscreen(
+        &self,
+        id: &TabId,
+        publish: impl FnOnce(LogicalRect),
+    ) -> Result<()> {
+        let (_operation, tab) = self.get_tab(id, TabAccessKind::Layout)?;
+        let rect = Self::park_tab(&tab)?;
+        publish(rect);
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    fn park_tab(tab: &ManagedTab) -> Result<LogicalRect> {
+        let layout = *tab.layout.read();
+        if layout.rect.x < -1000.0 {
+            return Ok(layout.rect);
+        }
+        let rect = offscreen_rect(layout.rect);
+        platform::apply_rect(&tab.webview, rect)?;
+        *tab.layout.write() = TabLayout {
+            rect,
+            restore_rect: Some(layout.rect),
+        };
+        Ok(rect)
+    }
+
     pub fn set_visible(&self, id: &TabId, visible: bool) -> Result<()> {
-        let tab = self.get_tab(id)?;
+        let (_operation, tab) = self.get_tab(id, TabAccessKind::Layout)?;
         #[cfg(target_os = "linux")]
         {
             let layout = *tab.layout.read();
@@ -652,15 +789,8 @@ impl TabManager {
                     };
                 }
                 tab.webview.show()?;
-            } else if layout.rect.x >= -1000.0 {
-                // PROJECT-RULES 3.5: preserve the existing viewport size
-                // and move it outside the visible area instead of hide().
-                let rect = offscreen_rect(layout.rect);
-                platform::apply_rect(&tab.webview, rect)?;
-                *tab.layout.write() = TabLayout {
-                    rect,
-                    restore_rect: Some(layout.rect),
-                };
+            } else {
+                Self::park_tab(&tab)?;
             }
         }
         #[cfg(not(target_os = "linux"))]
@@ -675,7 +805,7 @@ impl TabManager {
     /// 设置子 webview 内容缩放（WebKitGTK set_zoom_level）。
     /// 用于宫格小窗按比例缩小网页内容，实现"自适应"展示。
     pub fn set_zoom(&self, id: &TabId, scale_factor: f64) -> Result<()> {
-        let tab = self.get_tab(id)?;
+        let (_operation, tab) = self.get_tab(id, TabAccessKind::Operation)?;
         tab.webview.set_zoom(scale_factor)?;
         Ok(())
     }
@@ -688,8 +818,8 @@ impl TabManager {
         let Some(tab) = tab else {
             return Ok(());
         };
-        // Keep ownership on failure. The reservation prevents duplicate
-        // create/close, but no registry lock is held inside the engine.
+        // Keep ownership on failure. Admission excludes other synchronous
+        // dispatches and duplicate lifecycle changes for this identity.
         tab.webview.close()?;
         self.tabs.write().remove(id);
         platform::forget_native_layout(id);
@@ -697,7 +827,7 @@ impl TabManager {
     }
 
     pub fn navigate(&self, id: &TabId, url: &str) -> Result<()> {
-        let tab = self.get_tab(id)?;
+        let (_operation, tab) = self.get_tab(id, TabAccessKind::Operation)?;
 
         let url: tauri::Url = url
             .parse()
@@ -714,7 +844,7 @@ impl TabManager {
     /// 注意：子 webview 由本插件持有，app.get_webview 找不到它们，
     /// 宿主应用必须走这个方法（否则 eval 静默空转，AI 群发/前进后退全失效）。
     pub fn eval(&self, id: &TabId, js: &str) -> Result<()> {
-        let tab = self.get_tab(id)?;
+        let (_operation, tab) = self.get_tab(id, TabAccessKind::Operation)?;
         tab.webview.eval(js)?;
         Ok(())
     }
@@ -727,7 +857,10 @@ impl TabManager {
         id: &TabId,
         callback: impl FnOnce(std::result::Result<Vec<u8>, String>) + Send + 'static,
     ) -> Result<()> {
-        let webview = self.get_tab(id)?.webview.clone();
+        // Protect dispatch only, never keep a reservation across an
+        // asynchronous WebKit/WebView2 completion callback.
+        let (_operation, tab) = self.get_tab(id, TabAccessKind::Operation)?;
+        let webview = tab.webview.clone();
         #[cfg(target_os = "linux")]
         {
             webview.with_webview(move |native| {
@@ -830,7 +963,10 @@ impl TabManager {
         js: String,
         callback: impl FnOnce(std::result::Result<String, String>) + Send + 'static,
     ) -> Result<()> {
-        let webview = self.get_tab(id)?.webview.clone();
+        // Protect dispatch only, never keep a reservation across an
+        // asynchronous WebKit/WebView2 completion callback.
+        let (_operation, tab) = self.get_tab(id, TabAccessKind::Operation)?;
+        let webview = tab.webview.clone();
         #[cfg(target_os = "linux")]
         webview.with_webview(move |native| {
             use java_script_core::ValueExt;
@@ -893,17 +1029,30 @@ mod offscreen_layout_tests {
 
     #[test]
     fn lifecycle_reservation_releases_its_id_on_drop() {
-        let busy = RwLock::new(HashSet::new());
+        let busy = RwLock::new(HashMap::new());
         let id = "tab-test".to_string();
-        assert!(busy.write().insert(id.clone()));
         {
-            let _reservation = TabLifecycleReservation {
-                busy: &busy,
-                id: id.clone(),
-            };
-            assert!(busy.read().contains(&id));
+            let _reservation =
+                reserve_tab_access(&busy, &id, TabAccessKind::Lifecycle).unwrap();
+            assert!(reserve_tab_access(&busy, &id, TabAccessKind::Operation).is_err());
+            assert!(busy.read().contains_key(&id));
         }
-        assert!(!busy.read().contains(&id));
+        assert!(!busy.read().contains_key(&id));
+    }
+
+    #[test]
+    fn active_dispatch_excludes_close_but_allows_non_layout_operations() {
+        let busy = RwLock::new(HashMap::new());
+        let id = "tab-test".to_string();
+        let operation = reserve_tab_access(&busy, &id, TabAccessKind::Operation).unwrap();
+        let layout = reserve_tab_access(&busy, &id, TabAccessKind::Layout).unwrap();
+        assert!(reserve_tab_access(&busy, &id, TabAccessKind::Layout).is_err());
+        assert!(reserve_tab_access(&busy, &id, TabAccessKind::Lifecycle).is_err());
+        drop(layout);
+        assert!(reserve_tab_access(&busy, &id, TabAccessKind::Lifecycle).is_err());
+        drop(operation);
+        assert!(busy.read().is_empty());
+        assert!(reserve_tab_access(&busy, &id, TabAccessKind::Lifecycle).is_ok());
     }
 }
 

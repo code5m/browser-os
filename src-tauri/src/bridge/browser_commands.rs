@@ -81,23 +81,38 @@ pub(crate) fn apply_bounds(
     width: f64,
     height: f64,
 ) -> Result<(), String> {
-    // 后端去重：仅"rect 相同且 <50ms"才丢弃（防 IPC 洪泛），rect 变了必须应用
-    {
-        let state = app.state::<AppState>();
-        let mut last = state.last_position_at.lock().unwrap();
-        let now = std::time::Instant::now();
-        if let Some((t, lx, ly, lw, lh)) = last.get(id) {
+    // Dedup only successful requests. A pending or failed dispatch is
+    // not a receipt. Also consult the current target: a subsequent hide
+    // must invalidate an otherwise identical recent visible position.
+    let now = std::time::Instant::now();
+    let state = app.state::<AppState>();
+    let recent_success = {
+        let last = state.last_position_at.lock().unwrap();
+        last.get(id).is_some_and(|(t, lx, ly, lw, lh)| {
             let same_rect = (lx - x).abs() < 0.5
                 && (ly - y).abs() < 0.5
                 && (lw - width).abs() < 0.5
                 && (lh - height).abs() < 0.5;
-            if same_rect && now.duration_since(*t).as_millis() < 50 {
-                return Ok(());
-            }
-        }
-        last.insert(id.to_string(), (now, x, y, width, height));
+            same_rect && now.saturating_duration_since(*t).as_millis() < 50
+        })
+    };
+    let expected = (
+        x.round().max(0.0),
+        y.round().max(0.0),
+        width.round().max(1.0),
+        height.round().max(1.0),
+    );
+    if recent_success && state.child_layouts.lock().unwrap().get(id).copied() == Some(expected) {
+        return Ok(());
     }
-    apply_bounds_inner(app, id, x, y, width, height)
+    let result = apply_bounds_inner(app, id, x, y, width, height);
+    if result.is_ok() {
+        let mut last = state.last_position_at.lock().unwrap();
+        if last.get(id).map_or(true, |entry| entry.0 <= now) {
+            last.insert(id.to_string(), (now, x, y, width, height));
+        }
+    }
+    result
 }
 
 /// apply_bounds 的无去重内部实现：同时适用于 command 线程与主线程上下文
@@ -114,26 +129,31 @@ pub(crate) fn apply_bounds_inner(
     let manager = app.state::<TabManagerState>();
     // 诊断：update_rect 失败（如 TabNotFound）时必须先留日志再返回，
     // 否则前端 .catch 吞掉后宫格"静默不显示"，无法定位是前端没发还是后端没建。
-    if let Err(e) = manager.update_rect(
-        &id.to_string(),
-        LogicalRect::new(
-            x.round().max(0.0),
-            y.round().max(0.0),
-            width.round().max(1.0),
-            height.round().max(1.0),
-        ),
-    ) {
-        eprintln!("[apply_bounds] label={} update_rect 失败: {e}", id);
-        return Err(format!("定位失败: {e}"));
-    }
-    if let Err(e) = manager.set_visible(&id.to_string(), true) {
-        eprintln!("[apply_bounds] label={} set_visible 失败: {e}", id);
+    let rect = LogicalRect::new(
+        x.round().max(0.0),
+        y.round().max(0.0),
+        width.round().max(1.0),
+        height.round().max(1.0),
+    );
+    let state = app.state::<AppState>();
+    let prior_target = state.child_layouts.lock().unwrap().get(id).copied();
+    if let Err(e) = manager.position_visible(&id.to_string(), rect, || {
+        let mut layouts = state.child_layouts.lock().unwrap();
+        // A hide request may have been recorded while the dispatcher was
+        // busy. Do not replace that newer target with an older receipt.
+        if layouts.get(id).copied() == prior_target {
+            layouts.insert(id.to_string(), (rect.x, rect.y, rect.width, rect.height));
+        }
+    }) {
+        eprintln!("[apply_bounds] label={} position/show failed: {e}", id);
+        return Err(format!("定位或显示失败: {e}"));
     }
     eprintln!(
         "[apply_bounds] label={} logical=({},{},{},{})",
         id, x, y, width, height
     );
-    remember_layout(app, id, x, y, width, height);
+    // The normalized target was published before releasing the plugin's
+    // layout reservation; the sweep never replays a pre-command snapshot.
     Ok(())
 }
 
@@ -141,7 +161,7 @@ pub(crate) fn apply_bounds_inner(
 /// 关键：【不能走 grid_position/apply_bounds】——它有 50ms 去重，宫格刚定位后
 /// 50ms 内的"移出屏幕"请求会被去重丢弃，导致宫格仍留在屏幕上（实测切主页仍看到
 /// 宫格内容）。hide_bounds 无去重、保持尺寸只移位置，是隐藏的正确入口。
-/// 对没记录在 child_layouts 的宫格（极端情况），也强制移出（直接给 1x1 临时尺寸）。
+/// 对无 bridge 布局记录的 Linux 页签，从插件读取已有视口尺寸再移出。
 /// 隐藏单个子 webview（页签/宫格），用无去重的 hide_bounds。
 /// 宫格显示时移出激活页签、页签切换时移出非激活页签都走这里，
 /// 避免 tab_position/apply_bounds 的 50ms 去重把"移出屏幕"请求丢弃。
@@ -150,6 +170,7 @@ pub fn hide_webview(webview: tauri::Webview, app: AppHandle, id: String) -> Resu
     crate::shared::native_legacy_policy::require_main(&webview, "hide_webview")?;
     crate::shared::native_legacy_policy::bound_text("hide_webview", "id", &id)?;
 
+    #[cfg(not(target_os = "linux"))]
     use tauri_plugin_browser_tabs::{LogicalRect, TabManagerState};
     // 宫格已迁子进程：隐藏 = 子进程整个窗口 hide（等价旧方案的移出屏幕）
     if let Some(index) = grid_index_of(&id) {
@@ -158,18 +179,22 @@ pub fn hide_webview(webview: tauri::Webview, app: AppHandle, id: String) -> Resu
         mgr.send(index, GridCmd::HideWindow { id });
         return Ok(());
     }
-    let state = app.state::<AppState>();
-    let has_layout = state.child_layouts.lock().unwrap().contains_key(&id);
-    if has_layout {
-        hide_bounds(&app, &id);
-    } else {
-        let manager = app.state::<TabManagerState>();
-        // 兜底移出成功时也记入 child_layouts（隐藏态），让守护线程持续压制漂移
-        if manager
-            .update_rect(&id, LogicalRect::new(-30000.0, -30000.0, 800.0, 600.0))
-            .is_ok()
-        {
-            remember_layout(&app, &id, -30000.0, -30000.0, 800.0, 600.0);
+    #[cfg(target_os = "linux")]
+    hide_bounds(&app, &id);
+    #[cfg(not(target_os = "linux"))]
+    {
+        let state = app.state::<AppState>();
+        let has_layout = state.child_layouts.lock().unwrap().contains_key(&id);
+        if has_layout {
+            hide_bounds(&app, &id);
+        } else {
+            let manager = app.state::<TabManagerState>();
+            if manager
+                .update_rect(&id, LogicalRect::new(-30000.0, -30000.0, 800.0, 600.0))
+                .is_ok()
+            {
+                remember_layout(&app, &id, -30000.0, -30000.0, 800.0, 600.0);
+            }
         }
     }
     Ok(())
@@ -179,7 +204,9 @@ pub fn hide_webview(webview: tauri::Webview, app: AppHandle, id: String) -> Resu
 pub fn hide_all_webviews(webview: tauri::Webview, app: AppHandle) -> Result<(), String> {
     crate::shared::native_legacy_policy::require_main(&webview, "hide_all_webviews")?;
 
-    use tauri_plugin_browser_tabs::{LogicalRect, TabManagerState};
+    #[cfg(not(target_os = "linux"))]
+    use tauri_plugin_browser_tabs::LogicalRect;
+    use tauri_plugin_browser_tabs::TabManagerState;
     let manager = app.state::<TabManagerState>();
     let state = app.state::<AppState>();
     // 宫格已迁子进程：逐格下发 HideWindow（子进程整个窗口 hide）
@@ -211,18 +238,18 @@ pub fn hide_all_webviews(webview: tauri::Webview, app: AppHandle) -> Result<(), 
         if !existing.contains(&id) {
             continue;
         }
-        // 优先用 hide_bounds（保持尺寸只移位置，安全不死锁）。
-        // 但若 child_layouts 无记录（页签/宫格从未被定位过），hide_bounds 会跳过导致残留，
-        // 此时兜底直接 update_rect 移到屏幕外（给一个安全的 800x600 尺寸，避免 1x1 触发重排死锁）。
-        let has_layout = state.child_layouts.lock().unwrap().contains_key(&id);
-        if has_layout {
-            hide_bounds(&app, &id);
-        } else {
-            // 诊断：兜底移出失败时留日志（TabNotFound = 插件表里没有该 webview）。
-            // 成功时记入 child_layouts（隐藏态），让守护线程持续压制漂移。
-            match manager.update_rect(&id, LogicalRect::new(-30000.0, -30000.0, 800.0, 600.0)) {
-                Ok(_) => remember_layout(&app, &id, -30000.0, -30000.0, 800.0, 600.0),
-                Err(e) => eprintln!("[hide_all_webviews] id={} 兜底移出失败: {e}", id),
+        #[cfg(target_os = "linux")]
+        hide_bounds(&app, &id);
+        #[cfg(not(target_os = "linux"))]
+        {
+            let has_layout = state.child_layouts.lock().unwrap().contains_key(&id);
+            if has_layout {
+                hide_bounds(&app, &id);
+            } else {
+                match manager.update_rect(&id, LogicalRect::new(-30000.0, -30000.0, 800.0, 600.0)) {
+                    Ok(_) => remember_layout(&app, &id, -30000.0, -30000.0, 800.0, 600.0),
+                    Err(e) => eprintln!("[hide_all_webviews] id={} 兜底移出失败: {e}", id),
+                }
             }
         }
     }
@@ -253,6 +280,7 @@ pub fn start_layout_enforcer(app: AppHandle) {
             let sweep_app = app.clone();
             if app
                 .run_on_main_thread(move || {
+                    let _sweep = LayoutSweepGuard;
                     LAYOUT_SWEEP_RUNNING.store(true, Ordering::Release);
                     if !sweep_app
                         .state::<AppState>()
@@ -261,8 +289,6 @@ pub fn start_layout_enforcer(app: AppHandle) {
                     {
                         enforce_layout_once(&sweep_app);
                     }
-                    LAYOUT_SWEEP_RUNNING.store(false, Ordering::Release);
-                    LAYOUT_SWEEP_IN_FLIGHT.store(false, Ordering::Release);
                 })
                 .is_err()
             {
@@ -279,6 +305,17 @@ pub fn start_layout_enforcer(app: AppHandle) {
 static LAYOUT_SWEEP_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
 #[cfg(target_os = "linux")]
 static LAYOUT_SWEEP_RUNNING: AtomicBool = AtomicBool::new(false);
+
+#[cfg(target_os = "linux")]
+struct LayoutSweepGuard;
+
+#[cfg(target_os = "linux")]
+impl Drop for LayoutSweepGuard {
+    fn drop(&mut self) {
+        LAYOUT_SWEEP_RUNNING.store(false, Ordering::Release);
+        LAYOUT_SWEEP_IN_FLIGHT.store(false, Ordering::Release);
+    }
+}
 
 /// Fixed diagnostic state: no tab identifiers, URLs, or browser content.
 #[cfg(target_os = "linux")]
@@ -299,20 +336,32 @@ fn enforce_layout_once(app: &AppHandle) {
         let _ = tauri_plugin_browser_tabs::ensure_native_layout(&main);
     }
     let state = app.state::<AppState>();
-    #[cfg(target_os = "linux")]
-    let layouts = {
-        // Never wait on application metadata from a GTK callback.
-        // A contended snapshot is retried by the next periodic sweep.
-        let Ok(layouts) = state.child_layouts.try_lock() else {
-            return;
-        };
-        layouts.clone()
-    };
-    #[cfg(not(target_os = "linux"))]
-    let layouts = state.child_layouts.lock().unwrap().clone();
     use tauri_plugin_browser_tabs::{LogicalRect, TabManagerState};
     let manager = app.state::<TabManagerState>();
-    for (id, (x, y, w, h)) in layouts {
-        let _ = manager.update_rect(&id, LogicalRect::new(x, y, w.max(1.0), h.max(1.0)));
+    #[cfg(target_os = "linux")]
+    {
+        // Capture identities, not stale rectangles. The plugin reads each
+        // target after it has reserved that tab's layout operation.
+        let ids: Vec<String> = {
+            let Ok(layouts) = state.child_layouts.try_lock() else {
+                return;
+            };
+            layouts.keys().cloned().collect()
+        };
+        for id in ids {
+            let _ = manager.reconcile_rect(&id, || {
+                let layouts = state.child_layouts.try_lock().ok()?;
+                layouts.get(&id).map(|&(x, y, w, h)| {
+                    LogicalRect::new(x, y, w.max(1.0), h.max(1.0))
+                })
+            });
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let layouts = state.child_layouts.lock().unwrap().clone();
+        for (id, (x, y, w, h)) in layouts {
+            let _ = manager.update_rect(&id, LogicalRect::new(x, y, w.max(1.0), h.max(1.0)));
+        }
     }
 }

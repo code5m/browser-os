@@ -17,7 +17,7 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
 const PROBE_INTERVAL: Duration = Duration::from_secs(1);
 const SUSPECT_AFTER_MS: u64 = 5_000;
@@ -161,6 +161,7 @@ fn snapshot(event: &str, stalled_ms: u64) -> Value {
         .chars()
         .take(80)
         .collect::<String>();
+    let (session_dropped, echo_dropped) = crate::crashlog::log_loss_counters();
     json!({
         "schema": "browseros-ui-hang-v1",
         "time": chrono::Utc::now().to_rfc3339(),
@@ -179,6 +180,8 @@ fn snapshot(event: &str, stalled_ms: u64) -> Value {
         "io_pressure": read_pressure("/proc/pressure/io"),
         "cpu_pressure": read_pressure("/proc/pressure/cpu"),
         "swap_counters": swap_counters(),
+        "stderr_session_dropped_bytes": session_dropped,
+        "stderr_echo_dropped_bytes": echo_dropped,
         "layout_sweep": crate::bridge::layout_enforcer_status()
     })
 }
@@ -212,6 +215,45 @@ pub fn start(app: AppHandle) {
     let start = Instant::now();
     let last_callback = Arc::new(AtomicU64::new(1));
     let pending_callback = Arc::new(AtomicBool::new(false));
+    let dispatch_failed = Arc::new(AtomicBool::new(false));
+    let shutdown_requested = Arc::clone(&app.state::<crate::AppState>().shutdown_requested);
+
+    // Sending a main-thread callback is normally quick, but a dispatcher
+    // can itself be stalled. Never make the sampler depend on that call
+    // returning. One pending request and a bounded channel are sufficient.
+    let (probe_tx, probe_rx) = std::sync::mpsc::sync_channel::<()>(1);
+    let callback_timestamp = Arc::clone(&last_callback);
+    let callback_pending = Arc::clone(&pending_callback);
+    let callback_failed = Arc::clone(&dispatch_failed);
+    if thread::Builder::new()
+        .name("browseros-ui-probe-submit".into())
+        .spawn(move || {
+            while probe_rx.recv().is_ok() {
+                let timestamp = Arc::clone(&callback_timestamp);
+                let pending = Arc::clone(&callback_pending);
+                let started = start;
+                if app
+                    .run_on_main_thread(move || {
+                        timestamp.store(
+                            started.elapsed().as_millis().min((u64::MAX - 1) as u128) as u64 + 1,
+                            Ordering::Release,
+                        );
+                        pending.store(false, Ordering::Release);
+                    })
+                    .is_err()
+                {
+                    callback_failed.store(true, Ordering::Release);
+                    callback_pending.store(false, Ordering::Release);
+                    break;
+                }
+            }
+        })
+        .is_err()
+    {
+        eprintln!("[hang-watchdog] probe submit worker unavailable");
+        return;
+    }
+
     let _ = thread::Builder::new()
         .name("browseros-ui-watchdog".into())
         .spawn(move || {
@@ -219,26 +261,25 @@ pub fn start(app: AppHandle) {
             let mut last_snapshot_ms: u64 = 0;
             loop {
                 thread::sleep(PROBE_INTERVAL);
+                if shutdown_requested.load(Ordering::Acquire) {
+                    break;
+                }
+                if dispatch_failed.load(Ordering::Acquire) {
+                    let age = (start.elapsed().as_millis().min((u64::MAX - 1) as u128) as u64 + 1)
+                        .saturating_sub(last_callback.load(Ordering::Acquire));
+                    append_bounded(&path, &snapshot("gtk_probe_dispatch_failed", age));
+                    break;
+                }
                 if !pending_callback.swap(true, Ordering::SeqCst) {
-                    let timestamp = Arc::clone(&last_callback);
-                    let pending = Arc::clone(&pending_callback);
-                    let pending_error = Arc::clone(&pending_callback);
-                    let started = start;
-                    if app
-                        .run_on_main_thread(move || {
-                            timestamp.store(
-                                started.elapsed().as_millis().min(u64::MAX as u128) as u64 + 1,
-                                Ordering::Release,
-                            );
-                            pending.store(false, Ordering::Release);
-                        })
-                        .is_err()
-                    {
-                        pending_error.store(false, Ordering::Release);
-                        return;
+                    if probe_tx.try_send(()).is_err() {
+                        pending_callback.store(false, Ordering::Release);
+                        let age = (start.elapsed().as_millis().min((u64::MAX - 1) as u128) as u64 + 1)
+                            .saturating_sub(last_callback.load(Ordering::Acquire));
+                        append_bounded(&path, &snapshot("gtk_probe_dispatch_failed", age));
+                        break;
                     }
                 }
-                let now_ms = start.elapsed().as_millis().min(u64::MAX as u128) as u64 + 1;
+                let now_ms = start.elapsed().as_millis().min((u64::MAX - 1) as u128) as u64 + 1;
                 let age_ms = now_ms.saturating_sub(last_callback.load(Ordering::Acquire));
                 if age_ms >= SUSPECT_AFTER_MS {
                     if !stalled || now_ms.saturating_sub(last_snapshot_ms) >= 15_000 {

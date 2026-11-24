@@ -1,12 +1,12 @@
 //! 崩溃与运行日志捕获：
 //! 1) stderr 镜像到会话日志 —— Rust eprintln、WebKitGTK / GStreamer 原生报错
-//!    都走 stderr；会话文件优先，终端回显使用有界队列，避免慢终端阻塞主线程
+//!    都走 stderr；磁盘和终端分别使用有界队列，避免慢日志接收端堵塞 GTK
 //! 2) Rust panic 钩子：panic 信息 + 完整堆栈写入 crash.log
 //! 3) SIGSEGV / SIGABRT / SIGBUS / SIGILL 信号捕获：WebKitGTK 原生崩溃（段错误）
 //!    不经过 panic 钩子，用信号处理器直写日志后恢复默认处理重新抛出
 //!
 //! 日志目录：~/.local/share/com.jizhijiandan.mvp/logs/
-//!   session-时间戳.log  每次启动一个全量日志（保留最近 10 个）
+//!   session-时间戳.log  每次启动一个会话日志（保留最近 10 个，过载丢失有计数）
 //!   crash.log           panic / 致命信号专用（追加）
 
 use std::fs::{self, OpenOptions};
@@ -14,9 +14,27 @@ use std::io::{Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
+use std::sync::mpsc::{self, Receiver, SyncSender};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 static LOG_FD: AtomicI32 = AtomicI32::new(-1);
+static SESSION_DROPPED_BYTES: AtomicU64 = AtomicU64::new(0);
+static ECHO_DROPPED_BYTES: AtomicU64 = AtomicU64::new(0);
+
+const LOG_CHUNK_BYTES: usize = 8192;
+const SESSION_QUEUE_CHUNKS: usize = 128;
+const ECHO_QUEUE_CHUNKS: usize = 32;
+type LogChunk = Arc<[u8]>;
+
+/// Counters only; never return any log text to hang diagnostics.
+pub(crate) fn log_loss_counters() -> (u64, u64) {
+    (
+        SESSION_DROPPED_BYTES.load(Ordering::Relaxed),
+        ECHO_DROPPED_BYTES.load(Ordering::Relaxed),
+    )
+}
 
 fn log_dir() -> PathBuf {
     let base = std::env::var("XDG_DATA_HOME")
@@ -87,12 +105,13 @@ pub fn init() {
     prune_old_logs(&dir, 10);
 }
 
-/// Prepare all resources before changing fd 2. The original stderr echo
-/// has its own bounded queue: a terminal/journal that stops reading cannot
-/// block the session-log drain. The session file remains the primary sink.
+/// Prepare all resources before changing fd 2. Neither disk writes nor
+/// terminal/journal writes run on the pipe reader. A stalled sink can only
+/// fill its own bounded queue; excess bytes are counted instead of blocking
+/// GTK behind the stderr pipe. Fatal records keep their independent fd.
 fn start_stderr_mirror(path: &Path) -> std::io::Result<()> {
     let file = OpenOptions::new()
-        .create(true)
+        .create_new(true)
         .append(true)
         .mode(0o600)
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
@@ -110,22 +129,25 @@ fn start_stderr_mirror(path: &Path) -> std::io::Result<()> {
     let reader = unsafe { fs::File::from_raw_fd(fds[0]) };
     let writer = unsafe { fs::File::from_raw_fd(fds[1]) };
 
-    // At most 32 x 8 KiB chunks can wait for the secondary echo sink.
-    // Under terminal backpressure only the echo may be dropped; session
-    // records and the independent fatal-signal descriptor are retained.
-    let (echo_tx, echo_rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(32);
+    // Bound total queued payload to about 1.25 MiB plus the current
+    // chunks. Arc shares payloads between the two independent consumers.
+    let (session_tx, session_rx) = mpsc::sync_channel::<LogChunk>(SESSION_QUEUE_CHUNKS);
+    let (echo_tx, echo_rx) = mpsc::sync_channel::<LogChunk>(ECHO_QUEUE_CHUNKS);
+    std::thread::Builder::new()
+        .name("browseros-stderr-session".into())
+        .spawn(move || write_session_log(session_rx, file))?;
     std::thread::Builder::new()
         .name("browseros-stderr-echo".into())
         .spawn(move || {
             for chunk in echo_rx {
                 if original.write_all(&chunk).is_err() {
-                    break;
+                    ECHO_DROPPED_BYTES.fetch_add(chunk.len() as u64, Ordering::Relaxed);
                 }
             }
         })?;
     std::thread::Builder::new()
         .name("browseros-stderr-pump".into())
-        .spawn(move || pump(reader, echo_tx, file))?;
+        .spawn(move || pump(reader, session_tx, echo_tx))?;
 
     // The reader now owns its resources and waits for input. If dup2 fails,
     // writer drops, the reader sees EOF, and both worker threads can exit.
@@ -136,12 +158,32 @@ fn start_stderr_mirror(path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-fn pump(
-    mut reader: fs::File,
-    echo: std::sync::mpsc::SyncSender<Vec<u8>>,
-    mut file: fs::File,
-) {
-    let mut buf = [0u8; 8192];
+fn write_session_log(chunks: Receiver<LogChunk>, mut file: fs::File) {
+    let mut last_report = Instant::now();
+    let mut reported = (0, 0);
+    for chunk in chunks {
+        if file.write_all(&chunk).is_err() {
+            SESSION_DROPPED_BYTES.fetch_add(chunk.len() as u64, Ordering::Relaxed);
+        }
+        let lost = log_loss_counters();
+        if lost != reported && last_report.elapsed() >= Duration::from_secs(5) {
+            // Rate limit this marker; do not amplify a log flood.
+            last_report = Instant::now();
+            if writeln!(
+                file,
+                "\n[crashlog] dropped_session_bytes={} dropped_echo_bytes={}",
+                lost.0, lost.1
+            )
+            .is_ok()
+            {
+                reported = lost;
+            }
+        }
+    }
+}
+
+fn pump(mut reader: fs::File, session: SyncSender<LogChunk>, echo: SyncSender<LogChunk>) {
+    let mut buf = [0u8; LOG_CHUNK_BYTES];
     loop {
         let n = match reader.read(&mut buf) {
             Ok(0) => break,
@@ -149,10 +191,15 @@ fn pump(
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(_) => break,
         };
-        let chunk = &buf[..n];
-        let _ = file.write_all(chunk);
-        // Do not block on the optional console/journal echo.
-        let _ = echo.try_send(chunk.to_vec());
+        let chunk: LogChunk = Arc::from(&buf[..n]);
+        // Never perform potentially blocking sink I/O or a blocking send
+        // on the pipe reader. Each lost chunk is counted independently.
+        if session.try_send(Arc::clone(&chunk)).is_err() {
+            SESSION_DROPPED_BYTES.fetch_add(n as u64, Ordering::Relaxed);
+        }
+        if echo.try_send(chunk).is_err() {
+            ECHO_DROPPED_BYTES.fetch_add(n as u64, Ordering::Relaxed);
+        }
     }
 }
 
@@ -192,9 +239,13 @@ fn append_crash(dir: &Path, text: &str) {
     if let Ok(mut f) = OpenOptions::new()
         .create(true)
         .append(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
         .open(dir.join("crash.log"))
     {
-        let _ = f.write_all(text.as_bytes());
+        if f.metadata().is_ok_and(|metadata| metadata.is_file()) {
+            let _ = f.write_all(text.as_bytes());
+        }
     }
     let fd = LOG_FD.load(Ordering::SeqCst);
     if fd >= 0 {
