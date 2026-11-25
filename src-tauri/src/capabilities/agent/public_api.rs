@@ -145,13 +145,17 @@ mod coding_bootstrap_scope_tests {
         let id = uuid::Uuid::parse_str(&session_id).unwrap();
         assert_eq!(request["session_id"], session_id);
         let saved_path = storage.join("coding-sessions").join(format!("{id}.json"));
-        let saved: Value = serde_json::from_slice(&std::fs::read(saved_path).unwrap()).unwrap();
+        assert!(saved_path.exists());
+        let saved = super::super::coding::execute(&root, &storage,
+            serde_json::json!({"action":"session","session_id":session_id}),
+            |_, _| Err("AGENT_BOOTSTRAP_PROVIDER_DENIED".into())).unwrap();
         assert_eq!(saved["session_id"], session_id);
         assert_eq!(saved["status"], "ready");
 
-        let execution = super::super::execution_owner::ProductionExecution::begin_coding(
+        let execution = super::super::execution_owner::ProductionExecution::resume_coding(
             &root,
-            Some(&session_id),
+            &session_id,
+            None,
         )
         .unwrap();
         let record = execution.tasks().get(execution.id()).unwrap();

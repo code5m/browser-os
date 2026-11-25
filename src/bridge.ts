@@ -49,22 +49,43 @@ type TabOwnerView = {
 };
 const terminalTabReceipt = (r: TabReceipt) => ["succeeded", "failed", "cancelled"].includes(r.phase);
 const receiptDelay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
-const tabControl = new Map<string, { key: string; promise: Promise<unknown> }>();
+type ControlResult = { ok: true; value: unknown } | { ok: false; error: unknown };
+type ControlWaiter = (result: ControlResult) => void;
+type ControlSlot = { key: string; waiters: Set<ControlWaiter> };
+const tabControl = new Map<string, ControlSlot>();
 function boundedTabControl<T>(lane: string, key: string, call: () => Promise<T>): Promise<T> {
   let slot = tabControl.get(lane);
   if (slot && slot.key !== key) return Promise.reject(new Error("TAB_CONTROL_LANE_UNRESOLVED"));
   if (!slot) {
-    const promise = Promise.resolve().then(call);
-    slot = { key, promise };
-    tabControl.set(lane, slot);
-    const owned = slot;
-    const release = () => { if (tabControl.get(lane) === owned) tabControl.delete(lane); };
-    void promise.then(release, release);
+    const created: ControlSlot = { key, waiters: new Set() };
+    slot = created;
+    tabControl.set(lane, created);
+    const settle = (result: ControlResult) => {
+      if (tabControl.get(lane) === created) tabControl.delete(lane);
+      for (const waiter of created.waiters) waiter(result);
+      created.waiters.clear();
+    };
+    // Exactly one subscription to the native Promise. Repeated timed-out
+    // polls must not retain their resolver closures on a lost transport.
+    void Promise.resolve().then(call).then(
+      value => settle({ ok: true, value }),
+      error => settle({ ok: false, error }),
+    );
   }
-  const promise = slot.promise as Promise<T>;
+  const owned = slot;
+  if (owned.waiters.size >= 2) return Promise.reject(new Error("TAB_CONTROL_LANE_UNRESOLVED"));
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("TAB_CONTROL_REPLY_TIMEOUT")), 1500);
-    promise.then(value => { clearTimeout(timer); resolve(value); }, error => { clearTimeout(timer); reject(error); });
+    const waiter: ControlWaiter = result => {
+      clearTimeout(timer);
+      owned.waiters.delete(waiter);
+      if (result.ok) resolve(result.value as T);
+      else reject(result.error);
+    };
+    const timer = setTimeout(() => {
+      owned.waiters.delete(waiter);
+      reject(new Error("TAB_CONTROL_REPLY_TIMEOUT"));
+    }, 1500);
+    owned.waiters.add(waiter);
   });
 }
 const tabReceiptCall = (request: Record<string, unknown>) =>

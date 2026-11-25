@@ -44,6 +44,12 @@ fn key(_storage: &Path, _create: bool) -> Result<[u8; 32], String> {
     Ok([0x42; 32])
 }
 
+fn is_cas_sidecar(name: &str) -> bool {
+    if name == ".browseros-cas-directory.lock" { return true; }
+    name.strip_prefix(".browseros-cas-").and_then(|s| s.strip_suffix(".lock"))
+        .is_some_and(|digest| digest.len() == 64 && digest.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
 #[cfg(not(test))]
 fn key(storage: &Path, create: bool) -> Result<[u8; 32], String> {
     use crate::keyring_store::KeyringStore;
@@ -104,6 +110,15 @@ fn key(storage: &Path, create: bool) -> Result<[u8; 32], String> {
                         if count > 1024 { return Err("AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED".into()); }
                         let name = entry.file_name();
                         let name = name.to_str().ok_or("AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED")?;
+                        // Historical CAS sidecars are zero-length lock
+                        // objects, not user data. Never delete them or follow
+                        // a symlink/reparse point when migrating.
+                        if is_cas_sidecar(name) {
+                            let bytes = safe_paths::read_regular(&entry.path(), &[directory.clone()], 1)
+                                .map_err(|_| "AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED")?;
+                            if !bytes.is_empty() { return Err("AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED".into()); }
+                            continue;
+                        }
                         if !matches!(name, "manifest.json" | "apply-transaction.json")
                             && uuid::Uuid::parse_str(name).is_err() {
                             return Err("AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED".into());
@@ -209,8 +224,16 @@ fn sealed_marker(storage: &Path, scope: &str, establish: bool) -> Result<bool, S
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             if establish {
-                safe_paths::create_new_file(&path, &[dir], PREFIX)
-                    .map_err(|_| "AGENT_CHECKPOINT_MARKER_FAILED")?;
+                match safe_paths::create_new_file(&path, &[dir.clone()], PREFIX) {
+                    Ok(()) => {},
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                        if safe_paths::read_regular(&path, &[dir], PREFIX.len())
+                            .map_err(|_| "AGENT_CHECKPOINT_MARKER_INVALID")? != PREFIX {
+                            return Err("AGENT_CHECKPOINT_MARKER_INVALID".into());
+                        }
+                    }
+                    Err(_) => return Err("AGENT_CHECKPOINT_MARKER_FAILED".into()),
+                }
             }
             Ok(establish)
         }
@@ -222,7 +245,11 @@ fn read_record(storage: &Path, path: &Path, directory: PathBuf, scope: &str, lim
     let bytes = safe_paths::read_regular(path, &[directory], limit + OVERHEAD)
         .map_err(|_| "AGENT_SESSION_READ_FAILED")?;
     let plaintext = if bytes.starts_with(PREFIX) {
-        open(&key(storage, false)?, scope, &bytes)?
+        let plaintext = open(&key(storage, false)?, scope, &bytes)?;
+        // A successfully authenticated historical record also establishes
+        // its migration marker, even when only read, not rewritten.
+        sealed_marker(storage, scope, true)?;
+        plaintext
     } else {
         if sealed_marker(storage, scope, false)? {
             return Err("AGENT_CHECKPOINT_PLAINTEXT_DOWNGRADE".into());
@@ -308,6 +335,14 @@ mod tests {
         let last = corrupt.len() - 1;
         corrupt[last] ^= 1;
         assert!(open(&key, "session-a", &corrupt).is_err());
+    }
+
+    #[test]
+    fn migration_accepts_only_known_cas_lock_names() {
+        assert!(is_cas_sidecar(".browseros-cas-directory.lock"));
+        assert!(is_cas_sidecar(&format!(".browseros-cas-{}.lock", "a".repeat(64))));
+        assert!(!is_cas_sidecar(".browseros-cas-unknown.lock"));
+        assert!(!is_cas_sidecar(".browseros-cas-directory.lock.json"));
     }
 
     #[test]

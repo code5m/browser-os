@@ -954,6 +954,9 @@ struct ApplyBackup {
     written_identity: Option<String>,
     #[serde(default)]
     restored_identity: Option<String>,
+    // Exact parent object observed through the pinned publication handle.
+    #[serde(default)]
+    published_parent_identity: Option<String>,
 }
 #[derive(Serialize, Deserialize)]
 struct ApplyJournal {
@@ -1110,6 +1113,12 @@ fn apply_journal_restore(
 ) -> Result<(), String> {
     let storage_identity = crate::capabilities::workspace::safe_paths::directory_identity(storage)
         .map_err(|_| "AGENT_STORAGE_UNAVAILABLE")?;
+    // Older journals without a pinned publication parent must be preserved
+    // for explicit review, not repaired against a newly opened path.
+    if journal.entries.iter().any(|entry| entry.written_identity.is_some()
+        && entry.published_parent_identity.is_none()) {
+        return Err("AGENT_RECOVERY_PROOF_REQUIRED".into());
+    }
     // Preflight every attempted write before changing any file. Recheck inside the native
     // CAS again at execution: preflight itself is not a transaction.
     for entry in &journal.entries {
@@ -1120,6 +1129,12 @@ fn apply_journal_restore(
         }
         let target = resolve(root, &entry.path, true)?;
         apply_target_key(&target, &storage_identity)?;
+        let parent = target.parent().ok_or("AGENT_RECOVERY_PROOF_REQUIRED")?;
+        let parent_identity = entry.published_parent_identity.as_deref().ok_or("AGENT_RECOVERY_PROOF_REQUIRED")?;
+        if crate::capabilities::workspace::safe_paths::directory_identity(parent)
+            .map_err(|_| "AGENT_RECOVERY_CONFLICT")? != parent_identity {
+            return Err("AGENT_RECOVERY_CONFLICT".into());
+        }
         let current = snapshot(root, &target)?;
         if was_restored(entry, current.as_ref()) {
             continue;
@@ -1139,6 +1154,12 @@ fn apply_journal_restore(
         }
         let target = resolve(root, &entry.path, true)?;
         apply_target_key(&target, &storage_identity)?;
+        let parent = target.parent().ok_or("AGENT_RECOVERY_PROOF_REQUIRED")?;
+        let parent_identity = entry.published_parent_identity.as_deref().ok_or("AGENT_RECOVERY_PROOF_REQUIRED")?;
+        if crate::capabilities::workspace::safe_paths::directory_identity(parent)
+            .map_err(|_| "AGENT_RECOVERY_CONFLICT")? != parent_identity {
+            return Err("AGENT_RECOVERY_CONFLICT".into());
+        }
         let current = snapshot(root, &target)?;
         if was_restored(&entry, current.as_ref()) {
             continue;
@@ -1148,22 +1169,25 @@ fn apply_journal_restore(
             return Err("AGENT_RECOVERY_CONFLICT".into());
         }
         if let Some(bytes) = backup_bytes(storage, journal, &entry)? {
-            crate::capabilities::workspace::safe_paths::write_versioned(
+            crate::capabilities::workspace::safe_paths::write_versioned_approved(
                 &target,
                 &[root.to_path_buf()],
+                parent,
+                parent_identity,
                 Some(&current),
                 &bytes,
                 MAX_FILE,
-                |identity| {
+                |identity, _parent_identity| {
                     journal.entries[index].restored_identity = Some(identity.into());
                     persist_journal(journal_path, journal)
                 },
             )
             .map_err(|_| "AGENT_RECOVERY_CONFLICT")?;
         } else {
-            crate::capabilities::workspace::safe_paths::remove_if_unchanged(
+            crate::capabilities::workspace::safe_paths::remove_if_unchanged_approved(
                 &target,
                 &[root.to_path_buf()],
+                parent_identity,
                 &current,
                 MAX_FILE,
             )
@@ -1355,6 +1379,7 @@ fn apply_changes_with_write_hook(
             before_identity: original.as_ref().map(|s| s.identity.clone()),
             written_identity: None,
             restored_identity: None,
+            published_parent_identity: None,
         });
     }
     let operation_id = uuid::Uuid::new_v4().to_string();
@@ -1410,8 +1435,9 @@ fn apply_changes_with_write_hook(
                 originals[index].as_ref(),
                 change.content.as_bytes(),
                 MAX_FILE,
-                |identity| {
+                |identity, parent_identity| {
                     journal.entries[index].written_identity = Some(identity.into());
+                    journal.entries[index].published_parent_identity = Some(parent_identity.into());
                     persist_journal(&journal_path, &journal)
                 },
             )
@@ -2715,18 +2741,23 @@ mod tests {
                 before_identity: Some(original.identity.clone()),
                 written_identity: None,
                 restored_identity: None,
+            published_parent_identity: None,
             }],
         };
         let journal_path = apply_journal_path(&storage, &id).unwrap();
         persist_journal(&journal_path, &journal).unwrap();
-        crate::capabilities::workspace::safe_paths::write_versioned(
+        let parent_identity = crate::capabilities::workspace::safe_paths::directory_identity(&f.0).unwrap();
+        crate::capabilities::workspace::safe_paths::write_versioned_approved(
             &f.0.join("first.txt"),
             &[f.0.clone()],
+            &f.0,
+            &parent_identity,
             Some(&original),
             b"proposed",
             MAX_FILE,
-            |identity| {
+            |identity, parent_identity| {
                 journal.entries[0].written_identity = Some(identity.into());
+                journal.entries[0].published_parent_identity = Some(parent_identity.into());
                 persist_journal(&journal_path, &journal)
             },
         )
@@ -2792,6 +2823,7 @@ mod tests {
             before_identity: None,
             written_identity: None,
             restored_identity: None,
+            published_parent_identity: None,
         });
         persist_journal(&journal_path, &journal).unwrap();
         fs::write(f.0.join("not-attempted.txt"), b"external creation").unwrap();
@@ -2802,6 +2834,18 @@ mod tests {
             b"external creation"
         );
         assert!(!journal_path.exists());
+    }
+
+    #[test]
+    fn recovery_without_published_parent_receipt_preserves_file_and_journal() {
+        let f = Fixture::new();
+        let (id, path) = interrupted_apply(&f);
+        let mut journal: ApplyJournal = serde_json::from_slice(&read_coding_artifact(&path, MAX_SESSION).unwrap()).unwrap();
+        journal.entries[0].published_parent_identity = None;
+        persist_journal(&path, &journal).unwrap();
+        assert_eq!(run(&f, json!({"action":"session","session_id":id})).unwrap_err(), "AGENT_RECOVERY_PROOF_REQUIRED");
+        assert_eq!(fs::read(f.0.join("first.txt")).unwrap(), b"proposed");
+        assert!(path.exists());
     }
 
     #[test]

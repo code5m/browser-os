@@ -82,10 +82,10 @@ impl Binding {
     fn capture(app: &AppHandle, action: &Action) -> Result<Self, String> {
         let Some(id) = action.target() else { return Ok(Self::New); };
         let state = app.state::<crate::AppState>();
-        if !state.tabs.lock().map_err(|_| "TAB_MUTATION_OWNER_UNKNOWN")?.contains_key(id) {
+        if !state.tabs.try_lock().map_err(|_| "TAB_MUTATION_INSTANCE_UNAVAILABLE")?.contains_key(id) {
             return Err("TAB_NOT_FOUND".into());
         }
-        if state.hibernated_tabs.lock().map_err(|_| "TAB_MUTATION_OWNER_UNKNOWN")?.contains(id) {
+        if state.hibernated_tabs.try_lock().map_err(|_| "TAB_MUTATION_INSTANCE_UNAVAILABLE")?.contains(id) {
             return Ok(Self::Hibernated);
         }
         app.state::<TabManagerState>().instance(&id.to_owned()).map(Self::Live)
@@ -215,7 +215,9 @@ pub(crate) fn tab_mutation(webview: Webview, app: AppHandle, request: Request) -
         Request::Prepare { client_id, epoch, sequence, action } => {
             action.authorize(&webview)?;
             if client_id.len() != 36 || uuid::Uuid::parse_str(&client_id).is_err() { return Err("TAB_MUTATION_INVALID_ID".into()); }
-            {
+            // A reservation is held across instance capture, but the mutex
+            // is not. Background lifecycle changes cannot cross this gap.
+            let reserve = {
                 let mut state = owner()?;
                 state.expire_prepared();
                 if epoch != state.epoch { return Err("TAB_MUTATION_STALE_EPOCH".into()); }
@@ -223,15 +225,28 @@ pub(crate) fn tab_mutation(webview: Webview, app: AppHandle, request: Request) -
                     if slot.receipt.client_id != client_id || slot.action.as_ref() != Some(&action) {
                         return Err("TAB_MUTATION_OWNER_BUSY".into());
                     }
+                    None
                 } else {
                     if state.internal_active { return Err("TAB_MUTATION_OWNER_BUSY".into()); }
                     if sequence != state.next_sequence.to_string() { return Err("TAB_MUTATION_STALE_SEQUENCE".into()); }
-                    let binding = Binding::capture(&app, &action)?;
+                    state.internal_active = true;
+                    Some(InternalMutation)
+                }
+            };
+            if let Some(reservation) = reserve {
+                let binding = Binding::capture(&app, &action)?;
+                {
+                    let mut state = owner()?;
+                    if state.slot.is_some() || !state.internal_active
+                        || epoch != state.epoch || sequence != state.next_sequence.to_string() {
+                        return Err("TAB_MUTATION_STALE_SEQUENCE".into());
+                    }
                     state.next_sequence = state.next_sequence.checked_add(1).ok_or("TAB_MUTATION_SEQUENCE_EXHAUSTED")?;
                     let receipt = Receipt { ticket: uuid::Uuid::new_v4().to_string(), client_id,
                         command: action.command(), phase: Phase::Prepared, value: None, error: None };
                     state.slot = Some(Slot { receipt, action: Some(action), binding: Some(binding), since: std::time::Instant::now() });
                 }
+                drop(reservation);
             }
         }
         Request::Start { ticket } => {

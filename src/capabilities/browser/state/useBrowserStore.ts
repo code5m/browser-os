@@ -77,6 +77,9 @@ export const useBrowserStore = defineStore("browser", () => {
   async function recoverNativeTabs() {
     if (tabRecoveryBusy.value) return;
     tabRecoveryBusy.value = true;
+    // Recovery supersedes all queued user intents. Do not dispatch one while
+    // the native snapshot is being reconciled.
+    for (const queued of waitingMutations.splice(0)) rejectWaiting(queued);
     try {
       let view = await bridge.inspectTabMutation();
       const receipt = view.receipt;
@@ -98,6 +101,14 @@ export const useBrowserStore = defineStore("browser", () => {
       }
       if (!view.active_known) throw new Error("TAB_NATIVE_ACTIVE_UNKNOWN");
       const actual = await bridge.reconcileTabList();
+      const confirmed = await bridge.inspectTabMutation();
+      if (confirmed.epoch !== view.epoch || confirmed.next_sequence !== view.next_sequence
+          || confirmed.internal_active || !confirmed.active_known
+          || confirmed.active_tab_id !== view.active_tab_id
+          || confirmed.receipt?.ticket !== current?.ticket
+          || confirmed.receipt?.phase !== current?.phase) {
+        throw new Error("TAB_MUTATION_RECOVERY_CHANGED");
+      }
       // Preserve the logical ordering of surviving tabs; append new native
       // records. A reload cannot invent recently-closed entries.
       const byId = new Map(actual.map(tab => [tab.id, tab]));
@@ -131,13 +142,13 @@ export const useBrowserStore = defineStore("browser", () => {
   }
 
   function scheduleMutationDrain() {
-    if (drainScheduled || runningMutation || !waitingMutations.length) return;
+    if (drainScheduled || runningMutation || tabRecoveryBusy.value || tabRecoveryRequired.value || !waitingMutations.length) return;
     drainScheduled = true;
     // Preserve the existing microtask admission boundary: a newer view intent
     // can invalidate a request before any native dispatch has begun.
     void Promise.resolve().then(() => {
       drainScheduled = false;
-      if (runningMutation) return;
+      if (runningMutation || tabRecoveryBusy.value || tabRecoveryRequired.value) return;
       const entry = waitingMutations.shift();
       if (!entry) return;
       clearMutationTimer(entry.timer);

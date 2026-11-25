@@ -1428,7 +1428,7 @@ pub(super) fn read_versioned(
 pub(super) fn write_versioned_approved(
     path: &Path, roots: &[PathBuf], ancestor: &Path, ancestor_identity: &str,
     expected: Option<&FileSnapshot>, content: &[u8], limit: usize,
-    prepare: impl FnOnce(&str) -> Result<(), String>,
+    prepare: impl FnOnce(&str, &str) -> Result<(), String>,
 ) -> Result<(), String> {
     use std::path::Component;
     use windows_sys::Wdk::Storage::FileSystem::FILE_OPEN_IF;
@@ -1450,8 +1450,9 @@ pub(super) fn write_versioned_approved(
             .map_err(|_| "FILE_PARENT_NOT_AUTHORIZED")?;
         authorize_with_root(&parent, &root).map_err(|_| "FILE_PARENT_NOT_AUTHORIZED")?;
     }
+    let parent_identity = object_identity(&identity(&parent).map_err(|_| "FILE_IDENTITY_UNAVAILABLE")?);
     write_versioned_at(&parent, filename, expected.map(|s| s.bytes.as_slice()),
-        expected.map(|s| s.identity.as_str()), content, limit, prepare)
+        expected.map(|s| s.identity.as_str()), content, limit, |staged| prepare(staged, &parent_identity))
 }
 
 pub(super) fn write_versioned(
@@ -1481,18 +1482,34 @@ pub(super) fn remove_if_unchanged(
     expected: &FileSnapshot,
     limit: usize,
 ) -> Result<(), String> {
+    let parent = authorized_parent(path, roots)?;
+    let filename = path.file_name().ok_or("FILE_NAME_INVALID")?;
+    remove_at(&parent, filename, expected, limit)
+}
+
+pub(super) fn remove_if_unchanged_approved(
+    path: &Path, roots: &[PathBuf], parent_identity: &str,
+    expected: &FileSnapshot, limit: usize,
+) -> Result<(), String> {
+    let parent = authorized_parent(path, roots)?;
+    if object_identity(&identity(&parent).map_err(|_| "FILE_IDENTITY_UNAVAILABLE")?) != parent_identity {
+        return Err("FILE_APPROVED_ANCESTOR_CHANGED".into());
+    }
+    let filename = path.file_name().ok_or("FILE_NAME_INVALID")?;
+    remove_at(&parent, filename, expected, limit)
+}
+
+fn remove_at(parent: &File, filename: &std::ffi::OsStr, expected: &FileSnapshot, limit: usize) -> Result<(), String> {
     use windows_sys::Wdk::Storage::FileSystem::FILE_OPEN;
     const DELETE: u32 = 0x0001_0000;
     const FILE_READ_DATA: u32 = 0x0000_0001;
     const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
     const FILE_SHARE_READ: u32 = 0x0000_0001;
-    let parent = authorized_parent(path, roots)?;
-    let filename = path.file_name().ok_or("FILE_NAME_INVALID")?;
-    let _lock = cas_lock(&parent, filename)?;
+    let _lock = cas_lock(parent, filename)?;
     // No write/delete sharing: the same handle is checked and marked deleted.
     // Existing incompatible external writers make this operation fail closed.
     let mut target = open_child_at(
-        &parent,
+        parent,
         filename,
         DELETE | FILE_READ_DATA | FILE_READ_ATTRIBUTES,
         FILE_SHARE_READ,
