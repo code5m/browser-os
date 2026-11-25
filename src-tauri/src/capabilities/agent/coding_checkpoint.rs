@@ -38,16 +38,159 @@ pub(super) fn workspace_owner(storage: &Path, root: &Path) -> Result<AuditLock, 
         .map_err(|_| "AGENT_WORKSPACE_OWNER_BUSY".into())
 }
 
-#[cfg(test)]
-fn key(_storage: &Path, _create: bool) -> Result<[u8; 32], String> {
-    // Unit fixtures never touch a real OS credential service.
-    Ok([0x42; 32])
-}
+const LEGACY_INVENTORY: &str = "legacy-checkpoint-inventory.v1";
+const LEGACY_INVENTORY_SCOPE: &str = "legacy-inventory:v1";
+const LEGACY_INVENTORY_LIMIT: usize = 1024 * 1024;
+type LegacyInventory = std::collections::BTreeMap<String, String>;
 
 fn is_cas_sidecar(name: &str) -> bool {
     if name == ".browseros-cas-directory.lock" { return true; }
     name.strip_prefix(".browseros-cas-").and_then(|s| s.strip_suffix(".lock"))
         .is_some_and(|digest| digest.len() == 64 && digest.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
+fn canonical_id(value: &str) -> bool {
+    uuid::Uuid::parse_str(value).is_ok_and(|id| id.to_string() == value)
+}
+
+/// Capture the exact legacy plaintext bytes before the first encrypted write.
+/// No previously sealed store is permitted to create a new legacy inventory.
+fn collect_legacy_inventory(storage: &Path) -> Result<LegacyInventory, String> {
+    let mut records = LegacyInventory::new();
+    let mut count = 0usize;
+    let mut bytes_read = 0usize;
+    let mut add = |scope: Option<String>, path: &Path, directory: &Path| -> Result<(), String> {
+        count += 1;
+        if count > 1024 { return Err("AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED".into()); }
+        let limit = if scope.is_some() { 4 * 1024 * 1024 + OVERHEAD } else { 1 };
+        let data = safe_paths::read_regular(path, &[directory.to_path_buf()], limit)
+            .map_err(|_| "AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED")?;
+        bytes_read = bytes_read.saturating_add(data.len());
+        if bytes_read > 32 * 1024 * 1024 || data.starts_with(PREFIX) {
+            return Err("AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED".into());
+        }
+        if let Some(scope) = scope {
+            records.insert(scope, format!("{:x}", Sha256::digest(&data)));
+        } else if !data.is_empty() {
+            return Err("AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED".into());
+        }
+        Ok(())
+    };
+    let sessions = private_directory(storage, "coding-sessions")?;
+    for entry in std::fs::read_dir(&sessions).map_err(|_| "AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED")? {
+        let entry = entry.map_err(|_| "AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED")?;
+        let name = entry.file_name();
+        let name = name.to_str().ok_or("AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED")?;
+        if let Some(id) = name.strip_suffix(".json").filter(|id| canonical_id(id)) {
+            add(Some(id.to_owned()), &entry.path(), &sessions)?;
+        } else if is_cas_sidecar(name) {
+            add(None, &entry.path(), &sessions)?;
+        } else {
+            return Err("AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED".into());
+        }
+    }
+    let backups = private_directory(storage, "coding-backups")?;
+    for session in std::fs::read_dir(&backups).map_err(|_| "AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED")? {
+        let session = session.map_err(|_| "AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED")?;
+        let name = session.file_name();
+        let id = name.to_str().ok_or("AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED")?;
+        if !canonical_id(id) || !session.file_type().map_err(|_| "AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED")?.is_dir() {
+            return Err("AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED".into());
+        }
+        let directory = private_directory(&backups, id)?;
+        for entry in std::fs::read_dir(&directory).map_err(|_| "AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED")? {
+            let entry = entry.map_err(|_| "AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED")?;
+            let name = entry.file_name();
+            let name = name.to_str().ok_or("AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED")?;
+            if is_cas_sidecar(name) {
+                add(None, &entry.path(), &directory)?;
+            } else if matches!(name, "manifest.json" | "apply-transaction.json") || canonical_id(name) {
+                add(Some(format!("backup:{id}:{name}")), &entry.path(), &directory)?;
+            } else {
+                return Err("AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED".into());
+            }
+        }
+    }
+    Ok(records)
+}
+
+fn read_inventory(directory: &Path, secret: &[u8; 32]) -> Result<LegacyInventory, String> {
+    let bytes = safe_paths::read_regular(&directory.join(LEGACY_INVENTORY), &[directory.to_path_buf()],
+        LEGACY_INVENTORY_LIMIT + OVERHEAD).map_err(|_| "AGENT_CHECKPOINT_LEGACY_REVIEW_REQUIRED")?;
+    let plaintext = open(secret, LEGACY_INVENTORY_SCOPE, &bytes)?;
+    serde_json::from_slice(&plaintext).map_err(|_| "AGENT_CHECKPOINT_LEGACY_REVIEW_REQUIRED".into())
+}
+fn verify_legacy_record(storage: &Path, secret: &[u8; 32], scope: &str, bytes: &[u8]) -> Result<(), String> {
+    if sealed_marker(storage, scope, false)? {
+        return Err("AGENT_CHECKPOINT_PLAINTEXT_DOWNGRADE".into());
+    }
+    let directory = private_directory(storage, "coding-owner-locks")?;
+    let records = read_inventory(&directory, secret)?;
+    let digest = format!("{:x}", Sha256::digest(bytes));
+    if records.get(scope) != Some(&digest) {
+        return Err("AGENT_CHECKPOINT_LEGACY_REVIEW_REQUIRED".into());
+    }
+    Ok(())
+}
+
+fn initialization_marker(directory: &Path) -> Result<Option<Vec<u8>>, String> {
+    let marker = directory.join("key-initialized");
+    match std::fs::symlink_metadata(&marker) {
+        Ok(_) => {
+            let data = safe_paths::read_regular(&marker, &[directory.to_path_buf()], 16)
+                .map_err(|_| "AGENT_CHECKPOINT_KEY_MARKER_INVALID")?;
+            if data != b"BOSC1" && data != b"BOSC2" {
+                return Err("AGENT_CHECKPOINT_KEY_MARKER_INVALID".into());
+            }
+            Ok(Some(data))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(_) => Err("AGENT_CHECKPOINT_KEY_MARKER_INVALID".into()),
+    }
+}
+fn inventory_exists(directory: &Path) -> Result<bool, String> {
+    match std::fs::symlink_metadata(directory.join(LEGACY_INVENTORY)) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(_) => Err("AGENT_CHECKPOINT_LEGACY_REVIEW_REQUIRED".into()),
+    }
+}
+fn prepare_legacy_inventory(storage: &Path, directory: &Path) -> Result<Option<LegacyInventory>, String> {
+    let sealed = private_directory(storage, "coding-sealed-records")?;
+    if std::fs::read_dir(sealed).map_err(|_| "AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED")?.next().is_some() {
+        return Err("AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED".into());
+    }
+    if inventory_exists(directory)? { Ok(None) } else { Ok(Some(collect_legacy_inventory(storage)?)) }
+}
+fn publish_inventory(directory: &Path, secret: &[u8; 32], legacy: Option<LegacyInventory>) -> Result<(), String> {
+    if let Some(records) = legacy {
+        let data = serde_json::to_vec(&records).map_err(|_| "AGENT_CHECKPOINT_LEGACY_REVIEW_REQUIRED")?;
+        if data.len() > LEGACY_INVENTORY_LIMIT { return Err("AGENT_CHECKPOINT_LEGACY_REVIEW_REQUIRED".into()); }
+        let encrypted = seal(secret, LEGACY_INVENTORY_SCOPE, &data)?;
+        safe_paths::create_new_file(&directory.join(LEGACY_INVENTORY), &[directory.to_path_buf()], &encrypted)
+            .map_err(|_| "AGENT_CHECKPOINT_LEGACY_REVIEW_REQUIRED")?;
+    } else {
+        // A crash between inventory and key marker must authenticate the
+        // original inventory, never enroll whatever bytes are present now.
+        read_inventory(directory, secret)?;
+    }
+    safe_paths::create_new_file(&directory.join("key-initialized"), &[directory.to_path_buf()], b"BOSC2")
+        .map_err(|_| "AGENT_CHECKPOINT_KEY_MARKER_FAILED")?;
+    Ok(())
+}
+
+#[cfg(test)]
+fn key(storage: &Path, create: bool) -> Result<[u8; 32], String> {
+    // Fixtures never touch the real OS credential service.
+    let secret = [0x42; 32];
+    let directory = private_directory(storage, "coding-owner-locks")?;
+    let _owner = AuditLock::acquire_named(&directory.join("key-init.lock"), Duration::from_secs(2))
+        .map_err(|_| "AGENT_CHECKPOINT_KEY_BUSY")?;
+    if initialization_marker(&directory)?.is_none() && create {
+        let legacy = prepare_legacy_inventory(storage, &directory)?;
+        publish_inventory(&directory, &secret, legacy)?;
+    }
+    Ok(secret)
 }
 
 #[cfg(not(test))]
@@ -56,19 +199,7 @@ fn key(storage: &Path, create: bool) -> Result<[u8; 32], String> {
     let directory = private_directory(storage, "coding-owner-locks")?;
     let _owner = AuditLock::acquire_named(&directory.join("key-init.lock"), Duration::from_secs(2))
         .map_err(|_| "AGENT_CHECKPOINT_KEY_BUSY")?;
-    let marker = directory.join("key-initialized");
-    let marker_value = match std::fs::symlink_metadata(&marker) {
-        Ok(_) => {
-            let data = safe_paths::read_regular(&marker, &[directory.clone()], 16)
-                .map_err(|_| "AGENT_CHECKPOINT_KEY_MARKER_INVALID")?;
-            if data != b"BOSC1" && data != b"BOSC2" {
-                return Err("AGENT_CHECKPOINT_KEY_MARKER_INVALID".into());
-            }
-            Some(data)
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(_) => return Err("AGENT_CHECKPOINT_KEY_MARKER_INVALID".into()),
-    };
+    let marker_value = initialization_marker(&directory)?;
     let initialized = marker_value.is_some();
     let identity = safe_paths::directory_identity(&directory)
         .map_err(|_| "AGENT_CHECKPOINT_KEY_UNAVAILABLE")?;
@@ -78,85 +209,11 @@ fn key(storage: &Path, create: bool) -> Result<[u8; 32], String> {
     } else {
         scoped_key.as_str()
     };
-    if !initialized {
-        // A removed marker must not select a fresh key for a sealed store.
-        match std::fs::read_dir(storage.join("coding-sealed-records")) {
-            Ok(mut entries) => {
-                if entries.next().is_some() {
-                    return Err("AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED".into());
-                }
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(_) => return Err("AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED".into()),
-        }
-        // Permit a bounded legacy plaintext store to migrate, but never
-        // generate a new key over a sealed backup whose key marker is lost.
-        let backup_root = storage.join("coding-backups");
-        match std::fs::read_dir(&backup_root) {
-            Ok(sessions) => {
-                let mut count = 0usize;
-                let mut bytes_read = 0usize;
-                for session in sessions {
-                    let session = session.map_err(|_| "AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED")?;
-                    count += 1;
-                    if count > 1024 || !session.file_type().map_err(|_| "AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED")?.is_dir()
-                        || session.file_name().to_str().is_none_or(|id| uuid::Uuid::parse_str(id).is_err()) {
-                        return Err("AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED".into());
-                    }
-                    let directory = session.path();
-                    for entry in std::fs::read_dir(&directory).map_err(|_| "AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED")? {
-                        let entry = entry.map_err(|_| "AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED")?;
-                        count += 1;
-                        if count > 1024 { return Err("AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED".into()); }
-                        let name = entry.file_name();
-                        let name = name.to_str().ok_or("AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED")?;
-                        // Historical CAS sidecars are zero-length lock
-                        // objects, not user data. Never delete them or follow
-                        // a symlink/reparse point when migrating.
-                        if is_cas_sidecar(name) {
-                            let bytes = safe_paths::read_regular(&entry.path(), &[directory.clone()], 1)
-                                .map_err(|_| "AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED")?;
-                            if !bytes.is_empty() { return Err("AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED".into()); }
-                            continue;
-                        }
-                        if !matches!(name, "manifest.json" | "apply-transaction.json")
-                            && uuid::Uuid::parse_str(name).is_err() {
-                            return Err("AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED".into());
-                        }
-                        let data = safe_paths::read_regular(&entry.path(), &[directory.clone()], 4 * 1024 * 1024 + OVERHEAD)
-                            .map_err(|_| "AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED")?;
-                        bytes_read = bytes_read.saturating_add(data.len());
-                        if bytes_read > 32 * 1024 * 1024 || data.starts_with(PREFIX) {
-                            return Err("AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED".into());
-                        }
-                    }
-                }
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(_) => return Err("AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED".into()),
-        }
-    }
+    if !initialized && !create { return Err("AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED".into()); }
+    let legacy = if initialized { None } else { prepare_legacy_inventory(storage, &directory)? };
     let encoded = match KeyringStore::get_token_result(key_id) {
         Ok(value) => value,
-        Err(keyring::Error::NoEntry) if create && !initialized => {
-            // Never rotate a missing key if encrypted checkpoints already
-            // exist. A lost key is a recovery error, not a fresh empty store.
-            let sessions = private_directory(storage, "coding-sessions")?;
-            let entries = std::fs::read_dir(&sessions).map_err(|_| "AGENT_CHECKPOINT_KEY_UNAVAILABLE")?;
-            for (index, entry) in entries.enumerate() {
-                if index >= 1024 {
-                    return Err("AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED".into());
-                }
-                let path = entry.map_err(|_| "AGENT_CHECKPOINT_KEY_UNAVAILABLE")?.path();
-                if path.extension().and_then(|v| v.to_str()) != Some("json") {
-                    continue;
-                }
-                let bytes = safe_paths::read_regular(&path, &[sessions.clone()], 4 * 1024 * 1024 + OVERHEAD)
-                    .map_err(|_| "AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED")?;
-                if bytes.starts_with(PREFIX) {
-                    return Err("AGENT_CHECKPOINT_KEY_MISSING".into());
-                }
-            }
+        Err(keyring::Error::NoEntry) if create && !initialized && legacy.is_some() => {
             let mut key = [0u8; 32];
             SystemRandom::new().fill(&mut key).map_err(|_| "AGENT_CHECKPOINT_RANDOM_FAILED")?;
             let value = base64::engine::general_purpose::STANDARD.encode(key);
@@ -165,14 +222,11 @@ fn key(storage: &Path, create: bool) -> Result<[u8; 32], String> {
         }
         Err(_) => return Err("AGENT_CHECKPOINT_KEY_UNAVAILABLE".into()),
     };
-    let key: [u8; 32] = base64::engine::general_purpose::STANDARD.decode(encoded)
+    let secret: [u8; 32] = base64::engine::general_purpose::STANDARD.decode(encoded)
         .map_err(|_| "AGENT_CHECKPOINT_KEY_INVALID")?.try_into()
         .map_err(|_| "AGENT_CHECKPOINT_KEY_INVALID")?;
-    if create && !initialized {
-        safe_paths::create_new_file(&marker, &[directory], b"BOSC2")
-            .map_err(|_| "AGENT_CHECKPOINT_KEY_MARKER_FAILED")?;
-    }
-    Ok(key)
+    if !initialized { publish_inventory(&directory, &secret, legacy)?; }
+    Ok(secret)
 }
 
 fn cipher(key: &[u8; 32]) -> Result<LessSafeKey, String> {
@@ -254,6 +308,11 @@ fn read_record(storage: &Path, path: &Path, directory: PathBuf, scope: &str, lim
         if sealed_marker(storage, scope, false)? {
             return Err("AGENT_CHECKPOINT_PLAINTEXT_DOWNGRADE".into());
         }
+        // Stores already encrypted before this inventory existed cannot
+        // establish that an unmarked plaintext record was genuinely legacy.
+        // Keep its bytes for recovery, never execute it automatically.
+        let secret = key(storage, true)?;
+        verify_legacy_record(storage, &secret, scope, &bytes)?;
         bytes
     };
     if plaintext.len() > limit {
@@ -272,8 +331,8 @@ fn write_record(storage: &Path, path: &Path, directory: PathBuf, scope: &str, pl
     if let Some(previous) = &expected {
         if previous.bytes.starts_with(PREFIX) {
             open(&secret, scope, &previous.bytes)?;
-        } else if sealed_marker(storage, scope, false)? {
-            return Err("AGENT_CHECKPOINT_PLAINTEXT_DOWNGRADE".into());
+        } else {
+            verify_legacy_record(storage, &secret, scope, &previous.bytes)?;
         }
     }
     let encrypted = seal(&secret, scope, plaintext)?;
@@ -343,6 +402,25 @@ mod tests {
         assert!(is_cas_sidecar(&format!(".browseros-cas-{}.lock", "a".repeat(64))));
         assert!(!is_cas_sidecar(".browseros-cas-unknown.lock"));
         assert!(!is_cas_sidecar(".browseros-cas-directory.lock.json"));
+    }
+
+    #[test]
+    fn legacy_inventory_binds_bytes_and_rejects_unenrolled_plaintext() {
+        let storage = std::env::temp_dir().join(format!("browseros-agent-legacy-{}", uuid::Uuid::new_v4()));
+        let id = uuid::Uuid::new_v4().to_string();
+        let directory = private_directory(&storage, "coding-sessions").unwrap();
+        let path = directory.join(format!("{id}.json"));
+        std::fs::write(&path, b"legacy session").unwrap();
+        assert_eq!(read(&storage, &id, 128).unwrap(), b"legacy session");
+        std::fs::write(&path, b"tampered session").unwrap();
+        assert!(read(&storage, &id, 128).is_err());
+        let other = uuid::Uuid::new_v4().to_string();
+        std::fs::write(directory.join(format!("{other}.json")), b"unenrolled").unwrap();
+        assert!(read(&storage, &other, 128).is_err());
+        std::fs::write(&path, b"legacy session").unwrap();
+        write(&storage, &id, b"upgraded", 128).unwrap();
+        assert_eq!(read(&storage, &id, 128).unwrap(), b"upgraded");
+        std::fs::remove_dir_all(storage).unwrap();
     }
 
     #[test]
