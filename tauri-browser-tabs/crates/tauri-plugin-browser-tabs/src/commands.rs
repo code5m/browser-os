@@ -261,6 +261,15 @@ impl std::io::Write for BoundedPngWriter {
         if bytes.len() > 32 * 1024 * 1024 - self.0.len() {
             return Err(std::io::Error::other("CAPTURE_SIZE_LIMIT"));
         }
+        let needed = self.0.len() + bytes.len();
+        if needed > self.0.capacity() {
+            // Do not let geometric Vec growth request a capacity above the
+            // logical PNG budget. Allocator rounding is not an RSS guarantee.
+            let target = needed.max(self.0.capacity().saturating_mul(2))
+                .min(32 * 1024 * 1024);
+            self.0.try_reserve_exact(target - self.0.len())
+                .map_err(|_| std::io::Error::other("CAPTURE_ALLOCATION_FAILED"))?;
+        }
         self.0.extend_from_slice(bytes);
         Ok(bytes.len())
     }
@@ -405,6 +414,70 @@ fn complete_capture<T>(pending: &parking_lot::Mutex<Option<impl FnOnce(T)>>, res
     }
 }
 
+/// CDP returns one JSON response, not a bounded renderer stream. Borrow
+/// the ordinary unescaped base64 string and decode in bounded chunks.
+#[cfg(any(target_os = "windows", test))]
+fn decode_capture_png(json: &str, cancelled: impl Fn() -> bool)
+    -> std::result::Result<Vec<u8>, String>
+{
+    use base64::Engine;
+    const LIMIT: usize = 32 * 1024 * 1024;
+    const CHUNK: usize = 64 * 1024; // multiple of four base64 characters
+    #[derive(serde::Deserialize)]
+    struct Payload<'a> {
+        #[serde(borrow)]
+        data: std::borrow::Cow<'a, str>,
+    }
+    if cancelled() { return Err("CAPTURE_CANCELLED_OR_STALE".into()); }
+    if json.len() > 45 * 1024 * 1024 { return Err("CAPTURE_SIZE_LIMIT".into()); }
+    let payload: Payload<'_> = serde_json::from_str(json)
+        .map_err(|_| "CAPTURE_RESPONSE_INVALID".to_string())?;
+    let encoded = payload.data.as_bytes();
+    if encoded.len() > ((LIMIT + 2) / 3) * 4 {
+        return Err("CAPTURE_SIZE_LIMIT".into());
+    }
+    if encoded.is_empty() || encoded.len() % 4 != 0 {
+        return Err("CAPTURE_PNG_DECODE_FAILED".into());
+    }
+    let padding = if encoded.ends_with(b"==") { 2 }
+        else if encoded.ends_with(b"=") { 1 } else { 0 };
+    let expected = encoded.len() / 4 * 3 - padding;
+    if expected > LIMIT { return Err("CAPTURE_SIZE_LIMIT".into()); }
+    let mut data = Vec::new();
+    data.try_reserve_exact(expected).map_err(|_| "CAPTURE_ALLOCATION_FAILED".to_string())?;
+    let mut scratch = [0u8; CHUNK / 4 * 3 + 3];
+    for (index, chunk) in encoded.chunks(CHUNK).enumerate() {
+        if cancelled() { return Err("CAPTURE_CANCELLED_OR_STALE".into()); }
+        // Each chunk is a separate decoder input: padding is valid only
+        // in the last chunk of the original response.
+        if (index + 1) * CHUNK < encoded.len() && chunk.contains(&b'=') {
+            return Err("CAPTURE_PNG_DECODE_FAILED".into());
+        }
+        let written = base64::engine::general_purpose::STANDARD
+            .decode_slice(chunk, &mut scratch)
+            .map_err(|_| "CAPTURE_PNG_DECODE_FAILED".to_string())?;
+        if written > expected.saturating_sub(data.len()) {
+            return Err("CAPTURE_SIZE_LIMIT".into());
+        }
+        data.extend_from_slice(&scratch[..written]);
+    }
+    if cancelled() { return Err("CAPTURE_CANCELLED_OR_STALE".into()); }
+    if data.len() != expected { return Err("CAPTURE_PNG_DECODE_FAILED".into()); }
+    Ok(data)
+}
+
+#[cfg(test)]
+#[test]
+fn bounded_capture_decode_rejects_interior_padding_and_cancellation() {
+    use base64::Engine;
+    let bytes = vec![7u8; 80 * 1024];
+    let valid = serde_json::json!({"data": base64::engine::general_purpose::STANDARD.encode(&bytes)});
+    assert_eq!(decode_capture_png(&valid.to_string(), || false).unwrap(), bytes);
+    let bad = serde_json::json!({"data": format!("{}YQ==YQ==", "YWFh".repeat(16_383))});
+    assert!(decode_capture_png(&bad.to_string(), || false).is_err());
+    assert!(decode_capture_png(&valid.to_string(), || true).is_err());
+}
+
 const MAX_CAPTURE_EDGE: f64 = 16_384.0;
 const MAX_CAPTURE_PIXELS: f64 = 16_000_000.0;
 
@@ -462,7 +535,10 @@ fn copy_capture_pixels(surface: gtk::cairo::Surface)
         .ok_or_else(|| "CAPTURE_DIMENSION_LIMIT".to_string())?;
     surface.flush();
     let data = surface.data().map_err(|_| "CAPTURE_SURFACE_DATA_UNAVAILABLE".to_string())?;
-    let bytes = data.get(..len).ok_or("CAPTURE_SURFACE_INVALID")?.to_vec();
+    let pixels = data.get(..len).ok_or("CAPTURE_SURFACE_INVALID")?;
+    let mut bytes = Vec::new();
+    bytes.try_reserve_exact(len).map_err(|_| "CAPTURE_ALLOCATION_FAILED".to_string())?;
+    bytes.extend_from_slice(pixels);
     Ok((bytes, format, width, height, stride))
 }
 
@@ -1419,11 +1495,10 @@ impl TabManager {
                                 // bounded owned pixel buffer crosses to the worker.
                                 // The existing host permit covers encoding, too.
                                 let pending = Arc::new(parking_lot::Mutex::new(Some(callback)));
-                                let worker_reply = pending.clone();
                                 let worker = std::thread::Builder::new()
                                     .name("browseros-screenshot-png".into())
-                                    .spawn(move || {
-                                        let result = (|| {
+                                    .spawn(move || -> std::result::Result<Vec<u8>, String> {
+                                        
                                             if cancellation.is_cancelled()
                                                 || !capture_document.observed_generation_is_current()
                                             {
@@ -1441,11 +1516,18 @@ impl TabManager {
                                                 return Err("CAPTURE_CANCELLED_OR_STALE".into());
                                             }
                                             Ok(png.0)
-                                        })();
-                                        complete_capture(&worker_reply, result);
                                     });
-                                if worker.is_err() {
-                                    complete_capture(&pending, Err("CAPTURE_WORKER_FAILED".into()));
+                                match worker {
+                                    Ok(worker) => {
+                                        // The callback is published only after the
+                                        // owned CPU worker has actually exited.
+                                        tauri::async_runtime::spawn_blocking(move || {
+                                            let result = worker.join()
+                                                .unwrap_or_else(|_| Err("CAPTURE_WORKER_FAILED".into()));
+                                            complete_capture(&pending, result);
+                                        });
+                                    }
+                                    Err(_) => complete_capture(&pending, Err("CAPTURE_WORKER_FAILED".into())),
                                 }
                             },
                         );
@@ -1528,35 +1610,21 @@ impl TabManager {
                                 }
                                 // Retain the receipt through bounded decoding, but do
                                 // not parse/allocate the PNG on the WebView UI thread.
-                                let worker_reply = image_reply.clone();
                                 let worker = std::thread::Builder::new()
                                     .name("browseros-screenshot-decode".into())
                                     .spawn(move || {
-                                        let data = (|| {
-                                            if image_cancel.is_cancelled() || !image_document.observed_generation_is_current() {
-                                                return Err("CAPTURE_CANCELLED_OR_STALE".into());
-                                            }
-                                            let response: serde_json::Value = serde_json::from_str(&json)
-                                                .map_err(|_| "CAPTURE_RESPONSE_INVALID".to_string())?;
-                                            let image = response.get("data").and_then(|v| v.as_str())
-                                                .ok_or_else(|| "CAPTURE_NO_IMAGE".to_string())?;
-                                            const LIMIT: usize = 32 * 1024 * 1024;
-                                            if image.len() > ((LIMIT + 2) / 3) * 4 {
-                                                return Err("CAPTURE_SIZE_LIMIT".into());
-                                            }
-                                            use base64::Engine;
-                                            let data = base64::engine::general_purpose::STANDARD.decode(image)
-                                                .map_err(|_| "CAPTURE_PNG_DECODE_FAILED".to_string())?;
-                                            if data.len() > LIMIT { return Err("CAPTURE_SIZE_LIMIT".into()); }
-                                            if image_cancel.is_cancelled() || !image_document.observed_generation_is_current() {
-                                                return Err("CAPTURE_CANCELLED_OR_STALE".into());
-                                            }
-                                            Ok(data)
-                                        })();
-                                        complete_capture(&worker_reply, data);
+                                        decode_capture_png(&json, || image_cancel.is_cancelled()
+                                            || !image_document.observed_generation_is_current())
                                     });
-                                if worker.is_err() {
-                                    complete_capture(&image_reply, Err("CAPTURE_WORKER_FAILED".into()));
+                                match worker {
+                                    Ok(worker) => {
+                                        tauri::async_runtime::spawn_blocking(move || {
+                                            let result = worker.join()
+                                                .unwrap_or_else(|_| Err("CAPTURE_WORKER_FAILED".into()));
+                                            complete_capture(&image_reply, result);
+                                        });
+                                    }
+                                    Err(_) => complete_capture(&image_reply, Err("CAPTURE_WORKER_FAILED".into())),
                                 }
                                 Ok(())
                             },

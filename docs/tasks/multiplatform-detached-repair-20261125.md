@@ -252,3 +252,12 @@ Coding read-only claims now persist a signed Foundation approval, Run ID and pro
 ## Common model adapters
 
 Remote Chat/Legacy and local Ollama now share Foundation's zero-tool complete-message adapter. Local Chat enters the encrypted production Run owner and uses an absolute transport read deadline. Streaming Foundation and the official experimental Rig adapter share a single revision-bound model-turn lease/cancellation/deadline implementation. Rig retains its real SDK turn algorithm for the intentional offline A/B experiment; this does not claim remote providers physically terminate on dropping a future. Coding keeps its existing bounded complete-batch host. No network/provider tests run.
+
+
+### 2026-11-25 — Host screenshot postprocessing budget and exit receipt
+
+- Linux pixel-copy allocation uses fallible bounded reservation; PNG writer bounds the requested growth capacity. Windows CDP JSON normally borrows the base64 field and decodes fixed-size chunks into a fallibly reserved, length-checked output. Cancellation and document generation are checked between chunks.
+- Both host CPU workers now return their result to an off-main-thread joiner. The completion callback runs only after the owned worker thread has exited; panic produces a failure result after join. These are **host postprocessing** limits/exit receipts, not a renderer process limit or termination proof.
+- Remaining D01/D02 boundaries: already-entered hung GTK/WebKitGTK/WebView2 operations cannot be force-cancelled safely in this live-WebView architecture. Queue fencing cannot release an entered unknown operation. Independent renderer process ownership, allocation enforcement and a validated exit receipt for the actual live document remain unimplemented. No hidden page reopen, forced shared-renderer kill, new Tauri command, or locked layout change was made.
+- Remaining D04 boundaries: experimental Rig retains its SDK orchestration algorithm (common model-turn gate); one-shot receipt metadata is not a complete resumable conversation store, and manual MCP still lacks receipt catalog/reconciliation and a caller-stable retry identity. Frontend read handoff is not a full native execution lease. No unsupported claim of total closure.
+- New regression source covers cross-chunk decoding, interior padding, cancellation. NOT_RUN. No CI, build, tests, validation, installation, or ref update.
