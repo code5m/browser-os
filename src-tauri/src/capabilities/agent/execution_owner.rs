@@ -67,6 +67,17 @@ struct EffectEvidence {
     tool: Option<String>,
     disposition: String,
     response_digest: Option<String>,
+    #[serde(default)]
+    workspace_identity: Option<String>,
+    #[serde(default)]
+    review_revision: Option<String>,
+}
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct ManualEffectReview {
+    observation: String,
+    evidence: String,
+    recorded_at_ms: u64,
+    workspace_identity_bound: bool,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -90,6 +101,8 @@ struct NativeRunReceipt {
     successor: Option<TextSuccessor>,
     #[serde(default)]
     payload_forgotten: bool,
+    #[serde(default)]
+    effect_reviews: Vec<ManualEffectReview>,
 }
 fn unix_ms() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
@@ -117,6 +130,7 @@ impl DurableRun {
             text: self.text.clone(), effect: self.effect.clone(),
             created_at_ms: self.created_at_ms, updated_at_ms: unix_ms(),
             previous_run: self.previous_run, successor: None, payload_forgotten: false,
+            effect_reviews: Vec::new(),
         };
         self.write_record(&receipt)
     }
@@ -514,7 +528,7 @@ impl ProductionExecution {
 
     /// Keep bounded, encrypted evidence for manual MCP. The receipt records
     /// what the transport reported, not a claim of exactly-once remote effects.
-    pub(crate) fn checkpoint_manual_mcp(&mut self, digest: String, request: &serde_json::Value) -> Result<(), String> {
+    pub(crate) fn checkpoint_manual_mcp(&mut self, root: &Path, digest: String, request: &serde_json::Value) -> Result<(), String> {
         #[cfg(any(target_os = "linux", target_os = "windows"))]
         {
             let run = self.durable_run.as_mut().ok_or("AGENT_RUN_RECEIPT_REQUIRED")?;
@@ -524,10 +538,21 @@ impl ProductionExecution {
             let safe_label = |field: &str| request[field].as_str().filter(|value|
                 !value.is_empty() && value.len() <= 256 && !crate::security_policy::contains_credential_leak(value))
                 .map(str::to_owned);
-            run.effect = Some(EffectEvidence { request_digest: digest.clone(), target: safe_label("server_id"),
-                tool: safe_label("tool"), disposition: "dispatching".into(), response_digest: None });
+            let target = safe_label("server_id").or_else(|| {
+                request["server"]["command"].as_str()
+                    .and_then(|command| Path::new(command).file_name())
+                    .and_then(|name| name.to_str())
+                    .filter(|name| name.len() <= 256 && !crate::security_policy::contains_credential_leak(name))
+                    .map(str::to_owned)
+            });
+            let identity = crate::capabilities::workspace::safe_paths::directory_identity(root)
+                .map_err(|_| "AGENT_WORKSPACE_IDENTITY_UNAVAILABLE")?;
+            run.effect = Some(EffectEvidence { request_digest: digest.clone(), target,
+                tool: safe_label("tool"), disposition: "dispatching".into(), response_digest: None,
+                workspace_identity: Some(format!("{:x}", Sha256::digest(identity.as_bytes()))),
+                review_revision: safe_label("review_revision") });
         }
-        let _ = (digest, request);
+        let _ = (root, digest, request);
         self.checkpoint("dispatching")
     }
 
@@ -542,6 +567,122 @@ impl ProductionExecution {
         }
         let _ = (result, reported_success);
         self.checkpoint(if reported_success { "transport_returned" } else { "operation_unknown" })
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    fn manual_scope(root: &Path) -> Result<(Uuid, String), String> {
+        let canonical = root.canonicalize().map_err(|_| "AGENT_ROOT_INVALID")?;
+        if !canonical.is_dir() { return Err("AGENT_ROOT_INVALID".into()); }
+        let (workspace, _) = coding_scope(&canonical, Some(&Uuid::new_v4().to_string()))?
+            .ok_or("AGENT_SESSION_REQUIRED")?;
+        let identity = crate::capabilities::workspace::safe_paths::directory_identity(&canonical)
+            .map_err(|_| "AGENT_WORKSPACE_IDENTITY_UNAVAILABLE")?;
+        Ok((workspace, format!("{:x}", Sha256::digest(identity.as_bytes()))))
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    fn check_manual_scope(record: &NativeRunReceipt, workspace: Uuid, identity: &str) -> Result<(), String> {
+        if record.task.goal != "manual_mcp" || record.task.workspace_id != workspace
+            || record.task.session_id != record.id || record.text.is_some() || record.successor.is_some()
+            || record.effect.as_ref().and_then(|effect| effect.workspace_identity.as_deref())
+                .is_some_and(|bound| bound != identity) {
+            return Err("AGENT_RUN_SCOPE_MISMATCH".into());
+        }
+        Ok(())
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    fn manual_summary(record: &NativeRunReceipt, detail: bool) -> serde_json::Value {
+        let effect = record.effect.as_ref();
+        let mut result = serde_json::json!({
+            "id":record.id,"task_id":record.task.id,"phase":record.phase,
+            "revision":record.task.revision.to_string(),"updated_at_ms":record.updated_at_ms,
+            "tool":effect.and_then(|value| value.tool.as_deref()),
+            "target":effect.and_then(|value| value.target.as_deref()),
+            "disposition":effect.map(|value| value.disposition.as_str()),
+            "identity_bound":effect.and_then(|value| value.workspace_identity.as_ref()).is_some(),
+            "observations":record.effect_reviews.len(),
+            "can_reconcile":record.phase == "operation_unknown" && record.task.status == TaskStatus::Paused
+                && record.effect_reviews.len() < 16,
+        });
+        if detail {
+            result["request_digest"] = serde_json::json!(effect.map(|value| &value.request_digest));
+            result["review_revision"] = serde_json::json!(effect.and_then(|value| value.review_revision.as_ref()));
+            result["response_digest"] = serde_json::json!(effect.and_then(|value| value.response_digest.as_ref()));
+            result["reviews"] = serde_json::json!(&record.effect_reviews);
+            result["approved_tool"] = serde_json::json!(record.approval.as_ref().map(|claim| &claim.tool_name));
+        }
+        result
+    }
+
+    pub(crate) fn manual_mcp_catalog(storage: &Path, root: &Path, after: Option<Uuid>) -> Result<serde_json::Value, String> {
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        {
+            let (workspace, identity) = Self::manual_scope(root)?;
+            let (ids, next) = super::coding_checkpoint::RunCheckpoint::catalog_page(storage, after)?;
+            let mut records = Vec::new();
+            let mut unavailable = 0;
+            for id in ids {
+                let result = (|| -> Result<Option<serde_json::Value>, String> {
+                    let owner = DurableRun::lookup(storage, id)?;
+                    let record = owner.read_record()?.ok_or("AGENT_RUN_NOT_FOUND")?;
+                    if Self::check_manual_scope(&record, workspace, &identity).is_err() { return Ok(None); }
+                    Ok(Some(Self::manual_summary(&owner.recover_record(record)?, false)))
+                })();
+                match result { Ok(Some(record)) => records.push(record), Ok(None) => {}, Err(_) => unavailable += 1 }
+            }
+            Ok(serde_json::json!({"runs":records,"next_cursor":next,"unavailable":unavailable}))
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        { let _ = (storage, root, after); Err("AGENT_PRIVATE_STORAGE_UNAVAILABLE".into()) }
+    }
+
+    pub(crate) fn read_manual_mcp(storage: &Path, root: &Path, id: Uuid) -> Result<serde_json::Value, String> {
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        {
+            let (workspace, identity) = Self::manual_scope(root)?;
+            let owner = DurableRun::lookup(storage, id)?;
+            let record = owner.read_record()?.ok_or("AGENT_RUN_NOT_FOUND")?;
+            Self::check_manual_scope(&record, workspace, &identity)?;
+            Ok(Self::manual_summary(&owner.recover_record(record)?, true))
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        { let _ = (storage, root, id); Err("AGENT_PRIVATE_STORAGE_UNAVAILABLE".into()) }
+    }
+
+    /// Manual evidence is an attestation, not an authoritative effect
+    /// receipt or proof of termination of an escaped remote/child process.
+    /// No result is sent to a model and no retry is authorized by this API.
+    pub(crate) fn reconcile_manual_mcp(storage: &Path, root: &Path, id: Uuid, revision: u64,
+        observation: &str, evidence: &str) -> Result<serde_json::Value, String> {
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        {
+            if !matches!(observation, "observed_applied" | "observed_not_applied" | "unresolved")
+                || evidence.trim().is_empty() || evidence.len() > 2048
+                || crate::security_policy::contains_credential_leak(evidence) {
+                return Err("AGENT_EFFECT_EVIDENCE_INVALID".into());
+            }
+            let (workspace, identity) = Self::manual_scope(root)?;
+            let owner = DurableRun::lookup(storage, id)?;
+            let record = owner.read_record()?.ok_or("AGENT_RUN_NOT_FOUND")?;
+            Self::check_manual_scope(&record, workspace, &identity)?;
+            let mut record = owner.recover_record(record)?;
+            if record.task.revision != revision || record.phase != "operation_unknown"
+                || record.task.status != TaskStatus::Paused || record.effect_reviews.len() >= 16 {
+                return Err("AGENT_EFFECT_REVIEW_STALE".into());
+            }
+            let bound = record.effect.as_ref().and_then(|effect| effect.workspace_identity.as_ref()).is_some();
+            record.effect_reviews.push(ManualEffectReview {
+                observation: observation.into(), evidence: evidence.trim().into(),
+                recorded_at_ms: unix_ms(), workspace_identity_bound: bound,
+            });
+            record.task.revision = record.task.revision.checked_add(1).ok_or("AGENT_TASK_REVISION_EXHAUSTED")?;
+            record.updated_at_ms = unix_ms();
+            owner.write_record(&record)?;
+            Ok(Self::manual_summary(&record, true))
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        { let _ = (storage, root, id, revision, observation, evidence); Err("AGENT_PRIVATE_STORAGE_UNAVAILABLE".into()) }
     }
 
     pub(crate) fn checkpoint(&self, phase: &str) -> Result<(), String> {
@@ -866,6 +1007,35 @@ mod tests {
         assert!(ProductionExecution::advance_text(&storage, first, second, "", || false,
             |_,_| Ok(|| panic!("forgotten successor must not replay"))).is_err());
         std::fs::remove_dir_all(storage).unwrap();
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[test]
+    fn manual_effect_observation_does_not_release_unknown_or_allow_replay() {
+        let root = std::env::temp_dir().join(format!("browseros-mcp-review-{}", Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let storage = root.join("store");
+        let run = Uuid::new_v4();
+        let mut execution = ProductionExecution::begin_workspace_run(&storage, "manual_mcp", &root, run).unwrap();
+        let arguments = serde_json::json!({"run_id":run});
+        let (claim, permit) = execution.approve_native("coding.manual_mcp_call", arguments.clone(),
+            ToolEffect::ExternalSideEffect, "fixture-revision".into()).unwrap();
+        execution.checkpoint_approval(claim.clone()).unwrap();
+        let lease = execution.acquire_approved_native(permit, &claim, &arguments).unwrap();
+        execution.checkpoint_manual_mcp(&root, "fixture-digest".into(), &serde_json::json!({"tool":"fixture"})).unwrap();
+        drop(lease);
+        execution.record_manual_mcp_return(&Err("MCP_TERMINATION_UNKNOWN".into()), false).unwrap();
+        execution.finish_unknown().unwrap();
+        let receipt = ProductionExecution::read_manual_mcp(&storage, &root, run).unwrap();
+        let revision = receipt["revision"].as_str().unwrap().parse().unwrap();
+        let reconciled = ProductionExecution::reconcile_manual_mcp(&storage, &root, run, revision,
+            "observed_not_applied", "External record inspected").unwrap();
+        assert_eq!(reconciled["phase"], "operation_unknown");
+        assert_eq!(reconciled["reviews"][0]["observation"], "observed_not_applied");
+        assert!(ProductionExecution::reconcile_manual_mcp(&storage, &root, run, revision,
+            "observed_applied", "Stale observation").is_err());
+        assert!(ProductionExecution::begin_workspace_run(&storage, "manual_mcp", &root, run).is_err());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

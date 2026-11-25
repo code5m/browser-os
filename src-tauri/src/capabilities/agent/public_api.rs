@@ -110,11 +110,42 @@ pub(crate) fn dispatch_coding_request(
     {
         return super::coding_lsp::execute(root, request);
     }
+    let parse_run_id = |value: &str| -> Result<uuid::Uuid, String> {
+        let id = uuid::Uuid::parse_str(value).map_err(|_| "AGENT_RUN_ID_INVALID")?;
+        if id.get_version_num() != 4 || id.to_string() != value { return Err("AGENT_RUN_ID_INVALID".into()); }
+        Ok(id)
+    };
+    match action {
+        "manual_mcp_history" => return ProductionExecution::manual_mcp_catalog(storage, root,
+            request["cursor"].as_str().filter(|value| !value.is_empty())
+                .map(|value| uuid::Uuid::parse_str(value).map_err(|_| "AGENT_RUN_ID_INVALID")).transpose()?),
+        "manual_mcp_receipt" => return ProductionExecution::read_manual_mcp(storage, root,
+            parse_run_id(request["run_id"].as_str().ok_or("AGENT_RUN_ID_REQUIRED")?)?),
+        "manual_mcp_reconcile" => {
+            if request["approved"] != true { return Err("AGENT_EXPLICIT_APPROVAL_REQUIRED".into()); }
+            return ProductionExecution::reconcile_manual_mcp(storage, root,
+                parse_run_id(request["run_id"].as_str().ok_or("AGENT_RUN_ID_REQUIRED")?)?,
+                request["revision"].as_str().ok_or("AGENT_EFFECT_REVIEW_STALE")?.parse()
+                    .map_err(|_| "AGENT_EFFECT_REVIEW_STALE")?,
+                request["observation"].as_str().ok_or("AGENT_EFFECT_EVIDENCE_INVALID")?,
+                request["evidence"].as_str().ok_or("AGENT_EFFECT_EVIDENCE_INVALID")?);
+        }
+        _ => {}
+    }
     if ["mcp_tools", "mcp_call"].contains(&action) {
         if request["approved"] != true { return Err("MCP_EXPLICIT_APPROVAL_REQUIRED".into()); }
         use sha2::{Digest, Sha256};
-        let run = uuid::Uuid::new_v4();
-        let mut execution = ProductionExecution::begin_workspace_run(storage, "manual_mcp", root, run)?;
+        // New UI supplies the immutable request ID before dispatch. Keep
+        // old callers compatible, returning their native-generated ID.
+        let run = match request.get("run_id") {
+            None | Some(Value::Null) => uuid::Uuid::new_v4(),
+            Some(Value::String(value)) => parse_run_id(value)?,
+            _ => return Err("AGENT_RUN_ID_INVALID".into()),
+        };
+        let canonical = root.canonicalize().map_err(|_| "AGENT_ROOT_INVALID")?;
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        let _workspace_owner = super::coding_checkpoint::workspace_owner(storage, &canonical)?;
+        let mut execution = ProductionExecution::begin_workspace_run(storage, "manual_mcp", &canonical, run)?;
         let revision = format!("{:x}", Sha256::digest(
             serde_json::to_vec(&request).map_err(|_| "AGENT_OPERATION_INVALID")?));
         let arguments = serde_json::json!({"run_id":run,"review_digest":revision});
@@ -123,8 +154,8 @@ pub(crate) fn dispatch_coding_request(
             arguments.clone(), browseros_agent_foundation::tool::ToolEffect::ExternalSideEffect, revision.clone())?;
         execution.checkpoint_approval(claim.clone())?;
         let lease = execution.acquire_approved_native(permit, &claim, &arguments)?;
-        execution.checkpoint_manual_mcp(revision, &request)?;
-        let result = super::coding_context::execute(root, storage, request);
+        execution.checkpoint_manual_mcp(&canonical, revision, &request)?;
+        let result = super::coding_context::execute(&canonical, storage, request);
         drop(lease);
         let reported_success = result.as_ref().is_ok_and(|value| value.get("result").is_some_and(|result| !result.is_null())
             && value["result"]["isError"] != true);
@@ -134,7 +165,11 @@ pub(crate) fn dispatch_coding_request(
         } else {
             execution.finish_unknown()?;
         }
-        return result;
+        return result.map(|mut value| {
+            value["run_id"] = serde_json::json!(run);
+            value["receipt_phase"] = serde_json::json!(if reported_success { "completed" } else { "operation_unknown" });
+            value
+        });
     }
     if [
         "skills_list",

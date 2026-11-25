@@ -10,6 +10,7 @@ import CodingCommandPanel from './CodingCommandPanel.vue';
 import SandboxRecoveryPanel from './SandboxRecoveryPanel.vue';
 import CodingOperationReview from './CodingOperationReview.vue';
 import McpExecutionReview from './McpExecutionReview.vue';
+import { createChatRequestId, utf8Bytes } from '../model/chatHistory.mjs';
 import { clampPane, dirtyBuffers, isDirtyBuffer, entryPath, newBuffer, sessionMessages, canApplyChanges, proposalFor, reconcileSavedBuffer, parseMcpJson, providerFailureHint, sessionNotice, selectChatModel } from '../model/codingWorkbench.mjs';
 import {diagnosticContext,lspFailureHint} from '../model/codingLsp.mjs';
 import {readRecoveryFile} from '../model/codingWorkbench.mjs';
@@ -137,6 +138,15 @@ const mcpCommand=ref(''),mcpArgs=ref('[]'),mcpTool=ref(''),mcpArguments=ref('{}'
 const mcpRunning=manualMcpRunning;
 const mcpReview=ref<any>(null),mcpCredentialsApproved=ref(false),mcpReviewing=ref(false),reviewedMcpRequest=ref('');
 let mcpReviewSequence=0;
+type McpObservation = {observation:string;evidence:string;recorded_at_ms:number;workspace_identity_bound:boolean};
+type ManualMcpReceipt = {id:string;phase:string;revision:string;updated_at_ms:number;tool:string|null;target:string|null;disposition:string|null;identity_bound:boolean;observations:number;can_reconcile:boolean;request_digest?:string|null;review_revision?:string|null;response_digest?:string|null;approved_tool?:string|null;reviews?:McpObservation[]};
+const mcpRunId=ref('');
+const mcpReceiptOpen=ref(false),mcpReceiptBusy=ref(false);
+const mcpReceipts=ref<ManualMcpReceipt[]>([]),mcpCursor=ref<string|null>(null),mcpUnavailable=ref(0);
+const mcpReceipt=ref<ManualMcpReceipt|null>(null),mcpReceiptError=ref('');
+const mcpObservation=ref('unresolved'),mcpEvidence=ref('');
+let mcpReceiptSequence=0;
+watch(connectedRoot,()=>{mcpReceiptSequence++;mcpRunId.value='';mcpReceiptOpen.value=false;mcpReceiptBusy.value=false;mcpReceipts.value=[];mcpCursor.value=null;mcpReceipt.value=null;mcpReceiptError.value='';mcpEvidence.value='';},{flush:'sync'});
 const mcpScopeApproved=computed(()=>!mcpReview.value?.credential_refs?.length&&!mcpReview.value?.environment_names?.length||mcpCredentialsApproved.value);
 watch([mcpServerId,mcpCommand,mcpArgs,mcpTool,mcpArguments,connectedRoot],()=>{mcpReviewSequence++;mcpReview.value=null;reviewedMcpRequest.value='';mcpApproved.value=false;mcpCredentialsApproved.value=false;mcpReviewing.value=false;},{flush:'sync'});
 const mcpDetached=ref(Boolean(remembered && (remembered.mcpDetached || manualMcpRunning.value)));
@@ -349,19 +359,55 @@ async function reviewMcp(action:'mcp_tools'|'mcp_call'){
     reviewedMcpRequest.value=JSON.stringify(input);mcpReview.value=review;notice.value='请检查程序、参数和凭据范围，再批准本次调用。';
   });}finally{if(sequence===mcpReviewSequence)mcpReviewing.value=false;}
 }
+async function loadMcpReceipts(reset=true){
+  if(!connectedRoot.value||mcpReceiptBusy.value||mcpRunning.value)return;
+  const sequence=++mcpReceiptSequence;mcpReceiptOpen.value=true;mcpReceiptBusy.value=true;mcpReceiptError.value='';
+  try{
+    const result=await call({action:'manual_mcp_history',cursor:reset?'':(mcpCursor.value||'')});
+    if(sequence!==mcpReceiptSequence)return;
+    mcpReceipts.value=reset?result.runs:[...mcpReceipts.value,...result.runs.filter((row:ManualMcpReceipt)=>!mcpReceipts.value.some(old=>old.id===row.id))];
+    mcpCursor.value=result.next_cursor;mcpUnavailable.value=reset?result.unavailable:mcpUnavailable.value+result.unavailable;
+  }catch(error){if(sequence===mcpReceiptSequence&&!(error instanceof ProjectScopeChanged))mcpReceiptError.value=String(error);}
+  finally{if(sequence===mcpReceiptSequence)mcpReceiptBusy.value=false;}
+}
+async function readMcpReceipt(id:string){
+  if(!id||mcpReceiptBusy.value||mcpRunning.value)return;
+  const sequence=++mcpReceiptSequence;mcpReceiptOpen.value=true;mcpReceiptBusy.value=true;mcpReceiptError.value='';
+  try{const result=await call({action:'manual_mcp_receipt',run_id:id});if(sequence===mcpReceiptSequence){mcpReceipt.value=result;mcpEvidence.value='';mcpObservation.value='unresolved';}}
+  catch(error){if(sequence===mcpReceiptSequence&&!(error instanceof ProjectScopeChanged))mcpReceiptError.value=String(error);}
+  finally{if(sequence===mcpReceiptSequence)mcpReceiptBusy.value=false;}
+}
+async function reconcileMcpReceipt(){
+  const record=mcpReceipt.value,evidence=mcpEvidence.value.trim();
+  if(!record?.can_reconcile||mcpReceiptBusy.value||mcpRunning.value||!evidence||utf8Bytes(evidence)>2048)return;
+  const sequence=++mcpReceiptSequence;mcpReceiptBusy.value=true;mcpReceiptError.value='';
+  try{
+    const result=await call({action:'manual_mcp_reconcile',run_id:record.id,revision:record.revision,
+      observation:mcpObservation.value,evidence,approved:true});
+    if(sequence===mcpReceiptSequence){mcpReceipt.value=result;mcpEvidence.value='';}
+  }catch(error){if(sequence===mcpReceiptSequence&&!(error instanceof ProjectScopeChanged))mcpReceiptError.value=String(error);}
+  finally{if(sequence===mcpReceiptSequence)mcpReceiptBusy.value=false;}
+}
 async function mcpAction(action:'mcp_tools'|'mcp_call'){
   if(mcpRunning.value||mcpReviewing.value)return;
   if(!mcpApproved.value||!mcpReview.value||mcpReview.value.action!==action||!mcpScopeApproved.value){notice.value='请先读取并批准本次完整执行范围';return;}
   const review=mcpReview.value,input=mcpRequest(action);
   if(reviewedMcpRequest.value!==JSON.stringify(input)){mcpReview.value=null;mcpApproved.value=false;notice.value='参数已变化，请重新读取执行范围';return;}
-  const selectedTool=mcpTool.value;mcpApproved.value=false;mcpRunning.value=true;
+  const selectedTool=mcpTool.value,runId=createChatRequestId(),epoch=projectEpoch;
+  mcpRunId.value=runId;mcpApproved.value=false;mcpRunning.value=true;
+  notice.value='MCP 正在执行，Run '+runId+'；失联时请查询回执，不要重复提交。';
   try{await act(async()=>{
-    const result=await call({...input,approved:true,review_revision:review.revision,approved_credential_refs:review.credential_refs,approved_environment_names:review.environment_names});
+    const result=await call({...input,run_id:runId,approved:true,review_revision:review.revision,approved_credential_refs:review.credential_refs,approved_environment_names:review.environment_names});
+    if(result.receipt_phase==='operation_unknown'){
+      notice.value='MCP 外部结果未知，Run '+runId+'；请在运行回执中核对，不会自动重放。';
+      return;
+    }
     if(action==='mcp_tools')mcpTools.value=result.result?.tools||[];
     output.value+='\nMCP '+action+'\n'+JSON.stringify(result.result,null,2);
     if(action==='mcp_call')context.value.push({name:'MCP '+selectedTool,text:JSON.stringify(result.result)});
     notice.value='MCP 调用完成，返回内容作为外部数据';
   });}finally{mcpApproved.value=false;mcpCredentialsApproved.value=false;mcpReview.value=null;mcpRunning.value=false;}
+  if(epoch===projectEpoch)await readMcpReceipt(runId);
 }
 async function send(){
   if(!prompt.value.trim()){notice.value='请输入智能体指令后再发送';return;}
@@ -449,7 +495,7 @@ onBeforeUnmount(()=>{
     const copy=(value:unknown)=>JSON.parse(JSON.stringify(value));
     saveWorkbenchMemory({root:root.value,connectedRoot:connectedRoot.value,tree:copy(tree.value),folders:copy(folders.value),expanded:copy(expanded.value),truncatedDirs:copy(truncatedDirs.value),directoryPages:copy(directoryPages.value),buffers:copy(buffers.value),active:active.value,sessionId:sessionId.value,messages:copy(messages.value),changes:copy(changes.value),tools:copy(tools.value),operations:copy(operations.value),context:copy(context.value),prompt:prompt.value,mode:mode.value,modelId:modelId.value,mcpDetached:mcpDetached.value||mcpRunning.value,interruptedSave:interruptedSave.value?{path:interruptedSave.value.buffer.path,attempted:interruptedSave.value.attempted}:null,interruptedApply:interruptedApply.value?{pending:copy(interruptedApply.value.pending),snapshots:[...interruptedApply.value.snapshots]}:null,proposalReviewRequired:proposalReviewRequired.value,sessionRecoveryRequired:sessionRecoveryRequired.value||busy.value||modelRequestRunning.value});
   }
-  ++projectEpoch;stopLsp();cleanupDrag?.();if(modelRequestRunning.value&&activeRunId.value)void call({action:'cancel',run_id:activeRunId.value,session_id:sessionId.value}).catch(()=>{ /* Native request remains bounded even when cancellation delivery fails. */ });
+  ++projectEpoch;++mcpReceiptSequence;stopLsp();cleanupDrag?.();if(modelRequestRunning.value&&activeRunId.value)void call({action:'cancel',run_id:activeRunId.value,session_id:sessionId.value}).catch(()=>{ /* Native request remains bounded even when cancellation delivery fails. */ });
 });
 </script>
 <template>
@@ -462,7 +508,35 @@ onBeforeUnmount(()=>{
         <div v-if="sidebar==='mcp'" class="resource"><label>服务<select v-model="mcpServerId" aria-label="MCP 服务" @change="mcpApproved=false;mcpTools=[];mcpTool=''"><option value="">手动输入 stdio 配置</option><option v-for="server in resources" :key="server.id" :value="server.id">{{server.name}} · {{server.transport}}</option></select></label><p v-if="mcpServerId" class="hint">将使用所选服务的本机配置；下面手动启动参数仅在未选择服务时生效。</p></div>
         <template v-if="sidebar==='files'"><div class="folder-root">{{documentPathName(connectedRoot)||'尚未打开项目'}}</div><p v-if="truncatedDirs['']" class="hint">项目根目录未完整显示；可从第一页分页查看，超出扫描上限的内容仍须另行检查。</p><button v-if="canLoadDirectoryPage('')" @click="loadDirectoryPage('')">{{directoryPages['']?'加载更多根目录文件':'分页查看项目根目录'}}</button><form @submit.prevent="createFile"><input v-model="newFilePath" aria-label="新文件相对路径" placeholder="src/new-file.ts"><button :disabled="!connectedRoot">新建</button></form><template v-for="row in visibleEntries" :key="row.path"><button class="file-row" :class="{selected:active===row.path}" :style="{paddingLeft:(12+row.depth*14)+'px'}" @click="row.entry.kind==='directory'?toggleFolder(row.path):openFile(row.path)"><span>{{row.entry.kind==='directory'?(expanded.includes(row.path)?'▾':'▸'):'·'}}</span>{{row.entry.name}}</button><p v-if="expanded.includes(row.path)&&truncatedDirs[row.path]" class="hint">{{row.path}} 未完整显示；可分页查看，超出扫描上限的内容仍须另行检查。</p><button v-if="expanded.includes(row.path)&&canLoadDirectoryPage(row.path)" @click="loadDirectoryPage(row.path)">{{directoryPages[row.path]?'加载更多':'分页查看'}} {{row.path}}</button></template></template>
         <template v-else-if="sidebar==='search'"><form @submit.prevent="searchFiles"><input v-model="search" placeholder="搜索文件内容" aria-label="搜索文件内容"><button :disabled="!connectedRoot">查找</button></form><p v-if="searchTruncated" class="hint">搜索不完整：部分内容超出扫描上限或无法按文本读取，可能还有其他匹配。</p><button v-for="(match,index) in searchResults" :key="index" class="search-match" @click="openSearchMatch(match)"><strong>{{match.path}}</strong><span>{{match.line}} {{match.text}}</span></button></template>
-        <template v-else><p class="hint">{{sidebar==='skills'?'读取技能内容后作为本轮上下文':sidebar==='mcp'?'已发现的服务；每次执行需明确批准':'检索项目 docs 文档作为上下文'}}</p><form v-if="sidebar==='knowledge'" @submit.prevent="searchKnowledge"><input v-model="knowledgeQuery" aria-label="知识库关键词" placeholder="搜索项目知识库"><button :disabled="!connectedRoot">检索</button></form><article v-for="(item,index) in resources" :key="index" class="resource"><strong>{{item.name||item.title||item.path}}</strong><p>{{item.description||item.text||item.transport||item.status}}</p><button v-if="sidebar==='skills'" @click="addSkill(item)">读取并加入上下文</button><button v-if="sidebar==='knowledge'" @click="context.push({name:item.path+':'+item.line,text:item.text})">加入上下文</button><p v-if="sidebar==='mcp'">{{item.source}}</p></article><section v-if="sidebar==='mcp'" class="resource"><strong>显式配置 stdio 服务</strong><input v-model="mcpCommand" aria-label="MCP 可执行文件" placeholder="绝对路径，例如 /usr/bin/node"><textarea v-model="mcpArgs" aria-label="MCP 启动参数" placeholder="JSON 参数数组"/><select v-model="mcpTool" aria-label="MCP 工具"><option value="">选择工具</option><option v-for="tool in mcpTools" :key="tool.name" :value="tool.name">{{tool.name}}</option></select><textarea v-model="mcpArguments" aria-label="MCP 工具参数" placeholder="JSON 对象参数"/><button :disabled="!connectedRoot||mcpRunning||mcpReviewing" @click="reviewMcp('mcp_tools')">审阅列出工具的执行范围</button><button :disabled="!connectedRoot||mcpRunning||mcpReviewing||!mcpTool" @click="reviewMcp('mcp_call')">审阅所选工具的执行范围</button><McpExecutionReview :review="mcpReview" v-model:approved="mcpCredentialsApproved" :disabled="mcpRunning"/><label><input v-model="mcpApproved" type="checkbox" :disabled="mcpRunning||!mcpReview">我已检查并批准本次启动及工具参数</label><button :disabled="!connectedRoot||!mcpApproved||mcpRunning||!mcpReview||!mcpScopeApproved||mcpReview.action!=='mcp_tools'" @click="mcpAction('mcp_tools')">启动并列出工具</button><button :disabled="!connectedRoot||!mcpApproved||mcpRunning||!mcpTool||!mcpReview||!mcpScopeApproved||mcpReview.action!=='mcp_call'" @click="mcpAction('mcp_call')">执行所选工具</button></section><p v-if="!resources.length" class="hint">暂无可用项目，打开项目后刷新此面板。</p></template>
+        <template v-else><p class="hint">{{sidebar==='skills'?'读取技能内容后作为本轮上下文':sidebar==='mcp'?'已发现的服务；每次执行需明确批准':'检索项目 docs 文档作为上下文'}}</p><form v-if="sidebar==='knowledge'" @submit.prevent="searchKnowledge"><input v-model="knowledgeQuery" aria-label="知识库关键词" placeholder="搜索项目知识库"><button :disabled="!connectedRoot">检索</button></form><article v-for="(item,index) in resources" :key="index" class="resource"><strong>{{item.name||item.title||item.path}}</strong><p>{{item.description||item.text||item.transport||item.status}}</p><button v-if="sidebar==='skills'" @click="addSkill(item)">读取并加入上下文</button><button v-if="sidebar==='knowledge'" @click="context.push({name:item.path+':'+item.line,text:item.text})">加入上下文</button><p v-if="sidebar==='mcp'">{{item.source}}</p></article><section v-if="sidebar==='mcp'" class="resource"><strong>显式配置 stdio 服务</strong><input v-model="mcpCommand" aria-label="MCP 可执行文件" placeholder="绝对路径，例如 /usr/bin/node"><textarea v-model="mcpArgs" aria-label="MCP 启动参数" placeholder="JSON 参数数组"/><select v-model="mcpTool" aria-label="MCP 工具"><option value="">选择工具</option><option v-for="tool in mcpTools" :key="tool.name" :value="tool.name">{{tool.name}}</option></select><textarea v-model="mcpArguments" aria-label="MCP 工具参数" placeholder="JSON 对象参数"/><button :disabled="!connectedRoot||mcpRunning||mcpReviewing" @click="reviewMcp('mcp_tools')">审阅列出工具的执行范围</button><button :disabled="!connectedRoot||mcpRunning||mcpReviewing||!mcpTool" @click="reviewMcp('mcp_call')">审阅所选工具的执行范围</button><McpExecutionReview :review="mcpReview" v-model:approved="mcpCredentialsApproved" :disabled="mcpRunning"/><label><input v-model="mcpApproved" type="checkbox" :disabled="mcpRunning||!mcpReview">我已检查并批准本次启动及工具参数</label><button :disabled="!connectedRoot||!mcpApproved||mcpRunning||!mcpReview||!mcpScopeApproved||mcpReview.action!=='mcp_tools'" @click="mcpAction('mcp_tools')">启动并列出工具</button><button :disabled="!connectedRoot||!mcpApproved||mcpRunning||!mcpTool||!mcpReview||!mcpScopeApproved||mcpReview.action!=='mcp_call'" @click="mcpAction('mcp_call')">执行所选工具</button></section>
+        <section v-if="sidebar==='mcp'" class="resource" aria-label="MCP 运行回执">
+          <strong>加密运行回执及对账</strong>
+          <p v-if="mcpRunId">最近请求：{{mcpRunId}}</p>
+          <button :disabled="!connectedRoot||mcpRunning||mcpReceiptBusy" @click="loadMcpReceipts()">查询本项目回执</button>
+          <button v-if="mcpRunId" :disabled="mcpRunning||mcpReceiptBusy" @click="readMcpReceipt(mcpRunId)">核对最近请求</button>
+          <template v-if="mcpReceiptOpen">
+            <p v-if="mcpUnavailable" class="hint">有 {{mcpUnavailable}} 条记录暂不可读，可能正在执行或存储异常。</p>
+            <div v-for="item in mcpReceipts" :key="item.id">
+              <span>{{item.tool||item.target||'MCP'}} · {{item.phase}} · {{item.id.slice(0,8)}}</span>
+              <button :disabled="mcpReceiptBusy||mcpRunning" @click="readMcpReceipt(item.id)">查看</button>
+            </div>
+            <button v-if="mcpCursor" :disabled="mcpReceiptBusy||mcpRunning" @click="loadMcpReceipts(false)">下一页</button>
+            <article v-if="mcpReceipt">
+              <p>运行 {{mcpReceipt.id}} · {{mcpReceipt.phase}} · {{mcpReceipt.disposition||'未记录派发结果'}}</p>
+              <p class="hint" v-if="!mcpReceipt.identity_bound">旧记录或派发前记录缺少物理目录身份绑定，仅供辅助核对。</p>
+              <p v-if="mcpReceipt.request_digest" style="overflow-wrap:anywhere">请求摘要：{{mcpReceipt.request_digest}}</p>
+              <p v-if="mcpReceipt.response_digest" style="overflow-wrap:anywhere">返回摘要：{{mcpReceipt.response_digest}}</p>
+              <p v-for="(review,index) in mcpReceipt.reviews||[]" :key="index">{{review.observation}} · {{new Date(review.recorded_at_ms).toLocaleString()}}：{{review.evidence}}</p>
+              <template v-if="mcpReceipt.can_reconcile">
+                <p class="hint">记录你核对到的外部事实。人工记录不能证明原执行者退出，也不会解锁旧 Run 或自动重试。</p>
+                <select v-model="mcpObservation" aria-label="对账观察"><option value="unresolved">仍无法确定</option><option value="observed_applied">观察到已生效</option><option value="observed_not_applied">观察到未生效</option></select>
+                <textarea v-model="mcpEvidence" maxlength="2048" aria-label="对账证据" placeholder="外部订单、提交、查询结果等证据（勿输入凭据）"/>
+                <button :disabled="mcpRunning||mcpReceiptBusy||!mcpEvidence.trim()||utf8Bytes(mcpEvidence)>2048" @click="reconcileMcpReceipt">确认记录对账观察（不重试）</button>
+              </template>
+            </article>
+            <p v-if="mcpReceiptError" role="status">{{mcpReceiptError}}</p>
+          </template>
+        </section><p v-if="!resources.length" class="hint">暂无可用项目，打开项目后刷新此面板。</p></template>
       </aside>
       <div v-if="leftVisible" class="resize vertical" role="separator" aria-label="调整资源管理器宽度" aria-orientation="vertical" tabindex="0" @pointerdown="resize($event,'left')" @keydown="keyboardResize($event,'left')"/>
       <main class="editor-column"><div class="editor-tabs"><div v-for="buffer in buffers" :key="buffer.path" class="editor-tab" :class="{selected:active===buffer.path&&!preview}"><button @click="fileOpenRequest++;invalidatePreview();active=buffer.path;diff=false;preview=null">{{buffer.path.split('/').pop()}}{{isDirtyBuffer(buffer)?' ●':''}}{{bufferPathInvalidated(buffer)?' · 路径已变更':''}}</button><button :aria-label="'关闭 '+buffer.path" @click="closeFile(buffer.path)">×</button></div></div>
