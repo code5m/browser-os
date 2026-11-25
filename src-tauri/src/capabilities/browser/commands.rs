@@ -176,14 +176,22 @@ pub fn create_tab(app: AppHandle, url: &str) -> Result<TabInfo, String> {
 }
 
 pub(crate) fn create_tab_receipted(app: AppHandle, url: &str) -> Result<TabInfo, String> {
-    let (tx, rx) = std::sync::mpsc::sync_channel(1);
-    let info = create_tab_with_completion(app, url, Some(tx))?;
-    rx.recv().map_err(|_| "TAB_CREATE_CALLBACK_LOST")?;
+    use crate::shared::dispatch_receipt::{DispatchReceipt, WaitError};
+    let completion = std::sync::Arc::new(DispatchReceipt::new()?);
+    let info = create_tab_with_completion(app, url, Some(completion.clone()))?;
+    completion.wait(std::time::Duration::from_secs(20)).map_err(|error| match error {
+        // The tab metadata may already exist. This is a terminal partial
+        // failure requiring authoritative tab-list reconciliation, not a
+        // claim that no tab was created.
+        WaitError::Revoked => "TAB_CREATE_LAYOUT_REVOKED",
+        WaitError::Lost => "TAB_CREATE_CALLBACK_LOST",
+    })?;
     Ok(info)
 }
 
 fn create_tab_with_completion(
-    app: AppHandle, url: &str, completion: Option<std::sync::mpsc::SyncSender<()>>,
+    app: AppHandle, url: &str,
+    completion: Option<std::sync::Arc<crate::shared::dispatch_receipt::DispatchReceipt<()>>>,
 ) -> Result<TabInfo, String> {
     if app
         .state::<crate::AppState>()
@@ -275,9 +283,15 @@ fn create_tab_with_completion(
     // 队列里的 webview build 互相等待死锁）。这里用 run_on_main_thread 排队执行。
     let app_hide = app.clone();
     let active_id = id.clone();
-    let wait_for_completion = completion.is_some();
+    let dispatch_receipt = completion.clone();
     let dispatch = app.run_on_main_thread(move || {
-        let complete = || { if let Some(tx) = completion { let _ = tx.send(()); } };
+        let entered = match completion.as_ref() {
+            Some(receipt) => match receipt.enter() {
+                Some(entered) => Some(entered),
+                None => return, // revoked: never touch the native views
+            },
+            None => None,
+        };
         // A superseded hide intent is a finished host callback, not a new effect.
         let hide = || {
         let st = app_hide.state::<crate::AppState>();
@@ -297,9 +311,13 @@ fn create_tab_with_completion(
         }
         };
         hide();
-        complete();
+        if let Some(entered) = entered { entered.complete(()); }
     });
-    if wait_for_completion { dispatch.map_err(|_| "TAB_CREATE_CALLBACK_LOST")?; }
+    if dispatch.is_err() {
+        // A rejected dispatch may still be queued. Revoke only before entry;
+        // if already entered, the worker must wait for its real receipt.
+        if let Some(receipt) = dispatch_receipt { receipt.revoke_pending(); }
+    }
     eprintln!("[create_tab] run_on_main_thread 已排队 label={}", id);
 
     eprintln!("[create_tab] tab created label={}", id);

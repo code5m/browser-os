@@ -101,7 +101,27 @@ impl Binding {
         }
     }
 }
-struct Slot { receipt: Receipt, action: Option<Action>, binding: Option<Binding>, since: std::time::Instant }
+struct Slot { receipt: Receipt, action: Option<Action>, binding: Option<Binding>, since: std::time::Instant, entered: bool }
+impl Slot {
+    /// A queued worker is revocable only under this same Owner lock.
+    /// Once it has entered, cancellation is a request, never a receipt.
+    fn enter(&mut self) -> bool {
+        if self.receipt.phase != Phase::Running || self.entered { return false; }
+        self.entered = true;
+        true
+    }
+    fn cancel(&mut self) {
+        match self.receipt.phase {
+            Phase::Prepared => self.receipt.phase = Phase::Cancelled,
+            Phase::Running if !self.entered => {
+                self.receipt.phase = Phase::Cancelled;
+                self.receipt.error = Some("TAB_MUTATION_CANCELLED_BEFORE_EXECUTION".into());
+            }
+            Phase::Running => self.receipt.phase = Phase::CancelRequested,
+            _ => {}
+        }
+    }
+}
 struct Owner { slot: Option<Slot>, last_ack: Option<String>, epoch: String, next_sequence: u64, internal_active: bool }
 impl Default for Owner {
     fn default() -> Self { Self { slot: None, last_ack: None, epoch: uuid::Uuid::new_v4().to_string(), next_sequence: 1, internal_active: false } }
@@ -136,9 +156,13 @@ impl Owner {
 
     fn expire_prepared(&mut self) {
         if let Some(slot) = &mut self.slot {
-            if slot.receipt.phase == Phase::Prepared && slot.since.elapsed() >= std::time::Duration::from_secs(30) {
-                slot.receipt.phase = Phase::Cancelled;
-                slot.receipt.error = Some("TAB_MUTATION_PREPARE_EXPIRED".into());
+            if slot.since.elapsed() >= std::time::Duration::from_secs(30)
+                && (slot.receipt.phase == Phase::Prepared
+                    || (slot.receipt.phase == Phase::Running && !slot.entered)) {
+                let prepared = slot.receipt.phase == Phase::Prepared;
+                slot.cancel();
+                slot.receipt.error = Some(if prepared { "TAB_MUTATION_PREPARE_EXPIRED" }
+                    else { "TAB_MUTATION_WORKER_QUEUE_EXPIRED" }.into());
             }
         }
     }
@@ -277,7 +301,7 @@ pub(crate) fn tab_mutation(webview: Webview, app: AppHandle, request: Request) -
                     state.advance_sequence()?;
                     let receipt = Receipt { ticket: uuid::Uuid::new_v4().to_string(), client_id,
                         command: action.command(), phase: Phase::Prepared, value: None, error: None };
-                    state.slot = Some(Slot { receipt, action: Some(action), binding: Some(binding), since: std::time::Instant::now() });
+                    state.slot = Some(Slot { receipt, action: Some(action), binding: Some(binding), since: std::time::Instant::now(), entered: false });
                 }
                 drop(reservation);
             }
@@ -291,6 +315,7 @@ pub(crate) fn tab_mutation(webview: Webview, app: AppHandle, request: Request) -
                     let action = slot.action.clone().ok_or("TAB_MUTATION_INVALID_ACTION")?;
                     let binding = slot.binding.clone().ok_or("TAB_MUTATION_INVALID_ACTION")?;
                     slot.receipt.phase = Phase::Running;
+                    slot.since = std::time::Instant::now();
                     Some((action, binding))
                 }
             };
@@ -299,15 +324,16 @@ pub(crate) fn tab_mutation(webview: Webview, app: AppHandle, request: Request) -
                 let worker_app = app.clone();
                 let spawned = std::thread::Builder::new().name("browseros-tab-owner".into()).spawn(move || {
                     let mut guard = WorkerGuard { ticket: worker_ticket.clone(), completed: false };
-                    let cancelled = {
+                    let entered = {
                         let Ok(mut state) = owner() else { return; };
-                        let Ok(slot) = matching(&mut state, &worker_ticket) else { return; };
-                        if slot.receipt.phase == Phase::CancelRequested {
-                            slot.receipt.phase = Phase::Cancelled;
-                            true
-                        } else { false }
+                        state.expire_prepared();
+                        let Ok(slot) = matching(&mut state, &worker_ticket) else {
+                            guard.completed = true;
+                            return;
+                        };
+                        slot.enter()
                     };
-                    if cancelled {
+                    if !entered {
                         guard.completed = true;
                         notify(&worker_app, &worker_ticket);
                         return;
@@ -334,11 +360,7 @@ pub(crate) fn tab_mutation(webview: Webview, app: AppHandle, request: Request) -
                 let mut state = owner()?;
                 state.expire_prepared();
                 let slot = matching(&mut state, &ticket)?;
-                slot.receipt.phase = match slot.receipt.phase {
-                    Phase::Prepared => Phase::Cancelled,
-                    Phase::Running => Phase::CancelRequested,
-                    other => other,
-                };
+                slot.cancel();
             }
             notify(&app, &ticket);
         }
@@ -385,11 +407,17 @@ pub(super) async fn legacy<T: Send + 'static>(
         state.slot = Some(Slot {
             receipt: Receipt { ticket: ticket.clone(), client_id: "legacy".into(), command,
                 phase: Phase::Running, value: None, error: None },
-            action: None, binding: None, since: std::time::Instant::now(),
+            action: None, binding: None, since: std::time::Instant::now(), entered: false,
         });
     }
     tauri::async_runtime::spawn_blocking(move || {
         let mut guard = WorkerGuard { ticket: ticket.clone(), completed: false };
+        let entered = {
+            let mut state = owner()?;
+            state.expire_prepared();
+            matching(&mut state, &ticket).is_ok_and(Slot::enter)
+        };
+        if !entered { guard.completed = true; return Err("TAB_MUTATION_CANCELLED_BEFORE_EXECUTION".into()); }
         let result = operation(webview);
         if result.as_ref().is_err_and(|error| completion_unknown(error)) {
             unknown(&ticket);
@@ -405,7 +433,7 @@ pub(crate) fn tab_mutation_diagnostic() -> Value {
     match OWNER.try_lock() {
         Ok(state) => state.slot.as_ref().map(|s| serde_json::json!({
             "ticket": s.receipt.ticket, "command": s.receipt.command,
-            "phase": s.receipt.phase, "age_ms": s.since.elapsed().as_millis() as u64
+            "phase": s.receipt.phase, "entered": s.entered, "age_ms": s.since.elapsed().as_millis() as u64
         })).unwrap_or(Value::Null),
         Err(_) => serde_json::json!({"phase":"owner_unavailable"}),
     }
@@ -423,10 +451,25 @@ mod tests {
         state.slot = Some(Slot { receipt: Receipt { ticket: "fixture".into(), client_id: "fixture".into(),
             command: action.command(), phase: Phase::Prepared, value: None, error: None },
             action: Some(action), binding: Some(Binding::New),
-            since: std::time::Instant::now() - std::time::Duration::from_secs(31) });
+            since: std::time::Instant::now() - std::time::Duration::from_secs(31), entered: false });
         state.expire_prepared();
         assert_eq!(state.slot.as_ref().unwrap().receipt.phase, Phase::Cancelled);
         assert_ne!(old_sequence, state.next_sequence);
+    }
+
+    #[test]
+    fn queued_worker_revocation_is_terminal_and_late_entry_is_impossible() {
+        let mut slot = Slot { receipt: Receipt { ticket: "fixture".into(), client_id: "fixture".into(),
+            command: "tab_new", phase: Phase::Running, value: None, error: None },
+            action: None, binding: None, since: std::time::Instant::now(), entered: false };
+        slot.cancel();
+        assert_eq!(slot.receipt.phase, Phase::Cancelled);
+        assert!(!slot.enter());
+        slot.receipt.phase = Phase::Running;
+        assert!(slot.enter());
+        slot.cancel();
+        assert_eq!(slot.receipt.phase, Phase::CancelRequested);
+        assert!(!slot.receipt.phase.terminal());
     }
 
     #[test]

@@ -960,6 +960,8 @@ pub async fn tab_activate(webview: tauri::Webview, app: AppHandle, id: String) -
 pub(crate) fn tab_activate_impl(webview: tauri::Webview, app: AppHandle, id: String) -> Result<(), String> {
     crate::shared::native_legacy_policy::require_main(&webview, "tab_activate")?;
     crate::shared::native_legacy_policy::bound_text("tab_activate", "id", &id)?;
+    use crate::shared::dispatch_receipt::{DispatchReceipt, WaitError};
+    let receipt = std::sync::Arc::new(DispatchReceipt::new()?);
     let _transition = reserve_tab_transition(&id)?;
 
     {
@@ -1075,11 +1077,11 @@ pub(crate) fn tab_activate_impl(webview: tauri::Webview, app: AppHandle, id: Str
     // 这些 GTK 操作必须整体走 run_on_main_thread，避免 command 同步上下文死锁。
     let app_act = app.clone();
     let active_id = id.clone();
-    let (tx, rx) = std::sync::mpsc::sync_channel(1);
-    app.run_on_main_thread(move || {
-        // Transfer the existing lifecycle reservation to the callback. No
-        // second acquisition gap, no timeout-based release.
-        let _transition = _transition;
+    let callback = receipt.clone();
+    let dispatch = app.run_on_main_thread(move || {
+        // The blocking owner keeps the existing transition reservation
+        // until completion or proof this callback can never enter.
+        let Some(entered) = callback.enter() else { return; };
         let result: Result<(), String> = (|| {
         if !app_act
             .state::<TabManagerState>()
@@ -1137,10 +1139,13 @@ pub(crate) fn tab_activate_impl(webview: tauri::Webview, app: AppHandle, id: Str
 
             Ok(())
         })();
-        drop(_transition);
-        let _ = tx.send(result);
-    }).map_err(|_| "TAB_ACTIVATION_CALLBACK_LOST")?;
-    rx.recv().map_err(|_| "TAB_ACTIVATION_CALLBACK_LOST")??;
+        entered.complete(result);
+    });
+    if dispatch.is_err() { receipt.revoke_pending(); }
+    receipt.wait(std::time::Duration::from_secs(20)).map_err(|error| match error {
+        WaitError::Revoked => "TAB_ACTIVATION_LAYOUT_REVOKED",
+        WaitError::Lost => "TAB_ACTIVATION_CALLBACK_LOST",
+    })??;
     Ok(())
 }
 

@@ -41,6 +41,7 @@ mod shared {
     pub mod blocking;
     pub mod clipboard;
     pub(crate) mod credential_versions;
+    pub(crate) mod dispatch_receipt;
     pub mod images;
     pub mod invocation;
     pub mod native_legacy_policy;
