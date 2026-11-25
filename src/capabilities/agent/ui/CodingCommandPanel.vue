@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { commandWorkbench } from '../../script/public';
 import { limitUtf8Text } from '../model/codingWorkbench.mjs';
 import type { CommandSnippet, RunSnapshot } from '../../../types';
-const props=defineProps<{proposal?:{snippet_id:string;values:Record<string,string>};beforeExecute?:()=>Promise<void>}>();
+const props=defineProps<{proposal?:{snippet_id:string;values:Record<string,string>};beforeExecute?:()=>Promise<void>;executeOwned?:(values:Record<string,string>,revision:string)=>Promise<void>}>();
 const emit=defineEmits<{(event:'context',value:{name:string;text:string}):void;(event:'result',value:{status:string;text:string}):void;(event:'running',value:boolean):void;(event:'attempt'):void}>();
 const snippets=ref<CommandSnippet[]>([]), selected=ref(''), values=ref<Record<string,string>>({}), approved=ref(false), starting=ref(false), notice=ref('');
 const run=ref<RunSnapshot|null>(null);
@@ -25,6 +25,13 @@ async function poll(id:string,version:number){
 async function start(){
   if(!approved.value||running.value||!snippet.value||(props.proposal&&attempted.value))return;
   const id=snippet.value.id,input={...values.value},revision=snippet.value.revision;if(!revision){notice.value='请刷新命令定义后重新审核';return;}approved.value=false;starting.value=true;notice.value='';run.value=null;startUnknown.value=false;startRejected.value='';const version=++generation;
+  if(props.proposal&&props.executeOwned){
+    attempted.value=true;emit('attempt');
+    try{await props.executeOwned(input,revision);notice.value='原生会话已记录执行回执，请审核结果。';}
+    catch{notice.value='执行回执未知，请恢复原会话；不会自动重试。';}
+    finally{starting.value=false;for(const p of snippet.value?.params||[])if(p.secret)values.value[p.name]='';}
+    return;
+  }
   try{if(props.beforeExecute)await props.beforeExecute();}catch{starting.value=false;notice.value='无法确认执行状态，请恢复会话核对；命令未发出。';return;}
   if(disposed){starting.value=false;return;}
   attempted.value=true;emit('attempt');

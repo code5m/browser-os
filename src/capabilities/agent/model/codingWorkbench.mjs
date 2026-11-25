@@ -130,6 +130,7 @@ export function providerFailureHint(error) {
   return hints[match[1]]?hints[match[1]]+'（'+match[1]+'）':'模型调用失败，请检查配置';
 }
 export function sessionNotice(session) {
+  if(session.status==='operation_review')return '原生执行结果已保存，等待审核后继续';
   if(session.status==='operation_unknown')return '外部操作结果未知，必须先对账，不会自动重试';
   if(session.status==='interrupted')return '上次运行中断；已保留检查点，请核对后明确继续';
   if(session.status==='step_limit')return '已达到本轮工具步数上限；会话保留，可继续本轮任务';

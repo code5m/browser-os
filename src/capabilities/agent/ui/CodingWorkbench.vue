@@ -41,7 +41,7 @@ const invalidatedProposals=computed(()=>{
   return !!connectedRoot.value && changes.value.some(change=>
     documentOwnership.pathInvalidated(CODING_DOCUMENT_OWNER,documentKey(connectedRoot.value,change.path)));
 });
-const pendingOperations=computed(()=>operations.value.filter(item=>['pending','executing','unknown'].includes(item.status)));
+const pendingOperations=computed(()=>operations.value.filter(item=>['pending','executing','unknown','result_ready'].includes(item.status)));
 const changesetPath=ref('browseros-reviewed-changes.json');
 const output=ref(''), diagnostics=ref<string[]>([]), notice=ref('打开项目后开始编码'), busy=ref(false);
 const modelRequestRunning=ref(false), streamingText=ref(''), activeRunId=ref('');
@@ -148,7 +148,7 @@ let fileOpenRequest=0;
 class ProjectScopeChanged extends Error {}
 const call=async(request:Record<string,unknown>, onEvent?:Channel<any>):Promise<any>=>{
   const action=String(request.action);
-  if(sessionRecoveryRequired.value&&(['chat','propose','apply','discard','resolve_operation','reconcile_operation','export_changes','claim_operation'].includes(action)||(action==='session'&&request.session_id!==sessionId.value)))throw Error('AGENT_SESSION_RECOVERY_REQUIRED');
+  if(sessionRecoveryRequired.value&&(['chat','propose','apply','discard','resolve_operation','reconcile_operation','export_changes','claim_operation','execute_operation'].includes(action)||(action==='session'&&request.session_id!==sessionId.value)))throw Error('AGENT_SESSION_RECOVERY_REQUIRED');
   const epoch=projectEpoch;
   try{const result=await bridge.codingService({root:connectedRoot.value,...request},onEvent);if(epoch!==projectEpoch)throw new ProjectScopeChanged();return result;}
   catch(error){if(epoch!==projectEpoch)throw new ProjectScopeChanged();throw error;}
@@ -191,12 +191,33 @@ async function claimOperation(id:string){
   try{await call({action:'claim_operation',session_id:sessionId.value,operation_id:id});}
   catch(error){sessionRecoveryRequired.value=true;notice.value='执行状态未知，请先恢复当前会话并核对；操作尚未自动重试。';throw error;}
 }
+const ownedOperationId=ref('');
+async function executeOwned(id:string,grant:Record<string,unknown>){
+  if(busy.value||sessionRecoveryRequired.value)throw Error('AGENT_BUSY');
+  const epoch=projectEpoch;
+  busy.value=true;ownedOperationId.value=id;
+  try{
+    const response=await call({action:'execute_operation',session_id:sessionId.value,operation_id:id,run_id:id,approved:true,...grant});
+    updateSession(response);
+    notice.value=response.status==='operation_unknown'?'外部效果未知，必须核对终止与效果记录。':'原生执行回执已保存，请审核后继续。';
+  }catch(error){
+    if(!(error instanceof ProjectScopeChanged)){
+      sessionRecoveryRequired.value=true;
+      notice.value='执行响应未知，请恢复原会话核对。不会重复提交。';
+    }
+    throw error;
+  }finally{if(epoch===projectEpoch&&ownedOperationId.value===id){ownedOperationId.value='';busy.value=false;}}
+}
+async function cancelOwned(){
+  if(!ownedOperationId.value)return;
+  await act(async()=>{await call({action:'cancel',run_id:ownedOperationId.value});notice.value='已请求取消，等待原生执行回执；不能据此认定外部操作未生效。';});
+}
 async function resolveOperation(value:{id:string;status:string;result:string}){
   if(busy.value||sessionRecoveryRequired.value)return;
   busy.value=true;
   try{
     const reconcile=value.status==='reconciled_succeeded'||value.status==='reconciled_not_applied';
-    const response=await call({action:reconcile?'reconcile_operation':'resolve_operation',session_id:sessionId.value,operation_id:value.id,status:reconcile?(value.status==='reconciled_succeeded'?'succeeded':'not_applied'):value.status,result:value.result,...(reconcile?{confirmed:true}:{})});
+    const response=await call({action:reconcile?'reconcile_operation':'resolve_operation',session_id:sessionId.value,operation_id:value.id,status:reconcile?(value.status==='reconciled_succeeded'?'succeeded':'not_applied'):value.status,result:value.result,...(reconcile?{confirmed:true,execution_ended:true}:{})});
     updateSession(response);
     notice.value=pendingOperations.value.some(item=>item.status==='unknown')?'已保留未知结果，核对外部回执后才能继续。':'操作结果已记录，请处理剩余审批或继续任务';
   }
@@ -458,10 +479,10 @@ onBeforeUnmount(()=>{
         <div class="agent-controls"><select v-model="modelId" :disabled="busy||refreshingModels" aria-label="模型"><option value="" disabled>请选择已配置模型</option><option v-for="model in models" :key="model.id" :value="model.id">{{model.name}} · {{model.model}}</option></select><button type="button" :disabled="busy||refreshingModels" @click="refreshModels()">刷新模型</button><select v-model="mode" :disabled="busy" aria-label="智能体模式"><option value="plan">Plan · 分析规划</option><option value="build">Build · 生成变更</option></select><details><summary>会话恢复</summary><p class="hint">当前会话：{{sessionId||'未打开项目'}}</p><button :disabled="busy||!connectedRoot" @click="listSessions">刷新当前项目会话</button><p v-if="sessionsTruncated" class="hint">会话列表不完整：可能达到扫描上限，或有记录因密钥、权限或损坏无法读取；可输入已知 ID 核对。</p><div v-for="session in recentSessions" :key="session.session_id"><button :disabled="busy" @click="resumeId=session.session_id;resumeSession()">{{new Date(session.modified_ms).toLocaleString()}} · {{session.status}} · {{session.pending_changes}} 个变更 / {{session.pending_operations}} 个待审批</button></div><input v-model="resumeId" aria-label="恢复会话 ID" placeholder="输入已保存的会话 ID"><button :disabled="busy||!resumeId" @click="resumeSession">恢复</button></details></div>
         <div class="conversation"><p v-if="!messages.length" class="hint">描述目标或问题。智能体可以读取项目与工具上下文，生成的代码变更在审核后应用。</p><article v-for="(message,index) in messages" :key="index" class="message" :class="message.role"><strong>{{message.role==='user'?'你':'智能体'}}</strong><pre>{{message.content}}</pre></article><article v-if="streamingText" class="message assistant streaming"><strong>智能体 · 实时输出</strong><pre>{{streamingText}}</pre></article><article v-for="(tool,index) in tools" :key="'tool'+index" class="tool-call"><strong>{{tool.tool}} · {{tool.ok?'完成':'失败'}}</strong><pre>{{tool.path}}</pre></article><section v-if="changes.length" class="changes"><h4>待审核变更 · {{changes.length}}</h4><p v-if="invalidatedProposals||proposalReviewRequired" class="hint" role="status">目标路径已变化或提案需要重新审核；原提案保留，请放弃后重新生成。</p><button v-for="change in changes" :key="change.path" @click="previewChange(change)">{{change.path}}</button><button class="primary" :disabled="busy||previewLoading||previewFailed||invalidatedProposals||proposalReviewRequired" @click="applyChanges">原地应用（共享文件）</button><button :disabled="busy" @click="discardChanges">放弃本轮变更</button><p class="hint">共享工作区原地保存只能检测已观察到的冲突，无法排除不合作的外部编辑器。需要严格不覆盖时，导出独立变更集。</p><label>变更集相对路径 <input v-model="changesetPath" :disabled="busy" aria-label="独立变更集相对路径"/></label><button :disabled="busy||!changesetPath.trim()" @click="exportChangeset">导出变更集（不覆盖）</button></section></div>
         <form class="composer" @submit.prevent="send"><div v-for="(item,index) in context" :key="index" class="context-chip"><span>{{item.name}}</span><button type="button" :aria-label="'移除上下文 '+item.name" @click="context.splice(index,1)">×</button></div><textarea v-model="prompt" aria-label="智能体指令" placeholder="描述要构建的功能…" @keydown.ctrl.enter.prevent="send" @keydown.meta.enter.prevent="send"/><div><span>Ctrl / ⌘ Enter</span><span v-if="sendDisabledReason" class="composer-hint">{{sendDisabledReason}}</span><button class="primary" :title="sendDisabledReason||'发送智能体指令'" :disabled="!!sendDisabledReason">{{busy?'运行中…':'发送 ↑'}}</button></div></form>
-        <div class="operation-list"><template v-if="!sessionRecoveryRequired"><CodingOperationReview v-for="operation in pendingOperations" :key="operation.id" :operation="operation" :root="connectedRoot" :claim-operation="claimOperation" :diagnostics-available="lspEnabled&&!changes.length" :run-diagnostics="runRequestedDiagnostics" @resolve="resolveOperation"/><button v-if="operations.length&&!pendingOperations.length" :disabled="busy||!!changes.length" @click="continueAfterApproval">根据审批结果继续</button></template><p v-else class="hint">会话状态未知，恢复并核对之前不能重新操作。</p></div>
+        <div class="operation-list"><template v-if="!sessionRecoveryRequired"><CodingOperationReview v-for="operation in pendingOperations" :key="operation.id" :operation="operation" :root="connectedRoot" :claim-operation="claimOperation" :execute-owned="executeOwned" :diagnostics-available="lspEnabled&&!changes.length" :run-diagnostics="runRequestedDiagnostics" @resolve="resolveOperation"/><button v-if="operations.length&&!pendingOperations.length" :disabled="busy||!!changes.length" @click="continueAfterApproval">根据审批结果继续</button></template><p v-else class="hint">会话状态未知，恢复并核对之前不能重新操作。</p></div>
         <button v-if="sessionRecoveryRequired" type="button" :disabled="busy" @click="recoverSession">恢复当前会话并核对状态</button>
         <button v-if="runStatus==='step_limit'" type="button" :disabled="busy||!!pendingOperations.length||!!changes.length" @click="continueAfterLimit">继续本轮任务</button>
-        <button v-if="modelRequestRunning" type="button" @click="cancelRun">停止本轮请求</button>
+        <button v-if="ownedOperationId" type="button" @click="cancelOwned">请求取消外部执行</button><button v-if="modelRequestRunning" type="button" @click="cancelRun">停止本轮请求</button>
       </aside>
     </div><footer class="coding-status" role="status"><span>{{runStatus==='cancelled'?'本轮已停止；尚未应用的变更仍保留待审核':notice}}</span><span v-if="mcpDetached">MCP 调用仍在执行或已结束，切换视图后结果可能无法显示；请核对外部状态。 <button type="button" @click="mcpDetached=false">已知悉</button></span><span>{{dirty.length}} 个未保存文件 · {{mode==='plan'?'只读规划':'审核后应用'}}</span></footer>
   </section>
