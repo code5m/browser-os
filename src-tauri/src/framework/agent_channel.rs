@@ -4,7 +4,7 @@
 use browseros_agent_foundation as foundation;
 use foundation::{
     approval::{
-        ApprovalBinding, ApprovalBroker, HostApprovalDecision, HostApprovalIssuer, ResourceBinding,
+        ApprovalBinding, HostApprovalDecision, HostApprovalIssuer, ResourceBinding,
     },
     benchmark::{
         run_benchmark_suite, run_routed_fixture_owned, BenchmarkReport, RoutedFixtureResult,
@@ -383,7 +383,7 @@ pub async fn agent_runtime_read_tool(
         ContextGrant::ExplicitSelection,
     )
     .map_err(|_| "AGENT_EXPERIMENT_RESOURCE_INVALID")?;
-    let execution = tauri::async_runtime::spawn_blocking(move ||
+    let mut execution = tauri::async_runtime::spawn_blocking(move ||
         crate::capabilities::agent::public_api::ProductionExecution::begin_durable(
             &storage, "agent_channel", session, workspace, session, vec![ctx]))
         .await.map_err(|_| "AGENT_RUN_WORKER_FAILED")??;
@@ -395,9 +395,9 @@ pub async fn agent_runtime_read_tool(
     let mut secret = [0_u8; 32];
     secret[..16].copy_from_slice(uuid::Uuid::new_v4().as_bytes());
     secret[16..].copy_from_slice(uuid::Uuid::new_v4().as_bytes());
-    let ticket = HostApprovalIssuer::new(secret)
+    let (ticket, permit) = HostApprovalIssuer::new(secret)
         .map_err(|_| "AGENT_EXPERIMENT_APPROVAL_FAILED")?
-        .issue(
+        .resolve_local_decision(
             tasks,
             task_id,
             call,
@@ -412,15 +412,11 @@ pub async fn agent_runtime_read_tool(
             },
         )
         .map_err(|_| "AGENT_EXPERIMENT_APPROVAL_FAILED")?;
-    let permit = ApprovalBroker::new(secret)
-        .map_err(|_| "AGENT_EXPERIMENT_APPROVAL_FAILED")?
-        .resolve(tasks, &ticket)
-        .map_err(|_| "AGENT_EXPERIMENT_APPROVAL_FAILED")?
-        .ok_or("AGENT_EXPERIMENT_APPROVAL_DENIED")?;
+    let permit = permit.ok_or("AGENT_EXPERIMENT_APPROVAL_DENIED")?;
     // Preserve the approval consumption before calling the owner. The native
     // call remains read-only; interruption is not automatically retried.
     let execution = tauri::async_runtime::spawn_blocking(move || {
-        execution.checkpoint("approved")?;
+        execution.checkpoint_approval(ticket.claims)?;
         Ok::<_, String>(execution)
     }).await.map_err(|_| "AGENT_RUN_WORKER_FAILED")??;
     let result = tools.execute(permit, tasks, Duration::from_secs(15)).await

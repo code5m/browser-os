@@ -277,6 +277,8 @@ struct OperationReceipt {
     native_run_id: Option<String>,
     // Local transport return is not proof of arbitrary remote quiescence.
     phase: String,
+    #[serde(default)]
+    approval: Option<browseros_agent_foundation::approval::ApprovalClaims>,
 }
 fn external_operation(kind: &str) -> bool { matches!(kind, "command" | "mcp") }
 fn unresolved_operation(operation: &Operation) -> bool {
@@ -1921,11 +1923,22 @@ pub(crate) fn execute_with_adapter(
             let signal = request_signal(&request)?;
             let execution = super::execution_owner::ProductionExecution::resume_coding(
                 &root, &session.session_id, session.foundation_task.as_ref())?;
+            // Bind the signed decision to the encrypted operation identity,
+            // original model proposal and the exact main-UI review request.
+            // Keep raw review data out of Foundation approval metadata.
+            let review_revision = hash(&serde_json::to_vec(&request).map_err(|_| "AGENT_OPERATION_INVALID")?);
+            let approved_arguments = json!({"operation_id":id,"input_digest":hash(&serde_json::to_vec(&input)
+                .map_err(|_| "AGENT_OPERATION_INVALID")?), "review_digest":review_revision});
+            let effect = if kind == "command" { browseros_agent_foundation::tool::ToolEffect::ExecuteProcess }
+                else { browseros_agent_foundation::tool::ToolEffect::ExternalSideEffect };
+            let (approval, permit) = execution.approve_native(
+                if kind == "command" { "coding.command" } else { "coding.mcp" },
+                approved_arguments.clone(), effect, review_revision)?;
             session.foundation_task = Some(execution.record()?);
             session.runs.push(RunReceipt { id: operation_run.clone(), task_id: execution.id(), status: "running".into() });
             session.operations[index].execution = Some(OperationReceipt {
                 native_run_id: (kind == "command").then(|| format!("run-{operation_run}")),
-                run_id: operation_run, phase: "dispatching".into()
+                run_id: operation_run, phase: "dispatching".into(), approval: Some(approval.clone())
             });
             session.operations[index].status = "executing".into();
             session.status = "operation_executing".into();
@@ -1935,7 +1948,7 @@ pub(crate) fn execute_with_adapter(
             running_map().lock().map_err(|_| "AGENT_BUSY")?.insert(
                 (root.clone(), session.session_id.clone()), signal.clone());
             let _running_guard = RunningGuard { root: root.clone(), session_id: session.session_id.clone() };
-            let execution_lease = execution.acquire_lease()?;
+            let execution_lease = execution.acquire_approved_native(permit, &approval, &approved_arguments)?;
             let response = if signal.load(Ordering::SeqCst) {
                 Err("AGENT_OPERATION_CANCELLED_BEFORE_DISPATCH".into())
             } else { adapter(&kind, &input, &request, &signal) };
@@ -2391,6 +2404,8 @@ mod tests {
             Ok(json!({"status":"succeeded","result":"fixture native output"}))
         }).unwrap();
         assert_eq!(result["operations"][0]["status"],"result_ready");
+        assert_eq!(result["operations"][0]["execution"]["approval"]["accepted"],true);
+        assert_eq!(result["operations"][0]["execution"]["approval"]["tool_name"],"coding.mcp");
         assert_eq!(result["foundation_task"]["id"],session["foundation_task"]["id"]);
         assert!(execute_with_adapter(&f.0,&storage,request,|_,_|unreachable!(),|_,_,_,_|panic!("must not replay")).is_err());
         assert!(run(&f,json!({"action":"chat","session_id":id,"message":"skip review"})).is_err());

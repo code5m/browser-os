@@ -5,9 +5,11 @@
 //! Terminal tasks are retired; paused Coding tasks are detached after
 //! producing a host checkpoint. The Coding session stores that checkpoint.
 use browseros_agent_foundation::{
-    context::ContextRef,
+    approval::{ApprovalClaims, HostApprovalDecision, HostApprovalIssuer, ResourceBinding},
+    context::{ContextGrant, ContextKind, ContextRef},
     event::EventJournal,
-    task::{TaskRecord, TaskRegistry, TaskStatus},
+    task::{ApprovedOperation, TaskRecord, TaskRegistry, TaskStatus},
+    tool::ToolEffect,
 };
 use sha2::{Digest, Sha256};
 use std::{
@@ -51,16 +53,19 @@ struct NativeRunReceipt {
     id: Uuid,
     phase: String,
     task: TaskRecord,
+    #[serde(default)]
+    approval: Option<ApprovalClaims>,
 }
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 struct DurableRun {
     id: Uuid,
     checkpoint: super::coding_checkpoint::RunCheckpoint,
+    approval: Option<ApprovalClaims>,
 }
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 impl DurableRun {
     fn persist(&self, phase: &str, task: TaskRecord) -> Result<(), String> {
-        let receipt = NativeRunReceipt { id: self.id, phase: phase.into(), task };
+        let receipt = NativeRunReceipt { id: self.id, phase: phase.into(), task, approval: self.approval.clone() };
         self.checkpoint.write(&serde_json::to_vec(&receipt).map_err(|_| "AGENT_RUN_RECEIPT_INVALID")?)
     }
     fn reject_existing(&self) -> Result<(), String> {
@@ -73,7 +78,8 @@ impl DurableRun {
             record.task.revision = record.task.revision.checked_add(1).ok_or("AGENT_TASK_REVISION_EXHAUSTED")?;
             record.task.status = TaskStatus::Paused;
             record.task.pending = None;
-            self.persist("interrupted", record.task)?;
+            record.phase = "interrupted".into();
+            self.checkpoint.write(&serde_json::to_vec(&record).map_err(|_| "AGENT_RUN_RECEIPT_INVALID")?)?;
         }
         Err("AGENT_RUN_ALREADY_RECORDED".into())
     }
@@ -100,7 +106,7 @@ impl ProductionExecution {
         #[cfg(any(target_os = "linux", target_os = "windows"))]
         {
             let checkpoint = super::coding_checkpoint::RunCheckpoint::acquire(storage, run)?;
-            let durable = DurableRun { id: run, checkpoint };
+            let durable = DurableRun { id: run, checkpoint, approval: None };
             durable.reject_existing()?;
             let mut execution = Self::begin_scoped(kind, workspace, session, context)?;
             durable.persist("running", execution.record()?)?;
@@ -120,18 +126,65 @@ impl ProductionExecution {
         Ok(())
     }
 
+    pub(crate) fn checkpoint_approval(&mut self, claim: ApprovalClaims) -> Result<(), String> {
+        let task = self.record()?;
+        if !claim.accepted || claim.task_id != task.id
+            || claim.workspace_id != task.workspace_id || claim.session_id != task.session_id
+            || claim.task_revision.checked_add(1) != Some(task.revision)
+            || task.status != TaskStatus::Running
+        { return Err("AGENT_APPROVAL_STALE".into()); }
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        if let Some(run) = &mut self.durable_run { run.approval = Some(claim); }
+        self.checkpoint("approved")
+    }
+
+    /// Only callable by an already-authorized main-window native owner.
+    /// Native workspace owners still validate the actual resource and
+    /// persist their own effect intent before dispatch.
+    pub(crate) fn approve_native(&self, tool: &str, arguments: serde_json::Value,
+        effect: ToolEffect, revision: String) -> Result<(ApprovalClaims, ApprovedOperation), String> {
+        use ring::rand::{SecureRandom, SystemRandom};
+        let record = self.record()?;
+        let resource = ResourceBinding { resource_id: format!("workspace:{}", record.workspace_id),
+            resource_revision: revision };
+        let mut secret = [0u8; 32];
+        SystemRandom::new().fill(&mut secret).map_err(|_| "AGENT_APPROVAL_RANDOM_FAILED")?;
+        let issuer = HostApprovalIssuer::new(secret).map_err(|_| "AGENT_APPROVAL_FAILED")?;
+        let call = issuer.propose_reviewed_native(self.tasks, self.id, record.revision,
+            tool, arguments, effect).map_err(|_| "AGENT_APPROVAL_FAILED")?;
+        let (receipt, permit) = issuer.resolve_local_decision(self.tasks, self.id, call,
+            HostApprovalDecision { principal_id: Uuid::new_v4(), resource, accepted: true,
+                ttl: std::time::Duration::from_secs(120) })
+            .map_err(|_| "AGENT_APPROVAL_FAILED")?;
+        Ok((receipt.claims, permit.ok_or("AGENT_APPROVAL_DENIED")?))
+    }
+    pub(crate) fn acquire_approved_native(&self, permit: ApprovedOperation,
+        claim: &ApprovalClaims, arguments: &serde_json::Value)
+        -> Result<browseros_agent_foundation::task::ExecutionLease<'static>, String> {
+        if claim.task_id != self.id { return Err("AGENT_APPROVAL_STALE".into()); }
+        permit.claim_native_owner(self.tasks, claim, arguments)
+            .map_err(|_| "AGENT_APPROVAL_STALE".into())
+    }
+
     /// Resume one Coding Task across separate Runs under its native session
     /// owner. The encrypted checkpoint is the authority across restarts.
     pub(crate) fn resume_coding(root: &Path, session_id: &str, previous: Option<&TaskRecord>) -> Result<Self, String> {
         let (workspace, session) = coding_scope(root, Some(session_id))?.ok_or("AGENT_SESSION_REQUIRED")?;
+        let context = vec![ContextRef::checked(ContextKind::Project,
+            format!("workspace:{workspace}"), ContextGrant::ApprovedScope)
+            .map_err(|_| "AGENT_TASK_SCOPE_MISMATCH")?];
         if let Some(record) = previous {
             if record.workspace_id != workspace || record.session_id != session
-                || record.goal != "coding" || !record.context.is_empty()
+                || record.goal != "coding" || (!record.context.is_empty() && record.context != context)
             { return Err("AGENT_TASK_SCOPE_MISMATCH".into()); }
             match record.status {
                 TaskStatus::Paused => {
                     let tasks = task_owner();
-                    tasks.restore_paused_record(record.clone()).map_err(|_| "AGENT_TASK_RESTORE_FAILED")?;
+                    let mut restored = record.clone();
+                    // Old authenticated paused checkpoints have no workspace
+                    // reference. Add only the deterministic current owner scope.
+                    restored.context = context.clone();
+                    tasks.restore_paused_record(restored).map_err(|_| "AGENT_TASK_RESTORE_FAILED")?;
                     if tasks.start(record.id).is_err() {
                         let _ = tasks.detach_paused_record(record.id);
                         return Err("AGENT_TASK_START_FAILED".into());
@@ -144,7 +197,7 @@ impl ProductionExecution {
                 _ => return Err("AGENT_TASK_RECOVERY_REQUIRED".into()),
             }
         }
-        Self::begin_scoped("coding", workspace, session, vec![])
+        Self::begin_scoped("coding", workspace, session, context)
     }
 
     /// Model and external tool adapters share the Foundation task's
