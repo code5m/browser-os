@@ -30,7 +30,10 @@ function invoke<T>(
     (error) => { diagnosticIpc(command, started, "error"); throw error; },
   );
 }
-// The native owner, not a rejected IPC Promise, decides whether work ended.
+// Control-plane deadlines do not cancel the native mutation. Each phase
+// retains at most one unresolved transport request; lost promises cannot
+// cause unbounded retry allocation. A separate inspect lane and native event
+// deliver terminal receipts even if a mutation reply is lost.
 type TabAction =
   | { kind: "new"; url: string }
   | { kind: "open"; id: string; url: string }
@@ -40,60 +43,119 @@ type TabReceipt = {
   phase: "prepared" | "running" | "cancel_requested" | "succeeded" | "failed" | "cancelled" | "unknown";
   value?: unknown; error?: string;
 };
-const tabReceiptCall = (request: Record<string, unknown>) =>
-  invoke<TabReceipt | null>("tab_mutation", { request });
+type TabOwnerView = {
+  epoch: string; next_sequence: string; receipt: TabReceipt | null; last_ack: string | null;
+  internal_active: boolean; active_known: boolean; active_tab_id: string | null;
+};
+const terminalTabReceipt = (r: TabReceipt) => ["succeeded", "failed", "cancelled"].includes(r.phase);
 const receiptDelay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
-async function ownedTabMutation<T>(action: TabAction): Promise<T> {
-  const clientId = crypto.randomUUID();
-  let prepared: TabReceipt | null = null;
-  // Prepare has no side effects. Recover a lost prepare reply by inspecting
-  // this client nonce; never start an unrecognized or another client's ticket.
+const tabControl = new Map<string, { key: string; promise: Promise<unknown> }>();
+function boundedTabControl<T>(lane: string, key: string, call: () => Promise<T>): Promise<T> {
+  let slot = tabControl.get(lane);
+  if (slot && slot.key !== key) return Promise.reject(new Error("TAB_CONTROL_LANE_UNRESOLVED"));
+  if (!slot) {
+    const promise = Promise.resolve().then(call);
+    slot = { key, promise };
+    tabControl.set(lane, slot);
+    const owned = slot;
+    const release = () => { if (tabControl.get(lane) === owned) tabControl.delete(lane); };
+    void promise.then(release, release);
+  }
+  const promise = slot.promise as Promise<T>;
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("TAB_CONTROL_REPLY_TIMEOUT")), 1500);
+    promise.then(value => { clearTimeout(timer); resolve(value); }, error => { clearTimeout(timer); reject(error); });
+  });
+}
+const tabReceiptCall = (request: Record<string, unknown>) =>
+  boundedTabControl<TabOwnerView>(String(request.phase), JSON.stringify(request),
+    () => invoke<TabOwnerView>("tab_mutation", { request }));
+let terminalEvent: TabReceipt | null = null;
+let receiptListenerStarted = false;
+function ensureTabReceiptListener() {
+  if (receiptListenerStarted) return;
+  receiptListenerStarted = true;
+  void listen<TabReceipt>("browser-tab-mutation-receipt", (event) => {
+    if (terminalTabReceipt(event.payload)) terminalEvent = event.payload;
+  }).catch(() => { receiptListenerStarted = false; });
+}
+function receiptErrorIsAuthoritative(error: unknown) {
+  return /TAB_MUTATION_OWNER_BUSY|TAB_MUTATION_INVALID_ID|TAB_MUTATION_STALE_EPOCH|TAB_MUTATION_STALE_SEQUENCE|TAB_MUTATION_INSTANCE_UNAVAILABLE|TAB_NOT_FOUND|NATIVE_LEGACY_ARGUMENT_|NATIVE_SOURCE_DENIED/.test(String(error));
+}
+async function acknowledgeTabReceipt(ticket: string, epoch: string): Promise<void> {
   for (;;) {
     try {
-      prepared = await tabReceiptCall({ phase: "prepare", client_id: clientId, action });
+      const view = await tabReceiptCall({ phase: "ack", ticket });
+      if (view.epoch === epoch && view.last_ack === ticket) return;
+    } catch {}
+    try {
+      const view = await tabReceiptCall({ phase: "inspect" });
+      if (view.epoch === epoch && view.last_ack === ticket) return;
+      if (view.epoch !== epoch) throw new Error("TAB_MUTATION_NATIVE_EPOCH_CHANGED");
     } catch (error) {
-      const message = String(error);
-      if (/TAB_MUTATION_OWNER_BUSY|TAB_MUTATION_INVALID_ID|NATIVE_LEGACY_ARGUMENT_|NATIVE_SOURCE_DENIED/.test(message)) throw error;
+      if (String(error).includes("TAB_MUTATION_NATIVE_EPOCH_CHANGED")) throw error;
+    }
+    await receiptDelay(500);
+  }
+}
+async function ownedTabMutation<T>(action: TabAction): Promise<T> {
+  ensureTabReceiptListener();
+  // Inspect is read-only. Do not prepare anything if its admission epoch is unknown.
+  const initial = await tabReceiptCall({ phase: "inspect" });
+  if (initial.receipt || initial.internal_active) throw new Error("TAB_MUTATION_OWNER_BUSY");
+  const clientId = crypto.randomUUID();
+  const request = { phase: "prepare", client_id: clientId, epoch: initial.epoch,
+    sequence: initial.next_sequence, action };
+  let prepared: TabReceipt | null = null;
+  for (;;) {
+    try {
+      const view = await tabReceiptCall(request);
+      if (view.epoch === initial.epoch && view.receipt?.client_id === clientId) prepared = view.receipt;
+    } catch (error) {
+      if (receiptErrorIsAuthoritative(error)) throw error;
+    }
+    if (!prepared) {
       try {
-        const existing = await tabReceiptCall({ phase: "inspect" });
-        if (existing?.client_id === clientId) prepared = existing;
-        else if (existing) throw new Error("TAB_MUTATION_OWNER_BUSY");
-      } catch (inspectionError) {
-        if (String(inspectionError).includes("TAB_MUTATION_OWNER_BUSY")) throw inspectionError;
+        const view = await tabReceiptCall({ phase: "inspect" });
+        if (view.epoch !== initial.epoch) throw new Error("TAB_MUTATION_NATIVE_EPOCH_CHANGED");
+        if (view.receipt?.client_id === clientId) prepared = view.receipt;
+        else if (view.receipt || view.next_sequence !== initial.next_sequence) throw new Error("TAB_MUTATION_OWNER_BUSY");
+      } catch (error) {
+        if (receiptErrorIsAuthoritative(error) || String(error).includes("TAB_MUTATION_NATIVE_EPOCH_CHANGED")) throw error;
       }
     }
-    if (prepared?.client_id === clientId) break;
+    if (prepared) break;
     await receiptDelay(500);
   }
   const ticket = prepared.ticket;
-  // Send exactly once. Poll independently; a lost start reply never resubmits
-  // the underlying mutation. Only native start with this ticket can run it.
-  void tabReceiptCall({ phase: "start", ticket }).catch(() => {});
+  // At most one actual start request; late starts cannot cross expiry/cancel.
+  if (prepared.phase === "prepared") void tabReceiptCall({ phase: "start", ticket }).catch(() => {});
   const began = performance.now();
-  let lastCancel = 0;
+  let receipt = prepared;
   for (;;) {
-    let receipt: TabReceipt | null;
-    try { receipt = await tabReceiptCall({ phase: "poll", ticket }); }
-    catch { await receiptDelay(500); continue; }
-    if (!receipt || receipt.ticket !== ticket) {
-      // Keep frontend admission quarantined, rather than inventing completion.
-      await receiptDelay(500); continue;
-    }
-    if (receipt.phase === "prepared" && performance.now() - began > 5000 && performance.now() - lastCancel > 1000) {
-      lastCancel = performance.now();
-      // A cancelled preparation cannot be started by a late start message.
-      try { await tabReceiptCall({ phase: "cancel", ticket }); } catch {}
-    }
-    if (receipt.phase === "succeeded" || receipt.phase === "failed" || receipt.phase === "cancelled") {
-      // Ack only authoritative host terminal state. Ack retry is idempotent.
-      for (;;) {
-        try { await tabReceiptCall({ phase: "ack", ticket }); break; }
-        catch { await receiptDelay(500); }
-      }
+    const event = terminalEvent as TabReceipt | null;
+    if (event?.ticket === ticket && terminalTabReceipt(event)) receipt = event;
+    if (terminalTabReceipt(receipt)) {
+      await acknowledgeTabReceipt(ticket, initial.epoch);
       if (receipt.phase === "succeeded") return receipt.value as T;
       throw new Error(receipt.error || "TAB_MUTATION_CANCELLED");
     }
-    await receiptDelay(200);
+    try {
+      const view = await tabReceiptCall({ phase: "poll", ticket });
+      if (view.epoch === initial.epoch && view.receipt?.ticket === ticket) receipt = view.receipt;
+    } catch {
+      try {
+        const view = await tabReceiptCall({ phase: "inspect" });
+        if (view.epoch === initial.epoch && view.receipt?.ticket === ticket) receipt = view.receipt;
+      } catch {}
+    }
+    if (receipt.phase === "prepared" && performance.now() - began > 5000) {
+      try {
+        const view = await tabReceiptCall({ phase: "cancel", ticket });
+        if (view.receipt?.ticket === ticket) receipt = view.receipt;
+      } catch {}
+    }
+    await receiptDelay(400);
   }
 }
 
@@ -923,11 +985,11 @@ export const bridge = {
 
   tabList: () => invoke<TabInfo[]>("tab_list"),
 
-  inspectTabMutation: () => tabReceiptCall({ phase: "inspect" }),
+  inspectTabMutation: () => { ensureTabReceiptListener(); return tabReceiptCall({ phase: "inspect" }); },
   cancelTabMutation: (ticket: string) => tabReceiptCall({ phase: "cancel", ticket }),
-  // Explicit recovery after a frontend reload: reconcile tabList first.
-  // Native code refuses nonterminal/unknown tickets regardless of this caller.
   acknowledgeTabMutation: (ticket: string) => tabReceiptCall({ phase: "ack", ticket }),
+  // Read-only recovery lane with independent bounded transport.
+  reconcileTabList: () => boundedTabControl<TabInfo[]>("reconcile-list", "tab-list", () => invoke<TabInfo[]>("tab_list")),
 
   tabSetTitle: (id: string, title: string) =>
     invoke("tab_set_title", { id, title }),

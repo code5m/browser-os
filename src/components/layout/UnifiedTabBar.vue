@@ -137,6 +137,11 @@ async function newTab() {
     </div>
     <button class="tab-new" @click="newTab" title="新建页签"><Plus :size="18"/></button>
     </div>
+    <button v-if="browser.tabNativeState === 'unknown' || browser.tabRecoveryRequired"
+      class="native-recovery" :disabled="browser.tabRecoveryBusy" @click.stop="browser.recoverNativeTabs()"
+      :title="browser.tabRecoveryMessage || '查询原生回执并核对页签，不强制释放执行权'">页签恢复</button>
+    <span v-if="browser.tabRecoveryMessage && (browser.tabRecoveryRequired || browser.tabNativeState === 'unknown')"
+      class="native-recovery-status" role="status" :title="browser.tabRecoveryMessage">{{browser.tabRecoveryMessage}}</span>
     <div class="titlebar-drag" aria-hidden="true"></div>
     <div class="window-controls" aria-label="窗口控制">
       <button title="最小化" @click.stop="minimizeWindow">−</button>
@@ -182,6 +187,8 @@ async function newTab() {
 .unified::-webkit-scrollbar { display: none; }
 .tab-strip{display:flex;align-items:flex-end;gap:3px;flex:0 1 auto;min-width:0;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
 .tab-strip::-webkit-scrollbar{display:none}
+.native-recovery{flex:none;margin:4px;padding:4px 8px;border:1px solid #a97927;border-radius:4px;background:transparent;color:var(--chrome-text,#3c4043);cursor:pointer}
+.native-recovery-status{font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;align-self:center;color:var(--chrome-text,#3c4043)}
 .titlebar-drag { flex: 1; min-width: 24px; align-self: stretch; cursor: default; }
 .window-controls { display: flex; flex: none; align-items: stretch; align-self:stretch; margin: -3px -6px 0 0; }
 .window-controls button { width: 42px; border: 0; border-radius: 0; background: transparent; display: grid; place-items: center; color:var(--chrome-text,#3c4043); cursor: pointer; }

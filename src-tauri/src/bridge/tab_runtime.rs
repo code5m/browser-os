@@ -46,6 +46,7 @@ mod transition_tests {
 }
 
 pub(crate) fn tab_new_native(app: AppHandle, url: String) -> Result<TabInfo, String> {
+    let _owner = super::tab_mutation::reserve_internal()?;
     let tab = create_tab(app.clone(), &url)?;
     Ok(tab)
 }
@@ -62,6 +63,7 @@ pub(crate) fn tab_new_impl(webview: tauri::Webview, app: AppHandle, url: String)
 
 /// 关闭指定页签。
 pub(crate) fn tab_close_native(app: AppHandle, id: String) -> Result<(), String> {
+    let _owner = super::tab_mutation::reserve_internal()?;
     close_tab(&app, &id)
 }
 #[tauri::command]
@@ -72,7 +74,7 @@ pub async fn tab_close(webview: tauri::Webview, app: AppHandle, id: String) -> R
 pub(crate) fn tab_close_impl(webview: tauri::Webview, app: AppHandle, id: String) -> Result<(), String> {
     crate::shared::native_legacy_policy::require_main(&webview, "tab_close")?;
     crate::shared::native_legacy_policy::bound_text("tab_close", "id", &id)?;
-    tab_close_native(app, id)
+    close_tab(&app, &id)
 }
 
 /// 在指定页签中打开网址（导航）。
@@ -132,6 +134,7 @@ pub fn tab_position(
     crate::shared::native_legacy_policy::bound_dimension("tab_position", "height", height)?;
 
     if let Err(e) = apply_bounds(&app, &id, x, y, width, height) {
+        let _owner = super::tab_mutation::reserve_internal()?;
         recover_tab_webview(&app, &id, "position", &e)?;
         apply_bounds_inner(&app, &id, x, y, width, height)
             .map_err(|retry| format!("{e}; 恢复后重试定位失败: {retry}"))?;
@@ -680,6 +683,7 @@ fn hibernate_tab(app: &AppHandle, id: &str, idle_window: std::time::Duration) ->
     };
     // Snapshotting runs on the WebView event loop and may take up to two
     // seconds. Recheck activation/idle state before destroying the native view.
+    let Ok(_owner) = super::tab_mutation::reserve_internal() else { return false; };
     let Ok(_transition) = reserve_tab_transition(id) else {
         return false;
     };
@@ -1021,6 +1025,7 @@ pub(crate) fn tab_activate_impl(webview: tauri::Webview, app: AppHandle, id: Str
         let restore_id = id.clone();
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(900));
+            let Ok(_owner) = super::tab_mutation::reserve_internal() else { return; };
             let Ok(_transition) = reserve_tab_transition(&restore_id) else {
                 return;
             };

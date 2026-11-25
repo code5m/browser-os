@@ -70,6 +70,55 @@ export const useBrowserStore = defineStore("browser", () => {
   const tabNativeState = ref<"ready" | "running" | "unknown">("ready");
   let runningMutation: { startedAt: number; unknown: boolean } | null = null;
   let drainScheduled = false;
+  const tabRecoveryRequired = ref(false);
+  const tabRecoveryMessage = ref("");
+  const tabRecoveryBusy = ref(false);
+
+  async function recoverNativeTabs() {
+    if (tabRecoveryBusy.value) return;
+    tabRecoveryBusy.value = true;
+    try {
+      let view = await bridge.inspectTabMutation();
+      const receipt = view.receipt;
+      if (runningMutation) {
+        if (receipt?.phase === "prepared" || receipt?.phase === "running") {
+          view = await bridge.cancelTabMutation(receipt.ticket);
+        }
+        tabRecoveryMessage.value = "本地操作仍持有执行权；已查询/请求取消，等待原生终态。";
+        return;
+      }
+      tabRecoveryRequired.value = true;
+      if (receipt?.phase === "prepared" || receipt?.phase === "running") {
+        view = await bridge.cancelTabMutation(receipt.ticket);
+      }
+      const current = view.receipt;
+      if (view.internal_active || (current && !["succeeded", "failed", "cancelled"].includes(current.phase))) {
+        tabRecoveryMessage.value = "原生操作尚无权威终态；不会清除执行权或重试。";
+        return;
+      }
+      if (!view.active_known) throw new Error("TAB_NATIVE_ACTIVE_UNKNOWN");
+      const actual = await bridge.reconcileTabList();
+      // Preserve the logical ordering of surviving tabs; append new native
+      // records. A reload cannot invent recently-closed entries.
+      const byId = new Map(actual.map(tab => [tab.id, tab]));
+      const ordered = tabs.flatMap(tab => byId.has(tab.id) ? [byId.get(tab.id)!] : []);
+      const seen = new Set(ordered.map(tab => tab.id));
+      ordered.push(...actual.filter(tab => !seen.has(tab.id)));
+      tabs.splice(0, tabs.length, ...ordered);
+      activeTabId.value = view.active_tab_id && byId.has(view.active_tab_id) ? view.active_tab_id : "";
+      url.value = byId.get(activeTabId.value)?.url ?? "";
+      if (current) {
+        const ack = await bridge.acknowledgeTabMutation(current.ticket);
+        if (ack.epoch !== view.epoch || ack.last_ack !== current.ticket) throw new Error("TAB_MUTATION_ACK_UNKNOWN");
+      }
+      tabRecoveryRequired.value = false;
+      tabRecoveryMessage.value = "已按原生记录恢复页签；未重放旧操作。";
+      nextTick(relocate);
+    } catch {
+      tabRecoveryRequired.value = true;
+      tabRecoveryMessage.value = "控制面未确认，原生执行权仍受保护；可再次查询，必要时正常退出应用后重新打开。";
+    } finally { tabRecoveryBusy.value = false; }
+  }
 
   function clearMutationTimer(timer: number) {
     if (window.clearTimeout) window.clearTimeout(timer);
@@ -97,7 +146,7 @@ export const useBrowserStore = defineStore("browser", () => {
   }
 
   function mutateTabs<T>(operation: () => Promise<T>): Promise<T> {
-    if (waitingMutations.length + Number(runningMutation !== null) >= MUTATION_LIMIT ||
+    if (tabRecoveryRequired.value || tabRecoveryBusy.value || waitingMutations.length + Number(runningMutation !== null) >= MUTATION_LIMIT ||
         (runningMutation && (runningMutation.unknown ||
           Date.now() - runningMutation.startedAt >= MUTATION_DEADLINE_MS))) {
       return Promise.reject(new Error("TAB_NATIVE_OPERATION_STALLED"));
@@ -123,6 +172,11 @@ export const useBrowserStore = defineStore("browser", () => {
             const value = await operation();
             if (!owner.unknown) resolve(value);
           } catch (error) {
+            if (/TAB_MUTATION_OWNER_BUSY|TAB_MUTATION_STALE_|TAB_CONTROL_|TAB_MUTATION_NATIVE_EPOCH_CHANGED|TAB_MUTATION_ACK_UNKNOWN/.test(String(error))) {
+              tabRecoveryRequired.value = true;
+              tabRecoveryMessage.value = "原生执行记录需核对；请使用页签恢复。";
+              for (const queued of waitingMutations.splice(0)) rejectWaiting(queued);
+            }
             if (!owner.unknown) reject(error);
           } finally {
             clearMutationTimer(watchdog);
@@ -559,8 +613,10 @@ export const useBrowserStore = defineStore("browser", () => {
       hideAllWebviews();
       await mutateTabs(async () => {
         const closing = tabs.map(({ id }) => id);
-        const results = await Promise.allSettled(closing.map(async id => {
-          await closeNativeTab(id);
+        const failed: string[] = [];
+        for (const id of closing) {
+          try { await closeNativeTab(id); }
+          catch { failed.push(id); continue; }
           // A successful close receipt is authoritative even when another
           // close never returns. Keep only unconfirmed/failed owner records.
           const row = tabs.findIndex(tab => tab.id === id);
@@ -569,8 +625,7 @@ export const useBrowserStore = defineStore("browser", () => {
           if (!tabs.some(tab => tab.id === activeTabId.value)) {
             activeTabId.value = tabs[0]?.id ?? "";
           }
-        }));
-        const failed = closing.filter((_, index) => results[index].status === "rejected");
+        }
         if (!tabs.some(tab => tab.id === activeTabId.value)) activeTabId.value = tabs[0]?.id ?? "";
         if (failed.length) {
           throw new Error(`BROWSER_CLEANUP_FAILED:${failed.join(",")}`);
@@ -594,6 +649,10 @@ export const useBrowserStore = defineStore("browser", () => {
     activeTab,
     isBrowserVisible,
     tabNativeState,
+    tabRecoveryRequired,
+    tabRecoveryBusy,
+    tabRecoveryMessage,
+    recoverNativeTabs,
     aiFiltered,
     tabNew,
     consumeActiveBlankTab,
