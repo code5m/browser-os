@@ -80,13 +80,19 @@ fn matching<'a>(state: &'a mut Owner, ticket: &str) -> Result<&'a mut Slot, Stri
     state.slot.as_mut().filter(|s| s.receipt.ticket == ticket)
         .ok_or_else(|| "TAB_MUTATION_STALE_TICKET".into())
 }
+fn completion_unknown(error: &str) -> bool {
+    matches!(error, "TAB_CREATE_CALLBACK_LOST" | "TAB_ACTIVATION_CALLBACK_LOST")
+}
 fn finish(ticket: &str, result: Result<Value, String>) {
     if let Ok(mut state) = owner() {
         if let Ok(slot) = matching(&mut state, ticket) {
             if !matches!(slot.receipt.phase, Phase::Running | Phase::CancelRequested) { return; }
             match result {
                 Ok(value) => { slot.receipt.phase = Phase::Succeeded; slot.receipt.value = Some(value); }
-                Err(error) => { slot.receipt.phase = Phase::Failed; slot.receipt.error = Some(error); }
+                Err(error) => {
+                    slot.receipt.phase = if completion_unknown(&error) { Phase::Unknown } else { Phase::Failed };
+                    slot.receipt.error = Some(error);
+                }
             }
         }
     }
@@ -119,7 +125,7 @@ pub(crate) fn tab_mutation(webview: Webview, app: AppHandle, request: Request) -
     match request {
         Request::Prepare { client_id, action } => {
             action.authorize(&webview)?;
-            if uuid::Uuid::parse_str(&client_id).is_err() { return Err("TAB_MUTATION_INVALID_ID".into()); }
+            if client_id.len() != 36 || uuid::Uuid::parse_str(&client_id).is_err() { return Err("TAB_MUTATION_INVALID_ID".into()); }
             let mut state = owner()?;
             if let Some(slot) = &state.slot {
                 if slot.receipt.client_id == client_id && slot.action.as_ref() == Some(&action) {
@@ -210,7 +216,9 @@ pub(super) async fn legacy<T: Send + 'static>(
     tauri::async_runtime::spawn_blocking(move || {
         let mut guard = WorkerGuard { ticket: ticket.clone(), completed: false };
         let result = operation(webview);
-        if let Ok(mut state) = owner() {
+        if result.as_ref().is_err_and(|error| completion_unknown(error)) {
+            unknown(&ticket);
+        } else if let Ok(mut state) = owner() {
             if matching(&mut state, &ticket).is_ok() { state.slot = None; }
         }
         guard.completed = true;

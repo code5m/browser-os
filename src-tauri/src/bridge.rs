@@ -39,7 +39,7 @@ pub(crate) use self::integration_commands::*;
 pub(crate) use self::resource_commands::*;
 pub(crate) use self::system_commands::*;
 pub(crate) use self::tab_runtime::*;
-pub(crate) use self::tab_mutation::{tab_mutation, tab_mutation_diagnostic};
+pub(crate) use self::tab_mutation::*;
 pub(crate) use self::terminal_commands::*;
 pub(crate) use self::workbench_commands::*;
 #[cfg(test)]

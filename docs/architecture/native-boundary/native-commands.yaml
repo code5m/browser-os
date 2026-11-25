@@ -1492,6 +1492,16 @@ commands:
     permission: "tauri.default-commands(main-only)"
     current_boundary: "centralized in bridge.rs — no per-capability native module"
     target_boundary: "shared webview execution service; capability state remains owned by callers"
+  tab_mutation:
+    file: "src-tauri/src/bridge/tab_mutation.rs"
+    owner: "browser"
+    category: "CAPABILITY_NATIVE_ADAPTER"
+    callers: "src/capabilities/browser/**"
+    side_effect: "prepare/start/cancel/poll/ack a bounded native tab mutation; only start crosses native dispatch"
+    resource: "WEBVIEW"
+    permission: "tauri.default-commands(main-only)"
+    current_boundary: "Browser-owned host receipt adapter; existing tab lifecycle implementation reused"
+    target_boundary: "ADR-20261125 D01; native terminal receipt and quarantined unknown outcome"
   tab_activate:
     file: "src-tauri/src/bridge/tab_runtime.rs"
     owner: "browser"

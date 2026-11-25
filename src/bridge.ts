@@ -45,14 +45,32 @@ const tabReceiptCall = (request: Record<string, unknown>) =>
 const receiptDelay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 async function ownedTabMutation<T>(action: TabAction): Promise<T> {
   const clientId = crypto.randomUUID();
-  const prepared = await tabReceiptCall({ phase: "prepare", client_id: clientId, action });
-  if (!prepared || prepared.client_id !== clientId) throw new Error("TAB_MUTATION_RECEIPT_MISSING");
+  let prepared: TabReceipt | null = null;
+  // Prepare has no side effects. Recover a lost prepare reply by inspecting
+  // this client nonce; never start an unrecognized or another client's ticket.
+  for (;;) {
+    try {
+      prepared = await tabReceiptCall({ phase: "prepare", client_id: clientId, action });
+    } catch (error) {
+      const message = String(error);
+      if (/TAB_MUTATION_OWNER_BUSY|TAB_MUTATION_INVALID_ID|NATIVE_LEGACY_ARGUMENT_|NATIVE_SOURCE_DENIED/.test(message)) throw error;
+      try {
+        const existing = await tabReceiptCall({ phase: "inspect" });
+        if (existing?.client_id === clientId) prepared = existing;
+        else if (existing) throw new Error("TAB_MUTATION_OWNER_BUSY");
+      } catch (inspectionError) {
+        if (String(inspectionError).includes("TAB_MUTATION_OWNER_BUSY")) throw inspectionError;
+      }
+    }
+    if (prepared?.client_id === clientId) break;
+    await receiptDelay(500);
+  }
   const ticket = prepared.ticket;
   // Send exactly once. Poll independently; a lost start reply never resubmits
   // the underlying mutation. Only native start with this ticket can run it.
   void tabReceiptCall({ phase: "start", ticket }).catch(() => {});
   const began = performance.now();
-  let cancelledPreparation = false;
+  let lastCancel = 0;
   for (;;) {
     let receipt: TabReceipt | null;
     try { receipt = await tabReceiptCall({ phase: "poll", ticket }); }
@@ -61,9 +79,10 @@ async function ownedTabMutation<T>(action: TabAction): Promise<T> {
       // Keep frontend admission quarantined, rather than inventing completion.
       await receiptDelay(500); continue;
     }
-    if (receipt.phase === "prepared" && !cancelledPreparation && performance.now() - began > 5000) {
-      cancelledPreparation = true;
-      void tabReceiptCall({ phase: "cancel", ticket }).catch(() => {});
+    if (receipt.phase === "prepared" && performance.now() - began > 5000 && performance.now() - lastCancel > 1000) {
+      lastCancel = performance.now();
+      // A cancelled preparation cannot be started by a late start message.
+      try { await tabReceiptCall({ phase: "cancel", ticket }); } catch {}
     }
     if (receipt.phase === "succeeded" || receipt.phase === "failed" || receipt.phase === "cancelled") {
       // Ack only authoritative host terminal state. Ack retry is idempotent.
@@ -906,6 +925,9 @@ export const bridge = {
 
   inspectTabMutation: () => tabReceiptCall({ phase: "inspect" }),
   cancelTabMutation: (ticket: string) => tabReceiptCall({ phase: "cancel", ticket }),
+  // Explicit recovery after a frontend reload: reconcile tabList first.
+  // Native code refuses nonterminal/unknown tickets regardless of this caller.
+  acknowledgeTabMutation: (ticket: string) => tabReceiptCall({ phase: "ack", ticket }),
 
   tabSetTitle: (id: string, title: string) =>
     invoke("tab_set_title", { id, title }),

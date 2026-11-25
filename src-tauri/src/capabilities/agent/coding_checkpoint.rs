@@ -74,15 +74,51 @@ fn key(storage: &Path, create: bool) -> Result<[u8; 32], String> {
     };
     if !initialized {
         // A removed marker must not select a fresh key for a sealed store.
-        for name in ["coding-sealed-records", "coding-backups"] {
-            match std::fs::read_dir(storage.join(name)) {
-                Ok(mut entries) if entries.next().is_some() => {
+        match std::fs::read_dir(storage.join("coding-sealed-records")) {
+            Ok(mut entries) => {
+                if entries.next().is_some() {
                     return Err("AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED".into());
                 }
-                Ok(_) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(_) => return Err("AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED".into()),
             }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err("AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED".into()),
+        }
+        // Permit a bounded legacy plaintext store to migrate, but never
+        // generate a new key over a sealed backup whose key marker is lost.
+        let backup_root = storage.join("coding-backups");
+        match std::fs::read_dir(&backup_root) {
+            Ok(sessions) => {
+                let mut count = 0usize;
+                let mut bytes_read = 0usize;
+                for session in sessions {
+                    let session = session.map_err(|_| "AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED")?;
+                    count += 1;
+                    if count > 1024 || !session.file_type().map_err(|_| "AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED")?.is_dir()
+                        || session.file_name().to_str().is_none_or(|id| uuid::Uuid::parse_str(id).is_err()) {
+                        return Err("AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED".into());
+                    }
+                    let directory = session.path();
+                    for entry in std::fs::read_dir(&directory).map_err(|_| "AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED")? {
+                        let entry = entry.map_err(|_| "AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED")?;
+                        count += 1;
+                        if count > 1024 { return Err("AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED".into()); }
+                        let name = entry.file_name();
+                        let name = name.to_str().ok_or("AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED")?;
+                        if !matches!(name, "manifest.json" | "apply-transaction.json")
+                            && uuid::Uuid::parse_str(name).is_err() {
+                            return Err("AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED".into());
+                        }
+                        let data = safe_paths::read_regular(&entry.path(), &[directory.clone()], 4 * 1024 * 1024 + OVERHEAD)
+                            .map_err(|_| "AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED")?;
+                        bytes_read = bytes_read.saturating_add(data.len());
+                        if bytes_read > 32 * 1024 * 1024 || data.starts_with(PREFIX) {
+                            return Err("AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED".into());
+                        }
+                    }
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err("AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED".into()),
         }
     }
     let encoded = match KeyringStore::get_token_result(key_id) {
