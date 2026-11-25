@@ -1539,7 +1539,7 @@ fn load_without_recovery(root: &Path, storage: &Path, id: Option<&str>) -> Resul
         #[cfg(any(target_os = "linux", target_os = "windows"))]
         let bytes = super::coding_checkpoint::read(storage, id, MAX_SESSION)?;
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-        let bytes = read_recovery_file(&path, MAX_SESSION, "AGENT_SESSION_READ_FAILED")?;
+        let bytes: Vec<u8> = Err("AGENT_PRIVATE_STORAGE_UNAVAILABLE")?;
         let session: Session = serde_json::from_slice(&bytes)
             .map_err(|_| "AGENT_SESSION_INVALID")?;
         if session.root != root.to_string_lossy() {
@@ -1587,18 +1587,29 @@ fn load(root: &Path, storage: &Path, id: Option<&str>) -> Result<Session, String
                 interrupted_external = true;
             }
         }
-        if session.status == "running" || interrupted_external {
-            use browseros_agent_foundation::task::TaskStatus;
-            session.status = if interrupted_external { "operation_unknown" } else { "interrupted" }.into();
-            if let Some(task) = &mut session.foundation_task {
-                if matches!(task.status, TaskStatus::Running | TaskStatus::AwaitingApproval) {
-                    task.status = TaskStatus::Paused;
-                    task.pending = None;
-                    task.revision = task.revision.checked_add(1).ok_or("AGENT_TASK_REVISION_EXHAUSTED")?;
-                }
+        use browseros_agent_foundation::task::TaskStatus;
+        // The native session owner excludes a live Coding execution. Examine
+        // every recorded run, even when the view status is not "running".
+        let mut interrupted_native = session.status == "running";
+        if let Some(task) = &mut session.foundation_task {
+            if matches!(task.status, TaskStatus::Running | TaskStatus::AwaitingApproval) {
+                task.revision = task.revision.checked_add(1).ok_or("AGENT_TASK_REVISION_EXHAUSTED")?;
+                task.status = TaskStatus::Paused;
+                task.pending = None;
+                interrupted_native = true;
             }
-            if let Some(run) = session.runs.last_mut() {
-                if run.status == "running" { run.status = "interrupted".into(); }
+        }
+        for run in &mut session.runs {
+            if run.status == "running" {
+                run.status = "interrupted".into();
+                interrupted_native = true;
+            }
+        }
+        if interrupted_native || interrupted_external {
+            if session.status != "recovery_conflict" {
+                session.status = if interrupted_external || session.operations.iter().any(|op| op.status == "unknown") {
+                    "operation_unknown"
+                } else { "interrupted" }.into();
             }
             save(storage, &session)?;
         }
@@ -1614,7 +1625,10 @@ fn save(storage: &Path, session: &Session) -> Result<Value, String> {
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     super::coding_checkpoint::write(storage, &session.session_id, &bytes, MAX_SESSION)?;
     #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-    atomic_write(&session_path(storage, &session.session_id)?, &bytes)?;
+    {
+        let _ = (storage, session, bytes);
+        return Err("AGENT_PRIVATE_STORAGE_UNAVAILABLE".into());
+    }
     serde_json::to_value(session).map_err(|_| "AGENT_SESSION_WRITE_FAILED".into())
 }
 
@@ -2292,6 +2306,24 @@ mod tests {
             |_, _| panic!("restore must not invoke the provider")).unwrap();
         assert_eq!(restored["status"], "interrupted");
         assert_eq!(restored["last_run_id"].as_str(), session.last_run_id.as_deref());
+    }
+
+    #[test]
+    fn recovery_marks_all_unfinished_runs_even_with_a_nonrunning_view_status() {
+        let f = Fixture::new();
+        let storage = f.0.join("state");
+        let mut session = load(&f.0, &storage, None).unwrap();
+        session.status = "review".into();
+        for status in ["running", "succeeded", "running"] {
+            session.runs.push(RunReceipt { id: uuid::Uuid::new_v4().to_string(), task_id: uuid::Uuid::new_v4(), status: status.into() });
+        }
+        save(&storage, &session).unwrap();
+        let restored = execute(&f.0, &storage, json!({"action":"session","session_id":session.session_id}),
+            |_, _| panic!("recovery cannot dispatch a provider")).unwrap();
+        assert_eq!(restored["status"], "interrupted");
+        assert_eq!(restored["runs"][0]["status"], "interrupted");
+        assert_eq!(restored["runs"][1]["status"], "succeeded");
+        assert_eq!(restored["runs"][2]["status"], "interrupted");
     }
 
     #[test]

@@ -205,3 +205,20 @@ Chat, Legacy and Coding now use the existing Foundation engine's bounded complet
 ## Linux process-tree containment
 
 Script/command and Linux MCP owners share a small descriptor-bound cgroup-v2 primitive. An operator may set BROWSEROS_DELEGATED_CGROUP_ROOT to an existing, user-owned, non-root delegated subtree containing the BrowserOS host; no mount, sudo, chmod, controller enablement or installation is performed. Each execution receives a fresh leaf and joins it in pre_exec before user code can fork. Descendants that call setsid or double-fork remain in the scope. Cleanup uses cgroup.kill and confirms the recursive populated field is zero before successful completion. Configured-but-unavailable delegation fails before dispatch; unconfigured hosts retain existing process-group behavior without a strict containment claim. Same-UID malicious cgroup migration, an external privileged actor, and host-crash orphan scope reconciliation remain explicit limitations; never adopt or kill an arbitrary preexisting cgroup. Windows Job behavior unchanged. MCP start failure cleans up the owned group; successful MCP receipt also requires its output reader to finish. Kernel contract: https://docs.kernel.org/admin-guide/cgroup-v2.html. Source-only tests NOT_RUN; no refs, CI, builds or checks.
+
+
+## End-of-round boundary and recovery tightening
+
+Cgroup preparation does not grant kill authority; a successful child spawn arms cleanup. Agent recovery examines all authenticated run records and running task status under session ownership, pauses interrupted tasks and retains unknown external effects. Unsupported platforms may not fall back to plaintext Coding session persistence. Linux PNG encoding observes cancellation at write boundaries; Windows CDP PNG parsing/decoding moves to a bounded worker with cancellation/document checks, and the capture receipt remains owned until decode completion. The existing watchdog receives non-blocking metadata-only capture phase and age in addition to tab mutation metadata. No screenshot renderer hard-memory-cap or forced renderer-exit guarantee is inferred from host-side bounds or callback cancellation. No GTK layout/lifecycle change. Test sources NOT_RUN.
+
+### Nine-item review disposition (source candidate, not acceptance)
+
+- Agent execution loop: Chat/Legacy/Coding share the Foundation complete-message engine; the experimental streaming Channel and existing approval/provider adapters are not a fully migrated universal engine.
+- Native permanent IPC loss: bounded lanes, generation fencing and unknown quarantine remain authoritative; safe same-host reuse after permanently lost native completion still needs proof of executor isolation, never force-release a slot.
+- GTK freeze: actual affected-host thread stack and reproducer unavailable (device offline). Metadata is evidence scaffolding, not a root-cause repair.
+- Capture: bounded preflight, worker decode/encode, document generation and receipts are implemented in source; hard-isolated renderer with whole-document fidelity and confirmed termination remains unimplemented.
+- Agent recovery: encrypted Coding records, leases, all unfinished-run recovery and external-effect reconciliation; not every experimental/manual path has a durable run owner.
+- Linux process tree: optional delegated cgroup-v2 path for script/MCP with recursive empty receipt; delegation must exist, fallback groups are not strict containment, crash-orphan reconciliation and other process owners remain outside this guarantee.
+- File conflict: encrypted pre-save drafts, post-save observation and explicit no-replace conflict copy, under D03 best-effort unmanaged-file policy.
+- IPC and module responsibilities: reuse existing receipt, engine, process and draft owners; no claim all paths and state machines are converged.
+- No installed-package, GUI, build, test, gate, CI or Actions verification performed; target branch/ref unchanged. Real-device evidence and permission to validate remain prerequisites for an acceptance decision.
