@@ -234,6 +234,43 @@ impl TaskRegistry {
         Ok(())
     }
 
+    /// Restore only a paused task from an authenticated host checkpoint.
+    /// The host must hold cross-process session ownership. This is never a
+    /// way to import an approval or restore a live execution lease.
+    pub fn restore_paused_record(&self, record: TaskRecord) -> Result<()> {
+        #[cfg(feature = "durable-sqlite")]
+        if self.durable.is_some() { return Err(FoundationError::InvalidTransition); }
+        if record.id.is_nil() || record.session_id.is_nil() || record.workspace_id.is_nil()
+            || record.status != TaskStatus::Paused || record.pending.is_some()
+            || record.goal.trim().is_empty() || record.goal.len() > 32_768
+        { return Err(FoundationError::InvalidInput("paused task checkpoint")); }
+        validate_context_list(&record.context)?;
+        let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
+        if tasks.contains_key(&record.id) { return Err(FoundationError::InvalidTransition); }
+        let id = record.id;
+        let (sender, _) = watch::channel(false);
+        self.signals.lock().unwrap_or_else(|e| e.into_inner()).insert(id, sender);
+        tasks.insert(id, record);
+        self.journal.append(id, EventKind::Interrupted);
+        Ok(())
+    }
+
+    /// Evict a quiescent in-memory projection; the host's encrypted session
+    /// checkpoint is authoritative. Never erase an active lease or SQLite row.
+    pub fn detach_paused_record(&self, id: Uuid) -> Result<()> {
+        #[cfg(feature = "durable-sqlite")]
+        if self.durable.is_some() { return Err(FoundationError::InvalidTransition); }
+        let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
+        let task = tasks.get(&id).ok_or(FoundationError::NotFound)?;
+        if task.status != TaskStatus::Paused || task.pending.is_some()
+            || self.execution_leases.lock().unwrap_or_else(|e| e.into_inner()).contains(&id)
+        { return Err(FoundationError::InvalidTransition); }
+        tasks.remove(&id);
+        self.signals.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
+        self.journal.retire_task(id);
+        Ok(())
+    }
+
     pub fn get(&self, id: Uuid) -> Result<TaskRecord> {
         self.tasks
             .lock()
@@ -635,6 +672,22 @@ impl TaskRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn paused_checkpoint_restores_same_task_and_new_revision() {
+        let registry = TaskRegistry::new(Arc::new(EventJournal::new(32)));
+        let task = registry.create_scoped(Uuid::new_v4(), Uuid::new_v4(), "coding", vec![]).unwrap();
+        registry.start(task.id).unwrap();
+        assert!(registry.detach_paused_record(task.id).is_err());
+        registry.pause(task.id).unwrap();
+        let checkpoint = registry.get(task.id).unwrap();
+        registry.detach_paused_record(task.id).unwrap();
+        assert!(registry.get(task.id).is_err());
+        registry.restore_paused_record(checkpoint.clone()).unwrap();
+        assert!(registry.restore_paused_record(checkpoint.clone()).is_err());
+        registry.start(task.id).unwrap();
+        assert_eq!(registry.get(task.id).unwrap().revision, checkpoint.revision + 1);
+    }
 
     #[test]
     fn stale_generation_cannot_finish_or_record_progress_after_resume() {

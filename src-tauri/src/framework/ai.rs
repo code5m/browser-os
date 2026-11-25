@@ -1872,10 +1872,8 @@ pub async fn coding_service(
                 .send(json!({"type":"delta","text":text}))
                 .map_err(|_| "AGENT_STREAM_DISCONNECTED".to_string())
         };
-        let execution = crate::capabilities::agent::public_api::ProductionExecution::begin_coding(
-            &cancel_root,
-            request["session_id"].as_str(),
-        )?;
+        // Coding owns Task admission under the native session lock. Read,
+        // list and review calls must not invent a successful execution.
         let cancel_session = request["session_id"].as_str().unwrap_or("").to_owned();
         let response = crate::capabilities::agent::public_api::dispatch_coding_request(
             &root,
@@ -1897,15 +1895,6 @@ pub async fn coding_service(
                 )
             },
         );
-        if _run_guard.as_ref().is_some_and(|guard| guard.cancelled())
-            || response
-                .as_ref()
-                .is_ok_and(|value| value["status"] == "cancelled")
-        {
-            execution.cancel()?;
-        } else {
-            execution.finish(response.is_ok())?;
-        }
         response
     })
     .await

@@ -2,12 +2,12 @@
 //! Plain chat and project-scoped Coding share the official Foundation TaskRegistry
 //! state machine and a single process-level task registry. Model transport and
 //! business tools remain in their separately approved owner adapters.
-//! Terminal tasks are retired after completion to avoid an unbounded cache.
-//! This is not a durable session store.
+//! Terminal tasks are retired; paused Coding tasks are detached after
+//! producing a host checkpoint. The Coding session stores that checkpoint.
 use browseros_agent_foundation::{
     context::ContextRef,
     event::EventJournal,
-    task::{TaskRegistry, TaskStatus},
+    task::{TaskRecord, TaskRegistry, TaskStatus},
 };
 use sha2::{Digest, Sha256};
 use std::{
@@ -54,14 +54,53 @@ impl ProductionExecution {
         Self::begin_scoped(kind, Uuid::nil(), Uuid::new_v4(), vec![])
     }
 
-    /// Session-bearing Coding calls use exactly the existing persisted session
-    /// UUID and stable canonical workspace identity for cancellation, approval
-    /// and task trace correlation. No invented UUID replaces a real session.
-    pub(crate) fn begin_coding(root: &Path, session_id: Option<&str>) -> Result<Self, String> {
-        match coding_scope(root, session_id)? {
-            Some((workspace, session)) => Self::begin_scoped("coding", workspace, session, vec![]),
-            None => Self::begin("coding"),
+    /// Resume one Coding Task across separate Runs under its native session
+    /// owner. The encrypted checkpoint is the authority across restarts.
+    pub(crate) fn resume_coding(root: &Path, session_id: &str, previous: Option<&TaskRecord>) -> Result<Self, String> {
+        let (workspace, session) = coding_scope(root, Some(session_id))?.ok_or("AGENT_SESSION_REQUIRED")?;
+        if let Some(record) = previous {
+            if record.workspace_id != workspace || record.session_id != session
+                || record.goal != "coding" || !record.context.is_empty()
+            { return Err("AGENT_TASK_SCOPE_MISMATCH".into()); }
+            match record.status {
+                TaskStatus::Paused => {
+                    let tasks = task_owner();
+                    tasks.restore_paused_record(record.clone()).map_err(|_| "AGENT_TASK_RESTORE_FAILED")?;
+                    if tasks.start(record.id).is_err() {
+                        let _ = tasks.detach_paused_record(record.id);
+                        return Err("AGENT_TASK_START_FAILED".into());
+                    }
+                    return Ok(Self { tasks, id: record.id, finished: false });
+                }
+                TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Cancelled => {}
+                _ => return Err("AGENT_TASK_RECOVERY_REQUIRED".into()),
+            }
         }
+        Self::begin_scoped("coding", workspace, session, vec![])
+    }
+
+    pub(crate) fn record(&self) -> Result<TaskRecord, String> {
+        self.tasks.get(self.id).map_err(|_| "AGENT_TASK_LOOKUP_FAILED".into())
+    }
+
+    /// A completed provider response can still mean a paused Task.
+    pub(crate) fn settle_coding(mut self, status: &str) -> Result<TaskRecord, String> {
+        match status {
+            "review" | "approval_required" | "step_limit" | "interrupted"
+                | "operation_unknown" | "operation_executing" =>
+                self.tasks.pause(self.id),
+            "complete" => self.tasks.finish(self.id, true),
+            "cancelled" => self.tasks.cancel(self.id),
+            _ => self.tasks.finish(self.id, false),
+        }.map_err(|_| "AGENT_TASK_SETTLE_FAILED")?;
+        let checkpoint = self.record()?;
+        if checkpoint.status == TaskStatus::Paused {
+            self.tasks.detach_paused_record(self.id).map_err(|_| "AGENT_TASK_DETACH_FAILED")?;
+        } else {
+            self.tasks.retire_terminal(self.id).map_err(|_| "AGENT_TASK_RETIRE_FAILED")?;
+        }
+        self.finished = true;
+        Ok(checkpoint)
     }
 
     pub(crate) fn begin_scoped(

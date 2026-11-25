@@ -9,6 +9,8 @@ const props=defineProps<{operation:Operation;root:string;claimOperation:(id:stri
 const emit=defineEmits<{(event:'resolve',value:{id:string;status:string;result:string}):void}>();
 const approved=ref(false),busy=ref(false),consumed=ref(false),result=ref(''),notice=ref('');
 const outcome=ref('succeeded');
+const evidence=ref('');
+const reconciliation=ref<'succeeded'|'not_applied'>('succeeded');
 const resultOwner=ref<{id:string;root:string}|null>(null);
 const mcpReview=ref<any>(null),credentialsApproved=ref(false),reviewing=ref(false);
 let reviewSequence=0;
@@ -47,19 +49,20 @@ async function executeOperation(){
     else if(kind==='database_context')response={result:(await import('../../database/public')).readCodingDatabaseContext()};
     else if(kind==='browser_context')response={result:(await import('../../browser/public')).readCodingBrowserContext()};
     else throw new Error('OPERATION_KIND_UNSUPPORTED');
-    outcome.value=response.result?.isError?'failed':'succeeded';result.value=operationResultText(response.result);notice.value='执行结果尚未发送模型，请先检查，再记录结果。';
-  }catch(error){outcome.value='failed';result.value=kind==='mcp'?mcpFailureCode(error):'WORKSPACE_OPERATION_FAILED';notice.value=(kind==='mcp'?mcpFailureHint(error):'操作失败；确认能力已启用及所需上下文已加载')+'。不会自动重试，请记录失败结果。';}finally{busy.value=false;}
+    outcome.value=response.result?.isError?(kind==='mcp'?'unknown':'failed'):'succeeded';result.value=operationResultText(response.result);notice.value='执行结果尚未发送模型，请先检查，再记录结果。';
+  }catch(error){outcome.value=kind==='mcp'?'unknown':'failed';result.value=kind==='mcp'?mcpFailureCode(error):'WORKSPACE_OPERATION_FAILED';notice.value=(kind==='mcp'?mcpFailureHint(error):'操作失败；确认能力已启用及所需上下文已加载')+'。不会自动重试，请记录结果并按需对账。';}finally{busy.value=false;}
 }
 function record(){if(!result.value||busy.value||resultOwner.value?.id!==props.operation.id||resultOwner.value?.root!==props.root)return;emit('resolve',{id:resultOwner.value.id,status:outcome.value,result:result.value});}
 function commandResult(value:{status:string;text:string}){emit('resolve',{id:props.operation.id,status:value.status,result:value.text});}
 function reject(){if(!busy.value&&!consumed.value)emit('resolve',{id:props.operation.id,status:'rejected',result:'The user rejected this operation.'});}
-function recordUnknown(){emit('resolve',{id:props.operation.id,status:'failed',result:'OPERATION_RESULT_UNKNOWN_USER_REVIEW_REQUIRED'});}
+function recordUnknown(){emit('resolve',{id:props.operation.id,status:'unknown',result:'OPERATION_RESULT_UNKNOWN_USER_REVIEW_REQUIRED'});}
+function reconcile(){if(!evidence.value.trim())return;emit('resolve',{id:props.operation.id,status:reconciliation.value==='succeeded'?'reconciled_succeeded':'reconciled_not_applied',result:evidence.value.trim()});}
 </script>
 <template><section class="operation-review" :aria-label="'审批操作 '+operation.kind">
  <strong>等待审批 · {{({command:'命令片段',mcp:'MCP 工具',code_diagnostics:'代码诊断',git_context:'Git 状态',database_context:'数据库结构',browser_context:'浏览器标签'} as any)[operation.kind]}}</strong><pre>{{JSON.stringify(operation.input,null,2)}}</pre>
  <p v-if="operation.kind==='git_context'">只读当前编码项目的 Git 状态：{{root}}。不提交、拉取或推送。</p><p v-if="operation.kind==='database_context'">仅读取数据库模块当前已加载的表/视图名称，不连接数据库、不执行 SQL。</p><p v-if="operation.kind==='browser_context'">仅读取现有标签标题和地址；地址移除账号、密码、查询参数和片段，不读取网页内容。</p>
  <p v-if="operation.kind==='code_diagnostics'">请先在编辑器启用本项目语言服务，并处理待审核变更。仅使用你已批准的隔离范围分析 Rust 文本；不运行 Cargo、测试或项目脚本，诊断成功不代表编译通过。</p>
- <template v-if="operation.status==='executing'&&!consumed"><p class="recovery-warning">此操作的执行结果未知，可能已经执行。请检查运行记录或外部系统，再记录状态；不会自动再次执行。</p><button @click="recordUnknown">已核对，记录结果未知</button></template>
+ <template v-if="operation.status==='unknown'||(operation.status==='executing'&&!consumed)"><p class="recovery-warning">外部结果尚未确认。超时、取消或通信失败不代表操作未生效；不会自动重试。</p><button v-if="operation.status==='executing'" @click="recordUnknown">暂时记录为结果未知</button><label>核对外部系统后的结果 <select v-model="reconciliation"><option value="succeeded">已确认生效</option><option value="not_applied">已确认未生效</option></select></label><textarea v-model="evidence" placeholder="填写实际回执、外部系统记录或核对依据（不要包含凭据）" aria-label="对账依据"></textarea><button :disabled="!evidence.trim()||busy" @click="reconcile">确认并记录对账结果</button></template>
  <template v-else>
  <p>{{consumed?'请求已发出，请核实并记录结果。':'这是模型提出的请求，尚未执行。请核对目标和参数。'}}{{operation.kind==='code_diagnostics'?'本次只分析源文本，不修改项目文件或应用修复。':'执行可能修改文件、外部系统或数据。'}}</p>
  <CodingCommandPanel v-if="operation.kind==='command'" :proposal="operation.input" :before-execute="()=>claimOperation(operation.id)" @result="commandResult" @running="busy=$event" @attempt="consumed=true"/>

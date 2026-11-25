@@ -48,6 +48,8 @@ pub(crate) fn prepare_coding_session(
             | "apply"
             | "claim_operation"
             | "resolve_operation"
+            | "reconcile_operation"
+            | "export_changes"
     ) {
         return Ok(None);
     }
