@@ -202,12 +202,16 @@ async function forgetRestoredRun() {
       !['completed','failed','cancelled'].includes(record.phase)) return;
   const revision = ++historyRevision;
   historyLoading.value = true;
-  try { await aiService.forgetTextRun(record.id); }
+  let archived = false;
+  try { archived = (await aiService.forgetTextRun(record.id)).archived; }
   catch (reason) { if (revision === historyRevision) historyError.value = String(reason); return; }
   finally { if (revision === historyRevision) historyLoading.value = false; }
   if (revision !== historyRevision) return;
   await restoreRun(record.id);
   await loadRunHistory();
+  if (!archived && revision + 2 === historyRevision) {
+    historyError.value = '本条内容已清理，归档尚未确认；可再次归档，原运行 ID 保留。';
+  }
 }
 watch(() => props.active, active => {
   if (active === false && currentRequestId) void stopReply();
@@ -242,7 +246,8 @@ onMounted(refreshModels);
       <button v-if="restored.can_resume||restored.successor" :disabled="busy||historyLoading" @click="resumeRestoredRun">{{restored.successor?'恢复已登记的后续运行（未发布的请求可能重新计费）':'明确重新执行此未完成的模型请求（可能再次计费）'}}</button>
       <p v-if="!restored.can_continue&&!restored.can_resume&&!restored.successor" class="hint">此记录仅供查看；如需新任务请新建会话。</p>
       <p v-if="restored.can_continue&&restored.profile_id!==modelId" class="hint">原模型未配置，不能通过其他模型接续此记录。</p>
-      <details v-if="['completed','failed','cancelled'].includes(restored.phase)&&restored.has_payload"><summary>清理本条终态记录的内容</summary><p>清理后此条内容不可恢复，保留运行 ID；其他记录可能仍保存上下文副本。</p><button :disabled="busy||historyLoading" @click="forgetRestoredRun">确认清理此条内容</button></details>
+      <p v-if="restored.archived" class="hint">终态回执已归档，活跃记录容量已释放；运行 ID 仍保留。</p>
+      <details v-if="['completed','failed','cancelled'].includes(restored.phase)&&(restored.has_payload||restored.forgotten&&!restored.archived)"><summary>{{restored.forgotten?'重试终态归档':'清理本条终态记录的内容并归档'}}</summary><p>清理后此条内容不可恢复，保留运行 ID；其他记录可能仍保存上下文副本。归档发布确认前不会移除活跃记录。</p><button :disabled="busy||historyLoading" @click="forgetRestoredRun">{{restored.forgotten?'确认重试归档':'确认清理并归档'}}</button></details>
     </section>
     <main class="history" aria-live="polite"><p v-if="!lines.length" class="hint">选择一个已配置模型即可开始聊天，无需输入项目地址。编码和文件操作请切换到「编码工作区」。</p><article v-for="(line,index) in lines" :key="index" :class="line.role"><strong>{{line.role==='user'?'你':'智能体'}}</strong><p>{{line.content}}</p></article></main>
     <p v-if="error" class="error" role="alert">{{error}}</p><p v-if="utf8Bytes(prompt.trim()) > 24000" class="error">消息超过后端 24000 字节限制</p>

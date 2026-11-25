@@ -56,6 +56,23 @@ fn canonical_id(value: &str) -> bool {
 /// Capture the exact legacy plaintext bytes before the first encrypted write.
 /// No previously sealed store is permitted to create a new legacy inventory.
 fn collect_legacy_inventory(storage: &Path) -> Result<LegacyInventory, String> {
+    // These namespaces have never had plaintext records. A missing key
+    // initialization marker beside existing encrypted production runs is
+    // not a first-run migration, and must never generate a replacement key.
+    for name in ["agent-run-receipts", "agent-run-archive"] {
+        let directory = private_directory(storage, name)?;
+        for (index, entry) in std::fs::read_dir(&directory)
+            .map_err(|_| "AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED")?.enumerate() {
+            if index >= 32768 { return Err("AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED".into()); }
+            let entry = entry.map_err(|_| "AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED")?;
+            let filename = entry.file_name();
+            let filename = filename.to_str().ok_or("AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED")?;
+            if !is_cas_sidecar(filename)
+                || safe_paths::read_regular(&entry.path(), &[directory.clone()], 1)
+                    .map_err(|_| "AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED")?.len() != 0
+            { return Err("AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED".into()); }
+        }
+    }
     let mut records = LegacyInventory::new();
     let mut count = 0usize;
     let mut bytes_read = 0usize;
@@ -364,13 +381,21 @@ pub(super) fn write(storage: &Path, id: &str, plaintext: &[u8], limit: usize) ->
 const RUN_LIMIT: usize = 1024 * 1024;
 const MAX_RUN_RECORDS: usize = 4096;
 const MAX_RUN_DIRECTORY_ENTRIES: usize = 32768;
+// Terminal payload compaction is explicit. The immutable archive preserves
+// replay IDs, Task/Session identity and lineage without model text.
+const ARCHIVE_LIMIT: usize = 64 * 1024;
+const MAX_ARCHIVED_RUNS: usize = 16384;
+const MAX_ARCHIVE_DIRECTORY_ENTRIES: usize = 65536;
 
 fn run_catalog_ids(directory: &Path) -> Result<Vec<uuid::Uuid>, String> {
+    bounded_run_ids(directory, MAX_RUN_RECORDS, MAX_RUN_DIRECTORY_ENTRIES)
+}
+fn bounded_run_ids(directory: &Path, max_records: usize, max_entries: usize) -> Result<Vec<uuid::Uuid>, String> {
     let mut ids = Vec::new();
     for (index, entry) in std::fs::read_dir(directory)
         .map_err(|_| "AGENT_RUN_CATALOG_UNAVAILABLE")?.enumerate()
     {
-        if index >= MAX_RUN_DIRECTORY_ENTRIES {
+        if index >= max_entries {
             return Err("AGENT_RUN_CATALOG_REVIEW_REQUIRED".into());
         }
         let entry = entry.map_err(|_| "AGENT_RUN_CATALOG_UNAVAILABLE")?;
@@ -384,7 +409,7 @@ fn run_catalog_ids(directory: &Path) -> Result<Vec<uuid::Uuid>, String> {
             return Err("AGENT_RUN_CATALOG_REVIEW_REQUIRED".into());
         }
         ids.push(uuid::Uuid::parse_str(id).map_err(|_| "AGENT_RUN_CATALOG_REVIEW_REQUIRED")?);
-        if ids.len() > MAX_RUN_RECORDS { return Err("AGENT_RUN_CATALOG_FULL".into()); }
+        if ids.len() > max_records { return Err("AGENT_RUN_CATALOG_FULL".into()); }
     }
     ids.sort_unstable();
     Ok(ids)
@@ -398,7 +423,14 @@ pub(super) struct RunCheckpoint {
 impl RunCheckpoint {
     pub(super) fn catalog_page(storage: &Path, after: Option<uuid::Uuid>) -> Result<(Vec<uuid::Uuid>, Option<uuid::Uuid>), String> {
         let directory = private_directory(storage, "agent-run-receipts")?;
-        let mut page: Vec<_> = run_catalog_ids(&directory)?.into_iter()
+        let archive = private_directory(storage, "agent-run-archive")?;
+        // Active-before-archive scanning cannot omit a record solely
+        // because archival publication precedes active-record removal.
+        let mut ids = run_catalog_ids(&directory)?;
+        ids.extend(bounded_run_ids(&archive, MAX_ARCHIVED_RUNS, MAX_ARCHIVE_DIRECTORY_ENTRIES)?);
+        ids.sort_unstable();
+        ids.dedup(); // interrupted archival may leave two identical copies
+        let mut page: Vec<_> = ids.into_iter()
             .filter(|id| after.map_or(true, |cursor| *id > cursor)).take(17).collect();
         let next = if page.len() > 16 { page.pop(); page.last().copied() } else { None };
         Ok((page, next))
@@ -406,17 +438,20 @@ impl RunCheckpoint {
     /// Unknown IDs must not create an unbounded collection of run locks.
     pub(super) fn record_exists(storage: &Path, id: uuid::Uuid) -> Result<bool, String> {
         if id.is_nil() { return Err("AGENT_RUN_ID_INVALID".into()); }
+        let archive = private_directory(storage, "agent-run-archive")?;
         let directory = private_directory(storage, "agent-run-receipts")?;
-        match std::fs::symlink_metadata(directory.join(format!("{id}.run"))) {
-            Ok(meta) if meta.is_file() => Ok(true),
-            Ok(_) => Err("AGENT_RUN_RECEIPT_INVALID".into()),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                if sealed_marker(storage, &format!("production-run:v1:{id}"), false)? {
-                    Err("AGENT_RUN_RECEIPT_MISSING".into())
-                } else { Ok(false) }
+        let present = |parent: &Path| -> Result<bool, String> {
+            match std::fs::symlink_metadata(parent.join(format!("{id}.run"))) {
+                Ok(meta) if meta.is_file() => Ok(true),
+                Ok(_) => Err("AGENT_RUN_RECEIPT_INVALID".into()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+                Err(_) => Err("AGENT_RUN_RECEIPT_INVALID".into()),
             }
-            Err(_) => Err("AGENT_RUN_RECEIPT_INVALID".into()),
-        }
+        };
+        if present(&archive)? || present(&directory)? || present(&archive)? { return Ok(true); }
+        if sealed_marker(storage, &format!("production-run:v1:{id}"), false)? {
+            Err("AGENT_RUN_RECEIPT_MISSING".into())
+        } else { Ok(false) }
     }
     pub(super) fn acquire(storage: &Path, id: uuid::Uuid) -> Result<Self, String> {
         if id.is_nil() { return Err("AGENT_RUN_ID_INVALID".into()); }
@@ -428,9 +463,29 @@ impl RunCheckpoint {
     }
     fn path(&self) -> PathBuf { self.directory.join(format!("{}.run", self.id)) }
     fn scope(&self) -> String { format!("production-run:v1:{}", self.id) }
+    fn archive_directory(&self) -> Result<PathBuf, String> {
+        private_directory(&self.storage, "agent-run-archive")
+    }
+    fn archive_snapshot(&self) -> Result<Option<safe_paths::FileSnapshot>, String> {
+        let directory = self.archive_directory()?;
+        safe_paths::read_versioned(&directory.join(format!("{}.run", self.id)), &[directory.clone()],
+            ARCHIVE_LIMIT + OVERHEAD)
+    }
+    pub(super) fn archive_confirmed(&self) -> Result<bool, String> {
+        Ok(self.archive_snapshot()?.is_some()
+            && safe_paths::read_versioned(&self.path(), &[self.directory.clone()], RUN_LIMIT + OVERHEAD)?.is_none())
+    }
     pub(super) fn read(&self) -> Result<Option<Vec<u8>>, String> {
         let roots = [self.directory.clone()];
-        let Some(record) = safe_paths::read_versioned(&self.path(), &roots, RUN_LIMIT + OVERHEAD)? else {
+        let active = safe_paths::read_versioned(&self.path(), &roots, RUN_LIMIT + OVERHEAD)?;
+        if let Some(archived) = self.archive_snapshot()? {
+            let bytes = open(&key(&self.storage, false)?, &self.scope(), &archived.bytes)?;
+            if bytes.len() > ARCHIVE_LIMIT || active.as_ref().is_some_and(|record| record.bytes != archived.bytes) {
+                return Err("AGENT_RUN_ARCHIVE_CONFLICT".into());
+            }
+            return Ok(Some(bytes));
+        }
+        let Some(record) = active else {
             // A previously initialized missing record is not a new request.
             if sealed_marker(&self.storage, &self.scope(), false)? {
                 return Err("AGENT_RUN_RECEIPT_MISSING".into());
@@ -441,7 +496,54 @@ impl RunCheckpoint {
         if bytes.len() > RUN_LIMIT { return Err("AGENT_RUN_RECEIPT_LIMIT".into()); }
         Ok(Some(bytes))
     }
+    /// Caller holds this Run lock and has already authenticated a terminal
+    /// compacted text record. Publish an identical ciphertext with
+    /// no-replace before removing the active copy. Neither a crash between
+    /// publication/removal nor a repeated archival can resurrect a Run ID.
+    pub(super) fn archive_terminal(&self) -> Result<(), String> {
+        let locks = private_directory(&self.storage, "coding-owner-locks")?;
+        let _catalog = AuditLock::acquire_named(&locks.join("run-catalog.lock"), Duration::from_secs(2))
+            .map_err(|_| "AGENT_RUN_CATALOG_BUSY")?;
+        let roots = [self.directory.clone()];
+        let active = safe_paths::read_versioned(&self.path(), &roots, RUN_LIMIT + OVERHEAD)?;
+        let archive = self.archive_directory()?;
+        let archive_path = archive.join(format!("{}.run", self.id));
+        let mut published = self.archive_snapshot()?;
+        let secret = key(&self.storage, false)?;
+        if let Some(archived) = &published {
+            open(&secret, &self.scope(), &archived.bytes)?;
+            if active.as_ref().is_some_and(|record| record.bytes != archived.bytes) {
+                return Err("AGENT_RUN_ARCHIVE_CONFLICT".into());
+            }
+        } else {
+            let source = active.as_ref().ok_or("AGENT_RUN_RECEIPT_MISSING")?;
+            if open(&secret, &self.scope(), &source.bytes)?.len() > ARCHIVE_LIMIT {
+                return Err("AGENT_RUN_ARCHIVE_LIMIT".into());
+            }
+            if bounded_run_ids(&archive, MAX_ARCHIVED_RUNS, MAX_ARCHIVE_DIRECTORY_ENTRIES)?.len() >= MAX_ARCHIVED_RUNS {
+                return Err("AGENT_RUN_ARCHIVE_FULL".into());
+            }
+            if !sealed_marker(&self.storage, &self.scope(), false)? {
+                return Err("AGENT_RUN_RECEIPT_MISSING".into());
+            }
+            safe_paths::create_new_file(&archive_path, &[archive.clone()], &source.bytes)
+                .map_err(|_| "AGENT_RUN_ARCHIVE_PUBLICATION_PENDING")?;
+            published = self.archive_snapshot()?;
+            if published.as_ref().map(|record| &record.bytes) != Some(&source.bytes) {
+                return Err("AGENT_RUN_ARCHIVE_PUBLICATION_PENDING".into());
+            }
+        }
+        // Retain the sealed marker and archive even if removal fails. A
+        // later retry can remove the exact duplicate under the same lock.
+        if published.is_none() { return Err("AGENT_RUN_ARCHIVE_PUBLICATION_PENDING".into()); }
+        if let Some(source) = &active {
+            safe_paths::remove_if_unchanged(&self.path(), &roots, source, RUN_LIMIT + OVERHEAD)?;
+        }
+        if !self.archive_confirmed()? { return Err("AGENT_RUN_ARCHIVE_PUBLICATION_PENDING".into()); }
+        Ok(())
+    }
     pub(super) fn write(&self, bytes: &[u8]) -> Result<(), String> {
+        if self.archive_snapshot()?.is_some() { return Err("AGENT_RUN_ARCHIVED".into()); }
         if bytes.len() > RUN_LIMIT { return Err("AGENT_RUN_RECEIPT_LIMIT".into()); }
         let roots = [self.directory.clone()];
         let path = self.path();
@@ -565,6 +667,29 @@ mod tests {
         assert_eq!(run_catalog_ids(&directory).unwrap(), vec![id]);
         std::fs::write(directory.join("bad.run"), b"invalid identity").unwrap();
         assert!(run_catalog_ids(&directory).is_err());
+        std::fs::remove_dir_all(storage).unwrap();
+    }
+
+    #[test]
+    fn archive_preserves_identity_and_is_idempotent_after_duplicate_publication() {
+        let storage = std::env::temp_dir().join(format!("browseros-run-archive-{}", uuid::Uuid::new_v4()));
+        let id = uuid::Uuid::new_v4();
+        let run = RunCheckpoint::acquire(&storage, id).unwrap();
+        run.write(b"compact fixture").unwrap();
+        let original = std::fs::read(run.path()).unwrap();
+        let archive = run.archive_directory().unwrap();
+        // Simulate publication followed by a crash before active removal.
+        safe_paths::create_new_file(&archive.join(format!("{id}.run")), &[archive.clone()], &original).unwrap();
+        assert!(!run.archive_confirmed().unwrap());
+        assert_eq!(run.read().unwrap().unwrap(), b"compact fixture");
+        assert!(run.write(b"replay").is_err());
+        run.archive_terminal().unwrap();
+        run.archive_terminal().unwrap();
+        assert!(run.archive_confirmed().unwrap());
+        assert_eq!(run.read().unwrap().unwrap(), b"compact fixture");
+        assert!(RunCheckpoint::record_exists(&storage,id).unwrap());
+        assert_eq!(RunCheckpoint::catalog_page(&storage,None).unwrap().0,vec![id]);
+        drop(run);
         std::fs::remove_dir_all(storage).unwrap();
     }
 

@@ -1626,8 +1626,8 @@ pub fn execute(path: &Path, request: AiRequest) -> Result<Value, String> {
         "run_restore" => return ProductionExecution::read_text_run(storage, parse_chat_request_id(&request.id)?),
         "run_forget" => {
             if !request.confirmed { return Err("AGENT_RUN_FORGET_APPROVAL_REQUIRED".into()); }
-            ProductionExecution::forget_text_payload(storage, parse_chat_request_id(&request.id)?)?;
-            return Ok(json!({"forgotten":true}));
+            let archived = ProductionExecution::forget_text_payload(storage, parse_chat_request_id(&request.id)?)?;
+            return Ok(json!({"forgotten":true,"archived":archived}));
         }
         "run_continue" if !request.confirmed || request.request_id.is_empty() =>
             return Err("AGENT_RUN_RESUME_APPROVAL_REQUIRED".into()),

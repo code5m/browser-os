@@ -10,7 +10,7 @@ export type TextRunSummary = {
   can_resume:boolean; can_continue:boolean;
 };
 export type TextRunRecord = TextRunSummary & {
-  profile_id?:string|null; model?:string; messages:{role:'user'|'assistant';content:string}[];
+  profile_id?:string|null; model?:string; archived?:boolean; messages:{role:'user'|'assistant';content:string}[];
 };
 export const aiService = {
   textRuns: (cursor=''):Promise<{runs:TextRunSummary[];next_cursor:string|null;unavailable:number}> =>
@@ -18,7 +18,7 @@ export const aiService = {
   restoreTextRun: (id:string):Promise<TextRunRecord> => bridge.aiService({action:'run_restore',id}),
   continueTextRun: (id:string,requestId:string,message=''):Promise<{content:string;model:string}> =>
     bridge.aiService({action:'run_continue',id,request_id:requestId,message,confirmed:true}),
-  forgetTextRun: (id:string):Promise<{forgotten:boolean}> => bridge.aiService({action:'run_forget',id,confirmed:true}),
+  forgetTextRun: (id:string):Promise<{forgotten:boolean;archived:boolean}> => bridge.aiService({action:'run_forget',id,confirmed:true}),
   list: ():Promise<AiConfiguration> => bridge.aiService({action:'list'}),
   importLocal: ():Promise<{imported:number;total:number;plugin_credentials:number;plugins:number;total_plugins:number;sources:string[];skipped:string[];credential_cleanup_pending?:boolean}> => bridge.aiService({action:'import'}),
   save: (profile:AiProfile,credential:string):Promise<{saved:boolean;credential_cleanup_pending?:boolean}> => bridge.aiService({action:'save',profile,credential}),

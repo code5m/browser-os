@@ -365,6 +365,7 @@ impl ProductionExecution {
                 response["model"] = text.input["model"].clone();
             }
             response["messages"] = serde_json::json!(messages);
+            response["archived"] = serde_json::json!(owner.checkpoint.archive_confirmed()?);
             Ok(response)
         }
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
@@ -499,7 +500,7 @@ impl ProductionExecution {
 
     /// Explicit terminal payload compaction: preserve the replay identity
     /// and any unpublished reservation. Other records may retain copies.
-    pub(crate) fn forget_text_payload(storage: &Path, id: Uuid) -> Result<(), String> {
+    pub(crate) fn forget_text_payload(storage: &Path, id: Uuid) -> Result<bool, String> {
         #[cfg(any(target_os = "linux", target_os = "windows"))]
         {
             let owner = DurableRun::lookup(storage, id)?;
@@ -508,6 +509,10 @@ impl ProductionExecution {
             let mut record = owner.recover_record(record)?;
             if !matches!(record.task.status, TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Cancelled) {
                 return Err("AGENT_RUN_NOT_TERMINAL".into());
+            }
+            if record.payload_forgotten && record.text.is_none()
+                && record.successor.as_ref().map_or(true, |next| next.input.is_none()) {
+                return Ok(owner.checkpoint.archive_terminal().is_ok());
             }
             if let Some(next) = &mut record.successor {
                 let child = DurableRun::lookup(storage, next.id)?.read_record()?.ok_or("AGENT_RUN_SUCCESSOR_PENDING")?;
@@ -520,7 +525,10 @@ impl ProductionExecution {
             record.text = None;
             record.payload_forgotten = true;
             record.updated_at_ms = unix_ms();
-            owner.write_record(&record)
+            owner.write_record(&record)?;
+            // The compact receipt is already durable even if archival is
+            // pending. Report capacity release separately and allow retry.
+            Ok(owner.checkpoint.archive_terminal().is_ok())
         }
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         { let _ = (storage, id); Err("AGENT_PRIVATE_STORAGE_UNAVAILABLE".into()) }
