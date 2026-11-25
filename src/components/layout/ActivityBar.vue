@@ -33,14 +33,15 @@ async function captureCurrentPage() {
     addHomeDirectoryShortcut(directory);
     layout.showToast('整页截图已保存；主页已加入“截图目录”');
   } catch (error) {
-    const code = String(error).match(/CAPTURE_[A-Z_]+/)?.[0] ?? 'CAPTURE_FAILED';
+    const code = String(error).match(/(?:CAPTURE|TAB_CONTROL)_[A-Z_]+/)?.[0] ?? 'CAPTURE_FAILED';
     layout.showToast(code==='CAPTURE_RECOVERY_REQUIRED'||code==='CAPTURE_OUTCOME_UNKNOWN'||code==='TAB_CONTROL_REPLY_TIMEOUT'
       ? '截图状态未确认，请通过菜单查询或取消截图任务；不会自动重试。' : '整页截图失败：' + code);
   } finally { capturingPage.value = false; }
 }
 async function recoverCapture() {
   try {
-    const view=await bridge.inspectCapture();
+    let view=await bridge.inspectCapture();
+    if(!view.receipt) view=await bridge.fenceCapture(view.epoch,view.next_sequence);
     const receipt=view.receipt??view.last_completed;
     if(!receipt){layout.showToast('没有待恢复的截图任务');return;}
     if(!['succeeded','failed','cancelled'].includes(receipt.phase)){

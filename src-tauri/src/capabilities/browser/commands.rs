@@ -435,7 +435,7 @@ pub fn report_resources(
 // One native capture owner replaces the former IPC-waiter-owned lane.
 // It retains admission through engine callback, encoding and publication.
 // A disconnected caller is never evidence of renderer termination.
-use tauri_plugin_browser_tabs::{CaptureCancellation, TabManagerState};
+use tauri_plugin_browser_tabs::{CaptureCancellation, CaptureDocument, TabManagerState};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -524,30 +524,20 @@ fn capture_ack(ticket: &str) -> Result<(), String> {
     owner.last_completed = owner.slot.take().map(|slot| slot.receipt);
     Ok(())
 }
-async fn run_capture(app: AppHandle, id: String, ticket: String, cancellation: CaptureCancellation) {
+async fn run_capture(app: AppHandle, id: String, ticket: String, document: CaptureDocument, cancellation: CaptureCancellation) {
     let mut guard = CaptureWorkerGuard { app: app.clone(), ticket: ticket.clone(), completed: false };
     let manager = app.state::<TabManagerState>();
-    let document = match manager.capture_document(&id) {
-        Ok(document) => document,
-        Err(_) => {
-            capture_finish(&app, &ticket, CapturePhase::Failed, Err("CAPTURE_TAB_UNAVAILABLE".into()));
-            guard.completed = true;
-            return;
-        }
-    };
     if cancellation.is_cancelled() {
         capture_finish(&app, &ticket, CapturePhase::Cancelled, Err("CAPTURE_CANCELLED_BEFORE_DISPATCH".into()));
         guard.completed = true;
         return;
     }
     let (send, mut recv) = tokio::sync::oneshot::channel();
-    if manager.capture_full_page_cancellable(&id, cancellation.clone(), move |result| {
+    let _dispatch = manager.capture_bound_document(&id, document.clone(), cancellation.clone(), move |result| {
         let _ = send.send(result);
-    }).is_err() {
-        // The dispatcher did not supply an authoritative callback receipt.
-        // Keep admission rather than assuming a native dispatch did not occur.
-        return;
-    }
+    });
+    // Even a dispatch error must not discard a callback which may already
+    // have been queued. A closed reply channel without a receipt is UNKNOWN.
     drop(manager);
     let native = match tokio::time::timeout(std::time::Duration::from_secs(30), &mut recv).await {
         Ok(value) => value,
@@ -596,6 +586,8 @@ fn begin_capture(app: AppHandle, id: String, ticket: String, epoch: &str, sequen
     if app.state::<AppState>().shutdown_requested.load(Ordering::Acquire) {
         return Err("CAPTURE_APPLICATION_SHUTTING_DOWN".into());
     }
+    let document = app.state::<TabManagerState>().capture_document(&id)
+        .map_err(|_| "CAPTURE_TAB_UNAVAILABLE")?;
     let cancellation = CaptureCancellation::new();
     {
         let mut owner = CAPTURE_OWNER.lock().map_err(|_| "CAPTURE_OWNER_UNKNOWN")?;
@@ -614,14 +606,16 @@ fn begin_capture(app: AppHandle, id: String, ticket: String, epoch: &str, sequen
     }
     // Spawn independent work before returning the receipt. No callback needs
     // the original invoke future or its frontend to continue.
-    let _ = tauri::async_runtime::spawn(run_capture(app, id, ticket, cancellation));
+    let _ = tauri::async_runtime::spawn(run_capture(app, id, ticket, document, cancellation));
     Ok(())
 }
 
 #[derive(serde::Deserialize)]
 #[serde(tag = "phase", rename_all = "snake_case")]
-pub(crate) enum CaptureRequest {
+pub enum CaptureRequest {
     Inspect,
+    Fence { epoch: String, sequence: String },
+    CancelPending { id: String, ticket: String, epoch: String, sequence: String },
     Start { id: String, ticket: String, epoch: String, sequence: String },
     Cancel { ticket: String },
     Ack { ticket: String },
@@ -641,6 +635,35 @@ pub async fn capture_full_page(
     if let Some(request) = request {
         match request {
             CaptureRequest::Inspect => {}
+            CaptureRequest::Fence { epoch, sequence } => {
+                let mut owner = CAPTURE_OWNER.lock().map_err(|_| "CAPTURE_OWNER_UNKNOWN")?;
+                if owner.slot.is_some() { return Err("CAPTURE_BUSY".into()); }
+                if epoch != owner.epoch { return Err("CAPTURE_STALE_EPOCH".into()); }
+                if sequence != owner.next_sequence.to_string() { return Err("CAPTURE_STALE_SEQUENCE".into()); }
+                owner.next_sequence = owner.next_sequence.checked_add(1).ok_or("CAPTURE_SEQUENCE_EXHAUSTED")?;
+            }
+            CaptureRequest::CancelPending { id, ticket, epoch, sequence } => {
+                crate::shared::invocation::check_tab_id(&id)?;
+                if ticket.len() != 36 || uuid::Uuid::parse_str(&ticket).map_or(true, |id| id.get_version_num() != 4) {
+                    return Err("CAPTURE_INVALID_TICKET".into());
+                }
+                let cancelled_before_start = {
+                    let mut owner = CAPTURE_OWNER.lock().map_err(|_| "CAPTURE_OWNER_UNKNOWN")?;
+                    if epoch != owner.epoch { return Err("CAPTURE_STALE_EPOCH".into()); }
+                    if owner.last_completed.as_ref().is_some_and(|r| r.ticket == ticket) { true }
+                    else if let Some(slot) = &owner.slot {
+                        if slot.receipt.ticket != ticket || slot.receipt.tab_id != id { return Err("CAPTURE_BUSY".into()); }
+                        false
+                    } else {
+                        if sequence != owner.next_sequence.to_string() { return Err("CAPTURE_STALE_SEQUENCE".into()); }
+                        owner.next_sequence = owner.next_sequence.checked_add(1).ok_or("CAPTURE_SEQUENCE_EXHAUSTED")?;
+                        owner.last_completed = Some(CaptureReceipt { ticket: ticket.clone(), tab_id: id,
+                            phase: CapturePhase::Cancelled, path: None, error: Some("CAPTURE_CANCELLED_BEFORE_DISPATCH".into()) });
+                        true
+                    }
+                };
+                if !cancelled_before_start { capture_cancel(&app, &ticket)?; }
+            }
             CaptureRequest::Start { id, ticket, epoch, sequence } =>
                 begin_capture(app.clone(), id, ticket, &epoch, &sequence)?,
             CaptureRequest::Cancel { ticket } => capture_cancel(&app, &ticket)?,

@@ -99,6 +99,10 @@ export const useBrowserStore = defineStore("browser", () => {
         tabRecoveryMessage.value = "原生操作尚无权威终态；不会清除执行权或重试。";
         return;
       }
+      if (!current) {
+        view = await bridge.fenceTabMutation(view.epoch, view.next_sequence);
+        if (view.receipt || view.internal_active) throw new Error("TAB_MUTATION_RECOVERY_CHANGED");
+      }
       if (!view.active_known) throw new Error("TAB_NATIVE_ACTIVE_UNKNOWN");
       const actual = await bridge.reconcileTabList();
       const confirmed = await bridge.inspectTabMutation();
@@ -124,7 +128,8 @@ export const useBrowserStore = defineStore("browser", () => {
       }
       tabRecoveryRequired.value = false;
       tabRecoveryMessage.value = "已按原生记录恢复页签；未重放旧操作。";
-      nextTick(relocate);
+      tabNativeState.value = "ready";
+      nextTick(syncViewVisibility);
     } catch {
       tabRecoveryRequired.value = true;
       tabRecoveryMessage.value = "控制面未确认，原生执行权仍受保护；可再次查询，必要时正常退出应用后重新打开。";
@@ -174,6 +179,8 @@ export const useBrowserStore = defineStore("browser", () => {
             if (runningMutation !== owner || owner.unknown) return;
             owner.unknown = true;
             tabNativeState.value = "unknown";
+            tabRecoveryRequired.value = true;
+            tabRecoveryMessage.value = "等待原生回执超时；需要核对，禁止自动重试。";
             // Do not tell the caller that the native mutation was cancelled.
             // Its closure still owns reconciliation and the execution slot.
             reject(new Error("TAB_NATIVE_OUTCOME_UNKNOWN"));
@@ -183,7 +190,7 @@ export const useBrowserStore = defineStore("browser", () => {
             const value = await operation();
             if (!owner.unknown) resolve(value);
           } catch (error) {
-            if (/TAB_MUTATION_OWNER_BUSY|TAB_MUTATION_STALE_|TAB_CONTROL_|TAB_MUTATION_NATIVE_EPOCH_CHANGED|TAB_MUTATION_ACK_UNKNOWN/.test(String(error))) {
+            if (/TAB_MUTATION_OWNER_BUSY|TAB_MUTATION_STALE_|TAB_CONTROL_|TAB_MUTATION_NATIVE_EPOCH_CHANGED|TAB_MUTATION_ACK_UNKNOWN|TAB_MUTATION_OUTCOME_UNKNOWN|TAB_MUTATION_TERMINAL_FAILURE|BROWSER_CLEANUP_FAILED/.test(String(error))) {
               tabRecoveryRequired.value = true;
               tabRecoveryMessage.value = "原生执行记录需核对；请使用页签恢复。";
               for (const queued of waitingMutations.splice(0)) rejectWaiting(queued);
@@ -194,7 +201,7 @@ export const useBrowserStore = defineStore("browser", () => {
             // Only actual operation settlement (including owner reconciliation)
             // can release the slot. No timer or UI reset admits a replacement.
             runningMutation = null;
-            tabNativeState.value = "ready";
+            tabNativeState.value = tabRecoveryRequired.value ? "unknown" : "ready";
             scheduleMutationDrain();
           }
         },
@@ -236,7 +243,7 @@ export const useBrowserStore = defineStore("browser", () => {
       try {
         t = await bridge.tabNew(u);
       } catch (error) {
-        await syncViewVisibility();
+        void syncViewVisibility();
         throw error;
       }
       if (!isBrowserResourceAllowed()) {
@@ -262,7 +269,7 @@ export const useBrowserStore = defineStore("browser", () => {
         if (activeTabId.value && tabs.some((tab) => tab.id === activeTabId.value)) {
           await bridge.tabActivate(activeTabId.value);
         }
-        await syncViewVisibility();
+        void syncViewVisibility();
       }
       return true;
     });
@@ -294,7 +301,7 @@ export const useBrowserStore = defineStore("browser", () => {
         await bridge.tabActivate(id);
       } catch (error) {
         // Native failure never publishes a new visible view or activeTabId.
-        await syncViewVisibility();
+        void syncViewVisibility();
         throw error;
       }
       if (!isBrowserResourceAllowed() || !tabs.some((tab) => tab.id === id) || !publish()) {
@@ -302,7 +309,7 @@ export const useBrowserStore = defineStore("browser", () => {
         if (activeTabId.value && tabs.some((tab) => tab.id === activeTabId.value)) {
           await bridge.tabActivate(activeTabId.value);
         }
-        await syncViewVisibility();
+        void syncViewVisibility();
         return false;
       }
       activeTabId.value = id;
@@ -531,7 +538,7 @@ export const useBrowserStore = defineStore("browser", () => {
           !isBrowserResourceAllowed() || !publish.isCurrent()) return false;
       await bridge.tabOpen(current.id, target);
       if (!isBrowserResourceAllowed() || !tabs.some((t) => t.id === current.id)) {
-        await syncViewVisibility();
+        void syncViewVisibility();
         return false;
       }
       current.title = target;
@@ -627,7 +634,7 @@ export const useBrowserStore = defineStore("browser", () => {
         const failed: string[] = [];
         for (const id of closing) {
           try { await closeNativeTab(id); }
-          catch { failed.push(id); continue; }
+          catch { failed.push(...closing.slice(closing.indexOf(id))); break; }
           // A successful close receipt is authoritative even when another
           // close never returns. Keep only unconfirmed/failed owner records.
           const row = tabs.findIndex(tab => tab.id === id);

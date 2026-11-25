@@ -88,8 +88,8 @@ function boundedTabControl<T>(lane: string, key: string, call: () => Promise<T>)
     owned.waiters.add(waiter);
   });
 }
-const tabReceiptCall = (request: Record<string, unknown>) =>
-  boundedTabControl<TabOwnerView>(String(request.phase), JSON.stringify(request),
+const tabReceiptCall = (request: Record<string, unknown>, recovery = false) =>
+  boundedTabControl<TabOwnerView>((recovery ? "recovery-" : "") + String(request.phase), JSON.stringify(request),
     () => invoke<TabOwnerView>("tab_mutation", { request }));
 let terminalEvent: TabReceipt | null = null;
 let receiptListenerStarted = false;
@@ -103,8 +103,8 @@ function ensureTabReceiptListener() {
 function receiptErrorIsAuthoritative(error: unknown) {
   return /TAB_MUTATION_OWNER_BUSY|TAB_MUTATION_INVALID_ID|TAB_MUTATION_STALE_EPOCH|TAB_MUTATION_STALE_SEQUENCE|TAB_MUTATION_INSTANCE_UNAVAILABLE|TAB_NOT_FOUND|NATIVE_LEGACY_ARGUMENT_|NATIVE_SOURCE_DENIED/.test(String(error));
 }
-async function acknowledgeTabReceipt(ticket: string, epoch: string): Promise<void> {
-  for (;;) {
+async function acknowledgeTabReceipt(ticket: string, epoch: string, deadline: number): Promise<void> {
+  while (performance.now() < deadline) {
     try {
       const view = await tabReceiptCall({ phase: "ack", ticket });
       if (view.epoch === epoch && view.last_ack === ticket) return;
@@ -118,6 +118,7 @@ async function acknowledgeTabReceipt(ticket: string, epoch: string): Promise<voi
     }
     await receiptDelay(500);
   }
+  throw new Error("TAB_MUTATION_ACK_UNKNOWN");
 }
 async function ownedTabMutation<T>(action: TabAction): Promise<T> {
   ensureTabReceiptListener();
@@ -127,8 +128,9 @@ async function ownedTabMutation<T>(action: TabAction): Promise<T> {
   const clientId = crypto.randomUUID();
   const request = { phase: "prepare", client_id: clientId, epoch: initial.epoch,
     sequence: initial.next_sequence, action };
+  const deadline = performance.now() + 15000;
   let prepared: TabReceipt | null = null;
-  for (;;) {
+  while (performance.now() < deadline) {
     try {
       const view = await tabReceiptCall(request);
       if (view.epoch === initial.epoch && view.receipt?.client_id === clientId) prepared = view.receipt;
@@ -148,18 +150,20 @@ async function ownedTabMutation<T>(action: TabAction): Promise<T> {
     if (prepared) break;
     await receiptDelay(500);
   }
+  if (!prepared) throw new Error("TAB_MUTATION_OUTCOME_UNKNOWN");
   const ticket = prepared.ticket;
   // At most one actual start request; late starts cannot cross expiry/cancel.
   if (prepared.phase === "prepared") void tabReceiptCall({ phase: "start", ticket }).catch(() => {});
   const began = performance.now();
   let receipt = prepared;
-  for (;;) {
+  while (performance.now() < deadline) {
     const event = terminalEvent as TabReceipt | null;
     if (event?.ticket === ticket && terminalTabReceipt(event)) receipt = event;
     if (terminalTabReceipt(receipt)) {
-      await acknowledgeTabReceipt(ticket, initial.epoch);
+      await acknowledgeTabReceipt(ticket, initial.epoch, deadline);
       if (receipt.phase === "succeeded") return receipt.value as T;
-      throw new Error(receipt.error || "TAB_MUTATION_CANCELLED");
+      // A worker failure need not mean the host was left unchanged.
+      throw new Error("TAB_MUTATION_TERMINAL_FAILURE:" + (receipt.error || "TAB_MUTATION_CANCELLED"));
     }
     try {
       const view = await tabReceiptCall({ phase: "poll", ticket });
@@ -178,6 +182,9 @@ async function ownedTabMutation<T>(action: TabAction): Promise<T> {
     }
     await receiptDelay(400);
   }
+  // The frontend waiter ends, not the native operation. Only explicit
+  // reconciliation may admit another mutation after this outcome.
+  throw new Error("TAB_MUTATION_OUTCOME_UNKNOWN");
 }
 
 type CaptureReceipt = {
@@ -186,8 +193,8 @@ type CaptureReceipt = {
   path: string|null; error: string|null;
 };
 type CaptureView = {epoch:string;next_sequence:string;receipt:CaptureReceipt|null;last_completed:CaptureReceipt|null};
-const captureControl = (request: Record<string, unknown>) =>
-  boundedTabControl<CaptureView>("capture-"+String(request.phase), JSON.stringify(request),
+const captureControl = (request: Record<string, unknown>, recovery = false) =>
+  boundedTabControl<CaptureView>("capture-"+(recovery?"recovery-":"")+String(request.phase), JSON.stringify(request),
     () => invoke<CaptureView>("capture_full_page", {request}));
 const captureTerminal = (receipt: CaptureReceipt) => ["succeeded","failed","cancelled"].includes(receipt.phase);
 let captureEvent: CaptureReceipt|null = null, captureListenerStarted = false;
@@ -205,9 +212,11 @@ async function ownedCapture(id: string): Promise<string> {
   const ticket=crypto.randomUUID();
   const request={phase:"start",id,ticket,epoch:initial.epoch,sequence:initial.next_sequence};
   // Start only once. A lost start reply never causes a second screenshot.
-  void captureControl(request).catch(()=>{});
+  let startError: unknown = null;
+  void captureControl(request).catch(error=>{startError=error;});
   const deadline=performance.now()+35000;
   while(performance.now()<deadline) {
+    if(startError && /CAPTURE_(?:INVALID_TICKET|TAB_UNAVAILABLE|APPLICATION_SHUTTING_DOWN|STALE_EPOCH|STALE_SEQUENCE|BUSY)|CAPTURE_MAIN_ONLY/.test(String(startError))) throw startError;
     let receipt=(captureEvent as CaptureReceipt|null)?.ticket===ticket?captureEvent:null;
     try {
       const view=await captureControl({phase:"inspect"});
@@ -228,7 +237,7 @@ async function ownedCapture(id: string): Promise<string> {
   }
   // Cancel is advisory. The original task remains queryable until its
   // callback/worker actually finishes; UI can recover it from the menu.
-  void captureControl({phase:"cancel",ticket}).catch(()=>{});
+  void captureControl({phase:"cancel_pending",id,ticket,epoch:initial.epoch,sequence:initial.next_sequence},true).catch(()=>{});
   throw Error("CAPTURE_OUTCOME_UNKNOWN");
 }
 
@@ -1058,9 +1067,10 @@ export const bridge = {
 
   tabList: () => invoke<TabInfo[]>("tab_list"),
 
-  inspectTabMutation: () => { ensureTabReceiptListener(); return tabReceiptCall({ phase: "inspect" }); },
+  inspectTabMutation: () => { ensureTabReceiptListener(); return tabReceiptCall({ phase: "inspect" }, true); },
+  fenceTabMutation: (epoch: string, sequence: string) => tabReceiptCall({ phase: "fence", epoch, sequence }, true),
   cancelTabMutation: (ticket: string) => tabReceiptCall({ phase: "cancel", ticket }),
-  acknowledgeTabMutation: (ticket: string) => tabReceiptCall({ phase: "ack", ticket }),
+  acknowledgeTabMutation: (ticket: string) => tabReceiptCall({ phase: "ack", ticket }, true),
   // Read-only recovery lane with independent bounded transport.
   reconcileTabList: () => boundedTabControl<TabInfo[]>("reconcile-list", "tab-list", () => invoke<TabInfo[]>("tab_list")),
 
@@ -1078,9 +1088,10 @@ export const bridge = {
 
   // Native full-document PNG capture, returns the saved local path (not image bytes).
   captureFullPage: (id: string) => ownedCapture(id),
-  inspectCapture: () => captureControl({phase:"inspect"}),
+  inspectCapture: () => captureControl({phase:"inspect"},true),
+  fenceCapture: (epoch: string, sequence: string) => captureControl({phase:"fence",epoch,sequence},true),
   cancelCapture: (ticket: string) => captureControl({phase:"cancel",ticket}),
-  acknowledgeCapture: (ticket: string) => captureControl({phase:"ack",ticket}),
+  acknowledgeCapture: (ticket: string) => captureControl({phase:"ack",ticket},true),
 
   // 页签休眠开关（默认关；开启后非激活超 10 分钟的页签销毁 webview 仅留 URL，激活时重建）
   setTabHibernation: (enabled: boolean) =>

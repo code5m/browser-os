@@ -1225,20 +1225,38 @@ impl TabManager {
         self.capture_full_page_cancellable(id, CaptureCancellation::new(), callback)
     }
 
-    #[allow(deprecated)] // Keep support for the pinned WebKitGTK 2.22 API.
     pub fn capture_full_page_cancellable(
         &self,
         id: &TabId,
         cancellation: CaptureCancellation,
         callback: impl FnOnce(std::result::Result<Vec<u8>, String>) + Send + 'static,
     ) -> Result<()> {
-        // Protect dispatch only, never keep a reservation across an
-        // asynchronous WebKit/WebView2 completion callback.
-        let (_operation, tab) = self.get_tab(id, TabAccessKind::Operation)?;
+        let document = self.capture_document(id)?;
+        self.capture_bound_document(id, document, cancellation, callback)
+    }
+
+    #[allow(deprecated)] // Keep support for the pinned WebKitGTK 2.22 API.
+    pub fn capture_bound_document(
+        &self,
+        id: &TabId,
+        capture_document: CaptureDocument,
+        cancellation: CaptureCancellation,
+        callback: impl FnOnce(std::result::Result<Vec<u8>, String>) + Send + 'static,
+    ) -> Result<()> {
+        // Bind the admitted document, not whichever native instance happens
+        // to own the logical id when the worker starts.
+        let Ok((_operation, tab)) = self.get_tab(id, TabAccessKind::Operation) else {
+            callback(Err("CAPTURE_INSTANCE_STALE".into()));
+            return Ok(());
+        };
+        if !std::sync::Weak::ptr_eq(&capture_document.instance.0, &Arc::downgrade(&tab))
+            || !capture_document.observed_generation_is_current() {
+            callback(Err("CAPTURE_DOCUMENT_STALE".into()));
+            return Ok(());
+        }
         let webview = tab.webview.clone();
         #[cfg(target_os = "linux")]
         {
-            let capture_document = CaptureDocument::from_tab(&tab);
             webview.with_webview(move |native| {
                 use java_script_core::ValueExt;
                 use webkit2gtk::WebViewExt;
@@ -1351,7 +1369,6 @@ impl TabManager {
         {
             let capture_app = self.app.clone();
             let capture_id = id.clone();
-            let capture_document = CaptureDocument::from_tab(&tab);
             webview.with_webview(move |native| {
                 use webview2_com::CallDevToolsProtocolMethodCompletedHandler;
                 use windows::core::PCWSTR;

@@ -207,6 +207,7 @@ pub(crate) enum Request {
     Cancel { ticket: String },
     Ack { ticket: String },
     Inspect,
+    Fence { epoch: String, sequence: String },
 }
 #[tauri::command]
 pub(crate) fn tab_mutation(webview: Webview, app: AppHandle, request: Request) -> Result<OwnerView, String> {
@@ -321,6 +322,15 @@ pub(crate) fn tab_mutation(webview: Webview, app: AppHandle, request: Request) -
             }
         }
         Request::Inspect => {}
+        Request::Fence { epoch, sequence } => {
+            let mut state = owner()?;
+            if state.slot.is_some() || state.internal_active { return Err("TAB_MUTATION_OWNER_BUSY".into()); }
+            if epoch != state.epoch { return Err("TAB_MUTATION_STALE_EPOCH".into()); }
+            if sequence != state.next_sequence.to_string() { return Err("TAB_MUTATION_STALE_SEQUENCE".into()); }
+            // A lost prepare may still be queued in IPC. Retire its admission
+            // sequence before declaring an empty owner reconciled.
+            state.next_sequence = state.next_sequence.checked_add(1).ok_or("TAB_MUTATION_SEQUENCE_EXHAUSTED")?;
+        }
     }
     snapshot(&app)
 }
