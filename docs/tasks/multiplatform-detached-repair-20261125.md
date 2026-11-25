@@ -247,3 +247,8 @@ CaptureCancellation now carries an independent, monotonic queued/entered/revoked
 ## Remaining local approval entrypoints
 
 Coding read-only claims now persist a signed Foundation approval, Run ID and process epoch before handoff to the existing UI owner. Claims from earlier process epochs (including legacy executing claims without a receipt) become unknown; late UI results cannot complete them. The lease covers native admission, not the UI read's lifetime. Direct user-approved MCP tools/list and tools/call use encrypted production run receipts, signed approval and the common execution lease, and retain the existing revision/credential/process owner. Uncertain direct MCP results are recorded paused/operation_unknown, never automatically replayed. Manual callers still lack stable caller request IDs and a receipt catalog/reconciliation UI; new explicit invocations are distinct runs, not deduplication of remote effects. Tests NOT_RUN.
+
+
+## Common model adapters
+
+Remote Chat/Legacy and local Ollama now share Foundation's zero-tool complete-message adapter. Local Chat enters the encrypted production Run owner and uses an absolute transport read deadline. Streaming Foundation and the official experimental Rig adapter share a single revision-bound model-turn lease/cancellation/deadline implementation. Rig retains its real SDK turn algorithm for the intentional offline A/B experiment; this does not claim remote providers physically terminate on dropping a future. Coding keeps its existing bounded complete-batch host. No network/provider tests run.

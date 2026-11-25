@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     io::{Read, Write},
     net::{Ipv4Addr, SocketAddrV4, TcpStream},
-    time::Duration,
+    time::{Duration, Instant},
 };
 const ADDRESS: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::LOCALHOST, 11434);
 const MAX_RESPONSE: usize = 256 * 1024;
@@ -41,6 +41,7 @@ fn check(req: &LocalChatRequest) -> Result<(), String> {
     Ok(())
 }
 fn send_local(body: &str) -> Result<String, String> {
+    let deadline = Instant::now() + Duration::from_secs(30);
     let mut socket = TcpStream::connect_timeout(&ADDRESS.into(), Duration::from_secs(2))
         .map_err(|_| "AGENT_PROVIDER_OFFLINE")?;
     socket
@@ -57,6 +58,10 @@ fn send_local(body: &str) -> Result<String, String> {
     let mut response = Vec::new();
     let mut buf = [0u8; 4096];
     loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() { return Err("AGENT_PROVIDER_TIMEOUT".into()); }
+        socket.set_read_timeout(Some(remaining.min(Duration::from_secs(25))))
+            .map_err(|_| "AGENT_PROVIDER_IO")?;
         let n = socket
             .read(&mut buf)
             .map_err(|_| "AGENT_PROVIDER_TIMEOUT")?;
@@ -91,20 +96,21 @@ pub fn local_chat(req: LocalChatRequest) -> Result<LocalChatAnswer, String> {
        "stream":false,"options":{"num_predict":1024}
     })
     .to_string();
-    let text = send_local(&body)?;
-    let parsed: serde_json::Value =
-        serde_json::from_str(&text).map_err(|_| "AGENT_PROVIDER_INVALID_RESPONSE")?;
-    let answer = parsed
-        .get("response")
-        .and_then(|x| x.as_str())
-        .ok_or("AGENT_PROVIDER_INVALID_RESPONSE")?;
-    if answer.is_empty() {
-        return Err("AGENT_PROVIDER_EMPTY_RESPONSE".into());
-    }
+    use browseros_agent_foundation::{engine::drive_text_turn, FoundationError};
+    let answer = drive_text_turn(|| -> Result<serde_json::Value, String> {
+        let text = send_local(&body)?;
+        let parsed: serde_json::Value = serde_json::from_str(&text).map_err(|_| "AGENT_PROVIDER_INVALID_RESPONSE")?;
+        let response = parsed.get("response").and_then(|x| x.as_str())
+            .ok_or("AGENT_PROVIDER_INVALID_RESPONSE")?;
+        Ok(serde_json::json!({"role":"assistant","content":response}))
+    }, || false, |error| match error {
+        FoundationError::Provider(code) if code == "MODEL_TEXT_EMPTY" => "AGENT_PROVIDER_EMPTY_RESPONSE".into(),
+        _ => "AGENT_PROVIDER_INVALID_RESPONSE".into(),
+    })?;
     Ok(LocalChatAnswer {
         provider: "ollama_local".into(),
         model: req.model,
-        content: answer.into(),
+        content: answer,
     })
 }
 #[cfg(test)]
@@ -140,7 +146,17 @@ pub async fn agent_local_chat(
     request: LocalChatRequest,
 ) -> Result<LocalChatAnswer, String> {
     crate::shared::invocation::check_invocation_source(&webview, "agent_local_chat", None, &app)?;
-    tauri::async_runtime::spawn_blocking(move || local_chat(request))
+    let storage = crate::workspace::data_dir(&app);
+    tauri::async_runtime::spawn_blocking(move || {
+        let run = uuid::Uuid::new_v4();
+        let execution = super::execution_owner::ProductionExecution::begin_durable(
+            &storage, "local_chat", run, uuid::Uuid::nil(), run, vec![])?;
+        let lease = execution.acquire_lease()?;
+        let response = local_chat(request);
+        drop(lease);
+        execution.finish(response.is_ok())?;
+        response
+    })
         .await
         .map_err(|_| "AGENT_PROVIDER_WORKER_FAILED".to_string())?
 }

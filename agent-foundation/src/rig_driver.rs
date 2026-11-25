@@ -107,7 +107,7 @@ impl RigMultiTurnDriver {
                     if task.status != TaskStatus::Running || task.revision != revision {
                         return Err(FoundationError::Cancelled);
                     }
-                    let _lease = tasks.acquire_execution(task_id, revision)?;
+                    let mut gate = crate::engine::ModelTurnGate::acquire(tasks, task_id, revision, Duration::from_secs(45))?;
                     let request = CompletionRequest::new(prompt)
                         .messages(history)
                         .model::<String>(Some(model_id.to_owned()))
@@ -115,18 +115,7 @@ impl RigMultiTurnDriver {
                     self.pilot
                         .state()
                         .advertise_tools(turn, definitions.to_vec());
-                    let mut cancellation = tasks.cancellation(task_id)?;
-                    if *cancellation.borrow_and_update() {
-                        return Err(FoundationError::Cancelled);
-                    }
-                    let response = tokio::select! {
-                        reply=tokio::time::timeout(Duration::from_secs(45),model.complete(request)) =>
-                            reply.map_err(|_|FoundationError::Timeout)??,
-                        _=cancellation.changed()=>return Err(FoundationError::Cancelled),
-                    };
-                    if !tasks.active_at_revision(task_id, revision) {
-                        return Err(FoundationError::Cancelled);
-                    }
+                    let response = gate.receive(model.complete(request)).await?;
                     if response.choice.len() > 64 {
                         return Err(FoundationError::Provider("RIG_CONTENT_LIMIT".into()));
                     }

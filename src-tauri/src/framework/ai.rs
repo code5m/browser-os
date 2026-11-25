@@ -891,39 +891,15 @@ fn build_chat_messages(
 
 // Chat and Legacy are deliberately text-only hosts of the same bounded
 // complete-message engine. They must not silently accept model tool calls.
-struct TextBatchHost<'a> {
-    profile: &'a ProviderProfile,
-    messages: &'a [Value],
-    cancellation: &'a (dyn Fn() -> bool + Sync),
-    result: Option<String>,
-}
-impl browseros_agent_foundation::engine::FunctionBatchHost for TextBatchHost<'_> {
-    type Error = String;
-    fn cancelled(&self) -> bool { (self.cancellation)() }
-    fn on_cancelled(&mut self) -> Result<(), String> { Err("AI_PROVIDER_CANCELLED".into()) }
-    fn request(&mut self) -> Result<Value, String> {
-        provider_turn_cancelable(self.profile, self.messages, &[], self.cancellation)
-    }
-    fn provider_failure(&mut self, error: String) -> String { error }
-    fn validate_reply(&mut self, _: &Value) -> Result<(), String> { Ok(()) }
-    fn invalid_batch(&mut self, _: browseros_agent_foundation::FoundationError) -> String {
-        "AI_RESPONSE_INVALID".into()
-    }
-    fn accept_batch(&mut self, _: usize, _: bool, reply: Value,
-        calls: Vec<browseros_agent_foundation::model::FunctionCall>)
-        -> Result<browseros_agent_foundation::engine::BatchFlow, String> {
-        if !calls.is_empty() { return Err("AI_RESPONSE_INVALID".into()); }
-        self.result = Some(reply["content"].as_str().filter(|text| !text.trim().is_empty())
-            .ok_or("AI_RESPONSE_EMPTY")?.to_owned());
-        Ok(browseros_agent_foundation::engine::BatchFlow::Stop)
-    }
-}
 fn text_model_turn(profile: &ProviderProfile, messages: &[Value],
     cancelled: &(dyn Fn() -> bool + Sync)) -> Result<String, String> {
-    let mut host = TextBatchHost { profile, messages, cancellation: cancelled, result: None };
-    browseros_agent_foundation::engine::drive_function_batches(&mut host, 1, 0)?;
-    if cancelled() { return Err("AI_PROVIDER_CANCELLED".into()); }
-    host.result.ok_or_else(|| "AI_RESPONSE_EMPTY".into())
+    use browseros_agent_foundation::{engine::drive_text_turn, FoundationError};
+    drive_text_turn(|| provider_turn_cancelable(profile, messages, &[], cancelled), cancelled,
+        |error| match error {
+            FoundationError::Cancelled => "AI_PROVIDER_CANCELLED".into(),
+            FoundationError::Provider(code) if code == "MODEL_TEXT_EMPTY" => "AI_RESPONSE_EMPTY".into(),
+            _ => "AI_RESPONSE_INVALID".into(),
+        })
 }
 
 fn chat_with_history(

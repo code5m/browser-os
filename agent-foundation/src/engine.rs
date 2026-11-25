@@ -53,6 +53,48 @@ pub struct TurnResult {
     pub usage: Option<(u64, u64)>,
 }
 
+/// Shared model transport gate for Foundation streaming and experimental Rig
+/// adapters. One revision/lease and one absolute deadline per model turn.
+/// Dropping a provider future is only a cooperative transport cancellation;
+/// this gate does not prove a remote provider or external effect stopped.
+pub(crate) struct ModelTurnGate<'a> {
+    tasks: &'a TaskRegistry,
+    id: Uuid,
+    revision: u64,
+    deadline: tokio::time::Instant,
+    cancellation: tokio::sync::watch::Receiver<bool>,
+    _lease: crate::task::ExecutionLease<'a>,
+}
+impl<'a> ModelTurnGate<'a> {
+    pub(crate) fn acquire(tasks: &'a TaskRegistry, id: Uuid, revision: u64, limit: Duration) -> Result<Self> {
+        let lease = tasks.acquire_execution(id, revision)?;
+        let cancellation = tasks.cancellation(id)?;
+        let gate = Self { tasks, id, revision, deadline: tokio::time::Instant::now() + limit,
+            cancellation, _lease: lease };
+        gate.active()?;
+        Ok(gate)
+    }
+    fn active(&self) -> Result<()> {
+        if *self.cancellation.borrow() || !self.tasks.active_at_revision(self.id, self.revision) {
+            return Err(FoundationError::Cancelled);
+        }
+        Ok(())
+    }
+    pub(crate) async fn receive<T>(&mut self, future: impl std::future::Future<Output = Result<T>>) -> Result<T> {
+        self.active()?;
+        let deadline = self.deadline;
+        if tokio::time::Instant::now() >= deadline { return Err(FoundationError::Timeout); }
+        let result = tokio::select! {
+            biased;
+            _ = self.cancellation.changed() => Err(FoundationError::Cancelled),
+            _ = tokio::time::sleep_until(deadline) => Err(FoundationError::Timeout),
+            response = future => response,
+        };
+        self.active()?;
+        result
+    }
+}
+
 pub struct AgentEngine<'a> {
     pub provider: &'a dyn ModelProvider,
     pub tools: &'a ToolRegistry,
@@ -76,7 +118,7 @@ impl AgentEngine<'_> {
         }
         let revision = task.revision;
         // Acquire one shared task execution slot before opening model transport.
-        let _lease = self.tasks.acquire_execution(task_id, revision)?;
+        let mut gate = ModelTurnGate::acquire(self.tasks, task_id, revision, self.limits.deadline)?;
         let request = ModelRequest {
             session_id: task.session_id,
             model_id: model_id.into(),
@@ -84,34 +126,14 @@ impl AgentEngine<'_> {
             context: task.context,
         };
         request.validate()?;
-        let mut cancellation = self.tasks.cancellation(task_id)?;
-        if *cancellation.borrow_and_update() {
-            return Err(FoundationError::Cancelled);
-        }
-
         let run = async {
-            let mut stream = tokio::select! {
-                result = self.provider.stream(request) => result?,
-                _ = cancellation.changed() => return Err(FoundationError::Cancelled),
-            };
-            if !self.tasks.active_at_revision(task_id, revision) {
-                return Err(FoundationError::Cancelled);
-            }
+            let mut stream = gate.receive(self.provider.stream(request)).await?;
             let mut text = String::new();
             let mut usage = None;
             let mut count = 0usize;
 
             loop {
-                let event = tokio::select! {
-                    change = cancellation.changed() => {
-                        let _ = change; // closed sender is also cancellation
-                        return Err(FoundationError::Cancelled);
-                    },
-                    item = stream.recv() => item,
-                };
-                if !self.tasks.active_at_revision(task_id, revision) {
-                    return Err(FoundationError::Cancelled);
-                }
+                let event = gate.receive(async { Ok(stream.recv().await) }).await?;
                 count += 1;
                 if count > self.limits.max_model_events {
                     return Err(FoundationError::Provider("MODEL_EVENT_LIMIT".to_owned()));
@@ -186,10 +208,7 @@ impl AgentEngine<'_> {
                 }
             }
         };
-        let result = match tokio::time::timeout(self.limits.deadline, run).await {
-            Ok(result) => result,
-            Err(_) => Err(FoundationError::Timeout),
-        };
+        let result = run.await;
         if result.is_err() && self.tasks.active_at_revision(task_id, revision) {
             // Only the same active revision can be failed; never override Pause or Cancel.
             let _ = self.tasks.finish_at_revision(task_id, false, revision);
@@ -247,6 +266,44 @@ pub fn drive_function_batches<H: FunctionBatchHost>(
         }
     }
     Ok(())
+}
+
+/// Shared text-only adapter for remote and local complete-message providers.
+/// The transport supplies a normalized assistant message, never a tool grant.
+struct TextOnlyHost<P, C, M> {
+    request: P,
+    cancelled: C,
+    error: M,
+    result: Option<String>,
+}
+impl<E, P, C, M> FunctionBatchHost for TextOnlyHost<P, C, M>
+where P: FnMut() -> std::result::Result<serde_json::Value, E>,
+    C: Fn() -> bool, M: Fn(FoundationError) -> E
+{
+    type Error = E;
+    fn cancelled(&self) -> bool { (self.cancelled)() }
+    fn on_cancelled(&mut self) -> std::result::Result<(), E> { Err((self.error)(FoundationError::Cancelled)) }
+    fn request(&mut self) -> std::result::Result<serde_json::Value, E> { (self.request)() }
+    fn provider_failure(&mut self, error: E) -> E { error }
+    fn validate_reply(&mut self, _: &serde_json::Value) -> std::result::Result<(), E> { Ok(()) }
+    fn invalid_batch(&mut self, error: FoundationError) -> E { (self.error)(error) }
+    fn accept_batch(&mut self, _: usize, _: bool, reply: serde_json::Value,
+        calls: Vec<crate::model::FunctionCall>) -> std::result::Result<BatchFlow, E> {
+        if !calls.is_empty() { return Err((self.error)(FoundationError::PermissionDenied)); }
+        self.result = Some(reply["content"].as_str().filter(|text| !text.trim().is_empty())
+            .ok_or_else(|| (self.error)(FoundationError::Provider("MODEL_TEXT_EMPTY".into())))?.to_owned());
+        Ok(BatchFlow::Stop)
+    }
+}
+pub fn drive_text_turn<E>(
+    request: impl FnMut() -> std::result::Result<serde_json::Value, E>,
+    cancelled: impl Fn() -> bool,
+    error: impl Fn(FoundationError) -> E,
+) -> std::result::Result<String, E> {
+    let mut host = TextOnlyHost { request, cancelled, error, result: None };
+    drive_function_batches(&mut host, 1, 0)?;
+    if (host.cancelled)() { return Err((host.error)(FoundationError::Cancelled)); }
+    host.result.ok_or_else(|| (host.error)(FoundationError::Provider("MODEL_TEXT_EMPTY".into())))
 }
 
 #[cfg(test)]
