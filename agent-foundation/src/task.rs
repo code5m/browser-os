@@ -76,7 +76,7 @@ pub struct TaskRegistry {
 
 /// Prevents concurrent model/tool execution for one task across all adapters.
 /// Dropping the lease releases it (including early errors and cancellation).
-pub(crate) struct ExecutionLease<'a> {
+pub struct ExecutionLease<'a> {
     registry: &'a TaskRegistry,
     task_id: Uuid,
     #[cfg(feature = "durable-sqlite")]
@@ -282,7 +282,7 @@ impl TaskRegistry {
 
     /// Acquire the sole in-flight model/tool execution slot for a task.
     /// Callers must still check cancellation and revision after async work.
-    pub(crate) fn acquire_execution(&self, id: Uuid, revision: u64) -> Result<ExecutionLease<'_>> {
+    pub fn acquire_execution(&self, id: Uuid, revision: u64) -> Result<ExecutionLease<'_>> {
         let tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
         let task = tasks.get(&id).ok_or(FoundationError::NotFound)?;
         if task.status != TaskStatus::Running || task.revision != revision {

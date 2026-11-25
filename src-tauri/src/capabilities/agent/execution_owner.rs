@@ -79,6 +79,14 @@ impl ProductionExecution {
         Self::begin_scoped("coding", workspace, session, vec![])
     }
 
+    /// Model and external tool adapters share the Foundation task's
+    /// execution lease, in addition to durable session ownership.
+    pub(crate) fn acquire_lease(&self) -> Result<browseros_agent_foundation::task::ExecutionLease<'static>, String> {
+        let record = self.record()?;
+        let tasks: &'static TaskRegistry = self.tasks;
+        tasks.acquire_execution(self.id, record.revision).map_err(|_| "AGENT_TASK_EXECUTION_BUSY".into())
+    }
+
     pub(crate) fn record(&self) -> Result<TaskRecord, String> {
         self.tasks.get(self.id).map_err(|_| "AGENT_TASK_LOOKUP_FAILED".into())
     }

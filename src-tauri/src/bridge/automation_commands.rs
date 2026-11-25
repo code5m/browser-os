@@ -447,6 +447,13 @@ pub fn run_command(
     expected_revision: String,
 ) -> Result<RunSnapshot, String> {
     check_invocation_source(&webview, "run_command", None, &app)?;
+    run_reviewed_command(app, id, values, expected_revision, None)
+}
+
+fn run_reviewed_command(
+    app: AppHandle, id: String, values: HashMap<String, String>,
+    expected_revision: String, owned_id: Option<uuid::Uuid>,
+) -> Result<RunSnapshot, String> {
     crate::images::check_id(&id, "命令片段 id")?;
     let snippet = get_enabled_snippet(&app, &id)?;
     if expected_revision.len() != 64
@@ -463,7 +470,7 @@ pub fn run_command(
     let roots = crate::workspace::allowed_roots(&app);
     let home = app.path().home_dir().map_err(|e| e.to_string())?;
     let table = Arc::clone(&app.state::<AppState>().script_runs);
-    let start = crate::script_runner::start_command(
+    let start = crate::script_runner::start_command_owned(
         &table,
         &snippet,
         &values,
@@ -471,6 +478,7 @@ pub fn run_command(
         &home,
         Some(app.clone()),
         Some(workspace::script_runs_file(&app)),
+        owned_id,
     );
     let run_id = match start {
         Ok(rid) => rid,
@@ -511,7 +519,11 @@ pub(crate) fn run_command_for_coding(
     let values: HashMap<String, String> = serde_json::from_value(request["values"].clone())
         .map_err(|_| "SNIPPET_REVIEW_REQUIRED")?;
     if cancellation.load(Ordering::Acquire) { return Err("AGENT_OPERATION_CANCELLED_BEFORE_DISPATCH".into()); }
-    let started = run_command(app.clone(), webview.clone(), id, values, revision)?;
+    check_invocation_source(webview, "run_command", None, app)?;
+    let operation_id = request["operation_id"].as_str().ok_or("AGENT_OPERATION_REQUIRED")?;
+    let owned_id = uuid::Uuid::parse_str(operation_id).map_err(|_| "AGENT_RUN_ID_INVALID")?;
+    if owned_id.get_version_num() != 4 { return Err("AGENT_RUN_ID_INVALID".into()); }
+    let started = run_reviewed_command(app.clone(), id, values, revision, Some(owned_id))?;
     let table = Arc::clone(&app.state::<AppState>().script_runs);
     let completed = table.wait_for_supervisor(&started.run_id, cancellation).map_err(map_run_error)?;
     // Full command output can contain secrets. Keep it in the existing user

@@ -564,7 +564,8 @@ fn kill_group(_pgid: i32, _sig: i32) {}
 /// 进程组是否仍有存活成员（信号 0 探测；ESRCH 即整组已消失）。
 #[cfg(unix)]
 pub fn process_group_alive(pgid: i32) -> bool {
-    unsafe { libc::killpg(pgid, 0) == 0 }
+    (unsafe { libc::killpg(pgid, 0) == 0 })
+        || std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
 }
 
 #[cfg(not(unix))]
@@ -705,6 +706,16 @@ fn supervise(
     let mut readers = Some(readers);
 
     let finish = |status: RunStatus, exit_code: Option<i32>, error: Option<String>| {
+        // Terminate is a request, not a completion receipt. Retain admission
+        // while the owned native group/Job cannot be observed empty.
+        #[cfg(unix)]
+        while pgid.is_some_and(process_group_alive) {
+            thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
+        }
+        #[cfg(windows)]
+        while !job.is_empty().unwrap_or(false) {
+            thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
+        }
         let mut st = state.lock().unwrap_or_else(|p| p.into_inner());
         // 终态不可互转（a 卡 §2）：已有终态则不再改写。
         if st.status.is_terminal() {
@@ -804,10 +815,24 @@ fn start_argv_run(
     app: Option<AppHandle>,
     records_file: Option<PathBuf>,
 ) -> Result<String, RunError> {
+    start_argv_run_owned(table, script_id, timeout_secs, argv, cwd, home_dir, app, records_file, None)
+}
+
+fn start_argv_run_owned(
+    table: &Arc<ScriptProcessTable>,
+    script_id: &str,
+    timeout_secs: u32,
+    argv: Vec<String>,
+    cwd: PathBuf,
+    home_dir: &Path,
+    app: Option<AppHandle>,
+    records_file: Option<PathBuf>,
+    owned_id: Option<uuid::Uuid>,
+) -> Result<String, RunError> {
     let timeout = effective_timeout(timeout_secs)?;
 
     // --- 1) 并发检查 + 占位注册（同一锁内，原子） ---
-    let run_id = format!("run-{}", uuid::Uuid::new_v4());
+    let run_id = format!("run-{}", owned_id.unwrap_or_else(uuid::Uuid::new_v4));
     let cancel = Arc::new(AtomicBool::new(false));
     let state = Arc::new(Mutex::new(RunSnapshot {
         run_id: run_id.clone(),
@@ -825,7 +850,7 @@ fn start_argv_run(
 
     {
         let mut runs = table.lock_runs();
-        if runs
+        if runs.contains_key(&run_id) || runs
             .values()
             .any(|e| e.script_id == script_id && !is_terminal_entry(e))
         {
@@ -1049,16 +1074,23 @@ pub fn start_command(
     app: Option<AppHandle>,
     records_file: Option<PathBuf>,
 ) -> Result<String, RunError> {
+    start_command_owned(table, snippet, values, roots, home_dir, app, records_file, None)
+}
+
+pub(crate) fn start_command_owned(
+    table: &Arc<ScriptProcessTable>,
+    snippet: &CommandSnippet,
+    values: &HashMap<String, String>,
+    roots: &[PathBuf],
+    home_dir: &Path,
+    app: Option<AppHandle>,
+    records_file: Option<PathBuf>,
+    owned_id: Option<uuid::Uuid>,
+) -> Result<String, RunError> {
     let argv = build_command_argv(snippet, values, roots)?;
-    start_argv_run(
-        table,
-        &snippet.id,
-        snippet.timeout_secs,
-        argv,
-        home_dir.to_path_buf(),
-        home_dir,
-        app,
-        records_file,
+    start_argv_run_owned(
+        table, &snippet.id, snippet.timeout_secs, argv,
+        home_dir.to_path_buf(), home_dir, app, records_file, owned_id,
     )
 }
 
