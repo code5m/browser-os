@@ -275,6 +275,21 @@ impl ScriptProcessTable {
             .map(|e| e.state.lock().unwrap_or_else(|p| p.into_inner()).clone())
     }
 
+    /// Pin the existing supervisor's state, even if the table later evicts a
+    /// finished entry. Only the supervisor publishes a terminal state.
+    pub(crate) fn wait_for_supervisor(&self, run_id: &str, requested: &AtomicBool) -> Result<RunSnapshot, RunError> {
+        let (state, cancel) = {
+            let runs = self.lock_runs();
+            let entry = runs.get(run_id).ok_or_else(|| RunError::UnknownRun(run_id.to_owned()))?;
+            (Arc::clone(&entry.state), Arc::clone(&entry.cancel))
+        };
+        loop {
+            if requested.load(Ordering::Acquire) { cancel.store(true, Ordering::Release); }
+            let snapshot = state.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+            if snapshot.status.is_terminal() { return Ok(snapshot); }
+            thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
+        }
+    }
     /// 请求取消：**只置信号位，立即返回，不阻塞**（真正的 kill 由 supervisor 线程执行）。
     /// 对已终态的 run 为幂等 no-op（R13）。
     pub fn cancel(&self, run_id: &str) -> Result<(), RunError> {
@@ -466,7 +481,7 @@ fn spawn_in_new_group(cmd: &mut Command) -> std::io::Result<Child> {
     use std::os::unix::process::CommandExt;
     unsafe {
         cmd.pre_exec(|| {
-            libc::setsid();
+            if libc::setsid() < 0 { return Err(std::io::Error::last_os_error()); }
             Ok(())
         });
     }
@@ -1053,27 +1068,21 @@ pub fn start_command(
 /// 见 a 卡 §8.6）。b 卡阶段无调用者，故标注 `#[allow(dead_code)]`（同 M2-3 `join_image_path` 口径）。
 #[allow(dead_code)]
 pub fn kill_all_running(table: &ScriptProcessTable) -> usize {
-    // 先收集，再 kill：避免持 state 锁做 IO（killpg 可能慢）。
-    let targets: Vec<(Option<i32>, Arc<AtomicBool>, Arc<Mutex<RunSnapshot>>)> = {
+    // Shutdown coordinator owns the deadline. Signal all supervisors first;
+    // never publish Cancelled while a child/output reader may still run.
+    let targets: Vec<(Arc<AtomicBool>, Arc<Mutex<RunSnapshot>>)> = {
         let runs = table.lock_runs();
-        runs.iter()
-            .filter(|(_, e)| !is_terminal_entry(e))
-            .map(|(_, e)| (e.pgid, Arc::clone(&e.cancel), Arc::clone(&e.state)))
-            .collect()
+        runs.values().filter(|entry| !is_terminal_entry(entry))
+            .map(|entry| (Arc::clone(&entry.cancel), Arc::clone(&entry.state))).collect()
     };
-
-    let mut killed = 0;
-    for (pgid, cancel, state) in targets {
-        cancel.store(true, Ordering::SeqCst);
-        terminate_group(pgid, CANCEL_GRACE_SECS);
-        let mut st = state.lock().unwrap_or_else(|p| p.into_inner());
-        if !st.status.is_terminal() {
-            st.status = RunStatus::Cancelled;
-            st.finished_at = Some(Utc::now());
-            killed += 1;
+    for (cancel, _) in &targets { cancel.store(true, Ordering::SeqCst); }
+    for (_, state) in &targets {
+        loop {
+            if state.lock().unwrap_or_else(|p| p.into_inner()).status.is_terminal() { break; }
+            thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
         }
     }
-    killed
+    targets.len()
 }
 
 fn is_terminal_entry(entry: &RunEntry) -> bool {

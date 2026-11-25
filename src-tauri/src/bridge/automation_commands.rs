@@ -499,6 +499,30 @@ pub fn run_command(
     Ok(snapshot)
 }
 
+/// Coding's native owner invokes the same reviewed snippet runner, including
+/// its source/permission policy. Its session lock remains held until the
+/// supervisor returns, even when the initiating frontend disappears.
+pub(crate) fn run_command_for_coding(
+    app: &AppHandle, webview: &tauri::Webview, input: &serde_json::Value,
+    request: &serde_json::Value, cancellation: &AtomicBool,
+) -> Result<serde_json::Value, String> {
+    let id = input["snippet_id"].as_str().ok_or("SNIPPET_NOT_FOUND")?.to_owned();
+    let revision = request["expected_revision"].as_str().ok_or("SNIPPET_REVIEW_REQUIRED")?.to_owned();
+    let values: HashMap<String, String> = serde_json::from_value(request["values"].clone())
+        .map_err(|_| "SNIPPET_REVIEW_REQUIRED")?;
+    if cancellation.load(Ordering::Acquire) { return Err("AGENT_OPERATION_CANCELLED_BEFORE_DISPATCH".into()); }
+    let started = run_command(app.clone(), webview.clone(), id, values, revision)?;
+    let table = Arc::clone(&app.state::<AppState>().script_runs);
+    let completed = table.wait_for_supervisor(&started.run_id, cancellation).map_err(map_run_error)?;
+    // Full command output can contain secrets. Keep it in the existing user
+    // command history; persist only native receipt metadata in model context.
+    Ok(serde_json::json!({
+        "status": if completed.status == RunStatus::Succeeded { "succeeded" } else { "unknown" },
+        "result": {"run_id":completed.run_id,"script_id":completed.script_id,
+            "status":completed.status,"exit_code":completed.exit_code}
+    }))
+}
+
 /// 启动脚本：命令层只传输入 map，真正展开和 fail-closed 校验在 `script_runner`。
 #[tauri::command]
 pub fn run_script(

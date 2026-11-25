@@ -47,6 +47,7 @@ pub(crate) fn prepare_coding_session(
             | "discard"
             | "apply"
             | "claim_operation"
+            | "execute_operation"
             | "resolve_operation"
             | "reconcile_operation"
             | "export_changes"
@@ -83,6 +84,8 @@ pub(crate) fn prepare_coding_session(
 /// Framework is allowed to supply the provider turn, not bypass Owner action checks.
 /// All side effects (including file proposals/apply and MCP operations) stay in Coding Owner.
 pub(crate) fn dispatch_coding_request(
+    app: &tauri::AppHandle,
+    webview: &tauri::Webview,
     root: &std::path::Path,
     storage: &std::path::Path,
     request: Value,
@@ -119,7 +122,25 @@ pub(crate) fn dispatch_coding_request(
     {
         return super::coding_context::execute(root, storage, request);
     }
-    super::coding::execute(root, storage, request, provider)
+    super::coding::execute_with_adapter(root, storage, request, provider, |kind, input, approved, cancel| {
+        match kind {
+            "command" => crate::bridge::run_command_for_coding(app, webview, input, approved, cancel),
+            "mcp" => {
+                let response = super::coding_context::execute(root, storage, serde_json::json!({
+                    "action":"mcp_call", "approved":true,
+                    "server_id":input["server_id"], "tool":input["tool"], "arguments":input["arguments"],
+                    "review_revision":approved["review_revision"],
+                    "approved_credential_refs":approved["approved_credential_refs"],
+                    "approved_environment_names":approved["approved_environment_names"]
+                }))?;
+                Ok(serde_json::json!({
+                    "status":if response["result"]["isError"] == true { "unknown" } else { "succeeded" },
+                    "result":response["result"]
+                }))
+            }
+            _ => Err("AGENT_OPERATION_INVALID".into()),
+        }
+    })
 }
 
 pub(crate) fn coding_cancelled(root: &std::path::Path, session_id: &str) -> bool {

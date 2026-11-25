@@ -87,9 +87,9 @@ impl ProductionExecution {
     pub(crate) fn settle_coding(mut self, status: &str) -> Result<TaskRecord, String> {
         match status {
             "review" | "approval_required" | "step_limit" | "interrupted"
-                | "operation_unknown" | "operation_executing" =>
+                | "operation_unknown" | "operation_executing" | "operation_review" | "ready" =>
                 self.tasks.pause(self.id),
-            "complete" => self.tasks.finish(self.id, true),
+            "complete" | "applied" => self.tasks.finish(self.id, true),
             "cancelled" => self.tasks.cancel(self.id),
             _ => self.tasks.finish(self.id, false),
         }.map_err(|_| "AGENT_TASK_SETTLE_FAILED")?;

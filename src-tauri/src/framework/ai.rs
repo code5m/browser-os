@@ -1831,7 +1831,7 @@ pub async fn coding_service(
     }
     // Register before entering the blocking queue, while the run ID is already
     // known to the main UI. A prior cancel remains attached to this exact run.
-    let run_guard = if request["action"] == "chat" {
+    let run_guard = if matches!(request["action"].as_str(), Some("chat" | "execute_operation")) {
         Some(crate::capabilities::agent::public_api::register_coding_run(
             request["run_id"].as_str().ok_or("AGENT_RUN_ID_REQUIRED")?,
         )?)
@@ -1876,6 +1876,8 @@ pub async fn coding_service(
         // list and review calls must not invent a successful execution.
         let cancel_session = request["session_id"].as_str().unwrap_or("").to_owned();
         let response = crate::capabilities::agent::public_api::dispatch_coding_request(
+            &app,
+            &webview,
             &root,
             &storage,
             request,
@@ -2825,31 +2827,23 @@ mod tests {
         assert_eq!(review["arguments"], mcp_request["arguments"]);
         assert_eq!(review["credential_refs"], json!([]));
         assert_eq!(review["environment_names"], json!([]));
-        crate::capabilities::agent::coding::execute(
-            &root,
-            &storage,
-            json!({"action":"claim_operation","session_id":id,"operation_id":operation["id"]}),
+        let approved = crate::capabilities::agent::coding::execute_with_adapter(
+            &root, &storage,
+            json!({"action":"execute_operation","session_id":id,"operation_id":operation["id"],"approved":true}),
             |_, _| unreachable!(),
-        )
-        .expect("persist approval execution claim");
-        // This is an explicit test-fixture approval, not a claim of human GUI approval.
-        let mut approved_request = mcp_request;
-        approved_request["approved"] = json!(true);
-        approved_request["review_revision"] = review["revision"].clone();
-        approved_request["approved_credential_refs"] = review["credential_refs"].clone();
-        approved_request["approved_environment_names"] = review["environment_names"].clone();
-        let approved =
-            crate::capabilities::agent::coding_context::execute(&root, &storage, approved_request)
-                .expect("approved fixture MCP call");
-        let result = approved["result"].to_string();
-        assert!(result.contains("violet"));
-        crate::capabilities::agent::coding::execute(
-            &root,
-            &storage,
-            json!({"action":"resolve_operation","session_id":id,"operation_id":operation["id"],"status":"succeeded","result":result}),
-            |_, _| unreachable!(),
-        )
-        .expect("record reviewed fixture output");
+            |kind, input, _, _| {
+                assert_eq!(kind, "mcp");
+                let result = crate::capabilities::agent::coding_context::execute(&root, &storage,
+                    json!({"action":"mcp_call","approved":true,"server_id":input["server_id"],"tool":input["tool"],"arguments":input["arguments"],
+                        "review_revision":review["revision"],"approved_credential_refs":review["credential_refs"],
+                        "approved_environment_names":review["environment_names"]}))?;
+                Ok(json!({"status":"succeeded","result":result["result"]}))
+            },
+        ).expect("execute under native operation ownership");
+        assert!(approved["operations"][0]["result"].as_str().unwrap().contains("violet"));
+        crate::capabilities::agent::coding::execute(&root,&storage,
+            json!({"action":"resolve_operation","session_id":id,"operation_id":operation["id"],"status":"accepted"}),
+            |_,_|unreachable!()).expect("accept the stored native result");
         let second = crate::capabilities::agent::coding::execute(
             &root,
             &storage,
