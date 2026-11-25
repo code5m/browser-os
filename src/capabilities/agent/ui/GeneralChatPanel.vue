@@ -13,6 +13,8 @@ const busy = ref(false);
 const loading = ref(false);
 const stopping = ref(false);
 let currentRequestId: string | null = null;
+type PendingTurn = { id: string; model: string; message: string; history: ChatLine[]; session: number };
+const pendingRetry = ref<PendingTurn | null>(null);
 let sessionVersion = 0;
 const error = ref('');
 const canSend = computed(() => !!modelId.value && !!prompt.value.trim() && utf8Bytes(prompt.value.trim()) <= 24000 && !busy.value && !loading.value);
@@ -38,23 +40,43 @@ async function refreshModels() {
 async function send() {
   const message = prompt.value.trim();
   if (!canSend.value || message.length > 12000) { error.value = '消息不能超过 12000 字符或 24000 UTF-8 字节'; return; }
-  const history: ChatLine[] = selectChatHistory(lines.value);
-  const requestId = createChatRequestId();
-  const selectedModel = modelId.value;
-  const currentSession = sessionVersion;
+  pendingRetry.value = null;
+  await submitTurn({
+    id: createChatRequestId(), model: modelId.value, message,
+    history: selectChatHistory(lines.value).map(line => ({ ...line })), session: sessionVersion,
+  });
+}
+async function retryOriginal() {
+  const turn = pendingRetry.value;
+  if (!turn || busy.value || loading.value || turn.session !== sessionVersion || turn.model !== modelId.value) return;
+  await submitTurn(turn);
+}
+async function submitTurn(turn: PendingTurn) {
+  if (busy.value || turn.session !== sessionVersion || turn.model !== modelId.value) return;
+  const requestId = turn.id;
   currentRequestId = requestId;
   busy.value = true;
   stopping.value = false;
   error.value = '';
+  pendingRetry.value = null;
   try {
-    const answer = await aiService.chat('default', message, selectedModel, history, requestId);
-    // Discard late provider results after switching model/session or unmounting.
-    if (sessionVersion !== currentSession || modelId.value !== selectedModel) return;
-    lines.value.push({role:'user',content:message},{role:'assistant',content:answer.content});
+    const answer = await aiService.chat('default', turn.message, turn.model, turn.history, requestId);
+    if (sessionVersion !== turn.session || modelId.value !== turn.model) return;
+    lines.value.push({role:'user',content:turn.message},{role:'assistant',content:answer.content});
     if (lines.value.length > 100) lines.value.splice(0, lines.value.length - 100);
-    prompt.value = '';
+    if (prompt.value.trim() === turn.message) prompt.value = '';
   } catch (reason) {
-    if (sessionVersion === currentSession) error.value = String(reason);
+    if (sessionVersion === turn.session && modelId.value === turn.model) {
+      const detail = String(reason);
+      error.value = /AGENT_RUN_RECOVERY_REQUIRED|AGENT_RUN_RESULT_UNAVAILABLE/.test(detail)
+        ? '原请求已有记录但结果无法恢复；不会自动再次调用模型。如需重新生成，请主动发送新请求。'
+        : detail;
+      // Only retry the immutable original turn, never a modified prompt
+      // with a reused request ID. No plaintext conversation in web storage.
+      if (!/AGENT_RUN_RECOVERY_REQUIRED|AGENT_RUN_RESULT_UNAVAILABLE|AGENT_RUN_INPUT_MISMATCH|AI_PROVIDER_CANCELLED/.test(detail)) {
+        pendingRetry.value = turn;
+      }
+    }
   } finally {
     if (currentRequestId === requestId) {
       currentRequestId = null;
@@ -75,6 +97,7 @@ async function stopReply() {
 function newConversation() {
   if (busy.value) return;
   sessionVersion++;
+  pendingRetry.value = null;
   lines.value = [];
   prompt.value = '';
   error.value = '';
@@ -94,7 +117,7 @@ onMounted(refreshModels);
 <template>
   <section class="plain-chat" aria-label="普通聊天，不需要项目路径">
     <header><strong>普通聊天</strong><span>无需打开项目 · 不会访问文件或执行工具</span></header>
-    <div class="toolbar"><select v-model="modelId" :disabled="busy || loading" aria-label="聊天模型"><option value="" disabled>选择聊天模型</option><option v-for="model in models" :key="model.id" :value="model.id">{{ model.name }} · {{ model.model }}</option></select><button :disabled="busy || loading" @click="refreshModels">刷新模型</button><button :disabled="busy" @click="newConversation">新建会话</button></div>
+    <div class="toolbar"><select v-model="modelId" :disabled="busy || loading" aria-label="聊天模型"><option value="" disabled>选择聊天模型</option><option v-for="model in models" :key="model.id" :value="model.id">{{ model.name }} · {{ model.model }}</option></select><button :disabled="busy || loading" @click="refreshModels">刷新模型</button><button :disabled="busy" @click="newConversation">新建会话</button><button v-if="pendingRetry" :disabled="busy || loading" @click="retryOriginal">重试原请求 / 恢复已保存结果</button></div>
     <main class="history" aria-live="polite"><p v-if="!lines.length" class="hint">选择一个已配置模型即可开始聊天，无需输入项目地址。编码和文件操作请切换到「编码工作区」。</p><article v-for="(line,index) in lines" :key="index" :class="line.role"><strong>{{line.role==='user'?'你':'智能体'}}</strong><p>{{line.content}}</p></article></main>
     <p v-if="error" class="error" role="alert">{{error}}</p><p v-if="utf8Bytes(prompt.trim()) > 24000" class="error">消息超过后端 24000 字节限制</p>
     <form class="composer" @submit.prevent="send"><textarea v-model="prompt" :disabled="busy" maxlength="12000" rows="3" placeholder="输入想讨论的问题…（无需项目路径）" aria-label="聊天消息" @keydown.ctrl.enter.prevent="send"></textarea><button v-if="busy" type="button" :disabled="stopping" @click="stopReply">{{stopping?'停止中…':'停止生成'}}</button><button v-else type="submit" :disabled="!canSend">发送</button></form>

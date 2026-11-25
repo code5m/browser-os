@@ -119,12 +119,16 @@ pub(crate) fn dispatch_coding_request(
         let arguments = serde_json::json!({"run_id":run,"review_digest":revision});
         let (claim, permit) = execution.approve_native(
             if action == "mcp_tools" { "coding.manual_mcp_tools" } else { "coding.manual_mcp_call" },
-            arguments.clone(), browseros_agent_foundation::tool::ToolEffect::ExternalSideEffect, revision)?;
+            arguments.clone(), browseros_agent_foundation::tool::ToolEffect::ExternalSideEffect, revision.clone())?;
         execution.checkpoint_approval(claim.clone())?;
         let lease = execution.acquire_approved_native(permit, &claim, &arguments)?;
+        execution.checkpoint_manual_mcp(revision, &request)?;
         let result = super::coding_context::execute(root, storage, request);
         drop(lease);
-        if result.as_ref().is_ok_and(|value| value["result"]["isError"] != true) {
+        let reported_success = result.as_ref().is_ok_and(|value| value.get("result").is_some_and(|result| !result.is_null())
+            && value["result"]["isError"] != true);
+        execution.record_manual_mcp_return(&result, reported_success)?;
+        if reported_success {
             execution.finish(true)?;
         } else {
             execution.finish_unknown()?;

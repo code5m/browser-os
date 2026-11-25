@@ -14,7 +14,7 @@ pub struct LocalChatRequest {
     pub message: String,
     pub system: String,
 }
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct LocalChatAnswer {
     pub provider: String,
     pub model: String,
@@ -149,13 +149,13 @@ pub async fn agent_local_chat(
     let storage = crate::workspace::data_dir(&app);
     tauri::async_runtime::spawn_blocking(move || {
         let run = uuid::Uuid::new_v4();
-        let execution = super::execution_owner::ProductionExecution::begin_durable(
-            &storage, "local_chat", run, uuid::Uuid::nil(), run, vec![])?;
-        let lease = execution.acquire_lease()?;
-        let response = local_chat(request);
-        drop(lease);
-        execution.finish(response.is_ok())?;
-        response
+        check(&request)?;
+        let input = serde_json::json!({"provider":"ollama_local","model":request.model,
+            "message":request.message,"system":request.system});
+        let result = super::execution_owner::ProductionExecution::run_checkpointed_text(
+            &storage, "local_chat", run, input, || false,
+            || serde_json::to_value(local_chat(request)?).map_err(|_| "AGENT_RUN_RECEIPT_INVALID".into()))?;
+        serde_json::from_value(result).map_err(|_| "AGENT_RUN_RECEIPT_INVALID".into())
     })
         .await
         .map_err(|_| "AGENT_PROVIDER_WORKER_FAILED".to_string())?

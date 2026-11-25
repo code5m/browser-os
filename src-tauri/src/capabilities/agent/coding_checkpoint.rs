@@ -358,7 +358,37 @@ pub(super) fn write(storage: &Path, id: &str, plaintext: &[u8], limit: usize) ->
 // same private directory, OS lock, authenticated encryption and versioned
 // publication. Unlike legacy Coding sessions these records NEVER migrate
 // plaintext. A missing record is distinct from an unreadable record.
-const RUN_LIMIT: usize = 64 * 1024;
+// Keep the admission budget separate from the per-record output cap.
+// Never evict a run merely to make room: its ID and unknown-effect evidence
+// are part of the replay boundary. Existing owners may finish at the cap.
+const RUN_LIMIT: usize = 1024 * 1024;
+const MAX_RUN_RECORDS: usize = 4096;
+const MAX_RUN_DIRECTORY_ENTRIES: usize = 32768;
+
+fn run_catalog_ids(directory: &Path) -> Result<Vec<uuid::Uuid>, String> {
+    let mut ids = Vec::new();
+    for (index, entry) in std::fs::read_dir(directory)
+        .map_err(|_| "AGENT_RUN_CATALOG_UNAVAILABLE")?.enumerate()
+    {
+        if index >= MAX_RUN_DIRECTORY_ENTRIES {
+            return Err("AGENT_RUN_CATALOG_REVIEW_REQUIRED".into());
+        }
+        let entry = entry.map_err(|_| "AGENT_RUN_CATALOG_UNAVAILABLE")?;
+        let name = entry.file_name();
+        let Some(id) = name.to_str().and_then(|name| name.strip_suffix(".run")) else {
+            // Versioned-write lock/temp files are not run identities. They
+            // still count toward the bounded directory traversal.
+            continue;
+        };
+        if !canonical_id(id) || !entry.file_type().map_err(|_| "AGENT_RUN_CATALOG_UNAVAILABLE")?.is_file() {
+            return Err("AGENT_RUN_CATALOG_REVIEW_REQUIRED".into());
+        }
+        ids.push(uuid::Uuid::parse_str(id).map_err(|_| "AGENT_RUN_CATALOG_REVIEW_REQUIRED")?);
+        if ids.len() > MAX_RUN_RECORDS { return Err("AGENT_RUN_CATALOG_FULL".into()); }
+    }
+    ids.sort_unstable();
+    Ok(ids)
+}
 pub(super) struct RunCheckpoint {
     storage: PathBuf,
     directory: PathBuf,
@@ -395,6 +425,18 @@ impl RunCheckpoint {
         let path = self.path();
         let scope = self.scope();
         let expected = safe_paths::read_versioned(&path, &roots, RUN_LIMIT + OVERHEAD)?;
+        // Serialize only new-record admission across processes. Never hold
+        // the catalog lock during a provider request, and do not require new
+        // admission capacity to publish the terminal result of a live run.
+        let _catalog = if expected.is_none() {
+            let locks = private_directory(&self.storage, "coding-owner-locks")?;
+            let lock = AuditLock::acquire_named(&locks.join("run-catalog.lock"), Duration::from_secs(2))
+                .map_err(|_| "AGENT_RUN_CATALOG_BUSY")?;
+            if run_catalog_ids(&self.directory)?.len() >= MAX_RUN_RECORDS {
+                return Err("AGENT_RUN_CATALOG_FULL".into());
+            }
+            Some(lock)
+        } else { None };
         let secret = key(&self.storage, true)?;
         if let Some(previous) = &expected {
             open(&secret, &scope, &previous.bytes)?;
@@ -488,6 +530,19 @@ mod tests {
         assert!(read_artifact(&storage, &id, "apply-transaction.json", 128).is_err());
         std::fs::write(dir.join("manifest.json"), b"legacy").unwrap();
         assert_eq!(read_artifact(&storage, &id, "manifest.json", 128).unwrap_err(), "AGENT_CHECKPOINT_PLAINTEXT_DOWNGRADE");
+        std::fs::remove_dir_all(storage).unwrap();
+    }
+
+    #[test]
+    fn catalog_lists_canonical_run_records_not_write_sidecars() {
+        let storage = std::env::temp_dir().join(format!("browseros-run-catalog-{}", uuid::Uuid::new_v4()));
+        let directory = private_directory(&storage, "agent-run-receipts").unwrap();
+        let id = uuid::Uuid::new_v4();
+        std::fs::write(directory.join(format!("{id}.run")), b"fixture").unwrap();
+        std::fs::write(directory.join(".browseros-cas-directory.lock"), b"").unwrap();
+        assert_eq!(run_catalog_ids(&directory).unwrap(), vec![id]);
+        std::fs::write(directory.join("bad.run"), b"invalid identity").unwrap();
+        assert!(run_catalog_ids(&directory).is_err());
         std::fs::remove_dir_all(storage).unwrap();
     }
 

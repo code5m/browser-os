@@ -902,6 +902,21 @@ fn text_model_turn(profile: &ProviderProfile, messages: &[Value],
         })
 }
 
+// The credential snapshot is deliberately not serializable. Bind a retry
+// to the exact normalized non-credential provider configuration and prompt.
+fn text_checkpoint_input(profile: &ProviderProfile, messages: &[Value], agent: Option<&str>) -> Result<Value, String> {
+    validate(profile)?;
+    if profile.kind != "chat" { return Err("AI_MODEL_NOT_CHAT".into()); }
+    let input = json!({"profile_id":profile.id,"base_url":profile.base_url,
+        "model":profile.model,"messages":messages,"agent_id":agent});
+    if profile.credential.is_empty() || serde_json::to_string(&input)
+        .map_err(|_| "AGENT_RUN_RECEIPT_INVALID")?.contains(&profile.credential) {
+        return Err("AI_CONTEXT_CREDENTIAL_DENIED".into());
+    }
+    Ok(input)
+}
+
+#[cfg(test)]
 fn chat_with_history(
     profile: &ProviderProfile,
     message: &str,
@@ -1733,25 +1748,13 @@ pub fn execute(path: &Path, request: AiRequest) -> Result<Value, String> {
             drop(lock);
             let signal = cancel_guard.as_ref().ok_or("AI_CHAT_REQUEST_UNAVAILABLE")?;
             let run = signal.id.unwrap_or_else(uuid::Uuid::new_v4);
-            let execution =
-                crate::capabilities::agent::public_api::ProductionExecution::begin_durable(
-                    path.parent().ok_or("AGENT_STORAGE_UNAVAILABLE")?, "legacy_agent",
-                    run, uuid::Uuid::nil(), run, vec![])?;
             let cancelled = || signal.cancelled.load(Ordering::SeqCst);
-            if cancelled() {
-                execution.cancel()?;
-                return Err("AI_PROVIDER_CANCELLED".into());
-            }
-            let lease = execution.acquire_lease()?;
-            let response = text_model_turn(&profile, &messages, &cancelled)
-                .map(|content| json!({"content":content,"model":profile.model,"agent_id":agent.id,"tools_executed":false}));
-            drop(lease);
-            if cancelled() {
-                execution.cancel()?;
-            } else {
-                execution.finish(response.is_ok())?;
-            }
-            response
+            let input = text_checkpoint_input(&profile, &messages, Some(&agent.id))?;
+            crate::capabilities::agent::public_api::ProductionExecution::run_checkpointed_text(
+                path.parent().ok_or("AGENT_STORAGE_UNAVAILABLE")?, "legacy_agent",
+                run, input, cancelled,
+                || text_model_turn(&profile, &messages, &cancelled)
+                    .map(|content| json!({"content":content,"model":profile.model,"agent_id":agent.id,"tools_executed":false})))
         }
         "chat" => {
             let id = if request.id.is_empty() {
@@ -1773,25 +1776,14 @@ pub fn execute(path: &Path, request: AiRequest) -> Result<Value, String> {
             drop(lock);
             let signal = cancel_guard.as_ref().ok_or("AI_CHAT_REQUEST_UNAVAILABLE")?;
             let run = signal.id.unwrap_or_else(uuid::Uuid::new_v4);
-            let execution =
-                crate::capabilities::agent::public_api::ProductionExecution::begin_durable(
-                    path.parent().ok_or("AGENT_STORAGE_UNAVAILABLE")?, "chat",
-                    run, uuid::Uuid::nil(), run, vec![])?;
-            let lease = execution.acquire_lease()?;
-            let response = chat_with_history(
-                &profile,
-                &request.message,
-                &request.scope,
-                &request.history,
-                &|| signal.cancelled.load(Ordering::SeqCst),
-            );
-            drop(lease);
-            if signal.cancelled.load(Ordering::SeqCst) {
-                execution.cancel()?;
-            } else {
-                execution.finish(response.is_ok())?;
-            }
-            response
+            let messages = build_chat_messages(&request.message, &request.scope, &request.history)?;
+            let input = text_checkpoint_input(&profile, &messages, None)?;
+            let cancelled = || signal.cancelled.load(Ordering::SeqCst);
+            crate::capabilities::agent::public_api::ProductionExecution::run_checkpointed_text(
+                path.parent().ok_or("AGENT_STORAGE_UNAVAILABLE")?, "chat",
+                run, input, cancelled,
+                || text_model_turn(&profile, &messages, &cancelled)
+                    .map(|content| json!({"content":content,"model":profile.model})))
         }
         _ => Err("AI_ACTION_INVALID".into()),
     }

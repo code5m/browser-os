@@ -45,9 +45,24 @@ fn task_owner() -> &'static TaskRegistry {
     PRODUCTION_TASKS.get_or_init(|| TaskRegistry::new(Arc::new(EventJournal::new(128))))
 }
 
-/// The native Run receipt owns only encrypted task/approval metadata. Text
-/// history is still provided by the authenticated chat UI; no credentials,
-/// provider responses or user prompts are put in this journal.
+/// Text-only runs keep their exact normalized provider input and eligible
+/// result under the same encrypted owner as task/approval metadata. Never
+/// serialize the ProviderProfile credential snapshot into this record.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct TextRunPayload {
+    input: serde_json::Value,
+    result: Option<serde_json::Value>,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct EffectEvidence {
+    request_digest: String,
+    target: Option<String>,
+    tool: Option<String>,
+    disposition: String,
+    response_digest: Option<String>,
+}
+
 #[derive(serde::Serialize, serde::Deserialize)]
 struct NativeRunReceipt {
     id: Uuid,
@@ -55,33 +70,65 @@ struct NativeRunReceipt {
     task: TaskRecord,
     #[serde(default)]
     approval: Option<ApprovalClaims>,
+    #[serde(default)]
+    text: Option<TextRunPayload>,
+    #[serde(default)]
+    effect: Option<EffectEvidence>,
+    #[serde(default)]
+    created_at_ms: u64,
+    #[serde(default)]
+    updated_at_ms: u64,
+}
+fn unix_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default().as_millis().min(u64::MAX as u128) as u64
 }
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 struct DurableRun {
     id: Uuid,
     checkpoint: super::coding_checkpoint::RunCheckpoint,
     approval: Option<ApprovalClaims>,
+    text: Option<TextRunPayload>,
+    effect: Option<EffectEvidence>,
+    created_at_ms: u64,
 }
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 impl DurableRun {
+    fn new(storage: &Path, id: Uuid) -> Result<Self, String> {
+        Ok(Self { id, checkpoint: super::coding_checkpoint::RunCheckpoint::acquire(storage, id)?,
+            approval: None, text: None, effect: None, created_at_ms: unix_ms() })
+    }
     fn persist(&self, phase: &str, task: TaskRecord) -> Result<(), String> {
-        let receipt = NativeRunReceipt { id: self.id, phase: phase.into(), task, approval: self.approval.clone() };
+        let receipt = NativeRunReceipt {
+            id: self.id, phase: phase.into(), task, approval: self.approval.clone(),
+            text: self.text.clone(), effect: self.effect.clone(),
+            created_at_ms: self.created_at_ms, updated_at_ms: unix_ms(),
+        };
         self.checkpoint.write(&serde_json::to_vec(&receipt).map_err(|_| "AGENT_RUN_RECEIPT_INVALID")?)
     }
-    fn reject_existing(&self) -> Result<(), String> {
-        let Some(bytes) = self.checkpoint.read()? else { return Ok(()); };
+    fn recover_existing(&self) -> Result<Option<NativeRunReceipt>, String> {
+        let Some(bytes) = self.checkpoint.read()? else { return Ok(None); };
         let mut record: NativeRunReceipt = serde_json::from_slice(&bytes).map_err(|_| "AGENT_RUN_RECEIPT_INVALID")?;
         if record.id != self.id { return Err("AGENT_RUN_RECEIPT_INVALID".into()); }
-        // Obtaining this OS lock excludes the previous cooperating host owner.
-        // It does NOT prove that an external effect failed or may be replayed.
+        // The OS lock excludes the old cooperating owner, not an already
+        // dispatched remote side effect. Approval is evidence, never a
+        // reusable execution permit.
         if matches!(record.task.status, TaskStatus::Running | TaskStatus::AwaitingApproval) {
             record.task.revision = record.task.revision.checked_add(1).ok_or("AGENT_TASK_REVISION_EXHAUSTED")?;
             record.task.status = TaskStatus::Paused;
             record.task.pending = None;
-            record.phase = "interrupted".into();
+            let effect_possible = record.approval.as_ref().is_some_and(|claim|
+                claim.accepted && matches!(claim.effect, ToolEffect::ExecuteProcess | ToolEffect::ExternalSideEffect));
+            record.phase = if effect_possible { "operation_unknown" } else { "interrupted" }.into();
+            if let Some(effect) = &mut record.effect { effect.disposition = "unknown".into(); }
+            record.updated_at_ms = unix_ms();
             self.checkpoint.write(&serde_json::to_vec(&record).map_err(|_| "AGENT_RUN_RECEIPT_INVALID")?)?;
         }
-        Err("AGENT_RUN_ALREADY_RECORDED".into())
+        Ok(Some(record))
+    }
+    fn reject_existing(&self) -> Result<(), String> {
+        if self.recover_existing()?.is_some() { Err("AGENT_RUN_ALREADY_RECORDED".into()) }
+        else { Ok(()) }
     }
 }
 
@@ -105,8 +152,7 @@ impl ProductionExecution {
         workspace: Uuid, session: Uuid, context: Vec<ContextRef>) -> Result<Self, String> {
         #[cfg(any(target_os = "linux", target_os = "windows"))]
         {
-            let checkpoint = super::coding_checkpoint::RunCheckpoint::acquire(storage, run)?;
-            let durable = DurableRun { id: run, checkpoint, approval: None };
+            let durable = DurableRun::new(storage, run)?;
             durable.reject_existing()?;
             let mut execution = Self::begin_scoped(kind, workspace, session, context)?;
             durable.persist("running", execution.record()?)?;
@@ -115,6 +161,104 @@ impl ProductionExecution {
         }
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         { let _ = (storage, kind, run, workspace, session, context); Err("AGENT_PRIVATE_STORAGE_UNAVAILABLE".into()) }
+    }
+
+    /// A retry with the same request UUID and exact normalized input can
+    /// recover a committed text-only result. It never reruns an interrupted
+    /// or ambiguous provider dispatch. A different input under an existing
+    /// UUID is rejected even when the old result is available.
+    pub(crate) fn run_checkpointed_text(
+        storage: &Path, kind: &'static str, run: Uuid, input: serde_json::Value,
+        cancelled: impl Fn() -> bool,
+        provider: impl FnOnce() -> Result<serde_json::Value, String>,
+    ) -> Result<serde_json::Value, String> {
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        {
+            if !matches!(kind, "chat" | "legacy_agent" | "local_chat") || !input.is_object()
+                || serde_json::to_vec(&input).map_err(|_| "AGENT_RUN_RECEIPT_INVALID")?.len() > 128 * 1024
+            {
+                return Err("AGENT_RUN_INPUT_LIMIT".into());
+            }
+            if cancelled() { return Err("AI_PROVIDER_CANCELLED".into()); }
+            let mut durable = DurableRun::new(storage, run)?;
+            if let Some(previous) = durable.recover_existing()? {
+                if previous.task.goal != kind || previous.task.session_id != run || !previous.task.workspace_id.is_nil() {
+                    return Err("AGENT_RUN_SCOPE_MISMATCH".into());
+                }
+                let text = previous.text.ok_or("AGENT_RUN_RECOVERY_REQUIRED")?;
+                if text.input != input { return Err("AGENT_RUN_INPUT_MISMATCH".into()); }
+                if previous.phase == "completed" && previous.task.status == TaskStatus::Completed {
+                    return text.result.ok_or_else(|| "AGENT_RUN_RESULT_UNAVAILABLE".into());
+                }
+                return Err("AGENT_RUN_RECOVERY_REQUIRED".into());
+            }
+            durable.text = Some(TextRunPayload { input, result: None });
+            let mut execution = Self::begin_scoped(kind, Uuid::nil(), run, vec![])?;
+            durable.persist("prepared", execution.record()?)?;
+            execution.durable_run = Some(durable);
+            if cancelled() {
+                execution.cancel()?;
+                return Err("AI_PROVIDER_CANCELLED".into());
+            }
+            let lease = execution.acquire_lease()?;
+            execution.checkpoint("running")?;
+            let response = provider();
+            drop(lease);
+            if cancelled() {
+                execution.cancel()?;
+                return Err("AI_PROVIDER_CANCELLED".into());
+            }
+            if let Ok(value) = &response {
+                let encoded = serde_json::to_string(value).map_err(|_| "AGENT_RUN_RECEIPT_INVALID")?;
+                // The provider adapter has already redacted its known
+                // credential. Do not retain additional suspected secrets
+                // or oversized output in a recovery record.
+                if encoded.len() <= 512 * 1024 && !crate::security_policy::contains_credential_leak(&encoded) {
+                    if let Some(payload) = execution.durable_run.as_mut().and_then(|run| run.text.as_mut()) {
+                        payload.result = Some(value.clone());
+                    }
+                }
+            }
+            // Complete the authenticated publication before handing the
+            // successful answer back to the UI. A lost IPC response can
+            // recover this result without a second provider invocation.
+            execution.finish(response.is_ok())?;
+            response
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        { let _ = (storage, kind, run, input, cancelled, provider); Err("AGENT_PRIVATE_STORAGE_UNAVAILABLE".into()) }
+    }
+
+    /// Keep bounded, encrypted evidence for manual MCP. The receipt records
+    /// what the transport reported, not a claim of exactly-once remote effects.
+    pub(crate) fn checkpoint_manual_mcp(&mut self, digest: String, request: &serde_json::Value) -> Result<(), String> {
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        {
+            let run = self.durable_run.as_mut().ok_or("AGENT_RUN_RECEIPT_REQUIRED")?;
+            if !run.approval.as_ref().is_some_and(|claim| claim.accepted) {
+                return Err("AGENT_APPROVAL_REQUIRED".into());
+            }
+            let safe_label = |field: &str| request[field].as_str().filter(|value|
+                !value.is_empty() && value.len() <= 256 && !crate::security_policy::contains_credential_leak(value))
+                .map(str::to_owned);
+            run.effect = Some(EffectEvidence { request_digest: digest.clone(), target: safe_label("server_id"),
+                tool: safe_label("tool"), disposition: "dispatching".into(), response_digest: None });
+        }
+        let _ = (digest, request);
+        self.checkpoint("dispatching")
+    }
+
+    pub(crate) fn record_manual_mcp_return(&mut self, result: &Result<serde_json::Value, String>, reported_success: bool) -> Result<(), String> {
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        {
+            let effect = self.durable_run.as_mut().and_then(|run| run.effect.as_mut())
+                .ok_or("AGENT_RUN_RECEIPT_REQUIRED")?;
+            effect.disposition = if reported_success { "transport_returned" } else { "unknown" }.into();
+            effect.response_digest = result.as_ref().ok().and_then(|value| serde_json::to_vec(value).ok())
+                .map(|bytes| format!("{:x}", Sha256::digest(&bytes)));
+        }
+        let _ = (result, reported_success);
+        self.checkpoint(if reported_success { "transport_returned" } else { "operation_unknown" })
     }
 
     pub(crate) fn checkpoint(&self, phase: &str) -> Result<(), String> {
@@ -367,6 +511,45 @@ mod tests {
         assert_eq!(recovered.phase, "interrupted");
         drop(checkpoint);
         let _ = std::fs::remove_dir_all(storage);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[test]
+    fn text_run_recovers_exact_result_without_provider_replay() {
+        let storage = std::env::temp_dir().join(format!("browseros-text-receipt-{}", Uuid::new_v4()));
+        let id = Uuid::new_v4();
+        let input = serde_json::json!({"model":"fixture","messages":[{"role":"user","content":"hello"}]});
+        let expected = serde_json::json!({"content":"answer","model":"fixture"});
+        assert_eq!(ProductionExecution::run_checkpointed_text(&storage, "chat", id, input.clone(),
+            || false, || Ok(expected.clone())).unwrap(), expected);
+        assert_eq!(ProductionExecution::run_checkpointed_text(&storage, "chat", id, input,
+            || false, || panic!("a committed response must not contact the provider")).unwrap(), expected);
+        assert!(ProductionExecution::run_checkpointed_text(&storage, "chat", id,
+            serde_json::json!({"model":"other"}), || false, || panic!("mismatched input must not dispatch")).is_err());
+        let raw = std::fs::read(storage.join("agent-run-receipts").join(format!("{id}.run"))).unwrap();
+        assert!(!raw.windows(b"hello".len()).any(|bytes| bytes == b"hello"));
+        std::fs::remove_dir_all(storage).unwrap();
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[test]
+    fn interrupted_text_run_retains_context_but_never_replays() {
+        let storage = std::env::temp_dir().join(format!("browseros-text-interrupted-{}", Uuid::new_v4()));
+        let id = Uuid::new_v4();
+        let input = serde_json::json!({"model":"fixture"});
+        let mut durable = DurableRun::new(&storage, id).unwrap();
+        durable.text = Some(TextRunPayload { input: input.clone(), result: None });
+        let execution = ProductionExecution::begin_scoped("chat", Uuid::nil(), id, vec![]).unwrap();
+        durable.persist("running", execution.record().unwrap()).unwrap();
+        drop(execution);
+        drop(durable);
+        assert_eq!(ProductionExecution::run_checkpointed_text(&storage, "chat", id, input,
+            || false, || panic!("unknown dispatch may not replay")).unwrap_err(), "AGENT_RUN_RECOVERY_REQUIRED");
+        let receipt = DurableRun::new(&storage, id).unwrap().recover_existing().unwrap().unwrap();
+        assert_eq!(receipt.task.status, TaskStatus::Paused);
+        assert_eq!(receipt.phase, "interrupted");
+        assert!(receipt.text.is_some());
+        std::fs::remove_dir_all(storage).unwrap();
     }
 
     #[test]
