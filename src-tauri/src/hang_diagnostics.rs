@@ -197,6 +197,7 @@ fn snapshot(event: &str, stalled_ms: u64) -> Value {
             "status": read_status(&format!("{main_thread}/status"))
         },
         "threads": threads_snapshot(),
+        "tab_mutation": crate::bridge::tab_mutation_diagnostic(),
         "children": children_snapshot(),
         "memory_pressure": read_pressure("/proc/pressure/memory"),
         "io_pressure": read_pressure("/proc/pressure/io"),

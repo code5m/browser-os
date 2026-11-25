@@ -92,6 +92,7 @@ commands.allow = [
     "tab_list",
     "tab_set_title",
     "tab_activate",
+    "tab_mutation",
     "tab_go_back",
     "tab_go_forward",
     "tab_reload",

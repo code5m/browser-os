@@ -172,6 +172,19 @@ pub fn hide_bounds(app: &AppHandle, id: &str) {
 }
 /// 创建一个浏览器页签（独立子窗口，方案 B），返回其信息并设为激活页签。
 pub fn create_tab(app: AppHandle, url: &str) -> Result<TabInfo, String> {
+    create_tab_with_completion(app, url, None)
+}
+
+pub(crate) fn create_tab_receipted(app: AppHandle, url: &str) -> Result<TabInfo, String> {
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    let info = create_tab_with_completion(app, url, Some(tx))?;
+    rx.recv().map_err(|_| "TAB_CREATE_CALLBACK_LOST")?;
+    Ok(info)
+}
+
+fn create_tab_with_completion(
+    app: AppHandle, url: &str, completion: Option<std::sync::mpsc::SyncSender<()>>,
+) -> Result<TabInfo, String> {
     if app
         .state::<crate::AppState>()
         .shutdown_requested
@@ -262,7 +275,11 @@ pub fn create_tab(app: AppHandle, url: &str) -> Result<TabInfo, String> {
     // 队列里的 webview build 互相等待死锁）。这里用 run_on_main_thread 排队执行。
     let app_hide = app.clone();
     let active_id = id.clone();
-    let _ = app.run_on_main_thread(move || {
+    let wait_for_completion = completion.is_some();
+    let dispatch = app.run_on_main_thread(move || {
+        let complete = || { if let Some(tx) = completion { let _ = tx.send(()); } };
+        // A superseded hide intent is a finished host callback, not a new effect.
+        let hide = || {
         let st = app_hide.state::<crate::AppState>();
         if st.shutdown_requested.load(Ordering::Acquire)
             || st.active_tab.lock().unwrap().as_deref() != Some(active_id.as_str())
@@ -278,7 +295,11 @@ pub fn create_tab(app: AppHandle, url: &str) -> Result<TabInfo, String> {
                 hide_bounds(&app_hide, &k);
             }
         }
+        };
+        hide();
+        complete();
     });
+    if wait_for_completion { dispatch.map_err(|_| "TAB_CREATE_CALLBACK_LOST")?; }
     eprintln!("[create_tab] run_on_main_thread 已排队 label={}", id);
 
     eprintln!("[create_tab] tab created label={}", id);

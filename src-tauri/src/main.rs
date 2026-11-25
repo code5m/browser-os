@@ -182,7 +182,7 @@ fn native_eval_in_tab(app: tauri::AppHandle, id: String, js: String) -> Result<S
     bridge::eval_in_tab_sync(native_main_webview(&app)?, app, id, js)
 }
 fn native_tab_activate(app: tauri::AppHandle, id: String) -> Result<(), String> {
-    bridge::tab_activate(native_main_webview(&app)?, app, id)
+    bridge::tab_activate_impl(native_main_webview(&app)?, app, id)
 }
 fn native_tab_position(
     app: tauri::AppHandle,
@@ -1974,6 +1974,7 @@ fn main() {
             bridge::tab_list,
             bridge::tab_set_title,
             bridge::tab_activate,
+            bridge::tab_mutation,
             bridge::tab_go_back,
             bridge::tab_go_forward,
             bridge::tab_reload,

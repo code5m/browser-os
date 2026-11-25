@@ -30,6 +30,54 @@ function invoke<T>(
     (error) => { diagnosticIpc(command, started, "error"); throw error; },
   );
 }
+// The native owner, not a rejected IPC Promise, decides whether work ended.
+type TabAction =
+  | { kind: "new"; url: string }
+  | { kind: "open"; id: string; url: string }
+  | { kind: "close" | "activate" | "back" | "forward" | "reload"; id: string };
+type TabReceipt = {
+  ticket: string; client_id: string; command: string;
+  phase: "prepared" | "running" | "cancel_requested" | "succeeded" | "failed" | "cancelled" | "unknown";
+  value?: unknown; error?: string;
+};
+const tabReceiptCall = (request: Record<string, unknown>) =>
+  invoke<TabReceipt | null>("tab_mutation", { request });
+const receiptDelay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+async function ownedTabMutation<T>(action: TabAction): Promise<T> {
+  const clientId = crypto.randomUUID();
+  const prepared = await tabReceiptCall({ phase: "prepare", client_id: clientId, action });
+  if (!prepared || prepared.client_id !== clientId) throw new Error("TAB_MUTATION_RECEIPT_MISSING");
+  const ticket = prepared.ticket;
+  // Send exactly once. Poll independently; a lost start reply never resubmits
+  // the underlying mutation. Only native start with this ticket can run it.
+  void tabReceiptCall({ phase: "start", ticket }).catch(() => {});
+  const began = performance.now();
+  let cancelledPreparation = false;
+  for (;;) {
+    let receipt: TabReceipt | null;
+    try { receipt = await tabReceiptCall({ phase: "poll", ticket }); }
+    catch { await receiptDelay(500); continue; }
+    if (!receipt || receipt.ticket !== ticket) {
+      // Keep frontend admission quarantined, rather than inventing completion.
+      await receiptDelay(500); continue;
+    }
+    if (receipt.phase === "prepared" && !cancelledPreparation && performance.now() - began > 5000) {
+      cancelledPreparation = true;
+      void tabReceiptCall({ phase: "cancel", ticket }).catch(() => {});
+    }
+    if (receipt.phase === "succeeded" || receipt.phase === "failed" || receipt.phase === "cancelled") {
+      // Ack only authoritative host terminal state. Ack retry is idempotent.
+      for (;;) {
+        try { await tabReceiptCall({ phase: "ack", ticket }); break; }
+        catch { await receiptDelay(500); }
+      }
+      if (receipt.phase === "succeeded") return receipt.value as T;
+      throw new Error(receipt.error || "TAB_MUTATION_CANCELLED");
+    }
+    await receiptDelay(200);
+  }
+}
+
 import type {
   Artifact,
   ImageRef,
@@ -840,14 +888,14 @@ export const bridge = {
   launchApp: (exec: string) => invoke("launch_app", { exec }),
 
   // ====== 浏览器页签 ======
-  tabNew: (url: string) => invoke<TabInfo>("tab_new", { url }),
+  tabNew: (url: string) => ownedTabMutation<TabInfo>({ kind: "new", url }),
 
-  tabClose: (id: string) => invoke("tab_close", { id }),
+  tabClose: (id: string) => ownedTabMutation<void>({ kind: "close", id }),
 
   // 激活页签：后端隐藏其它页签的子 webview 并恢复目标页签显示
-  tabActivate: (id: string) => invoke("tab_activate", { id }),
+  tabActivate: (id: string) => ownedTabMutation<void>({ kind: "activate", id }),
 
-  tabOpen: (id: string, url: string) => invoke("tab_open", { id, url }),
+  tabOpen: (id: string, url: string) => ownedTabMutation<void>({ kind: "open", id, url }),
 
   tabPosition: (
     id: string,
@@ -856,14 +904,17 @@ export const bridge = {
 
   tabList: () => invoke<TabInfo[]>("tab_list"),
 
+  inspectTabMutation: () => tabReceiptCall({ phase: "inspect" }),
+  cancelTabMutation: (ticket: string) => tabReceiptCall({ phase: "cancel", ticket }),
+
   tabSetTitle: (id: string, title: string) =>
     invoke("tab_set_title", { id, title }),
 
-  tabGoBack: (id: string) => invoke("tab_go_back", { id }),
+  tabGoBack: (id: string) => ownedTabMutation<void>({ kind: "back", id }),
 
-  tabGoForward: (id: string) => invoke("tab_go_forward", { id }),
+  tabGoForward: (id: string) => ownedTabMutation<void>({ kind: "forward", id }),
 
-  tabReload: (id: string) => invoke("tab_reload", { id }),
+  tabReload: (id: string) => ownedTabMutation<void>({ kind: "reload", id }),
 
   // 在指定子 webview 中执行 JavaScript（用于 AI 模式向宫格注入问题）
   evalInTab: (id: string, js: string) => invoke<string>("eval_in_tab", { id, js }),

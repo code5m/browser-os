@@ -27,6 +27,7 @@ fn append(file: &mut File, event: &str, age_ms: u64) {
         "age_ms": age_ms,
         "pid": std::process::id(),
         "platform": std::env::consts::OS,
+        "tab_mutation": crate::bridge::tab_mutation_diagnostic(),
     });
     let _ = writeln!(file, "{record}");
 }
