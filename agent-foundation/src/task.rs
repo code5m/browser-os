@@ -281,7 +281,7 @@ impl TaskRegistry {
         }
         let mut next = previous.clone();
         next.status = TaskStatus::Running;
-        next.revision += 1;
+        next.revision = next.revision.checked_add(1).ok_or(FoundationError::InvalidTransition)?;
         let events = [EventKind::StateChanged {
             from: previous.status,
             to: next.status,
@@ -308,7 +308,7 @@ impl TaskRegistry {
         }
         let mut next = previous.clone();
         next.status = TaskStatus::Paused;
-        next.revision += 1;
+        next.revision = next.revision.checked_add(1).ok_or(FoundationError::InvalidTransition)?;
         let events = [EventKind::StateChanged {
             from: previous.status,
             to: next.status,
@@ -330,7 +330,7 @@ impl TaskRegistry {
         let mut next = previous.clone();
         next.status = TaskStatus::Cancelled;
         next.pending = None;
-        next.revision += 1;
+        next.revision = next.revision.checked_add(1).ok_or(FoundationError::InvalidTransition)?;
         let events = [EventKind::StateChanged {
             from: previous.status,
             to: next.status,
@@ -367,7 +367,7 @@ impl TaskRegistry {
         }
         let mut next = previous.clone();
         next.status = status;
-        next.revision += 1;
+        next.revision = next.revision.checked_add(1).ok_or(FoundationError::InvalidTransition)?;
         let events = [EventKind::StateChanged {
             from: previous.status,
             to: next.status,
@@ -441,7 +441,7 @@ impl TaskRegistry {
         let mut next = previous.clone();
         next.pending = Some(pending);
         next.status = TaskStatus::AwaitingApproval;
-        next.revision += 1;
+        next.revision = next.revision.checked_add(1).ok_or(FoundationError::InvalidTransition)?;
         let events = [
             EventKind::StateChanged {
                 from: previous.status,
@@ -482,7 +482,7 @@ impl TaskRegistry {
         let mut next = previous.clone();
         next.pending = None;
         next.status = TaskStatus::Running;
-        next.revision += 1;
+        next.revision = next.revision.checked_add(1).ok_or(FoundationError::InvalidTransition)?;
         let events = [
             EventKind::ApprovalResolved { call_id, accepted },
             EventKind::StateChanged {
@@ -606,7 +606,7 @@ impl TaskRegistry {
             );
             if interrupted {
                 task.status = TaskStatus::Paused;
-                task.revision += 1;
+                task.revision = task.revision.checked_add(1).ok_or(FoundationError::InvalidTransition)?;
             }
             task.pending = None;
             if registry

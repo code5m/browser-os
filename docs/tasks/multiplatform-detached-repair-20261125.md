@@ -50,3 +50,45 @@ were executed. Regression cases are source only, NOT_RUN.
    defects. Unrelated publishing/WeChat files and governance workflows untouched.
 
 Overall: BLOCKED / GUI_PENDING. No PASS claim.
+
+
+## Second detached source repair
+
+Parent: `81399f21f6db08d4187c428a9a5b2e125d096d9a`. No branch refs, workflows, builds, tests, or gates were run or changed.
+
+- Browser owner: replace the Promise-tail backlog with a physically bounded,
+  removable queue; distinguish waiting timeout from UNKNOWN in-flight outcome.
+  An in-flight watchdog rejects the caller and discards queued work but retains
+  the original operation and execution slot until settlement. History/reload/
+  legacy close share the owner path. Capability cleanup processes confirmed
+  close receipts individually. Added controlled late-settlement regressions.
+  Native non-return, transport rejection versus actual terminal completion,
+  engine cancellation, and recovery after frontend/process restart still
+  require the approved native operation protocol. No timeout releases a slot.
+- Capture: recheck native WebView identity before the Windows metrics-to-
+  capture transition and before the host saves results. Also reject missing
+  or oversized legacy CDP layout metrics in addition to CSS dimensions.
+  No renderer-wide memory guarantee, document-generation fence, or Linux
+  pre-allocation hard bound is claimed.
+- Durable foundation: require the persisted Running revision before lease or
+  effect dispatch. Unknown effects block additional effects, execution leases,
+  and transitions back to Running until reconciliation. Lease deadlines no
+  longer permit stealing or recovery; an orphaned lease fails closed pending a
+  protected owner-death recovery mechanism. Prioritize cancellation before
+  tool polling and check revision after durable intent. Use checked revision
+  increments. Added deterministic lease and unknown-effect regressions.
+  Production owner remains in-memory; no unsafe durable activation.
+- Linux workspace staging: retain our actual opened stage handle and refuse
+  name-based cleanup when the stage name was replaced; failed exclusive stage
+  creation no longer unlinks someone else's name. Added a deterministic
+  stage-replacement regression. This is a specific cleanup fix, not strict
+  external target CAS; ordinary target rename/unlink remains non-conditional.
+- GTK hot paths, WebView lifecycle/position primitives, publishing/WeChat, and
+  governance were not modified. Real Windows/Linux/GTK/GUI and final gates
+  remain NOT_RUN by user instruction. A strict existing-file replacement policy
+  must either use a proven enforced primitive or explicitly decide on a
+  non-overwriting conflict workflow; silently disabling normal editing is not
+  approved.
+
+Status: BLOCKED / GUI_PENDING. This is unverified source, not a completed
+seven-item closure.

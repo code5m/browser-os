@@ -439,6 +439,7 @@ pub async fn capture_full_page(
     crate::shared::invocation::check_tab_id(&id)?;
     let permit = CAPTURE_LANE.reserve()?;
     let manager = app.state::<tauri_plugin_browser_tabs::TabManagerState>();
+    let instance = manager.instance(&id).map_err(|_| "CAPTURE_TAB_UNAVAILABLE".to_string())?;
     let cancellation = tauri_plugin_browser_tabs::CaptureCancellation::new();
     let mut waiter = CaptureWaitGuard(Some(cancellation.clone()));
     let (send, recv) = tokio::sync::oneshot::channel();
@@ -457,6 +458,11 @@ pub async fn capture_full_page(
     // A terminal native receipt arrived. Do not cancel completed work.
     waiter.0.take();
     let (bytes, permit) = result?;
+    // Native identity is stronger than a logical tab ID. A snapshot from a
+    // closed/replaced WebView must never be published as the new tab's image.
+    if !manager.is_current_instance(&id, &instance) {
+        return Err("CAPTURE_INSTANCE_STALE".into());
+    }
     let base = crate::workspace::data_dir(&app);
     permit.run(move || save_capture(&base, &bytes)).await
 }

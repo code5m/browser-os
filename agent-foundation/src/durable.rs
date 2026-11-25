@@ -145,6 +145,13 @@ impl SqliteTaskStore {
         expected_revision: Option<u64>,
         event_kinds: &[EventKind],
     ) -> Result<Vec<EventRecord>> {
+        // A recovered or previously paused task cannot become executable
+        // while an earlier external effect is still unaccounted for.
+        if event_kinds.iter().any(|kind| matches!(
+            kind, EventKind::StateChanged { to: TaskStatus::Running, .. }
+        )) {
+            Self::ensure_no_unknown_effect(tx, task.id)?;
+        }
         let id = task.id.to_string();
         let serialized = encode(task)?;
         match expected_revision {
@@ -219,8 +226,9 @@ impl SqliteTaskStore {
     /// Explicitly pause interrupted work. All pending approvals are invalidated;
     /// existing effect receipts remain Unknown pending external reconciliation.
     pub fn recover_paused(&self) -> Result<Vec<TaskRecord>> {
-        // Do not steal a live worker's task on a second process attach.
-        // An expired lease can be recovered, but never resumed automatically.
+        // A wall-clock deadline is not proof that a worker or its native
+        // side effect stopped. Even expired leases must be reconciled by a
+        // trusted owner before crash recovery can take over.
         // Keep lease inspection, snapshot reads and all recovery publications
         // in one write transaction. A second connection cannot acquire a lease
         // between the check and pause, and a failed recovery leaves no partial
@@ -229,14 +237,14 @@ impl SqliteTaskStore {
         let tx = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(storage)?;
-        let live: i64 = tx.query_row(
-            "SELECT COUNT(*) FROM foundation_leases WHERE expires_ms>?1",
-            params![epoch_ms()?],
+        let leases: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM foundation_leases",
+            [],
             |row| row.get(0),
         ).map_err(storage)?;
-        if live != 0 {
+        if leases != 0 {
             return Err(FoundationError::Storage(
-                "another worker has an active task lease".into(),
+                "unreleased task lease requires owner reconciliation".into(),
             ));
         }
         let tasks = Self::load_tasks_from(&tx)?;
@@ -358,15 +366,70 @@ impl SqliteTaskStore {
         effect: ToolEffect,
         tool_name: &str,
     ) -> Result<()> {
+        self.begin_effect_checked(task_id, call_id, key, effect, tool_name, None)
+    }
+
+    pub(crate) fn begin_effect_at_revision(
+        &self,
+        task_id: Uuid,
+        call_id: Uuid,
+        key: &str,
+        effect: ToolEffect,
+        tool_name: &str,
+        revision: u64,
+    ) -> Result<()> {
+        self.begin_effect_checked(task_id, call_id, key, effect, tool_name, Some(revision))
+    }
+
+    fn ensure_no_unknown_effect(connection: &Connection, task_id: Uuid) -> Result<()> {
+        let unknown: bool = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM foundation_effects WHERE task_id=?1 AND state='unknown')",
+            params![task_id.to_string()],
+            |row| row.get(0),
+        ).map_err(storage)?;
+        if unknown {
+            return Err(FoundationError::Storage("unreconciled task effect".into()));
+        }
+        Ok(())
+    }
+
+    fn require_running_revision(connection: &Connection, task_id: Uuid, revision: u64) -> Result<()> {
+        let body: Option<String> = connection.query_row(
+            "SELECT body FROM foundation_tasks WHERE id=?1 AND revision=?2",
+            params![task_id.to_string(), to_i64(revision)?],
+            |row| row.get(0),
+        ).optional().map_err(storage)?;
+        let task: TaskRecord = decode(&body.ok_or(FoundationError::InvalidTransition)?)?;
+        if task.id != task_id || task.revision != revision || task.status != TaskStatus::Running {
+            return Err(FoundationError::InvalidTransition);
+        }
+        Ok(())
+    }
+
+    fn begin_effect_checked(
+        &self,
+        task_id: Uuid,
+        call_id: Uuid,
+        key: &str,
+        effect: ToolEffect,
+        tool_name: &str,
+        revision: Option<u64>,
+    ) -> Result<()> {
         if key.is_empty() || key.len() > 256 || effect == ToolEffect::ReadOnly {
             return Err(FoundationError::InvalidInput("effect intent"));
         }
-        let connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
-        connection.execute(
+        let mut connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
+        let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate).map_err(storage)?;
+        if let Some(revision) = revision {
+            Self::require_running_revision(&tx, task_id, revision)?;
+        }
+        Self::ensure_no_unknown_effect(&tx, task_id)?;
+        tx.execute(
             "INSERT INTO foundation_effects(call_id,task_id,effect_key,effect,tool,state,started_ms)
              VALUES(?1,?2,?3,?4,?5,'unknown',?6)",
             params![call_id.to_string(),task_id.to_string(),key,encode(&effect)?,tool_name,epoch_ms()?]
         ).map_err(storage)?;
+        tx.commit().map_err(storage)?;
         Ok(())
     }
 
@@ -447,33 +510,26 @@ impl SqliteTaskStore {
         .collect()
     }
 
-    /// Cross-process exclusion for the existing 120-second runtime limit;
-    /// stale leases only expire after 180 seconds. Never use as a fencing
-    /// mechanism for remote side effects (their idempotency belongs upstream).
+    /// Cross-process admission. The stored deadline is diagnostic only:
+    /// expiration is not proof that the previous execution has stopped.
+    /// Until the trusted host supplies a protected crash-recovery boundary,
+    /// orphaned leases fail closed rather than allowing overlapping workers.
     pub fn acquire_lease(&self, task_id: Uuid, revision: u64) -> Result<Uuid> {
         let mut connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
         let tx = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(storage)?;
-        let stored: Option<i64> = tx
-            .query_row(
-                "SELECT revision FROM foundation_tasks WHERE id=?1",
-                params![task_id.to_string()],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(storage)?;
-        if stored != Some(to_i64(revision)?) {
-            return Err(FoundationError::InvalidTransition);
-        }
+        Self::require_running_revision(&tx, task_id, revision)?;
+        Self::ensure_no_unknown_effect(&tx, task_id)?;
         let token = Uuid::new_v4();
         let now = epoch_ms()?;
+        let expires = now.checked_add(180_000)
+            .ok_or_else(|| FoundationError::Storage("lease deadline overflow".into()))?;
         let changed = tx
             .execute(
                 "INSERT INTO foundation_leases(task_id,token,expires_ms) VALUES(?1,?2,?3)
-             ON CONFLICT(task_id) DO UPDATE SET token=excluded.token,expires_ms=excluded.expires_ms
-             WHERE foundation_leases.expires_ms<=?4",
-                params![task_id.to_string(), token.to_string(), now + 180_000, now],
+                 ON CONFLICT(task_id) DO NOTHING",
+                params![task_id.to_string(), token.to_string(), expires],
             )
             .map_err(storage)?;
         if changed != 1 {
@@ -640,6 +696,49 @@ mod tests {
             assert_eq!(db.events_since(task.id, 0, 100).unwrap().len(), 1);
         }
         assert_eq!(db.pending_outbox(100).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn expired_lease_cannot_be_stolen_or_recovered_by_time_alone() {
+        let db = Arc::new(SqliteTaskStore::in_memory().unwrap());
+        let tasks = TaskRegistry::new_durable(
+            db.clone(), Arc::new(crate::event::EventJournal::new(32)),
+        ).unwrap();
+        let task = tasks.create_scoped(Uuid::new_v4(), Uuid::new_v4(), "lease", vec![]).unwrap();
+        tasks.start(task.id).unwrap();
+        let revision = tasks.get(task.id).unwrap().revision;
+        let lease = db.acquire_lease(task.id, revision).unwrap();
+        db.connection.lock().unwrap().execute(
+            "UPDATE foundation_leases SET expires_ms=0 WHERE task_id=?1",
+            params![task.id.to_string()],
+        ).unwrap();
+        assert!(db.acquire_lease(task.id, revision).is_err());
+        assert!(db.recover_paused().is_err());
+        db.release_lease(task.id, lease);
+        assert_eq!(db.recover_paused().unwrap()[0].status, TaskStatus::Paused);
+    }
+
+    #[test]
+    fn unknown_effect_blocks_new_execution_until_reconciled() {
+        let db = Arc::new(SqliteTaskStore::in_memory().unwrap());
+        let tasks = TaskRegistry::new_durable(
+            db.clone(), Arc::new(crate::event::EventJournal::new(32)),
+        ).unwrap();
+        let task = tasks.create_scoped(Uuid::new_v4(), Uuid::new_v4(), "effect", vec![]).unwrap();
+        tasks.start(task.id).unwrap();
+        let revision = tasks.get(task.id).unwrap().revision;
+        let call = Uuid::new_v4();
+        db.begin_effect_at_revision(task.id, call, "first", ToolEffect::ExternalSideEffect, "test.send", revision).unwrap();
+        assert!(db.begin_effect_at_revision(task.id, Uuid::new_v4(), "second", ToolEffect::ExternalSideEffect, "test.send", revision).is_err());
+        assert!(db.acquire_lease(task.id, revision).is_err());
+        tasks.pause(task.id).unwrap();
+        assert!(tasks.start(task.id).is_err());
+        db.reconcile_effect(call, false, "trusted provider confirms not applied").unwrap();
+        tasks.start(task.id).unwrap();
+        let new_revision = tasks.get(task.id).unwrap().revision;
+        assert!(db.begin_effect_at_revision(task.id, Uuid::new_v4(), "stale", ToolEffect::ExternalSideEffect, "test.send", revision).is_err());
+        let lease = db.acquire_lease(task.id, new_revision).unwrap();
+        db.release_lease(task.id, lease);
     }
 
     #[test]

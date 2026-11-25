@@ -148,13 +148,63 @@ function callerView(store) {
   const inFlight = browser.tabClose("never-reordered");
   await Promise.resolve();
   const waiting = browser.tabClose("never-reordered");
-  assert.equal(timers.size, 1, "only the waiting caller retains a timeout");
-  [...timers.values()][0]();
+  assert.equal(timers.size, 2, "running watchdog and waiting deadline are distinct");
+  [...timers.values()][1]();
   await assert.rejects(waiting, /TAB_NATIVE_OPERATION_STALLED/);
   assert.equal(nativeCalls, 1, "timeout cannot release the native serialization tail");
   finishNative();
   assert.equal(await inFlight, true);
   assert.equal(nativeCalls, 1, "the expired queued request must never run later");
+}
+{
+  const timers = new Map();
+  let timerId = 0;
+  const { browser, native } = fixture({
+    setTimeout(callback) { const id = ++timerId; timers.set(id, callback); return id; },
+    clearTimeout(id) { timers.delete(id); },
+  });
+  browser.tabs.push({ id: "hung", url: "https://fixture.test" }, { id: "later", url: "https://later.test" });
+  let finish;
+  const closed = [];
+  native.tabClose = id => {
+    closed.push(id);
+    return id === "hung" ? new Promise(resolve => { finish = resolve; }) : Promise.resolve();
+  };
+  const running = browser.tabClose("hung");
+  await Promise.resolve();
+  const queued = browser.tabClose("later");
+  const unknown = assert.rejects(running, /TAB_NATIVE_OUTCOME_UNKNOWN/);
+  const refused = assert.rejects(queued, /TAB_NATIVE_OPERATION_STALLED/);
+  [...timers.values()][0]();
+  await Promise.all([unknown, refused]);
+  assert.equal(browser.tabNativeState, "unknown");
+  await assert.rejects(browser.tabClose("later"), /TAB_NATIVE_OPERATION_STALLED/);
+  assert.deepEqual(closed, ["hung"]);
+  assert.equal(browser.recentlyClosed.length, 0, "unknown is not a completed close");
+  finish();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(browser.tabNativeState, "ready");
+  assert.deepEqual(closed, ["hung"], "discarded requests cannot reappear after a late receipt");
+  assert.equal(browser.tabs.some(tab => tab.id === "hung"), false);
+  assert.equal(await browser.tabClose("later"), true);
+  assert.deepEqual(closed, ["hung", "later"]);
+}
+{
+  const { browser, native } = fixture();
+  browser.tabs.push({ id: "held", url: "https://fixture.test" }, { id: "current", url: "https://current.test" });
+  browser.activeTabId = "current";
+  let release;
+  native.tabClose = () => new Promise(resolve => { release = resolve; });
+  let historyCalls = 0;
+  native.tabGoBack = async () => { historyCalls++; };
+  const closing = browser.tabClose("held");
+  await Promise.resolve();
+  const history = browser.goBack();
+  assert.equal(historyCalls, 0, "history cannot bypass an admitted mutation");
+  release();
+  await closing;
+  await history;
+  assert.equal(historyCalls, 1);
 }
 {
   const { browser, native, lifecycle } = fixture();

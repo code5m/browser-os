@@ -354,6 +354,20 @@ fn capture_clip_from_metrics(json: &str) -> std::result::Result<serde_json::Valu
     {
         return Err("CAPTURE_DIMENSION_LIMIT".into());
     }
+    // CDP also reports the legacy layout coordinate space. Refuse an
+    // oversize or unavailable second measurement instead of relying solely
+    // on CSS dimensions. Neither metric proves the engine's total allocations.
+    let legacy = metrics.get("contentSize").ok_or("CAPTURE_METRICS_UNAVAILABLE")?;
+    let legacy_dimension = |key: &str| {
+        legacy.get(key).and_then(|v| v.as_f64())
+            .filter(|v| v.is_finite() && *v > 0.0 && v.ceil() <= 16_384.0)
+            .ok_or_else(|| "CAPTURE_DIMENSION_LIMIT".to_string())
+    };
+    let legacy_width = legacy_dimension("width")?;
+    let legacy_height = legacy_dimension("height")?;
+    if legacy_width.ceil() * legacy_height.ceil() > 16_000_000.0 {
+        return Err("CAPTURE_DIMENSION_LIMIT".into());
+    }
     Ok(serde_json::json!({
         "format": "png", "captureBeyondViewport": true, "fromSurface": true,
         "clip": { "x": x, "y": y, "width": width, "height": height, "scale": 1 }
@@ -376,9 +390,12 @@ mod capture_request_tests {
     #[test]
     fn metrics_require_finite_bounded_css_clip() {
         let clip = capture_clip_from_metrics(
-            r#"{"cssContentSize":{"x":0,"y":0,"width":1200,"height":4000}}"#,
+            r#"{"cssContentSize":{"x":0,"y":0,"width":1200,"height":4000},"contentSize":{"width":1200,"height":4000}}"#,
         ).unwrap();
         assert_eq!(clip["clip"]["height"].as_f64(), Some(4000.0));
+        assert!(capture_clip_from_metrics(
+            r#"{"cssContentSize":{"x":0,"y":0,"width":1200,"height":4000},"contentSize":{"width":4800,"height":16000}}"#,
+        ).is_err());
         assert!(capture_clip_from_metrics(r#"{"contentSize":{"width":100,"height":100}}"#).is_err());
         assert!(capture_clip_from_metrics(
             r#"{"cssContentSize":{"x":0,"y":0,"width":16000,"height":16000}}"#,
@@ -1136,6 +1153,9 @@ impl TabManager {
         }
         #[cfg(target_os = "windows")]
         {
+            let capture_app = self.app.clone();
+            let capture_id = id.clone();
+            let capture_instance = TabInstance(Arc::downgrade(&tab));
             webview.with_webview(move |native| {
                 use webview2_com::CallDevToolsProtocolMethodCompletedHandler;
                 use windows::core::PCWSTR;
@@ -1171,6 +1191,14 @@ impl TabManager {
                                 return Ok(());
                             }
                         };
+                        // Layout metrics may arrive after a close/replacement.
+                        // Never dispatch the second native operation in that case.
+                        if !capture_app.state::<TabManagerState>()
+                            .is_current_instance(&capture_id, &capture_instance)
+                        {
+                            complete_capture(&metrics_reply, Err("CAPTURE_INSTANCE_STALE".into()));
+                            return Ok(());
+                        }
                         let method: Vec<u16> = "Page.captureScreenshot".encode_utf16().chain(std::iter::once(0)).collect();
                         let params: Vec<u16> = params.to_string().encode_utf16().chain(std::iter::once(0)).collect();
                         let image_reply = metrics_reply.clone();

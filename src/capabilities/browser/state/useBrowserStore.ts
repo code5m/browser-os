@@ -60,40 +60,89 @@ export const useBrowserStore = defineStore("browser", () => {
       : aiSites.filter((s) => s.region === aiFilter.value)
   );
 
-  // Serialize the existing owner's native mutations. A slow activation or close
-  // must not publish an older selection after a newer request has completed.
-  let tabMutationTail: Promise<unknown> = Promise.resolve();
-  let tabMutationQueued = 0;
-  let tabMutationStartedAt = 0;
+  // A bounded, removable waiting queue. An expired entry is physically
+  // removed; a hung native operation cannot retain a growing Promise chain.
+  // A caller deadline is an UNKNOWN outcome, NOT a native cancellation receipt.
+  const MUTATION_LIMIT = 32;
+  const MUTATION_DEADLINE_MS = 20_000;
+  type WaitingMutation = { timer: number; run: () => Promise<void>; reject: (reason: Error) => void };
+  const waitingMutations: WaitingMutation[] = [];
+  const tabNativeState = ref<"ready" | "running" | "unknown">("ready");
+  let runningMutation: { startedAt: number; unknown: boolean } | null = null;
+  let drainScheduled = false;
+
+  function clearMutationTimer(timer: number) {
+    if (window.clearTimeout) window.clearTimeout(timer);
+    else clearTimeout(timer);
+  }
+
+  function rejectWaiting(entry: WaitingMutation) {
+    clearMutationTimer(entry.timer);
+    entry.reject(new Error("TAB_NATIVE_OPERATION_STALLED"));
+  }
+
+  function scheduleMutationDrain() {
+    if (drainScheduled || runningMutation || !waitingMutations.length) return;
+    drainScheduled = true;
+    // Preserve the existing microtask admission boundary: a newer view intent
+    // can invalidate a request before any native dispatch has begun.
+    void Promise.resolve().then(() => {
+      drainScheduled = false;
+      if (runningMutation) return;
+      const entry = waitingMutations.shift();
+      if (!entry) return;
+      clearMutationTimer(entry.timer);
+      void entry.run();
+    });
+  }
+
   function mutateTabs<T>(operation: () => Promise<T>): Promise<T> {
-    // Never race an in-flight native IPC and release its place in the queue:
-    // it could still commit later. Refuse excess/new work instead of letting
-    // an unresponsive WebView create an unbounded promise backlog.
-    if (tabMutationQueued >= 32 || (tabMutationStartedAt && Date.now() - tabMutationStartedAt > 20_000)) {
+    if (waitingMutations.length + Number(runningMutation !== null) >= MUTATION_LIMIT ||
+        (runningMutation && (runningMutation.unknown ||
+          Date.now() - runningMutation.startedAt >= MUTATION_DEADLINE_MS))) {
       return Promise.reject(new Error("TAB_NATIVE_OPERATION_STALLED"));
     }
-    tabMutationQueued++;
-    let resolveResult!: (value: T) => void;
-    let rejectResult!: (error: unknown) => void;
-    const result = new Promise<T>((resolve, reject) => { resolveResult = resolve; rejectResult = reject; });
-    let expired = false;
-    const waitTimer = window.setTimeout(() => {
-      // This entry has not started. Reject its caller, but retain the native
-      // tail; a late native reply must still complete before any newer action.
-      expired = true;
-      tabMutationQueued--;
-      rejectResult(new Error("TAB_NATIVE_OPERATION_STALLED"));
-    }, 20_000);
-    tabMutationTail = tabMutationTail.then(async () => {
-      if (expired) return;
-      if (window.clearTimeout) window.clearTimeout(waitTimer);
-      else clearTimeout(waitTimer);
-      tabMutationStartedAt = Date.now();
-      try { resolveResult(await operation()); }
-      catch (error) { rejectResult(error); }
-      finally { tabMutationStartedAt = 0; tabMutationQueued--; }
+    return new Promise<T>((resolve, reject) => {
+      const entry: WaitingMutation = {
+        timer: 0,
+        reject,
+        run: async () => {
+          const owner = { startedAt: Date.now(), unknown: false };
+          runningMutation = owner;
+          tabNativeState.value = "running";
+          const watchdog = window.setTimeout(() => {
+            if (runningMutation !== owner || owner.unknown) return;
+            owner.unknown = true;
+            tabNativeState.value = "unknown";
+            // Do not tell the caller that the native mutation was cancelled.
+            // Its closure still owns reconciliation and the execution slot.
+            reject(new Error("TAB_NATIVE_OUTCOME_UNKNOWN"));
+            for (const queued of waitingMutations.splice(0)) rejectWaiting(queued);
+          }, MUTATION_DEADLINE_MS);
+          try {
+            const value = await operation();
+            if (!owner.unknown) resolve(value);
+          } catch (error) {
+            if (!owner.unknown) reject(error);
+          } finally {
+            clearMutationTimer(watchdog);
+            // Only actual operation settlement (including owner reconciliation)
+            // can release the slot. No timer or UI reset admits a replacement.
+            runningMutation = null;
+            tabNativeState.value = "ready";
+            scheduleMutationDrain();
+          }
+        },
+      };
+      entry.timer = window.setTimeout(() => {
+        const index = waitingMutations.indexOf(entry);
+        if (index < 0) return;
+        waitingMutations.splice(index, 1);
+        rejectWaiting(entry);
+      }, MUTATION_DEADLINE_MS);
+      waitingMutations.push(entry);
+      scheduleMutationDrain();
     });
-    return result;
   }
 
   async function closeNativeTab(id: string) {
@@ -262,44 +311,64 @@ export const useBrowserStore = defineStore("browser", () => {
   async function tabReload(id: string) {
     const t = tabs.find((x) => x.id === id);
     if (!t) return;
-    t.title = t.url;
-    nativeTabFailures.delete(id);
-    await bridge.tabOpen(id, t.url);
-    if (activeTabId.value === id && layout.mainView === "browser") url.value = t.url;
-    await nextTick();
-    relocate();
+    const requestedUrl = t.url;
+    await mutateTabs(async () => {
+      if (!isBrowserResourceAllowed() || !tabs.some(tab => tab === t) || t.url !== requestedUrl) return;
+      await bridge.tabOpen(id, requestedUrl);
+      if (!tabs.some(tab => tab === t) || t.url !== requestedUrl) return;
+      nativeTabFailures.delete(id);
+      t.title = t.url;
+      if (activeTabId.value === id && layout.mainView === "browser") url.value = t.url;
+      await nextTick();
+      relocate();
+    });
   }
   async function tabNavigate(id: string) {
     const t = tabs.find((x) => x.id === id);
     if (!t) return;
-    const u = t.url.trim() || "about:blank";
-    t.title = u;
-    nativeTabFailures.delete(id);
-    await bridge.tabOpen(id, u);
-    if (activeTabId.value === id) url.value = u;
-    layout.showToast("页签导航: " + u);
-    await nextTick();
-    relocate();
+    const originalUrl = t.url;
+    const u = originalUrl.trim() || "about:blank";
+    await mutateTabs(async () => {
+      if (!isBrowserResourceAllowed() || !tabs.some(tab => tab === t) || t.url !== originalUrl) return;
+      await bridge.tabOpen(id, u);
+      if (!tabs.some(tab => tab === t) || (t.url !== originalUrl && t.url !== u)) return;
+      nativeTabFailures.delete(id);
+      t.title = u;
+      if (activeTabId.value === id && layout.mainView === "browser") url.value = u;
+      await nextTick();
+      relocate();
+    });
+  }
+  // A history/reload intent belongs to the active tab at submission time.
+  // Never retarget it to a replacement selected while waiting in the queue.
+  async function mutateActiveTab(operation: (id: string) => Promise<unknown>) {
+    const id = activeTabId.value;
+    const target = tabs.find(tab => tab.id === id);
+    if (!target) return;
+    await mutateTabs(async () => {
+      if (!isBrowserResourceAllowed() || activeTabId.value !== id ||
+          !tabs.some(tab => tab === target)) return;
+      await operation(id);
+      if (tabs.some(tab => tab === target)) nativeTabFailures.delete(id);
+    });
   }
   async function goBack() {
-    if (!activeTabId.value) return;
-    nativeTabFailures.delete(activeTabId.value);
-    await bridge.tabGoBack(activeTabId.value);
+    await mutateActiveTab(id => bridge.tabGoBack(id));
   }
   async function goForward() {
-    if (!activeTabId.value) return;
-    nativeTabFailures.delete(activeTabId.value);
-    await bridge.tabGoForward(activeTabId.value);
+    await mutateActiveTab(id => bridge.tabGoForward(id));
   }
   async function reloadActive() {
-    if (!activeTabId.value) return;
-    const current = tabs.find((t) => t.id === activeTabId.value);
-    if (current) current.title = current.url;
-    nativeTabFailures.delete(activeTabId.value);
-    await bridge.tabReload(activeTabId.value);
-    layout.showToast("已刷新当前页签");
-    await nextTick();
-    relocate();
+    await mutateActiveTab(async id => {
+      const target = tabs.find(tab => tab.id === id);
+      const requestedUrl = target?.url;
+      await bridge.tabReload(id);
+      if (target && tabs.some(tab => tab === target) && target.url === requestedUrl) {
+        target.title = target.url;
+      }
+      await nextTick();
+      relocate();
+    });
   }
   function setTitle(t: TabInfo) {
     const existing = tabs.find((x) => x.id === t.id);
@@ -351,7 +420,9 @@ export const useBrowserStore = defineStore("browser", () => {
 
   // Browser owns only ordinary tab WebViews. Grid lifecycle moved to capabilities/grid.
   async function closeBrowser() {
-    await bridge.closeBrowser();
+    // Legacy public entry must not close a native tab behind its Store owner.
+    const id = activeTabId.value;
+    if (id) await closeTabNow(id);
   }
 
   // ===== 资源扫描（按 id 更新，不覆盖其他页签） =====
@@ -488,22 +559,20 @@ export const useBrowserStore = defineStore("browser", () => {
       hideAllWebviews();
       await mutateTabs(async () => {
         const closing = tabs.map(({ id }) => id);
-        const results = await Promise.allSettled(closing.map(id => closeNativeTab(id)));
-        const failed: string[] = [];
-        for (let index = 0; index < results.length; index++) {
-          const id = closing[index];
-          if (results[index].status === "rejected") {
-            failed.push(id);
-            continue;
-          }
+        const results = await Promise.allSettled(closing.map(async id => {
+          await closeNativeTab(id);
+          // A successful close receipt is authoritative even when another
+          // close never returns. Keep only unconfirmed/failed owner records.
           const row = tabs.findIndex(tab => tab.id === id);
           if (row >= 0) tabs.splice(row, 1);
           nativeTabFailures.delete(id);
-        }
+          if (!tabs.some(tab => tab.id === activeTabId.value)) {
+            activeTabId.value = tabs[0]?.id ?? "";
+          }
+        }));
+        const failed = closing.filter((_, index) => results[index].status === "rejected");
         if (!tabs.some(tab => tab.id === activeTabId.value)) activeTabId.value = tabs[0]?.id ?? "";
         if (failed.length) {
-          // Keep both native failure metadata and logical records for retry.
-          // Runtime must not issue a successful Owner cleanup receipt.
           throw new Error(`BROWSER_CLEANUP_FAILED:${failed.join(",")}`);
         }
         nativeTabFailures.clear();
@@ -524,6 +593,7 @@ export const useBrowserStore = defineStore("browser", () => {
     aiSites,
     activeTab,
     isBrowserVisible,
+    tabNativeState,
     aiFiltered,
     tabNew,
     consumeActiveBlankTab,

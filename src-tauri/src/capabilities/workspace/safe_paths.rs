@@ -646,9 +646,11 @@ mod linux {
         }
         let temp_name =
             std::ffi::OsString::from(format!(".browseros-cas-{}.tmp", uuid::Uuid::new_v4()));
+        // Do not clean up a name when O_EXCL creation failed: it may belong
+        // to someone else. Retain our actual file descriptor for error cleanup.
+        let mut stage = create_temp_at(parent, &temp_name).map_err(|_| "FILE_STAGE_FAILED")?;
         let mut published = false;
         let result = (|| {
-            let mut stage = create_temp_at(parent, &temp_name).map_err(|_| "FILE_STAGE_FAILED")?;
             stage.write_all(content).map_err(|_| "FILE_STAGE_FAILED")?;
             if let Some((metadata, _)) = &initial {
                 use std::os::unix::fs::PermissionsExt;
@@ -690,7 +692,10 @@ mod linux {
             sync_directory(parent).map_err(|_| "FILE_DURABILITY_UNCERTAIN")?;
             Ok(())
         })();
-        if result.is_err() && !published {
+        if result.is_err() && !published && entry_still_matches(parent, &temp_name, &stage).is_ok() {
+            // A replaced stage name is not our object. Leave it untouched.
+            // As with the existing unlinkat boundary, this identity recheck
+            // narrows but cannot eliminate arbitrary namespace races.
             unlink_at(parent, &temp_name);
         }
         result
@@ -1450,6 +1455,30 @@ mod versioned_write_tests {
         );
         assert_eq!(result.unwrap_err(), "FILE_CONFLICT");
         assert_eq!(fs::read(&target).unwrap(), b"external");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn swapped_stage_is_not_deleted_by_failed_publication_cleanup() {
+        let root = fixture();
+        let target = root.join("target.txt");
+        fs::write(&target, b"before").unwrap();
+        let before = read_versioned(&target, &[root.clone()], 1024).unwrap().unwrap();
+        let mut replaced = None;
+        let result = write_versioned(&target, &[root.clone()], Some(&before), b"ours", 1024, |_| {
+            let stage = fs::read_dir(&root).unwrap().map(|entry| entry.unwrap().path())
+                .find(|path| path.file_name().unwrap().to_string_lossy().starts_with(".browseros-cas-")
+                    && path.extension().is_some_and(|ext| ext == "tmp")).unwrap();
+            fs::rename(&stage, root.join("held-stage")).unwrap();
+            fs::write(&stage, b"external stage replacement").unwrap();
+            replaced = Some(stage);
+            Ok(())
+        });
+        assert_eq!(result.unwrap_err(), "FILE_STAGE_CHANGED");
+        assert_eq!(fs::read(&target).unwrap(), b"before");
+        assert_eq!(fs::read(replaced.unwrap()).unwrap(), b"external stage replacement");
+        assert_eq!(fs::read(root.join("held-stage")).unwrap(), b"ours");
         fs::remove_dir_all(root).unwrap();
     }
 

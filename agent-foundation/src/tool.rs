@@ -207,13 +207,21 @@ impl ToolRegistry {
         // A process crash or a timeout leaves it unknown; never auto-retry.
         #[cfg(feature = "durable-sqlite")]
         if let Some(store) = effect_store {
-            store.begin_effect(
+            store.begin_effect_at_revision(
                 permit.task_id,
                 permit.operation.call_id,
                 &idempotency_key,
                 permit.operation.effect,
                 &permit.operation.tool_name,
+                permit.revision,
             )?;
+        }
+        // Receipt creation is not permission to dispatch a stale generation.
+        // A cancelled call remains conservatively unknown for reconciliation.
+        if !tasks.active_at_revision(permit.task_id, permit.revision)
+            || *cancellation.borrow_and_update()
+        {
+            return Err(FoundationError::Cancelled);
         }
         let future = if effectful || tool.requires_authorized_call() {
             tool.call_authorized(AuthorizedCall {
@@ -225,9 +233,10 @@ impl ToolRegistry {
             tool.call(permit.operation.arguments)
         };
         let result = tokio::select! {
-            response = future => response,
+            biased;
             _ = cancellation.changed() => Err(FoundationError::Cancelled),
             _ = tokio::time::sleep(timeout) => Err(FoundationError::Timeout),
+            response = future => response,
         };
         // Reject stale results from paused/cancelled/completed/restarted work.
         // For side effects the durable UNKNOWN receipt survives this exit.
