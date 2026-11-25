@@ -44,6 +44,8 @@ mod shared {
     pub mod images;
     pub mod invocation;
     pub mod native_legacy_policy;
+    #[cfg(target_os = "linux")]
+    pub(crate) mod process_scope;
     pub mod validation;
 }
 

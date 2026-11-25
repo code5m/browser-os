@@ -261,6 +261,8 @@ struct Session {
     secrets: Vec<String>,
     cancellation: Arc<AtomicBool>,
     reaped: bool,
+    scope: Option<crate::shared::process_scope::ProcessScope>,
+    reader: Option<thread::JoinHandle<()>>,
 }
 impl Drop for Session {
     fn drop(&mut self) {
@@ -274,18 +276,33 @@ impl Session {
         // Signal the owned group before reaping its leader. Never signal the
         // numeric id again after reaping (it could have been reused).
         unsafe { libc::kill(-pgid, libc::SIGKILL); }
+        if let Some(scope) = &self.scope { let _ = scope.request_kill(); }
         let _ = self.child.kill();
-        self.child.wait().map_err(|_| "MCP_TERMINATION_UNKNOWN")?;
+        // Never signal a numeric PGID again after a wait attempt with an
+        // unknown receipt. The pinned cgroup remains an independent owner.
         self.reaped = true;
-        let deadline = Instant::now() + Duration::from_secs(2);
-        loop {
-            if unsafe { libc::kill(-pgid, 0) } != 0
-                && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
-                return Ok(());
+        self.child.wait().map_err(|_| "MCP_TERMINATION_UNKNOWN")?;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        if let Some(scope) = &self.scope {
+            scope.terminate_and_confirm(deadline).map_err(|_| "MCP_TERMINATION_UNKNOWN")?;
+        } else {
+            loop {
+                if unsafe { libc::kill(-pgid, 0) } != 0
+                    && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) { break; }
+                if Instant::now() >= deadline { return Err("MCP_TERMINATION_UNKNOWN".into()); }
+                thread::sleep(Duration::from_millis(20));
             }
-            if Instant::now() >= deadline { return Err("MCP_TERMINATION_UNKNOWN".into()); }
-            thread::sleep(Duration::from_millis(20));
         }
+        if let Some(reader) = &self.reader {
+            while !reader.is_finished() {
+                if Instant::now() >= deadline { return Err("MCP_TERMINATION_UNKNOWN".into()); }
+                thread::sleep(Duration::from_millis(20));
+            }
+        }
+        if let Some(reader) = self.reader.take() {
+            reader.join().map_err(|_| "MCP_TERMINATION_UNKNOWN")?;
+        }
+        Ok(())
     }
     #[cfg(test)]
     fn start(root: &Path, config: &Value, seconds: u64) -> Result<Self, String> {
@@ -371,8 +388,20 @@ impl Session {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
+        let scope = crate::shared::process_scope::ProcessScope::prepare().map_err(|_| "MCP_CGROUP_UNAVAILABLE")?;
+        if let Some(scope) = &scope { scope.attach(&mut cmd).map_err(|_| "MCP_CGROUP_UNAVAILABLE")?; }
         let mut child = cmd.spawn().map_err(|_| "MCP_START_FAILED")?;
-        let input = child.stdin.take().ok_or("MCP_STDIN_FAILED")?;
+        let terminate_start_failure = |child: &mut Child| {
+            let pgid = child.id() as i32;
+            unsafe { libc::kill(-pgid, libc::SIGKILL); }
+            if let Some(scope) = &scope { let _ = scope.request_kill(); }
+            let _ = child.kill();
+            let _ = child.wait();
+        };
+        let input = match child.stdin.take() {
+            Some(input) => input,
+            None => { terminate_start_failure(&mut child); return Err("MCP_STDIN_FAILED".into()); }
+        };
         let fd = input.as_raw_fd();
         // O_NONBLOCK plus poll keeps a server that stops reading from freezing the caller.
         if unsafe {
@@ -383,13 +412,15 @@ impl Session {
             )
         } < 0
         {
-            let _ = child.kill();
-            let _ = child.wait();
+            terminate_start_failure(&mut child);
             return Err("MCP_PIPE_SETUP_FAILED".into());
         }
-        let output = child.stdout.take().ok_or("MCP_STDOUT_FAILED")?;
+        let output = match child.stdout.take() {
+            Some(output) => output,
+            None => { terminate_start_failure(&mut child); return Err("MCP_STDOUT_FAILED".into()); }
+        };
         let (tx, rx) = mpsc::sync_channel(32);
-        thread::spawn(move || {
+        let reader = match thread::Builder::new().name("browseros-mcp-reader".into()).spawn(move || {
             let mut reader = BufReader::new(output);
             loop {
                 let mut bytes = vec![];
@@ -412,7 +443,10 @@ impl Session {
                     }
                 }
             }
-        });
+        }) {
+            Ok(reader) => reader,
+            Err(_) => { terminate_start_failure(&mut child); return Err("MCP_READER_START_FAILED".into()); }
+        };
         Ok(Self {
             child,
             input,
@@ -421,6 +455,8 @@ impl Session {
             secrets,
             cancellation: Arc::new(AtomicBool::new(false)),
             reaped: false,
+            scope,
+            reader: Some(reader),
         })
     }
     fn send(&mut self, value: Value) -> Result<(), String> {

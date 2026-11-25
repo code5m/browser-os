@@ -732,6 +732,7 @@ fn supervise(
     mut child: Child,
     pgid: Option<i32>,
     #[cfg(windows)] job: crate::windows_process::JobObject,
+    #[cfg(target_os = "linux")] scope: Option<crate::shared::process_scope::ProcessScope>,
     timeout_secs: u32,
     cancel: Arc<AtomicBool>,
     state: Arc<Mutex<RunSnapshot>>,
@@ -743,11 +744,26 @@ fn supervise(
     let started = Instant::now();
     let mut readers = Some(readers);
 
+    // Scope cleanup is checked before joining pipes. An escaped process
+    // group member still inherits its delegated cgroup.
+    #[cfg(target_os = "linux")]
+    let finish_scope = || -> bool {
+        match &scope {
+            Some(scope) => scope.terminate_and_confirm(Instant::now() + Duration::from_secs(5)).is_ok(),
+            None => true,
+        }
+    };
     let finish = |status: RunStatus, exit_code: Option<i32>, error: Option<String>| {
         // Terminate is a request, not a completion receipt. Retain admission
         // while the owned native group/Job cannot be observed empty.
+        #[cfg(target_os = "linux")]
+        if scope.is_some() && !finish_scope() { return; }
+        #[cfg(target_os = "linux")]
+        let group_only = scope.is_none();
+        #[cfg(all(unix, not(target_os = "linux")))]
+        let group_only = true;
         #[cfg(unix)]
-        while pgid.is_some_and(process_group_alive) {
+        while group_only && pgid.is_some_and(process_group_alive) {
             thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
         }
         #[cfg(windows)]
@@ -798,6 +814,11 @@ fn supervise(
                 // reaping. Never send another numeric PGID signal here.
                 #[cfg(not(target_os = "linux"))]
                 terminate_group(pgid, HARD_GRACE_SECS);
+                #[cfg(target_os = "linux")]
+                if !finish_scope() {
+                    eprintln!("[script-supervisor] delegated scope termination unconfirmed");
+                    return;
+                }
                 join_output_readers(readers.take().unwrap_or_default());
                 finish(status, code, None);
                 return;
@@ -807,6 +828,8 @@ fn supervise(
                     #[cfg(windows)]
                     let _ = job.terminate();
                     terminate_group(pgid, CANCEL_GRACE_SECS);
+                    #[cfg(target_os = "linux")]
+                    if let Some(scope) = &scope { let _ = scope.request_kill(); }
                     let code = match child.wait() {
                         Ok(exit) => exit.code(),
                         Err(_) => {
@@ -816,7 +839,12 @@ fn supervise(
                             return;
                         }
                     };
-                    join_output_readers(readers.take().unwrap_or_default());
+                    #[cfg(target_os = "linux")]
+                if !finish_scope() {
+                    eprintln!("[script-supervisor] delegated scope termination unconfirmed");
+                    return;
+                }
+                join_output_readers(readers.take().unwrap_or_default());
                     finish(RunStatus::Cancelled, code, None);
                     return;
                 }
@@ -824,6 +852,8 @@ fn supervise(
                     #[cfg(windows)]
                     let _ = job.terminate();
                     terminate_group(pgid, HARD_GRACE_SECS);
+                    #[cfg(target_os = "linux")]
+                    if let Some(scope) = &scope { let _ = scope.request_kill(); }
                     let code = match child.wait() {
                         Ok(exit) => exit.code(),
                         Err(_) => {
@@ -833,7 +863,12 @@ fn supervise(
                             return;
                         }
                     };
-                    join_output_readers(readers.take().unwrap_or_default());
+                    #[cfg(target_os = "linux")]
+                if !finish_scope() {
+                    eprintln!("[script-supervisor] delegated scope termination unconfirmed");
+                    return;
+                }
+                join_output_readers(readers.take().unwrap_or_default());
                     finish(RunStatus::Timeout, code, None);
                     return;
                 }
@@ -858,7 +893,12 @@ fn supervise(
                         eprintln!("[script-supervisor] child reap unconfirmed");
                         return;
                     }
-                    join_output_readers(readers.take().unwrap_or_default());
+                    #[cfg(target_os = "linux")]
+                if !finish_scope() {
+                    eprintln!("[script-supervisor] delegated scope termination unconfirmed");
+                    return;
+                }
+                join_output_readers(readers.take().unwrap_or_default());
                     finish(
                         RunStatus::Failed,
                         None,
@@ -1017,6 +1057,17 @@ fn start_argv_run_owned(
         .stderr(Stdio::piped());
 
     // --- 3) spawn（新进程组） ---
+    #[cfg(target_os = "linux")]
+    let scope = match crate::shared::process_scope::ProcessScope::prepare().and_then(|scope| {
+        if let Some(scope) = &scope { scope.attach(&mut cmd)?; }
+        Ok(scope)
+    }) {
+        Ok(scope) => scope,
+        Err(error) => {
+            table.lock_runs().remove(&run_id);
+            return Err(RunError::SpawnFailed(format!("BROWSEROS_CGROUP_UNAVAILABLE: {error}")));
+        }
+    };
     let mut child = match spawn_in_new_group(&mut cmd) {
         Ok(c) => c,
         Err(e) => {
@@ -1076,6 +1127,8 @@ fn start_argv_run_owned(
             Some(pgid),
             #[cfg(windows)]
             job,
+            #[cfg(target_os = "linux")]
+            scope,
             timeout,
             cancel,
             st,
