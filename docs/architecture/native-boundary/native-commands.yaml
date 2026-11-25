@@ -215,10 +215,10 @@ commands:
     owner: "browser"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/components/layout/ActivityBar.vue via src/bridge.ts"
-    side_effect: "capture app-owned tab's full document PNG into private local screenshots directory"
+    side_effect: "start, query, cancel and acknowledge a single native capture task; publish full-document PNG in private screenshots directory"
     resource: "FILE"
-    permission: "tauri.default-commands(main-only); current tab ID; bounded PNG and timeout"
-    current_boundary: "browser capability owner through tab manager native engine"
+    permission: "tauri.default-commands(main-only); current tab ID; bounded admission and PNG; cancellation is not completion"
+    current_boundary: "browser capture owner retains admission through engine callback and storage, including lost IPC"
     target_boundary: "browser-owned native capture API with no remote page IPC"
   list_tab_resources:
     file: "src-tauri/src/capabilities/browser/commands.rs"

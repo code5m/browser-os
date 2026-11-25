@@ -34,8 +34,34 @@ async function captureCurrentPage() {
     layout.showToast('整页截图已保存；主页已加入“截图目录”');
   } catch (error) {
     const code = String(error).match(/CAPTURE_[A-Z_]+/)?.[0] ?? 'CAPTURE_FAILED';
-    layout.showToast('整页截图失败：' + code);
+    layout.showToast(code==='CAPTURE_RECOVERY_REQUIRED'||code==='CAPTURE_OUTCOME_UNKNOWN'||code==='TAB_CONTROL_REPLY_TIMEOUT'
+      ? '截图状态未确认，请通过菜单查询或取消截图任务；不会自动重试。' : '整页截图失败：' + code);
   } finally { capturingPage.value = false; }
+}
+async function recoverCapture() {
+  try {
+    const view=await bridge.inspectCapture();
+    const receipt=view.receipt??view.last_completed;
+    if(!receipt){layout.showToast('没有待恢复的截图任务');return;}
+    if(!['succeeded','failed','cancelled'].includes(receipt.phase)){
+      layout.showToast('截图仍未获得终态：'+receipt.phase+'；原生容量保持占用');return;
+    }
+    if(receipt.phase==='succeeded'&&receipt.path){
+      const directory=receipt.path.replace(/[\\/]webpage-[^\\/]+\.png$/, '');
+      addHomeDirectoryShortcut(directory);
+      layout.showToast('截图已保存；主页已加入截图目录');
+    }else{layout.showToast('截图终态：'+(receipt.error||receipt.phase));}
+    if(view.receipt)await bridge.acknowledgeCapture(receipt.ticket);
+  }catch{layout.showToast('截图回执尚未确认，请重新查询');}
+}
+async function cancelCaptureTask() {
+  try{
+    const view=await bridge.inspectCapture();
+    if(view.receipt&&!['succeeded','failed','cancelled'].includes(view.receipt.phase)){
+      await bridge.cancelCapture(view.receipt.ticket);
+      layout.showToast('已请求取消；须等待原生回执，不会立即释放截图容量');
+    }else{await recoverCapture();}
+  }catch{layout.showToast('取消状态未知，原生截图容量仍受保护');}
 }
 const appsStore = useAppsStore();
 const term = useTerminalStore();
@@ -98,7 +124,9 @@ async function toggleMoreActions(event:MouseEvent) {
     {text:'沉浸全屏 · F11',action:toggleImmersive},
     {text:'AI 导航',enabled:layout.mainView==='browser',action:()=>browser.toggleAiNav()},
     {text:'采集选中内容',action:()=>art.collectSelection()},
-    {text:'整页截图 (PNG)',enabled:layout.mainView==='browser' && !!browser.activeTabId,action:()=>void captureCurrentPage()},
+    {text:'整页截图 (PNG)',enabled:layout.mainView==='browser' && !!browser.activeTabId && !capturingPage.value,action:()=>void captureCurrentPage()},
+    {text:'查询/恢复截图任务',action:()=>void recoverCapture()},
+    {text:'请求取消截图任务',action:()=>void cancelCaptureTask()},
     {text:'设置',action:()=>onItem('settings')},
   ];
   await nativeMenu.open(items,menuAnchor(event.currentTarget as Element));

@@ -166,3 +166,8 @@ Base edb3db3a. Frontend control lanes now remove timed-out waiters rather than r
 ## Native Coding operation ownership (fcaf3fb6)
 
 Command and MCP proposal execution enters execute_operation under the encrypted Coding session's native/process lock, with pre-dispatch Run/Task receipt. Reviewed command uses the same snippet validation and script supervisor; shutdown no longer publishes a fake terminal status. The UI uses the owned execution route and accepts only the stored native result. Unknown effects require separately confirmed termination and effect evidence, never automatic replay. Apply/discard close a paused Task when no unresolved approvals remain. Cancellation is requested via the exact operation Run ID (MCP cancellation transport still requires native adapter completion). All regression source fixtures NOT_RUN; no refs, CI, Actions, builds or tests.
+
+
+## Capture task protocol
+
+The existing main-only capture_full_page command now supports inspect/start/cancel/ack through one bounded native capture slot; legacy string-return callers share the same admission. Engine and publication work outlive the initiating invoke. Timeout requests cancellation but never releases native capacity. Terminal callbacks persist the in-process receipt, including saved path, and can be recovered from the ActivityBar native menu; unknown callbacks remain quarantined. Start uses host epoch and sequence, preventing a completed request from being started again. No engine hard-allocation claim; D02 best-effort current-document boundary unchanged. Source-only tests NOT_RUN. No ref or workflow changes.

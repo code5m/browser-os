@@ -180,6 +180,58 @@ async function ownedTabMutation<T>(action: TabAction): Promise<T> {
   }
 }
 
+type CaptureReceipt = {
+  ticket: string; tab_id: string;
+  phase: "running"|"cancel_requested"|"succeeded"|"failed"|"cancelled"|"unknown";
+  path: string|null; error: string|null;
+};
+type CaptureView = {epoch:string;next_sequence:string;receipt:CaptureReceipt|null;last_completed:CaptureReceipt|null};
+const captureControl = (request: Record<string, unknown>) =>
+  boundedTabControl<CaptureView>("capture-"+String(request.phase), JSON.stringify(request),
+    () => invoke<CaptureView>("capture_full_page", {request}));
+const captureTerminal = (receipt: CaptureReceipt) => ["succeeded","failed","cancelled"].includes(receipt.phase);
+let captureEvent: CaptureReceipt|null = null, captureListenerStarted = false;
+function ensureCaptureListener() {
+  if(captureListenerStarted)return;
+  captureListenerStarted=true;
+  void listen<CaptureReceipt>("browser-capture-receipt", event=>{
+    if(captureTerminal(event.payload))captureEvent=event.payload;
+  }).catch(()=>{captureListenerStarted=false;});
+}
+async function ownedCapture(id: string): Promise<string> {
+  ensureCaptureListener();
+  const initial=await captureControl({phase:"inspect"});
+  if(initial.receipt)throw Error("CAPTURE_RECOVERY_REQUIRED");
+  const ticket=crypto.randomUUID();
+  const request={phase:"start",id,ticket,epoch:initial.epoch,sequence:initial.next_sequence};
+  // Start only once. A lost start reply never causes a second screenshot.
+  void captureControl(request).catch(()=>{});
+  const deadline=performance.now()+35000;
+  while(performance.now()<deadline) {
+    let receipt=(captureEvent as CaptureReceipt|null)?.ticket===ticket?captureEvent:null;
+    try {
+      const view=await captureControl({phase:"inspect"});
+      if(view.epoch!==initial.epoch)throw Error("CAPTURE_NATIVE_EPOCH_CHANGED");
+      if(view.receipt?.ticket===ticket)receipt=view.receipt;
+      else if(view.last_completed?.ticket===ticket)receipt=view.last_completed;
+      else if(view.receipt||view.next_sequence!==initial.next_sequence)throw Error("CAPTURE_RECOVERY_REQUIRED");
+    }catch(error){
+      if(/CAPTURE_NATIVE_EPOCH_CHANGED|CAPTURE_RECOVERY_REQUIRED/.test(String(error)))throw error;
+    }
+    if(receipt&&captureTerminal(receipt)){
+      const ack=await captureControl({phase:"ack",ticket});
+      if(ack.last_completed?.ticket!==ticket)throw Error("CAPTURE_OUTCOME_UNKNOWN");
+      if(receipt.phase==="succeeded"&&receipt.path)return receipt.path;
+      throw Error(receipt.error||"CAPTURE_FAILED");
+    }
+    await receiptDelay(400);
+  }
+  // Cancel is advisory. The original task remains queryable until its
+  // callback/worker actually finishes; UI can recover it from the menu.
+  void captureControl({phase:"cancel",ticket}).catch(()=>{});
+  throw Error("CAPTURE_OUTCOME_UNKNOWN");
+}
+
 import type {
   Artifact,
   ImageRef,
@@ -1025,7 +1077,10 @@ export const bridge = {
   evalInTab: (id: string, js: string) => invoke<string>("eval_in_tab", { id, js }),
 
   // Native full-document PNG capture, returns the saved local path (not image bytes).
-  captureFullPage: (id: string) => invoke<string>("capture_full_page", { id }),
+  captureFullPage: (id: string) => ownedCapture(id),
+  inspectCapture: () => captureControl({phase:"inspect"}),
+  cancelCapture: (ticket: string) => captureControl({phase:"cancel",ticket}),
+  acknowledgeCapture: (ticket: string) => captureControl({phase:"ack",ticket}),
 
   // 页签休眠开关（默认关；开启后非激活超 10 分钟的页签销毁 webview 仅留 URL，激活时重建）
   setTabHibernation: (enabled: boolean) =>

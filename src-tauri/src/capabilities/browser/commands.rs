@@ -432,60 +432,243 @@ pub fn report_resources(
     Ok(())
 }
 
-// Dropping the IPC future requests cancellation but does not return native
-// capacity: only the callback that owns the permit may do that.
-struct CaptureWaitGuard(Option<tauri_plugin_browser_tabs::CaptureCancellation>);
+// One native capture owner replaces the former IPC-waiter-owned lane.
+// It retains admission through engine callback, encoding and publication.
+// A disconnected caller is never evidence of renderer termination.
+use tauri_plugin_browser_tabs::{CaptureCancellation, TabManagerState};
 
-impl Drop for CaptureWaitGuard {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+enum CapturePhase { Running, CancelRequested, Succeeded, Failed, Cancelled, Unknown }
+impl CapturePhase {
+    fn terminal(self) -> bool { matches!(self, Self::Succeeded | Self::Failed | Self::Cancelled) }
+}
+#[derive(Clone, serde::Serialize)]
+struct CaptureReceipt {
+    ticket: String,
+    tab_id: String,
+    phase: CapturePhase,
+    path: Option<String>,
+    error: Option<String>,
+}
+struct CaptureSlot { receipt: CaptureReceipt, cancellation: CaptureCancellation }
+struct CaptureOwner {
+    epoch: String,
+    next_sequence: u64,
+    slot: Option<CaptureSlot>,
+    last_completed: Option<CaptureReceipt>,
+}
+static CAPTURE_OWNER: std::sync::LazyLock<std::sync::Mutex<CaptureOwner>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(CaptureOwner {
+        epoch: uuid::Uuid::new_v4().to_string(), next_sequence: 1, slot: None, last_completed: None,
+    }));
+#[derive(serde::Serialize)]
+struct CaptureView {
+    epoch: String,
+    next_sequence: String,
+    receipt: Option<CaptureReceipt>,
+    last_completed: Option<CaptureReceipt>,
+}
+fn capture_view() -> Result<CaptureView, String> {
+    let owner = CAPTURE_OWNER.lock().map_err(|_| "CAPTURE_OWNER_UNKNOWN")?;
+    Ok(CaptureView {
+        epoch: owner.epoch.clone(), next_sequence: owner.next_sequence.to_string(),
+        receipt: owner.slot.as_ref().map(|slot| slot.receipt.clone()),
+        last_completed: owner.last_completed.clone(),
+    })
+}
+fn capture_notify(app: &AppHandle, receipt: CaptureReceipt) {
+    let _ = app.emit_to("main", "browser-capture-receipt", receipt);
+}
+fn capture_finish(app: &AppHandle, ticket: &str, phase: CapturePhase, result: Result<String, String>) {
+    let receipt = CAPTURE_OWNER.lock().ok().and_then(|mut owner| {
+        let slot = owner.slot.as_mut().filter(|slot| slot.receipt.ticket == ticket)?;
+        if slot.receipt.phase.terminal() { return None; }
+        slot.receipt.phase = phase;
+        match result {
+            Ok(path) => slot.receipt.path = Some(path),
+            Err(error) => slot.receipt.error = Some(error),
+        }
+        Some(slot.receipt.clone())
+    });
+    if let Some(receipt) = receipt { capture_notify(app, receipt); }
+}
+struct CaptureWorkerGuard { app: AppHandle, ticket: String, completed: bool }
+impl Drop for CaptureWorkerGuard {
     fn drop(&mut self) {
-        if let Some(cancellation) = self.0.take() {
-            cancellation.cancel();
+        if !self.completed {
+            capture_finish(&self.app, &self.ticket, CapturePhase::Unknown, Err("CAPTURE_WORKER_OUTCOME_UNKNOWN".into()));
         }
     }
 }
+fn capture_cancel(app: &AppHandle, ticket: &str) -> Result<(), String> {
+    let (cancellation, receipt) = {
+        let mut owner = CAPTURE_OWNER.lock().map_err(|_| "CAPTURE_OWNER_UNKNOWN")?;
+        let slot = owner.slot.as_mut().filter(|slot| slot.receipt.ticket == ticket)
+            .ok_or("CAPTURE_STALE_TICKET")?;
+        if slot.receipt.phase.terminal() { return Ok(()); }
+        if slot.receipt.phase == CapturePhase::Running {
+            slot.receipt.phase = CapturePhase::CancelRequested;
+        }
+        (slot.cancellation.clone(), slot.receipt.clone())
+    };
+    cancellation.cancel();
+    capture_notify(app, receipt);
+    Ok(())
+}
+fn capture_ack(ticket: &str) -> Result<(), String> {
+    let mut owner = CAPTURE_OWNER.lock().map_err(|_| "CAPTURE_OWNER_UNKNOWN")?;
+    if owner.last_completed.as_ref().is_some_and(|receipt| receipt.ticket == ticket) { return Ok(()); }
+    let slot = owner.slot.as_ref().filter(|slot| slot.receipt.ticket == ticket).ok_or("CAPTURE_STALE_TICKET")?;
+    if !slot.receipt.phase.terminal() { return Err("CAPTURE_NOT_TERMINAL".into()); }
+    owner.last_completed = owner.slot.take().map(|slot| slot.receipt);
+    Ok(())
+}
+async fn run_capture(app: AppHandle, id: String, ticket: String, cancellation: CaptureCancellation) {
+    let mut guard = CaptureWorkerGuard { app: app.clone(), ticket: ticket.clone(), completed: false };
+    let manager = app.state::<TabManagerState>();
+    let document = match manager.capture_document(&id) {
+        Ok(document) => document,
+        Err(_) => {
+            capture_finish(&app, &ticket, CapturePhase::Failed, Err("CAPTURE_TAB_UNAVAILABLE".into()));
+            guard.completed = true;
+            return;
+        }
+    };
+    if cancellation.is_cancelled() {
+        capture_finish(&app, &ticket, CapturePhase::Cancelled, Err("CAPTURE_CANCELLED_BEFORE_DISPATCH".into()));
+        guard.completed = true;
+        return;
+    }
+    let (send, mut recv) = tokio::sync::oneshot::channel();
+    if manager.capture_full_page_cancellable(&id, cancellation.clone(), move |result| {
+        let _ = send.send(result);
+    }).is_err() {
+        // The dispatcher did not supply an authoritative callback receipt.
+        // Keep admission rather than assuming a native dispatch did not occur.
+        return;
+    }
+    drop(manager);
+    let native = match tokio::time::timeout(std::time::Duration::from_secs(30), &mut recv).await {
+        Ok(value) => value,
+        Err(_) => {
+            let _ = capture_cancel(&app, &ticket);
+            // Timeout is a request to stop, not a completed operation.
+            // Windows CDP may return much later; hold the same owner.
+            recv.await
+        }
+    };
+    let Ok(result) = native else { return; };
+    if cancellation.is_cancelled() {
+        capture_finish(&app, &ticket, CapturePhase::Cancelled, Err("CAPTURE_CANCELLED_AT_COMPLETION".into()));
+        guard.completed = true;
+        return;
+    }
+    let bytes = match result {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            capture_finish(&app, &ticket, CapturePhase::Failed, Err(error));
+            guard.completed = true;
+            return;
+        }
+    };
+    if !app.state::<TabManagerState>().is_current_capture_document(&id, &document) {
+        capture_finish(&app, &ticket, CapturePhase::Failed, Err("CAPTURE_DOCUMENT_STALE".into()));
+        guard.completed = true;
+        return;
+    }
+    let base = crate::workspace::data_dir(&app);
+    let storage = tauri::async_runtime::spawn_blocking(move || save_capture(&base, &bytes)).await;
+    // A cancel arriving during publication cannot erase a file that was
+    // actually committed. Report the publication outcome faithfully.
+    match storage {
+        Ok(Ok(path)) => capture_finish(&app, &ticket, CapturePhase::Succeeded, Ok(path)),
+        Ok(Err(error)) => capture_finish(&app, &ticket, CapturePhase::Failed, Err(error)),
+        Err(_) => return,
+    }
+    guard.completed = true;
+}
+fn begin_capture(app: AppHandle, id: String, ticket: String, epoch: &str, sequence: &str) -> Result<(), String> {
+    crate::shared::invocation::check_tab_id(&id)?;
+    if ticket.len() != 36 || uuid::Uuid::parse_str(&ticket).map_or(true, |id| id.get_version_num() != 4) {
+        return Err("CAPTURE_INVALID_TICKET".into());
+    }
+    if app.state::<AppState>().shutdown_requested.load(Ordering::Acquire) {
+        return Err("CAPTURE_APPLICATION_SHUTTING_DOWN".into());
+    }
+    let cancellation = CaptureCancellation::new();
+    {
+        let mut owner = CAPTURE_OWNER.lock().map_err(|_| "CAPTURE_OWNER_UNKNOWN")?;
+        if epoch != owner.epoch { return Err("CAPTURE_STALE_EPOCH".into()); }
+        if let Some(slot) = &owner.slot {
+            if slot.receipt.ticket == ticket && slot.receipt.tab_id == id { return Ok(()); }
+            return Err("CAPTURE_BUSY".into());
+        }
+        if sequence != owner.next_sequence.to_string() { return Err("CAPTURE_STALE_SEQUENCE".into()); }
+        owner.next_sequence = owner.next_sequence.checked_add(1).ok_or("CAPTURE_SEQUENCE_EXHAUSTED")?;
+        owner.slot = Some(CaptureSlot {
+            receipt: CaptureReceipt { ticket: ticket.clone(), tab_id: id.clone(), phase: CapturePhase::Running,
+                path: None, error: None },
+            cancellation: cancellation.clone(),
+        });
+    }
+    // Spawn independent work before returning the receipt. No callback needs
+    // the original invoke future or its frontend to continue.
+    let _ = tauri::async_runtime::spawn(run_capture(app, id, ticket, cancellation));
+    Ok(())
+}
 
-/// Explicit, main-window-only full-document screenshot. No DOM credentials or
-/// remote webview privileges are consulted. Save in the private app data tree.
+#[derive(serde::Deserialize)]
+#[serde(tag = "phase", rename_all = "snake_case")]
+pub(crate) enum CaptureRequest {
+    Inspect,
+    Start { id: String, ticket: String, epoch: String, sequence: String },
+    Cancel { ticket: String },
+    Ack { ticket: String },
+}
+
+/// Main-only, native current-document capture. Old callers keep the string
+/// return; the optional task protocol exposes cancellation and terminal
+/// receipts through this same permission/command, not a second capture lane.
 #[tauri::command]
 pub async fn capture_full_page(
     webview: tauri::Webview,
     app: AppHandle,
-    id: String,
-) -> Result<String, String> {
-    static CAPTURE_LANE: crate::shared::blocking::BlockingLane =
-        crate::shared::blocking::BlockingLane::new(1, "CAPTURE_BUSY", "CAPTURE_WORKER_FAILED");
-    if webview.label() != "main" {
-        return Err("CAPTURE_MAIN_ONLY".into());
+    id: Option<String>,
+    request: Option<CaptureRequest>,
+) -> Result<serde_json::Value, String> {
+    if webview.label() != "main" { return Err("CAPTURE_MAIN_ONLY".into()); }
+    if let Some(request) = request {
+        match request {
+            CaptureRequest::Inspect => {}
+            CaptureRequest::Start { id, ticket, epoch, sequence } =>
+                begin_capture(app.clone(), id, ticket, &epoch, &sequence)?,
+            CaptureRequest::Cancel { ticket } => capture_cancel(&app, &ticket)?,
+            CaptureRequest::Ack { ticket } => capture_ack(&ticket)?,
+        }
+        return serde_json::to_value(capture_view()?).map_err(|_| "CAPTURE_RECEIPT_FAILED".into());
     }
-    crate::shared::invocation::check_tab_id(&id)?;
-    let permit = CAPTURE_LANE.reserve()?;
-    let manager = app.state::<tauri_plugin_browser_tabs::TabManagerState>();
-    let document = manager.capture_document(&id).map_err(|_| "CAPTURE_TAB_UNAVAILABLE".to_string())?;
-    let cancellation = tauri_plugin_browser_tabs::CaptureCancellation::new();
-    let mut waiter = CaptureWaitGuard(Some(cancellation.clone()));
-    let (send, recv) = tokio::sync::oneshot::channel();
-    manager
-        .capture_full_page_cancellable(&id, cancellation, move |result| {
-            // The native callback owns admission, even after the IPC waiter
-            // times out or is dropped. Successful delivery transfers that
-            // ownership to validation/storage; failed delivery releases it.
-            let _ = send.send(result.map(|bytes| (bytes, permit)));
-        })
-        .map_err(|_| "CAPTURE_TAB_UNAVAILABLE".to_string())?;
-    let result = tokio::time::timeout(std::time::Duration::from_secs(30), recv)
-        .await
-        .map_err(|_| "CAPTURE_TIMEOUT".to_string())?
-        .map_err(|_| "CAPTURE_WORKER_FAILED".to_string())?;
-    // A terminal native receipt arrived. Do not cancel completed work.
-    waiter.0.take();
-    let (bytes, permit) = result?;
-    // Native identity is stronger than a logical tab ID. A snapshot from a
-    // closed/replaced WebView must never be published as the new tab's image.
-    if !manager.is_current_capture_document(&id, &document) {
-        return Err("CAPTURE_DOCUMENT_STALE".into());
+    let id = id.ok_or("CAPTURE_TAB_UNAVAILABLE")?;
+    let view = capture_view()?;
+    let ticket = uuid::Uuid::new_v4().to_string();
+    begin_capture(app.clone(), id, ticket.clone(), &view.epoch, &view.next_sequence)?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let current = capture_view()?;
+        let receipt = current.receipt.filter(|receipt| receipt.ticket == ticket)
+            .or_else(|| current.last_completed.filter(|receipt| receipt.ticket == ticket))
+            .ok_or("CAPTURE_OUTCOME_UNKNOWN")?;
+        if receipt.phase.terminal() {
+            capture_ack(&ticket)?;
+            return receipt.path.map(serde_json::Value::String)
+                .ok_or_else(|| receipt.error.unwrap_or_else(|| "CAPTURE_FAILED".into()));
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = capture_cancel(&app, &ticket);
+            return Err("CAPTURE_OUTCOME_UNKNOWN".into());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
     }
-    let base = crate::workspace::data_dir(&app);
-    permit.run(move || save_capture(&base, &bytes)).await
 }
 
 fn save_capture(base: &std::path::Path, bytes: &[u8]) -> Result<String, String> {
@@ -523,6 +706,16 @@ mod capture_storage_tests {
         bytes.extend_from_slice(&width.to_be_bytes());
         bytes.extend_from_slice(&height.to_be_bytes());
         bytes
+    }
+
+    #[test]
+    fn cancellation_request_and_unknown_do_not_release_capture_owner() {
+        assert!(!CapturePhase::Running.terminal());
+        assert!(!CapturePhase::CancelRequested.terminal());
+        assert!(!CapturePhase::Unknown.terminal());
+        assert!(CapturePhase::Cancelled.terminal());
+        assert!(CapturePhase::Succeeded.terminal());
+        assert!(CapturePhase::Failed.terminal());
     }
 
     #[test]
