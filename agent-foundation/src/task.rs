@@ -215,16 +215,16 @@ impl TaskRegistry {
         }
         let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
         let task = tasks.get(&id).ok_or(FoundationError::NotFound)?;
-        if !task.status.is_terminal() {
+        if !task.status.is_terminal()
+            || self.execution_leases.lock().unwrap_or_else(|e| e.into_inner()).contains(&id)
+        {
             return Err(FoundationError::InvalidTransition);
         }
+        // Keep the task lock until its cancellation signal and journal
+        // projection are retired. Otherwise an authenticated restore of
+        // this identity can race and have its *new* signal removed.
         tasks.remove(&id);
-        drop(tasks);
         self.signals
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(&id);
-        self.execution_leases
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove(&id);
@@ -313,7 +313,9 @@ impl TaskRegistry {
     pub fn start(&self, id: Uuid) -> Result<()> {
         let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
         let previous = tasks.get(&id).ok_or(FoundationError::NotFound)?.clone();
-        if !matches!(previous.status, TaskStatus::Ready | TaskStatus::Paused) {
+        if !matches!(previous.status, TaskStatus::Ready | TaskStatus::Paused)
+            || self.execution_leases.lock().unwrap_or_else(|e| e.into_inner()).contains(&id)
+        {
             return Err(FoundationError::InvalidTransition);
         }
         let mut next = previous.clone();
@@ -836,6 +838,24 @@ mod tests {
             registry.resolve_approval(task.id, call, true).err(),
             Some(FoundationError::InvalidTransition)
         );
+    }
+
+    #[test]
+    fn cancellation_and_pause_do_not_reclaim_live_execution_identity() {
+        let registry = TaskRegistry::new(Arc::new(EventJournal::new(32)));
+        let task = registry.create_scoped(Uuid::new_v4(), Uuid::new_v4(), "coding", vec![]).unwrap();
+        registry.start(task.id).unwrap();
+        let revision = registry.get(task.id).unwrap().revision;
+        let lease = registry.acquire_execution(task.id, revision).unwrap();
+        registry.pause(task.id).unwrap();
+        assert_eq!(registry.start(task.id), Err(FoundationError::InvalidTransition));
+        assert_eq!(registry.detach_paused_record(task.id), Err(FoundationError::InvalidTransition));
+        registry.cancel(task.id).unwrap();
+        assert_eq!(registry.retire_terminal(task.id), Err(FoundationError::InvalidTransition));
+        assert_eq!(registry.get(task.id).unwrap().status, TaskStatus::Cancelled);
+        drop(lease);
+        registry.retire_terminal(task.id).unwrap();
+        assert!(registry.get(task.id).is_err());
     }
 
     #[test]

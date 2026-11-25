@@ -2002,10 +2002,13 @@ pub(crate) fn execute_with_adapter(
                     session.status = "response_denied".into();
                     return Err("AGENT_RESPONSE_DENIED".into());
                 }
-                let calls = reply["tool_calls"].as_array().cloned().unwrap_or_default();
-                if calls.len() > 8 {
+                // Validate the complete assistant function batch before
+                // adding it to the transcript or staging any proposal.
+                if reply["tool_calls"].as_array().is_some_and(|calls| calls.len() > 8) {
                     return Err("AGENT_TOOL_LIMIT".into());
                 }
+                let calls = browseros_agent_foundation::model::parse_function_batch(&reply, 8)
+                    .map_err(|_| "AGENT_REPLY_INVALID")?;
                 session.messages.push(reply.clone());
                 messages.push(reply);
                 if calls.is_empty() {
@@ -2018,11 +2021,8 @@ pub(crate) fn execute_with_adapter(
                     break;
                 }
                 for call in calls {
-                    let name = call["function"]["name"].as_str().unwrap_or("");
-                    let arguments: Value = serde_json::from_str(
-                        call["function"]["arguments"].as_str().unwrap_or("{}"),
-                    )
-                    .unwrap_or(Value::Null);
+                    let name = call.name.as_str();
+                    let arguments = call.arguments;
                     let output = if cancelled(&root, &session.session_id) {
                         Err("AGENT_CANCELLED".into())
                     } else { match name {
@@ -2065,7 +2065,7 @@ pub(crate) fn execute_with_adapter(
                         content = json!({"error":"AGENT_TOOL_OUTPUT_LIMIT"}).to_string();
                     }
                     let message =
-                        json!({"role":"tool","tool_call_id":call["id"],"content":content});
+                        json!({"role":"tool","tool_call_id":call.id,"content":content});
                     session.messages.push(message.clone());
                     messages.push(message);
                 }
@@ -2295,6 +2295,25 @@ mod tests {
         assert!(result["sessions"][0].get("root").is_none());
         assert_eq!(result["sessions"][0]["pending_operations"], 0);
     }
+    #[test]
+    fn malformed_function_batch_does_not_stage_a_valid_prefix() {
+        let f = Fixture::new();
+        let storage = f.0.join("state");
+        let opened = run(&f, json!({"action":"session"})).unwrap();
+        let id = &opened["session_id"];
+        let reply = json!({"role":"assistant","tool_calls":[
+            {"id":"first","function":{"name":"write_file","arguments":json!({"path":"new.txt","content":"must not be staged","expected_hash":null}).to_string()}},
+            {"id":"first","function":{"name":"read_file","arguments":"{}"}}
+        ]});
+        assert_eq!(execute(&f.0, &storage, json!({"action":"chat","session_id":id,"message":"work"}), |_,_| Ok(reply.clone())).unwrap_err(),
+            "AGENT_REPLY_INVALID");
+        let saved = run(&f, json!({"action":"session","session_id":id})).unwrap();
+        assert!(saved["changes"].as_array().unwrap().is_empty());
+        assert!(saved["operations"].as_array().unwrap().is_empty());
+        assert!(!saved["messages"].as_array().unwrap().iter().any(|message| message.get("tool_calls").is_some()));
+        assert!(!f.0.join("new.txt").exists());
+    }
+
     #[test]
     fn native_operation_receipt_blocks_replay_and_requires_review() {
         let f = Fixture::new();

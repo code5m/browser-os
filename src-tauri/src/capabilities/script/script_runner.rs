@@ -285,8 +285,12 @@ impl ScriptProcessTable {
         };
         loop {
             if requested.load(Ordering::Acquire) { cancel.store(true, Ordering::Release); }
-            let snapshot = state.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
-            if snapshot.status.is_terminal() { return Ok(snapshot); }
+            {
+                let snapshot = state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                if snapshot.status.is_terminal() { return Ok(snapshot.clone()); }
+            }
+            // A Running snapshot may hold megabytes of output. Only copy
+            // it once after terminal publication, not at every poll.
             thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
         }
     }
@@ -688,6 +692,40 @@ fn terminate_group(pgid: Option<i32>, grace_secs: u32) {
 #[cfg(not(unix))]
 fn terminate_group(_pgid: Option<i32>, _grace_secs: u32) {}
 
+/// On Linux observe the owned leader's exit without reaping it. Its PID
+/// cannot be recycled while it remains an unreaped child. Never dispatch a
+/// group signal after Child::try_wait/Child::wait has reaped the leader.
+#[cfg(target_os = "linux")]
+fn leader_exited_unreaped(child: &Child) -> std::io::Result<bool> {
+    loop {
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        let result = unsafe {
+            libc::waitid(libc::P_PID, child.id() as libc::id_t, &mut info,
+                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT)
+        };
+        if result == 0 {
+            return Ok(unsafe { info.si_pid() } != 0);
+        }
+        let error = std::io::Error::last_os_error();
+        if error.kind() != std::io::ErrorKind::Interrupted { return Err(error); }
+    }
+}
+
+fn poll_leader_exit(child: &mut Child, pgid: Option<i32>) -> std::io::Result<Option<std::process::ExitStatus>> {
+    #[cfg(target_os = "linux")]
+    {
+        if !leader_exited_unreaped(child)? { return Ok(None); }
+        // The leader has finished; leftover descendants must not retain
+        // its pipes or execute beyond its lifetime. Hard cleanup here
+        // avoids a five-second grace wait on the intentionally unreaped
+        // zombie leader. Running cancellation/timeout retain TERM grace.
+        if let Some(pgid) = pgid { kill_group(pgid, libc::SIGKILL); }
+        child.wait().map(Some)
+    }
+    #[cfg(not(target_os = "linux"))]
+    { let _ = pgid; child.try_wait() }
+}
+
 /// supervisor：轮询 wait + 超时/取消 + 收尾状态。
 /// **`Child` 的所有权在此线程**，进程表不持 `Child`。
 fn supervise(
@@ -742,7 +780,7 @@ fn supervise(
     };
 
     loop {
-        match child.try_wait() {
+        match poll_leader_exit(&mut child, pgid) {
             Ok(Some(exit)) => {
                 let code = exit.code();
                 // 退出码 0 视为成功（a 卡 §7：`Succeeded` 语义）。
@@ -756,6 +794,9 @@ fn supervise(
                 // remain Running forever waiting for EOF from an orphaned descendant.
                 #[cfg(windows)]
                 let _ = job.terminate();
+                // Linux has already signalled the owned group BEFORE
+                // reaping. Never send another numeric PGID signal here.
+                #[cfg(not(target_os = "linux"))]
                 terminate_group(pgid, HARD_GRACE_SECS);
                 join_output_readers(readers.take().unwrap_or_default());
                 finish(status, code, None);
@@ -766,7 +807,15 @@ fn supervise(
                     #[cfg(windows)]
                     let _ = job.terminate();
                     terminate_group(pgid, CANCEL_GRACE_SECS);
-                    let code = child.wait().ok().and_then(|s| s.code());
+                    let code = match child.wait() {
+                        Ok(exit) => exit.code(),
+                        Err(_) => {
+                            // No confirmed reap: retain Running admission
+                            // and never invent a terminal cancellation.
+                            eprintln!("[script-supervisor] child reap unconfirmed");
+                            return;
+                        }
+                    };
                     join_output_readers(readers.take().unwrap_or_default());
                     finish(RunStatus::Cancelled, code, None);
                     return;
@@ -775,7 +824,15 @@ fn supervise(
                     #[cfg(windows)]
                     let _ = job.terminate();
                     terminate_group(pgid, HARD_GRACE_SECS);
-                    let code = child.wait().ok().and_then(|s| s.code());
+                    let code = match child.wait() {
+                        Ok(exit) => exit.code(),
+                        Err(_) => {
+                            // No confirmed reap: retain Running admission
+                            // and never invent a terminal cancellation.
+                            eprintln!("[script-supervisor] child reap unconfirmed");
+                            return;
+                        }
+                    };
                     join_output_readers(readers.take().unwrap_or_default());
                     finish(RunStatus::Timeout, code, None);
                     return;
@@ -783,21 +840,32 @@ fn supervise(
                 thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
             }
             Err(e) => {
-                // A failed wait handle must not leave a Job-owned descendant
-                // holding stdout/stderr open. Tear down the entire Windows
-                // process tree before joining readers; Linux keeps its process
-                // group cleanup path.
-                #[cfg(windows)]
-                let _ = job.terminate();
-                terminate_group(pgid, HARD_GRACE_SECS);
-                let _ = child.wait();
-                join_output_readers(readers.take().unwrap_or_default());
-                finish(
-                    RunStatus::Failed,
-                    None,
-                    Some(format!("等待子进程失败: {e}")),
-                );
-                return;
+                // A lost wait receipt on Linux means identity can no
+                // longer be established (e.g. ECHILD). Never signal a
+                // potentially reused group or publish a false terminal.
+                #[cfg(target_os = "linux")]
+                {
+                    eprintln!("[script-supervisor] leader ownership unconfirmed: {:?}", e.kind());
+                    return;
+                }
+                #[cfg(not(target_os = "linux"))]
+                {
+                    // Windows retains an independent, identity-bound Job.
+                    #[cfg(windows)]
+                    let _ = job.terminate();
+                    terminate_group(pgid, HARD_GRACE_SECS);
+                    if child.wait().is_err() {
+                        eprintln!("[script-supervisor] child reap unconfirmed");
+                        return;
+                    }
+                    join_output_readers(readers.take().unwrap_or_default());
+                    finish(
+                        RunStatus::Failed,
+                        None,
+                        Some(format!("等待子进程失败: {e}")),
+                    );
+                    return;
+                }
             }
         }
     }
@@ -1837,6 +1905,21 @@ mod script_runner_tests {
         assert_eq!(loaded[0].run_id, run_id);
         assert!(loaded[0].output_tail.contains("hello-out"));
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn leader_exit_observation_does_not_reap_the_owned_pid() {
+        let mut command = Command::new("/bin/true");
+        let mut child = spawn_in_new_group(&mut command).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !leader_exited_unreaped(&child).unwrap() {
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(10));
+        }
+        // WNOWAIT must leave the same exited child observable twice and
+        // allow the normal Child owner to reap the original exit status.
+        assert!(leader_exited_unreaped(&child).unwrap());
+        assert!(child.wait().unwrap().success());
     }
 
     // ---------- B13：进程表容量只淘汰终态 ----------

@@ -134,11 +134,7 @@ impl AgentEngine<'_> {
                         tool_name,
                         arguments_json,
                     }) => {
-                        if arguments_json.len() > 16_384 {
-                            return Err(FoundationError::InvalidInput("tool arguments too large"));
-                        }
-                        let arguments = serde_json::from_str(&arguments_json)
-                            .map_err(|_| FoundationError::InvalidInput("tool argument JSON"))?;
+                        let arguments = crate::model::parse_tool_arguments(&arguments_json)?;
                         let call_id = self
                             .tools
                             .propose_at_revision(
