@@ -104,6 +104,27 @@ impl ProcessScope {
         Ok(Some(scope))
     }
 
+    /// Set and read back cgroup-accounted memory and swap limits on the
+    /// empty owned domain. GPU/external broker allocations are not covered.
+    /// No controller delegation or permission changes are performed.
+    pub(crate) fn configure_memory_limit(&self, bytes: usize) -> io::Result<()> {
+        if self.spawned || bytes == 0 || self.populated()? { return Err(denied()); }
+        fn set(group: &File, name: &CStr, value: &str) -> io::Result<()> {
+            open_at(group, name, libc::O_WRONLY)?.write_all(value.as_bytes())?;
+            let mut actual = String::new();
+            open_at(group, name, libc::O_RDONLY)?.take(128).read_to_string(&mut actual)?;
+            if actual.trim() != value { return Err(denied()); }
+            Ok(())
+        }
+        let memory = CStr::from_bytes_with_nul(b"memory.max\0").expect("static cgroup filename");
+        let swap = CStr::from_bytes_with_nul(b"memory.swap.max\0").expect("static cgroup filename");
+        let oom = CStr::from_bytes_with_nul(b"memory.oom.group\0").expect("static cgroup filename");
+        set(&self.group, memory, &bytes.to_string())?;
+        set(&self.group, swap, "0")?;
+        set(&self.group, oom, "1")?;
+        Ok(())
+    }
+
     /// Install membership BEFORE exec, not after the child may have forked.
     /// Only async-signal-safe write is used between fork and exec.
     pub(crate) fn attach(&self, command: &mut Command) -> io::Result<()> {

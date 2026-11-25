@@ -12,6 +12,7 @@ use windows_sys::Win32::System::JobObjects::{
     JobObjectExtendedLimitInformation, QueryInformationJobObject, SetInformationJobObject,
     TerminateJobObject, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    JOB_OBJECT_LIMIT_JOB_MEMORY,
 };
 use windows_sys::Win32::System::Threading::{
     GetProcessIdOfThread, OpenProcess, OpenThread, ResumeThread, PROCESS_SET_QUOTA,
@@ -44,6 +45,15 @@ impl JobObject {
     }
 
     fn create() -> Result<Self, String> {
+        Self::create_with_limit(None)
+    }
+
+    pub(crate) fn create_with_memory_limit(bytes: usize) -> Result<Self, String> {
+        if bytes == 0 { return Err("WINDOWS_JOB_MEMORY_LIMIT_INVALID".into()); }
+        Self::create_with_limit(Some(bytes))
+    }
+
+    fn create_with_limit(memory_limit: Option<usize>) -> Result<Self, String> {
         unsafe {
             let job = CreateJobObjectW(ptr::null(), ptr::null());
             if job.is_null() {
@@ -55,6 +65,10 @@ impl JobObject {
             let owner = Self(job);
             let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
             limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            if let Some(bytes) = memory_limit {
+                limits.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_JOB_MEMORY;
+                limits.JobMemoryLimit = bytes;
+            }
             if SetInformationJobObject(
                 owner.0,
                 JobObjectExtendedLimitInformation,
@@ -66,6 +80,19 @@ impl JobObject {
                     "WINDOWS_JOB_LIMITS: {}",
                     std::io::Error::last_os_error()
                 ));
+            }
+            if let Some(bytes) = memory_limit {
+                let mut actual: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+                if QueryInformationJobObject(
+                    owner.0, JobObjectExtendedLimitInformation,
+                    &mut actual as *mut _ as *mut std::ffi::c_void,
+                    std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                    std::ptr::null_mut(),
+                ) == 0 || actual.BasicLimitInformation.LimitFlags & JOB_OBJECT_LIMIT_JOB_MEMORY == 0
+                    || actual.JobMemoryLimit != bytes
+                    || actual.BasicLimitInformation.LimitFlags & JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE == 0 {
+                    return Err("WINDOWS_JOB_MEMORY_LIMIT_UNCONFIRMED".into());
+                }
             }
             Ok(owner)
         }

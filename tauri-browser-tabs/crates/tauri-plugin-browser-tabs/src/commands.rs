@@ -13,7 +13,6 @@ use std::sync::Arc;
 use std::sync::Mutex;
 #[cfg(target_os = "windows")]
 use std::time::Duration;
-#[cfg(not(target_os = "linux"))]
 use tauri::webview::PageLoadEvent;
 use tauri::{
     webview::NewWindowResponse, AppHandle, Emitter, Manager, State, Webview, WebviewBuilder,
@@ -40,12 +39,8 @@ fn browser_profile_path(app_data_dir: &Path) -> PathBuf {
 }
 
 #[cfg(target_os = "linux")]
-fn ensure_private_browser_profile(app: &AppHandle<Wry>) -> Result<PathBuf> {
-    let base = app
-        .path()
-        .app_data_dir()
-        .map_err(|_| BrowserTabError::Platform("browser profile directory unavailable".into()))?;
-    let profile = browser_profile_path(&base);
+fn ensure_private_browser_profile(base: &Path) -> Result<PathBuf> {
+    let profile = browser_profile_path(base);
     if let Ok(meta) = std::fs::symlink_metadata(&profile) {
         if !meta.file_type().is_dir() {
             return Err(BrowserTabError::Platform(
@@ -695,6 +690,10 @@ pub struct TabManager {
     lifecycle_busy: RwLock<HashMap<TabId, TabAccess>>,
     app: AppHandle<Wry>,
     host_label: String,
+    // Native host-only alternate profile. Never selected by an IPC caller.
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    isolated_profile: Option<PathBuf>,
+    isolated_ready: Option<Arc<std::sync::atomic::AtomicBool>>,
     #[cfg(target_os = "windows")]
     profile: RwLock<Option<Arc<browseros_platform_security::windows::PreparedPrivateDirectory>>>,
 }
@@ -706,9 +705,39 @@ impl TabManager {
             lifecycle_busy: RwLock::new(HashMap::new()),
             app,
             host_label: host_label.into(),
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
+            isolated_profile: None,
+            isolated_ready: None,
             #[cfg(target_os = "windows")]
             profile: RwLock::new(None),
         }
+    }
+
+    /// Only for the separate, fresh-profile capture host. The ordinary
+    /// browser and its shared persistent profile remain unchanged.
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    pub fn new_isolated_capture(
+        app: AppHandle<Wry>, host_label: impl Into<String>, root: PathBuf,
+    ) -> Self {
+        let mut manager = Self::new(app, host_label);
+        manager.isolated_profile = Some(root);
+        manager.isolated_ready = Some(Arc::new(std::sync::atomic::AtomicBool::new(false)));
+        manager
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    fn profile_base(&self) -> Result<PathBuf> {
+        match &self.isolated_profile {
+            Some(root) => Ok(root.clone()),
+            None => self.app.path().app_data_dir().map_err(|_| {
+                BrowserTabError::Platform("BROWSER_PROFILE_LOCATION_UNAVAILABLE".into())
+            }),
+        }
+    }
+
+    pub fn isolated_document_ready(&self) -> bool {
+        self.isolated_ready.as_ref().is_some_and(|ready|
+            ready.load(std::sync::atomic::Ordering::Acquire))
     }
 
     /// Call in app setup before creating any WebView or accepting tab commands.
@@ -721,9 +750,7 @@ impl TabManager {
             if slot.is_some() {
                 return Ok(());
             }
-            let base = self.app.path().app_data_dir().map_err(|_| {
-                BrowserTabError::Platform("BROWSER_PROFILE_LOCATION_UNAVAILABLE".into())
-            })?;
+            let base = self.profile_base()?;
             browseros_platform_security::windows::ensure_private_directory_root(
                 &base,
                 &browser_profile_security_options(),
@@ -803,7 +830,7 @@ impl TabManager {
         #[cfg(target_os = "windows")]
         let profile = self.prepared_browser_profile()?;
         #[cfg(target_os = "linux")]
-        let profile = ensure_private_browser_profile(&self.app)?;
+        let profile = ensure_private_browser_profile(&self.profile_base()?)?;
 
         let _reservation = self.reserve_lifecycle(&options.id)?;
         if self.tabs.read().contains_key(&options.id) {
@@ -815,10 +842,29 @@ impl TabManager {
         // NavigationFinished before the document actually finishes loading.
         // Linux continues to use native WebKit main-frame URI observations.
         let document_revision = Arc::new(std::sync::atomic::AtomicU64::new(1));
+        let isolated = self.isolated_ready.clone();
+        let nav_ready = isolated.clone();
+        let nav_revision = document_revision.clone();
         let mut builder = WebviewBuilder::new(&options.id, WebviewUrl::External(url))
-            .on_navigation(|_| true)
+            .on_navigation(move |url| {
+                if let Some(ready) = &nav_ready {
+                    ready.store(false, std::sync::atomic::Ordering::Release);
+                    invalidate_capture_document(&nav_revision);
+                    url.scheme() == "https" && url.host_str().is_some()
+                        && url.username().is_empty() && url.password().is_none()
+                } else { true }
+            })
             .transparent(options.transparent);
 
+        if let Some(ready) = isolated {
+            let revision = document_revision.clone();
+            builder = builder.on_page_load(move |_webview, payload| {
+                invalidate_capture_document(&revision);
+                ready.store(matches!(payload.event(), PageLoadEvent::Finished)
+                    && payload.url().scheme() == "https",
+                    std::sync::atomic::Ordering::Release);
+            }).on_download(|_, _| false);
+        } else {
         #[cfg(not(target_os = "linux"))]
         {
             let nav_id = options.id.clone();
@@ -839,6 +885,7 @@ impl TabManager {
                 };
                 let _ = nav_app.emit("browser-tabs://event", event);
             });
+        }
         }
 
         // Linux and Windows browser tabs share one app-scoped persistent

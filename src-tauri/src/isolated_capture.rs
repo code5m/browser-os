@@ -1,0 +1,261 @@
+//! Explicit fresh-URL capture process. No session migration, no normal
+//! app/remote command handlers, no shared browser profile, no live-tab reload.
+//! The parent owns a memory-limited native process domain and publishes output
+//! only after recursive-empty accounting and the original child exit.
+//! This is process lifecycle containment, NOT a hostile same-UID sandbox.
+use crate::capabilities::workspace::safe_paths;
+use crate::native_supervisor::OwnedHost;
+use std::{
+    ffi::OsStr,
+    path::{Path, PathBuf},
+    process::Command,
+    sync::{mpsc, Arc},
+    thread,
+    time::{Duration, Instant},
+};
+use tauri::Manager;
+use tauri_plugin_browser_tabs::{CaptureCancellation, CreateTabOptions, LogicalRect, TabManager};
+
+const PARENT_FLAG: &str = "--isolated-capture";
+const CHILD_FLAG: &str = "--isolated-capture-worker";
+const URL_ENV: &str = "BROWSEROS_CAPTURE_JOB_URL";
+const ROOT_ENV: &str = "BROWSEROS_CAPTURE_JOB_ROOT";
+const MAX_BYTES: usize = 32 * 1024 * 1024;
+const MEMORY_LIMIT: usize = 2 * 1024 * 1024 * 1024;
+const DEADLINE: Duration = Duration::from_secs(60);
+const POLL: Duration = Duration::from_millis(50);
+const HOST: &str = "isolated-capture-host";
+const PAGE: &str = "isolated-capture-page";
+
+fn checked_url(raw: &str) -> Result<String, String> {
+    if raw.len() > 8192 { return Err("CAPTURE_URL_INVALID".into()); }
+    let url = url::Url::parse(raw).map_err(|_| "CAPTURE_URL_INVALID")?;
+    if url.scheme() != "https" || url.host_str().is_none()
+        || !url.username().is_empty() || url.password().is_some() {
+        return Err("CAPTURE_HTTPS_URL_REQUIRED".into());
+    }
+    Ok(url.into())
+}
+fn checked_png(bytes: &[u8]) -> Result<(), String> {
+    if bytes.len() < 24 || bytes.len() > MAX_BYTES
+        || !bytes.starts_with(b"\x89PNG\r\n\x1a\n") || &bytes[12..16] != b"IHDR" {
+        return Err("CAPTURE_INVALID_PNG".into());
+    }
+    let width = u32::from_be_bytes(bytes[16..20].try_into().map_err(|_| "CAPTURE_INVALID_PNG")?);
+    let height = u32::from_be_bytes(bytes[20..24].try_into().map_err(|_| "CAPTURE_INVALID_PNG")?);
+    if width == 0 || height == 0 || width > 16_384 || height > 16_384
+        || u64::from(width) * u64::from(height) > 16_000_000 {
+        return Err("CAPTURE_DIMENSION_LIMIT".into());
+    }
+    Ok(())
+}
+fn scratch_parent() -> Result<PathBuf, String> {
+    std::env::temp_dir().canonicalize().map_err(|_| "CAPTURE_TEMP_UNAVAILABLE".into())
+}
+fn fresh_scratch() -> Result<(PathBuf, PathBuf, String), String> {
+    let parent = scratch_parent()?;
+    let root = parent.join(format!("browseros-isolated-capture-{}", uuid::Uuid::new_v4()));
+    // No sensitive content until the OS private-directory policy is applied.
+    let mut builder = std::fs::DirBuilder::new();
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(&root).map_err(|_| "CAPTURE_TEMP_CREATE_FAILED")?;
+    safe_paths::ensure_private_directory(&root).map_err(|_| "CAPTURE_TEMP_PRIVATE_FAILED")?;
+    let identity = safe_paths::directory_identity(&root).map_err(|_| "CAPTURE_TEMP_IDENTITY_FAILED")?;
+    Ok((parent, root, identity))
+}
+fn cleanup(parent: &Path, root: &Path, identity: &str) -> Result<(), String> {
+    if safe_paths::directory_identity(root).map_err(|_| "CAPTURE_TEMP_IDENTITY_FAILED")? != identity {
+        return Err("CAPTURE_TEMP_IDENTITY_CHANGED".into());
+    }
+    safe_paths::remove_tree(root, &[parent.to_path_buf()]).map_err(|_| "CAPTURE_TEMP_CLEANUP_FAILED".into())
+}
+fn run_parent(raw: &str, output: PathBuf) -> Result<(), String> {
+    let url = checked_url(raw)?;
+    if !output.is_absolute() || output.extension() != Some(OsStr::new("png")) {
+        return Err("CAPTURE_ABSOLUTE_NEW_PNG_PATH_REQUIRED".into());
+    }
+    let output_parent = output.parent().ok_or("CAPTURE_OUTPUT_PATH_INVALID")?.to_path_buf();
+    // Early rejection is only convenience. Final native no-replace publish
+    // remains authoritative even if another writer creates the destination.
+    match std::fs::symlink_metadata(&output) {
+        Ok(_) => return Err("CAPTURE_OUTPUT_ALREADY_EXISTS".into()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+        Err(_) => return Err("CAPTURE_OUTPUT_PATH_INVALID".into()),
+    }
+    let (parent, root, identity) = fresh_scratch()?;
+    let exe = std::env::current_exe().map_err(|_| "CAPTURE_EXECUTABLE_UNAVAILABLE")?;
+    let mut command = Command::new(exe);
+    command.arg(CHILD_FLAG).env(URL_ENV, url).env(ROOT_ENV, &root);
+    let mut owner = match OwnedHost::spawn_command(command, Some(MEMORY_LIMIT)) {
+        Ok(owner) => owner,
+        Err(error) => {
+            // Spawn/assignment failure can leave ownership uncertain. Do not
+            // remove a possibly live renderer's private directory.
+            eprintln!("[isolated-capture] scratch retained: {}", root.display());
+            return Err(error);
+        }
+    };
+    let deadline = Instant::now() + DEADLINE;
+    let result = loop {
+        match owner.exited() {
+            Ok(Some(status)) => break if status.success() { Ok(()) } else { Err("CAPTURE_WORKER_FAILED".to_owned()) },
+            Ok(None) if Instant::now() < deadline => thread::sleep(POLL),
+            Ok(None) => break Err("CAPTURE_DEADLINE_EXCEEDED".to_owned()),
+            Err(error) => break Err(error),
+        }
+    };
+    // A failed wait or elapsed deadline does not authorize output or cleanup.
+    // Retire the whole owned domain (including surviving descendants).
+    if let Err(error) = owner.retire() {
+        eprintln!("[isolated-capture] exit unconfirmed; scratch retained: {}", root.display());
+        return Err(error);
+    }
+    let publish = result.and_then(|_| {
+        if safe_paths::directory_identity(&root).map_err(|_| "CAPTURE_TEMP_IDENTITY_FAILED")? != identity {
+            return Err("CAPTURE_TEMP_IDENTITY_CHANGED".into());
+        }
+        let bytes = safe_paths::read_regular(&root.join("capture.png"), &[root.clone()], MAX_BYTES)
+            .map_err(|_| "CAPTURE_WORKER_RESULT_UNAVAILABLE")?;
+        checked_png(&bytes)?;
+        safe_paths::create_new_file(&output, &[output_parent], &bytes)
+            .map_err(|_| "CAPTURE_OUTPUT_NO_REPLACE_FAILED".into())
+    });
+    // Never erase the already published user file on a cleanup failure.
+    if let Err(error) = cleanup(&parent, &root, &identity) {
+        eprintln!("[isolated-capture] {error}; scratch retained: {}", root.display());
+    }
+    publish
+}
+fn worker_root() -> Result<PathBuf, String> {
+    let root = std::env::var_os(ROOT_ENV).map(PathBuf::from).ok_or("CAPTURE_WORKER_ROOT_REQUIRED")?;
+    let parent = scratch_parent()?;
+    let name = root.file_name().and_then(OsStr::to_str).ok_or("CAPTURE_WORKER_ROOT_INVALID")?;
+    let id = name.strip_prefix("browseros-isolated-capture-").ok_or("CAPTURE_WORKER_ROOT_INVALID")?;
+    if uuid::Uuid::parse_str(id).map_or(true, |id| id.get_version_num() != 4)
+        || root.parent() != Some(parent.as_path())
+        || root.canonicalize().ok().as_ref() != Some(&root) {
+        return Err("CAPTURE_WORKER_ROOT_INVALID".into());
+    }
+    safe_paths::ensure_private_directory(&root).map_err(|_| "CAPTURE_TEMP_PRIVATE_FAILED")?;
+    Ok(root)
+}
+fn run_render(app: tauri::AppHandle, root: PathBuf, url: String) -> Result<(), String> {
+    let manager = Arc::new(TabManager::new_isolated_capture(app, HOST, root.clone()));
+    manager.prepare_storage().map_err(|_| "CAPTURE_PROFILE_PREPARE_FAILED")?;
+    let id = PAGE.to_string();
+    manager.create_tab(CreateTabOptions {
+        id: id.clone(), url, rect: LogicalRect::new(0.0, 0.0, 1280.0, 720.0),
+        visible: true, auto_resize: false, user_agent: None, transparent: false,
+        initialization_script: None,
+    }).map_err(|_| "CAPTURE_RENDER_CREATE_FAILED")?;
+    let deadline = Instant::now() + DEADLINE;
+    // Actual page-load Finished notification, not a fixed sleep or URI change.
+    while !manager.isolated_document_ready() {
+        if Instant::now() >= deadline { return Err("CAPTURE_DOCUMENT_LOADING".into()); }
+        thread::sleep(POLL);
+    }
+    let document = manager.capture_document(&id).map_err(|_| "CAPTURE_DOCUMENT_UNAVAILABLE")?;
+    if !manager.isolated_document_ready() { return Err("CAPTURE_DOCUMENT_STALE".into()); }
+    let cancellation = CaptureCancellation::new();
+    let (tx, rx) = mpsc::sync_channel(1);
+    manager.capture_bound_document(&id, document.clone(), cancellation.clone(), move |result| {
+        let _ = tx.try_send(result);
+    }).map_err(|_| "CAPTURE_RENDER_DISPATCH_FAILED")?;
+    let bytes = match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+        Ok(result) => result?,
+        Err(_) => {
+            cancellation.cancel();
+            return Err("CAPTURE_RENDER_OUTCOME_UNKNOWN".into());
+        }
+    };
+    if !manager.isolated_document_ready() || !manager.is_current_capture_document(&id, &document) {
+        return Err("CAPTURE_DOCUMENT_STALE".into());
+    }
+    checked_png(&bytes)?;
+    safe_paths::create_new_file(&root.join("capture.png"), &[root], &bytes)
+        .map_err(|_| "CAPTURE_WORKER_OUTPUT_FAILED".into())
+}
+fn run_child() -> Result<(), String> {
+    let root = worker_root()?;
+    let url = checked_url(&std::env::var(URL_ENV).map_err(|_| "CAPTURE_WORKER_URL_REQUIRED")?)?;
+    // Clear request-specific state before the native engine starts any
+    // subprocess. The render job never invokes the ordinary app bootstrap.
+    std::env::remove_var(URL_ENV);
+    std::env::remove_var(ROOT_ENV);
+    #[cfg(target_os = "linux")]
+    {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+        std::env::set_var("GDK_BACKEND", "x11");
+        std::env::set_var("GTK_USE_PORTAL", "0");
+    }
+    let mut context = tauri::generate_context!();
+    context.config_mut().app.with_global_tauri = false;
+    context.config_mut().app.security.asset_protocol.enable = false;
+    tauri::Builder::default()
+        // No application plugins or invoke_handler. Labels do not match
+        // normal main/tab/grid capabilities. The worker is not a sandbox.
+        .setup(move |app| {
+            tauri::window::WindowBuilder::new(app, HOST)
+                .title("BrowserOS independent capture (fresh profile)")
+                .inner_size(1280.0, 720.0)
+                .build()?;
+            let handle = app.handle().clone();
+            let root = root.clone();
+            let url = url.clone();
+            thread::Builder::new().name("browseros-isolated-render".into()).spawn(move || {
+                match run_render(handle, root, url) {
+                    Ok(()) => std::process::exit(0),
+                    Err(_) => std::process::exit(2),
+                }
+            })?;
+            Ok(())
+        })
+        .run(context).map_err(|_| "CAPTURE_RENDER_RUNTIME_FAILED".to_owned())?;
+    // A window close is not a completed capture.
+    Err("CAPTURE_WORKER_CLOSED".into())
+}
+pub(crate) fn launch_if_requested() -> Option<i32> {
+    let args: Vec<_> = std::env::args_os().skip(1).collect();
+    let first = args.first()?.as_os_str();
+    let result = if first == OsStr::new(PARENT_FLAG) {
+        if args.len() != 3 {
+            Err("usage: --isolated-capture HTTPS_URL ABSOLUTE_NEW_PNG".into())
+        } else {
+            match args[1].to_str() {
+                Some(url) => run_parent(url, PathBuf::from(&args[2])),
+                None => Err("CAPTURE_URL_INVALID".into()),
+            }
+        }
+    } else if first == OsStr::new(CHILD_FLAG) {
+        if args.len() != 1 { Err("CAPTURE_WORKER_ARGUMENTS_INVALID".into()) } else { run_child() }
+    } else { return None; };
+    Some(match result {
+        Ok(()) => 0,
+        Err(code) => { eprintln!("[isolated-capture] {code}"); 1 }
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn explicit_mode_rejects_non_https_and_embedded_credentials() {
+        assert!(checked_url("https://example.com/").is_ok());
+        assert!(checked_url("file:///tmp/page.html").is_err());
+        assert!(checked_url("http://example.com/").is_err());
+        assert!(checked_url("https://user:pass@example.com/").is_err());
+    }
+    #[test]
+    fn output_requires_bounded_png_dimensions() {
+        let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
+        png.extend_from_slice(&1280u32.to_be_bytes());
+        png.extend_from_slice(&720u32.to_be_bytes());
+        assert!(checked_png(&png).is_ok());
+        png[16..20].copy_from_slice(&20_000u32.to_be_bytes());
+        assert!(checked_png(&png).is_err());
+    }
+}

@@ -23,7 +23,7 @@ const HANG: Duration = Duration::from_secs(60);
 const CLEANUP: Duration = Duration::from_secs(15);
 const STARTUP_WARNING: Duration = Duration::from_secs(120);
 
-struct OwnedHost {
+pub(crate) struct OwnedHost {
     child: Child,
     #[cfg(target_os = "linux")]
     scope: crate::shared::process_scope::ProcessScope,
@@ -36,11 +36,20 @@ impl OwnedHost {
         let mut command = Command::new(exe);
         command.args(args).env(ADDRESS, listener.local_addr().map_err(|_| "SUPERVISOR_LISTENER_FAILED")?.to_string())
             .env(TOKEN, token);
+        Self::spawn_command(command, None)
+    }
+
+    /// Shared owned process domain. An optional budget must be installed
+    /// before any worker code can execute; no unbounded fallback.
+    pub(crate) fn spawn_command(mut command: Command, memory_limit: Option<usize>) -> Result<Self, String> {
         #[cfg(target_os = "linux")]
         {
             let mut scope = crate::shared::process_scope::ProcessScope::prepare()
                 .map_err(|_| "SUPERVISOR_CGROUP_UNAVAILABLE")?
                 .ok_or("SUPERVISOR_DELEGATED_CGROUP_REQUIRED")?;
+            if let Some(bytes) = memory_limit {
+                scope.configure_memory_limit(bytes).map_err(|_| "SUPERVISOR_MEMORY_BUDGET_UNAVAILABLE")?;
+            }
             scope.attach(&mut command).map_err(|_| "SUPERVISOR_CGROUP_ATTACH_FAILED")?;
             scope.contain_nested_owners(&mut command);
             let child = command.spawn().map_err(|_| "SUPERVISOR_SPAWN_FAILED")?;
@@ -51,7 +60,10 @@ impl OwnedHost {
         {
             use std::os::windows::process::CommandExt;
             command.creation_flags(crate::windows_process::CREATE_SUSPENDED);
-            let job = crate::windows_process::JobObject::create_for_spawn()?;
+            let job = match memory_limit {
+                Some(bytes) => crate::windows_process::JobObject::create_with_memory_limit(bytes)?,
+                None => crate::windows_process::JobObject::create_for_spawn()?,
+            };
             let child = command.spawn().map_err(|_| "SUPERVISOR_SPAWN_FAILED")?;
             let mut owner = Self { child, job };
             if owner.job.assign_suspended_pid(owner.child.id()).is_err() {
@@ -65,13 +77,13 @@ impl OwnedHost {
         }
     }
 
-    fn exited(&mut self) -> Result<Option<ExitStatus>, String> {
+    pub(crate) fn exited(&mut self) -> Result<Option<ExitStatus>, String> {
         self.child.try_wait().map_err(|_| "SUPERVISOR_WAIT_FAILED".into())
     }
 
     /// A kill request is not a receipt. Both the kernel's domain accounting
     /// and the original Child wait must confirm before another launch.
-    fn retire(&mut self) -> Result<ExitStatus, String> {
+    pub(crate) fn retire(&mut self) -> Result<ExitStatus, String> {
         let deadline = Instant::now() + CLEANUP;
         #[cfg(target_os = "linux")]
         self.scope.terminate_and_confirm(deadline).map_err(|_| "SUPERVISOR_SCOPE_EXIT_UNKNOWN")?;

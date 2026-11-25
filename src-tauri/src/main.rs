@@ -64,6 +64,8 @@ mod shutdown;
 mod startup;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 mod native_supervisor;
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+mod isolated_capture;
 mod capabilities {
     pub mod agent;
     pub mod bfc;
@@ -1569,6 +1571,12 @@ fn run_m0_driver(app: tauri::AppHandle, cfg: bridge::M0Config) {
 }
 
 fn main() {
+    // Explicit separate render job: no single-instance forwarding, workspace
+    // loading, remote bridge commands or access to the live browser profile.
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    if let Some(code) = isolated_capture::launch_if_requested() {
+        std::process::exit(code);
+    }
     // Phase 0：宫格子进程分支（在最前判断，避免初始化主进程逻辑）
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     if let Some(index) = parse_grid_child_arg() {
