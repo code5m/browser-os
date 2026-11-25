@@ -282,10 +282,6 @@ pub(super) fn rename_no_replace(
 /// Never fall back to a raw path-based std::fs::write after authorization.
 pub(super) fn create_new_file(path: &Path, roots: &[PathBuf], content: &[u8]) -> io::Result<()> {
     use std::io::Write;
-    use windows_sys::Wdk::Storage::FileSystem::FILE_CREATE;
-    const DELETE: u32 = 0x0001_0000;
-    const FILE_WRITE_DATA: u32 = 0x0000_0002;
-    const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
     if !path.is_absolute() {
         return Err(denied());
     }
@@ -295,23 +291,17 @@ pub(super) fn create_new_file(path: &Path, roots: &[PathBuf], content: &[u8]) ->
     let parent = open_destination_directory(parent_path)?;
     authorize_with_root(&parent, &root)?;
     let temp = std::ffi::OsString::from(format!(".browseros-create-{}.tmp", uuid::Uuid::new_v4()));
-    let result = (|| {
-        let mut stage = open_child_at(
-            &parent,
-            &temp,
-            DELETE | FILE_WRITE_DATA | FILE_READ_ATTRIBUTES,
-            FILE_SHARE_READ_WRITE_DELETE,
-            FILE_CREATE,
-        )?;
-        stage.write_all(content)?;
-        stage.sync_all()?;
-        drop(stage);
-        rename_no_replace(&parent_path.join(&temp), parent_path, filename, roots)
-    })();
-    if result.is_err() {
-        let _ = remove_regular_at(&parent, &temp);
-    }
-    result
+    // Use the same private, nonshared staging handle as versioned writes.
+    // Never reopen a temporary name for publish or cleanup.
+    let mut stage = open_stage_at(&parent, &temp)?;
+    stage.write_all(content)?;
+    stage.sync_all()?;
+    stage.arm_cleanup().map_err(io::Error::other)?;
+    stage.prepare_publish().map_err(io::Error::other)?;
+    rename_at(&stage, &parent, filename, false)?;
+    stage.published = true;
+    let _ = parent.sync_all();
+    Ok(())
 }
 
 /// Single-component create only: never call create_dir_all on user-supplied
@@ -1433,6 +1423,35 @@ pub(super) fn read_versioned(
             bytes,
         }),
     )
+}
+
+pub(super) fn write_versioned_approved(
+    path: &Path, roots: &[PathBuf], ancestor: &Path, ancestor_identity: &str,
+    expected: Option<&FileSnapshot>, content: &[u8], limit: usize,
+    prepare: impl FnOnce(&str) -> Result<(), String>,
+) -> Result<(), String> {
+    use std::path::Component;
+    use windows_sys::Wdk::Storage::FileSystem::FILE_OPEN_IF;
+    let relative = path.strip_prefix(ancestor).map_err(|_| "FILE_APPROVED_ANCESTOR_CHANGED")?;
+    if relative.components().any(|part| !matches!(part, Component::Normal(_))) {
+        return Err("FILE_APPROVED_ANCESTOR_CHANGED".into());
+    }
+    let filename = relative.file_name().ok_or("FILE_NAME_INVALID")?;
+    let root = open_authorized_root(ancestor, roots).map_err(|_| "FILE_PARENT_NOT_AUTHORIZED")?;
+    let mut parent = open_destination_directory(ancestor).map_err(|_| "FILE_PARENT_NOT_AUTHORIZED")?;
+    authorize_with_root(&parent, &root).map_err(|_| "FILE_PARENT_NOT_AUTHORIZED")?;
+    if object_identity(&identity(&parent).map_err(|_| "FILE_IDENTITY_UNAVAILABLE")?) != ancestor_identity {
+        return Err("FILE_APPROVED_ANCESTOR_CHANGED".into());
+    }
+    for part in relative.parent().ok_or("FILE_PARENT_INVALID")?.components() {
+        let Component::Normal(segment) = part else { return Err("FILE_PARENT_INVALID".into()); };
+        parent = open_object_at(&parent, segment, 0x0080 | 0x0001 | 0x0002 | 0x0004 | 0x0020,
+            FILE_SHARE_READ_WRITE_DELETE, FILE_OPEN_IF, true)
+            .map_err(|_| "FILE_PARENT_NOT_AUTHORIZED")?;
+        authorize_with_root(&parent, &root).map_err(|_| "FILE_PARENT_NOT_AUTHORIZED")?;
+    }
+    write_versioned_at(&parent, filename, expected.map(|s| s.bytes.as_slice()),
+        expected.map(|s| s.identity.as_str()), content, limit, prepare)
 }
 
 pub(super) fn write_versioned(

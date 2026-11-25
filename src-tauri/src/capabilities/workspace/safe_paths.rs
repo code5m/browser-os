@@ -403,15 +403,17 @@ mod linux {
         let parent = open_allowed_dir(parent_path, roots)?;
         let temp =
             std::ffi::OsString::from(format!(".browseros-create-{}.tmp", uuid::Uuid::new_v4()));
+        let mut staged = create_temp_at(&parent, &temp)?;
+        let mut published = false;
         let result = (|| {
-            let mut staged = create_temp_at(&parent, &temp)?;
             staged.write_all(content)?;
             staged.sync_all()?;
-            drop(staged);
+            entry_still_matches(&parent, &temp, &staged)?;
             rename_bound(&parent, &temp, &parent, filename)?;
+            published = true;
             sync_directory(&parent)
         })();
-        if result.is_err() {
+        if result.is_err() && !published && entry_still_matches(&parent, &temp, &staged).is_ok() {
             unlink_at(&parent, &temp);
         }
         result
@@ -751,6 +753,42 @@ mod linux {
                 bytes,
             }),
         )
+    }
+
+    pub(super) fn write_versioned_approved(
+        path: &Path, roots: &[PathBuf], ancestor: &Path, ancestor_identity: &str,
+        expected: Option<&FileSnapshot>, content: &[u8], limit: usize,
+        prepare: impl FnOnce(&str) -> Result<(), String>,
+    ) -> Result<(), String> {
+        let relative = path.strip_prefix(ancestor).map_err(|_| "FILE_APPROVED_ANCESTOR_CHANGED")?;
+        if relative.components().any(|part| !matches!(part, Component::Normal(_))) {
+            return Err("FILE_APPROVED_ANCESTOR_CHANGED".into());
+        }
+        let filename = relative.file_name().ok_or("FILE_NAME_INVALID")?;
+        let mut parent = open_allowed_dir(ancestor, roots).map_err(|_| "FILE_PARENT_NOT_AUTHORIZED")?;
+        if object_identity(&parent.metadata().map_err(|_| "FILE_IDENTITY_UNAVAILABLE")?) != ancestor_identity {
+            return Err("FILE_APPROVED_ANCESTOR_CHANGED".into());
+        }
+        // The approved native directory stays pinned. Resolve each remaining
+        // segment relative to the current handle, never reopen an absolute path.
+        for part in relative.parent().ok_or("FILE_PARENT_INVALID")?.components() {
+            let Component::Normal(segment) = part else { return Err("FILE_PARENT_INVALID".into()); };
+            parent = match open_child_dir(&parent, segment) {
+                Ok(next) => next,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    let native = name(segment).map_err(|_| "FILE_PARENT_INVALID")?;
+                    if unsafe { libc::mkdirat(parent.as_raw_fd(), native.as_ptr(), 0o700) } != 0
+                        && io::Error::last_os_error().kind() != io::ErrorKind::AlreadyExists {
+                        return Err("FILE_PARENT_CREATE_FAILED".into());
+                    }
+                    sync_directory(&parent).map_err(|_| "FILE_DURABILITY_UNCERTAIN")?;
+                    open_child_dir(&parent, segment).map_err(|_| "FILE_PARENT_NOT_AUTHORIZED")?
+                }
+                Err(_) => return Err("FILE_PARENT_NOT_AUTHORIZED".into()),
+            };
+        }
+        write_versioned_at(&parent, filename, expected.map(|s| s.bytes.as_slice()),
+            expected.map(|s| s.identity.as_str()), content, limit, prepare)
     }
 
     pub(super) fn write_versioned(
@@ -1246,6 +1284,22 @@ pub fn read_versioned(
 /// same-SID isolation. Windows serializes cooperating writes per native parent.
 /// prepare runs before acquiring the commit lock; the snapshot is rechecked
 /// afterwards while holding that lock.
+/// Bind the commit to the native ancestor approved by the user, not a later
+/// path lookup. Shared external files still do not provide arbitrary-writer CAS.
+pub fn write_versioned_approved(
+    path: &Path, roots: &[PathBuf], ancestor: &Path, ancestor_identity: &str,
+    expected: Option<&FileSnapshot>, content: &[u8], limit: usize,
+    prepare: impl FnOnce(&str) -> Result<(), String>,
+) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    { linux::write_versioned_approved(path, roots, ancestor, ancestor_identity, expected, content, limit, prepare) }
+    #[cfg(target_os = "windows")]
+    { windows::write_versioned_approved(path, roots, ancestor, ancestor_identity, expected, content, limit, prepare) }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    { let _ = (path, roots, ancestor, ancestor_identity, expected, content, limit, prepare);
+      Err("FILE_DESCRIPTOR_CAS_UNSUPPORTED".into()) }
+}
+
 pub fn write_versioned(
     path: &Path,
     roots: &[PathBuf],
@@ -1293,6 +1347,23 @@ pub fn remove_if_unchanged(
 #[cfg(all(test, any(target_os = "linux", target_os = "windows")))]
 mod cross_platform_file_manager_tests {
     use super::*;
+
+    #[test]
+    fn approved_directory_replacement_is_not_authorized() {
+        let root = std::env::temp_dir().join(format!("browseros-approval-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("approved")).unwrap();
+        let root = root.canonicalize().unwrap();
+        let approved = root.join("approved");
+        let identity = directory_identity(&approved).unwrap();
+        std::fs::rename(&approved, root.join("previous")).unwrap();
+        std::fs::create_dir(&approved).unwrap();
+        assert_eq!(write_versioned_approved(&approved.join("new/file.txt"), &[root.clone()],
+            &approved, &identity, None, b"reviewed", 1024, |_| Ok(())).unwrap_err(),
+            "FILE_APPROVED_ANCESTOR_CHANGED");
+        assert!(!approved.join("new").exists());
+        assert!(!root.join("previous/new").exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn native_directory_listing_denies_external_paths() {

@@ -984,7 +984,7 @@ fn artifact_parts(path: &Path) -> Result<(&Path, &str, &str), String> {
 fn write_coding_artifact(path: &Path, bytes: &[u8], limit: usize) -> Result<(), String> {
     let (storage, session, name) = artifact_parts(path)?;
     #[cfg(any(target_os = "linux", target_os = "windows"))]
-    { coding_checkpoint::write_artifact(storage, session, name, bytes, limit) }
+    { super::coding_checkpoint::write_artifact(storage, session, name, bytes, limit) }
     #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     { let _ = (storage, session, name, bytes, limit); Err("AGENT_PRIVATE_STORAGE_UNAVAILABLE".into()) }
 }
@@ -992,7 +992,7 @@ fn write_coding_artifact(path: &Path, bytes: &[u8], limit: usize) -> Result<(), 
 fn read_coding_artifact(path: &Path, limit: usize) -> Result<Vec<u8>, String> {
     let (storage, session, name) = artifact_parts(path)?;
     #[cfg(any(target_os = "linux", target_os = "windows"))]
-    { coding_checkpoint::read_artifact(storage, session, name, limit) }
+    { super::coding_checkpoint::read_artifact(storage, session, name, limit) }
     #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     { let _ = (storage, session, name, limit); Err("AGENT_PRIVATE_STORAGE_UNAVAILABLE".into()) }
 }
@@ -1213,21 +1213,6 @@ fn recover_pending_apply(root: &Path, storage: &Path, session: &mut Session) -> 
     fs::remove_file(path).map_err(|_| "AGENT_RECOVERY_CLEAR_FAILED")?;
     Ok(())
 }
-fn ensure_target_parent(root: &Path, target: &Path) -> Result<(), String> {
-    let parent = target.parent().ok_or("AGENT_PATH_DENIED")?;
-    if !parent.exists() {
-        match crate::capabilities::workspace::safe_paths::create_directory_all(
-            parent,
-            &[root.to_path_buf()],
-        ) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(_) => return Err("AGENT_WRITE_FAILED".into()),
-        }
-    }
-    // The actual write independently opens and authorizes the pinned parent.
-    Ok(())
-}
 // These native identities are a preflight for accidental alias duplication and
 // Owner storage overlap, not filesystem authority. Every actual write still
 // reopens an authorized pinned parent and performs versioned publication.
@@ -1415,10 +1400,13 @@ fn apply_changes_with_write_hook(
             {
                 return Err("AGENT_CHANGE_PATH_CHANGED".into());
             }
-            ensure_target_parent(root, &target)?;
-            crate::capabilities::workspace::safe_paths::write_versioned(
+            let proof = change.target_proof.as_ref().ok_or("AGENT_CHANGE_REVIEW_REQUIRED")?;
+            let ancestor = target.ancestors().nth(proof.suffix.len()).ok_or("AGENT_CHANGE_PATH_CHANGED")?;
+            crate::capabilities::workspace::safe_paths::write_versioned_approved(
                 &target,
                 &[root.to_path_buf()],
+                ancestor,
+                &proof.ancestor,
                 originals[index].as_ref(),
                 change.content.as_bytes(),
                 MAX_FILE,
