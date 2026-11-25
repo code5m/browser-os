@@ -198,6 +198,7 @@ fn snapshot(event: &str, stalled_ms: u64) -> Value {
         },
         "threads": threads_snapshot(),
         "tab_mutation": crate::bridge::tab_mutation_diagnostic(),
+        "capture": crate::capabilities::browser::public_api::capture_diagnostic(),
         "children": children_snapshot(),
         "memory_pressure": read_pressure("/proc/pressure/memory"),
         "io_pressure": read_pressure("/proc/pressure/io"),

@@ -8,3 +8,6 @@ pub(crate) fn agent_tab_summary(app: AppHandle) -> Value {
     json!({"count":count,"items":tabs.into_iter().take(100)
         .map(|tab| json!({"id":tab.id,"title":tab.title})).collect::<Vec<_>>()})
 }
+
+/// Metadata-only watchdog observation through the Browser capability.
+pub(crate) fn capture_diagnostic() -> Value { super::commands::capture_diagnostic() }

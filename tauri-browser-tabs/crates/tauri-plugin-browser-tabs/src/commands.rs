@@ -250,11 +250,14 @@ struct ManagedTab {
 
 #[cfg(target_os = "linux")]
 #[derive(Default)]
-struct BoundedPngWriter(Vec<u8>);
+struct BoundedPngWriter(Vec<u8>, Option<CaptureCancellation>);
 
 #[cfg(target_os = "linux")]
 impl std::io::Write for BoundedPngWriter {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if self.1.as_ref().is_some_and(CaptureCancellation::is_cancelled) {
+            return Err(std::io::Error::other("CAPTURE_CANCELLED"));
+        }
         if bytes.len() > 32 * 1024 * 1024 - self.0.len() {
             return Err(std::io::Error::other("CAPTURE_SIZE_LIMIT"));
         }
@@ -271,10 +274,22 @@ impl std::io::Write for BoundedPngWriter {
 #[test]
 fn png_writer_rejects_a_chunk_before_exceeding_its_limit() {
     use std::io::Write;
-    let mut writer = BoundedPngWriter(vec![0; 32 * 1024 * 1024 - 2]);
+    let mut writer = BoundedPngWriter(vec![0; 32 * 1024 * 1024 - 2], None);
     assert_eq!(writer.write(&[1, 2]).unwrap(), 2);
     assert!(writer.write(&[3]).is_err());
     assert_eq!(writer.0.len(), 32 * 1024 * 1024);
+}
+
+#[cfg(all(test, target_os = "linux"))]
+#[test]
+fn png_writer_stops_accepting_bytes_after_cancellation() {
+    use std::io::Write;
+    let cancellation = CaptureCancellation::new();
+    let mut writer = BoundedPngWriter(Vec::new(), Some(cancellation.clone()));
+    writer.write_all(&[1]).unwrap();
+    cancellation.cancel();
+    assert!(writer.write_all(&[2]).is_err());
+    assert_eq!(writer.0, vec![1]);
 }
 
 /// One request owns its cancellation signal. A request to cancel is NOT a
@@ -1344,7 +1359,7 @@ impl TabManager {
                                             let surface = gtk::cairo::ImageSurface::create_for_data(
                                                 bytes, format, width, height, stride,
                                             ).map_err(|_| "CAPTURE_SURFACE_INVALID".to_string())?;
-                                            let mut png = BoundedPngWriter::default();
+                                            let mut png = BoundedPngWriter(Vec::new(), Some(cancellation.clone()));
                                             surface.write_to_png(&mut png)
                                                 .map_err(|_| "CAPTURE_PNG_ENCODE_FAILED".to_string())?;
                                             if cancellation.is_cancelled()
@@ -1425,24 +1440,46 @@ impl TabManager {
                                     complete_capture(&image_reply, Err("CAPTURE_CANCELLED_OR_STALE".into()));
                                     return Ok(());
                                 }
-                                let data = status
-                                    .map_err(|_| "CAPTURE_ENGINE_FAILED".to_string())
-                                    .and_then(|_| {
-                                        if json.len() > 45 * 1024 * 1024 {
-                                            return Err("CAPTURE_SIZE_LIMIT".into());
-                                        }
-                                        let response: serde_json::Value = serde_json::from_str(&json)
-                                            .map_err(|_| "CAPTURE_RESPONSE_INVALID".to_string())?;
-                                        let image = response.get("data").and_then(|v| v.as_str())
-                                            .ok_or_else(|| "CAPTURE_NO_IMAGE".to_string())?;
-                                        if image.len() > 44 * 1024 * 1024 {
-                                            return Err("CAPTURE_SIZE_LIMIT".into());
-                                        }
-                                        use base64::Engine;
-                                        base64::engine::general_purpose::STANDARD.decode(image)
-                                            .map_err(|_| "CAPTURE_PNG_DECODE_FAILED".into())
+                                if status.is_err() {
+                                    complete_capture(&image_reply, Err("CAPTURE_ENGINE_FAILED".into()));
+                                    return Ok(());
+                                }
+                                if json.len() > 45 * 1024 * 1024 {
+                                    complete_capture(&image_reply, Err("CAPTURE_SIZE_LIMIT".into()));
+                                    return Ok(());
+                                }
+                                // Retain the receipt through bounded decoding, but do
+                                // not parse/allocate the PNG on the WebView UI thread.
+                                let worker_reply = image_reply.clone();
+                                let worker = std::thread::Builder::new()
+                                    .name("browseros-screenshot-decode".into())
+                                    .spawn(move || {
+                                        let data = (|| {
+                                            if image_cancel.is_cancelled() || !image_document.observed_generation_is_current() {
+                                                return Err("CAPTURE_CANCELLED_OR_STALE".into());
+                                            }
+                                            let response: serde_json::Value = serde_json::from_str(&json)
+                                                .map_err(|_| "CAPTURE_RESPONSE_INVALID".to_string())?;
+                                            let image = response.get("data").and_then(|v| v.as_str())
+                                                .ok_or_else(|| "CAPTURE_NO_IMAGE".to_string())?;
+                                            const LIMIT: usize = 32 * 1024 * 1024;
+                                            if image.len() > ((LIMIT + 2) / 3) * 4 {
+                                                return Err("CAPTURE_SIZE_LIMIT".into());
+                                            }
+                                            use base64::Engine;
+                                            let data = base64::engine::general_purpose::STANDARD.decode(image)
+                                                .map_err(|_| "CAPTURE_PNG_DECODE_FAILED".to_string())?;
+                                            if data.len() > LIMIT { return Err("CAPTURE_SIZE_LIMIT".into()); }
+                                            if image_cancel.is_cancelled() || !image_document.observed_generation_is_current() {
+                                                return Err("CAPTURE_CANCELLED_OR_STALE".into());
+                                            }
+                                            Ok(data)
+                                        })();
+                                        complete_capture(&worker_reply, data);
                                     });
-                                complete_capture(&image_reply, data);
+                                if worker.is_err() {
+                                    complete_capture(&image_reply, Err("CAPTURE_WORKER_FAILED".into()));
+                                }
                                 Ok(())
                             },
                         ));

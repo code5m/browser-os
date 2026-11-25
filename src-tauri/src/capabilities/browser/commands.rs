@@ -451,7 +451,7 @@ struct CaptureReceipt {
     path: Option<String>,
     error: Option<String>,
 }
-struct CaptureSlot { receipt: CaptureReceipt, cancellation: CaptureCancellation }
+struct CaptureSlot { receipt: CaptureReceipt, cancellation: CaptureCancellation, since: std::time::Instant }
 struct CaptureOwner {
     epoch: String,
     next_sequence: u64,
@@ -468,6 +468,18 @@ struct CaptureView {
     next_sequence: String,
     receipt: Option<CaptureReceipt>,
     last_completed: Option<CaptureReceipt>,
+}
+/// Non-blocking metadata only: no document, image or filesystem path.
+pub(crate) fn capture_diagnostic() -> serde_json::Value {
+    match CAPTURE_OWNER.try_lock() {
+        Ok(owner) => match &owner.slot {
+            Some(slot) => serde_json::json!({ "ticket": slot.receipt.ticket, "phase": slot.receipt.phase,
+                "age_ms": slot.since.elapsed().as_millis().min(u64::MAX as u128) as u64,
+                "cancel_requested": slot.cancellation.is_cancelled() }),
+            None => serde_json::json!({"phase":"idle"}),
+        },
+        Err(_) => serde_json::json!({"phase":"owner_unavailable"}),
+    }
 }
 fn capture_view() -> Result<CaptureView, String> {
     let owner = CAPTURE_OWNER.lock().map_err(|_| "CAPTURE_OWNER_UNKNOWN")?;
@@ -604,7 +616,7 @@ fn begin_capture(app: AppHandle, id: String, ticket: String, epoch: &str, sequen
         owner.slot = Some(CaptureSlot {
             receipt: CaptureReceipt { ticket: ticket.clone(), tab_id: id.clone(), phase: CapturePhase::Running,
                 path: None, error: None },
-            cancellation: cancellation.clone(),
+            cancellation: cancellation.clone(), since: std::time::Instant::now(),
         });
     }
     // Spawn independent work before returning the receipt. No callback needs
