@@ -516,8 +516,8 @@ fn capture_finish(app: &AppHandle, ticket: &str, phase: CapturePhase, result: Re
         if slot.receipt.phase.terminal() { return None; }
         slot.receipt.phase = phase;
         match result {
-            Ok(path) => slot.receipt.path = Some(path),
-            Err(error) => slot.receipt.error = Some(error),
+            Ok(path) => { slot.receipt.path = Some(path); slot.receipt.error = None; }
+            Err(error) => { slot.receipt.error = Some(error); slot.receipt.path = None; }
         }
         Some(slot.receipt.clone())
     });
@@ -537,7 +537,15 @@ fn capture_cancel(app: &AppHandle, ticket: &str) -> Result<(), String> {
         let slot = owner.slot.as_mut().filter(|slot| slot.receipt.ticket == ticket)
             .ok_or("CAPTURE_STALE_TICKET")?;
         if slot.receipt.phase.terminal() { return Ok(()); }
-        if slot.receipt.phase == CapturePhase::Running {
+        if slot.cancellation.revoke_pending_native() {
+            // This is proof that neither isolated-world layout measurement
+            // nor the renderer screenshot can ever be started by this
+            // callback. Terminal cancellation is now safe, even if the
+            // dispatcher never sends a reply.
+            slot.receipt.phase = CapturePhase::Cancelled;
+            slot.receipt.error = Some("CAPTURE_CANCELLED_BEFORE_DISPATCH".into());
+            slot.receipt.path = None;
+        } else if slot.receipt.phase == CapturePhase::Running {
             slot.receipt.phase = CapturePhase::CancelRequested;
         }
         (slot.cancellation.clone(), slot.receipt.clone())
@@ -576,12 +584,22 @@ async fn run_capture(app: AppHandle, id: String, ticket: String, document: Captu
         Ok(value) => value,
         Err(_) => {
             let _ = capture_cancel(&app, &ticket);
-            // Timeout is a request to stop, not a completed operation.
-            // Windows CDP may return much later; hold the same owner.
+            if cancellation.native_dispatch_revoked() {
+                guard.completed = true;
+                return;
+            }
+            // Timeout after native entry is a request to stop, not a
+            // completion receipt. Retain this owner through engine return.
             recv.await
         }
     };
-    let Ok(result) = native else { return; };
+    let Ok(result) = native else {
+        // A dropped dispatch callback before entry is revocable. If it
+        // entered the renderer, a lost completion still proves nothing.
+        let _ = capture_cancel(&app, &ticket);
+        if cancellation.native_dispatch_revoked() { guard.completed = true; }
+        return;
+    };
     if cancellation.is_cancelled() {
         capture_finish(&app, &ticket, CapturePhase::Cancelled, Err("CAPTURE_CANCELLED_AT_COMPLETION".into()));
         guard.completed = true;

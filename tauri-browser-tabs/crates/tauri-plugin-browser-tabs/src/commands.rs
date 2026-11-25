@@ -299,6 +299,8 @@ fn png_writer_stops_accepting_bytes_after_cancellation() {
 #[derive(Clone)]
 pub struct CaptureCancellation {
     requested: Arc<std::sync::atomic::AtomicBool>,
+    // 0 queued, 1 entered native callback, 2 irrevocably fenced.
+    dispatch: Arc<std::sync::atomic::AtomicU8>,
     #[cfg(target_os = "linux")]
     native: webkit2gtk::gio::Cancellable,
 }
@@ -307,9 +309,33 @@ impl CaptureCancellation {
     pub fn new() -> Self {
         Self {
             requested: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            dispatch: Arc::new(std::sync::atomic::AtomicU8::new(0)),
             #[cfg(target_os = "linux")]
             native: webkit2gtk::gio::Cancellable::new(),
         }
+    }
+
+    /// Fencing a queued callback proves it can never dispatch renderer
+    /// work. A callback that has entered cannot be fenced or called done.
+    pub fn revoke_pending_native(&self) -> bool {
+        use std::sync::atomic::Ordering;
+        match self.dispatch.compare_exchange(0, 2, Ordering::AcqRel, Ordering::Acquire) {
+            Ok(_) | Err(2) => true,
+            _ => false,
+        }
+    }
+
+    pub fn native_dispatch_revoked(&self) -> bool {
+        self.dispatch.load(std::sync::atomic::Ordering::Acquire) == 2
+    }
+
+    fn enter_native(&self) -> bool {
+        use std::sync::atomic::Ordering;
+        if self.is_cancelled() {
+            self.revoke_pending_native();
+            return false;
+        }
+        self.dispatch.compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire).is_ok()
     }
 
     pub fn cancel(&self) {
@@ -326,6 +352,43 @@ impl CaptureCancellation {
     pub fn is_cancelled(&self) -> bool {
         self.requested.load(std::sync::atomic::Ordering::Acquire)
     }
+}
+
+// A permanently lost queued callback must not consume an unbounded number
+// of closures/dispatchers after its operation has been safely fenced. Keep
+// two outstanding native dispatch permits until each actual closure exits
+// or is destroyed. A revoked callback is still counted until then.
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+static CAPTURE_DISPATCHES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+struct CaptureDispatchPermit;
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+impl CaptureDispatchPermit {
+    fn acquire() -> Option<Self> {
+        use std::sync::atomic::Ordering;
+        CAPTURE_DISPATCHES.fetch_update(Ordering::AcqRel, Ordering::Acquire,
+            |n| (n < 2).then_some(n + 1)).ok()?;
+        Some(Self)
+    }
+}
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+impl Drop for CaptureDispatchPermit {
+    fn drop(&mut self) {
+        CAPTURE_DISPATCHES.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn capture_can_only_revoke_before_native_entry() {
+    let queued = CaptureCancellation::new();
+    assert!(queued.revoke_pending_native());
+    assert!(!queued.enter_native());
+    let entered = CaptureCancellation::new();
+    assert!(entered.enter_native());
+    assert!(!entered.revoke_pending_native());
+    entered.cancel();
+    assert!(!entered.native_dispatch_revoked());
 }
 
 impl Default for CaptureCancellation {
@@ -1270,9 +1333,19 @@ impl TabManager {
             return Ok(());
         }
         let webview = tab.webview.clone();
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        let Some(dispatch_permit) = CaptureDispatchPermit::acquire() else {
+            callback(Err("CAPTURE_NATIVE_DISPATCH_BUSY".into()));
+            return Ok(());
+        };
         #[cfg(target_os = "linux")]
         {
             webview.with_webview(move |native| {
+                let _dispatch_permit = dispatch_permit;
+                if !cancellation.enter_native() {
+                    callback(Err("CAPTURE_CANCELLED_BEFORE_DISPATCH".into()));
+                    return;
+                }
                 use java_script_core::ValueExt;
                 use webkit2gtk::WebViewExt;
                 use gtk::prelude::WidgetExt;
@@ -1385,6 +1458,11 @@ impl TabManager {
             let capture_app = self.app.clone();
             let capture_id = id.clone();
             webview.with_webview(move |native| {
+                let _dispatch_permit = dispatch_permit;
+                if !cancellation.enter_native() {
+                    callback(Err("CAPTURE_CANCELLED_BEFORE_DISPATCH".into()));
+                    return;
+                }
                 use webview2_com::CallDevToolsProtocolMethodCompletedHandler;
                 use windows::core::PCWSTR;
                 let core = match unsafe { native.controller().CoreWebView2() } {
