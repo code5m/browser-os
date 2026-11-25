@@ -916,6 +916,57 @@ fn text_checkpoint_input(profile: &ProviderProfile, messages: &[Value], agent: O
     Ok(input)
 }
 
+// Restore only the normalized text-only input. Recheck the current
+// provider selection and acquire its credential in the native adapter.
+fn prepare_restored_text_provider<'a>(
+    config: &AiConfig, kind: &str, input: &Value,
+    cancelled: &'a (dyn Fn() -> bool + Sync),
+) -> Result<Box<dyn FnOnce() -> Result<Value, String> + 'a>, String> {
+    if kind == "local_chat" {
+        use crate::capabilities::agent::public_api::{LocalChatRequest, local_chat, validate_local_chat};
+        if input["provider"] != "ollama_local" { return Err("AGENT_RUN_SCOPE_MISMATCH".into()); }
+        let request = LocalChatRequest {
+            model: input["model"].as_str().ok_or("AGENT_RUN_CONTEXT_INVALID")?.into(),
+            message: input["message"].as_str().ok_or("AGENT_RUN_CONTEXT_INVALID")?.into(),
+            system: input["system"].as_str().ok_or("AGENT_RUN_CONTEXT_INVALID")?.into(),
+        };
+        validate_local_chat(&request)?;
+        return Ok(Box::new(move || {
+            if cancelled() { return Err("AI_PROVIDER_CANCELLED".into()); }
+            serde_json::to_value(local_chat(request)?)
+                .map_err(|_| "AGENT_RUN_RECEIPT_INVALID".into())
+        }));
+    }
+    if !matches!(kind, "chat" | "legacy_agent") { return Err("AGENT_RUN_SCOPE_MISMATCH".into()); }
+    let profile_id = input["profile_id"].as_str().ok_or("AGENT_RUN_CONTEXT_INVALID")?;
+    let profile = config.profiles.iter().find(|profile| profile.id == profile_id)
+        .ok_or("AI_NOT_CONFIGURED")?;
+    if input["base_url"].as_str() != Some(profile.base_url.as_str())
+        || input["model"].as_str() != Some(profile.model.as_str())
+    { return Err("AGENT_RUN_PROVIDER_CHANGED".into()); }
+    let profile = execution_profile(profile)?;
+    let messages = input["messages"].as_array().ok_or("AGENT_RUN_CONTEXT_INVALID")?.clone();
+    let agent = input["agent_id"].as_str().map(str::to_owned);
+    if (kind == "chat" && agent.is_some()) || (kind == "legacy_agent" && agent.is_none()) {
+        return Err("AGENT_RUN_SCOPE_MISMATCH".into());
+    }
+    if messages.len() < 2 || messages.len() > 14 || messages[0]["role"] != "system"
+        || messages.last().and_then(|turn| turn["role"].as_str()) != Some("user")
+        || messages.iter().enumerate().any(|(i, turn)| {
+            let Some(content) = turn["content"].as_str() else { return true; };
+            if i == 0 { content.len() > 32_768 }
+            else { !matches!(turn["role"].as_str(), Some("user" | "assistant"))
+                || content.len() > 24_000 || crate::security_policy::contains_credential_leak(content) }
+        }) || text_checkpoint_input(&profile, &messages, agent.as_deref())? != *input
+    { return Err("AGENT_RUN_CONTEXT_INVALID".into()); }
+    Ok(Box::new(move || {
+        let content = text_model_turn(&profile, &messages, cancelled)?;
+        Ok(if let Some(agent) = agent {
+            json!({"content":content,"model":profile.model,"agent_id":agent,"tools_executed":false})
+        } else { json!({"content":content,"model":profile.model}) })
+    }))
+}
+
 #[cfg(test)]
 fn chat_with_history(
     profile: &ProviderProfile,
@@ -1563,9 +1614,28 @@ pub fn execute(path: &Path, request: AiRequest) -> Result<Value, String> {
     if request.action == "cancel" {
         return Ok(json!({"cancelled":cancel_chat_request(&request.request_id)?}));
     }
+    let storage = path.parent().ok_or("AGENT_STORAGE_UNAVAILABLE")?;
+    use crate::capabilities::agent::public_api::ProductionExecution;
+    // Existing main-only service and request fields; authenticated records,
+    // never arbitrary paths, persisted credentials or workspace grants.
+    match request.action.as_str() {
+        "run_history" => return ProductionExecution::text_run_catalog(storage,
+            if request.id.is_empty() { None } else {
+                Some(uuid::Uuid::parse_str(&request.id).map_err(|_| "AGENT_RUN_ID_INVALID")?)
+            }),
+        "run_restore" => return ProductionExecution::read_text_run(storage, parse_chat_request_id(&request.id)?),
+        "run_forget" => {
+            if !request.confirmed { return Err("AGENT_RUN_FORGET_APPROVAL_REQUIRED".into()); }
+            ProductionExecution::forget_text_payload(storage, parse_chat_request_id(&request.id)?)?;
+            return Ok(json!({"forgotten":true}));
+        }
+        "run_continue" if !request.confirmed || request.request_id.is_empty() =>
+            return Err("AGENT_RUN_RESUME_APPROVAL_REQUIRED".into()),
+        _ => {}
+    }
     let cancel_guard = if matches!(
         request.action.as_str(),
-        "chat" | "legacy_chat" | "legacy_run"
+        "chat" | "legacy_chat" | "legacy_run" | "run_continue"
     ) {
         Some(register_chat_request(&request.request_id)?)
     } else {
@@ -1711,6 +1781,15 @@ pub fn execute(path: &Path, request: AiRequest) -> Result<Value, String> {
             }
             save_legacy_agents(&file, &defs)?;
             Ok(json!({"removed":true,"id":request.id}))
+        }
+        "run_continue" => {
+            let previous = parse_chat_request_id(&request.id)?;
+            let signal = cancel_guard.as_ref().ok_or("AI_CHAT_REQUEST_UNAVAILABLE")?;
+            let run = signal.id.ok_or("AI_CHAT_REQUEST_ID_INVALID")?;
+            drop(lock);
+            let cancelled = || signal.cancelled.load(Ordering::SeqCst);
+            ProductionExecution::advance_text(storage, previous, run, &request.message, &cancelled,
+                |kind, input| prepare_restored_text_provider(&config, kind, input, &cancelled))
         }
         "legacy_chat" | "legacy_run" => {
             let agent = if request.action == "legacy_run" {

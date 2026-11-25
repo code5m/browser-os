@@ -396,6 +396,28 @@ pub(super) struct RunCheckpoint {
     _owner: AuditLock,
 }
 impl RunCheckpoint {
+    pub(super) fn catalog_page(storage: &Path, after: Option<uuid::Uuid>) -> Result<(Vec<uuid::Uuid>, Option<uuid::Uuid>), String> {
+        let directory = private_directory(storage, "agent-run-receipts")?;
+        let mut page: Vec<_> = run_catalog_ids(&directory)?.into_iter()
+            .filter(|id| after.map_or(true, |cursor| *id > cursor)).take(17).collect();
+        let next = if page.len() > 16 { page.pop(); page.last().copied() } else { None };
+        Ok((page, next))
+    }
+    /// Unknown IDs must not create an unbounded collection of run locks.
+    pub(super) fn record_exists(storage: &Path, id: uuid::Uuid) -> Result<bool, String> {
+        if id.is_nil() { return Err("AGENT_RUN_ID_INVALID".into()); }
+        let directory = private_directory(storage, "agent-run-receipts")?;
+        match std::fs::symlink_metadata(directory.join(format!("{id}.run"))) {
+            Ok(meta) if meta.is_file() => Ok(true),
+            Ok(_) => Err("AGENT_RUN_RECEIPT_INVALID".into()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if sealed_marker(storage, &format!("production-run:v1:{id}"), false)? {
+                    Err("AGENT_RUN_RECEIPT_MISSING".into())
+                } else { Ok(false) }
+            }
+            Err(_) => Err("AGENT_RUN_RECEIPT_INVALID".into()),
+        }
+    }
     pub(super) fn acquire(storage: &Path, id: uuid::Uuid) -> Result<Self, String> {
         if id.is_nil() { return Err("AGENT_RUN_ID_INVALID".into()); }
         let directory = private_directory(storage, "agent-run-receipts")?;

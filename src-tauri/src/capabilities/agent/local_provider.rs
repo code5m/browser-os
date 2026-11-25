@@ -20,7 +20,7 @@ pub struct LocalChatAnswer {
     pub model: String,
     pub content: String,
 }
-fn check(req: &LocalChatRequest) -> Result<(), String> {
+pub(crate) fn check(req: &LocalChatRequest) -> Result<(), String> {
     if req.model.trim().is_empty()
         || req.model.len() > 100
         || !req

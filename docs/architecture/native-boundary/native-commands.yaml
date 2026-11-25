@@ -1807,7 +1807,7 @@ commands:
     owner: "framework"
     category: "FRAMEWORK_NATIVE_SERVICE"
     callers: "src/settings/** via src/bridge.ts"
-    side_effect: "explicit AI profile import/save/bind; OS keyring; bounded HTTPS provider request via fixed curl executable"
+    side_effect: "explicit AI profile import/save/bind; OS keyring; bounded HTTPS provider request via fixed curl executable; authenticated text run catalog, explicit successor and terminal payload forgetting"
     resource: "NETWORK_CONNECTION"
     permission: "main webview only; local config and Secret Service; user-selected HTTPS provider"
     current_boundary: "framework AI service shared by all workspace adapters"

@@ -8,3 +8,5 @@ export { useSettingsStore } from "./state/useSettingsStore";
 export type { KeymapScheme, Theme } from "./state/useSettingsStore";
 export { aiService } from './ai';
 export type { AiProfile, AiScope, AiConfiguration } from './ai';
+
+export type { TextRunSummary, TextRunRecord } from './ai';

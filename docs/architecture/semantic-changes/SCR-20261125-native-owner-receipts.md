@@ -15,3 +15,8 @@ Native command inventory declares tab_mutation as Browser-owned, main-only. The 
 ## Remaining evidence and accepted limitations
 
 Full renderer cancellation / engine allocation isolation, complete Foundation tool-loop convergence, recovery after a frontend restart (including a usable UI for inspect/reconcile/ack), internal native bypass paths, GTK incident stacks, and platform-specific behavior still require verification or implementation as documented. Never treat a host receipt as a renderer completion certificate. Record all future regressions. No CI, tests, build, GUI verification or installation executed.
+
+
+## Text-only durable continuation (2026-11-26)
+
+Existing main-only ai_service request fields serve run_history/run_restore/run_continue/run_forget. Catalog pages are bounded and expose only authenticated project-free text records; a live/unreadable record is not represented as terminal. Explicit continuation reserves exactly one successor and its normalized input in the encrypted predecessor before dispatch. An interrupted text Task retains its Task/Session identity under a fresh Run; a new chat turn creates a new Task in the same Session. The provider is revalidated against current configuration; no persisted credential or tool grant. A committed successor may return its saved result without provider replay. An unpublished reservation is recoverable only with the same successor identity and input. Explicit terminal payload forgetting preserves replay identity and does not erase other records' context copies. Existing Coding/MCP effects remain outside these text-only actions. No command parameter, permission, checker or locked native layout change. NOT_RUN.

@@ -55,6 +55,12 @@ struct TextRunPayload {
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct TextSuccessor {
+    id: Uuid,
+    input: Option<serde_json::Value>,
+    resume: bool,
+}
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct EffectEvidence {
     request_digest: String,
     target: Option<String>,
@@ -78,6 +84,12 @@ struct NativeRunReceipt {
     created_at_ms: u64,
     #[serde(default)]
     updated_at_ms: u64,
+    #[serde(default)]
+    previous_run: Option<Uuid>,
+    #[serde(default)]
+    successor: Option<TextSuccessor>,
+    #[serde(default)]
+    payload_forgotten: bool,
 }
 fn unix_ms() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
@@ -91,25 +103,40 @@ struct DurableRun {
     text: Option<TextRunPayload>,
     effect: Option<EffectEvidence>,
     created_at_ms: u64,
+    previous_run: Option<Uuid>,
 }
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 impl DurableRun {
     fn new(storage: &Path, id: Uuid) -> Result<Self, String> {
         Ok(Self { id, checkpoint: super::coding_checkpoint::RunCheckpoint::acquire(storage, id)?,
-            approval: None, text: None, effect: None, created_at_ms: unix_ms() })
+            approval: None, text: None, effect: None, created_at_ms: unix_ms(), previous_run: None })
     }
     fn persist(&self, phase: &str, task: TaskRecord) -> Result<(), String> {
         let receipt = NativeRunReceipt {
             id: self.id, phase: phase.into(), task, approval: self.approval.clone(),
             text: self.text.clone(), effect: self.effect.clone(),
             created_at_ms: self.created_at_ms, updated_at_ms: unix_ms(),
+            previous_run: self.previous_run, successor: None, payload_forgotten: false,
         };
-        self.checkpoint.write(&serde_json::to_vec(&receipt).map_err(|_| "AGENT_RUN_RECEIPT_INVALID")?)
+        self.write_record(&receipt)
     }
-    fn recover_existing(&self) -> Result<Option<NativeRunReceipt>, String> {
+    fn write_record(&self, receipt: &NativeRunReceipt) -> Result<(), String> {
+        if receipt.id != self.id { return Err("AGENT_RUN_RECEIPT_INVALID".into()); }
+        self.checkpoint.write(&serde_json::to_vec(receipt).map_err(|_| "AGENT_RUN_RECEIPT_INVALID")?)
+    }
+    fn lookup(storage: &Path, id: Uuid) -> Result<Self, String> {
+        if !super::coding_checkpoint::RunCheckpoint::record_exists(storage, id)? {
+            return Err("AGENT_RUN_NOT_FOUND".into());
+        }
+        Self::new(storage, id)
+    }
+    fn read_record(&self) -> Result<Option<NativeRunReceipt>, String> {
         let Some(bytes) = self.checkpoint.read()? else { return Ok(None); };
-        let mut record: NativeRunReceipt = serde_json::from_slice(&bytes).map_err(|_| "AGENT_RUN_RECEIPT_INVALID")?;
+        let record: NativeRunReceipt = serde_json::from_slice(&bytes).map_err(|_| "AGENT_RUN_RECEIPT_INVALID")?;
         if record.id != self.id { return Err("AGENT_RUN_RECEIPT_INVALID".into()); }
+        Ok(Some(record))
+    }
+    fn recover_record(&self, mut record: NativeRunReceipt) -> Result<NativeRunReceipt, String> {
         // The OS lock excludes the old cooperating owner, not an already
         // dispatched remote side effect. Approval is evidence, never a
         // reusable execution permit.
@@ -122,9 +149,12 @@ impl DurableRun {
             record.phase = if effect_possible { "operation_unknown" } else { "interrupted" }.into();
             if let Some(effect) = &mut record.effect { effect.disposition = "unknown".into(); }
             record.updated_at_ms = unix_ms();
-            self.checkpoint.write(&serde_json::to_vec(&record).map_err(|_| "AGENT_RUN_RECEIPT_INVALID")?)?;
+            self.write_record(&record)?;
         }
-        Ok(Some(record))
+        Ok(record)
+    }
+    fn recover_existing(&self) -> Result<Option<NativeRunReceipt>, String> {
+        self.read_record()?.map(|record| self.recover_record(record)).transpose()
     }
     fn reject_existing(&self) -> Result<(), String> {
         if self.recover_existing()?.is_some() { Err("AGENT_RUN_ALREADY_RECORDED".into()) }
@@ -180,11 +210,12 @@ impl ProductionExecution {
                 return Err("AGENT_RUN_INPUT_LIMIT".into());
             }
             if cancelled() { return Err("AI_PROVIDER_CANCELLED".into()); }
-            let mut durable = DurableRun::new(storage, run)?;
-            if let Some(previous) = durable.recover_existing()? {
+            let durable = DurableRun::new(storage, run)?;
+            if let Some(previous) = durable.read_record()? {
                 if previous.task.goal != kind || previous.task.session_id != run || !previous.task.workspace_id.is_nil() {
                     return Err("AGENT_RUN_SCOPE_MISMATCH".into());
                 }
+                let previous = durable.recover_record(previous)?;
                 let text = previous.text.ok_or("AGENT_RUN_RECOVERY_REQUIRED")?;
                 if text.input != input { return Err("AGENT_RUN_INPUT_MISMATCH".into()); }
                 if previous.phase == "completed" && previous.task.status == TaskStatus::Completed {
@@ -192,41 +223,293 @@ impl ProductionExecution {
                 }
                 return Err("AGENT_RUN_RECOVERY_REQUIRED".into());
             }
-            durable.text = Some(TextRunPayload { input, result: None });
-            let mut execution = Self::begin_scoped(kind, Uuid::nil(), run, vec![])?;
-            durable.persist("prepared", execution.record()?)?;
-            execution.durable_run = Some(durable);
-            if cancelled() {
-                execution.cancel()?;
-                return Err("AI_PROVIDER_CANCELLED".into());
-            }
-            let lease = execution.acquire_lease()?;
-            execution.checkpoint("running")?;
-            let response = provider();
-            drop(lease);
-            if cancelled() {
-                execution.cancel()?;
-                return Err("AI_PROVIDER_CANCELLED".into());
-            }
-            if let Ok(value) = &response {
-                let encoded = serde_json::to_string(value).map_err(|_| "AGENT_RUN_RECEIPT_INVALID")?;
-                // The provider adapter has already redacted its known
-                // credential. Do not retain additional suspected secrets
-                // or oversized output in a recovery record.
-                if encoded.len() <= 512 * 1024 && !crate::security_policy::contains_credential_leak(&encoded) {
-                    if let Some(payload) = execution.durable_run.as_mut().and_then(|run| run.text.as_mut()) {
-                        payload.result = Some(value.clone());
-                    }
-                }
-            }
-            // Complete the authenticated publication before handing the
-            // successful answer back to the UI. A lost IPC response can
-            // recover this result without a second provider invocation.
-            execution.finish(response.is_ok())?;
-            response
+            let execution = Self::begin_scoped(kind, Uuid::nil(), run, vec![])?;
+            Self::execute_text_attempt(durable, execution, input, cancelled, provider)
         }
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         { let _ = (storage, kind, run, input, cancelled, provider); Err("AGENT_PRIVATE_STORAGE_UNAVAILABLE".into()) }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    fn execute_text_attempt(mut durable: DurableRun, mut execution: Self, input: serde_json::Value,
+        cancelled: impl Fn() -> bool, provider: impl FnOnce() -> Result<serde_json::Value, String>)
+        -> Result<serde_json::Value, String>
+    {
+        durable.text = Some(TextRunPayload { input, result: None });
+        durable.persist("prepared", execution.record()?)?;
+        execution.durable_run = Some(durable);
+        if cancelled() {
+            execution.cancel()?;
+            return Err("AI_PROVIDER_CANCELLED".into());
+        }
+        let lease = execution.acquire_lease()?;
+        execution.checkpoint("running")?;
+        let response = provider();
+        drop(lease);
+        if cancelled() {
+            execution.cancel()?;
+            return Err("AI_PROVIDER_CANCELLED".into());
+        }
+        if let Ok(value) = &response {
+            let encoded = serde_json::to_string(value).map_err(|_| "AGENT_RUN_RECEIPT_INVALID")?;
+            // The provider adapter has already redacted its known
+            // credential. Do not retain additional suspected secrets
+            // or oversized output in a recovery record.
+            if encoded.len() <= 512 * 1024 && !crate::security_policy::contains_credential_leak(&encoded) {
+                if let Some(payload) = execution.durable_run.as_mut().and_then(|run| run.text.as_mut()) {
+                    payload.result = Some(value.clone());
+                }
+            }
+        }
+        // Complete the authenticated publication before handing the
+        // successful answer back to the UI. A lost IPC response can
+        // recover this result without a second provider invocation.
+        execution.finish(response.is_ok())?;
+        response
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    fn text_kind(record: &NativeRunReceipt) -> Result<&'static str, String> {
+        if !record.task.workspace_id.is_nil() || !record.task.context.is_empty()
+            || record.task.pending.is_some() || record.approval.is_some() || record.effect.is_some()
+        { return Err("AGENT_RUN_SCOPE_MISMATCH".into()); }
+        match record.task.goal.as_str() {
+            "chat" => Ok("chat"), "legacy_agent" => Ok("legacy_agent"),
+            "local_chat" => Ok("local_chat"), _ => Err("AGENT_RUN_SCOPE_MISMATCH".into()),
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    fn text_summary(record: &NativeRunReceipt) -> serde_json::Value {
+        let interrupted = record.task.status == TaskStatus::Paused && record.phase == "interrupted";
+        let completed = record.task.status == TaskStatus::Completed && record.phase == "completed";
+        let has_result = record.text.as_ref().and_then(|text| text.result.as_ref()).is_some();
+        serde_json::json!({
+            "id":record.id,"kind":record.task.goal,"phase":record.phase,
+            "task_id":record.task.id,"session_id":record.task.session_id,
+            "previous_run":record.previous_run,"successor":record.successor.as_ref().map(|next| next.id),
+            "reserved_input_available":record.successor.as_ref().is_some_and(|next| next.input.is_some()),
+            "created_at_ms":record.created_at_ms,"updated_at_ms":record.updated_at_ms,
+            "has_payload":record.text.is_some(),"has_result":has_result,"forgotten":record.payload_forgotten,
+            "can_resume":interrupted && record.text.is_some() && record.successor.is_none(),
+            "can_continue":completed && record.task.goal == "chat" && has_result && record.successor.is_none()
+        })
+    }
+
+    pub(crate) fn text_run_catalog(storage: &Path, after: Option<Uuid>) -> Result<serde_json::Value, String> {
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        {
+            let (ids, next) = super::coding_checkpoint::RunCheckpoint::catalog_page(storage, after)?;
+            let mut records = Vec::new();
+            let mut unavailable = 0;
+            for id in ids {
+                // Authenticate and classify before any recovery write. The
+                // project-free catalog never changes another owner's records.
+                let result = (|| -> Result<Option<serde_json::Value>, String> {
+                    let run = DurableRun::lookup(storage, id)?;
+                    let record = run.read_record()?.ok_or("AGENT_RUN_NOT_FOUND")?;
+                    if Self::text_kind(&record).is_err() { return Ok(None); }
+                    Ok(Some(Self::text_summary(&run.recover_record(record)?)))
+                })();
+                match result {
+                    Ok(Some(record)) => records.push(record),
+                    Ok(None) => {},
+                    Err(_) => unavailable += 1,
+                }
+            }
+            Ok(serde_json::json!({"runs":records,"next_cursor":next,"unavailable":unavailable}))
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        { let _ = (storage, after); Err("AGENT_PRIVATE_STORAGE_UNAVAILABLE".into()) }
+    }
+
+    pub(crate) fn read_text_run(storage: &Path, id: Uuid) -> Result<serde_json::Value, String> {
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        {
+            let owner = DurableRun::lookup(storage, id)?;
+            let record = owner.read_record()?.ok_or("AGENT_RUN_NOT_FOUND")?;
+            Self::text_kind(&record)?;
+            let record = owner.recover_record(record)?;
+            let mut response = Self::text_summary(&record);
+            let mut messages = Vec::new();
+            if let Some(text) = &record.text {
+                if let Some(turns) = text.input["messages"].as_array() {
+                    for turn in turns {
+                        if matches!(turn["role"].as_str(), Some("user" | "assistant")) {
+                            if let Some(content) = turn["content"].as_str() {
+                                messages.push(serde_json::json!({"role":turn["role"],"content":content}));
+                            }
+                        }
+                    }
+                } else if let Some(content) = text.input["message"].as_str() {
+                    messages.push(serde_json::json!({"role":"user","content":content}));
+                }
+                if let Some(content) = text.result.as_ref().and_then(|value| value["content"].as_str()) {
+                    messages.push(serde_json::json!({"role":"assistant","content":content}));
+                }
+                response["profile_id"] = text.input["profile_id"].clone();
+                response["model"] = text.input["model"].clone();
+            }
+            response["messages"] = serde_json::json!(messages);
+            Ok(response)
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        { let _ = (storage, id); Err("AGENT_PRIVATE_STORAGE_UNAVAILABLE".into()) }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    fn next_chat_input(text: &TextRunPayload, message: &str) -> Result<serde_json::Value, String> {
+        use serde_json::{json, Value};
+        if message.trim().is_empty() || message.len() > 24_000
+            || crate::security_policy::contains_credential_leak(message)
+        { return Err("AI_MESSAGE_INVALID".into()); }
+        let turns = text.input["messages"].as_array().ok_or("AGENT_RUN_CONTEXT_INVALID")?;
+        let system = turns.first().filter(|turn| turn["role"] == "system" && turn["content"].is_string())
+            .ok_or("AGENT_RUN_CONTEXT_INVALID")?;
+        let answer = text.result.as_ref().and_then(|value| value["content"].as_str())
+            .ok_or("AGENT_RUN_RESULT_UNAVAILABLE")?;
+        let mut prior = turns.iter().skip(1).cloned().collect::<Vec<Value>>();
+        prior.push(json!({"role":"assistant","content":answer}));
+        let mut selected = Vec::new();
+        let mut remaining = 16_000usize;
+        for turn in prior.iter().rev().take(12) {
+            let role = turn["role"].as_str().ok_or("AGENT_RUN_CONTEXT_INVALID")?;
+            let content = turn["content"].as_str().ok_or("AGENT_RUN_CONTEXT_INVALID")?;
+            if !matches!(role, "user" | "assistant") { return Err("AGENT_RUN_CONTEXT_INVALID".into()); }
+            let mut end = content.len().min(remaining).min(3000);
+            while !content.is_char_boundary(end) { end -= 1; }
+            if end == 0 { break; }
+            let truncated = &content[..end];
+            if crate::security_policy::contains_credential_leak(truncated) { return Err("AI_HISTORY_INVALID".into()); }
+            if !truncated.trim().is_empty() {
+                selected.push(json!({"role":role,"content":truncated}));
+                remaining -= end;
+            }
+        }
+        selected.reverse();
+        selected.insert(0, system.clone());
+        selected.push(json!({"role":"user","content":message}));
+        let mut input = text.input.clone();
+        input["messages"] = json!(selected);
+        Ok(input)
+    }
+
+    /// The predecessor holds a single durable successor reservation before
+    /// dispatch. Retrying a reserved child never creates another Run.
+    pub(crate) fn advance_text<P>(
+        storage: &Path, previous_id: Uuid, run: Uuid, message: &str,
+        cancelled: impl Fn() -> bool,
+        prepare: impl FnOnce(&str, &serde_json::Value) -> Result<P, String>,
+    ) -> Result<serde_json::Value, String>
+    where P: FnOnce() -> Result<serde_json::Value, String>
+    {
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        {
+            if previous_id == run || run.is_nil() || cancelled() {
+                return Err("AGENT_RUN_ADVANCE_INVALID".into());
+            }
+            let predecessor = DurableRun::lookup(storage, previous_id)?;
+            let record = predecessor.read_record()?.ok_or("AGENT_RUN_NOT_FOUND")?;
+            let kind = Self::text_kind(&record)?;
+            let mut record = predecessor.recover_record(record)?;
+            if record.successor.as_ref().is_some_and(|next| next.id != run) {
+                return Err("AGENT_RUN_SUCCESSOR_EXISTS".into());
+            }
+            let mut child = DurableRun::new(storage, run)?;
+            let existing_child = child.read_record()?;
+            if let Some(next) = &record.successor {
+                if next.id != run { return Err("AGENT_RUN_SUCCESSOR_EXISTS".into()); }
+                if !message.is_empty() && (next.resume || next.input.as_ref()
+                    .and_then(|input| input["messages"].as_array())
+                    .and_then(|turns| turns.last())
+                    .and_then(|turn| turn["content"].as_str()) != Some(message)) {
+                    return Err("AGENT_RUN_INPUT_MISMATCH".into());
+                }
+                if let Some(existing) = existing_child {
+                    if existing.previous_run != Some(previous_id) || existing.task.session_id != record.task.session_id
+                        || Self::text_kind(&existing)? != kind {
+                        return Err("AGENT_RUN_SCOPE_MISMATCH".into());
+                    }
+                    let existing = child.recover_record(existing)?;
+                    if existing.phase == "completed" && existing.task.status == TaskStatus::Completed {
+                        return existing.text.and_then(|text| text.result)
+                            .ok_or_else(|| "AGENT_RUN_RESULT_UNAVAILABLE".into());
+                    }
+                    return Err("AGENT_RUN_RECOVERY_REQUIRED".into());
+                }
+            } else if existing_child.is_some() {
+                return Err("AGENT_RUN_ALREADY_RECORDED".into());
+            }
+            let (input, resume) = if let Some(next) = &record.successor {
+                (next.input.clone().ok_or("AGENT_RUN_RESULT_UNAVAILABLE")?, next.resume)
+            } else {
+                let text = record.text.as_ref().ok_or("AGENT_RUN_RESULT_UNAVAILABLE")?;
+                if record.task.status == TaskStatus::Paused && record.phase == "interrupted" && message.is_empty() {
+                    (text.input.clone(), true)
+                } else if kind == "chat" && record.task.status == TaskStatus::Completed && record.phase == "completed" {
+                    (Self::next_chat_input(text, message)?, false)
+                } else { return Err("AGENT_RUN_NOT_RESUMABLE".into()); }
+            };
+            if serde_json::to_vec(&input).map_err(|_| "AGENT_RUN_RECEIPT_INVALID")?.len() > 128 * 1024 {
+                return Err("AGENT_RUN_INPUT_LIMIT".into());
+            }
+            if (resume && (record.task.status != TaskStatus::Paused || record.phase != "interrupted"))
+                || (!resume && (kind != "chat" || record.task.status != TaskStatus::Completed || record.phase != "completed"))
+            { return Err("AGENT_RUN_NOT_RESUMABLE".into()); }
+            let provider = prepare(kind, &input)?;
+            if cancelled() { return Err("AI_PROVIDER_CANCELLED".into()); }
+            if record.successor.is_none() {
+                record.successor = Some(TextSuccessor { id: run, input: Some(input.clone()), resume });
+                record.updated_at_ms = unix_ms();
+                predecessor.write_record(&record)?;
+            }
+            child.previous_run = Some(previous_id);
+            let execution = if resume {
+                let tasks = task_owner();
+                let task_id = record.task.id;
+                tasks.restore_paused_record(record.task.clone()).map_err(|_| "AGENT_TASK_RESTORE_FAILED")?;
+                if tasks.start(task_id).is_err() {
+                    let _ = tasks.detach_paused_record(task_id);
+                    return Err("AGENT_TASK_START_FAILED".into());
+                }
+                Self { tasks, id: task_id, finished: false, durable_run: None }
+            } else {
+                Self::begin_scoped(kind, Uuid::nil(), record.task.session_id, vec![])?
+            };
+            // The predecessor's OS lock spans the child attempt.
+            Self::execute_text_attempt(child, execution, input, cancelled, provider)
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        { let _ = (storage, previous_id, run, message, cancelled, prepare); Err("AGENT_PRIVATE_STORAGE_UNAVAILABLE".into()) }
+    }
+
+    /// Explicit terminal payload compaction: preserve the replay identity
+    /// and any unpublished reservation. Other records may retain copies.
+    pub(crate) fn forget_text_payload(storage: &Path, id: Uuid) -> Result<(), String> {
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        {
+            let owner = DurableRun::lookup(storage, id)?;
+            let record = owner.read_record()?.ok_or("AGENT_RUN_NOT_FOUND")?;
+            Self::text_kind(&record)?;
+            let mut record = owner.recover_record(record)?;
+            if !matches!(record.task.status, TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Cancelled) {
+                return Err("AGENT_RUN_NOT_TERMINAL".into());
+            }
+            if let Some(next) = &mut record.successor {
+                let child = DurableRun::lookup(storage, next.id)?.read_record()?.ok_or("AGENT_RUN_SUCCESSOR_PENDING")?;
+                if child.previous_run != Some(id) || child.task.session_id != record.task.session_id
+                    || Self::text_kind(&child)? != record.task.goal.as_str() {
+                    return Err("AGENT_RUN_SCOPE_MISMATCH".into());
+                }
+                next.input = None;
+            }
+            record.text = None;
+            record.payload_forgotten = true;
+            record.updated_at_ms = unix_ms();
+            owner.write_record(&record)
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        { let _ = (storage, id); Err("AGENT_PRIVATE_STORAGE_UNAVAILABLE".into()) }
     }
 
     /// Keep bounded, encrypted evidence for manual MCP. The receipt records
@@ -549,6 +832,39 @@ mod tests {
         assert_eq!(receipt.task.status, TaskStatus::Paused);
         assert_eq!(receipt.phase, "interrupted");
         assert!(receipt.text.is_some());
+        std::fs::remove_dir_all(storage).unwrap();
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[test]
+    fn interrupted_text_successor_resumes_same_task_and_never_forks() {
+        let storage = std::env::temp_dir().join(format!("browseros-text-resume-{}", Uuid::new_v4()));
+        let first = Uuid::new_v4();
+        let second = Uuid::new_v4();
+        let input = serde_json::json!({"model":"fixture"});
+        let mut durable = DurableRun::new(&storage, first).unwrap();
+        durable.text = Some(TextRunPayload { input: input.clone(), result: None });
+        let execution = ProductionExecution::begin_scoped("chat", Uuid::nil(), first, vec![]).unwrap();
+        let task_id = execution.id();
+        durable.persist("running", execution.record().unwrap()).unwrap();
+        drop(execution);
+        drop(durable);
+        let answer = serde_json::json!({"content":"resumed"});
+        assert_eq!(ProductionExecution::advance_text(&storage, first, second, "", || false, |kind, saved| {
+            assert_eq!(kind, "chat"); assert_eq!(saved, &input);
+            Ok(|| Ok(answer.clone()))
+        }).unwrap(), answer);
+        let recovered = ProductionExecution::read_text_run(&storage, second).unwrap();
+        assert_eq!(recovered["task_id"], serde_json::json!(task_id));
+        assert_eq!(recovered["session_id"], serde_json::json!(first));
+        assert!(ProductionExecution::advance_text(&storage, first, Uuid::new_v4(), "", || false,
+            |_,_| Ok(|| panic!("second successor must be rejected"))).is_err());
+        assert_eq!(ProductionExecution::advance_text(&storage, first, second, "", || false,
+            |_,_| Ok(|| panic!("committed successor must not replay"))).unwrap(), answer);
+        ProductionExecution::forget_text_payload(&storage, second).unwrap();
+        assert_eq!(ProductionExecution::read_text_run(&storage, second).unwrap()["forgotten"], true);
+        assert!(ProductionExecution::advance_text(&storage, first, second, "", || false,
+            |_,_| Ok(|| panic!("forgotten successor must not replay"))).is_err());
         std::fs::remove_dir_all(storage).unwrap();
     }
 
