@@ -8,7 +8,7 @@ use std::{
     ffi::{CStr, CString},
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
-    os::{fd::{AsRawFd, FromRawFd}, unix::{fs::{MetadataExt, OpenOptionsExt}, process::CommandExt}},
+    os::{fd::{AsRawFd, FromRawFd}, unix::{ffi::OsStrExt, fs::{MetadataExt, OpenOptionsExt}, process::CommandExt}},
     path::{Path, PathBuf},
     process::Command,
     time::{Duration, Instant},
@@ -61,6 +61,7 @@ pub(crate) struct ProcessScope {
     group: File,
     name: CString,
     identity: (u64, u64),
+    path: PathBuf,
     spawned: bool,
 }
 impl ProcessScope {
@@ -92,7 +93,8 @@ impl ProcessScope {
             }
         };
         let metadata = group.metadata()?;
-        let scope = Self { parent, group, name, identity: (metadata.dev(), metadata.ino()), spawned: false };
+        let path = root.join(std::ffi::OsStr::from_bytes(name.as_bytes()));
+        let scope = Self { parent, group, name, identity: (metadata.dev(), metadata.ino()), path, spawned: false };
         cgroup_fs(&scope.group)?;
         // Require all controls before spawning any user code. The leaf
         // must be empty, and the kernel must provide recursive kill.
@@ -121,6 +123,12 @@ impl ProcessScope {
             });
         }
         Ok(())
+    }
+
+    /// Nested cooperating BrowserOS owners must create their scopes inside
+    /// this execution domain, never alongside it in the original delegation.
+    pub(crate) fn contain_nested_owners(&self, command: &mut Command) {
+        command.env(ROOT_ENV, &self.path);
     }
 
     fn populated(&self) -> io::Result<bool> {

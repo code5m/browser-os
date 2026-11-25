@@ -62,6 +62,8 @@ mod security_policy;
 mod session;
 mod shutdown;
 mod startup;
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+mod native_supervisor;
 mod capabilities {
     pub mod agent;
     pub mod bfc;
@@ -1583,6 +1585,15 @@ fn main() {
         return;
     }
 
+    // Explicit, opt-in whole-application recovery mode. The supervisor
+    // never enters GTK/Tauri or the single-instance handler itself.
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    if let Some(code) = native_supervisor::launch_if_requested() {
+        std::process::exit(code);
+    }
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    let supervisor_endpoint = native_supervisor::take_child_endpoint();
+
     // 日志/崩溃捕获必须最先初始化（stderr 镜像 + panic 钩子 + 致命信号捕获）
     crashlog::init();
     // Workaround：WebKitGTK 在 Wayland 下默认启用 DMA-BUF 渲染器会静默崩溃
@@ -1629,7 +1640,7 @@ fn main() {
                 .body(html.into_bytes())
                 .unwrap()
         })
-        .setup(|app| {
+        .setup(move |app| {
             // Prepare workspace storage before business state, schedulers or WebViews.
             // Early single-instance/Opened requests stay in bounded memory.
             if let Err(error) = startup::prepare_workspace(app.handle()) {
@@ -1737,6 +1748,10 @@ fn main() {
             // callback; the dedicated worker can still snapshot thread wait
             // channels and memory pressure when the window loop is blocked.
             hang_diagnostics::start(app.handle().clone());
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
+            if let Some(endpoint) = supervisor_endpoint {
+                native_supervisor::start_child_probe(app.handle().clone(), endpoint);
+            }
             let _ = window.show();
             let _ = window.set_focus();
             // 修正主 UI webview 的 GTK allocation / CSS 视口（WebKitGTK 偶发卡在小尺寸，
