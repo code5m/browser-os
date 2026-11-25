@@ -137,3 +137,8 @@ installation or tests executed. No permission or WebView positioning rule change
   approval. This candidate does not manufacture cancellation or completion.
 
 Overall: BLOCKED / GUI_PENDING. All added tests are NOT_RUN.
+
+
+## Owner decision record (2026-11-25)
+
+The Owner approved the reviewed architecture targets and asked that they remain visible to later audits. The binding decisions D01–D08 and acceptance criteria are recorded in `docs/architecture/semantic-governance/ADR-20261125-native-owner-recovery.md`, linked from AGENTS.md and PROJECT-RULES.md. No gate exceptions. Approval is not implementation or verification. Current detached candidate remains BLOCKED / GUI_PENDING; no tests, CI, Actions, installation or branch update.

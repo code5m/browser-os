@@ -12,6 +12,10 @@
 
 不得把 `[PENDING]` 决策作为已批准需求实施。
 
+涉及原生执行、截图、Agent 恢复、外部文件并发及跨平台整改时，另必读
+`docs/architecture/semantic-governance/ADR-20261125-native-owner-recovery.md`。后续审查须区分已批准的平台边界、未完成实现与实际回归；
+不得将 ADR 当作 checker 豁免、忽略新证据或伪造 PASS。
+
 工程治理资产不得绕过 `npm run check:engineering-governance` 私自新增：新增/删除 GitHub Actions workflow 或版本化 Git Hook 时，必须在同一改动中更新 `docs/engineering/governance.json`。
 
 ## 2. 项目架构摘要
