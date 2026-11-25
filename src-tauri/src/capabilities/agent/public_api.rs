@@ -109,14 +109,34 @@ pub(crate) fn dispatch_coding_request(
     {
         return super::coding_lsp::execute(root, request);
     }
+    if ["mcp_tools", "mcp_call"].contains(&action) {
+        if request["approved"] != true { return Err("MCP_EXPLICIT_APPROVAL_REQUIRED".into()); }
+        use sha2::{Digest, Sha256};
+        let run = uuid::Uuid::new_v4();
+        let mut execution = ProductionExecution::begin_workspace_run(storage, "manual_mcp", root, run)?;
+        let revision = format!("{:x}", Sha256::digest(
+            serde_json::to_vec(&request).map_err(|_| "AGENT_OPERATION_INVALID")?));
+        let arguments = serde_json::json!({"run_id":run,"review_digest":revision});
+        let (claim, permit) = execution.approve_native(
+            if action == "mcp_tools" { "coding.manual_mcp_tools" } else { "coding.manual_mcp_call" },
+            arguments.clone(), browseros_agent_foundation::tool::ToolEffect::ExternalSideEffect, revision)?;
+        execution.checkpoint_approval(claim.clone())?;
+        let lease = execution.acquire_approved_native(permit, &claim, &arguments)?;
+        let result = super::coding_context::execute(root, storage, request);
+        drop(lease);
+        if result.as_ref().is_ok_and(|value| value["result"]["isError"] != true) {
+            execution.finish(true)?;
+        } else {
+            execution.finish_unknown()?;
+        }
+        return result;
+    }
     if [
         "skills_list",
         "skill_read",
         "knowledge_search",
         "mcp_list",
         "mcp_review",
-        "mcp_tools",
-        "mcp_call",
     ]
     .contains(&action)
     {

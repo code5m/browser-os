@@ -126,6 +126,23 @@ impl ProductionExecution {
         Ok(())
     }
 
+    pub(crate) fn begin_workspace_run(storage: &Path, kind: &'static str, root: &Path, run: Uuid) -> Result<Self, String> {
+        let canonical = root.canonicalize().map_err(|_| "AGENT_ROOT_INVALID")?;
+        if !canonical.is_dir() { return Err("AGENT_ROOT_INVALID".into()); }
+        let (workspace, session) = coding_scope(&canonical, Some(&run.to_string()))?.ok_or("AGENT_SESSION_REQUIRED")?;
+        let context = ContextRef::checked(ContextKind::Project, format!("workspace:{workspace}"), ContextGrant::ApprovedScope)
+            .map_err(|_| "AGENT_TASK_SCOPE_MISMATCH")?;
+        Self::begin_durable(storage, kind, run, workspace, session, vec![context])
+    }
+
+    pub(crate) fn finish_unknown(mut self) -> Result<(), String> {
+        self.tasks.pause(self.id).map_err(|_| "AGENT_TASK_SETTLE_FAILED")?;
+        self.checkpoint("operation_unknown")?;
+        self.tasks.detach_paused_record(self.id).map_err(|_| "AGENT_TASK_DETACH_FAILED")?;
+        self.finished = true;
+        Ok(())
+    }
+
     pub(crate) fn checkpoint_approval(&mut self, claim: ApprovalClaims) -> Result<(), String> {
         let task = self.record()?;
         if !claim.accepted || claim.task_id != task.id
@@ -238,7 +255,7 @@ impl ProductionExecution {
         session: Uuid,
         context: Vec<ContextRef>,
     ) -> Result<Self, String> {
-        if !matches!(kind, "chat" | "coding" | "legacy_agent" | "agent_channel") {
+        if !matches!(kind, "chat" | "coding" | "legacy_agent" | "agent_channel" | "manual_mcp" | "local_chat") {
             return Err("AGENT_TASK_KIND_DENIED".into());
         }
         let tasks = task_owner();
