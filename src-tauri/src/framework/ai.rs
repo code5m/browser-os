@@ -1879,6 +1879,10 @@ pub async fn ai_service(
         return Err("AI_SOURCE_DENIED".into());
     }
     crate::shared::invocation::check_invocation_source(&webview, "ai_service", None, &app)?;
+    if matches!(request.action.as_str(), "channel_history" | "channel_restore" | "channel_forget"
+        | "channel_fixture" | "channel_read" | "channel_resume") {
+        return super::agent_channel::dispatch_recovery(app, webview, request).await;
+    }
     let path = app
         .path()
         .app_data_dir()

@@ -17,6 +17,8 @@ use std::{
     sync::{Arc, OnceLock},
 };
 use uuid::Uuid;
+mod channel;
+pub(crate) use channel::{ChannelAdmission, ChannelInput, ChannelStart};
 
 /// Stable task identity for a project with an existing Coding session.
 /// The canonical workspace path is never written to the TaskRegistry: only
@@ -45,9 +47,10 @@ fn task_owner() -> &'static TaskRegistry {
     PRODUCTION_TASKS.get_or_init(|| TaskRegistry::new(Arc::new(EventJournal::new(128))))
 }
 
-/// Text-only runs keep their exact normalized provider input and eligible
-/// result under the same encrypted owner as task/approval metadata. Never
-/// serialize the ProviderProfile credential snapshot into this record.
+/// Bounded input and eligible result under the same encrypted owner as
+/// task/approval metadata. The historical field name is "text"; consumers
+/// must classify the Task goal before interpreting the typed payload.
+/// Never serialize a ProviderProfile credential or reusable permit.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct TextRunPayload {
     input: serde_json::Value,
@@ -117,12 +120,14 @@ struct DurableRun {
     effect: Option<EffectEvidence>,
     created_at_ms: u64,
     previous_run: Option<Uuid>,
+    _predecessor: Option<Box<DurableRun>>,
 }
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 impl DurableRun {
     fn new(storage: &Path, id: Uuid) -> Result<Self, String> {
         Ok(Self { id, checkpoint: super::coding_checkpoint::RunCheckpoint::acquire(storage, id)?,
-            approval: None, text: None, effect: None, created_at_ms: unix_ms(), previous_run: None })
+            approval: None, text: None, effect: None, created_at_ms: unix_ms(),
+            previous_run: None, _predecessor: None })
     }
     fn persist(&self, phase: &str, task: TaskRecord) -> Result<(), String> {
         let receipt = NativeRunReceipt {

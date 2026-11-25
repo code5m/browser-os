@@ -25,3 +25,8 @@ Existing main-only ai_service request fields serve run_history/run_restore/run_c
 ## Manual MCP durable effect evidence (2026-11-26)
 
 The existing main-only coding_service accepts a stable manual run_id and bounded manual_mcp_history/manual_mcp_receipt/manual_mcp_reconcile actions. New manual receipts bind the native workspace directory identity, review digest and transport disposition. Queries authenticate/classify scope before recovery writes. A reconciliation is a bounded, revision-checked user observation; it is not proof of remote effect or executor exit, does not clear operation_unknown, and does not authorize old-run replay. Existing exact MCP review, credentials and process termination path remain the execution authority. No new native command or permissions. NOT_RUN.
+
+
+## Experimental Channel checkpoint and recovery
+
+Existing main-only ai_service fields carry channel_history/channel_restore/channel_fixture/channel_read/channel_resume/channel_forget. Offline fixture assignment or exact read-only arguments are authenticated before dispatch; same UUID and input may return a committed eligible result, never re-dispatch. An interrupted record reserves one successor under its OS lock and restores the same Task/Session, pinned offline engine and exact read resource. Read continuation obtains fresh local signed approval and still validates the original public capability. A shared blocking lane retains capacity across a dropped/timed-out read future. Old metadata-only receipts are view-only; pure A/B benchmark remains offline. No new native command signature or remote permission. NOT_RUN.

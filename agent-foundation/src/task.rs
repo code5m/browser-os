@@ -240,10 +240,10 @@ impl TaskRegistry {
     pub fn restore_paused_record(&self, record: TaskRecord) -> Result<()> {
         #[cfg(feature = "durable-sqlite")]
         if self.durable.is_some() { return Err(FoundationError::InvalidTransition); }
-        // Project-free text tasks have no workspace grant; only their
-        // empty-context paused projections may use this exception.
+        // Project-free text and offline Channel fixtures have no workspace
+        // grant; only empty-context paused projections use this exception.
         let project_free_text = record.workspace_id.is_nil()
-            && matches!(record.goal.as_str(), "chat" | "legacy_agent" | "local_chat")
+            && matches!(record.goal.as_str(), "chat" | "legacy_agent" | "local_chat" | "agent_channel")
             && record.context.is_empty();
         if record.id.is_nil() || record.session_id.is_nil() || (record.workspace_id.is_nil() && !project_free_text)
             || record.status != TaskStatus::Paused || record.pending.is_some()

@@ -4,7 +4,7 @@
 use serde_json::Value;
 use tauri::{AppHandle, Webview};
 
-pub(crate) use super::execution_owner::ProductionExecution;
+pub(crate) use super::execution_owner::{ChannelAdmission, ChannelInput, ChannelStart, ProductionExecution};
 pub(crate) use super::local_provider::{LocalChatRequest, local_chat, check as validate_local_chat};
 pub(crate) fn register_coding_run(id: &str) -> Result<super::coding::RunRequestGuard, String> {
     super::coding::register_run_request(id)

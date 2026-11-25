@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
+import { createChatRequestId } from "../../capabilities/agent/model/chatHistory.mjs";
 import { bridge, type AgentRuntimeExperimentConfig, type AgentRuntimeBenchmarkReport, type AgentRuntimeBenchmarkSample, type AgentRuntimeMode } from "../../bridge";
 
 const persisted = ref<AgentRuntimeExperimentConfig | null>(null);
@@ -26,6 +27,16 @@ const toolRoot = ref("");
 const confirmRead = ref(false);
 const toolPayloadText = ref("");
 const showResults = ref(false);
+type ChannelReceipt = {id:string;task_id:string;phase:string;kind:string|null;can_resume:boolean;successor:string|null;has_result:boolean;forgotten:boolean;input?:unknown;result?:unknown};
+const runId = ref("");
+const receipts = ref<ChannelReceipt[]>([]);
+const cursor = ref<string|null>(null);
+const receipt = ref<ChannelReceipt|null>(null);
+const historyBusy = ref(false);
+const historyVisible = ref(false);
+const historyUnavailable = ref(0);
+const resumeConfirmed = ref(false);
+const requestBusy = computed(()=>historyBusy.value||routing.value||reading.value);
 
 const supported = computed(() => persisted.value !== null && !loading.value);
 const runtimeOptions: {value:AgentRuntimeMode;label:string;hint:string}[] = [
@@ -103,11 +114,12 @@ async function benchmark() {
   }
 }
 async function runFixture() {
-  if (!persisted.value?.enabled || routing.value) return;
+  if (!persisted.value?.enabled || requestBusy.value) return;
   routing.value = true;
   error.value = "";message.value = "";routedResult.value=null;
   try {
-    routedResult.value = await bridge.agentRuntimeRunFixture(fixtureId.value);
+    runId.value = createChatRequestId();
+    routedResult.value = await bridge.aiService({action:"channel_fixture",id:fixtureId.value,request_id:runId.value,confirmed:true});
   } catch (reason) {
     error.value = "按策略执行失败：" + String(reason);
   } finally {
@@ -115,14 +127,15 @@ async function runFixture() {
   }
 }
 async function readTool() {
-  if (!labEnabled.value || !persisted.value?.enabled || !confirmRead.value || reading.value) return;
+  if (!labEnabled.value || !persisted.value?.enabled || !confirmRead.value || requestBusy.value) return;
   reading.value = true;
   error.value = "";message.value = "";toolPayloadText.value = "";
   try {
     const args:Record<string,unknown> = needsRepo.value
       ? {repo_id:toolRepo.value.trim()}
       : needsRoot.value ? {root:toolRoot.value.trim()} : {};
-    const response = await bridge.agentRuntimeReadTool(toolCommand.value,args);
+    runId.value = createChatRequestId();
+    const response = await bridge.aiService({action:"channel_read",id:toolCommand.value,message:JSON.stringify(args),request_id:runId.value,confirmed:true});
     toolPayloadText.value = JSON.stringify(response,null,2).slice(0,64000);
     message.value = "已通过主窗口授权和原业务 Public API 只读执行。";
   } catch (reason) {
@@ -131,6 +144,49 @@ async function readTool() {
     reading.value = false;
     confirmRead.value = false;
   }
+}
+async function loadHistory(reset=true) {
+  if(requestBusy.value)return;
+  historyBusy.value=true;historyVisible.value=true;error.value="";
+  try{
+    const page=await bridge.aiService({action:"channel_history",id:reset?"":cursor.value||""});
+    receipts.value=reset?page.runs:[...receipts.value,...page.runs.filter((row:ChannelReceipt)=>!receipts.value.some(old=>old.id===row.id))];
+    cursor.value=page.next_cursor;historyUnavailable.value=reset?page.unavailable:historyUnavailable.value+page.unavailable;
+  }catch(reason){error.value=String(reason);}
+  finally{historyBusy.value=false;}
+}
+async function restoreRun(id:string) {
+  if(!id||requestBusy.value)return;
+  historyBusy.value=true;historyVisible.value=true;resumeConfirmed.value=false;error.value="";
+  try{receipt.value=await bridge.aiService({action:"channel_restore",id});}
+  catch(reason){error.value=String(reason);}
+  finally{historyBusy.value=false;}
+}
+async function resumeRun(){
+  const old=receipt.value;
+  if(!old?.can_resume||!resumeConfirmed.value||!persisted.value?.enabled||requestBusy.value)return;
+  historyBusy.value=true;error.value="";resumeConfirmed.value=false;
+  const id=old.successor||createChatRequestId();runId.value=id;
+  try {
+    if(old.successor){
+      try{receipt.value=await bridge.aiService({action:"channel_restore",id});return;}
+      catch(reason){if(!String(reason).includes("AGENT_RUN_NOT_FOUND"))throw reason;}
+    }
+    await bridge.aiService({action:"channel_resume",id:old.id,request_id:id,confirmed:true});
+    receipt.value=await bridge.aiService({action:"channel_restore",id});
+  }catch(reason){error.value=String(reason);}
+  finally{historyBusy.value=false;}
+}
+async function archiveRun(){
+  const old=receipt.value;
+  if(!old||requestBusy.value||!["completed","failed","cancelled"].includes(old.phase))return;
+  historyBusy.value=true;error.value="";
+  try{
+    const result=await bridge.aiService({action:"channel_forget",id:old.id,confirmed:true});
+    receipt.value=await bridge.aiService({action:"channel_restore",id:old.id});
+    message.value=result.archived?"已归档，保留运行 ID":"内容已清理，归档尚未确认，可重试";
+  }catch(reason){error.value=String(reason);}
+  finally{historyBusy.value=false;}
 }
 function summary(engine:"native_turn"|"rig_agent_run") {
   const values=(report.value?.samples ?? []).filter(item=>item.engine===engine);
@@ -196,7 +252,7 @@ onMounted(refresh);
         <option value="git_review">Git 变更示例</option>
         <option value="database_report">数据库结果示例</option>
       </select>
-      <button type="button" class="primary" :disabled="!persisted?.enabled || routing" @click="runFixture">{{ routing ? "执行中…" : "按当前策略运行" }}</button>
+      <button type="button" class="primary" :disabled="!persisted?.enabled || requestBusy" @click="runFixture">{{ routing ? "执行中…" : "按当前策略运行" }}</button>
     </div>
     <div v-if="routedResult" class="notice" role="status">
       运行时：{{ routedResult.sample.engine === "rig_agent_run" ? "Rig AgentRun" : "Native" }} ·
@@ -241,9 +297,38 @@ onMounted(refresh);
     </div>
     <div class="actions">
       <label class="confirm"><input v-model="confirmRead" type="checkbox" :disabled="!persisted?.enabled" /> 我确认执行这一次只读检查</label>
-      <button type="button" class="primary" :disabled="!persisted?.enabled || !confirmRead || reading || (needsRepo && !toolRepo.trim()) || (needsRoot && !toolRoot.trim())" @click="readTool">{{ reading ? "验证中…" : "执行已授权检查" }}</button>
+      <button type="button" class="primary" :disabled="!persisted?.enabled || !confirmRead || requestBusy || (needsRepo && !toolRepo.trim()) || (needsRoot && !toolRoot.trim())" @click="readTool">{{ reading ? "验证中…" : "执行已授权检查" }}</button>
     </div>
     <pre v-if="toolPayloadText" class="payload" aria-label="业务接口执行结果">{{ toolPayloadText }}</pre>
+    <div class="lab-divider"></div>
+    <div class="subheader"><strong>加密运行记录与恢复</strong><small>固定路由 · 同一 Task · 新 Run · 重新审批只读操作</small></div>
+    <p v-if="runId" class="disclaimer">最近请求 {{runId}}；失联后先查询回执，不重复创建任务。</p>
+    <div class="actions">
+      <button :disabled="requestBusy" @click="loadHistory()">查询历史</button>
+      <button v-if="runId" :disabled="requestBusy" @click="restoreRun(runId)">查看最近请求</button>
+    </div>
+    <div v-if="historyVisible">
+      <p v-if="historyUnavailable" class="disclaimer">暂不可读取 {{historyUnavailable}} 条记录（执行中或存储不可用）。</p>
+      <div v-for="item in receipts" :key="item.id" class="actions">
+        <span>{{item.kind||"旧记录"}} · {{item.phase}} · {{item.id.slice(0,8)}}</span>
+        <button :disabled="requestBusy" @click="restoreRun(item.id)">查看</button>
+      </div>
+      <button v-if="cursor" :disabled="requestBusy" @click="loadHistory(false)">下一页</button>
+      <div v-if="receipt">
+        <p class="disclaimer">Task {{receipt.task_id}} · Run {{receipt.id}} · {{receipt.phase}}</p>
+        <pre v-if="receipt.input" class="payload">{{JSON.stringify(receipt.input,null,2)}}</pre>
+        <pre v-if="receipt.has_result" class="payload">{{JSON.stringify(receipt.result,null,2)}}</pre>
+        <template v-if="receipt.can_resume">
+          <label class="confirm"><input v-model="resumeConfirmed" type="checkbox"/> 我明确继续此检查点；只读调用将重新核对当前权限与资源</label>
+          <button :disabled="!resumeConfirmed||requestBusy||!persisted?.enabled" @click="resumeRun">恢复已登记任务</button>
+        </template>
+        <details v-if="['completed','failed','cancelled'].includes(receipt.phase)">
+          <summary>清理此条运行内容并归档</summary>
+          <p class="disclaimer">仅清理当前记录的输入输出，保留运行身份与审批证据。</p>
+          <button :disabled="requestBusy" @click="archiveRun">确认清理／归档</button>
+        </details>
+      </div>
+    </div>
     <p class="disclaimer">只读 API 仅向受信任的主窗口开放。Coding Agent 的完整工作流、数据库 SQL、Git 写入及浏览器导航仍沿用各业务模块的原有权限体系，本实验室不允许绕过。</p>
   </section>
 </template>

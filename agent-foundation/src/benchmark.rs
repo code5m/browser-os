@@ -34,6 +34,7 @@ const SUITE: [(&str, &str); 3] = [
     ),
 ];
 const ANSWER: &str = "Synthetic fixture completed; no native resources accessed.";
+pub fn is_fixture_id(id: &str) -> bool { SUITE.iter().any(|(fixture, _)| *fixture == id) }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BenchmarkReport {
