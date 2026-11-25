@@ -190,3 +190,8 @@ Base ada4dc96. Foundation now rejects task retirement, detachment/resumption whi
 ## Native control-plane recovery follow-up
 
 The tab receipt owner's existing sequence also advances for background/legacy admission and terminal ACK; capture ACK likewise fences older starts. Split owner/active-tab observations are invalidated if the owner changes during collection. Recovery adopts a tab list only after a matching terminal ACK and exactly one sequence advance (decimal-string arithmetic preserves u64 identity). Browser and capture commands share two fixed transport lanes per phase: normal plus recovery, including alternate read-only observation after timeout and a different ticket after native reconciliation. A permanently lost transport is not treated as a native completion; both lanes exhausted requires a safe frontend/application restart and further native reconciliation. No GTK layout primitive, new native command contract, workflow or checker changed. Test sources NOT_RUN; no CI/Actions or ref updates.
+
+
+## Shared file conflict recovery (workspace editors)
+
+Both overlay and inline text saves now synchronously persist the intended encrypted draft before the native best-effort write and observe the file after successful publication before clearing the recovery record. Uncertain saves retain the original baseline/local text and expose a scoped read-only disk observation. The user can explicitly create a new conflict copy through the existing no-replace create_file command; this does not rebase, overwrite or discard the original. Source-only; shared unmanaged files do not acquire arbitrary-writer CAS through a post-write observation. No CI, Actions, validation or branch updates.

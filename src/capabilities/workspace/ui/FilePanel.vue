@@ -38,6 +38,8 @@ function startResize(e: MouseEvent) {
 const ftreeBody = ref<HTMLElement | null>(null);
 // Local presentation-only menu state; file operations remain owned by useFileStore.
 const fileActionsOpen = ref(false);
+const inlineConflictTarget = ref("");
+watch(() => ws.activeInlineConflict?.path, () => { inlineConflictTarget.value = ""; });
 function openIdeaProjectScan() {
   const entry=ws.fileCtx.entry;
   if(!entry)return;
@@ -161,6 +163,16 @@ onMounted(async () => {
             <button @click="ws.closeInline" title="关闭">✕</button>
           </div>
         </div>
+        <section v-if="ws.activeInlineConflict" class="inline-conflict" aria-label="行内保存冲突恢复">
+          <p role="status">保存结果未确认，本地编辑仍保留。请查看磁盘版本或另存新文件，不会自动覆盖。</p>
+          <details v-if="ws.activeInlineConflict.disk !== null"><summary>查看磁盘版本（最多 12000 字符）</summary><pre>{{ ws.activeInlineConflict.disk.slice(0, 12000) }}</pre></details>
+          <p v-else-if="ws.activeInlineConflict.diskError">原路径当前无法读取。</p>
+          <form @submit.prevent="ws.saveConflictCopy('inline', inlineConflictTarget)">
+            <label>新文件绝对路径 <input v-model="inlineConflictTarget" :disabled="ws.conflictCopyBusy" autocomplete="off" spellcheck="false"></label>
+            <button type="submit" :disabled="ws.conflictCopyBusy || !inlineConflictTarget.trim()">保留冲突副本（不覆盖）</button>
+          </form>
+          <p v-if="ws.activeInlineConflict.savedCopy">副本已保存：{{ ws.activeInlineConflict.savedCopy }}</p>
+        </section>
         <div
           v-if="ws.inlineIsMd && !ws.inlineEdit"
           class="md-preview fedit-body"
@@ -522,4 +534,7 @@ onMounted(async () => {
 .draft-recovery-path { display: block; overflow-wrap: anywhere; }
 .draft-recovery small { display: block; margin: 4px 0; color: #4e5969; }
 .draft-recovery li div { display: flex; flex-wrap: wrap; gap: 4px; }
+.inline-conflict { flex: 0 0 auto; padding: 8px; border-bottom: 1px solid var(--border, #ccc); }
+.inline-conflict pre { max-height: 160px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.inline-conflict form { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 </style>

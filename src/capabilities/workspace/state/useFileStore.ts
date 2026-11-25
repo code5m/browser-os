@@ -124,6 +124,74 @@ export const useFileStore = defineStore("files", () => {
   let editorJournalTimer: ReturnType<typeof setTimeout> | null = null;
   let inlineJournalTimer: ReturnType<typeof setTimeout> | null = null;
   let journalChain: Promise<void> = Promise.resolve();
+  // An attempted save has three independent facts: the original baseline,
+  // the user's local text, and the most recently observed disk contents.
+  // Keep them separate even when the native write may have succeeded.
+  type SaveConflict = { path: string; revision: number; reason: string; disk: string | null; diskError: boolean; savedCopy: string };
+  const editorConflict = ref<SaveConflict | null>(null);
+  const inlineConflict = ref<SaveConflict | null>(null);
+  const conflictCopyBusy = ref(false);
+  const activeEditorConflict = computed(() => editorConflict.value?.revision === editorDocumentRevision
+    && editorConflict.value.path === editorFilePath.value ? editorConflict.value : null);
+  const activeInlineConflict = computed(() => inlineConflict.value?.revision === inlineDocumentRevision
+    && inlineConflict.value.path === inlineFile.value ? inlineConflict.value : null);
+  // Save As is independent of the original path; never rebase or overwrite
+  // the conflicted original merely because the user created a copy.
+  async function saveConflictCopy(surface: "editor" | "inline", destination: string): Promise<boolean> {
+    const conflict = surface === "editor" ? activeEditorConflict.value : activeInlineConflict.value;
+    const target = destination.trim();
+    if (!conflict || !target || conflictCopyBusy.value) return false;
+    const text = surface === "editor" ? fileContent.value : inlineText.value;
+    const baseline = surface === "editor" ? editorSavedContent.value : inlineSavedText.value;
+    const session = surface === "editor" ? editorDraftSession : inlineDraftSession;
+    let release: (() => void) | undefined;
+    conflictCopyBusy.value = true;
+    try {
+      documentPathKey("", target);
+      if (sameDocumentPath(conflict.path, target)) throw Error("FILE_COPY_MUST_BE_NEW");
+      release = documentOwnership.beginSave(surface === "editor" ? "workspace-overlay" : "workspace-inline", target);
+      // Native create_file uses pinned-parent, no-replace publication. Keep
+      // the original encrypted journal even after the new file is published.
+      await queueJournalStrict(() => bridge.editorDraftSave(conflict.path, session, baseline, text));
+      await bridge.createFile(target, text);
+      if ((surface === "editor" ? activeEditorConflict.value : activeInlineConflict.value) === conflict) {
+        conflict.savedCopy = target;
+      }
+      return true;
+    } catch (error) {
+      layout.showToast("冲突副本未确认保存，原草稿保留；请检查目标路径，不会自动覆盖: " + String(error).slice(0, 80));
+      return false;
+    } finally { release?.(); conflictCopyBusy.value = false; }
+  }
+
+  async function inspectSaveConflict(surface: "editor" | "inline", path: string, revision: number, reason: string) {
+    const owns = () => surface === "editor"
+      ? editorDocumentRevision === revision && editorFilePath.value === path
+      : inlineDocumentRevision === revision && inlineFile.value === path;
+    if (!owns()) return;
+    const conflict: SaveConflict = { path, revision, reason, disk: null, diskError: false, savedCopy: "" };
+    const state = surface === "editor" ? editorConflict : inlineConflict;
+    state.value = conflict;
+    const observation = state.value;
+    try {
+      const disk = await bridge.readFile(path);
+      if (owns() && state.value === observation) state.value.disk = disk;
+    } catch {
+      if (owns() && state.value === observation) state.value.diskError = true;
+    }
+  }
+
+  async function saveWithDraft(path: string, session: string, baseline: string, text: string) {
+    // Persist the exact intended bytes before asking the native owner to
+    // mutate a shared file. A crash, missing reply or external conflict must
+    // not rely solely on the debounced autosave having happened.
+    if (baseline !== text) await queueJournalStrict(() => bridge.editorDraftSave(path, session, baseline, text));
+    await bridge.writeFileCas(path, baseline, text);
+    // The original operation is best-effort CAS against external writers.
+    // Observe the publication before clearing the encrypted draft. This
+    // catches some late external writes, not all arbitrary-writer races.
+    if (await bridge.readFile(path) !== text) throw Error("FILE_POST_SAVE_CONFLICT");
+  }
   function queueJournal(action: () => Promise<void>): Promise<void> {
     journalChain = journalChain.then(action).catch((error) => {
       layout.showToast("草稿加密保存失败，当前修改仍保留在内存中: " + String(error).slice(0, 90));
@@ -838,23 +906,23 @@ export const useFileStore = defineStore("files", () => {
     if (!inlineEdit.value && inlineIsMd.value) inlineHtml.value = renderMd(inlineText.value);
   }
   async function saveInline() {
-    if (!inlineFile.value) return;
-    const path = inlineFile.value, text = inlineText.value;
+    if (!inlineFile.value || inlineText.value === inlineSavedText.value) return;
+    const path = inlineFile.value, text = inlineText.value, baseline = inlineSavedText.value;
     const documentRevision = inlineDocumentRevision;
     let releaseSave: (() => void) | undefined;
     try {
       releaseSave = documentOwnership.beginSave("workspace-inline", path);
-      await bridge.writeFileCas(path, inlineSavedText.value, text);
+      await saveWithDraft(path, inlineDraftSession, baseline, text);
     } catch (error: any) {
-      layout.showToast(String(error).includes("DOCUMENT_PATH_CHANGED")
-        ? "原文件已移动或删除，草稿仍保留；请复制内容后从新位置重新打开"
-        : "保存失败或磁盘冲突，草稿仍保留: " + (error?.message ?? error));
+      void inspectSaveConflict("inline", path, documentRevision, String(error).slice(0, 160));
+      layout.showToast("保存结果未确认；保留本地编辑，请使用冲突恢复区检查磁盘版本。");
       return;
     } finally {
       releaseSave?.();
     }
     const stillSameInlineFile = inlineFile.value === path && inlineDocumentRevision === documentRevision;
     if (stillSameInlineFile) {
+      inlineConflict.value = null;
       inlineSavedText.value = text;
       if (inlineJournalTimer) { clearTimeout(inlineJournalTimer); inlineJournalTimer = null; }
     }
@@ -1170,15 +1238,16 @@ export const useFileStore = defineStore("files", () => {
     if (!path) return;
     const text = fileContent.value;
     const baseline = editorSavedContent.value;
+    if (baseline === text) return;
     const documentRevision = editorDocumentRevision;
     let releaseSave: (() => void) | undefined;
     try {
       releaseSave = documentOwnership.beginSave("workspace-overlay", path);
-      // The native command serializes cooperating BrowserOS processes and
-      // validates the baseline inside the same critical section as atomic rename.
-      await bridge.writeFileCas(path, baseline, text);
+      // Do not clear the recovery record on an uncertain native outcome.
+      await saveWithDraft(path, editorDraftSession, baseline, text);
       const stillSameEditorFile = editorFilePath.value === path && editorDocumentRevision === documentRevision;
       if (stillSameEditorFile) {
+        editorConflict.value = null;
         editorSavedContent.value = text;
         if (editorJournalTimer) { clearTimeout(editorJournalTimer); editorJournalTimer = null; }
       }
@@ -1201,9 +1270,8 @@ export const useFileStore = defineStore("files", () => {
       }
       layout.showToast("已保存: " + documentPathName(path));
     } catch (error: any) {
-      layout.showToast(String(error).includes("DOCUMENT_PATH_CHANGED")
-        ? "原文件已移动或删除，草稿仍保留；请复制内容后从新位置重新打开"
-        : "保存失败或磁盘冲突，草稿仍保留: " + (error?.message ?? error));
+      void inspectSaveConflict("editor", path, documentRevision, String(error).slice(0, 160));
+      layout.showToast("保存结果未确认；保留本地编辑，请使用冲突恢复区检查磁盘版本。");
     } finally {
       releaseSave?.();
     }
@@ -1227,6 +1295,10 @@ export const useFileStore = defineStore("files", () => {
     editorFilePath,
     editorRecoveryId,
     editorDirty,
+    activeEditorConflict,
+    activeInlineConflict,
+    conflictCopyBusy,
+    saveConflictCopy,
     recoverableDrafts,
     recoveryNextCursor,
     recoveryLoading,

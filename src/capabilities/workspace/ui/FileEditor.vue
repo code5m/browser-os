@@ -8,6 +8,8 @@ import { relocateBrowser } from "../../../composables/browserNav";
 const ws = useFileStore();
 const layout = useLayoutStore();
 const recoveryTarget = ref("");
+const conflictTarget = ref("");
+watch(() => ws.activeEditorConflict?.path, () => { conflictTarget.value = ""; });
 watch(() => ws.editorRecoveryId, () => { recoveryTarget.value = ""; });
 
 function closeEditor() {
@@ -36,6 +38,16 @@ function closeEditor() {
         <button class="primary" type="submit" :disabled="ws.recoverySaving || !recoveryTarget.trim()">{{ ws.recoverySaving ? "正在另存…" : "另存为新文件" }}</button>
       </form>
     </section>
+    <section v-if="ws.activeEditorConflict" class="recovery-save-as" aria-label="保存冲突恢复">
+      <p role="status">保存结果未确认；本地编辑仍保留，原文件不会自动重试或覆盖。已观察的磁盘版本不是严格 CAS 证明。</p>
+      <details v-if="ws.activeEditorConflict.disk !== null"><summary>查看磁盘版本（最多 12000 字符）</summary><pre>{{ ws.activeEditorConflict.disk.slice(0, 12000) }}</pre></details>
+      <p v-else-if="ws.activeEditorConflict.diskError">当前无法读取原路径，可能已移动、删除或权限改变。</p>
+      <form @submit.prevent="ws.saveConflictCopy('editor', conflictTarget)">
+        <label>另存新文件绝对路径 <input v-model="conflictTarget" :disabled="ws.conflictCopyBusy" autocomplete="off" spellcheck="false"></label>
+        <button type="submit" :disabled="ws.conflictCopyBusy || !conflictTarget.trim()">保留冲突副本（不覆盖）</button>
+      </form>
+      <p v-if="ws.activeEditorConflict.savedCopy">副本已保存：{{ ws.activeEditorConflict.savedCopy }}；原编辑及草稿仍保留。</p>
+    </section>
     <div v-if="ws.mdPreview" class="md-preview" v-html="ws.mdHtml"></div>
     <textarea
       v-else
@@ -52,4 +64,5 @@ function closeEditor() {
 .recovery-save-as p { margin: 0 0 8px; font-size: 12px; }
 .recovery-save-as form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .recovery-save-as input { flex: 1; min-width: 180px; padding: 6px; }
+.recovery-save-as pre { max-height: 160px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 </style>
