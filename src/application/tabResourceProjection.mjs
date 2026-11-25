@@ -6,7 +6,7 @@
  * session save, or a replacement for native resource lifecycle. Every
  * resource includes the original owner and unmodified opaque ID for routing.
  */
-export function projectTabResources(browserTabs, moduleTabs, view, activeBrowser, activeModule) {
+export function projectTabResources(browserTabs, moduleTabs, view, activeBrowser, activeModule, order) {
   const resources = [];
   const seen = new Set();
   for (const tab of browserTabs) {
@@ -31,6 +31,17 @@ export function projectTabResources(browserTabs, moduleTabs, view, activeBrowser
       nativeWebviewId:null,
       view:tab.view
     });
+  }
+  if (order) {
+    const current = new Set(resources.map(item => item.key));
+    for (let i = order.length - 1; i >= 0; i--) {
+      if (!current.has(order[i])) order.splice(i, 1);
+    }
+    for (const item of resources) {
+      if (!order.includes(item.key)) order.push(item.key);
+    }
+    const position = new Map(order.map((key, index) => [key, index]));
+    resources.sort((a, b) => position.get(a.key) - position.get(b.key));
   }
   return resources;
 }

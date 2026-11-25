@@ -63,9 +63,36 @@ export const useBrowserStore = defineStore("browser", () => {
   // Serialize the existing owner's native mutations. A slow activation or close
   // must not publish an older selection after a newer request has completed.
   let tabMutationTail: Promise<unknown> = Promise.resolve();
+  let tabMutationQueued = 0;
+  let tabMutationStartedAt = 0;
   function mutateTabs<T>(operation: () => Promise<T>): Promise<T> {
-    const result = tabMutationTail.then(operation);
-    tabMutationTail = result.catch(() => {});
+    // Never race an in-flight native IPC and release its place in the queue:
+    // it could still commit later. Refuse excess/new work instead of letting
+    // an unresponsive WebView create an unbounded promise backlog.
+    if (tabMutationQueued >= 32 || (tabMutationStartedAt && Date.now() - tabMutationStartedAt > 20_000)) {
+      return Promise.reject(new Error("TAB_NATIVE_OPERATION_STALLED"));
+    }
+    tabMutationQueued++;
+    let resolveResult!: (value: T) => void;
+    let rejectResult!: (error: unknown) => void;
+    const result = new Promise<T>((resolve, reject) => { resolveResult = resolve; rejectResult = reject; });
+    let expired = false;
+    const waitTimer = window.setTimeout(() => {
+      // This entry has not started. Reject its caller, but retain the native
+      // tail; a late native reply must still complete before any newer action.
+      expired = true;
+      tabMutationQueued--;
+      rejectResult(new Error("TAB_NATIVE_OPERATION_STALLED"));
+    }, 20_000);
+    tabMutationTail = tabMutationTail.then(async () => {
+      if (expired) return;
+      if (window.clearTimeout) window.clearTimeout(waitTimer);
+      else clearTimeout(waitTimer);
+      tabMutationStartedAt = Date.now();
+      try { resolveResult(await operation()); }
+      catch (error) { rejectResult(error); }
+      finally { tabMutationStartedAt = 0; tabMutationQueued--; }
+    });
     return result;
   }
 

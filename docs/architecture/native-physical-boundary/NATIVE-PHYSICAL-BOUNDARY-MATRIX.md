@@ -120,6 +120,7 @@ DDD 边界 → Capability → TS Public Contract → Native Contract → Rust Mo
 | `active_tab` | `Mutex<Option<String>>` | 当前激活标签 | browser | CAPABILITY_NATIVE(browser) | `capabilities/browser/` |
 | `tab_counter` | `Arc<Mutex<u32>>` | 标签计数器 | browser | CAPABILITY_NATIVE(browser) | `capabilities/browser/` |
 | `child_layouts` | `Mutex<HashMap<String, (f64,f64,f64,f64)>>` | 宫格子窗口布局 | grid | CAPABILITY_NATIVE(grid) | `capabilities/grid/` |
+| `layout_revisions` | `Mutex<HashMap<String, u64>>` | 页签显隐与定位目标代次 | browser | CAPABILITY_NATIVE(browser) | `capabilities/browser/` |
 | `last_position_at` | `Mutex<HashMap<String, (Instant,f64,f64,f64,f64)>>` | 窗口位置记忆 | grid | CAPABILITY_NATIVE(grid) | `capabilities/grid/` |
 | `grid_zooms` | `Mutex<HashMap<String, f64>>` | 宫格缩放 | grid | CAPABILITY_NATIVE(grid) | `capabilities/grid/` |
 | `terminals` | `Mutex<HashMap<String, TerminalSession>>` | 终端会话 | terminal | CAPABILITY_NATIVE(terminal) | `capabilities/terminal/` |

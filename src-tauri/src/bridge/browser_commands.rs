@@ -6,6 +6,50 @@
 
 use super::*;
 
+fn publish_layout_if_current(
+    layouts: &mut HashMap<String, (f64, f64, f64, f64)>,
+    revisions: &mut HashMap<String, u64>,
+    id: &str,
+    prior_target: Option<(f64, f64, f64, f64)>,
+    prior_revision: u64,
+    next_target: (f64, f64, f64, f64),
+) -> bool {
+    if layouts.get(id).copied() != prior_target
+        || revisions.get(id).copied().unwrap_or(0) != prior_revision
+    {
+        return false;
+    }
+    layouts.insert(id.to_string(), next_target);
+    revisions.insert(id.to_string(), prior_revision.wrapping_add(1));
+    true
+}
+
+#[cfg(test)]
+mod layout_revision_tests {
+    use super::*;
+
+    #[test]
+    fn a_late_visible_position_cannot_undo_a_hide_even_after_aba() {
+        let mut layouts = HashMap::from([("tab".to_string(), (4.0, 5.0, 600.0, 400.0))]);
+        let mut revisions = HashMap::from([("tab".to_string(), 1)]);
+        let original = layouts["tab"];
+        layouts.insert("tab".into(), (-30000.0, 5.0, 600.0, 400.0));
+        revisions.insert("tab".into(), 2);
+        layouts.insert("tab".into(), original);
+        revisions.insert("tab".into(), 3);
+        assert!(!publish_layout_if_current(
+            &mut layouts,
+            &mut revisions,
+            "tab",
+            Some(original),
+            1,
+            (10.0, 5.0, 600.0, 400.0),
+        ));
+        assert_eq!(layouts["tab"], original);
+        assert_eq!(revisions["tab"], 3);
+    }
+}
+
 /// 打开浏览器（内嵌为 main 窗口的子 webview）。
 /// 内部等价于「新建一个页签」并设为激活页签。前端优先使用 tab_new 多开页签。
 #[tauri::command]
@@ -136,14 +180,27 @@ pub(crate) fn apply_bounds_inner(
         height.round().max(1.0),
     );
     let state = app.state::<AppState>();
-    let prior_target = state.child_layouts.lock().unwrap().get(id).copied();
+    let (prior_target, prior_revision) = {
+        let layouts = state.child_layouts.lock().unwrap();
+        let revisions = state.layout_revisions.lock().unwrap();
+        (
+            layouts.get(id).copied(),
+            revisions.get(id).copied().unwrap_or(0),
+        )
+    };
     if let Err(e) = manager.position_visible(&id.to_string(), rect, || {
         let mut layouts = state.child_layouts.lock().unwrap();
         // A hide request may have been recorded while the dispatcher was
         // busy. Do not replace that newer target with an older receipt.
-        if layouts.get(id).copied() == prior_target {
-            layouts.insert(id.to_string(), (rect.x, rect.y, rect.width, rect.height));
-        }
+        let mut revisions = state.layout_revisions.lock().unwrap();
+        publish_layout_if_current(
+            &mut layouts,
+            &mut revisions,
+            id,
+            prior_target,
+            prior_revision,
+            (rect.x, rect.y, rect.width, rect.height),
+        )
     }) {
         eprintln!("[apply_bounds] label={} position/show failed: {e}", id);
         return Err(format!("定位或显示失败: {e}"));
@@ -338,30 +395,31 @@ fn enforce_layout_once(app: &AppHandle) {
     let state = app.state::<AppState>();
     use tauri_plugin_browser_tabs::{LogicalRect, TabManagerState};
     let manager = app.state::<TabManagerState>();
-    #[cfg(target_os = "linux")]
     {
         // Capture identities, not stale rectangles. The plugin reads each
         // target after it has reserved that tab's layout operation.
-        let ids: Vec<String> = {
+        let mut ids: Vec<String> = {
             let Ok(layouts) = state.child_layouts.try_lock() else {
                 return;
             };
             layouts.keys().cloned().collect()
         };
-        for id in ids {
-            let _ = manager.reconcile_rect(&id, || {
+        if ids.is_empty() {
+            return;
+        }
+        ids.sort_unstable();
+        // A single GTK callback has bounded work even when many background
+        // tabs exist. Rotate the starting point so no tab starves.
+        static NEXT_LAYOUT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let start = NEXT_LAYOUT.fetch_add(8, Ordering::Relaxed) % ids.len();
+        for offset in 0..ids.len().min(8) {
+            let id = &ids[(start + offset) % ids.len()];
+            let _ = manager.reconcile_rect(id, || {
                 let layouts = state.child_layouts.try_lock().ok()?;
                 layouts
-                    .get(&id)
+                    .get(id)
                     .map(|&(x, y, w, h)| LogicalRect::new(x, y, w.max(1.0), h.max(1.0)))
             });
-        }
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let layouts = state.child_layouts.lock().unwrap().clone();
-        for (id, (x, y, w, h)) in layouts {
-            let _ = manager.update_rect(&id, LogicalRect::new(x, y, w.max(1.0), h.max(1.0)));
         }
     }
 }

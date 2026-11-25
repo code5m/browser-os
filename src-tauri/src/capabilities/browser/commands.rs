@@ -78,11 +78,12 @@ pub fn spawn_child_window(
 }
 /// 记住某个子窗口的内容区布局矩形（CSS 坐标），供 move/resize 时重定位。
 pub fn remember_layout(app: &AppHandle, id: &str, x: f64, y: f64, w: f64, h: f64) {
-    app.state::<crate::AppState>()
-        .child_layouts
-        .lock()
-        .unwrap()
-        .insert(id.to_string(), (x, y, w, h));
+    let state = app.state::<crate::AppState>();
+    let mut layouts = state.child_layouts.lock().unwrap();
+    layouts.insert(id.to_string(), (x, y, w, h));
+    let mut revisions = state.layout_revisions.lock().unwrap();
+    let revision = revisions.entry(id.to_string()).or_default();
+    *revision = revision.wrapping_add(1);
 }
 
 /// 归一化用户输入的网址：支持以下写法
@@ -204,6 +205,16 @@ pub fn create_tab(app: AppHandle, url: &str) -> Result<TabInfo, String> {
         INITIAL_HIDDEN_WEBVIEW_WIDTH,
         INITIAL_HIDDEN_WEBVIEW_HEIGHT,
     )?;
+    // Record the initial native offscreen viewport. A hide arriving before
+    // the first position now has a concrete target on both platforms.
+    remember_layout(
+        &app,
+        &id,
+        -30000.0,
+        -30000.0,
+        INITIAL_HIDDEN_WEBVIEW_WIDTH,
+        INITIAL_HIDDEN_WEBVIEW_HEIGHT,
+    );
     eprintln!(
         "[create_tab] 子窗口已提交创建 label={} init=(800x600) offscreen=true",
         id
@@ -229,6 +240,8 @@ pub fn create_tab(app: AppHandle, url: &str) -> Result<TabInfo, String> {
         app.state::<TabManagerState>()
             .close_tab(&id)
             .map_err(|_| "TAB_CANCELLED_CLEANUP_FAILED".to_string())?;
+        state0.child_layouts.lock().unwrap().remove(&id);
+        state0.layout_revisions.lock().unwrap().remove(&id);
         return Err("TAB_APPLICATION_SHUTTING_DOWN".into());
     }
     *app.state::<crate::AppState>().active_tab.lock().unwrap() = Some(id.clone());

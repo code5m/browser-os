@@ -243,7 +243,43 @@ struct ManagedTab {
     webview: Webview<Wry>,
     #[cfg(target_os = "linux")]
     layout: RwLock<TabLayout>,
+    #[cfg(not(target_os = "linux"))]
+    last_rect: RwLock<LogicalRect>,
 }
+
+#[cfg(target_os = "linux")]
+#[derive(Default)]
+struct BoundedPngWriter(Vec<u8>);
+
+#[cfg(target_os = "linux")]
+impl std::io::Write for BoundedPngWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if bytes.len() > 32 * 1024 * 1024 - self.0.len() {
+            return Err(std::io::Error::other("CAPTURE_SIZE_LIMIT"));
+        }
+        self.0.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+#[test]
+fn png_writer_rejects_a_chunk_before_exceeding_its_limit() {
+    use std::io::Write;
+    let mut writer = BoundedPngWriter(vec![0; 32 * 1024 * 1024 - 2]);
+    assert_eq!(writer.write(&[1, 2]).unwrap(), 2);
+    assert!(writer.write(&[3]).is_err());
+    assert_eq!(writer.0.len(), 32 * 1024 * 1024);
+}
+
+/// Opaque native instance identity. A weak reference cannot retain a closed
+/// WebView and cannot match a replacement reusing the same logical tab ID.
+#[derive(Clone)]
+pub struct TabInstance(std::sync::Weak<ManagedTab>);
 
 /// Internal state for managing tabs.
 ///
@@ -670,6 +706,8 @@ impl TabManager {
                 rect: native_rect,
                 restore_rect: (!options.visible).then_some(options.rect),
             }),
+            #[cfg(not(target_os = "linux"))]
+            last_rect: RwLock::new(native_rect),
         });
         self.tabs.write().insert(options.id, entry);
         Ok(())
@@ -682,6 +720,10 @@ impl TabManager {
 
         let (_operation, tab) = self.get_tab(id, TabAccessKind::Layout)?;
         platform::apply_rect(&tab.webview, rect)?;
+        #[cfg(not(target_os = "linux"))]
+        {
+            *tab.last_rect.write() = rect;
+        }
         #[cfg(target_os = "linux")]
         {
             *tab.layout.write() = TabLayout {
@@ -699,13 +741,17 @@ impl TabManager {
         &self,
         id: &TabId,
         rect: LogicalRect,
-        publish: impl FnOnce(),
+        publish: impl FnOnce() -> bool,
     ) -> Result<()> {
         if rect.is_empty() {
             return Err(BrowserTabError::InvalidRect(rect));
         }
         let (_operation, tab) = self.get_tab(id, TabAccessKind::Layout)?;
         platform::apply_rect(&tab.webview, rect)?;
+        #[cfg(not(target_os = "linux"))]
+        {
+            *tab.last_rect.write() = rect;
+        }
         #[cfg(target_os = "linux")]
         {
             *tab.layout.write() = TabLayout {
@@ -714,14 +760,23 @@ impl TabManager {
             };
         }
         tab.webview.show()?;
-        publish();
+        if !publish() {
+            #[cfg(target_os = "linux")]
+            Self::park_tab(&tab)?;
+            #[cfg(not(target_os = "linux"))]
+            {
+                let parked = LogicalRect::new(-30000.0, rect.y, rect.width, rect.height);
+                platform::apply_rect(&tab.webview, parked)?;
+                *tab.last_rect.write() = parked;
+            }
+            return Err(BrowserTabError::Platform("TAB_LAYOUT_SUPERSEDED".into()));
+        }
         Ok(())
     }
 
     /// Read the latest host target *after* acquiring the layout reservation,
     /// so a periodic sweep cannot overwrite a completed position command
     /// with geometry captured before that command.
-    #[cfg(target_os = "linux")]
     pub fn reconcile_rect(
         &self,
         id: &TabId,
@@ -734,15 +789,29 @@ impl TabManager {
         if rect.is_empty() {
             return Err(BrowserTabError::InvalidRect(rect));
         }
-        let current = *tab.layout.read();
-        if current.rect == rect {
-            return platform::linux::ensure_size_allocated(&tab.webview, rect);
+        #[cfg(target_os = "linux")]
+        {
+            let current = *tab.layout.read();
+            if current.rect == rect {
+                return platform::linux::ensure_size_allocated(&tab.webview, rect);
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        if *tab.last_rect.read() == rect {
+            return Ok(());
         }
         platform::apply_rect(&tab.webview, rect)?;
-        *tab.layout.write() = TabLayout {
-            rect,
-            restore_rect: None,
-        };
+        #[cfg(not(target_os = "linux"))]
+        {
+            *tab.last_rect.write() = rect;
+        }
+        #[cfg(target_os = "linux")]
+        {
+            *tab.layout.write() = TabLayout {
+                rect,
+                restore_rect: None,
+            };
+        }
         Ok(())
     }
 
@@ -836,6 +905,27 @@ impl TabManager {
         self.tabs.read().keys().cloned().collect()
     }
 
+    pub fn instance(&self, id: &TabId) -> Result<TabInstance> {
+        let (_operation, tab) = self.get_tab(id, TabAccessKind::Operation)?;
+        Ok(TabInstance(Arc::downgrade(&tab)))
+    }
+
+    pub fn is_current_instance(&self, id: &TabId, instance: &TabInstance) -> bool {
+        self.get_tab(id, TabAccessKind::Operation)
+            .is_ok_and(|(_operation, tab)| {
+                std::sync::Weak::ptr_eq(&instance.0, &Arc::downgrade(&tab))
+            })
+    }
+
+    pub fn eval_instance(&self, id: &TabId, instance: &TabInstance, js: &str) -> Result<()> {
+        let (_operation, tab) = self.get_tab(id, TabAccessKind::Operation)?;
+        if !std::sync::Weak::ptr_eq(&instance.0, &Arc::downgrade(&tab)) {
+            return Err(BrowserTabError::Platform("TAB_INSTANCE_STALE".into()));
+        }
+        tab.webview.eval(js)?;
+        Ok(())
+    }
+
     /// 在指定子 webview 中执行 JavaScript（fire-and-forget）。
     /// 注意：子 webview 由本插件持有，app.get_webview 找不到它们，
     /// 宿主应用必须走这个方法（否则 eval 静默空转，AI 群发/前进后退全失效）。
@@ -869,14 +959,23 @@ impl TabManager {
                         let image = result
                             .map_err(|_| "CAPTURE_ENGINE_FAILED".to_string())
                             .and_then(|surface| {
-                                let mut png = Vec::new();
+                                let surface = gtk::cairo::ImageSurface::try_from(surface)
+                                    .map_err(|_| "CAPTURE_SURFACE_INVALID".to_string())?;
+                                let width = surface.width();
+                                let height = surface.height();
+                                if width <= 0
+                                    || height <= 0
+                                    || width > 16_384
+                                    || height > 16_384
+                                    || i64::from(width) * i64::from(height) > 80_000_000
+                                {
+                                    return Err("CAPTURE_DIMENSION_LIMIT".into());
+                                }
+                                let mut png = BoundedPngWriter::default();
                                 surface
                                     .write_to_png(&mut png)
                                     .map_err(|_| "CAPTURE_PNG_ENCODE_FAILED".to_string())?;
-                                if png.len() > 32 * 1024 * 1024 {
-                                    return Err("CAPTURE_SIZE_LIMIT".into());
-                                }
-                                Ok(png)
+                                Ok(png.0)
                             });
                         callback(image);
                     },

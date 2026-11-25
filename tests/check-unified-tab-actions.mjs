@@ -10,7 +10,7 @@ import * as documentPaths from "../src/application/documentPaths.mjs";
 
 // Exercise the actual Layout/Browser owners with controlled native completions.
 // This does not run Tauri, install an application, or infer native GUI acceptance.
-function fixture() {
+function fixture(options = {}) {
   const isRef = Symbol("test-ref");
   const reactive = (value) => value;
   const ref = (value) => ({ [isRef]: true, value });
@@ -43,7 +43,7 @@ function fixture() {
         if (Object.hasOwn(modules, name)) return modules[name];
         throw Error("Unexpected dependency: " + name);
       },
-      window: { setTimeout, clearTimeout }, setTimeout, clearTimeout, console,
+      window: { setTimeout: options.setTimeout || setTimeout, clearTimeout: options.clearTimeout || clearTimeout }, setTimeout, clearTimeout, console,
     }, { filename: path });
     return exports;
   }
@@ -118,6 +118,43 @@ function callerView(store) {
   assert.equal(attempts, 3, "temporary failure retries are bounded");
   assert.equal(browser.tabs.length, 1);
   assert.equal(browser.recentlyClosed.length, 0);
+}
+{
+  const { browser, native } = fixture();
+  browser.tabs.push({ id: "slow-close", url: "https://fixture.test" });
+  let finishNative;
+  native.tabClose = () => new Promise(resolve => { finishNative = resolve; });
+  const first = browser.tabClose("slow-close");
+  await Promise.resolve();
+  const queued = Array.from({ length: 31 }, () => browser.tabClose("slow-close"));
+  await assert.rejects(browser.tabClose("slow-close"), /TAB_NATIVE_OPERATION_STALLED/);
+  assert.equal(browser.tabs.length, 1, "a refused queue entry must not mutate the owner");
+  finishNative();
+  assert.equal(await first, true);
+  assert.deepEqual(await Promise.all(queued), Array(31).fill(false));
+  assert.equal(browser.tabs.length, 0);
+}
+{
+  const timers = new Map();
+  let nextTimer = 0;
+  const { browser, native } = fixture({
+    setTimeout(callback) { const id = ++nextTimer; timers.set(id, callback); return id; },
+    clearTimeout(id) { timers.delete(id); },
+  });
+  browser.tabs.push({ id: "never-reordered", url: "https://fixture.test" });
+  let finishNative;
+  let nativeCalls = 0;
+  native.tabClose = () => { nativeCalls++; return new Promise(resolve => { finishNative = resolve; }); };
+  const inFlight = browser.tabClose("never-reordered");
+  await Promise.resolve();
+  const waiting = browser.tabClose("never-reordered");
+  assert.equal(timers.size, 1, "only the waiting caller retains a timeout");
+  [...timers.values()][0]();
+  await assert.rejects(waiting, /TAB_NATIVE_OPERATION_STALLED/);
+  assert.equal(nativeCalls, 1, "timeout cannot release the native serialization tail");
+  finishNative();
+  assert.equal(await inFlight, true);
+  assert.equal(nativeCalls, 1, "the expired queued request must never run later");
 }
 {
   const { browser, native, lifecycle } = fixture();
@@ -619,5 +656,27 @@ for (const deactivate of [false, true]) {
   await releasing;
   assert.equal(layout.mainView, "files", "suspension and cleanup preserve the unrelated visible module");
   assert.equal(browser.tabs.length, deactivate ? 0 : 1, "only successful owner cleanup removes the native tab record");
+}
+{
+  const order = [];
+  const project = (web, modules) => projectTabResources(web, modules, "browser", "a", "", order);
+  project([{ id: "a", url: "about:blank" }], [{ id: "m", label: "Files", view: "files" }]);
+  assert.deepEqual(project([{ id: "a", url: "about:blank" }, { id: "b", url: "about:blank" }],
+    [{ id: "m", label: "Files", view: "files" }]).map(tab => tab.key),
+    ["web:a", "module:m", "web:b"], "new tabs append across owner types");
+  assert.deepEqual(project([{ id: "b", url: "about:blank" }],
+    [{ id: "m", label: "Files", view: "files" }]).map(tab => tab.key),
+    ["module:m", "web:b"], "closed keys leave the ordering owner");
+}
+{
+  let tabs = [{ key: "web:a", active: true }, { key: "module:m", active: false }];
+  const activated = [];
+  const coordinator = createTabCoordinator({
+    resources: () => tabs,
+    activate: async tab => { activated.push(tab.key); tabs = tabs.map(item => ({ ...item, active: item.key === tab.key })); },
+    close: async tab => { tabs = tabs.filter(item => item.key !== tab.key); },
+  });
+  assert.equal(await coordinator.close("web:a"), true);
+  assert.deepEqual(activated, ["module:m"], "closing the active web tab selects its module neighbor");
 }
 console.log("UNIFIED_TAB_ACTIONS=PASS");

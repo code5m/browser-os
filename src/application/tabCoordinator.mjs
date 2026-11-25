@@ -19,7 +19,12 @@ export function createTabCoordinator({ resources, activate, close, enabled = () 
   async function closeOne(key) {
     const target = find(key);
     if (!target) return true; // A completed earlier close is already satisfied.
-    return (await close(target)) !== false;
+    const before = resources();
+    const index = before.findIndex(tab => tab.key === key);
+    const neighbor = target.active ? (before[index + 1] || before[index - 1]) : null;
+    if ((await close(target)) === false) return false;
+    if (neighbor && find(neighbor.key)) return activateOne(neighbor.key);
+    return true;
   }
   return {
     activate: (key) => run(() => activateOne(key)),

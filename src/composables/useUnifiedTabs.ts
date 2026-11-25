@@ -13,8 +13,10 @@ const bindings = new WeakMap<ReturnType<typeof useLayoutStore>, ReturnType<typeo
 
 function bindUnifiedTabs(layout: ReturnType<typeof useLayoutStore>) {
   const browser = useBrowserStore();
+  const tabOrder: string[] = [];
   const projectedTabs = computed(() => projectTabResources(
     browser.tabs, layout.modTabs, layout.mainView, browser.activeTabId, layout.activeModTab,
+    tabOrder,
   ));
 
   const coordinator = createTabCoordinator({

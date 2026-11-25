@@ -6,6 +6,45 @@
 
 use super::*;
 
+// The plugin protects each native call. This guard additionally protects the
+// host metadata transaction spanning several such calls. Never hold the set's
+// mutex while dispatching to GTK; competing commands fail fast instead.
+static TAB_TRANSITIONS: std::sync::LazyLock<Mutex<std::collections::HashSet<String>>> =
+    std::sync::LazyLock::new(|| Mutex::new(std::collections::HashSet::new()));
+
+pub(super) struct TabTransition(String);
+
+pub(super) fn reserve_tab_transition(id: &str) -> Result<TabTransition, String> {
+    let mut transitions = TAB_TRANSITIONS.lock().unwrap();
+    if !transitions.insert(id.to_string()) {
+        return Err("TAB_LIFECYCLE_BUSY".into());
+    }
+    Ok(TabTransition(id.to_string()))
+}
+
+impl Drop for TabTransition {
+    fn drop(&mut self) {
+        TAB_TRANSITIONS.lock().unwrap().remove(&self.0);
+    }
+}
+
+#[cfg(test)]
+mod transition_tests {
+    use super::*;
+
+    #[test]
+    fn transition_excludes_same_identity_and_releases_on_failure() {
+        let first = reserve_tab_transition("transition-fixture-a").unwrap();
+        assert!(
+            matches!(reserve_tab_transition("transition-fixture-a"), Err(e) if e == "TAB_LIFECYCLE_BUSY")
+        );
+        let other = reserve_tab_transition("transition-fixture-b").unwrap();
+        drop(first);
+        assert!(reserve_tab_transition("transition-fixture-a").is_ok());
+        drop(other);
+    }
+}
+
 pub(crate) fn tab_new_native(app: AppHandle, url: String) -> Result<TabInfo, String> {
     let tab = create_tab(app.clone(), &url)?;
     Ok(tab)
@@ -634,6 +673,9 @@ fn hibernate_tab(app: &AppHandle, id: &str, idle_window: std::time::Duration) ->
     };
     // Snapshotting runs on the WebView event loop and may take up to two
     // seconds. Recheck activation/idle state before destroying the native view.
+    let Ok(_transition) = reserve_tab_transition(id) else {
+        return false;
+    };
     if !still_idle() {
         return false;
     }
@@ -641,6 +683,7 @@ fn hibernate_tab(app: &AppHandle, id: &str, idle_window: std::time::Duration) ->
     let manager = app.state::<TabManagerState>();
     if manager.close_tab(&id.to_string()).is_ok() {
         state.child_layouts.lock().unwrap().remove(id);
+        state.layout_revisions.lock().unwrap().remove(id);
         state.last_position_at.lock().unwrap().remove(id);
         state.tab_idle_since.lock().unwrap().remove(id);
         state.hibernated_tabs.lock().unwrap().insert(id.to_string());
@@ -890,6 +933,7 @@ fn eval_in_tab_blocking(app: AppHandle, id: String, js: String) -> Result<String
 pub fn tab_activate(webview: tauri::Webview, app: AppHandle, id: String) -> Result<(), String> {
     crate::shared::native_legacy_policy::require_main(&webview, "tab_activate")?;
     crate::shared::native_legacy_policy::bound_text("tab_activate", "id", &id)?;
+    let _transition = reserve_tab_transition(&id)?;
 
     {
         let state = app.state::<AppState>();
@@ -934,6 +978,11 @@ pub fn tab_activate(webview: tauri::Webview, app: AppHandle, id: String) -> Resu
             .remove(&id);
         eprintln!("[hibernation] tab {} restored", id);
     }
+    use tauri_plugin_browser_tabs::TabManagerState;
+    let active_instance = app
+        .state::<TabManagerState>()
+        .instance(&id)
+        .map_err(|error| error.to_string())?;
     // Keep scroll metadata until the restored WebView accepts the command. If
     // the first load is still racing, a later activation can retry restoration.
     let scroll = app
@@ -944,10 +993,14 @@ pub fn tab_activate(webview: tauri::Webview, app: AppHandle, id: String) -> Resu
         .get(&id)
         .copied();
     if let Some((x, y)) = scroll {
+        let instance = active_instance.clone();
         let restore_app = app.clone();
         let restore_id = id.clone();
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(900));
+            let Ok(_transition) = reserve_tab_transition(&restore_id) else {
+                return;
+            };
             if !restore_app
                 .state::<AppState>()
                 .tabs
@@ -962,7 +1015,11 @@ pub fn tab_activate(webview: tauri::Webview, app: AppHandle, id: String) -> Resu
                 x.max(0.0),
                 y.max(0.0)
             );
-            if plugin_eval(&restore_app, &restore_id, &js).is_ok() {
+            if restore_app
+                .state::<TabManagerState>()
+                .eval_instance(&restore_id, &instance, &js)
+                .is_ok()
+            {
                 restore_app
                     .state::<AppState>()
                     .hibernated_scroll
@@ -991,6 +1048,15 @@ pub fn tab_activate(webview: tauri::Webview, app: AppHandle, id: String) -> Resu
     let app_act = app.clone();
     let active_id = id.clone();
     let _ = app.run_on_main_thread(move || {
+        let Ok(_transition) = reserve_tab_transition(&active_id) else {
+            return;
+        };
+        if !app_act
+            .state::<TabManagerState>()
+            .is_current_instance(&active_id, &active_instance)
+        {
+            return;
+        }
         let st = app_act.state::<AppState>();
         if st.shutdown_requested.load(Ordering::Acquire)
             || st.active_tab.lock().unwrap().as_deref() != Some(active_id.as_str())

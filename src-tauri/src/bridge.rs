@@ -160,9 +160,11 @@ fn recover_tab_webview(
     if !is_tab_label(id)
         || source_error.contains("TAB_LIFECYCLE_BUSY")
         || source_error.contains("TAB_LAYOUT_BUSY")
+        || source_error.contains("TAB_LAYOUT_SUPERSEDED")
     {
         return Err(source_error.to_string());
     }
+    let _transition = tab_runtime::reserve_tab_transition(id)?;
     let state = app.state::<AppState>();
     if state.hibernated_tabs.lock().unwrap().contains(id) {
         return Err(format!("{source_error}; 页签已休眠，等待激活时重建"));
@@ -265,6 +267,9 @@ pub struct AppState {
     pub tab_counter: Arc<Mutex<u32>>,
     /// 子窗口布局：id -> 内容区 CSS 矩形 (x, y, w, h)，供主窗 move/resize 重定位
     pub child_layouts: Mutex<HashMap<String, (f64, f64, f64, f64)>>,
+    /// Per-tab desired layout generation. A late native position cannot
+    /// publish over a newer hide, even if both rectangles are equal (ABA).
+    pub layout_revisions: Mutex<HashMap<String, u64>>,
     /// 上次定位：id -> (Instant, x, y, w, h)。去重防抖只在"rect 相同且 <50ms"时丢弃，
     /// rect 不同的新定位必须应用（否则旧 rect 先到时，50ms 窗口内的新 rect 被静默吞掉，
     /// 子 webview 永远停在旧位置——AI 模式输入框被宫格盖住就是这个 bug）
@@ -449,9 +454,14 @@ mod normalize_url_tests {
 }
 
 fn close_tab(app: &AppHandle, id: &str) -> Result<(), String> {
+    let _transition = tab_runtime::reserve_tab_transition(id)?;
     let state = app.state::<AppState>();
     // 销毁对应子 webview（插件内部走 dispatcher，跨线程安全）
-    let close_result = {
+    let close_result = if state.hibernated_tabs.lock().unwrap().contains(id) {
+        // Hibernation already released the native instance. The transition
+        // guard prevents activation from recreating it during this cleanup.
+        Ok(())
+    } else {
         use tauri_plugin_browser_tabs::TabManagerState;
         let manager = app.state::<TabManagerState>();
         manager
@@ -467,6 +477,7 @@ fn close_tab(app: &AppHandle, id: &str) -> Result<(), String> {
         .unwrap()
         .remove(id);
     state.last_position_at.lock().unwrap().remove(id);
+    state.layout_revisions.lock().unwrap().remove(id);
     state.tab_idle_since.lock().unwrap().remove(id);
     state.hibernated_tabs.lock().unwrap().remove(id);
     state.hibernated_scroll.lock().unwrap().remove(id);
@@ -559,6 +570,11 @@ pub fn register_shutdown_tasks(app: &AppHandle) -> Result<(), String> {
                     .unwrap()
                     .retain(|id, _| retained.contains(id));
                 state
+                    .layout_revisions
+                    .lock()
+                    .unwrap()
+                    .retain(|id, _| retained.contains(id));
+                state
                     .last_position_at
                     .lock()
                     .unwrap()
@@ -586,6 +602,7 @@ pub fn register_shutdown_tasks(app: &AppHandle) -> Result<(), String> {
                 return Err(format!("tab close errors: {}", errors.join("; ")));
             }
             state.child_layouts.lock().unwrap().clear();
+            state.layout_revisions.lock().unwrap().clear();
             state.last_position_at.lock().unwrap().clear();
             state.tab_idle_since.lock().unwrap().clear();
             state.hibernated_tabs.lock().unwrap().clear();
