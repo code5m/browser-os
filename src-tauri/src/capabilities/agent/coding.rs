@@ -969,10 +969,39 @@ fn apply_journal_path(storage: &Path, id: &str) -> Result<PathBuf, String> {
         .join(id)
         .join("apply-transaction.json"))
 }
+fn artifact_parts(path: &Path) -> Result<(&Path, &str, &str), String> {
+    let directory = path.parent().ok_or("AGENT_BACKUP_PATH_INVALID")?;
+    let session = directory.file_name().and_then(|s| s.to_str()).ok_or("AGENT_BACKUP_PATH_INVALID")?;
+    let base = directory.parent().ok_or("AGENT_BACKUP_PATH_INVALID")?;
+    if base.file_name().and_then(|s| s.to_str()) != Some("coding-backups") {
+        return Err("AGENT_BACKUP_PATH_INVALID".into());
+    }
+    let storage = base.parent().ok_or("AGENT_BACKUP_PATH_INVALID")?;
+    let name = path.file_name().and_then(|s| s.to_str()).ok_or("AGENT_BACKUP_PATH_INVALID")?;
+    Ok((storage, session, name))
+}
+
+fn write_coding_artifact(path: &Path, bytes: &[u8], limit: usize) -> Result<(), String> {
+    let (storage, session, name) = artifact_parts(path)?;
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    { coding_checkpoint::write_artifact(storage, session, name, bytes, limit) }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    { let _ = (storage, session, name, bytes, limit); Err("AGENT_PRIVATE_STORAGE_UNAVAILABLE".into()) }
+}
+
+fn read_coding_artifact(path: &Path, limit: usize) -> Result<Vec<u8>, String> {
+    let (storage, session, name) = artifact_parts(path)?;
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    { coding_checkpoint::read_artifact(storage, session, name, limit) }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    { let _ = (storage, session, name, limit); Err("AGENT_PRIVATE_STORAGE_UNAVAILABLE".into()) }
+}
+
 fn persist_journal(path: &Path, journal: &ApplyJournal) -> Result<(), String> {
-    atomic_write(
+    write_coding_artifact(
         path,
         &serde_json::to_vec(journal).map_err(|_| "AGENT_BACKUP_FAILED")?,
+        MAX_SESSION,
     )
 }
 fn snapshot(
@@ -1044,7 +1073,7 @@ fn backup_bytes(
             {
                 return Err("AGENT_RECOVERY_BACKUP_INVALID".into());
             }
-            let bytes = read_recovery_file(backup, MAX_FILE, "AGENT_RECOVERY_BACKUP_MISSING")?;
+            let bytes = read_coding_artifact(backup, MAX_FILE)?;
             if hash(&bytes) != *expected {
                 return Err("AGENT_RECOVERY_BACKUP_INVALID".into());
             }
@@ -1150,14 +1179,10 @@ fn recover_pending_apply(root: &Path, storage: &Path, session: &mut Session) -> 
         Ok(meta)
             if meta.is_file()
                 && !meta.file_type().is_symlink()
-                && meta.len() <= MAX_SESSION as u64 => {}
+                && meta.len() <= MAX_SESSION as u64 + 33 => {}
         _ => return Err("AGENT_RECOVERY_JOURNAL_INVALID".into()),
     }
-    let mut journal: ApplyJournal = serde_json::from_slice(&read_recovery_file(
-        &path,
-        MAX_SESSION,
-        "AGENT_RECOVERY_JOURNAL_INVALID",
-    )?)
+    let mut journal: ApplyJournal = serde_json::from_slice(&read_coding_artifact(&path, MAX_SESSION)?)
     .map_err(|_| "AGENT_RECOVERY_JOURNAL_INVALID")?;
     if journal.session_id != session.session_id || journal.entries.len() > 32 {
         return Err("AGENT_RECOVERY_JOURNAL_INVALID".into());
@@ -1332,7 +1357,7 @@ fn apply_changes_with_write_hook(
                 .join(&session.session_id)
                 .join(uuid::Uuid::new_v4().to_string());
             // Back up the SAME bounded snapshot whose hash was accepted.
-            atomic_write(&path, &original.bytes)?;
+            write_coding_artifact(&path, &original.bytes, MAX_FILE)?;
             Some(path)
         } else {
             None
@@ -1365,9 +1390,10 @@ fn apply_changes_with_write_hook(
             })
         })
         .collect();
-    atomic_write(
+    write_coding_artifact(
         &journal_path.with_file_name("manifest.json"),
         &serde_json::to_vec(&manifest).map_err(|_| "AGENT_BACKUP_FAILED")?,
+        MAX_SESSION,
     )?;
     session.status = "apply_prepared".into();
     session.apply_operation_id = Some(operation_id);
@@ -1646,7 +1672,7 @@ pub fn execute(
     if supplied_id.is_none() {
         session.session_id = session_id;
     }
-    if ["chat", "propose", "discard", "apply", "claim_operation"].contains(&action)
+    if ["chat", "propose", "discard", "apply"].contains(&action)
         && session.operations.iter().any(|o| matches!(o.status.as_str(), "executing" | "unknown"))
     { return Err("AGENT_APPROVAL_REQUIRED".into()); }
     match action {
@@ -1655,6 +1681,9 @@ pub fn execute(
             let id = request["operation_id"]
                 .as_str()
                 .ok_or("AGENT_OPERATION_REQUIRED")?;
+            if session.operations.iter().any(|o| o.id != id && matches!(o.status.as_str(), "executing" | "unknown")) {
+                return Err("AGENT_APPROVAL_REQUIRED".into());
+            }
             let operation = session
                 .operations
                 .iter_mut()
@@ -2682,7 +2711,7 @@ mod tests {
             .join("coding-backups")
             .join(&id)
             .join(uuid::Uuid::new_v4().to_string());
-        atomic_write(&backup, &original.bytes).unwrap();
+        write_coding_artifact(&backup, &original.bytes, MAX_FILE).unwrap();
         let operation_id = uuid::Uuid::new_v4().to_string();
         session.status = "apply_prepared".into();
         session.apply_operation_id = Some(operation_id.clone());
@@ -2766,7 +2795,7 @@ mod tests {
         let f = Fixture::new();
         let (id, journal_path) = interrupted_apply(&f);
         let mut journal: ApplyJournal =
-            serde_json::from_slice(&fs::read(&journal_path).unwrap()).unwrap();
+            serde_json::from_slice(&read_coding_artifact(&journal_path, MAX_SESSION).unwrap()).unwrap();
         journal.entries.push(ApplyBackup {
             path: "not-attempted.txt".into(),
             before_hash: None,
@@ -2791,14 +2820,14 @@ mod tests {
     fn legacy_journal_without_receipts_is_retained_without_rewriting_files() {
         let f = Fixture::new();
         let (id, journal_path) = interrupted_apply(&f);
-        let mut legacy: Value = serde_json::from_slice(&fs::read(&journal_path).unwrap()).unwrap();
+        let mut legacy: Value = serde_json::from_slice(&read_coding_artifact(&journal_path, MAX_SESSION).unwrap()).unwrap();
         legacy.as_object_mut().unwrap().remove("operation_id");
         for entry in legacy["entries"].as_array_mut().unwrap() {
             for key in ["before_identity", "written_identity", "restored_identity"] {
                 entry.as_object_mut().unwrap().remove(key);
             }
         }
-        atomic_write(&journal_path, &serde_json::to_vec(&legacy).unwrap()).unwrap();
+        write_coding_artifact(&journal_path, &serde_json::to_vec(&legacy).unwrap(), MAX_SESSION).unwrap();
         assert_eq!(
             run(&f, json!({"action":"session","session_id":id})).unwrap_err(),
             "AGENT_RECOVERY_PROOF_REQUIRED"
@@ -2857,10 +2886,10 @@ mod tests {
         )
         .unwrap()
         .filter_map(Result::ok)
-        .find(|entry| entry.file_name() != "manifest.json")
+        .find(|entry| entry.file_name().to_str().is_some_and(|name| uuid::Uuid::parse_str(name).is_ok()))
         .unwrap()
         .path();
-        assert_eq!(fs::read_to_string(backup).unwrap(), "old");
+        assert_eq!(read_coding_artifact(&backup, MAX_FILE).unwrap(), b"old");
     }
     #[test]
     fn missing_path_is_distinct_from_invalid_parent() {

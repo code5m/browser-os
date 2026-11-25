@@ -12,7 +12,7 @@ use std::{path::{Path, PathBuf}, time::Duration};
 const PREFIX: &[u8] = b"BOSC1";
 const OVERHEAD: usize = 5 + 12 + 16;
 #[cfg(not(test))]
-const KEY_ID: &str = "browseros:agent:coding-checkpoint:aes256:v1";
+const LEGACY_KEY_ID: &str = "browseros:agent:coding-checkpoint:aes256:v1";
 
 fn private_directory(storage: &Path, name: &str) -> Result<PathBuf, String> {
     let path = storage.join(name);
@@ -51,19 +51,41 @@ fn key(storage: &Path, create: bool) -> Result<[u8; 32], String> {
     let _owner = AuditLock::acquire_named(&directory.join("key-init.lock"), Duration::from_secs(2))
         .map_err(|_| "AGENT_CHECKPOINT_KEY_BUSY")?;
     let marker = directory.join("key-initialized");
-    let initialized = match std::fs::symlink_metadata(&marker) {
+    let marker_value = match std::fs::symlink_metadata(&marker) {
         Ok(_) => {
             let data = safe_paths::read_regular(&marker, &[directory.clone()], 16)
                 .map_err(|_| "AGENT_CHECKPOINT_KEY_MARKER_INVALID")?;
-            if data != b"BOSC1" {
+            if data != b"BOSC1" && data != b"BOSC2" {
                 return Err("AGENT_CHECKPOINT_KEY_MARKER_INVALID".into());
             }
-            true
+            Some(data)
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(_) => return Err("AGENT_CHECKPOINT_KEY_MARKER_INVALID".into()),
     };
-    let encoded = match KeyringStore::get_token_result(KEY_ID) {
+    let initialized = marker_value.is_some();
+    let identity = safe_paths::directory_identity(&directory)
+        .map_err(|_| "AGENT_CHECKPOINT_KEY_UNAVAILABLE")?;
+    let scoped_key = format!("browseros:agent:coding-checkpoint:aes256:v2:{:x}", Sha256::digest(identity.as_bytes()));
+    let key_id = if marker_value.as_deref() == Some(b"BOSC1".as_slice()) {
+        LEGACY_KEY_ID
+    } else {
+        scoped_key.as_str()
+    };
+    if !initialized {
+        // A removed marker must not select a fresh key for a sealed store.
+        for name in ["coding-sealed-records", "coding-backups"] {
+            match std::fs::read_dir(storage.join(name)) {
+                Ok(mut entries) if entries.next().is_some() => {
+                    return Err("AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED".into());
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(_) => return Err("AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED".into()),
+            }
+        }
+    }
+    let encoded = match KeyringStore::get_token_result(key_id) {
         Ok(value) => value,
         Err(keyring::Error::NoEntry) if create && !initialized => {
             // Never rotate a missing key if encrypted checkpoints already
@@ -87,7 +109,7 @@ fn key(storage: &Path, create: bool) -> Result<[u8; 32], String> {
             let mut key = [0u8; 32];
             SystemRandom::new().fill(&mut key).map_err(|_| "AGENT_CHECKPOINT_RANDOM_FAILED")?;
             let value = base64::engine::general_purpose::STANDARD.encode(key);
-            KeyringStore::save_token(KEY_ID, &value).map_err(|_| "AGENT_CHECKPOINT_KEY_UNAVAILABLE")?;
+            KeyringStore::save_token(key_id, &value).map_err(|_| "AGENT_CHECKPOINT_KEY_UNAVAILABLE")?;
             value
         }
         Err(_) => return Err("AGENT_CHECKPOINT_KEY_UNAVAILABLE".into()),
@@ -96,7 +118,7 @@ fn key(storage: &Path, create: bool) -> Result<[u8; 32], String> {
         .map_err(|_| "AGENT_CHECKPOINT_KEY_INVALID")?.try_into()
         .map_err(|_| "AGENT_CHECKPOINT_KEY_INVALID")?;
     if create && !initialized {
-        safe_paths::create_new_file(&marker, &[directory], PREFIX)
+        safe_paths::create_new_file(&marker, &[directory], b"BOSC2")
             .map_err(|_| "AGENT_CHECKPOINT_KEY_MARKER_FAILED")?;
     }
     Ok(key)
@@ -135,17 +157,40 @@ fn open(key: &[u8; 32], id: &str, bytes: &[u8]) -> Result<Vec<u8>, String> {
     Ok(plain.to_vec())
 }
 
-pub(super) fn read(storage: &Path, id: &str, limit: usize) -> Result<Vec<u8>, String> {
-    let directory = private_directory(storage, "coding-sessions")?;
-    let path = directory.join(format!("{id}.json"));
-    let bytes = safe_paths::read_regular(&path, &[directory], limit + OVERHEAD)
+// A private per-record migration marker prevents a previously sealed record
+// from being reinterpreted as an unauthenticated legacy JSON/blob. This is an
+// application-owner boundary, not protection against a hostile same-UID owner.
+fn sealed_marker(storage: &Path, scope: &str, establish: bool) -> Result<bool, String> {
+    let dir = private_directory(storage, "coding-sealed-records")?;
+    let path = dir.join(format!("{:x}.sealed", Sha256::digest(scope.as_bytes())));
+    match std::fs::symlink_metadata(&path) {
+        Ok(_) => {
+            if safe_paths::read_regular(&path, &[dir], 5)
+                .map_err(|_| "AGENT_CHECKPOINT_MARKER_INVALID")? != PREFIX {
+                return Err("AGENT_CHECKPOINT_MARKER_INVALID".into());
+            }
+            Ok(true)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if establish {
+                safe_paths::create_new_file(&path, &[dir], PREFIX)
+                    .map_err(|_| "AGENT_CHECKPOINT_MARKER_FAILED")?;
+            }
+            Ok(establish)
+        }
+        Err(_) => Err("AGENT_CHECKPOINT_MARKER_INVALID".into()),
+    }
+}
+
+fn read_record(storage: &Path, path: &Path, directory: PathBuf, scope: &str, limit: usize) -> Result<Vec<u8>, String> {
+    let bytes = safe_paths::read_regular(path, &[directory], limit + OVERHEAD)
         .map_err(|_| "AGENT_SESSION_READ_FAILED")?;
     let plaintext = if bytes.starts_with(PREFIX) {
-        open(&key(storage, false)?, id, &bytes)?
+        open(&key(storage, false)?, scope, &bytes)?
     } else {
-        // Legacy sessions are read only through the pinned, private owner.
-        // Successful subsequent save migrates this exact session; never
-        // interpret a failed authenticated ciphertext as legacy JSON.
+        if sealed_marker(storage, scope, false)? {
+            return Err("AGENT_CHECKPOINT_PLAINTEXT_DOWNGRADE".into());
+        }
         bytes
     };
     if plaintext.len() > limit {
@@ -154,23 +199,62 @@ pub(super) fn read(storage: &Path, id: &str, limit: usize) -> Result<Vec<u8>, St
     Ok(plaintext)
 }
 
-pub(super) fn write(storage: &Path, id: &str, plaintext: &[u8], limit: usize) -> Result<(), String> {
+fn write_record(storage: &Path, path: &Path, directory: PathBuf, scope: &str, plaintext: &[u8], limit: usize) -> Result<(), String> {
     if plaintext.len() > limit {
         return Err("AGENT_SESSION_LIMIT".into());
     }
-    let directory = private_directory(storage, "coding-sessions")?;
-    let path = directory.join(format!("{id}.json"));
     let roots = [directory];
-    let expected = safe_paths::read_versioned(&path, &roots, limit + OVERHEAD)?;
+    let expected = safe_paths::read_versioned(path, &roots, limit + OVERHEAD)?;
     let secret = key(storage, true)?;
     if let Some(previous) = &expected {
         if previous.bytes.starts_with(PREFIX) {
-            // Refuse to overwrite an unreadable or swapped encrypted record.
-            open(&secret, id, &previous.bytes)?;
+            open(&secret, scope, &previous.bytes)?;
+        } else if sealed_marker(storage, scope, false)? {
+            return Err("AGENT_CHECKPOINT_PLAINTEXT_DOWNGRADE".into());
         }
     }
-    let encrypted = seal(&secret, id, plaintext)?;
-    safe_paths::write_versioned(&path, &roots, expected.as_ref(), &encrypted, limit + OVERHEAD, |_| Ok(()))
+    let encrypted = seal(&secret, scope, plaintext)?;
+    // Crash between marking and publication preserves bytes but fails closed.
+    // Never silently fall back to legacy after migration began.
+    sealed_marker(storage, scope, true)?;
+    safe_paths::write_versioned(path, &roots, expected.as_ref(), &encrypted, limit + OVERHEAD, |_| Ok(()))
+}
+
+pub(super) fn read(storage: &Path, id: &str, limit: usize) -> Result<Vec<u8>, String> {
+    let directory = private_directory(storage, "coding-sessions")?;
+    let path = directory.join(format!("{id}.json"));
+    read_record(storage, &path, directory, id, limit)
+}
+
+pub(super) fn write(storage: &Path, id: &str, plaintext: &[u8], limit: usize) -> Result<(), String> {
+    let directory = private_directory(storage, "coding-sessions")?;
+    let path = directory.join(format!("{id}.json"));
+    write_record(storage, &path, directory, id, plaintext, limit)
+}
+
+fn artifact(storage: &Path, session: &str, name: &str) -> Result<(PathBuf, String), String> {
+    let parsed = uuid::Uuid::parse_str(session).map_err(|_| "AGENT_SESSION_INVALID")?;
+    if parsed.to_string() != session || (!matches!(name, "apply-transaction.json" | "manifest.json")
+        && uuid::Uuid::parse_str(name).map(|id| id.to_string() != name).unwrap_or(true)) {
+        return Err("AGENT_BACKUP_PATH_INVALID".into());
+    }
+    let base = private_directory(storage, "coding-backups")?;
+    let directory = private_directory(&base, session)?;
+    Ok((directory, format!("backup:{session}:{name}")))
+}
+
+pub(super) fn read_artifact(storage: &Path, session: &str, name: &str, limit: usize) -> Result<Vec<u8>, String> {
+    let (directory, scope) = artifact(storage, session, name)?;
+    let path = directory.join(name);
+    read_record(storage, &path, directory, &scope, limit)
+}
+
+pub(super) fn write_artifact(storage: &Path, session: &str, name: &str, bytes: &[u8], limit: usize) -> Result<(), String> {
+    // Initialize the key before creating a new backup directory.
+    key(storage, true)?;
+    let (directory, scope) = artifact(storage, session, name)?;
+    let path = directory.join(name);
+    write_record(storage, &path, directory, &scope, bytes, limit)
 }
 
 #[cfg(test)]
@@ -188,6 +272,21 @@ mod tests {
         let last = corrupt.len() - 1;
         corrupt[last] ^= 1;
         assert!(open(&key, "session-a", &corrupt).is_err());
+    }
+
+    #[test]
+    fn sealed_artifacts_cannot_downgrade_or_move_between_records() {
+        let storage = std::env::temp_dir().join(format!("browseros-agent-artifact-{}", uuid::Uuid::new_v4()));
+        let id = uuid::Uuid::new_v4().to_string();
+        write_artifact(&storage, &id, "manifest.json", b"private", 128).unwrap();
+        let dir = storage.join("coding-backups").join(&id);
+        let sealed = std::fs::read(dir.join("manifest.json")).unwrap();
+        assert_eq!(read_artifact(&storage, &id, "manifest.json", 128).unwrap(), b"private");
+        std::fs::write(dir.join("apply-transaction.json"), &sealed).unwrap();
+        assert!(read_artifact(&storage, &id, "apply-transaction.json", 128).is_err());
+        std::fs::write(dir.join("manifest.json"), b"legacy").unwrap();
+        assert_eq!(read_artifact(&storage, &id, "manifest.json", 128).unwrap_err(), "AGENT_CHECKPOINT_PLAINTEXT_DOWNGRADE");
+        std::fs::remove_dir_all(storage).unwrap();
     }
 
     #[test]
