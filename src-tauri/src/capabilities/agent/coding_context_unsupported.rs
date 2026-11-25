@@ -18,3 +18,8 @@ pub fn execute(_root: &Path, _storage: &Path, request: Value) -> Result<Value, S
         std::env::consts::OS
     ))
 }
+
+
+pub(crate) fn execute_cancelable(root: &Path, storage: &Path, request: Value, _cancellation: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Result<Value, String> {
+    execute(root, storage, request)
+}

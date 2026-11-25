@@ -8,7 +8,7 @@ use std::fs;
 use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex, atomic::{AtomicBool, Ordering}};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -223,6 +223,7 @@ struct Session {
     reader_fault: Arc<Mutex<Option<String>>>,
     deadline: Instant,
     secrets: Vec<String>,
+    cancellation: Arc<AtomicBool>,
 }
 impl Drop for Session {
     fn drop(&mut self) {
@@ -446,6 +447,7 @@ impl Session {
             reader_fault,
             deadline: Instant::now() + Duration::from_secs(seconds.clamp(1, 60)),
             secrets,
+            cancellation: Arc::new(AtomicBool::new(false)),
         })
     }
     fn send(&mut self, value: Value) -> Result<(), String> {
@@ -462,6 +464,7 @@ impl Session {
         // Observe the same end-to-end deadline when the writer is busy.
         let mut queued = bytes;
         loop {
+            if self.cancellation.load(Ordering::Acquire) { return Err("MCP_CANCEL_REQUESTED".into()); }
             match self.writer.try_send(queued) {
                 Ok(()) => break,
                 Err(mpsc::TrySendError::Disconnected(_)) => {
@@ -477,14 +480,15 @@ impl Session {
                 }
             }
         }
-        let remaining = self.deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            return Err("MCP_WRITE_TIMEOUT".into());
-        }
-        match self.write_result.recv_timeout(remaining) {
-            Ok(result) => result,
-            Err(mpsc::RecvTimeoutError::Timeout) => Err("MCP_WRITE_TIMEOUT".into()),
-            Err(mpsc::RecvTimeoutError::Disconnected) => Err("MCP_WRITE_FAILED".into()),
+        loop {
+            if self.cancellation.load(Ordering::Acquire) { return Err("MCP_CANCEL_REQUESTED".into()); }
+            let remaining = self.deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() { return Err("MCP_WRITE_TIMEOUT".into()); }
+            match self.write_result.recv_timeout(remaining.min(Duration::from_millis(100))) {
+                Ok(result) => return result,
+                Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(mpsc::RecvTimeoutError::Disconnected) => return Err("MCP_WRITE_FAILED".into()),
+            }
         }
     }
     fn recv_frame(&self) -> Result<Value, String> {
@@ -497,19 +501,19 @@ impl Session {
         if let Some(error) = fault() {
             return Err(error);
         }
-        let remaining = self.deadline.saturating_duration_since(Instant::now());
-        match self.reader.recv_timeout(remaining) {
-            Ok(value) => {
-                if let Some(error) = fault() {
-                    return Err(error);
+        loop {
+            if self.cancellation.load(Ordering::Acquire) { return Err("MCP_CANCEL_REQUESTED".into()); }
+            let remaining = self.deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() { return Err(fault().unwrap_or_else(|| "MCP_TIMEOUT_OR_CLOSED".into())); }
+            match self.reader.recv_timeout(remaining.min(Duration::from_millis(100))) {
+                Ok(value) => {
+                    if let Some(error) = fault() { return Err(error); }
+                    return value;
                 }
-                value
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                Err(fault().unwrap_or_else(|| "MCP_TIMEOUT_OR_CLOSED".into()))
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                Err(fault().unwrap_or_else(|| "MCP_CLOSED".into()))
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    if let Some(error) = fault() { return Err(error); }
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => return Err(fault().unwrap_or_else(|| "MCP_CLOSED".into())),
             }
         }
     }
@@ -534,6 +538,9 @@ impl Session {
 }
 
 pub fn execute(root: &Path, storage: &Path, request: Value) -> Result<Value, String> {
+    execute_cancelable(root, storage, request, Arc::new(AtomicBool::new(false)))
+}
+pub(crate) fn execute_cancelable(root: &Path, storage: &Path, request: Value, cancellation: Arc<AtomicBool>) -> Result<Value, String> {
     if request["action"] == "mcp_review" {
         let root = root.canonicalize().map_err(|_| "CONTEXT_ROOT_INVALID")?;
         let config = resolved_config(&root, storage, &request)?;
@@ -554,12 +561,15 @@ pub fn execute(root: &Path, storage: &Path, request: Value) -> Result<Value, Str
         storage,
         prepared.config["env_refs"].as_object(),
     )?;
+    if cancellation.load(Ordering::Acquire) { return Err("MCP_CANCEL_REQUESTED".into()); }
     let mut session = Session::start_with_credentials(
         &root,
         &prepared.config,
         request["timeout_seconds"].as_u64().unwrap_or(20),
         credentials,
     )?;
+    session.cancellation = cancellation;
+    let outcome = (|| -> Result<Value, String> {
     let initialized = session.rpc(1, "initialize", json!({"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"BrowserOS","version":"0.1.0"}}));
     #[cfg(test)]
     if let Err(ref error) = initialized {
@@ -590,6 +600,17 @@ pub fn execute(root: &Path, storage: &Path, request: Value) -> Result<Value, Str
     };
     scrub(&mut result, &session.secrets);
     Ok(json!({"result":result,"untrusted":true,"sandbox":"appcontainer-no-network"}))
+    })();
+    // TerminateJobObject is a request, not a completion receipt. Confirm
+    // the root process, stderr reader and empty owned Job before reporting
+    // success. On uncertainty SandboxProcess::drop retains cleanup ownership.
+    session.process.terminate().map_err(|_| "MCP_TERMINATION_UNKNOWN")?;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !session.process.cleanup_complete() {
+        if Instant::now() >= deadline { return Err("MCP_TERMINATION_UNKNOWN".into()); }
+        thread::sleep(Duration::from_millis(20));
+    }
+    outcome
 }
 
 #[cfg(test)]

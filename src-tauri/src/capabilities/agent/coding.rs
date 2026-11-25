@@ -1682,7 +1682,7 @@ pub fn execute(
 pub(crate) fn execute_with_adapter(
     root: &Path, storage: &Path, request: Value,
     mut provider: impl FnMut(&[Value], &[Value]) -> Result<Value, String>,
-    mut adapter: impl FnMut(&str, &Value, &Value, &AtomicBool) -> Result<Value, String>,
+    mut adapter: impl FnMut(&str, &Value, &Value, &Arc<AtomicBool>) -> Result<Value, String>,
 ) -> Result<Value, String> {
     #[cfg(all(not(unix), not(windows)))]
     {
@@ -1790,8 +1790,16 @@ pub(crate) fn execute_with_adapter(
                     operation.result = Some(if text.len() > 20_000 || secret(&text) { "AGENT_OPERATION_OUTPUT_WITHHELD".into() } else { text });
                     operation.status = "result_ready".into();
                 }
-                _ => {
-                    operation.result = Some("AGENT_EXTERNAL_OUTCOME_UNKNOWN".into());
+                outcome => {
+                    // Store diagnostic codes or a bounded native receipt, but
+                    // never send an uncertain external result to the model.
+                    let detail = match outcome {
+                        Ok(value) => value.to_string(),
+                        Err(error) => error,
+                    };
+                    operation.result = Some(if detail.len() > 20_000 || secret(&detail) {
+                        "AGENT_EXTERNAL_OUTCOME_UNKNOWN".into()
+                    } else { detail });
                     operation.status = "unknown".into();
                 }
             }
@@ -1804,7 +1812,7 @@ pub(crate) fn execute_with_adapter(
             let id = request["operation_id"]
                 .as_str()
                 .ok_or("AGENT_OPERATION_REQUIRED")?;
-            if session.operations.iter().any(|o| o.id != id && matches!(o.status.as_str(), "executing" | "unknown")) {
+            if session.operations.iter().any(|o| o.id != id && matches!(o.status.as_str(), "executing" | "unknown" | "result_ready")) {
                 return Err("AGENT_APPROVAL_REQUIRED".into());
             }
             let operation = session

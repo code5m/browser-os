@@ -8,7 +8,7 @@ use std::{
     os::unix::process::CommandExt,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    sync::mpsc,
+    sync::{mpsc, Arc, atomic::{AtomicBool, Ordering}},
     thread,
     time::{Duration, Instant},
 };
@@ -259,18 +259,34 @@ struct Session {
     rx: mpsc::Receiver<Result<Value, String>>,
     deadline: Instant,
     secrets: Vec<String>,
+    cancellation: Arc<AtomicBool>,
+    reaped: bool,
 }
 impl Drop for Session {
     fn drop(&mut self) {
-        // Every session owns a fresh process group, including server-spawned descendants.
-        unsafe {
-            libc::kill(-(self.child.id() as i32), libc::SIGKILL);
-        }
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        if !self.reaped { let _ = self.terminate_confirmed(); }
     }
 }
 impl Session {
+    fn terminate_confirmed(&mut self) -> Result<(), String> {
+        if self.reaped { return Err("MCP_TERMINATION_ALREADY_REAPED".into()); }
+        let pgid = self.child.id() as i32;
+        // Signal the owned group before reaping its leader. Never signal the
+        // numeric id again after reaping (it could have been reused).
+        unsafe { libc::kill(-pgid, libc::SIGKILL); }
+        let _ = self.child.kill();
+        self.child.wait().map_err(|_| "MCP_TERMINATION_UNKNOWN")?;
+        self.reaped = true;
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if unsafe { libc::kill(-pgid, 0) } != 0
+                && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+                return Ok(());
+            }
+            if Instant::now() >= deadline { return Err("MCP_TERMINATION_UNKNOWN".into()); }
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
     #[cfg(test)]
     fn start(root: &Path, config: &Value, seconds: u64) -> Result<Self, String> {
         Self::start_with_credentials(root, config, seconds, std::collections::BTreeMap::new())
@@ -403,6 +419,8 @@ impl Session {
             rx,
             deadline: Instant::now() + Duration::from_secs(seconds.clamp(1, 60)),
             secrets,
+            cancellation: Arc::new(AtomicBool::new(false)),
+            reaped: false,
         })
     }
     fn send(&mut self, value: Value) -> Result<(), String> {
@@ -413,6 +431,7 @@ impl Session {
         bytes.push(b'\n');
         let mut offset = 0;
         while offset < bytes.len() {
+            if self.cancellation.load(Ordering::Acquire) { return Err("MCP_CANCEL_REQUESTED".into()); }
             let remaining = self.deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 return Err("MCP_WRITE_TIMEOUT".into());
@@ -422,7 +441,7 @@ impl Session {
                 events: libc::POLLOUT,
                 revents: 0,
             };
-            let ready = unsafe { libc::poll(&mut fd, 1, remaining.as_millis().min(1000) as i32) };
+            let ready = unsafe { libc::poll(&mut fd, 1, remaining.as_millis().min(100) as i32) };
             if ready < 0 {
                 return Err("MCP_PIPE_FAILED".into());
             }
@@ -441,11 +460,14 @@ impl Session {
     fn rpc(&mut self, id: u64, method: &str, params: Value) -> Result<Value, String> {
         self.send(json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}))?;
         loop {
+            if self.cancellation.load(Ordering::Acquire) { return Err("MCP_CANCEL_REQUESTED".into()); }
             let remaining = self.deadline.saturating_duration_since(Instant::now());
-            let value = self
-                .rx
-                .recv_timeout(remaining)
-                .map_err(|_| "MCP_TIMEOUT_OR_CLOSED")??;
+            if remaining.is_zero() { return Err("MCP_TIMEOUT_OR_CLOSED".into()); }
+            let value = match self.rx.recv_timeout(remaining.min(Duration::from_millis(100))) {
+                Ok(value) => value?,
+                Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(mpsc::RecvTimeoutError::Disconnected) => return Err("MCP_TIMEOUT_OR_CLOSED".into()),
+            };
             if value["id"] == json!(id) {
                 if value.get("error").is_some() {
                     return Err("MCP_REMOTE_ERROR".into());
@@ -463,6 +485,9 @@ impl Session {
 }
 /// Requests originate in the trusted workbench; MCP execution requires a fresh UI approval.
 pub fn execute(root: &Path, storage: &Path, request: Value) -> Result<Value, String> {
+    execute_cancelable(root, storage, request, Arc::new(AtomicBool::new(false)))
+}
+pub(crate) fn execute_cancelable(root: &Path, storage: &Path, request: Value, cancellation: Arc<AtomicBool>) -> Result<Value, String> {
     let root = root.canonicalize().map_err(|_| "CONTEXT_ROOT_INVALID")?;
     match request["action"].as_str().unwrap_or("") {
         "skills_list" => Ok(
@@ -525,12 +550,15 @@ pub fn execute(root: &Path, storage: &Path, request: Value) -> Result<Value, Str
                 storage,
                 prepared.config["env_refs"].as_object(),
             )?;
+            if cancellation.load(Ordering::Acquire) { return Err("MCP_CANCEL_REQUESTED".into()); }
             let mut session = Session::start_with_credentials(
                 &root,
                 &prepared.config,
                 request["timeout_seconds"].as_u64().unwrap_or(20),
                 credentials,
             )?;
+            session.cancellation = cancellation;
+            let outcome = (|| -> Result<Value, String> {
             session.rpc(1,"initialize",json!({"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"BrowserOS","version":"0.1.0"}}))?;
             session.send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}))?;
             let mut result = if action == "mcp_tools" {
@@ -545,6 +573,9 @@ pub fn execute(root: &Path, storage: &Path, request: Value) -> Result<Value, Str
             // Server outputs are untrusted context and must never become permission instructions.
             scrub(&mut result, &session.secrets);
             Ok(json!({"result":result,"untrusted":true}))
+            })();
+            session.terminate_confirmed()?;
+            outcome
         }
         _ => Err("CONTEXT_ACTION_UNKNOWN".into()),
     }

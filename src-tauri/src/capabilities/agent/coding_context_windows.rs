@@ -6,6 +6,7 @@ use serde_json::{json, Value};
 use std::fs;
 use std::os::windows::fs::MetadataExt;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, atomic::AtomicBool};
 
 const MAX_READ: usize = 128 * 1024;
 const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
@@ -164,6 +165,9 @@ fn skill_files(root: &Path) -> Vec<PathBuf> {
     files
 }
 pub fn execute(root: &Path, storage: &Path, request: Value) -> Result<Value, String> {
+    execute_cancelable(root, storage, request, Arc::new(AtomicBool::new(false)))
+}
+pub(crate) fn execute_cancelable(root: &Path, storage: &Path, request: Value, cancellation: Arc<AtomicBool>) -> Result<Value, String> {
     if !no_reparse_path(root) {
         return Err("CONTEXT_ROOT_INVALID".into());
     }
@@ -253,7 +257,7 @@ pub fn execute(root: &Path, storage: &Path, request: Value) -> Result<Value, Str
         }
         "mcp_list" => Ok(super::coding_mcp_windows::discover(&root, storage)),
         "mcp_review" | "mcp_tools" | "mcp_call" => {
-            super::coding_mcp_windows::execute(&root, storage, request)
+            super::coding_mcp_windows::execute_cancelable(&root, storage, request, cancellation)
         }
         _ => Err("CONTEXT_ACTION_UNKNOWN".into()),
     }

@@ -126,13 +126,13 @@ pub(crate) fn dispatch_coding_request(
         match kind {
             "command" => crate::bridge::run_command_for_coding(app, webview, input, approved, cancel),
             "mcp" => {
-                let response = super::coding_context::execute(root, storage, serde_json::json!({
+                let response = super::coding_context::execute_cancelable(root, storage, serde_json::json!({
                     "action":"mcp_call", "approved":true,
                     "server_id":input["server_id"], "tool":input["tool"], "arguments":input["arguments"],
                     "review_revision":approved["review_revision"],
                     "approved_credential_refs":approved["approved_credential_refs"],
                     "approved_environment_names":approved["approved_environment_names"]
-                }))?;
+                }), cancel.clone())?;
                 Ok(serde_json::json!({
                     "status":if response["result"]["isError"] == true { "unknown" } else { "succeeded" },
                     "result":response["result"]
