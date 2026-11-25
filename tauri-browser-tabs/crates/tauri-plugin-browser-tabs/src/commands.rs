@@ -241,6 +241,7 @@ fn offscreen_rect(rect: LogicalRect) -> LogicalRect {
 
 struct ManagedTab {
     webview: Webview<Wry>,
+    document_revision: Arc<std::sync::atomic::AtomicU64>,
     #[cfg(target_os = "linux")]
     layout: RwLock<TabLayout>,
     #[cfg(not(target_os = "linux"))]
@@ -318,12 +319,73 @@ impl Default for CaptureCancellation {
     }
 }
 
-#[cfg(any(target_os = "windows", test))]
+#[cfg(any(target_os = "linux", target_os = "windows", test))]
 fn complete_capture<T>(pending: &parking_lot::Mutex<Option<impl FnOnce(T)>>, result: T) {
     let callback = pending.lock().take();
     if let Some(callback) = callback {
         callback(result);
     }
+}
+
+const MAX_CAPTURE_EDGE: f64 = 16_384.0;
+const MAX_CAPTURE_PIXELS: f64 = 16_000_000.0;
+
+#[cfg(any(target_os = "linux", target_os = "windows", test))]
+fn checked_capture_pixels(width: f64, height: f64, scale: f64) -> std::result::Result<(), String> {
+    if !width.is_finite() || !height.is_finite() || !scale.is_finite()
+        || width <= 0.0 || height <= 0.0 || scale <= 0.0
+    {
+        return Err("CAPTURE_METRICS_INVALID".into());
+    }
+    let width = (width * scale).ceil();
+    let height = (height * scale).ceil();
+    if width > MAX_CAPTURE_EDGE || height > MAX_CAPTURE_EDGE
+        || width * height > MAX_CAPTURE_PIXELS
+    {
+        return Err("CAPTURE_DIMENSION_LIMIT".into());
+    }
+    Ok(())
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn validate_linux_capture_metrics(json: &str, native_scale: f64) -> std::result::Result<(), String> {
+    if json.len() > 1024 || !native_scale.is_finite() || native_scale <= 0.0 {
+        return Err("CAPTURE_METRICS_INVALID".into());
+    }
+    let value: serde_json::Value =
+        serde_json::from_str(json).map_err(|_| "CAPTURE_METRICS_INVALID".to_string())?;
+    let number = |key: &str| value.get(key).and_then(|v| v.as_f64())
+        .ok_or_else(|| "CAPTURE_METRICS_INVALID".to_string());
+    let scale = number("scale")?;
+    if !scale.is_finite() || scale <= 0.0 {
+        return Err("CAPTURE_METRICS_INVALID".into());
+    }
+    // Use the larger of the native and isolated-world scale estimates.
+    checked_capture_pixels(number("width")?, number("height")?, scale.max(native_scale).max(1.0))
+}
+
+#[cfg(target_os = "linux")]
+fn copy_capture_pixels(surface: gtk::cairo::Surface)
+    -> std::result::Result<(Vec<u8>, gtk::cairo::Format, i32, i32, i32), String>
+{
+    let mut surface = gtk::cairo::ImageSurface::try_from(surface)
+        .map_err(|_| "CAPTURE_SURFACE_INVALID".to_string())?;
+    let (width, height, stride, format) =
+        (surface.width(), surface.height(), surface.stride(), surface.format());
+    checked_capture_pixels(f64::from(width), f64::from(height), 1.0)?;
+    if !matches!(format, gtk::cairo::Format::ARgb32 | gtk::cairo::Format::Rgb24)
+        || stride <= 0 || i64::from(stride) < i64::from(width) * 4
+    {
+        return Err("CAPTURE_SURFACE_INVALID".into());
+    }
+    let len = usize::try_from(stride).ok().and_then(|s|
+        usize::try_from(height).ok().and_then(|h| s.checked_mul(h)))
+        .filter(|n| *n <= 64 * 1024 * 1024)
+        .ok_or_else(|| "CAPTURE_DIMENSION_LIMIT".to_string())?;
+    surface.flush();
+    let data = surface.data().map_err(|_| "CAPTURE_SURFACE_DATA_UNAVAILABLE".to_string())?;
+    let bytes = data.get(..len).ok_or("CAPTURE_SURFACE_INVALID")?.to_vec();
+    Ok((bytes, format, width, height, stride))
 }
 
 /// Request an explicitly bounded CSS clip; never fall back to an unbounded
@@ -347,13 +409,10 @@ fn capture_clip_from_metrics(json: &str) -> std::result::Result<serde_json::Valu
     let y = field("y")?;
     let width = field("width")?;
     let height = field("height")?;
-    if x.abs() > 16_384.0 || y.abs() > 16_384.0
-        || width <= 0.0 || height <= 0.0
-        || width.ceil() > 16_384.0 || height.ceil() > 16_384.0
-        || width.ceil() * height.ceil() > 16_000_000.0
-    {
+    if x.abs() > MAX_CAPTURE_EDGE || y.abs() > MAX_CAPTURE_EDGE {
         return Err("CAPTURE_DIMENSION_LIMIT".into());
     }
+    checked_capture_pixels(width, height, 1.0)?;
     // CDP also reports the legacy layout coordinate space. Refuse an
     // oversize or unavailable second measurement instead of relying solely
     // on CSS dimensions. Neither metric proves the engine's total allocations.
@@ -365,9 +424,7 @@ fn capture_clip_from_metrics(json: &str) -> std::result::Result<serde_json::Valu
     };
     let legacy_width = legacy_dimension("width")?;
     let legacy_height = legacy_dimension("height")?;
-    if legacy_width.ceil() * legacy_height.ceil() > 16_000_000.0 {
-        return Err("CAPTURE_DIMENSION_LIMIT".into());
-    }
+    checked_capture_pixels(legacy_width, legacy_height, 1.0)?;
     Ok(serde_json::json!({
         "format": "png", "captureBeyondViewport": true, "fromSurface": true,
         "clip": { "x": x, "y": y, "width": width, "height": height, "scale": 1 }
@@ -406,6 +463,24 @@ mod capture_request_tests {
     }
 
     #[test]
+    fn linux_preflight_counts_physical_pixels_and_rejects_invalid_measurements() {
+        assert!(validate_linux_capture_metrics(r#"{"width":1200,"height":4000,"scale":1}"#, 1.0).is_ok());
+        assert!(validate_linux_capture_metrics(r#"{"width":1200,"height":4000,"scale":2}"#, 1.0).is_err());
+        assert!(validate_linux_capture_metrics(r#"{"width":1200,"height":4000,"scale":1}"#, 2.0).is_err());
+        assert!(validate_linux_capture_metrics(r#"{"width":0,"height":100,"scale":1}"#, 1.0).is_err());
+        assert!(validate_linux_capture_metrics("null", 1.0).is_err());
+        assert!(validate_linux_capture_metrics(r#"{"width":100,"height":100,"scale":1}"#, f64::NAN).is_err());
+    }
+
+    #[test]
+    fn exhausted_document_generation_does_not_wrap() {
+        let generation = std::sync::atomic::AtomicU64::new(u64::MAX - 1);
+        invalidate_capture_document(&generation);
+        invalidate_capture_document(&generation);
+        assert_eq!(generation.load(std::sync::atomic::Ordering::Acquire), u64::MAX);
+    }
+
+    #[test]
     fn cancellation_is_shared_and_idempotent() {
         let request = CaptureCancellation::new();
         let native = request.clone();
@@ -418,6 +493,36 @@ mod capture_request_tests {
             use webkit2gtk::gio::prelude::CancellableExt;
             assert!(native.native.is_cancelled());
         }
+    }
+}
+
+// An exhausted revision never becomes a reusable generation.
+fn invalidate_capture_document(revision: &std::sync::atomic::AtomicU64) {
+    use std::sync::atomic::Ordering;
+    let _ = revision.fetch_update(Ordering::AcqRel, Ordering::Acquire,
+        |old| old.checked_add(1));
+}
+
+/// A capture is bound to both the native object and its observed document
+/// generation. This is not a promise that the DOM cannot change in-place.
+#[derive(Clone)]
+pub struct CaptureDocument {
+    instance: TabInstance,
+    revision: u64,
+}
+
+impl CaptureDocument {
+    fn from_tab(tab: &Arc<ManagedTab>) -> Self {
+        Self {
+            instance: TabInstance(Arc::downgrade(tab)),
+            revision: tab.document_revision.load(std::sync::atomic::Ordering::Acquire),
+        }
+    }
+
+    fn observed_generation_is_current(&self) -> bool {
+        self.revision != u64::MAX && self.instance.0.upgrade().is_some_and(|tab| {
+            tab.document_revision.load(std::sync::atomic::Ordering::Acquire) == self.revision
+        })
     }
 }
 
@@ -555,6 +660,7 @@ impl TabManager {
         // On Windows, use Tauri's page-load lifecycle rather than emitting
         // NavigationFinished before the document actually finishes loading.
         // Linux continues to use native WebKit main-frame URI observations.
+        let document_revision = Arc::new(std::sync::atomic::AtomicU64::new(1));
         let mut builder = WebviewBuilder::new(&options.id, WebviewUrl::External(url))
             .on_navigation(|_| true)
             .transparent(options.transparent);
@@ -563,7 +669,9 @@ impl TabManager {
         {
             let nav_id = options.id.clone();
             let nav_app = self.app.clone();
+            let revision = document_revision.clone();
             builder = builder.on_page_load(move |_webview, payload| {
+                invalidate_capture_document(&revision);
                 let url = payload.url().to_string();
                 let event = match payload.event() {
                     PageLoadEvent::Started => BrowserTabEvent::NavigationStarted {
@@ -644,11 +752,19 @@ impl TabManager {
         {
             let uri_id = options.id.clone();
             let uri_app = self.app.clone();
+            let uri_revision = document_revision.clone();
+            let load_revision = document_revision.clone();
             let _ = webview.with_webview(move |native| {
                 use webkit2gtk::WebViewExt;
                 let gtk_wv = native.inner();
+                // Observation only: do not change layout, visibility or load
+                // behavior. Same-URL reloads also invalidate the capture.
+                gtk_wv.connect_load_changed(move |_, _| {
+                    invalidate_capture_document(&load_revision);
+                });
                 let last_uri = std::cell::RefCell::new(String::new());
                 gtk_wv.connect_uri_notify(move |wv| {
+                    invalidate_capture_document(&uri_revision);
                     let Some(uri) = wv.uri() else { return };
                     let value = uri.as_str();
                     let mut previous = last_uri.borrow_mut();
@@ -846,6 +962,7 @@ impl TabManager {
 
         let entry = Arc::new(ManagedTab {
             webview,
+            document_revision,
             #[cfg(target_os = "linux")]
             layout: RwLock::new(TabLayout {
                 rect: native_rect,
@@ -1016,6 +1133,7 @@ impl TabManager {
     /// 用于宫格小窗按比例缩小网页内容，实现"自适应"展示。
     pub fn set_zoom(&self, id: &TabId, scale_factor: f64) -> Result<()> {
         let (_operation, tab) = self.get_tab(id, TabAccessKind::Operation)?;
+        invalidate_capture_document(&tab.document_revision);
         tab.webview.set_zoom(scale_factor)?;
         Ok(())
     }
@@ -1030,6 +1148,7 @@ impl TabManager {
         };
         // Keep ownership on failure. Admission excludes other synchronous
         // dispatches and duplicate lifecycle changes for this identity.
+        invalidate_capture_document(&tab.document_revision);
         tab.webview.close()?;
         self.tabs.write().remove(id);
         platform::forget_native_layout(id);
@@ -1042,6 +1161,7 @@ impl TabManager {
         let url: tauri::Url = url
             .parse()
             .map_err(|_| BrowserTabError::InvalidUrl(url.to_string()))?;
+        invalidate_capture_document(&tab.document_revision);
         tab.webview.navigate(url)?;
         Ok(())
     }
@@ -1060,6 +1180,20 @@ impl TabManager {
             .is_ok_and(|(_operation, tab)| {
                 std::sync::Weak::ptr_eq(&instance.0, &Arc::downgrade(&tab))
             })
+    }
+
+    pub fn capture_document(&self, id: &TabId) -> Result<CaptureDocument> {
+        let (_operation, tab) = self.get_tab(id, TabAccessKind::Operation)?;
+        let document = CaptureDocument::from_tab(&tab);
+        if !document.observed_generation_is_current() {
+            return Err(BrowserTabError::Platform("CAPTURE_DOCUMENT_STALE".into()));
+        }
+        Ok(document)
+    }
+
+    pub fn is_current_capture_document(&self, id: &TabId, document: &CaptureDocument) -> bool {
+        self.is_current_instance(id, &document.instance)
+            && document.observed_generation_is_current()
     }
 
     pub fn eval_instance(&self, id: &TabId, instance: &TabInstance, js: &str) -> Result<()> {
@@ -1091,6 +1225,7 @@ impl TabManager {
         self.capture_full_page_cancellable(id, CaptureCancellation::new(), callback)
     }
 
+    #[allow(deprecated)] // Keep support for the pinned WebKitGTK 2.22 API.
     pub fn capture_full_page_cancellable(
         &self,
         id: &TabId,
@@ -1103,50 +1238,111 @@ impl TabManager {
         let webview = tab.webview.clone();
         #[cfg(target_os = "linux")]
         {
+            let capture_document = CaptureDocument::from_tab(&tab);
             webview.with_webview(move |native| {
+                use java_script_core::ValueExt;
                 use webkit2gtk::WebViewExt;
-                if cancellation.is_cancelled() {
-                    callback(Err("CAPTURE_CANCELLED_BEFORE_DISPATCH".into()));
+                use gtk::prelude::WidgetExt;
+                let gtk_wv = native.inner().clone();
+                if cancellation.is_cancelled() || !capture_document.observed_generation_is_current() {
+                    callback(Err("CAPTURE_CANCELLED_OR_STALE".into()));
                     return;
                 }
-                let cancellable = cancellation.native.clone();
-                native.inner().snapshot(
-                    webkit2gtk::SnapshotRegion::FullDocument,
-                    webkit2gtk::SnapshotOptions::NONE,
-                    Some(&cancellable),
+                if gtk_wv.is_loading() {
+                    callback(Err("CAPTURE_DOCUMENT_LOADING".into()));
+                    return;
+                }
+                // A fixed isolated-world program reads layout metrics only.
+                // No page-selected JS, DOM contents, URL or credentials cross IPC.
+                let native_scale = f64::from(gtk_wv.scale_factor()) * gtk_wv.zoom_level();
+                let metrics_view = gtk_wv.clone();
+                let metrics_cancel = cancellation.native.clone();
+                gtk_wv.run_javascript_in_world(
+                    r#"(() => {
+                        const root = document.documentElement;
+                        if (!root) return "null";
+                        const body = document.body;
+                        return JSON.stringify({
+                            width: Math.max(root.scrollWidth, root.offsetWidth, root.clientWidth,
+                                body?.scrollWidth || 0, body?.offsetWidth || 0, innerWidth),
+                            height: Math.max(root.scrollHeight, root.offsetHeight, root.clientHeight,
+                                body?.scrollHeight || 0, body?.offsetHeight || 0, innerHeight),
+                            scale: devicePixelRatio
+                        });
+                    })()"#,
+                    "browseros.capture.metrics.v1",
+                    Some(&metrics_cancel),
                     move |result| {
-                        // Only the native finish callback can release the permit.
-                        // Do not encode a snapshot abandoned by its IPC caller.
-                        if cancellation.is_cancelled() {
-                            callback(Err("CAPTURE_CANCELLED_AT_COMPLETION".into()));
+                        if cancellation.is_cancelled() || !capture_document.observed_generation_is_current()
+                            || metrics_view.is_loading()
+                        {
+                            callback(Err("CAPTURE_CANCELLED_OR_STALE".into()));
                             return;
                         }
-                        let image = result
-                            .map_err(|_| "CAPTURE_ENGINE_FAILED".to_string())
-                            .and_then(|surface| {
-                                let surface = gtk::cairo::ImageSurface::try_from(surface)
-                                    .map_err(|_| "CAPTURE_SURFACE_INVALID".to_string())?;
-                                let width = surface.width();
-                                let height = surface.height();
-                                if width <= 0
-                                    || height <= 0
-                                    || width > 16_384
-                                    || height > 16_384
-                                    || i64::from(width) * i64::from(height) > 80_000_000
+                        let measurement = result.map_err(|_| "CAPTURE_METRICS_FAILED".to_string())
+                            .and_then(|value| value.js_value()
+                                .map(|v| v.to_str().to_string())
+                                .ok_or_else(|| "CAPTURE_METRICS_UNAVAILABLE".to_string()))
+                            .and_then(|json| validate_linux_capture_metrics(&json, native_scale));
+                        if let Err(error) = measurement {
+                            callback(Err(error));
+                            return;
+                        }
+                        let snapshot_cancel = cancellation.native.clone();
+                        // FullDocument cannot accept a native allocation ceiling.
+                        // This is a conservative preflight, not a proof against
+                        // an in-place resize between measurement and allocation.
+                        metrics_view.snapshot(
+                            webkit2gtk::SnapshotRegion::FullDocument,
+                            webkit2gtk::SnapshotOptions::NONE,
+                            Some(&snapshot_cancel),
+                            move |result| {
+                                if cancellation.is_cancelled()
+                                    || !capture_document.observed_generation_is_current()
                                 {
-                                    return Err("CAPTURE_DIMENSION_LIMIT".into());
+                                    callback(Err("CAPTURE_CANCELLED_OR_STALE".into()));
+                                    return;
                                 }
-                                let mut png = BoundedPngWriter::default();
-                                surface
-                                    .write_to_png(&mut png)
-                                    .map_err(|_| "CAPTURE_PNG_ENCODE_FAILED".to_string())?;
-                                Ok(png.0)
-                            });
-                        callback(if cancellation.is_cancelled() {
-                            Err("CAPTURE_CANCELLED_AT_COMPLETION".into())
-                        } else {
-                            image
-                        });
+                                let pixels = result.map_err(|_| "CAPTURE_ENGINE_FAILED".to_string())
+                                    .and_then(copy_capture_pixels);
+                                let (bytes, format, width, height, stride) = match pixels {
+                                    Ok(pixels) => pixels,
+                                    Err(error) => { callback(Err(error)); return; }
+                                };
+                                // Cairo surfaces stay on the GTK thread; only a
+                                // bounded owned pixel buffer crosses to the worker.
+                                // The existing host permit covers encoding, too.
+                                let pending = Arc::new(parking_lot::Mutex::new(Some(callback)));
+                                let worker_reply = pending.clone();
+                                let worker = std::thread::Builder::new()
+                                    .name("browseros-screenshot-png".into())
+                                    .spawn(move || {
+                                        let result = (|| {
+                                            if cancellation.is_cancelled()
+                                                || !capture_document.observed_generation_is_current()
+                                            {
+                                                return Err("CAPTURE_CANCELLED_OR_STALE".into());
+                                            }
+                                            let surface = gtk::cairo::ImageSurface::create_for_data(
+                                                bytes, format, width, height, stride,
+                                            ).map_err(|_| "CAPTURE_SURFACE_INVALID".to_string())?;
+                                            let mut png = BoundedPngWriter::default();
+                                            surface.write_to_png(&mut png)
+                                                .map_err(|_| "CAPTURE_PNG_ENCODE_FAILED".to_string())?;
+                                            if cancellation.is_cancelled()
+                                                || !capture_document.observed_generation_is_current()
+                                            {
+                                                return Err("CAPTURE_CANCELLED_OR_STALE".into());
+                                            }
+                                            Ok(png.0)
+                                        })();
+                                        complete_capture(&worker_reply, result);
+                                    });
+                                if worker.is_err() {
+                                    complete_capture(&pending, Err("CAPTURE_WORKER_FAILED".into()));
+                                }
+                            },
+                        );
                     },
                 );
             })?;
@@ -1155,7 +1351,7 @@ impl TabManager {
         {
             let capture_app = self.app.clone();
             let capture_id = id.clone();
-            let capture_instance = TabInstance(Arc::downgrade(&tab));
+            let capture_document = CaptureDocument::from_tab(&tab);
             webview.with_webview(move |native| {
                 use webview2_com::CallDevToolsProtocolMethodCompletedHandler;
                 use windows::core::PCWSTR;
@@ -1194,7 +1390,7 @@ impl TabManager {
                         // Layout metrics may arrive after a close/replacement.
                         // Never dispatch the second native operation in that case.
                         if !capture_app.state::<TabManagerState>()
-                            .is_current_instance(&capture_id, &capture_instance)
+                            .is_current_capture_document(&capture_id, &capture_document)
                         {
                             complete_capture(&metrics_reply, Err("CAPTURE_INSTANCE_STALE".into()));
                             return Ok(());
@@ -1203,10 +1399,13 @@ impl TabManager {
                         let params: Vec<u16> = params.to_string().encode_utf16().chain(std::iter::once(0)).collect();
                         let image_reply = metrics_reply.clone();
                         let image_cancel = cancellation.clone();
+                        let image_document = capture_document.clone();
                         let completion = CallDevToolsProtocolMethodCompletedHandler::create(Box::new(
                             move |status, json| {
-                                if image_cancel.is_cancelled() {
-                                    complete_capture(&image_reply, Err("CAPTURE_CANCELLED_AT_COMPLETION".into()));
+                                if image_cancel.is_cancelled()
+                                    || !image_document.observed_generation_is_current()
+                                {
+                                    complete_capture(&image_reply, Err("CAPTURE_CANCELLED_OR_STALE".into()));
                                     return Ok(());
                                 }
                                 let data = status

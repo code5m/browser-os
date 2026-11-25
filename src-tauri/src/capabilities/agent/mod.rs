@@ -15,6 +15,8 @@ pub mod agent;
 pub mod agent_memory;
 
 pub mod coding;
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+mod coding_checkpoint;
 #[cfg(target_os = "linux")]
 pub mod coding_context;
 #[cfg(target_os = "windows")]

@@ -92,3 +92,48 @@ Parent: `81399f21f6db08d4187c428a9a5b2e125d096d9a`. No branch refs, workflows, b
 
 Status: BLOCKED / GUI_PENDING. This is unverified source, not a completed
 seven-item closure.
+
+
+## Third detached source repair: generation-fenced captures and protected Coding checkpoints
+
+Parent: `6ac6ce54abe385ce8f2e6fae2238f9b37008ec5b`. Source-only; no ref update, CI, Actions, builds, gates,
+installation or tests executed. No permission or WebView positioning rule changes.
+
+- Capture: track observed document generations independently of a reusable tab
+  ID. Invalidate on native load/URI observations, explicit navigation, zoom,
+  and close. Reject stale metrics/results. Linux performs an isolated-world
+  numeric preflight with native scale/zoom and a conservative 16-million
+  physical-pixel budget. The result callback bounds the raw pixel buffer and
+  moves PNG compression off GTK onto the existing admitted capture worker
+  path. No remote content is returned by the preflight. The WebKit API accepts
+  FullDocument but not an allocation ceiling, so dynamic DOM growth remains
+  a hard engine limit that this preflight cannot enforce. The Windows CDP
+  request still has no per-call native abort. Do not call either guarantee
+  fully solved without an engine/process boundary.
+- Coding: use the existing OS-owned lock primitive for session and workspace
+  ownership, including across cooperating processes. Persist the last run ID
+  and the complete transcript before model dispatch and between complete tool
+  batches; recover an interrupted turn without reissuing the provider call.
+  Claimed side effects stay claimed. Session checkpoints on Linux/Windows
+  are authenticated AES-256-GCM envelopes bound to the session UUID, using
+  the existing OS keyring and private directory/native versioned storage.
+  Missing encryption keys fail closed; no fallback plaintext writes. Legacy
+  plaintext sessions are read under the owner and migrate on the next save.
+  Existing backup/manifest formats and other platforms are not migrated.
+  This does not enable the unprotected Foundation SQLite storage or replace
+  the current Coding tool loop with Foundation. The test key is unit-test-only.
+- Remaining strict external target CAS: general Linux/Windows name replacement
+  has no compare-content-and-replace primitive against arbitrary external
+  writers. A strict no-overwrite fallback requires an explicit product change;
+  keep normal editor semantics rather than silently disabling editing.
+- GTK actual userspace thread stacks, Windows real native behavior, Linux
+  installed-client GUI and sustained performance require the real device.
+  Its Desktop Commander connection remains offline. Do not modify the
+  locked GTK layout/visibility path without that evidence.
+- The existing browser queue quarantines unknown outcomes. A host/native
+  operation-ID protocol and out-of-band authoritative receipts are still
+  required to recover permanently lost replies without releasing in-flight
+  native work; changing the command protocol/lifecycle needs explicit Owner
+  approval. This candidate does not manufacture cancellation or completion.
+
+Overall: BLOCKED / GUI_PENDING. All added tests are NOT_RUN.

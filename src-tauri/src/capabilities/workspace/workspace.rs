@@ -4,6 +4,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 #[path = "audit_lock.rs"]
 mod audit_lock;
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+pub(crate) use audit_lock::AuditLock;
 use tauri::{AppHandle, Manager};
 
 use crate::domain::{

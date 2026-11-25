@@ -18,13 +18,18 @@ type AuditFile = browseros_platform_security::windows::PrivateReadWriteFile;
 #[cfg(not(target_os = "windows"))]
 type AuditFile = File;
 
-pub(super) struct AuditLock(AuditFile);
+pub(crate) struct AuditLock(AuditFile);
 impl AuditLock {
     pub(super) fn acquire(audit_path: &Path) -> io::Result<Self> {
         let parent = audit_path
             .parent()
             .ok_or_else(|| io::Error::other("AUDIT_PARENT_UNAVAILABLE"))?;
-        let lock_path = parent.join("audit-write.lock");
+        Self::acquire_named(&parent.join("audit-write.lock"), LOCK_WAIT)
+    }
+
+    /// Reuse the same OS-owned private lock for other cooperating owners.
+    /// Caller must supply a stable name in an already protected directory.
+    pub(crate) fn acquire_named(lock_path: &Path, wait: Duration) -> io::Result<Self> {
         #[cfg(not(target_os = "windows"))]
         let owned_file = {
             let mut options = OpenOptions::new();
@@ -40,7 +45,7 @@ impl AuditLock {
         };
         #[cfg(target_os = "windows")]
         let owned_file =
-            browseros_platform_security::windows::open_private_read_write_file(&lock_path)?;
+            browseros_platform_security::windows::open_private_read_write_file(lock_path)?;
         #[cfg(not(target_os = "windows"))]
         let file = &owned_file;
         #[cfg(target_os = "windows")]
@@ -63,7 +68,7 @@ impl AuditLock {
         loop {
             match try_lock(file) {
                 Ok(true) => return Ok(Self(owned_file)),
-                Ok(false) if started.elapsed() < LOCK_WAIT => {
+                Ok(false) if started.elapsed() < wait => {
                     std::thread::sleep(Duration::from_millis(5));
                 }
                 Ok(false) => {

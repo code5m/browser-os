@@ -41,7 +41,7 @@ mod commands;
 mod models;
 mod platform;
 
-pub use commands::{CaptureCancellation, TabInstance, TabManager, TabManagerState};
+pub use commands::{CaptureCancellation, CaptureDocument, TabInstance, TabManager, TabManagerState};
 pub use models::{BrowserTabError, BrowserTabEvent, CreateTabOptions, LogicalRect, Result, TabId};
 pub use platform::ensure_native_layout;
 

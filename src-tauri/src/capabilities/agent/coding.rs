@@ -243,6 +243,8 @@ struct Session {
     tool_events: Vec<Value>,
     status: String,
     #[serde(default)]
+    last_run_id: Option<String>,
+    #[serde(default)]
     operations: Vec<Operation>,
     #[serde(default)]
     apply_operation_id: Option<String>,
@@ -1434,15 +1436,15 @@ fn load_without_recovery(root: &Path, storage: &Path, id: Option<&str>) -> Resul
     if let Some(id) = id {
         let path = session_path(storage, id)?;
         let m = fs::symlink_metadata(&path).map_err(|_| "AGENT_SESSION_NOT_FOUND")?;
-        if !m.is_file() || m.file_type().is_symlink() || m.len() > MAX_SESSION as u64 {
+        if !m.is_file() || m.file_type().is_symlink() || m.len() > (MAX_SESSION + 33) as u64 {
             return Err("AGENT_SESSION_INVALID".into());
         }
-        let session: Session = serde_json::from_slice(&read_recovery_file(
-            &path,
-            MAX_SESSION,
-            "AGENT_SESSION_READ_FAILED",
-        )?)
-        .map_err(|_| "AGENT_SESSION_INVALID")?;
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        let bytes = super::coding_checkpoint::read(storage, id, MAX_SESSION)?;
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        let bytes = read_recovery_file(&path, MAX_SESSION, "AGENT_SESSION_READ_FAILED")?;
+        let session: Session = serde_json::from_slice(&bytes)
+            .map_err(|_| "AGENT_SESSION_INVALID")?;
         if session.root != root.to_string_lossy() {
             return Err("AGENT_SESSION_ROOT_MISMATCH".into());
         }
@@ -1458,6 +1460,7 @@ fn load_without_recovery(root: &Path, storage: &Path, id: Option<&str>) -> Resul
             changes: vec![],
             tool_events: vec![],
             status: "ready".into(),
+            last_run_id: None,
             operations: vec![],
             apply_operation_id: None,
         })
@@ -1470,7 +1473,15 @@ fn load(root: &Path, storage: &Path, id: Option<&str>) -> Result<Session, String
     let _workspace_guard = workspace_mutex.lock().map_err(|_| "AGENT_BUSY")?;
     let mut session = load_without_recovery(root, storage, id)?;
     if id.is_some() {
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        let _process_workspace = super::coding_checkpoint::workspace_owner(storage, root)?;
         recover_pending_apply(root, storage, &mut session)?;
+        // A caller reaches load only after obtaining the session owner.
+        // An interrupted model turn is never silently resumed or replayed.
+        if session.status == "running" {
+            session.status = "interrupted".into();
+            save(storage, &session)?;
+        }
     }
     Ok(session)
 }
@@ -1480,6 +1491,9 @@ fn save(storage: &Path, session: &Session) -> Result<Value, String> {
     if bytes.len() > MAX_SESSION {
         return Err("AGENT_SESSION_LIMIT".into());
     }
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    super::coding_checkpoint::write(storage, &session.session_id, &bytes, MAX_SESSION)?;
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     atomic_write(&session_path(storage, &session.session_id)?, &bytes)?;
     serde_json::to_value(session).map_err(|_| "AGENT_SESSION_WRITE_FAILED".into())
 }
@@ -1582,7 +1596,8 @@ pub fn execute(
         _ => {}
     }
     let supplied_id = request["session_id"].as_str().filter(|id| !id.is_empty());
-    if supplied_id.is_some_and(|id| uuid::Uuid::parse_str(id).is_err()) {
+    if supplied_id.is_some_and(|id| uuid::Uuid::parse_str(id)
+        .map_or(true, |parsed| parsed.to_string() != id)) {
         return Err("AGENT_SESSION_INVALID".into());
     }
     let session_id = supplied_id
@@ -1592,6 +1607,8 @@ pub fn execute(
     // Do not queue a stale apply/discard behind a long model turn. The user can
     // retry after this same session completes; other sessions stay independent.
     let _session_guard = session_mutex.try_lock().map_err(|_| "AGENT_BUSY")?;
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    let _process_session = super::coding_checkpoint::session_owner(storage, &session_id)?;
     let plan = request["mode"].as_str() == Some("plan");
     if plan && ["propose", "apply"].contains(&action) {
         return Err("AGENT_PLAN_READ_ONLY".into());
@@ -1653,6 +1670,8 @@ pub fn execute(
         "apply" => {
             let workspace_mutex = workspace_lock(&root);
             let _write_guard = workspace_mutex.lock().map_err(|_| "AGENT_BUSY")?;
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
+            let _process_workspace = super::coding_checkpoint::workspace_owner(storage, &root)?;
             return apply_changes_transactional(&root, storage, &mut session, None);
         }
         "chat" => {
@@ -1672,13 +1691,22 @@ pub fn execute(
             if session.messages.len() > 128 {
                 return Err("AGENT_SESSION_LIMIT".into());
             }
-            session
-                .messages
-                .push(json!({"role":"user","content":prompt}));
+            let signal = request_signal(&request)?;
+            let current_run = request["run_id"].as_str().filter(|id| !id.is_empty())
+                .map(run_id).transpose()?.unwrap_or_else(uuid::Uuid::new_v4).to_string();
+            if session.last_run_id.as_deref() == Some(current_run.as_str()) {
+                return Err("AGENT_RUN_ALREADY_RECORDED".into());
+            }
+            session.last_run_id = Some(current_run);
+            session.messages.push(json!({"role":"user","content":prompt}));
             session.status = "running".into();
+            // Checkpoint the complete pre-dispatch transcript before opening
+            // model transport. A crash leaves an interrupted record, not a
+            // fabricated completion or a silently replayed provider call.
+            save(storage, &session)?;
             running_map().lock().map_err(|_| "AGENT_BUSY")?.insert(
                 (root.clone(), session.session_id.clone()),
-                request_signal(&request)?,
+                signal,
             );
             let _running_guard = RunningGuard {
                 root: root.clone(),
@@ -1739,7 +1767,9 @@ pub fn execute(
                         call["function"]["arguments"].as_str().unwrap_or("{}"),
                     )
                     .unwrap_or(Value::Null);
-                    let output = match name {
+                    let output = if cancelled(&root, &session.session_id) {
+                        Err("AGENT_CANCELLED".into())
+                    } else { match name {
                         "list_files" => tree(&root, arguments["path"].as_str().unwrap_or("")),
                         "read_file" => read_model_file(&root, &arguments),
                         "search_files" => search(&root, arguments["query"].as_str().unwrap_or("")),
@@ -1770,7 +1800,7 @@ pub fn execute(
                         "request_operation" => Err("AGENT_PLAN_READ_ONLY".into()),
                         "write_file" => Err("AGENT_PLAN_READ_ONLY".into()),
                         _ => Err("AGENT_TOOL_DENIED".into()),
-                    }
+                    }}
                     .unwrap_or_else(|e| json!({"error":e}));
                     session.tool_events.push(json!({"tool":name,"round":round,"ok":output.get("error").is_none(),"path":arguments["path"]}));
                     let mut content =
@@ -1783,6 +1813,10 @@ pub fn execute(
                     session.messages.push(message.clone());
                     messages.push(message);
                 }
+                if cancelled(&root, &session.session_id) {
+                    session.status = "cancelled".into();
+                    break;
+                }
                 if round == 7 {
                     session.status = "step_limit".into();
                 }
@@ -1790,6 +1824,9 @@ pub fn execute(
                     session.status = "approval_required".into();
                     break;
                 }
+                // Persist only complete tool batches, with one result per
+                // model call. Never restore a partially paired transcript.
+                save(storage, &session)?;
             }
         }
         _ => return Err("AGENT_ACTION_INVALID".into()),
@@ -1946,6 +1983,25 @@ mod tests {
         assert_eq!(over["matches"].as_array().unwrap().len(), 100);
         assert_eq!(over["truncated"], true);
     }
+    #[test]
+    fn interrupted_turn_restores_checkpoint_without_replaying_provider() {
+        let f = Fixture::new();
+        let storage = f.0.join("state");
+        let mut session = load(&f.0, &storage, None).unwrap();
+        session.status = "running".into();
+        session.last_run_id = Some(uuid::Uuid::new_v4().to_string());
+        session.messages.push(json!({"role":"user","content":"private checkpoint fixture"}));
+        save(&storage, &session).unwrap();
+        let encrypted = fs::read(session_path(&storage, &session.session_id).unwrap()).unwrap();
+        assert!(encrypted.starts_with(b"BOSC1"));
+        assert!(!encrypted.windows(b"private checkpoint fixture".len()).any(|w| w == b"private checkpoint fixture"));
+        let restored = execute(&f.0, &storage,
+            json!({"action":"session","session_id":session.session_id}),
+            |_, _| panic!("restore must not invoke the provider")).unwrap();
+        assert_eq!(restored["status"], "interrupted");
+        assert_eq!(restored["last_run_id"].as_str(), session.last_run_id.as_deref());
+    }
+
     #[test]
     fn recent_sessions_are_project_scoped_and_metadata_only() {
         let f = Fixture::new();

@@ -439,7 +439,7 @@ pub async fn capture_full_page(
     crate::shared::invocation::check_tab_id(&id)?;
     let permit = CAPTURE_LANE.reserve()?;
     let manager = app.state::<tauri_plugin_browser_tabs::TabManagerState>();
-    let instance = manager.instance(&id).map_err(|_| "CAPTURE_TAB_UNAVAILABLE".to_string())?;
+    let document = manager.capture_document(&id).map_err(|_| "CAPTURE_TAB_UNAVAILABLE".to_string())?;
     let cancellation = tauri_plugin_browser_tabs::CaptureCancellation::new();
     let mut waiter = CaptureWaitGuard(Some(cancellation.clone()));
     let (send, recv) = tokio::sync::oneshot::channel();
@@ -460,8 +460,8 @@ pub async fn capture_full_page(
     let (bytes, permit) = result?;
     // Native identity is stronger than a logical tab ID. A snapshot from a
     // closed/replaced WebView must never be published as the new tab's image.
-    if !manager.is_current_instance(&id, &instance) {
-        return Err("CAPTURE_INSTANCE_STALE".into());
+    if !manager.is_current_capture_document(&id, &document) {
+        return Err("CAPTURE_DOCUMENT_STALE".into());
     }
     let base = crate::workspace::data_dir(&app);
     permit.run(move || save_capture(&base, &bytes)).await
@@ -478,7 +478,7 @@ fn save_capture(base: &std::path::Path, bytes: &[u8]) -> Result<String, String> 
         || height == 0
         || width > 16_384
         || height > 16_384
-        || u64::from(width) * u64::from(height) > 80_000_000
+        || u64::from(width) * u64::from(height) > 16_000_000
     {
         return Err("CAPTURE_DIMENSION_LIMIT".into());
     }
