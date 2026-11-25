@@ -195,3 +195,8 @@ The tab receipt owner's existing sequence also advances for background/legacy ad
 ## Shared file conflict recovery (workspace editors)
 
 Both overlay and inline text saves now synchronously persist the intended encrypted draft before the native best-effort write and observe the file after successful publication before clearing the recovery record. Uncertain saves retain the original baseline/local text and expose a scoped read-only disk observation. The user can explicitly create a new conflict copy through the existing no-replace create_file command; this does not rebase, overwrite or discard the original. Source-only; shared unmanaged files do not acquire arbitrary-writer CAS through a post-write observation. No CI, Actions, validation or branch updates.
+
+
+## Shared production complete-message engine
+
+Chat, Legacy and Coding now use the existing Foundation engine's bounded complete-message batch driver. Transport, permissions and durable transcript remain explicit host adapters. Chat/Legacy advertise zero tool calls and hold Foundation execution leases; Coding validates whole batches before its host can stage changes or pending approvals. The experimental Agent Channel streaming driver and its signed, read-only Public API still use the same Foundation task/lease authority; this change does not turn the experimental single-suggestion protocol into a general persisted multi-tool execution engine. Actual provider integration and all new tests remain NOT_RUN. No runtime/command permission expansion, branch update, workflow, CI or validation.

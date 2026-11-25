@@ -1678,6 +1678,138 @@ fn recent_sessions(root: &Path, storage: &Path) -> Result<Value, String> {
 }
 
 /// `root` and `storage` must come from the trusted workspace authorization and app-data adapter.
+/// Coding uses the Foundation complete-message engine. Only this host
+/// adapter knows about the workspace, staged edits and encrypted transcript.
+/// It cannot execute an effectful model proposal: request_operation creates
+/// a pending host approval, consumed later by execute_operation.
+struct CodingBatchHost<'a, P> {
+    root: &'a Path,
+    storage: &'a Path,
+    session: &'a mut Session,
+    messages: &'a mut Vec<Value>,
+    plan: bool,
+    provider: &'a mut P,
+}
+impl<P: FnMut(&[Value], &[Value]) -> Result<Value, String>>
+    browseros_agent_foundation::engine::FunctionBatchHost for CodingBatchHost<'_, P>
+{
+    type Error = String;
+    fn cancelled(&self) -> bool { cancelled(self.root, &self.session.session_id) }
+    fn on_cancelled(&mut self) -> Result<(), String> {
+        self.session.status = "cancelled".into();
+        Ok(())
+    }
+    fn request(&mut self) -> Result<Value, String> {
+        (self.provider)(self.messages, &tools(self.plan))
+    }
+    fn provider_failure(&mut self, error: String) -> String {
+        self.session.status = "provider_error".into();
+        provider_failure(&error)
+    }
+    fn validate_reply(&mut self, reply: &Value) -> Result<(), String> {
+        let encoded = serde_json::to_string(reply).map_err(|_| "AGENT_REPLY_INVALID")?;
+        if encoded.len() > MAX_FILE || secret(&encoded) {
+            self.session.status = "response_denied".into();
+            return Err("AGENT_RESPONSE_DENIED".into());
+        }
+        if reply["tool_calls"].as_array().is_some_and(|calls| calls.len() > 8) {
+            return Err("AGENT_TOOL_LIMIT".into());
+        }
+        Ok(())
+    }
+    fn invalid_batch(&mut self, _: browseros_agent_foundation::FoundationError) -> String {
+        "AGENT_REPLY_INVALID".into()
+    }
+    fn accept_batch(&mut self, round: usize, last: bool, reply: Value,
+        calls: Vec<browseros_agent_foundation::model::FunctionCall>)
+        -> Result<browseros_agent_foundation::engine::BatchFlow, String>
+    {
+        let root = self.root;
+        let storage = self.storage;
+        let session = &mut *self.session;
+        let messages = &mut *self.messages;
+        let plan = self.plan;
+                session.messages.push(reply.clone());
+                messages.push(reply);
+                if calls.is_empty() {
+                    session.status = if session.changes.is_empty() {
+                        "complete"
+                    } else {
+                        "review"
+                    }
+                    .into();
+                    return Ok(browseros_agent_foundation::engine::BatchFlow::Stop);
+                }
+                for call in calls {
+                    let name = call.name.as_str();
+                    let arguments = call.arguments;
+                    let output = if cancelled(root, &session.session_id) {
+                        Err("AGENT_CANCELLED".into())
+                    } else { match name {
+                        "list_files" => tree(root, arguments["path"].as_str().unwrap_or("")),
+                        "read_file" => read_model_file(root, &arguments),
+                        "search_files" => search(root, arguments["query"].as_str().unwrap_or("")),
+                        "list_skills" => super::coding_context::execute(
+                            root,
+                            storage,
+                            json!({"action":"skills_list"}),
+                        ),
+                        "list_mcp_servers" => super::coding_context::execute(
+                            root,
+                            storage,
+                            json!({"action":"mcp_list"}),
+                        ),
+                        "read_skill" => super::coding_context::execute(
+                            root,
+                            storage,
+                            json!({"action":"skill_read","path":arguments["path"]}),
+                        ),
+                        "search_knowledge" => super::coding_context::execute(
+                            root,
+                            storage,
+                            json!({"action":"knowledge_search","query":arguments["query"]}),
+                        ),
+                        "write_file" if !plan => {
+                            stage_model_change(root, session, &arguments)
+                        }
+                        "request_operation" if !plan => propose_operation(session, &arguments),
+                        "request_operation" => Err("AGENT_PLAN_READ_ONLY".into()),
+                        "write_file" => Err("AGENT_PLAN_READ_ONLY".into()),
+                        _ => Err("AGENT_TOOL_DENIED".into()),
+                    }}
+                    .unwrap_or_else(|e| json!({"error":e}));
+                    session.tool_events.push(json!({"tool":name,"round":round,"ok":output.get("error").is_none(),"path":arguments["path"]}));
+                    let mut content =
+                        serde_json::to_string(&output).map_err(|_| "AGENT_REPLY_INVALID")?;
+                    if content.len() > 40000 {
+                        content = json!({"error":"AGENT_TOOL_OUTPUT_LIMIT"}).to_string();
+                    }
+                    let message =
+                        json!({"role":"tool","tool_call_id":call.id,"content":content});
+                    session.messages.push(message.clone());
+                    messages.push(message);
+                }
+                if cancelled(root, &session.session_id) {
+                    session.status = "cancelled".into();
+                    return Ok(browseros_agent_foundation::engine::BatchFlow::Stop);
+                }
+                if last {
+                    session.status = "step_limit".into();
+                }
+                if session.operations.iter().any(|o| o.status == "pending") {
+                    session.status = "approval_required".into();
+                    return Ok(browseros_agent_foundation::engine::BatchFlow::Stop);
+                }
+                // Checkpoint complete tool batches, not partial transcripts.
+                if session.status == "running" {
+                    save(storage, session)?;
+                    return Ok(browseros_agent_foundation::engine::BatchFlow::Continue);
+                }
+                Ok(browseros_agent_foundation::engine::BatchFlow::Stop)
+
+    }
+}
+
 pub fn execute(
     root: &Path,
     storage: &Path,
@@ -1976,115 +2108,11 @@ pub(crate) fn execute_with_adapter(
                 messages.push(json!({"role":"system","content":"Plan mode is read-only. Inspect and explain a proposed plan. Do not call write_file or propose edits."}));
             }
             messages.extend(session.messages.clone());
-            let turn_result: Result<(), String> = (|| {
-            for round in 0..8 {
-                if cancelled(&root, &session.session_id) {
-                    session.status = "cancelled".into();
-                    break;
-                }
-                let reply = match provider(&messages, &tools(plan)) {
-                    Ok(value) => value,
-                    Err(error) => {
-                        if cancelled(&root, &session.session_id) {
-                            session.status = "cancelled".into();
-                            break;
-                        }
-                        session.status = "provider_error".into();
-                        return Err(provider_failure(&error));
-                    }
-                };
-                if cancelled(&root, &session.session_id) {
-                    session.status = "cancelled".into();
-                    break;
-                }
-                let encoded = serde_json::to_string(&reply).map_err(|_| "AGENT_REPLY_INVALID")?;
-                if encoded.len() > MAX_FILE || secret(&encoded) {
-                    session.status = "response_denied".into();
-                    return Err("AGENT_RESPONSE_DENIED".into());
-                }
-                // Validate the complete assistant function batch before
-                // adding it to the transcript or staging any proposal.
-                if reply["tool_calls"].as_array().is_some_and(|calls| calls.len() > 8) {
-                    return Err("AGENT_TOOL_LIMIT".into());
-                }
-                let calls = browseros_agent_foundation::model::parse_function_batch(&reply, 8)
-                    .map_err(|_| "AGENT_REPLY_INVALID")?;
-                session.messages.push(reply.clone());
-                messages.push(reply);
-                if calls.is_empty() {
-                    session.status = if session.changes.is_empty() {
-                        "complete"
-                    } else {
-                        "review"
-                    }
-                    .into();
-                    break;
-                }
-                for call in calls {
-                    let name = call.name.as_str();
-                    let arguments = call.arguments;
-                    let output = if cancelled(&root, &session.session_id) {
-                        Err("AGENT_CANCELLED".into())
-                    } else { match name {
-                        "list_files" => tree(&root, arguments["path"].as_str().unwrap_or("")),
-                        "read_file" => read_model_file(&root, &arguments),
-                        "search_files" => search(&root, arguments["query"].as_str().unwrap_or("")),
-                        "list_skills" => super::coding_context::execute(
-                            &root,
-                            storage,
-                            json!({"action":"skills_list"}),
-                        ),
-                        "list_mcp_servers" => super::coding_context::execute(
-                            &root,
-                            storage,
-                            json!({"action":"mcp_list"}),
-                        ),
-                        "read_skill" => super::coding_context::execute(
-                            &root,
-                            storage,
-                            json!({"action":"skill_read","path":arguments["path"]}),
-                        ),
-                        "search_knowledge" => super::coding_context::execute(
-                            &root,
-                            storage,
-                            json!({"action":"knowledge_search","query":arguments["query"]}),
-                        ),
-                        "write_file" if !plan => {
-                            stage_model_change(&root, &mut session, &arguments)
-                        }
-                        "request_operation" if !plan => propose_operation(&mut session, &arguments),
-                        "request_operation" => Err("AGENT_PLAN_READ_ONLY".into()),
-                        "write_file" => Err("AGENT_PLAN_READ_ONLY".into()),
-                        _ => Err("AGENT_TOOL_DENIED".into()),
-                    }}
-                    .unwrap_or_else(|e| json!({"error":e}));
-                    session.tool_events.push(json!({"tool":name,"round":round,"ok":output.get("error").is_none(),"path":arguments["path"]}));
-                    let mut content =
-                        serde_json::to_string(&output).map_err(|_| "AGENT_REPLY_INVALID")?;
-                    if content.len() > 40000 {
-                        content = json!({"error":"AGENT_TOOL_OUTPUT_LIMIT"}).to_string();
-                    }
-                    let message =
-                        json!({"role":"tool","tool_call_id":call.id,"content":content});
-                    session.messages.push(message.clone());
-                    messages.push(message);
-                }
-                if cancelled(&root, &session.session_id) {
-                    session.status = "cancelled".into();
-                    break;
-                }
-                if round == 7 {
-                    session.status = "step_limit".into();
-                }
-                if session.operations.iter().any(|o| o.status == "pending") {
-                    session.status = "approval_required".into();
-                    break;
-                }
-                // Checkpoint complete tool batches, not partial transcripts.
-                if session.status == "running" { save(storage, &session)?; }
-            }
-            Ok(())
-            })();
+            let turn_result = browseros_agent_foundation::engine::drive_function_batches(
+                &mut CodingBatchHost { root: &root, storage, session: &mut session,
+                    messages: &mut messages, plan, provider: &mut provider },
+                8, 8,
+            );
             if turn_result.is_err() && session.status == "running" { session.status = "failed".into(); }
             drop(execution_lease);
             session.foundation_task = Some(execution.settle_coding(&session.status)?);

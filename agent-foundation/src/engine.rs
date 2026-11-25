@@ -198,6 +198,57 @@ impl AgentEngine<'_> {
     }
 }
 
+/// Production-compatible complete-message adapter for the existing engine.
+/// Streaming and complete-message transports have different cancellation and
+/// transcript semantics. Host adapters retain their real owner/lease and
+/// capability authorization; this driver owns bounded round progression,
+/// cancellation boundaries and complete function-batch admission.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BatchFlow { Continue, Stop }
+
+pub trait FunctionBatchHost {
+    type Error;
+    fn cancelled(&self) -> bool;
+    fn on_cancelled(&mut self) -> std::result::Result<(), Self::Error>;
+    fn request(&mut self) -> std::result::Result<serde_json::Value, Self::Error>;
+    fn provider_failure(&mut self, error: Self::Error) -> Self::Error;
+    fn validate_reply(&mut self, reply: &serde_json::Value) -> std::result::Result<(), Self::Error>;
+    fn invalid_batch(&mut self, error: FoundationError) -> Self::Error;
+    /// An accepted batch must be paired completely before committing its
+    /// transcript. Model-selected calls are not authorization for effects.
+    fn accept_batch(&mut self, round: usize, last: bool, reply: serde_json::Value,
+        calls: Vec<crate::model::FunctionCall>) -> std::result::Result<BatchFlow, Self::Error>;
+}
+
+pub fn drive_function_batches<H: FunctionBatchHost>(
+    host: &mut H, rounds: usize, max_calls: usize,
+) -> std::result::Result<(), H::Error> {
+    if !(1..=8).contains(&rounds) || max_calls > 8 {
+        return Err(host.invalid_batch(FoundationError::InvalidInput("function turn limits")));
+    }
+    for round in 0..rounds {
+        if host.cancelled() { return host.on_cancelled(); }
+        let reply = match host.request() {
+            Ok(value) => value,
+            Err(error) => {
+                if host.cancelled() { return host.on_cancelled(); }
+                return Err(host.provider_failure(error));
+            }
+        };
+        if host.cancelled() { return host.on_cancelled(); }
+        host.validate_reply(&reply)?;
+        let calls = crate::model::parse_function_batch(&reply, max_calls)
+            .map_err(|error| host.invalid_batch(error))?;
+        if host.cancelled() { return host.on_cancelled(); }
+        match host.accept_batch(round, round + 1 == rounds, reply, calls)? {
+            BatchFlow::Stop => return Ok(()),
+            BatchFlow::Continue if round + 1 < rounds => {}
+            BatchFlow::Continue => return Err(host.invalid_batch(FoundationError::InvalidTransition)),
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -209,6 +260,34 @@ mod tests {
     use serde_json::{json, Value};
     use std::sync::Arc;
     use tokio::sync::mpsc;
+
+    struct BatchFixture { cancelled: bool, replies: Vec<Value>, admitted: usize }
+    impl FunctionBatchHost for BatchFixture {
+        type Error = FoundationError;
+        fn cancelled(&self) -> bool { self.cancelled }
+        fn on_cancelled(&mut self) -> Result<()> { Err(FoundationError::Cancelled) }
+        fn request(&mut self) -> Result<Value> { self.replies.pop().ok_or(FoundationError::InvalidTransition) }
+        fn provider_failure(&mut self, error: FoundationError) -> FoundationError { error }
+        fn validate_reply(&mut self, _: &Value) -> Result<()> { Ok(()) }
+        fn invalid_batch(&mut self, error: FoundationError) -> FoundationError { error }
+        fn accept_batch(&mut self, _: usize, last: bool, _: Value, calls: Vec<crate::model::FunctionCall>) -> Result<BatchFlow> {
+            self.admitted += calls.len();
+            Ok(if last { BatchFlow::Stop } else { BatchFlow::Continue })
+        }
+    }
+    #[test]
+    fn complete_batch_driver_refuses_invalid_suffix_before_host_admission() {
+        let mut host = BatchFixture { cancelled: false, admitted: 0, replies: vec![json!({
+            "role":"assistant", "tool_calls":[
+                {"id":"one","function":{"name":"read_file","arguments":"{}"}},
+                {"id":"one","function":{"name":"write_file","arguments":"{}"}}
+            ]
+        })] };
+        assert!(drive_function_batches(&mut host, 1, 8).is_err());
+        assert_eq!(host.admitted, 0);
+        host.cancelled = true;
+        assert_eq!(drive_function_batches(&mut host, 1, 8), Err(FoundationError::Cancelled));
+    }
 
     struct ScriptedProvider(Vec<ModelEvent>);
     impl ModelProvider for ScriptedProvider {

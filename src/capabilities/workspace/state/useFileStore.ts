@@ -251,6 +251,7 @@ export const useFileStore = defineStore("files", () => {
       if (request !== editorReadRequest || editorFilePath.value !== oldPath ||
           fileContent.value !== oldContent || !publish()) return false;
       ++editorDocumentRevision;
+      editorConflict.value = null;
       editorFilePath.value = fork.path;
       editorSavedContent.value = fork.baseline;
       fileContent.value = fork.content;
@@ -314,6 +315,7 @@ export const useFileStore = defineStore("files", () => {
       const saved = await bridge.editorDraftSaveAs(recovery.id, target, text);
       if (editorRecoverySession.value === recovery) {
         ++editorDocumentRevision;
+      editorConflict.value = null;
         editorRecoverySession.value = null;
         editorFilePath.value = saved.path;
         editorSavedContent.value = saved.content;
@@ -885,6 +887,7 @@ export const useFileStore = defineStore("files", () => {
       }
       if (!ownsRead() || !publish()) return false;
       ++inlineDocumentRevision;
+      inlineConflict.value = null;
       inlineFile.value = entry.path;
       filePath.value = documentPathParent(entry.path);
       pathInput.value = filePath.value;
@@ -954,6 +957,7 @@ export const useFileStore = defineStore("files", () => {
     if (!canDiscardInline()) return;
     ++inlineReadRequest;
     ++inlineDocumentRevision;
+      inlineConflict.value = null;
     inlineFile.value = "";
   }
 
@@ -1038,6 +1042,7 @@ export const useFileStore = defineStore("files", () => {
       compareImages.value = [];
       previewError.value = "";
       ++inlineDocumentRevision;
+      inlineConflict.value = null;
       inlineFile.value = "";
       return true;
     } catch (e: any) {
@@ -1130,7 +1135,9 @@ export const useFileStore = defineStore("files", () => {
         fileContent.value !== previousContent || inlineFile.value !== previousInline ||
         inlineText.value !== previousInlineText || !publish()) return false;
     ++editorDocumentRevision;
+      editorConflict.value = null;
     ++inlineDocumentRevision;
+      inlineConflict.value = null;
     editorRecoverySession.value = null;
     editorFilePath.value = "";
     editorSavedContent.value = "";
@@ -1216,6 +1223,7 @@ export const useFileStore = defineStore("files", () => {
       }
       if (!ownsRead() || !publish()) return false;
       ++editorDocumentRevision;
+      editorConflict.value = null;
       editorRecoverySession.value = null;
       editorFilePath.value = path;
       editorSavedContent.value = recovered?.baseline ?? text;

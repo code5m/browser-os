@@ -889,6 +889,43 @@ fn build_chat_messages(
     Ok(messages)
 }
 
+// Chat and Legacy are deliberately text-only hosts of the same bounded
+// complete-message engine. They must not silently accept model tool calls.
+struct TextBatchHost<'a> {
+    profile: &'a ProviderProfile,
+    messages: &'a [Value],
+    cancellation: &'a (dyn Fn() -> bool + Sync),
+    result: Option<String>,
+}
+impl browseros_agent_foundation::engine::FunctionBatchHost for TextBatchHost<'_> {
+    type Error = String;
+    fn cancelled(&self) -> bool { (self.cancellation)() }
+    fn on_cancelled(&mut self) -> Result<(), String> { Err("AI_PROVIDER_CANCELLED".into()) }
+    fn request(&mut self) -> Result<Value, String> {
+        provider_turn_cancelable(self.profile, self.messages, &[], self.cancellation)
+    }
+    fn provider_failure(&mut self, error: String) -> String { error }
+    fn validate_reply(&mut self, _: &Value) -> Result<(), String> { Ok(()) }
+    fn invalid_batch(&mut self, _: browseros_agent_foundation::FoundationError) -> String {
+        "AI_RESPONSE_INVALID".into()
+    }
+    fn accept_batch(&mut self, _: usize, _: bool, reply: Value,
+        calls: Vec<browseros_agent_foundation::model::FunctionCall>)
+        -> Result<browseros_agent_foundation::engine::BatchFlow, String> {
+        if !calls.is_empty() { return Err("AI_RESPONSE_INVALID".into()); }
+        self.result = Some(reply["content"].as_str().filter(|text| !text.trim().is_empty())
+            .ok_or("AI_RESPONSE_EMPTY")?.to_owned());
+        Ok(browseros_agent_foundation::engine::BatchFlow::Stop)
+    }
+}
+fn text_model_turn(profile: &ProviderProfile, messages: &[Value],
+    cancelled: &(dyn Fn() -> bool + Sync)) -> Result<String, String> {
+    let mut host = TextBatchHost { profile, messages, cancellation: cancelled, result: None };
+    browseros_agent_foundation::engine::drive_function_batches(&mut host, 1, 0)?;
+    if cancelled() { return Err("AI_PROVIDER_CANCELLED".into()); }
+    host.result.ok_or_else(|| "AI_RESPONSE_EMPTY".into())
+}
+
 fn chat_with_history(
     profile: &ProviderProfile,
     message: &str,
@@ -897,17 +934,7 @@ fn chat_with_history(
     cancelled: &(dyn Fn() -> bool + Sync),
 ) -> Result<Value, String> {
     let messages = build_chat_messages(message, scope, history)?;
-    if cancelled() {
-        return Err("AI_PROVIDER_CANCELLED".into());
-    }
-    let reply = provider_turn_cancelable(profile, &messages, &[], cancelled)?;
-    if cancelled() {
-        return Err("AI_PROVIDER_CANCELLED".into());
-    }
-    let content = reply["content"]
-        .as_str()
-        .filter(|v| !v.trim().is_empty())
-        .ok_or("AI_RESPONSE_EMPTY")?;
+    let content = text_model_turn(profile, &messages, cancelled)?;
     Ok(json!({"content":content,"model":profile.model}))
 }
 
@@ -1736,14 +1763,10 @@ pub fn execute(path: &Path, request: AiRequest) -> Result<Value, String> {
                 execution.cancel()?;
                 return Err("AI_PROVIDER_CANCELLED".into());
             }
-            let response = provider_turn_cancelable(&profile, &messages, &[], &cancelled)
-                .and_then(|reply| {
-                    if cancelled() { return Err("AI_PROVIDER_CANCELLED".into()); }
-                    let content = reply["content"].as_str()
-                        .filter(|value| !value.trim().is_empty())
-                        .ok_or("AI_RESPONSE_EMPTY")?;
-                    Ok(json!({"content":content,"model":profile.model,"agent_id":agent.id,"tools_executed":false}))
-                });
+            let lease = execution.acquire_lease()?;
+            let response = text_model_turn(&profile, &messages, &cancelled)
+                .map(|content| json!({"content":content,"model":profile.model,"agent_id":agent.id,"tools_executed":false}));
+            drop(lease);
             if cancelled() {
                 execution.cancel()?;
             } else {
@@ -1772,6 +1795,7 @@ pub fn execute(path: &Path, request: AiRequest) -> Result<Value, String> {
             let signal = cancel_guard.as_ref().ok_or("AI_CHAT_REQUEST_UNAVAILABLE")?;
             let execution =
                 crate::capabilities::agent::public_api::ProductionExecution::begin("chat")?;
+            let lease = execution.acquire_lease()?;
             let response = chat_with_history(
                 &profile,
                 &request.message,
@@ -1779,6 +1803,7 @@ pub fn execute(path: &Path, request: AiRequest) -> Result<Value, String> {
                 &request.history,
                 &|| signal.cancelled.load(Ordering::SeqCst),
             );
+            drop(lease);
             if signal.cancelled.load(Ordering::SeqCst) {
                 execution.cancel()?;
             } else {
