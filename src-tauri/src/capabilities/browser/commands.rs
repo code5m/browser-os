@@ -411,6 +411,18 @@ pub fn report_resources(
     Ok(())
 }
 
+// Dropping the IPC future requests cancellation but does not return native
+// capacity: only the callback that owns the permit may do that.
+struct CaptureWaitGuard(Option<tauri_plugin_browser_tabs::CaptureCancellation>);
+
+impl Drop for CaptureWaitGuard {
+    fn drop(&mut self) {
+        if let Some(cancellation) = self.0.take() {
+            cancellation.cancel();
+        }
+    }
+}
+
 /// Explicit, main-window-only full-document screenshot. No DOM credentials or
 /// remote webview privileges are consulted. Save in the private app data tree.
 #[tauri::command]
@@ -427,21 +439,24 @@ pub async fn capture_full_page(
     crate::shared::invocation::check_tab_id(&id)?;
     let permit = CAPTURE_LANE.reserve()?;
     let manager = app.state::<tauri_plugin_browser_tabs::TabManagerState>();
-    let (send, recv) = std::sync::mpsc::channel();
+    let cancellation = tauri_plugin_browser_tabs::CaptureCancellation::new();
+    let mut waiter = CaptureWaitGuard(Some(cancellation.clone()));
+    let (send, recv) = tokio::sync::oneshot::channel();
     manager
-        .capture_full_page(&id, move |result| {
+        .capture_full_page_cancellable(&id, cancellation, move |result| {
             // The native callback owns admission, even after the IPC waiter
             // times out or is dropped. Successful delivery transfers that
             // ownership to validation/storage; failed delivery releases it.
             let _ = send.send(result.map(|bytes| (bytes, permit)));
         })
         .map_err(|_| "CAPTURE_TAB_UNAVAILABLE".to_string())?;
-    let (bytes, permit) = tauri::async_runtime::spawn_blocking(move || {
-        recv.recv_timeout(std::time::Duration::from_secs(30))
-            .map_err(|_| "CAPTURE_TIMEOUT".to_string())?
-    })
-    .await
-    .map_err(|_| "CAPTURE_WORKER_FAILED".to_string())??;
+    let result = tokio::time::timeout(std::time::Duration::from_secs(30), recv)
+        .await
+        .map_err(|_| "CAPTURE_TIMEOUT".to_string())?
+        .map_err(|_| "CAPTURE_WORKER_FAILED".to_string())?;
+    // A terminal native receipt arrived. Do not cancel completed work.
+    waiter.0.take();
+    let (bytes, permit) = result?;
     let base = crate::workspace::data_dir(&app);
     permit.run(move || save_capture(&base, &bytes)).await
 }

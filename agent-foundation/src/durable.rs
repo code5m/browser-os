@@ -134,6 +134,17 @@ impl SqliteTaskStore {
         let tx = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(storage)?;
+        let committed = Self::commit_in_transaction(&tx, task, expected_revision, event_kinds)?;
+        tx.commit().map_err(storage)?;
+        Ok(committed)
+    }
+
+    fn commit_in_transaction(
+        tx: &rusqlite::Transaction<'_>,
+        task: &TaskRecord,
+        expected_revision: Option<u64>,
+        event_kinds: &[EventKind],
+    ) -> Result<Vec<EventRecord>> {
         let id = task.id.to_string();
         let serialized = encode(task)?;
         match expected_revision {
@@ -185,12 +196,15 @@ impl SqliteTaskStore {
             .map_err(storage)?;
             committed.push(event);
         }
-        tx.commit().map_err(storage)?;
         Ok(committed)
     }
 
     pub fn load_tasks(&self) -> Result<Vec<TaskRecord>> {
         let connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
+        Self::load_tasks_from(&connection)
+    }
+
+    fn load_tasks_from(connection: &Connection) -> Result<Vec<TaskRecord>> {
         let mut stmt = connection
             .prepare("SELECT body FROM foundation_tasks ORDER BY id")
             .map_err(storage)?;
@@ -207,31 +221,36 @@ impl SqliteTaskStore {
     pub fn recover_paused(&self) -> Result<Vec<TaskRecord>> {
         // Do not steal a live worker's task on a second process attach.
         // An expired lease can be recovered, but never resumed automatically.
-        let live: i64 = {
-            let connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
-            connection
-                .query_row(
-                    "SELECT COUNT(*) FROM foundation_leases WHERE expires_ms>?1",
-                    params![epoch_ms()?],
-                    |row| row.get(0),
-                )
-                .map_err(storage)?
-        };
+        // Keep lease inspection, snapshot reads and all recovery publications
+        // in one write transaction. A second connection cannot acquire a lease
+        // between the check and pause, and a failed recovery leaves no partial
+        // task/event/outbox updates.
+        let mut connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
+        let tx = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(storage)?;
+        let live: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM foundation_leases WHERE expires_ms>?1",
+            params![epoch_ms()?],
+            |row| row.get(0),
+        ).map_err(storage)?;
         if live != 0 {
             return Err(FoundationError::Storage(
                 "another worker has an active task lease".into(),
             ));
         }
-        let tasks = self.load_tasks()?;
+        let tasks = Self::load_tasks_from(&tx)?;
         let mut recovered = Vec::with_capacity(tasks.len());
         for mut task in tasks {
             let previous = task.status;
             if matches!(previous, TaskStatus::Running | TaskStatus::AwaitingApproval) {
                 let old = task.revision;
-                task.revision += 1;
+                task.revision = old.checked_add(1)
+                    .ok_or_else(|| FoundationError::Storage("task revision overflow".into()))?;
                 task.status = TaskStatus::Paused;
                 task.pending = None;
-                self.commit(
+                Self::commit_in_transaction(
+                    &tx,
                     &task,
                     Some(old),
                     &[
@@ -249,6 +268,7 @@ impl SqliteTaskStore {
             }
             recovered.push(task);
         }
+        tx.commit().map_err(storage)?;
         Ok(recovered)
     }
 
@@ -590,6 +610,36 @@ mod tests {
         assert!(db.recover_paused().is_err());
         db.release_lease(task.id, lease);
         assert_eq!(db.recover_paused().unwrap()[0].status, TaskStatus::Paused);
+    }
+
+    #[test]
+    fn recovery_rolls_back_every_task_if_later_publication_fails() {
+        let db = SqliteTaskStore::in_memory().unwrap();
+        for id in [Uuid::from_u128(1), Uuid::from_u128(2)] {
+            let task = TaskRecord {
+                id,
+                session_id: Uuid::new_v4(),
+                workspace_id: Uuid::new_v4(),
+                goal: "interrupted".into(),
+                context: vec![],
+                status: TaskStatus::Running,
+                revision: 1,
+                pending: None,
+            };
+            db.commit(&task, None, &[EventKind::TaskCreated]).unwrap();
+        }
+        db.connection.lock().unwrap_or_else(|e| e.into_inner()).execute_batch(
+            "CREATE TRIGGER fail_second_recovery BEFORE UPDATE ON foundation_tasks
+             WHEN OLD.id='00000000-0000-0000-0000-000000000002'
+             BEGIN SELECT RAISE(ABORT,'simulated second recovery failure'); END;"
+        ).unwrap();
+        assert!(db.recover_paused().is_err());
+        for task in db.load_tasks().unwrap() {
+            assert_eq!(task.status, TaskStatus::Running);
+            assert_eq!(task.revision, 1);
+            assert_eq!(db.events_since(task.id, 0, 100).unwrap().len(), 1);
+        }
+        assert_eq!(db.pending_outbox(100).unwrap().len(), 2);
     }
 
     #[test]

@@ -276,6 +276,134 @@ fn png_writer_rejects_a_chunk_before_exceeding_its_limit() {
     assert_eq!(writer.0.len(), 32 * 1024 * 1024);
 }
 
+/// One request owns its cancellation signal. A request to cancel is NOT a
+/// terminal receipt: the host must retain admission until native completion.
+/// WebKit accepts GCancellable, but its renderer may still finish a snapshot.
+/// WebView2 has no per-CDP-call cancellation API here.
+#[derive(Clone)]
+pub struct CaptureCancellation {
+    requested: Arc<std::sync::atomic::AtomicBool>,
+    #[cfg(target_os = "linux")]
+    native: webkit2gtk::gio::Cancellable,
+}
+
+impl CaptureCancellation {
+    pub fn new() -> Self {
+        Self {
+            requested: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            #[cfg(target_os = "linux")]
+            native: webkit2gtk::gio::Cancellable::new(),
+        }
+    }
+
+    pub fn cancel(&self) {
+        use std::sync::atomic::Ordering;
+        if !self.requested.swap(true, Ordering::AcqRel) {
+            #[cfg(target_os = "linux")]
+            {
+                use webkit2gtk::gio::prelude::CancellableExt;
+                self.native.cancel();
+            }
+        }
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.requested.load(std::sync::atomic::Ordering::Acquire)
+    }
+}
+
+impl Default for CaptureCancellation {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn complete_capture<T>(pending: &parking_lot::Mutex<Option<impl FnOnce(T)>>, result: T) {
+    let callback = pending.lock().take();
+    if let Some(callback) = callback {
+        callback(result);
+    }
+}
+
+/// Request an explicitly bounded CSS clip; never fall back to an unbounded
+/// screenshot if layout metrics are absent or malformed. This bounds the
+/// requested region, not all renderer allocations or device-scale overhead.
+#[cfg(any(target_os = "windows", test))]
+fn capture_clip_from_metrics(json: &str) -> std::result::Result<serde_json::Value, String> {
+    if json.len() > 64 * 1024 {
+        return Err("CAPTURE_METRICS_LIMIT".into());
+    }
+    let metrics: serde_json::Value =
+        serde_json::from_str(json).map_err(|_| "CAPTURE_METRICS_INVALID".to_string())?;
+    let rect = metrics.get("cssContentSize").ok_or("CAPTURE_METRICS_UNAVAILABLE")?;
+    let field = |key: &str| {
+        rect.get(key)
+            .and_then(|value| value.as_f64())
+            .filter(|value| value.is_finite())
+            .ok_or_else(|| "CAPTURE_METRICS_INVALID".to_string())
+    };
+    let x = field("x")?;
+    let y = field("y")?;
+    let width = field("width")?;
+    let height = field("height")?;
+    if x.abs() > 16_384.0 || y.abs() > 16_384.0
+        || width <= 0.0 || height <= 0.0
+        || width.ceil() > 16_384.0 || height.ceil() > 16_384.0
+        || width.ceil() * height.ceil() > 16_000_000.0
+    {
+        return Err("CAPTURE_DIMENSION_LIMIT".into());
+    }
+    Ok(serde_json::json!({
+        "format": "png", "captureBeyondViewport": true, "fromSurface": true,
+        "clip": { "x": x, "y": y, "width": width, "height": height, "scale": 1 }
+    }))
+}
+
+#[cfg(test)]
+mod capture_request_tests {
+    use super::*;
+
+    #[test]
+    fn callback_is_consumed_once_across_dispatch_and_completion() {
+        let observed = std::cell::RefCell::new(Vec::new());
+        let pending = parking_lot::Mutex::new(Some(|value| observed.borrow_mut().push(value)));
+        complete_capture(&pending, "dispatch_failed");
+        complete_capture(&pending, "late_completion");
+        assert_eq!(*observed.borrow(), vec!["dispatch_failed"]);
+    }
+
+    #[test]
+    fn metrics_require_finite_bounded_css_clip() {
+        let clip = capture_clip_from_metrics(
+            r#"{"cssContentSize":{"x":0,"y":0,"width":1200,"height":4000}}"#,
+        ).unwrap();
+        assert_eq!(clip["clip"]["height"].as_f64(), Some(4000.0));
+        assert!(capture_clip_from_metrics(r#"{"contentSize":{"width":100,"height":100}}"#).is_err());
+        assert!(capture_clip_from_metrics(
+            r#"{"cssContentSize":{"x":0,"y":0,"width":16000,"height":16000}}"#,
+        ).is_err());
+        assert!(capture_clip_from_metrics(
+            r#"{"cssContentSize":{"x":0,"y":0,"width":0,"height":100}}"#,
+        ).is_err());
+    }
+
+    #[test]
+    fn cancellation_is_shared_and_idempotent() {
+        let request = CaptureCancellation::new();
+        let native = request.clone();
+        assert!(!native.is_cancelled());
+        request.cancel();
+        request.cancel();
+        assert!(native.is_cancelled());
+        #[cfg(target_os = "linux")]
+        {
+            use webkit2gtk::gio::prelude::CancellableExt;
+            assert!(native.native.is_cancelled());
+        }
+    }
+}
+
 /// Opaque native instance identity. A weak reference cannot retain a closed
 /// WebView and cannot match a replacement reusing the same logical tab ID.
 #[derive(Clone)]
@@ -943,6 +1071,15 @@ impl TabManager {
         id: &TabId,
         callback: impl FnOnce(std::result::Result<Vec<u8>, String>) + Send + 'static,
     ) -> Result<()> {
+        self.capture_full_page_cancellable(id, CaptureCancellation::new(), callback)
+    }
+
+    pub fn capture_full_page_cancellable(
+        &self,
+        id: &TabId,
+        cancellation: CaptureCancellation,
+        callback: impl FnOnce(std::result::Result<Vec<u8>, String>) + Send + 'static,
+    ) -> Result<()> {
         // Protect dispatch only, never keep a reservation across an
         // asynchronous WebKit/WebView2 completion callback.
         let (_operation, tab) = self.get_tab(id, TabAccessKind::Operation)?;
@@ -951,11 +1088,22 @@ impl TabManager {
         {
             webview.with_webview(move |native| {
                 use webkit2gtk::WebViewExt;
+                if cancellation.is_cancelled() {
+                    callback(Err("CAPTURE_CANCELLED_BEFORE_DISPATCH".into()));
+                    return;
+                }
+                let cancellable = cancellation.native.clone();
                 native.inner().snapshot(
                     webkit2gtk::SnapshotRegion::FullDocument,
                     webkit2gtk::SnapshotOptions::NONE,
-                    None::<&webkit2gtk::gio::Cancellable>,
+                    Some(&cancellable),
                     move |result| {
+                        // Only the native finish callback can release the permit.
+                        // Do not encode a snapshot abandoned by its IPC caller.
+                        if cancellation.is_cancelled() {
+                            callback(Err("CAPTURE_CANCELLED_AT_COMPLETION".into()));
+                            return;
+                        }
                         let image = result
                             .map_err(|_| "CAPTURE_ENGINE_FAILED".to_string())
                             .and_then(|surface| {
@@ -977,7 +1125,11 @@ impl TabManager {
                                     .map_err(|_| "CAPTURE_PNG_ENCODE_FAILED".to_string())?;
                                 Ok(png.0)
                             });
-                        callback(image);
+                        callback(if cancellation.is_cancelled() {
+                            Err("CAPTURE_CANCELLED_AT_COMPLETION".into())
+                        } else {
+                            image
+                        });
                     },
                 );
             })?;
@@ -994,54 +1146,82 @@ impl TabManager {
                         return;
                     }
                 };
-                // webview2-com 0.38 keeps its pwstr helper private. Pass
-                // public Windows PCWSTR values backed by live UTF-16 arrays.
-                let method: Vec<u16> = "Page.captureScreenshot"
-                    .encode_utf16()
-                    .chain(std::iter::once(0))
-                    .collect();
-                let params: Vec<u16> =
-                    r#"{"format":"png","captureBeyondViewport":true,"fromSurface":true}"#
-                        .encode_utf16()
-                        .chain(std::iter::once(0))
-                        .collect();
-                let completion = CallDevToolsProtocolMethodCompletedHandler::create(Box::new(
+                let pending = Arc::new(parking_lot::Mutex::new(Some(callback)));
+                if cancellation.is_cancelled() {
+                    complete_capture(&pending, Err("CAPTURE_CANCELLED_BEFORE_DISPATCH".into()));
+                    return;
+                }
+                let metrics_reply = pending.clone();
+                let capture_core = core.clone();
+                let metrics_method: Vec<u16> = "Page.getLayoutMetrics".encode_utf16().chain(std::iter::once(0)).collect();
+                let empty_params: Vec<u16> = "{}".encode_utf16().chain(std::iter::once(0)).collect();
+                let metrics_completion = CallDevToolsProtocolMethodCompletedHandler::create(Box::new(
                     move |status, json| {
-                        let data = status
-                            .map_err(|_| "CAPTURE_ENGINE_FAILED".to_string())
-                            .and_then(|_| {
-                                if json.len() > 45 * 1024 * 1024 {
-                                    return Err("CAPTURE_SIZE_LIMIT".into());
+                        if cancellation.is_cancelled() {
+                            complete_capture(&metrics_reply, Err("CAPTURE_CANCELLED_AT_COMPLETION".into()));
+                            return Ok(());
+                        }
+                        let params = match status
+                            .map_err(|_| "CAPTURE_METRICS_FAILED".to_string())
+                            .and_then(|_| capture_clip_from_metrics(&json))
+                        {
+                            Ok(params) => params,
+                            Err(error) => {
+                                complete_capture(&metrics_reply, Err(error));
+                                return Ok(());
+                            }
+                        };
+                        let method: Vec<u16> = "Page.captureScreenshot".encode_utf16().chain(std::iter::once(0)).collect();
+                        let params: Vec<u16> = params.to_string().encode_utf16().chain(std::iter::once(0)).collect();
+                        let image_reply = metrics_reply.clone();
+                        let image_cancel = cancellation.clone();
+                        let completion = CallDevToolsProtocolMethodCompletedHandler::create(Box::new(
+                            move |status, json| {
+                                if image_cancel.is_cancelled() {
+                                    complete_capture(&image_reply, Err("CAPTURE_CANCELLED_AT_COMPLETION".into()));
+                                    return Ok(());
                                 }
-                                let response: serde_json::Value = serde_json::from_str(&json)
-                                    .map_err(|_| "CAPTURE_RESPONSE_INVALID".to_string())?;
-                                let image = response
-                                    .get("data")
-                                    .and_then(|v| v.as_str())
-                                    .ok_or_else(|| "CAPTURE_NO_IMAGE".to_string())?;
-                                if image.len() > 44 * 1024 * 1024 {
-                                    return Err("CAPTURE_SIZE_LIMIT".into());
-                                }
-                                use base64::Engine;
-                                base64::engine::general_purpose::STANDARD
-                                    .decode(image)
-                                    .map_err(|_| "CAPTURE_PNG_DECODE_FAILED".into())
-                            });
-                        callback(data);
+                                let data = status
+                                    .map_err(|_| "CAPTURE_ENGINE_FAILED".to_string())
+                                    .and_then(|_| {
+                                        if json.len() > 45 * 1024 * 1024 {
+                                            return Err("CAPTURE_SIZE_LIMIT".into());
+                                        }
+                                        let response: serde_json::Value = serde_json::from_str(&json)
+                                            .map_err(|_| "CAPTURE_RESPONSE_INVALID".to_string())?;
+                                        let image = response.get("data").and_then(|v| v.as_str())
+                                            .ok_or_else(|| "CAPTURE_NO_IMAGE".to_string())?;
+                                        if image.len() > 44 * 1024 * 1024 {
+                                            return Err("CAPTURE_SIZE_LIMIT".into());
+                                        }
+                                        use base64::Engine;
+                                        base64::engine::general_purpose::STANDARD.decode(image)
+                                            .map_err(|_| "CAPTURE_PNG_DECODE_FAILED".into())
+                                    });
+                                complete_capture(&image_reply, data);
+                                Ok(())
+                            },
+                        ));
+                        // Recheck before dispatch. Once admitted, only the CDP
+                        // completion or a synchronous dispatch rejection ends it.
+                        if cancellation.is_cancelled() {
+                            complete_capture(&metrics_reply, Err("CAPTURE_CANCELLED_BEFORE_DISPATCH".into()));
+                        } else if unsafe {
+                            capture_core.CallDevToolsProtocolMethod(
+                                PCWSTR(method.as_ptr()), PCWSTR(params.as_ptr()), &completion,
+                            )
+                        }.is_err() {
+                            complete_capture(&metrics_reply, Err("CAPTURE_DISPATCH_FAILED".into()));
+                        }
                         Ok(())
                     },
                 ));
                 if unsafe {
                     core.CallDevToolsProtocolMethod(
-                        PCWSTR(method.as_ptr()),
-                        PCWSTR(params.as_ptr()),
-                        &completion,
+                        PCWSTR(metrics_method.as_ptr()), PCWSTR(empty_params.as_ptr()), &metrics_completion,
                     )
-                }
-                .is_err()
-                {
-                    // The callback normally receives errors; a synchronous failure
-                    // is surfaced as bounded timeout by the caller.
+                }.is_err() {
+                    complete_capture(&pending, Err("CAPTURE_METRICS_DISPATCH_FAILED".into()));
                 }
             })?;
         }
