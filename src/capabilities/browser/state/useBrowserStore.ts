@@ -74,6 +74,20 @@ export const useBrowserStore = defineStore("browser", () => {
   const tabRecoveryMessage = ref("");
   const tabRecoveryBusy = ref(false);
 
+  // Owner sequences are u64 serialized as decimal strings. Do not round
+  // through a JS Number (which loses identity beyond 2^53).
+  function incrementAdmissionSequence(sequence: string): string {
+    if (!/^\d+$/.test(sequence)) throw new Error("TAB_MUTATION_INVALID_SEQUENCE");
+    const digits = sequence.split("");
+    let carry = 1;
+    for (let i = digits.length - 1; i >= 0 && carry; i--) {
+      const next = Number(digits[i]) + carry;
+      digits[i] = String(next % 10);
+      carry = Math.floor(next / 10);
+    }
+    return (carry ? "1" : "") + digits.join("");
+  }
+
   async function recoverNativeTabs() {
     if (tabRecoveryBusy.value) return;
     tabRecoveryBusy.value = true;
@@ -113,6 +127,18 @@ export const useBrowserStore = defineStore("browser", () => {
           || confirmed.receipt?.phase !== current?.phase) {
         throw new Error("TAB_MUTATION_RECOVERY_CHANGED");
       }
+      if (current) {
+        // ACK retires the old sequence. Before adopting the list, require
+        // an empty owner and exactly one advancement: any intervening
+        // background/legacy admission invalidates this snapshot.
+        const ack = await bridge.acknowledgeTabMutation(current.ticket);
+        if (ack.epoch !== view.epoch || ack.last_ack !== current.ticket
+            || ack.receipt || ack.internal_active || !ack.active_known
+            || ack.active_tab_id !== view.active_tab_id
+            || ack.next_sequence !== incrementAdmissionSequence(view.next_sequence)) {
+          throw new Error("TAB_MUTATION_ACK_UNKNOWN");
+        }
+      }
       // Preserve the logical ordering of surviving tabs; append new native
       // records. A reload cannot invent recently-closed entries.
       const byId = new Map(actual.map(tab => [tab.id, tab]));
@@ -122,10 +148,6 @@ export const useBrowserStore = defineStore("browser", () => {
       tabs.splice(0, tabs.length, ...ordered);
       activeTabId.value = view.active_tab_id && byId.has(view.active_tab_id) ? view.active_tab_id : "";
       url.value = byId.get(activeTabId.value)?.url ?? "";
-      if (current) {
-        const ack = await bridge.acknowledgeTabMutation(current.ticket);
-        if (ack.epoch !== view.epoch || ack.last_ack !== current.ticket) throw new Error("TAB_MUTATION_ACK_UNKNOWN");
-      }
       tabRecoveryRequired.value = false;
       tabRecoveryMessage.value = "已按原生记录恢复页签；未重放旧操作。";
       tabNativeState.value = "ready";

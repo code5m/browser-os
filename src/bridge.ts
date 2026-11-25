@@ -88,9 +88,32 @@ function boundedTabControl<T>(lane: string, key: string, call: () => Promise<T>)
     owned.waiters.add(waiter);
   });
 }
-const tabReceiptCall = (request: Record<string, unknown>, recovery = false) =>
-  boundedTabControl<TabOwnerView>((recovery ? "recovery-" : "") + String(request.phase), JSON.stringify(request),
-    () => invoke<TabOwnerView>("tab_mutation", { request }));
+// Two fixed transport lanes per phase, shared by the normal and recovery
+// callers. Once the native owner has reconciled/fenced an old operation,
+// its lost transport must not make a *different* ticket permanently
+// unusable. Never allocate a third unresolved request or detach a native
+// effect on this basis. A same-key mutating request keeps its old lane;
+// only read-only observation may use an alternate transport after timeout.
+function boundedReceiptControl<T>(
+  phase: string, key: string, call: () => Promise<T>, recovery = false, readOnly = false,
+): Promise<T> {
+  const lanes = recovery ? ["recovery-" + phase, phase] : [phase, "recovery-" + phase];
+  const preferred = tabControl.get(lanes[0]);
+  const alternate = tabControl.get(lanes[1]);
+  if (!preferred || (preferred.key === key && (!readOnly || preferred.waiters.size > 0))) {
+    return boundedTabControl(lanes[0], key, call);
+  }
+  if (!alternate || alternate.key === key) {
+    return boundedTabControl(lanes[1], key, call);
+  }
+  if (preferred.key === key) return boundedTabControl(lanes[0], key, call);
+  return Promise.reject(new Error("TAB_CONTROL_LANE_UNRESOLVED"));
+}
+const tabReceiptCall = (request: Record<string, unknown>, recovery = false) => {
+  const phase = String(request.phase);
+  return boundedReceiptControl<TabOwnerView>("tab-" + phase, JSON.stringify(request),
+    () => invoke<TabOwnerView>("tab_mutation", { request }), recovery, phase === "inspect" || phase === "poll");
+};
 let terminalEvent: TabReceipt | null = null;
 let receiptListenerStarted = false;
 function ensureTabReceiptListener() {
@@ -193,9 +216,11 @@ type CaptureReceipt = {
   path: string|null; error: string|null;
 };
 type CaptureView = {epoch:string;next_sequence:string;receipt:CaptureReceipt|null;last_completed:CaptureReceipt|null};
-const captureControl = (request: Record<string, unknown>, recovery = false) =>
-  boundedTabControl<CaptureView>("capture-"+(recovery?"recovery-":"")+String(request.phase), JSON.stringify(request),
-    () => invoke<CaptureView>("capture_full_page", {request}));
+const captureControl = (request: Record<string, unknown>, recovery = false) => {
+  const phase = String(request.phase);
+  return boundedReceiptControl<CaptureView>("capture-" + phase, JSON.stringify(request),
+    () => invoke<CaptureView>("capture_full_page", {request}), recovery, phase === "inspect");
+};
 const captureTerminal = (receipt: CaptureReceipt) => ["succeeded","failed","cancelled"].includes(receipt.phase);
 let captureEvent: CaptureReceipt|null = null, captureListenerStarted = false;
 function ensureCaptureListener() {
@@ -1069,10 +1094,10 @@ export const bridge = {
 
   inspectTabMutation: () => { ensureTabReceiptListener(); return tabReceiptCall({ phase: "inspect" }, true); },
   fenceTabMutation: (epoch: string, sequence: string) => tabReceiptCall({ phase: "fence", epoch, sequence }, true),
-  cancelTabMutation: (ticket: string) => tabReceiptCall({ phase: "cancel", ticket }),
+  cancelTabMutation: (ticket: string) => tabReceiptCall({ phase: "cancel", ticket }, true),
   acknowledgeTabMutation: (ticket: string) => tabReceiptCall({ phase: "ack", ticket }, true),
   // Read-only recovery lane with independent bounded transport.
-  reconcileTabList: () => boundedTabControl<TabInfo[]>("reconcile-list", "tab-list", () => invoke<TabInfo[]>("tab_list")),
+  reconcileTabList: () => boundedReceiptControl<TabInfo[]>("reconcile-list", "tab-list", () => invoke<TabInfo[]>("tab_list"), true, true),
 
   tabSetTitle: (id: string, title: string) =>
     invoke("tab_set_title", { id, title }),
@@ -1090,7 +1115,7 @@ export const bridge = {
   captureFullPage: (id: string) => ownedCapture(id),
   inspectCapture: () => captureControl({phase:"inspect"},true),
   fenceCapture: (epoch: string, sequence: string) => captureControl({phase:"fence",epoch,sequence},true),
-  cancelCapture: (ticket: string) => captureControl({phase:"cancel",ticket}),
+  cancelCapture: (ticket: string) => captureControl({phase:"cancel",ticket},true),
   acknowledgeCapture: (ticket: string) => captureControl({phase:"ack",ticket},true),
 
   // 页签休眠开关（默认关；开启后非激活超 10 分钟的页签销毁 webview 仅留 URL，激活时重建）

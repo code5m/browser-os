@@ -107,6 +107,33 @@ impl Default for Owner {
     fn default() -> Self { Self { slot: None, last_ack: None, epoch: uuid::Uuid::new_v4().to_string(), next_sequence: 1, internal_active: false } }
 }
 impl Owner {
+    fn advance_sequence(&mut self) -> Result<(), String> {
+        self.next_sequence = self.next_sequence.checked_add(1).ok_or("TAB_MUTATION_SEQUENCE_EXHAUSTED")?;
+        Ok(())
+    }
+
+    fn admit_background(&mut self) -> Result<(), String> {
+        self.expire_prepared();
+        if self.slot.is_some() || self.internal_active {
+            return Err("TAB_MUTATION_OWNER_BUSY".into());
+        }
+        // A background operation changes the same native tab state as a
+        // user mutation. Even a completed operation between two inspect
+        // calls must invalidate an older reconciliation snapshot.
+        self.advance_sequence()?;
+        self.internal_active = true;
+        Ok(())
+    }
+
+    fn matches_view(&self, view: &OwnerView) -> bool {
+        self.epoch == view.epoch
+            && self.next_sequence.to_string() == view.next_sequence
+            && self.internal_active == view.internal_active
+            && self.last_ack == view.last_ack
+            && self.slot.as_ref().map(|s| (&s.receipt.ticket, s.receipt.phase))
+                == view.receipt.as_ref().map(|r| (&r.ticket, r.phase))
+    }
+
     fn expire_prepared(&mut self) {
         if let Some(slot) = &mut self.slot {
             if slot.receipt.phase == Phase::Prepared && slot.since.elapsed() >= std::time::Duration::from_secs(30) {
@@ -125,9 +152,7 @@ impl Drop for InternalMutation {
 }
 pub(super) fn reserve_internal() -> Result<InternalMutation, String> {
     let mut state = owner()?;
-    state.expire_prepared();
-    if state.slot.is_some() || state.internal_active { return Err("TAB_MUTATION_OWNER_BUSY".into()); }
-    state.internal_active = true;
+    state.admit_background()?;
     Ok(InternalMutation)
 }
 #[derive(Clone, Debug, Serialize)]
@@ -152,6 +177,13 @@ fn snapshot(app: &AppHandle) -> Result<OwnerView, String> {
     if let Ok(active) = app.state::<crate::AppState>().active_tab.try_lock() {
         view.active_known = true;
         view.active_tab_id = active.clone();
+    }
+    // Validate the split snapshot after releasing the app metadata lock.
+    // A native admission or phase transition during collection cannot be
+    // represented as a consistent active-tab observation.
+    if view.internal_active || !owner()?.matches_view(&view) {
+        view.active_known = false;
+        view.active_tab_id = None;
     }
     Ok(view)
 }
@@ -242,7 +274,7 @@ pub(crate) fn tab_mutation(webview: Webview, app: AppHandle, request: Request) -
                         || epoch != state.epoch || sequence != state.next_sequence.to_string() {
                         return Err("TAB_MUTATION_STALE_SEQUENCE".into());
                     }
-                    state.next_sequence = state.next_sequence.checked_add(1).ok_or("TAB_MUTATION_SEQUENCE_EXHAUSTED")?;
+                    state.advance_sequence()?;
                     let receipt = Receipt { ticket: uuid::Uuid::new_v4().to_string(), client_id,
                         command: action.command(), phase: Phase::Prepared, value: None, error: None };
                     state.slot = Some(Slot { receipt, action: Some(action), binding: Some(binding), since: std::time::Instant::now() });
@@ -317,6 +349,9 @@ pub(crate) fn tab_mutation(webview: Webview, app: AppHandle, request: Request) -
                 if !matching(&mut state, &ticket)?.receipt.phase.terminal() {
                     return Err("TAB_MUTATION_NOT_TERMINAL".into());
                 }
+                // Retire any prepare sequence observed before the old
+                // terminal slot was released. A duplicate ACK is a no-op.
+                state.advance_sequence()?;
                 state.slot = None;
                 state.last_ack = Some(ticket);
             }
@@ -329,7 +364,7 @@ pub(crate) fn tab_mutation(webview: Webview, app: AppHandle, request: Request) -
             if sequence != state.next_sequence.to_string() { return Err("TAB_MUTATION_STALE_SEQUENCE".into()); }
             // A lost prepare may still be queued in IPC. Retire its admission
             // sequence before declaring an empty owner reconciled.
-            state.next_sequence = state.next_sequence.checked_add(1).ok_or("TAB_MUTATION_SEQUENCE_EXHAUSTED")?;
+            state.advance_sequence()?;
         }
     }
     snapshot(&app)
@@ -346,6 +381,7 @@ pub(super) async fn legacy<T: Send + 'static>(
     {
         let mut state = owner()?;
         if state.slot.is_some() || state.internal_active { return Err("TAB_MUTATION_OWNER_BUSY".into()); }
+        state.advance_sequence()?;
         state.slot = Some(Slot {
             receipt: Receipt { ticket: ticket.clone(), client_id: "legacy".into(), command,
                 phase: Phase::Running, value: None, error: None },
@@ -391,6 +427,22 @@ mod tests {
         state.expire_prepared();
         assert_eq!(state.slot.as_ref().unwrap().receipt.phase, Phase::Cancelled);
         assert_ne!(old_sequence, state.next_sequence);
+    }
+
+    #[test]
+    fn completed_background_mutation_invalidates_empty_snapshot() {
+        let mut state = Owner::default();
+        let view = OwnerView {
+            epoch: state.epoch.clone(), next_sequence: state.next_sequence.to_string(),
+            receipt: None, last_ack: None, internal_active: false,
+            active_known: true, active_tab_id: None,
+        };
+        assert!(state.matches_view(&view));
+        state.admit_background().unwrap();
+        assert!(!state.matches_view(&view));
+        assert!(state.admit_background().is_err());
+        state.internal_active = false;
+        assert!(!state.matches_view(&view));
     }
 
     #[test]

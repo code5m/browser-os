@@ -521,6 +521,9 @@ fn capture_ack(ticket: &str) -> Result<(), String> {
     if owner.last_completed.as_ref().is_some_and(|receipt| receipt.ticket == ticket) { return Ok(()); }
     let slot = owner.slot.as_ref().filter(|slot| slot.receipt.ticket == ticket).ok_or("CAPTURE_STALE_TICKET")?;
     if !slot.receipt.phase.terminal() { return Err("CAPTURE_NOT_TERMINAL".into()); }
+    // An acknowledgement also fences any delayed start which observed the
+    // sequence while the old terminal slot was still present.
+    owner.next_sequence = owner.next_sequence.checked_add(1).ok_or("CAPTURE_SEQUENCE_EXHAUSTED")?;
     owner.last_completed = owner.slot.take().map(|slot| slot.receipt);
     Ok(())
 }
