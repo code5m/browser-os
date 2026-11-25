@@ -5,6 +5,7 @@ use serde_json::Value;
 use tauri::{AppHandle, Webview};
 
 pub(crate) use super::execution_owner::{ChannelAdmission, ChannelInput, ChannelStart, ProductionExecution};
+pub(crate) use super::coding::CodingProviderBinding;
 pub(crate) use super::local_provider::{LocalChatRequest, local_chat, check as validate_local_chat};
 pub(crate) fn register_coding_run(id: &str) -> Result<super::coding::RunRequestGuard, String> {
     super::coding::register_run_request(id)
@@ -40,6 +41,12 @@ pub(crate) fn prepare_coding_session(
     request: &mut Value,
 ) -> Result<Option<String>, String> {
     let action = request["action"].as_str().unwrap_or("");
+    if action == "resume_turn" {
+        let id = request["session_id"].as_str().filter(|id| !id.is_empty())
+            .ok_or("AGENT_SESSION_REQUIRED")?;
+        uuid::Uuid::parse_str(id).map_err(|_| "AGENT_SESSION_INVALID")?;
+        return Ok(None);
+    }
     if !matches!(
         action,
         "session"
@@ -90,6 +97,7 @@ pub(crate) fn dispatch_coding_request(
     root: &std::path::Path,
     storage: &std::path::Path,
     request: Value,
+    binding: Option<CodingProviderBinding>,
     provider: impl FnMut(&[Value], &[Value]) -> Result<Value, String>,
 ) -> Result<Value, String> {
     if !root.is_absolute() || root.parent().is_none() {
@@ -182,7 +190,7 @@ pub(crate) fn dispatch_coding_request(
     {
         return super::coding_context::execute(root, storage, request);
     }
-    super::coding::execute_with_adapter(root, storage, request, provider, |kind, input, approved, cancel| {
+    super::coding::execute_with_bound_adapter(root, storage, request, binding, provider, |kind, input, approved, cancel| {
         match kind {
             "command" => crate::bridge::run_command_for_coding(app, webview, input, approved, cancel),
             "mcp" => {

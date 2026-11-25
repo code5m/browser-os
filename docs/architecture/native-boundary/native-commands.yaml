@@ -1817,7 +1817,7 @@ commands:
     owner: "agent"
     category: "CAPABILITY_NATIVE_ADAPTER"
     callers: "src/capabilities/agent/** via src/bridge.ts"
-    side_effect: "bounded coding sessions; reviewed project file writes; approved MCP child process; authenticated workspace-scoped manual MCP receipt catalog and evidence-only reconciliation"
+    side_effect: "bounded coding sessions; reviewed project file writes; approved MCP child process; authenticated workspace-scoped manual MCP receipt catalog and evidence-only reconciliation; explicit authenticated model-checkpoint continuation without external effect replay"
     resource: "AGENT_EXECUTION"
     permission: "main webview only; explicit project root and per-call MCP approval"
     current_boundary: "framework dispatcher to agent runtime and shared AI provider"

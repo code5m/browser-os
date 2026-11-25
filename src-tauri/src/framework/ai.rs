@@ -1423,14 +1423,9 @@ fn coding_turn_cancelable(
     provider_turn_cancelable(&profile, messages, tools, cancelled)
 }
 
-fn coding_turn_cancelable_stream(
-    path: &Path,
-    id: &str,
-    messages: &[Value],
-    tools: &[Value],
-    cancelled: &(dyn Fn() -> bool + Sync),
-    on_delta: &mut dyn FnMut(&str) -> Result<(), String>,
-) -> Result<Value, String> {
+/// Resolve one immutable native provider snapshot per model Run. Later
+/// batches cannot silently switch profile/model/endpoint under the same Run.
+fn coding_execution_profile(path: &Path, id: &str) -> Result<ProviderProfile, String> {
     let guard = CONFIG_LOCK.lock().map_err(|_| "AI_CONFIG_BUSY")?;
     let config = read(path)?;
     let id = if id.is_empty() {
@@ -1450,7 +1445,18 @@ fn coding_turn_cancelable_stream(
         .ok_or("AI_NOT_CONFIGURED")?;
     let profile = execution_profile(profile)?;
     drop(guard);
-    provider_turn_cancelable_stream(&profile, messages, tools, cancelled, on_delta)
+    Ok(profile)
+}
+
+fn coding_provider_binding(profile: &ProviderProfile)
+    -> Result<crate::capabilities::agent::public_api::CodingProviderBinding, String> {
+    use sha2::{Digest, Sha256};
+    let bytes = serde_json::to_vec(&(&profile.id, &profile.base_url, &profile.model, &profile.kind))
+        .map_err(|_| "AGENT_CONTINUATION_INVALID")?;
+    Ok(crate::capabilities::agent::public_api::CodingProviderBinding {
+        profile_id: profile.id.clone(),
+        fingerprint: format!("{:x}", Sha256::digest(bytes)),
+    })
 }
 /// Old Agent definitions are treated as *model prompts*, never as grants to tools.
 fn validate_legacy_agent_definition(agent: &crate::domain::AgentDef) -> Result<(), String> {
@@ -1913,7 +1919,7 @@ pub async fn coding_service(
     }
     // Register before entering the blocking queue, while the run ID is already
     // known to the main UI. A prior cancel remains attached to this exact run.
-    let run_guard = if matches!(request["action"].as_str(), Some("chat" | "execute_operation")) {
+    let run_guard = if matches!(request["action"].as_str(), Some("chat" | "resume_turn" | "execute_operation")) {
         Some(crate::capabilities::agent::public_api::register_coding_run(
             request["run_id"].as_str().ok_or("AGENT_RUN_ID_REQUIRED")?,
         )?)
@@ -1957,16 +1963,20 @@ pub async fn coding_service(
         // Coding owns Task admission under the native session lock. Read,
         // list and review calls must not invent a successful execution.
         let cancel_session = request["session_id"].as_str().unwrap_or("").to_owned();
+        let model_profile = if matches!(request["action"].as_str(), Some("chat" | "resume_turn")) {
+            Some(coding_execution_profile(&storage.join("ai-profiles.json"), &id)?)
+        } else { None };
+        let binding = model_profile.as_ref().map(coding_provider_binding).transpose()?;
         let response = crate::capabilities::agent::public_api::dispatch_coding_request(
             &app,
             &webview,
             &root,
             &storage,
             request,
+            binding,
             |messages, tools| {
-                coding_turn_cancelable_stream(
-                    &storage.join("ai-profiles.json"),
-                    &id,
+                provider_turn_cancelable_stream(
+                    model_profile.as_ref().ok_or("AI_NOT_CONFIGURED")?,
                     messages,
                     tools,
                     &|| {

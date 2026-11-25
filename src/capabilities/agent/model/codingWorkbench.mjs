@@ -133,6 +133,7 @@ export function sessionNotice(session) {
   if(session.status==='operation_review')return '原生执行结果已保存，等待审核后继续';
   if(session.status==='operation_unknown')return '外部操作结果未知，必须先对账，不会自动重试';
   if(session.status==='interrupted')return '上次运行中断；已保留检查点，请核对后明确继续';
+  if(session.foundation_task?.status==='paused'&&session.continuation?.resume_pending&&session.status==='ready')return '本轮审核已处理，原 Task 尚未结束，可从检查点续跑';
   if(session.status==='step_limit')return '已达到本轮工具步数上限；会话保留，可继续本轮任务';
   if(session.status==='approval_required')return '等待你审批工作区操作';
   if(session.status==='cancelled')return '本轮已停止';
