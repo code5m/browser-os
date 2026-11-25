@@ -210,8 +210,9 @@ async function ownedTabMutation<T>(action: TabAction): Promise<T> {
   throw new Error("TAB_MUTATION_OUTCOME_UNKNOWN");
 }
 
+type CaptureMode = "current_document"|"independent_address";
 type CaptureReceipt = {
-  ticket: string; tab_id: string;
+  ticket: string; tab_id: string; mode?: CaptureMode;
   phase: "running"|"cancel_requested"|"succeeded"|"failed"|"cancelled"|"unknown";
   path: string|null; error: string|null;
 };
@@ -230,18 +231,22 @@ function ensureCaptureListener() {
     if(captureTerminal(event.payload))captureEvent=event.payload;
   }).catch(()=>{captureListenerStarted=false;});
 }
-async function ownedCapture(id: string): Promise<string> {
+async function ownedCapture(id: string, expectedUrl?: string): Promise<string> {
   ensureCaptureListener();
   const initial=await captureControl({phase:"inspect"});
   if(initial.receipt)throw Error("CAPTURE_RECOVERY_REQUIRED");
   const ticket=crypto.randomUUID();
-  const request={phase:"start",id,ticket,epoch:initial.epoch,sequence:initial.next_sequence};
+  const mode: CaptureMode = expectedUrl === undefined ? "current_document" : "independent_address";
+  const request={phase:"start",id,ticket,epoch:initial.epoch,sequence:initial.next_sequence,mode,
+    ...(expectedUrl === undefined ? {} : {expected_url:expectedUrl})};
   // Start only once. A lost start reply never causes a second screenshot.
   let startError: unknown = null;
   void captureControl(request).catch(error=>{startError=error;});
-  const deadline=performance.now()+35000;
+  // The independent renderer has a 60-second native deadline and a
+  // separate retirement budget. Frontend waiting is not termination proof.
+  const deadline=performance.now()+(mode==="independent_address"?85000:35000);
   while(performance.now()<deadline) {
-    if(startError && /CAPTURE_(?:INVALID_TICKET|TAB_UNAVAILABLE|APPLICATION_SHUTTING_DOWN|STALE_EPOCH|STALE_SEQUENCE|BUSY)|CAPTURE_MAIN_ONLY/.test(String(startError))) throw startError;
+    if(startError && /CAPTURE_(?:INVALID_TICKET|TAB_UNAVAILABLE|APPLICATION_SHUTTING_DOWN|STALE_EPOCH|STALE_SEQUENCE|BUSY|MODE_INVALID|ADDRESS_REQUIRED|ADDRESS_CHANGED|URL_INVALID|HTTPS_URL_REQUIRED|INDEPENDENT_UNSUPPORTED)|CAPTURE_MAIN_ONLY/.test(String(startError))) throw startError;
     let receipt=(captureEvent as CaptureReceipt|null)?.ticket===ticket?captureEvent:null;
     try {
       const view=await captureControl({phase:"inspect"});
@@ -252,6 +257,7 @@ async function ownedCapture(id: string): Promise<string> {
     }catch(error){
       if(/CAPTURE_NATIVE_EPOCH_CHANGED|CAPTURE_RECOVERY_REQUIRED/.test(String(error)))throw error;
     }
+    if(receipt?.phase==="unknown")throw Error("CAPTURE_OUTCOME_UNKNOWN");
     if(receipt&&captureTerminal(receipt)){
       const ack=await captureControl({phase:"ack",ticket});
       if(ack.last_completed?.ticket!==ticket)throw Error("CAPTURE_OUTCOME_UNKNOWN");
@@ -262,7 +268,7 @@ async function ownedCapture(id: string): Promise<string> {
   }
   // Cancel is advisory. The original task remains queryable until its
   // callback/worker actually finishes; UI can recover it from the menu.
-  void captureControl({phase:"cancel_pending",id,ticket,epoch:initial.epoch,sequence:initial.next_sequence},true).catch(()=>{});
+  void captureControl({phase:"cancel_pending",id,ticket,epoch:initial.epoch,sequence:initial.next_sequence,mode},true).catch(()=>{});
   throw Error("CAPTURE_OUTCOME_UNKNOWN");
 }
 
@@ -1113,6 +1119,7 @@ export const bridge = {
 
   // Native full-document PNG capture, returns the saved local path (not image bytes).
   captureFullPage: (id: string) => ownedCapture(id),
+  captureIndependentAddress: (id: string, expectedUrl: string) => ownedCapture(id,expectedUrl),
   inspectCapture: () => captureControl({phase:"inspect"},true),
   fenceCapture: (epoch: string, sequence: string) => captureControl({phase:"fence",epoch,sequence},true),
   cancelCapture: (ticket: string) => captureControl({phase:"cancel",ticket},true),

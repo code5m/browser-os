@@ -27,7 +27,7 @@ const POLL: Duration = Duration::from_millis(50);
 const HOST: &str = "isolated-capture-host";
 const PAGE: &str = "isolated-capture-page";
 
-fn checked_url(raw: &str) -> Result<String, String> {
+pub(crate) fn checked_url(raw: &str) -> Result<String, String> {
     if raw.len() > 8192 { return Err("CAPTURE_URL_INVALID".into()); }
     let url = url::Url::parse(raw).map_err(|_| "CAPTURE_URL_INVALID")?;
     if url.scheme() != "https" || url.host_str().is_none()
@@ -73,62 +73,68 @@ fn cleanup(parent: &Path, root: &Path, identity: &str) -> Result<(), String> {
     }
     safe_paths::remove_tree(root, &[parent.to_path_buf()]).map_err(|_| "CAPTURE_TEMP_CLEANUP_FAILED".into())
 }
-fn run_parent(raw: &str, output: PathBuf) -> Result<(), String> {
+/// Same execution path for the explicit CLI and Browser Owner. Cancellation
+/// does not return until the owned process domain has really been retired.
+/// The pending callback is metadata-only; it never releases admission.
+pub(crate) fn render_job(
+    raw: &str, cancelled: impl Fn() -> bool, on_retire_pending: impl Fn(),
+) -> Result<Vec<u8>, String> {
     let url = checked_url(raw)?;
-    if !output.is_absolute() || output.extension() != Some(OsStr::new("png")) {
-        return Err("CAPTURE_ABSOLUTE_NEW_PNG_PATH_REQUIRED".into());
-    }
-    let output_parent = output.parent().ok_or("CAPTURE_OUTPUT_PATH_INVALID")?.to_path_buf();
-    // Early rejection is only convenience. Final native no-replace publish
-    // remains authoritative even if another writer creates the destination.
-    match std::fs::symlink_metadata(&output) {
-        Ok(_) => return Err("CAPTURE_OUTPUT_ALREADY_EXISTS".into()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
-        Err(_) => return Err("CAPTURE_OUTPUT_PATH_INVALID".into()),
-    }
+    if cancelled() { return Err("CAPTURE_ISOLATED_CANCELLED".into()); }
     let (parent, root, identity) = fresh_scratch()?;
-    let exe = std::env::current_exe().map_err(|_| "CAPTURE_EXECUTABLE_UNAVAILABLE")?;
-    let mut command = Command::new(exe);
-    command.arg(CHILD_FLAG).env(URL_ENV, url).env(ROOT_ENV, &root);
-    let mut owner = match OwnedHost::spawn_command(command, Some(MEMORY_LIMIT)) {
-        Ok(owner) => owner,
-        Err(error) => {
-            // Spawn/assignment failure can leave ownership uncertain. Do not
-            // remove a possibly live renderer's private directory.
-            eprintln!("[isolated-capture] scratch retained: {}", root.display());
-            return Err(error);
-        }
-    };
-    let deadline = Instant::now() + DEADLINE;
-    let result = loop {
-        match owner.exited() {
-            Ok(Some(status)) => break if status.success() { Ok(()) } else { Err("CAPTURE_WORKER_FAILED".to_owned()) },
-            Ok(None) if Instant::now() < deadline => thread::sleep(POLL),
-            Ok(None) => break Err("CAPTURE_DEADLINE_EXCEEDED".to_owned()),
-            Err(error) => break Err(error),
-        }
-    };
-    // A failed wait or elapsed deadline does not authorize output or cleanup.
-    // Retire the whole owned domain (including surviving descendants).
-    if let Err(error) = owner.retire() {
-        eprintln!("[isolated-capture] exit unconfirmed; scratch retained: {}", root.display());
-        return Err(error);
-    }
-    let publish = result.and_then(|_| {
+    let result = (|| {
+        if cancelled() { return Err("CAPTURE_ISOLATED_CANCELLED".into()); }
+        let exe = std::env::current_exe().map_err(|_| "CAPTURE_EXECUTABLE_UNAVAILABLE")?;
+        let mut command = Command::new(exe);
+        command.arg(CHILD_FLAG).env(URL_ENV, url).env(ROOT_ENV, &root);
+        let mut owner = OwnedHost::spawn_command(command, Some(MEMORY_LIMIT), &on_retire_pending)?;
+        let deadline = Instant::now() + DEADLINE;
+        let render = loop {
+            if cancelled() { break Err("CAPTURE_ISOLATED_CANCELLED".to_owned()); }
+            match owner.exited() {
+                Ok(Some(status)) => break if status.success() { Ok(()) } else { Err("CAPTURE_WORKER_FAILED".to_owned()) },
+                Ok(None) if Instant::now() < deadline => thread::sleep(POLL),
+                Ok(None) => break Err("CAPTURE_DEADLINE_EXCEEDED".to_owned()),
+                Err(error) => break Err(error),
+            }
+        };
+        // An exit request or a deadline does not release the GUI's capture
+        // slot. Even if the first cleanup budget expires, retain the exact
+        // owner and keep trying until the kernel and Child agree on exit.
+        owner.retire_confirmed(&on_retire_pending);
+        if cancelled() { return Err("CAPTURE_ISOLATED_CANCELLED".into()); }
+        render?;
         if safe_paths::directory_identity(&root).map_err(|_| "CAPTURE_TEMP_IDENTITY_FAILED")? != identity {
             return Err("CAPTURE_TEMP_IDENTITY_CHANGED".into());
         }
         let bytes = safe_paths::read_regular(&root.join("capture.png"), &[root.clone()], MAX_BYTES)
             .map_err(|_| "CAPTURE_WORKER_RESULT_UNAVAILABLE")?;
         checked_png(&bytes)?;
-        safe_paths::create_new_file(&output, &[output_parent], &bytes)
-            .map_err(|_| "CAPTURE_OUTPUT_NO_REPLACE_FAILED".into())
-    });
-    // Never erase the already published user file on a cleanup failure.
+        Ok(bytes)
+    })();
+    // spawn_command returns only pre-dispatch failure or a fully retired
+    // failed assignment. Unknown termination retains the owner above.
     if let Err(error) = cleanup(&parent, &root, &identity) {
         eprintln!("[isolated-capture] {error}; scratch retained: {}", root.display());
     }
-    publish
+    result
+}
+
+fn run_parent(raw: &str, output: PathBuf) -> Result<(), String> {
+    if !output.is_absolute() || output.extension() != Some(OsStr::new("png")) {
+        return Err("CAPTURE_ABSOLUTE_NEW_PNG_PATH_REQUIRED".into());
+    }
+    let output_parent = output.parent().ok_or("CAPTURE_OUTPUT_PATH_INVALID")?.to_path_buf();
+    match std::fs::symlink_metadata(&output) {
+        Ok(_) => return Err("CAPTURE_OUTPUT_ALREADY_EXISTS".into()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+        Err(_) => return Err("CAPTURE_OUTPUT_PATH_INVALID".into()),
+    }
+    let bytes = render_job(raw, || false, || {
+        eprintln!("[isolated-capture] renderer exit unconfirmed; retaining owner");
+    })?;
+    safe_paths::create_new_file(&output, &[output_parent], &bytes)
+        .map_err(|_| "CAPTURE_OUTPUT_NO_REPLACE_FAILED".into())
 }
 fn worker_root() -> Result<PathBuf, String> {
     let root = std::env::var_os(ROOT_ENV).map(PathBuf::from).ok_or("CAPTURE_WORKER_ROOT_REQUIRED")?;

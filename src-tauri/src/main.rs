@@ -286,6 +286,10 @@ fn begin_graceful_shutdown(app: tauri::AppHandle, trigger: &'static str) {
     let spawn = std::thread::Builder::new()
         .name("browseros-shutdown".into())
         .spawn(move || {
+            if let Err(code) = crate::capabilities::browser::public_api::prepare_capture_exit(&worker_app) {
+                cancel_graceful_shutdown(&worker_app, &code);
+                return;
+            }
             // Saving is a reversible exit preflight, not an ordinary cleanup
             // task. A failed/panicked save must leave tabs and all native owners
             // alive so the user can correct the problem and retry closing.

@@ -23,19 +23,23 @@ import { createNativeMenu, menuAnchor, type NativeMenuEntry } from '../../compos
 const layout = useLayoutStore();
 const browser = useBrowserStore();
 const capturingPage = ref(false);
-async function captureCurrentPage() {
+async function captureCurrentPage(independent = false) {
   const id = browser.activeTabId;
+  const address = browser.url;
   if (!id || capturingPage.value || layout.mainView !== 'browser') return;
   capturingPage.value = true;
   try {
-    const path = await bridge.captureFullPage(id);
+    const path = independent
+      ? await bridge.captureIndependentAddress(id,address)
+      : await bridge.captureFullPage(id);
     const directory = path.replace(/[\\/]webpage-[^\\/]+\.png$/, '');
     addHomeDirectoryShortcut(directory);
-    layout.showToast('整页截图已保存；主页已加入“截图目录”');
+    layout.showToast((independent?'独立地址截图':'整页截图')+'已保存；主页已加入“截图目录”');
   } catch (error) {
     const code = String(error).match(/(?:CAPTURE|TAB_CONTROL)_[A-Z_]+/)?.[0] ?? 'CAPTURE_FAILED';
     layout.showToast(code==='CAPTURE_RECOVERY_REQUIRED'||code==='CAPTURE_OUTCOME_UNKNOWN'||code==='TAB_CONTROL_REPLY_TIMEOUT'
-      ? '截图状态未确认，请通过菜单查询或取消截图任务；不会自动重试。' : '整页截图失败：' + code);
+      ? '截图状态未确认，请通过菜单查询或取消截图任务；不会自动重试。'
+      : (independent?'独立地址截图失败：':'整页截图失败：') + code);
   } finally { capturingPage.value = false; }
 }
 async function recoverCapture() {
@@ -50,7 +54,7 @@ async function recoverCapture() {
     if(receipt.phase==='succeeded'&&receipt.path){
       const directory=receipt.path.replace(/[\\/]webpage-[^\\/]+\.png$/, '');
       addHomeDirectoryShortcut(directory);
-      layout.showToast('截图已保存；主页已加入截图目录');
+      layout.showToast((receipt.mode==='independent_address'?'独立地址截图':'截图')+'已保存；主页已加入截图目录');
     }else{layout.showToast('截图终态：'+(receipt.error||receipt.phase));}
     if(view.receipt)await bridge.acknowledgeCapture(receipt.ticket);
   }catch{layout.showToast('截图回执尚未确认，请重新查询');}
@@ -126,6 +130,9 @@ async function toggleMoreActions(event:MouseEvent) {
     {text:'AI 导航',enabled:layout.mainView==='browser',action:()=>browser.toggleAiNav()},
     {text:'采集选中内容',action:()=>art.collectSelection()},
     {text:'整页截图 (PNG)',enabled:layout.mainView==='browser' && !!browser.activeTabId && !capturingPage.value,action:()=>void captureCurrentPage()},
+    {text:'独立地址截图（不继承登录）',enabled:layout.mainView==='browser' && !!browser.activeTabId
+      && browser.url.startsWith('https://') && !capturingPage.value,
+      children:[{text:'确认：以全新配置重新打开当前 HTTPS 地址',action:()=>void captureCurrentPage(true)}]},
     {text:'查询/恢复截图任务',action:()=>void recoverCapture()},
     {text:'请求取消截图任务',action:()=>void cancelCaptureTask()},
     {text:'设置',action:()=>onItem('settings')},
@@ -337,7 +344,7 @@ async function openDirCenter() {
         <button class="tbtn" aria-label="后退" :disabled="!layout.isBrowserView()" @click="browser.goBack" title="后退"><ArrowLeft :size="18"/></button>
         <button class="tbtn" aria-label="前进" :disabled="!layout.isBrowserView()" @click="browser.goForward" title="前进"><ArrowRight :size="18"/></button>
         <button class="tbtn" aria-label="刷新" :disabled="!layout.isBrowserView()" @click="browser.reloadActive" title="刷新"><RotateCw :size="17"/></button>
-        <button class="tbtn" type="button" data-nav-item aria-label="整页截图" title="不滚动页面，截取完整网页 PNG" :disabled="layout.mainView !== 'browser' || !browser.activeTabId || capturingPage" @click="captureCurrentPage"><Camera :size="18"/></button>
+        <button class="tbtn" type="button" data-nav-item aria-label="整页截图" title="不滚动页面，截取完整网页 PNG" :disabled="layout.mainView !== 'browser' || !browser.activeTabId || capturingPage" @click="captureCurrentPage()"><Camera :size="18"/></button>
         <button class="tbtn" data-nav-item aria-label="主页" title="主页" :aria-current="layout.mainView === 'home' ? 'page' : undefined" @click="onItem('home')"><House :size="18"/></button>
         <div ref="omniAnchor" class="omni-wrap">
           <button type="button" class="omni-mode" aria-label="切换地址栏模式" :title="'地址栏模式：' + (layout.addrMode === 'auto' ? '自动' : layout.addrMode === 'url' ? '网页' : '文件')"

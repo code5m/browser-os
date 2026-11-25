@@ -36,12 +36,16 @@ impl OwnedHost {
         let mut command = Command::new(exe);
         command.args(args).env(ADDRESS, listener.local_addr().map_err(|_| "SUPERVISOR_LISTENER_FAILED")?.to_string())
             .env(TOKEN, token);
-        Self::spawn_command(command, None)
+        Self::spawn_command(command, None, || {
+            eprintln!("[native-supervisor] spawn cleanup pending; no replacement admitted");
+        })
     }
 
     /// Shared owned process domain. An optional budget must be installed
     /// before any worker code can execute; no unbounded fallback.
-    pub(crate) fn spawn_command(mut command: Command, memory_limit: Option<usize>) -> Result<Self, String> {
+    pub(crate) fn spawn_command(
+        mut command: Command, memory_limit: Option<usize>, _on_retire_pending: impl FnOnce(),
+    ) -> Result<Self, String> {
         #[cfg(target_os = "linux")]
         {
             let mut scope = crate::shared::process_scope::ProcessScope::prepare()
@@ -70,7 +74,10 @@ impl OwnedHost {
                 // The process may not be in the job if assignment failed.
                 // Only our own Child handle can be used in this error path.
                 let _ = owner.child.kill();
-                let _ = owner.retire();
+                // Retain the real Child and Job even when assignment failed.
+                // Returning a normal failure while a suspended or partially
+                // assigned child is still alive would authorize another run.
+                owner.retire_confirmed(_on_retire_pending);
                 return Err("SUPERVISOR_JOB_ASSIGN_FAILED".into());
             }
             Ok(owner)
@@ -100,6 +107,20 @@ impl OwnedHost {
             if let Some(status) = self.exited()? { return Ok(status); }
             if Instant::now() >= deadline { return Err("SUPERVISOR_CHILD_EXIT_UNKNOWN".into()); }
             thread::sleep(POLL);
+        }
+    }
+
+    /// For a recoverable job with a retained owner, a cleanup deadline is
+    /// a diagnostic boundary, not a permission to drop the owner. One worker
+    /// keeps its kernel handles and continues trying until actual exit.
+    pub(crate) fn retire_confirmed(&mut self, on_pending: impl FnOnce()) -> ExitStatus {
+        match self.retire() {
+            Ok(status) => return status,
+            Err(_) => on_pending(),
+        }
+        loop {
+            thread::sleep(POLL);
+            if let Ok(status) = self.retire() { return status; }
         }
     }
 
