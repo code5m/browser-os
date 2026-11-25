@@ -61,6 +61,7 @@ pub(crate) struct ProcessScope {
     group: File,
     name: CString,
     identity: (u64, u64),
+    spawned: bool,
 }
 impl ProcessScope {
     pub(crate) fn prepare() -> io::Result<Option<Self>> {
@@ -91,7 +92,7 @@ impl ProcessScope {
             }
         };
         let metadata = group.metadata()?;
-        let scope = Self { parent, group, name, identity: (metadata.dev(), metadata.ino()) };
+        let scope = Self { parent, group, name, identity: (metadata.dev(), metadata.ino()), spawned: false };
         cgroup_fs(&scope.group)?;
         // Require all controls before spawning any user code. The leaf
         // must be empty, and the kernel must provide recursive kill.
@@ -128,7 +129,11 @@ impl ProcessScope {
         parse_populated(&value)
     }
 
+    /// Only a successful child spawn confers termination authority.
+    pub(crate) fn mark_spawned(&mut self) { self.spawned = true; }
+
     pub(crate) fn request_kill(&self) -> io::Result<()> {
+        if !self.spawned { return Err(denied()); }
         open_at(&self.group, CStr::from_bytes_with_nul(b"cgroup.kill\0").expect("static cgroup filename"), libc::O_WRONLY)?.write_all(b"1")
     }
 
@@ -146,7 +151,7 @@ impl ProcessScope {
 impl Drop for ProcessScope {
     fn drop(&mut self) {
         // An error/unwind may request cleanup but cannot manufacture a receipt.
-        if self.populated().ok() == Some(true) { let _ = self.request_kill(); }
+        if self.spawned && self.populated().ok() == Some(true) { let _ = self.request_kill(); }
         if self.populated().ok() != Some(false) { return; }
         let Ok(current) = open_at(&self.parent, &self.name, libc::O_RDONLY | libc::O_DIRECTORY) else { return; };
         let Ok(meta) = current.metadata() else { return; };

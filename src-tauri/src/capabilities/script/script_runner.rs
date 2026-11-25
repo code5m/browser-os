@@ -1058,7 +1058,7 @@ fn start_argv_run_owned(
 
     // --- 3) spawn（新进程组） ---
     #[cfg(target_os = "linux")]
-    let scope = match crate::shared::process_scope::ProcessScope::prepare().and_then(|scope| {
+    let mut scope = match crate::shared::process_scope::ProcessScope::prepare().and_then(|scope| {
         if let Some(scope) = &scope { scope.attach(&mut cmd)?; }
         Ok(scope)
     }) {
@@ -1079,6 +1079,9 @@ fn start_argv_run_owned(
             };
         }
     };
+
+    #[cfg(target_os = "linux")]
+    if let Some(scope) = &mut scope { scope.mark_spawned(); }
 
     #[cfg(windows)]
     let job = match crate::windows_process::JobObject::attach_suspended_pid(child.id()) {

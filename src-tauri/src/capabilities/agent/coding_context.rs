@@ -388,9 +388,10 @@ impl Session {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
-        let scope = crate::shared::process_scope::ProcessScope::prepare().map_err(|_| "MCP_CGROUP_UNAVAILABLE")?;
+        let mut scope = crate::shared::process_scope::ProcessScope::prepare().map_err(|_| "MCP_CGROUP_UNAVAILABLE")?;
         if let Some(scope) = &scope { scope.attach(&mut cmd).map_err(|_| "MCP_CGROUP_UNAVAILABLE")?; }
         let mut child = cmd.spawn().map_err(|_| "MCP_START_FAILED")?;
+        if let Some(scope) = &mut scope { scope.mark_spawned(); }
         let terminate_start_failure = |child: &mut Child| {
             let pgid = child.id() as i32;
             unsafe { libc::kill(-pgid, libc::SIGKILL); }
