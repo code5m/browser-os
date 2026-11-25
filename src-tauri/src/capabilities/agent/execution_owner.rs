@@ -43,15 +43,81 @@ fn task_owner() -> &'static TaskRegistry {
     PRODUCTION_TASKS.get_or_init(|| TaskRegistry::new(Arc::new(EventJournal::new(128))))
 }
 
+/// The native Run receipt owns only encrypted task/approval metadata. Text
+/// history is still provided by the authenticated chat UI; no credentials,
+/// provider responses or user prompts are put in this journal.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct NativeRunReceipt {
+    id: Uuid,
+    phase: String,
+    task: TaskRecord,
+}
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+struct DurableRun {
+    id: Uuid,
+    checkpoint: super::coding_checkpoint::RunCheckpoint,
+}
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+impl DurableRun {
+    fn persist(&self, phase: &str, task: TaskRecord) -> Result<(), String> {
+        let receipt = NativeRunReceipt { id: self.id, phase: phase.into(), task };
+        self.checkpoint.write(&serde_json::to_vec(&receipt).map_err(|_| "AGENT_RUN_RECEIPT_INVALID")?)
+    }
+    fn reject_existing(&self) -> Result<(), String> {
+        let Some(bytes) = self.checkpoint.read()? else { return Ok(()); };
+        let mut record: NativeRunReceipt = serde_json::from_slice(&bytes).map_err(|_| "AGENT_RUN_RECEIPT_INVALID")?;
+        if record.id != self.id { return Err("AGENT_RUN_RECEIPT_INVALID".into()); }
+        // Obtaining this OS lock excludes the previous cooperating host owner.
+        // It does NOT prove that an external effect failed or may be replayed.
+        if matches!(record.task.status, TaskStatus::Running | TaskStatus::AwaitingApproval) {
+            record.task.revision = record.task.revision.checked_add(1).ok_or("AGENT_TASK_REVISION_EXHAUSTED")?;
+            record.task.status = TaskStatus::Paused;
+            record.task.pending = None;
+            self.persist("interrupted", record.task)?;
+        }
+        Err("AGENT_RUN_ALREADY_RECORDED".into())
+    }
+}
+
 pub(crate) struct ProductionExecution {
     tasks: &'static TaskRegistry,
     id: Uuid,
     finished: bool,
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    durable_run: Option<DurableRun>,
 }
 
 impl ProductionExecution {
     pub(crate) fn begin(kind: &'static str) -> Result<Self, String> {
         Self::begin_scoped(kind, Uuid::nil(), Uuid::new_v4(), vec![])
+    }
+
+    /// One-shot production entrypoints persist a Run before provider/tool
+    /// dispatch. A repeated UUID cannot dispatch a second attempt, even
+    /// after restart. A crash leaves an authenticated interrupted record.
+    pub(crate) fn begin_durable(storage: &Path, kind: &'static str, run: Uuid,
+        workspace: Uuid, session: Uuid, context: Vec<ContextRef>) -> Result<Self, String> {
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        {
+            let checkpoint = super::coding_checkpoint::RunCheckpoint::acquire(storage, run)?;
+            let durable = DurableRun { id: run, checkpoint };
+            durable.reject_existing()?;
+            let mut execution = Self::begin_scoped(kind, workspace, session, context)?;
+            durable.persist("running", execution.record()?)?;
+            execution.durable_run = Some(durable);
+            Ok(execution)
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        { let _ = (storage, kind, run, workspace, session, context); Err("AGENT_PRIVATE_STORAGE_UNAVAILABLE".into()) }
+    }
+
+    pub(crate) fn checkpoint(&self, phase: &str) -> Result<(), String> {
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        if let Some(run) = &self.durable_run {
+            run.persist(phase, self.record()?)?;
+        }
+        let _ = phase;
+        Ok(())
     }
 
     /// Resume one Coding Task across separate Runs under its native session
@@ -70,7 +136,9 @@ impl ProductionExecution {
                         let _ = tasks.detach_paused_record(record.id);
                         return Err("AGENT_TASK_START_FAILED".into());
                     }
-                    return Ok(Self { tasks, id: record.id, finished: false });
+                    return Ok(Self { tasks, id: record.id, finished: false,
+                        #[cfg(any(target_os = "linux", target_os = "windows"))]
+                        durable_run: None });
                 }
                 TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Cancelled => {}
                 _ => return Err("AGENT_TASK_RECOVERY_REQUIRED".into()),
@@ -133,6 +201,8 @@ impl ProductionExecution {
             tasks,
             id: task.id,
             finished: false,
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
+            durable_run: None,
         })
     }
 
@@ -146,6 +216,7 @@ impl ProductionExecution {
         self.tasks
             .cancel(self.id)
             .map_err(|_| "AGENT_TASK_CANCEL_FAILED")?;
+        self.checkpoint("cancelled")?;
         self.finished = true;
         self.tasks
             .retire_terminal(self.id)
@@ -168,6 +239,7 @@ impl ProductionExecution {
                 .map_err(|_| "AGENT_TASK_FINISH_FAILED")?,
             _ => return Err("AGENT_TASK_TERMINAL_MISMATCH".into()),
         }
+        self.checkpoint(if success { "completed" } else { "failed" })?;
         self.finished = true;
         self.tasks
             .retire_terminal(self.id)
@@ -206,6 +278,25 @@ mod tests {
         assert!(!one.0.is_nil());
         assert_eq!(coding_scope(Path::new("/workspace/a"), None).unwrap(), None);
         assert!(coding_scope(Path::new("/workspace/a"), Some("../../bad")).is_err());
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[test]
+    fn durable_one_shot_run_cannot_be_replayed_after_drop() {
+        let storage = std::env::temp_dir().join(format!("browseros-agent-run-{}", Uuid::new_v4()));
+        let id = Uuid::new_v4();
+        let execution = ProductionExecution::begin_durable(&storage, "chat", id, Uuid::nil(), id, vec![]).unwrap();
+        let task = execution.id();
+        drop(execution); // simulate lost terminal publication; disk remains running.
+        assert!(ProductionExecution::begin_durable(&storage, "chat", id, Uuid::nil(), id, vec![]).is_err());
+        let checkpoint = super::super::coding_checkpoint::RunCheckpoint::acquire(&storage, id).unwrap();
+        let bytes = checkpoint.read().unwrap().unwrap();
+        let recovered: NativeRunReceipt = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(recovered.task.id, task);
+        assert_eq!(recovered.task.status, TaskStatus::Paused);
+        assert_eq!(recovered.phase, "interrupted");
+        drop(checkpoint);
+        let _ = std::fs::remove_dir_all(storage);
     }
 
     #[test]

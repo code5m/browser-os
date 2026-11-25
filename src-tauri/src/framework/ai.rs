@@ -1756,8 +1756,11 @@ pub fn execute(path: &Path, request: AiRequest) -> Result<Value, String> {
             let profile = execution_profile(&profile)?;
             drop(lock);
             let signal = cancel_guard.as_ref().ok_or("AI_CHAT_REQUEST_UNAVAILABLE")?;
+            let run = signal.id.unwrap_or_else(uuid::Uuid::new_v4);
             let execution =
-                crate::capabilities::agent::public_api::ProductionExecution::begin("legacy_agent")?;
+                crate::capabilities::agent::public_api::ProductionExecution::begin_durable(
+                    path.parent().ok_or("AGENT_STORAGE_UNAVAILABLE")?, "legacy_agent",
+                    run, uuid::Uuid::nil(), run, vec![])?;
             let cancelled = || signal.cancelled.load(Ordering::SeqCst);
             if cancelled() {
                 execution.cancel()?;
@@ -1793,8 +1796,11 @@ pub fn execute(path: &Path, request: AiRequest) -> Result<Value, String> {
             let profile = execution_profile(&profile)?;
             drop(lock);
             let signal = cancel_guard.as_ref().ok_or("AI_CHAT_REQUEST_UNAVAILABLE")?;
+            let run = signal.id.unwrap_or_else(uuid::Uuid::new_v4);
             let execution =
-                crate::capabilities::agent::public_api::ProductionExecution::begin("chat")?;
+                crate::capabilities::agent::public_api::ProductionExecution::begin_durable(
+                    path.parent().ok_or("AGENT_STORAGE_UNAVAILABLE")?, "chat",
+                    run, uuid::Uuid::nil(), run, vec![])?;
             let lease = execution.acquire_lease()?;
             let response = chat_with_history(
                 &profile,

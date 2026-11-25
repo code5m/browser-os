@@ -189,8 +189,12 @@ pub async fn agent_runtime_run_fixture(
     router
         .restore_config_for_host(cfg)
         .map_err(|_| "AGENT_EXPERIMENT_ROUTE_INVALID")?;
-    let execution =
-        crate::capabilities::agent::public_api::ProductionExecution::begin("agent_channel")?;
+    let run = uuid::Uuid::new_v4();
+    let storage = crate::workspace::data_dir(&app);
+    let execution = tauri::async_runtime::spawn_blocking(move ||
+        crate::capabilities::agent::public_api::ProductionExecution::begin_durable(
+            &storage, "agent_channel", run, uuid::Uuid::nil(), run, vec![]))
+        .await.map_err(|_| "AGENT_RUN_WORKER_FAILED")??;
     let task_id = execution.id();
     let assignment = router
         .assign(task_id)
@@ -203,7 +207,9 @@ pub async fn agent_runtime_run_fixture(
         execution.tasks(),
     )
     .await;
-    execution.finish(response.is_ok())?;
+    let success = response.is_ok();
+    tauri::async_runtime::spawn_blocking(move || execution.finish(success))
+        .await.map_err(|_| "AGENT_RUN_WORKER_FAILED")??;
     response.map_err(|_| "AGENT_EXPERIMENT_FIXTURE_FAILED".into())
 }
 
@@ -353,6 +359,7 @@ pub async fn agent_runtime_read_tool(
         .ok_or("AGENT_EXPERIMENT_TOOL_DENIED")?;
     let resource = resource_for(&command, &args)?;
     let registry = PublicApiRegistry::default();
+    let storage = crate::workspace::data_dir(&app);
     let host = Arc::new(NativeOwnerHost { app, webview });
     registry
         .register(spec.owner, host)
@@ -376,12 +383,10 @@ pub async fn agent_runtime_read_tool(
         ContextGrant::ExplicitSelection,
     )
     .map_err(|_| "AGENT_EXPERIMENT_RESOURCE_INVALID")?;
-    let execution = crate::capabilities::agent::public_api::ProductionExecution::begin_scoped(
-        "agent_channel",
-        workspace,
-        session,
-        vec![ctx],
-    )?;
+    let execution = tauri::async_runtime::spawn_blocking(move ||
+        crate::capabilities::agent::public_api::ProductionExecution::begin_durable(
+            &storage, "agent_channel", session, workspace, session, vec![ctx]))
+        .await.map_err(|_| "AGENT_RUN_WORKER_FAILED")??;
     let tasks = execution.tasks();
     let task_id = execution.id();
     let call = tools
@@ -412,12 +417,18 @@ pub async fn agent_runtime_read_tool(
         .resolve(tasks, &ticket)
         .map_err(|_| "AGENT_EXPERIMENT_APPROVAL_FAILED")?
         .ok_or("AGENT_EXPERIMENT_APPROVAL_DENIED")?;
-    let result = tools
-        .execute(permit, tasks, Duration::from_secs(15))
-        .await
-        .map_err(|_| "AGENT_EXPERIMENT_TOOL_FAILED".to_string())?;
-    execution.finish(true)?;
-    Ok(result)
+    // Preserve the approval consumption before calling the owner. The native
+    // call remains read-only; interruption is not automatically retried.
+    let execution = tauri::async_runtime::spawn_blocking(move || {
+        execution.checkpoint("approved")?;
+        Ok::<_, String>(execution)
+    }).await.map_err(|_| "AGENT_RUN_WORKER_FAILED")??;
+    let result = tools.execute(permit, tasks, Duration::from_secs(15)).await
+        .map_err(|_| "AGENT_EXPERIMENT_TOOL_FAILED".to_string());
+    let success = result.is_ok();
+    tauri::async_runtime::spawn_blocking(move || execution.finish(success))
+        .await.map_err(|_| "AGENT_RUN_WORKER_FAILED")??;
+    result
 }
 
 #[cfg(test)]

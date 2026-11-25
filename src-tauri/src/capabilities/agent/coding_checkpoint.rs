@@ -354,6 +354,59 @@ pub(super) fn write(storage: &Path, id: &str, plaintext: &[u8], limit: usize) ->
     write_record(storage, &path, directory, id, plaintext, limit)
 }
 
+// One-shot production runs have their own typed namespace, but reuse the
+// same private directory, OS lock, authenticated encryption and versioned
+// publication. Unlike legacy Coding sessions these records NEVER migrate
+// plaintext. A missing record is distinct from an unreadable record.
+const RUN_LIMIT: usize = 64 * 1024;
+pub(super) struct RunCheckpoint {
+    storage: PathBuf,
+    directory: PathBuf,
+    id: uuid::Uuid,
+    _owner: AuditLock,
+}
+impl RunCheckpoint {
+    pub(super) fn acquire(storage: &Path, id: uuid::Uuid) -> Result<Self, String> {
+        if id.is_nil() { return Err("AGENT_RUN_ID_INVALID".into()); }
+        let directory = private_directory(storage, "agent-run-receipts")?;
+        let locks = private_directory(storage, "coding-owner-locks")?;
+        let owner = AuditLock::acquire_named(&locks.join(format!("run-{id}.lock")), Duration::ZERO)
+            .map_err(|_| "AGENT_RUN_OWNER_BUSY")?;
+        Ok(Self { storage: storage.to_path_buf(), directory, id, _owner: owner })
+    }
+    fn path(&self) -> PathBuf { self.directory.join(format!("{}.run", self.id)) }
+    fn scope(&self) -> String { format!("production-run:v1:{}", self.id) }
+    pub(super) fn read(&self) -> Result<Option<Vec<u8>>, String> {
+        let roots = [self.directory.clone()];
+        let Some(record) = safe_paths::read_versioned(&self.path(), &roots, RUN_LIMIT + OVERHEAD)? else {
+            // A previously initialized missing record is not a new request.
+            if sealed_marker(&self.storage, &self.scope(), false)? {
+                return Err("AGENT_RUN_RECEIPT_MISSING".into());
+            }
+            return Ok(None);
+        };
+        let bytes = open(&key(&self.storage, false)?, &self.scope(), &record.bytes)?;
+        if bytes.len() > RUN_LIMIT { return Err("AGENT_RUN_RECEIPT_LIMIT".into()); }
+        Ok(Some(bytes))
+    }
+    pub(super) fn write(&self, bytes: &[u8]) -> Result<(), String> {
+        if bytes.len() > RUN_LIMIT { return Err("AGENT_RUN_RECEIPT_LIMIT".into()); }
+        let roots = [self.directory.clone()];
+        let path = self.path();
+        let scope = self.scope();
+        let expected = safe_paths::read_versioned(&path, &roots, RUN_LIMIT + OVERHEAD)?;
+        let secret = key(&self.storage, true)?;
+        if let Some(previous) = &expected {
+            open(&secret, &scope, &previous.bytes)?;
+        } else if sealed_marker(&self.storage, &scope, false)? {
+            return Err("AGENT_RUN_RECEIPT_MISSING".into());
+        }
+        let encrypted = seal(&secret, &scope, bytes)?;
+        sealed_marker(&self.storage, &scope, true)?;
+        safe_paths::write_versioned(&path, &roots, expected.as_ref(), &encrypted, RUN_LIMIT + OVERHEAD, |_| Ok(()))
+    }
+}
+
 fn artifact(storage: &Path, session: &str, name: &str) -> Result<(PathBuf, String), String> {
     let parsed = uuid::Uuid::parse_str(session).map_err(|_| "AGENT_SESSION_INVALID")?;
     if parsed.to_string() != session || (!matches!(name, "apply-transaction.json" | "manifest.json")

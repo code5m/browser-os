@@ -222,3 +222,8 @@ Cgroup preparation does not grant kill authority; a successful child spawn arms 
 - File conflict: encrypted pre-save drafts, post-save observation and explicit no-replace conflict copy, under D03 best-effort unmanaged-file policy.
 - IPC and module responsibilities: reuse existing receipt, engine, process and draft owners; no claim all paths and state machines are converged.
 - No installed-package, GUI, build, test, gate, CI or Actions verification performed; target branch/ref unchanged. Real-device evidence and permission to validate remain prerequisites for an acceptance decision.
+
+
+## Production run ownership for one-shot adapters
+
+The existing encrypted checkpoint owner now protects a domain-separated per-run receipt for Chat, Legacy and Agent Channel. An OS lock spans admission, provider/approved read execution and terminal publication. Explicit chat request UUIDs cannot be replayed after process loss; legacy callers/Channel without a request UUID get a native UUID. A repeated interrupted receipt is paused, stale approval cleared and replay denied. Metadata only, no prompt or response persisted; Coding remains the encrypted session owner, and synthetic A/B benchmark remains offline. Run records are bounded per record, not yet an indexed retention/recovery UI; generated-ID callers cannot deduplicate a new invocation. No new native command or plaintext/SQLite fallback. Tests NOT_RUN.
