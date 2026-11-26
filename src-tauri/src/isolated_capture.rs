@@ -248,6 +248,12 @@ fn rgba_band(bytes: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
 }
 
 #[cfg(any(target_os = "windows", target_os = "linux", test))]
+fn verify_stable_pixels(first: &[u8], second: &[u8]) -> Result<(), String> {
+    if first != second { return Err("CAPTURE_PAINT_CHANGED".into()); }
+    Ok(())
+}
+
+#[cfg(any(target_os = "windows", target_os = "linux", test))]
 #[derive(Default)]
 struct BoundedOutput(Vec<u8>);
 #[cfg(any(target_os = "windows", target_os = "linux", test))]
@@ -308,6 +314,9 @@ fn capture_windows_bands(
                 if request(None)? != metrics { return Err("CAPTURE_LAYOUT_CHANGED".into()); }
                 let png = request(Some(band))?;
                 let rows = rgba_band(&png, band[2] as u32, band[3] as u32)?;
+                let check = request(Some(band))?;
+                let confirmation = rgba_band(&check, band[2] as u32, band[3] as u32)?;
+                verify_stable_pixels(&rows, &confirmation)?;
                 stream.write_all(&rows).map_err(|_| "CAPTURE_PNG_ENCODE_FAILED")?;
             }
             if request(None)? != metrics { return Err("CAPTURE_LAYOUT_CHANGED".into()); }
@@ -408,6 +417,9 @@ fn capture_linux_viewports(
                 let bytes = request(None, true)?;
                 let pixels = rgba_band(&bytes, plan.viewport_width, plan.viewport_height)?;
                 plan.check_position(&metrics(None)?, target)?;
+                let confirmation = rgba_band(&request(None, true)?, plan.viewport_width, plan.viewport_height)?;
+                plan.check_position(&metrics(None)?, target)?;
+                verify_stable_pixels(&pixels, &confirmation)?;
                 let stride = plan.viewport_width as usize * 4;
                 let row_width = plan.width as usize * 4;
                 for row in pixels.chunks_exact(stride).skip(skip as usize).take(rows as usize) {
@@ -616,6 +628,13 @@ mod tests {
         let mut output = BoundedOutput(vec![0; MAX_BYTES-1]);
         assert!(output.write_all(&[1,2]).is_err());
         assert_eq!(output.0.len(), MAX_BYTES-1);
+    }
+
+    #[test]
+    fn repeated_band_rejects_same_size_visual_changes() {
+        assert!(verify_stable_pixels(&[1,2,3,255], &[1,2,3,255]).is_ok());
+        assert!(verify_stable_pixels(&[1,2,3,255], &[1,2,4,255]).is_err());
+        assert!(verify_stable_pixels(&[1,2,3,255], &[1,2]).is_err());
     }
 
     #[test]
