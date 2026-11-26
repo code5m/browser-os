@@ -67,6 +67,7 @@ const nativeService = read('../src-tauri/src/framework/commands.rs');
 const fileCommands = read('../src-tauri/src/bridge/filesystem_commands.rs');
 const windowsSandbox = read('../src-tauri/src/capabilities/agent/windows_sandbox.rs');
 const windowsMcp = read('../src-tauri/src/capabilities/agent/coding_mcp_windows.rs');
+const mcpProtocol = read('../src-tauri/src/capabilities/agent/mcp_protocol.rs');
 const windowsLsp = read('../src-tauri/src/capabilities/agent/coding_lsp_windows.rs');
 const linuxLsp = read('../src-tauri/src/capabilities/agent/coding_lsp.rs');
 const windowsApps = read('../src-tauri/src/windows_apps.rs');
@@ -109,7 +110,12 @@ assert.match(process, /CREATE_SUSPENDED/);
 assert.match(winGrid, /assign_suspended_pid/);
 assert.match(winGrid, /CREATE_SUSPENDED/);
 assert.match(scriptRunner, /creation_flags\(crate::windows_process::CREATE_SUSPENDED\)/);
-assert.match(scriptRunner, /attach_suspended_pid/);
+// The pre-created Job is retained across partial assignment failure.
+// Check the order, not the retired convenience constructor.
+assert.match(scriptRunner, /JobObject::create_for_spawn\(\)[\s\S]*?before_spawn\(\)[\s\S]*?let mut child = match spawn_in_new_group\(&mut cmd\)[\s\S]*?job\.assign_suspended_pid\(child\.id\(\)\)/);
+const failedScriptJob = sourceRegion(scriptRunner, 'if let Err(error) = job.assign_suspended_pid(child.id())', 'let pgid = child.id()');
+assert.match(failedScriptJob, /confirm_owned_cleanup[\s\S]*?child\.try_wait\(\)[\s\S]*?job\.terminate\(\)/);
+assert.match(failedScriptJob, /confirm_job_empty\(&job\)[\s\S]*?table\.lock_runs\(\)\.remove\(&run_id\)/);
 assert.match(process, /suspended_spawn_assigns_job_before_immediate_grandchild_can_run/);
 assert.match(bfc, /health\.get\("ok"\)\.and_then\(Value::as_bool\) != Some\(true\)/);
 assert.match(bfc, /verify_local_bfc_service/);
@@ -636,7 +642,11 @@ assert.match(launchPolicy, /pub\(crate\) fn is_blocked_executable_path/);
 assert.match(windowsMcp, /security_policy::is_blocked_executable_path/);
 assert.match(windowsMcp, /windows_lolbin_wrappers_are_rejected_without_spawning_sandbox/);
 // MCP results are untrusted even in JSON object keys, not just values.
-assert.match(windowsMcp, /std::mem::take\(items\)/);
+assert.match(windowsMcp, /use super::mcp_protocol::\{[^}]*\bscrub\b/);
+assert.match(windowsMcp, /scrub\(&mut result, &session\.secrets\)/);
+assert.match(mcpProtocol, /std::mem::take\(items\)/);
+assert.match(mcpProtocol, /if sensitive_name \{\s*item = Value::Null;/);
+assert.match(mcpProtocol, /opaque_credential_properties_are_removed_recursively/);
 assert.match(windowsMcp, /credential_in_json_key_is_redacted_in_nested_mcp_results/);
 // Local drive and verbatim-drive paths authorize through native identity.
 assert.match(platformSecurity, /Prefix::Disk/);
