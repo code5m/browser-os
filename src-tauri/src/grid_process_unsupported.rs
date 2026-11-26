@@ -93,7 +93,7 @@ impl GridProcessManager {
         Err(unsupported())
     }
 
-    pub(crate) fn retry_failed_navigation(&self, _index: u32, _generation: u64, _url: &str) -> Result<(), String> {
+    pub(crate) fn retry_failed_navigation(&self, _binding: crate::grid_ipc::RendererBinding, _url: &str) -> Result<(), String> {
         Err(unsupported())
     }
 

@@ -273,8 +273,15 @@ pub fn start_grid_load_retry(app: AppHandle) {
         else {
             return;
         };
+        let Some(pid) = payload["renderer_pid"].as_u64().and_then(|value| u32::try_from(value).ok()).filter(|pid| *pid != 0) else { return; };
+        let Some(epoch) = payload["renderer_epoch"].as_str().and_then(|value| value.parse::<u64>().ok()).filter(|epoch| *epoch != 0) else { return; };
+        let Some(revision) = payload["renderer_navigation_revision"].as_str().and_then(|value| value.parse::<u64>().ok()) else { return; };
+        let binding = crate::grid_ipc::RendererBinding {
+            index, owner: (pid, epoch), generation, navigation_revision: revision,
+        };
         let url = payload["url"].as_str().unwrap_or("").to_string();
-        if url.is_empty() {
+        if !crate::grid_ipc::restorable_address(&url)
+            || !Url::parse(&url).is_ok_and(|value| matches!(value.scheme(), "http" | "https")) {
             return;
         }
         // 重试配额：60s 窗口内最多 2 次
@@ -300,7 +307,7 @@ pub fn start_grid_load_retry(app: AppHandle) {
                 return;
             }
             let mgr = &state.grid_manager;
-            if let Err(e) = mgr.retry_failed_navigation(index, generation, &url) {
+            if let Err(e) = mgr.retry_failed_navigation(binding, &url) {
                 eprintln!("[grid] grid-{index} 自动重试导航失败: {e}");
             } else {
                 eprintln!("[grid] grid-{index} 自动重试导航已下发");
@@ -1138,7 +1145,7 @@ pub(crate) fn eval_in_tab_sync(
 enum EvalBinding {
     Grid(crate::grid_ipc::RendererBinding),
     Isolated(crate::grid_ipc::RendererBinding),
-    Embedded(tauri_plugin_browser_tabs::TabInstance),
+    Embedded(tauri_plugin_browser_tabs::CaptureDocument),
 }
 
 fn capture_eval_binding(app: &AppHandle, id: &str) -> Result<EvalBinding, String> {
@@ -1153,7 +1160,7 @@ fn capture_eval_binding(app: &AppHandle, id: &str) -> Result<EvalBinding, String
         return state.grid_manager.renderer_binding(index).map(EvalBinding::Isolated);
     }
     app.state::<tauri_plugin_browser_tabs::TabManagerState>()
-        .instance(&id.to_owned())
+        .capture_document(&id.to_owned())
         .map(EvalBinding::Embedded)
         .map_err(|_| "TAB_MUTATION_INSTANCE_UNAVAILABLE".into())
 }
@@ -1172,10 +1179,11 @@ fn eval_in_tab_blocking(app: AppHandle, id: String, js: String,
             let _transition = reserve_tab_transition(&id)?;
             super::isolated_tabs::eval_bound(&app, &id, &js, binding)?;
         }
-        EvalBinding::Embedded(instance) => {
-            // Verify the original Weak instance, not a replacement label.
+        EvalBinding::Embedded(document) => {
+            // Verify both native instance and observed document generation
+            // after the blocking-lane wait.
             app.state::<tauri_plugin_browser_tabs::TabManagerState>()
-                .eval_instance(&id, &instance, &js)
+                .eval_document(&id, &document, &js)
                 .map_err(|error| format!("webview {id} JS dispatch failed: {error}"))?;
         }
     }

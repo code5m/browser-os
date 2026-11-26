@@ -377,7 +377,7 @@ impl SqliteTaskStore {
         effect: ToolEffect,
         tool_name: &str,
     ) -> Result<()> {
-        self.begin_effect_checked(task_id, call_id, key, effect, tool_name, None, None)
+        self.begin_effect_checked(task_id, call_id, key, effect, tool_name, None, None, None)
     }
 
     pub(crate) fn begin_effect_at_revision(
@@ -396,6 +396,7 @@ impl SqliteTaskStore {
             effect,
             tool_name,
             Some(revision),
+            None,
             None,
         )
     }
@@ -420,7 +421,20 @@ impl SqliteTaskStore {
             tool_name,
             Some(revision),
             Some(authority),
+            None,
         )
+    }
+
+    pub(crate) fn begin_owned_effect(
+        &self, task_id: Uuid, revision: u64, lease: Uuid, call_id: Uuid,
+        key: &str, effect: ToolEffect, tool_name: &str, authority: Option<&str>,
+    ) -> Result<()> {
+        if authority.is_some_and(|value| effect != ToolEffect::ExternalSideEffect
+            || value.len() != 64 || !value.bytes().all(|b| b.is_ascii_hexdigit())) {
+            return Err(FoundationError::InvalidInput("provider authority digest"));
+        }
+        self.begin_effect_checked(task_id, call_id, key, effect, tool_name,
+            Some(revision), authority, Some(lease))
     }
 
     fn ensure_no_unknown_effect(connection: &Connection, task_id: Uuid) -> Result<()> {
@@ -464,6 +478,7 @@ impl SqliteTaskStore {
         tool_name: &str,
         revision: Option<u64>,
         authority: Option<&str>,
+        lease: Option<Uuid>,
     ) -> Result<()> {
         if key.is_empty() || key.len() > 256 || effect == ToolEffect::ReadOnly {
             return Err(FoundationError::InvalidInput("effect intent"));
@@ -474,6 +489,13 @@ impl SqliteTaskStore {
             .map_err(storage)?;
         if let Some(revision) = revision {
             Self::require_running_revision(&tx, task_id, revision)?;
+        }
+        if let Some(lease) = lease {
+            let owns: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM foundation_leases WHERE task_id=?1 AND token=?2)",
+                params![task_id.to_string(), lease.to_string()], |row| row.get(0),
+            ).map_err(storage)?;
+            if !owns { return Err(FoundationError::InvalidTransition); }
         }
         Self::ensure_no_unknown_effect(&tx, task_id)?;
         tx.execute(
@@ -522,6 +544,22 @@ impl SqliteTaskStore {
         ).map_err(storage)?;
         if changed != 1 { return Err(FoundationError::InvalidTransition); }
         tx.commit().map_err(storage)?;
+        Ok(())
+    }
+
+    /// Only the still-owned execution can prove that it has not yet
+    /// constructed/called its adapter. This is not provider reconciliation.
+    pub(crate) fn reject_before_dispatch(
+        &self, task_id: Uuid, lease: Uuid, call_id: Uuid, key: &str, tool_name: &str,
+    ) -> Result<()> {
+        let connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
+        let changed = connection.execute(
+            "UPDATE foundation_effects SET state='reconciled_not_applied',evidence='host:dispatch_not_started'
+             WHERE call_id=?1 AND task_id=?2 AND effect_key=?3 AND tool=?4 AND state='unknown'
+             AND EXISTS(SELECT 1 FROM foundation_leases l WHERE l.task_id=?2 AND l.token=?5)",
+            params![call_id.to_string(), task_id.to_string(), key, tool_name, lease.to_string()],
+        ).map_err(storage)?;
+        if changed != 1 { return Err(FoundationError::InvalidTransition); }
         Ok(())
     }
 

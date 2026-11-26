@@ -92,6 +92,14 @@ impl ExecutionLease<'_> {
             .active_at_revision(self.task_id, self.revision)
     }
 
+    #[cfg(feature = "durable-sqlite")]
+    pub(crate) fn begin_effect(&self, call_id: Uuid, key: &str, effect: ToolEffect,
+        tool_name: &str, authority: Option<&str>) -> Result<()> {
+        let store = self.registry.durable.as_ref().ok_or(FoundationError::PermissionDenied)?;
+        let token = self.db_lease.ok_or(FoundationError::PermissionDenied)?;
+        store.begin_owned_effect(self.task_id, self.revision, token, call_id, key, effect, tool_name, authority)
+    }
+
     /// A durable successful side effect must be confirmed by the same lease,
     /// not by a task-id-only UPDATE after a stale in-memory generation check.
     #[cfg(feature = "durable-sqlite")]
@@ -99,6 +107,13 @@ impl ExecutionLease<'_> {
         let store = self.registry.durable.as_ref().ok_or(FoundationError::PermissionDenied)?;
         let token = self.db_lease.ok_or(FoundationError::PermissionDenied)?;
         store.confirm_effect_at_revision(self.task_id, self.revision, token, call_id, key, tool_name)
+    }
+
+    #[cfg(feature = "durable-sqlite")]
+    pub(crate) fn reject_before_dispatch(&self, call_id: Uuid, key: &str, tool_name: &str) -> Result<()> {
+        let store = self.registry.durable.as_ref().ok_or(FoundationError::PermissionDenied)?;
+        let token = self.db_lease.ok_or(FoundationError::PermissionDenied)?;
+        store.reject_before_dispatch(self.task_id, token, call_id, key, tool_name)
     }
 
     /// Commit terminal state only for the exact generation this lease owns.

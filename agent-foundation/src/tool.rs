@@ -352,46 +352,39 @@ impl ToolRegistry {
         // The UNKNOWN receipt must be DURABLE before any external execution.
         // A process crash or a timeout leaves it unknown; never auto-retry.
         #[cfg(feature = "durable-sqlite")]
-        if let Some(store) = effect_store {
-            if let Some(authority) = tool.reconciliation_authority().filter(|digest| {
+        if effect_store.is_some() {
+            let authority = tool.reconciliation_authority().filter(|digest| {
                 *digest != [0; 32] && permit.operation.effect == ToolEffect::ExternalSideEffect
-            }) {
-                store.begin_provider_effect_at_revision(
-                    permit.task_id,
-                    permit.operation.call_id,
-                    &idempotency_key,
-                    &permit.operation.tool_name,
-                    permit.revision,
-                    &hex::encode(authority),
-                )?;
-            } else {
-                store.begin_effect_at_revision(
-                    permit.task_id,
-                    permit.operation.call_id,
-                    &idempotency_key,
-                    permit.operation.effect,
-                    &permit.operation.tool_name,
-                    permit.revision,
-                )?;
+            }).map(hex::encode);
+            _lease.begin_effect(permit.operation.call_id, &idempotency_key,
+                permit.operation.effect, &permit.operation.tool_name, authority.as_deref())?;
+        }
+        // Check again after journal admission, but before constructing the
+        // adapter future (construction itself is not assumed side-effect-free).
+        let admitted = (|| -> Result<()> {
+            if !_lease.is_active() || *cancellation.borrow_and_update() {
+                return Err(FoundationError::Cancelled);
             }
-        }
-        // Receipt creation is not permission to dispatch a stale generation.
-        // A cancelled call remains conservatively unknown for reconciliation.
-        if !_lease.is_active() || *cancellation.borrow_and_update() {
-            return Err(FoundationError::Cancelled);
-        }
-        // Persistence or a resource-owner check may have consumed the approval
-        // lifetime. Recheck immediately before constructing the dispatch future.
-        if let Some(binding) = binding {
-            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
-                .map_err(|_| FoundationError::PermissionDenied)?.as_millis();
-            if now >= u128::from(binding.expires_at_unix_ms) {
-                return Err(FoundationError::PermissionDenied);
+            if let Some(binding) = binding {
+                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|_| FoundationError::PermissionDenied)?.as_millis();
+                if now >= u128::from(binding.expires_at_unix_ms) {
+                    return Err(FoundationError::PermissionDenied);
+                }
+                tool.validate_binding(binding, &permit.operation.arguments)?;
             }
-            tool.validate_binding(binding, &permit.operation.arguments)?;
-        }
-        if !_lease.is_active() || *cancellation.borrow_and_update() {
-            return Err(FoundationError::Cancelled);
+            if !_lease.is_active() || *cancellation.borrow_and_update() {
+                return Err(FoundationError::Cancelled);
+            }
+            Ok(())
+        })();
+        if let Err(error) = admitted {
+            #[cfg(feature = "durable-sqlite")]
+            if effect_store.is_some() {
+                _lease.reject_before_dispatch(permit.operation.call_id, &idempotency_key,
+                    &permit.operation.tool_name)?;
+            }
+            return Err(error);
         }
         let future = if effectful || tool.requires_authorized_call() {
             tool.call_authorized(AuthorizedCall {

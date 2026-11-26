@@ -544,9 +544,10 @@ fn run_grid_child(index: u32) {
         });
 }
 
-/// 子进程全局 UDS 写端（connect 成功后设置；窗口事件回调里取用）。
+/// Critical native events and receipts share one bounded FIFO. A WebView
+/// callback must never wait for the transport writer.
 #[cfg(any(target_os = "linux", target_os = "windows"))]
-static CHILD_WRITER: std::sync::OnceLock<std::sync::Arc<std::sync::Mutex<GridStream>>> =
+static CHILD_CRITICAL: std::sync::OnceLock<std::sync::mpsc::SyncSender<grid_ipc::Wire>> =
     std::sync::OnceLock::new();
 
 #[cfg(any(target_os = "linux", target_os = "windows"))]
@@ -571,19 +572,49 @@ pub(crate) fn enqueue_renderer_report(name: &str, payload: serde_json::Value) {
     }
 }
 
-/// 子进程 → 主进程 发异步事件（焦点上报 / 导航 / 新窗口 / 桥命令事件转发）。
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn enqueue_child_critical(message: grid_ipc::Wire) {
+    let Some(sender) = CHILD_CRITICAL.get() else { return; };
+    if sender.try_send(message).is_err() {
+        // Losing an ordered navigation event or response would leave a
+        // seemingly healthy parent with stale authority. Retire this child
+        // fault domain instead; the original callers observe UNKNOWN.
+        eprintln!("[grid-child] critical IPC lane unavailable");
+        std::process::exit(1);
+    }
+}
+
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 fn grid_child_send_event(name: &str, payload: serde_json::Value) {
-    if let Some(w) = CHILD_WRITER.get() {
-        let mut guard = w.lock().unwrap();
-        let _ = grid_ipc::write_wire(
-            &mut *guard,
-            &grid_ipc::Wire::Event {
-                name: name.to_string(),
-                payload,
-            },
-        );
-    }
+    enqueue_child_critical(grid_ipc::Wire::Event { name: name.to_owned(), payload });
+}
+
+/// Use the same remaining-budget writer for child reports and receipts.
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn write_child_frame(writer: &std::sync::Mutex<GridStream>, message: &grid_ipc::Wire)
+    -> Result<(), String>
+{
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let frame = grid_ipc::encode_wire(message).map_err(|_| "GRID_CHILD_FRAME_REJECTED")?;
+    let mut stream = grid_ipc::lock_renderer_writer(writer, deadline, || Ok(()))?;
+    write_child_stream(&mut *stream, &frame, deadline)
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn write_child_stream(stream: &mut GridStream, frame: &[u8], deadline: std::time::Instant)
+    -> Result<(), String>
+{
+    grid_ipc::write_frame_until(frame, deadline, |bytes, remaining| {
+        #[cfg(target_os = "linux")]
+        {
+            stream.set_write_timeout(Some(remaining))?;
+            std::io::Write::write(stream, bytes)
+        }
+        #[cfg(target_os = "windows")]
+        {
+            stream.write_with_timeout(bytes, remaining)
+        }
+    }).map_err(|_| "GRID_CHILD_WRITE_FAILED".into())
 }
 
 /// 子进程 UDS client：连接主进程 socket（重试至 15s）→ 注册事件转发 → 命令循环。
@@ -629,7 +660,27 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
             }
         };
         let mut initial_writer = writer.lock().unwrap();
-        let _ = CHILD_WRITER.set(writer.clone());
+        let (critical_send, critical_receive) = std::sync::mpsc::sync_channel::<grid_ipc::Wire>(64);
+        let critical_writer = writer.clone();
+        if std::thread::Builder::new().name("renderer-critical-ipc".into()).spawn(move || {
+            while let Ok(message) = critical_receive.recv() {
+                if let Err(error) = write_child_frame(&critical_writer, &message) {
+                    if error == "GRID_CHILD_FRAME_REJECTED" {
+                        if let grid_ipc::Wire::Response { seq, .. } = &message {
+                            // The operation may already have run. A local
+                            // response-size rejection is not a definite failure.
+                            let fallback = grid_ipc::Wire::err(*seq,
+                                "GRID_REQUEST_OUTCOME_UNKNOWN: renderer response encoding rejected");
+                            if write_child_frame(&critical_writer, &fallback).is_ok() { continue; }
+                        }
+                    }
+                    std::process::exit(1);
+                }
+            }
+        }).is_err() {
+            std::process::exit(1);
+        }
+        let _ = CHILD_CRITICAL.set(critical_send);
         if grid_ipc::is_tab_renderer(index) {
             let (send, recv) = std::sync::mpsc::sync_channel::<grid_ipc::Wire>(32);
             let report_writer = writer.clone();
@@ -638,11 +689,15 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
                     // Never hold the callback's coalescing lock during IPC.
                     let latest = LATEST_DOWNLOAD_REPORT.lock().unwrap_or_else(|p| p.into_inner()).take();
                     if let Some(report) = latest {
-                        if grid_ipc::write_wire(&mut *report_writer.lock().unwrap(), &report).is_err() { break; }
+                        if let Err(error) = write_child_frame(&report_writer, &report) {
+                            if error != "GRID_CHILD_FRAME_REJECTED" { std::process::exit(1); }
+                        }
                     }
                     match recv.recv_timeout(std::time::Duration::from_millis(100)) {
                         Ok(report) => {
-                            if grid_ipc::write_wire(&mut *report_writer.lock().unwrap(), &report).is_err() { break; }
+                            if let Err(error) = write_child_frame(&report_writer, &report) {
+                            if error != "GRID_CHILD_FRAME_REJECTED" { std::process::exit(1); }
+                        }
                         }
                         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
                         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
@@ -659,7 +714,6 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
 
         // 插件事件（宫格 webview 内导航完成 / window.open）→ 主进程。
         {
-            let w = writer.clone();
             app.listen("browser-tabs://event", move |event| {
                 let payload: serde_json::Value = match serde_json::from_str(event.payload()) {
                     Ok(v) => v,
@@ -676,25 +730,23 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
                             // Oversized/invalid popup observations are denied,
                             // not sent as malformed frames that disconnect a host.
                             if grid_ipc::valid_renderer_event(index, "new-tab-request", &report) {
-                                let _ = grid_ipc::write_wire(
-                                    &mut *w.lock().unwrap(),
-                                    &grid_ipc::Wire::Event {
-                                        name: "new-tab-request".to_string(), payload: report,
-                                    },
-                                );
+                                grid_child_send_event("new-tab-request", report);
                             }
                         }
                     }
+                    Some("navigationStarted" | "documentRevision") => {
+                        grid_child_send_event("tab-document-changed", serde_json::json!({ "id": label }));
+                    }
                     Some("navigationFinished") => {
-                        let id = payload.get("id").and_then(|i| i.as_str()).unwrap_or("");
                         let url = payload.get("url").and_then(|u| u.as_str()).unwrap_or("");
-                        let _ = grid_ipc::write_wire(
-                            &mut *w.lock().unwrap(),
-                            &grid_ipc::Wire::Event {
-                                name: "tab-navigated".to_string(),
-                                payload: serde_json::json!({ "id": id, "url": url }),
-                            },
-                        );
+                        let report = serde_json::json!({ "id": label, "url": url });
+                        if grid_ipc::valid_renderer_event(index, "tab-navigated", &report) {
+                            grid_child_send_event("tab-navigated", report);
+                        } else {
+                            // Even an unrepresentable URL must invalidate the
+                            // original document's authorization.
+                            grid_child_send_event("tab-document-changed", serde_json::json!({ "id": label }));
+                        }
                     }
                     Some("resourceReceived") if grid_ipc::is_tab_renderer(index) => {
                         if let Ok(mut raw) = serde_json::from_value::<bridge::RawResourceEvent>(payload.clone()) {
@@ -717,17 +769,13 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
                             "[grid-child-{}] loadFailed url_bytes={}",
                             index, url.len()
                         );
-                        let _ = grid_ipc::write_wire(
-                            &mut *w.lock().unwrap(),
-                            &grid_ipc::Wire::Event {
-                                name: "grid-load-failed".to_string(),
-                                payload: serde_json::json!({
-                                    "index": index.to_string(),
-                                    "url": url,
-                                    "error": err,
-                                }),
-                            },
-                        );
+                        let report = serde_json::json!({
+                            "index": index.to_string(), "url": url,
+                            "error": if err.is_empty() { "renderer load failed" } else { "native renderer load failed" },
+                        });
+                        if grid_ipc::valid_renderer_event(index, "grid-load-failed", &report) {
+                            grid_child_send_event("grid-load-failed", report);
+                        }
                     }
                     _ => {}
                 }
@@ -740,22 +788,28 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
             "artifact-collected",
             "grid-load-failed",
         ] {
-            let w = writer.clone();
             let name_owned = name.to_string();
             app.listen(name, move |event| {
+                // Reject oversized/invalid advisory payloads locally; they
+                // cannot become an authenticated renderer lifecycle event.
+                if event.payload().len() >= grid_ipc::MAX_GRID_WIRE_BYTES { return; }
                 let payload: serde_json::Value =
                     serde_json::from_str(event.payload()).unwrap_or(serde_json::Value::Null);
-                let _ = grid_ipc::write_wire(
-                    &mut *w.lock().unwrap(),
-                    &grid_ipc::Wire::Event {
-                        name: name_owned.clone(),
-                        payload,
-                    },
-                );
+                if grid_ipc::valid_renderer_event(index, &name_owned, &payload) {
+                    let report = grid_ipc::Wire::Event { name: name_owned.clone(), payload };
+                    // Optional bridge notifications can be dropped locally
+                    // when oversized, but never send a truncated frame.
+                    if grid_ipc::encode_wire(&report).is_ok() {
+                        enqueue_child_critical(report);
+                    }
+                }
             });
         }
 
-        if grid_ipc::write_wire(&mut *initial_writer, &grid_ipc::renderer_ready(index)).is_err() {
+        let ready_deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let ready = grid_ipc::encode_wire(&grid_ipc::renderer_ready(index))
+            .unwrap_or_else(|_| std::process::exit(1));
+        if write_child_stream(&mut *initial_writer, &ready, ready_deadline).is_err() {
             std::process::exit(1);
         }
         drop(initial_writer);
@@ -763,20 +817,6 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
         // 命令循环：Request → 本地执行 → Response。主进程断开（EOF/错误）→ 退出，
         // 避免主进程退出后残留置顶孤儿窗口。
         let mut reader = std::io::BufReader::new(stream);
-        let (native_read_replies, native_read_receive) =
-            std::sync::mpsc::sync_channel::<grid_ipc::Wire>(grid_ipc::MAX_PENDING_RENDERER_REQUESTS);
-        let native_read_writer = writer.clone();
-        if std::thread::Builder::new().name("renderer-read-replies".into()).spawn(move || {
-            while let Ok(response) = native_read_receive.recv() {
-                if grid_ipc::write_wire(&mut *native_read_writer.lock().unwrap(), &response).is_err() {
-                    // The owning renderer's transport cannot deliver receipts.
-                    // Exit this fault domain, not the main BrowserOS process.
-                    std::process::exit(1);
-                }
-            }
-        }).is_err() {
-            std::process::exit(1);
-        }
         let mut request_fence = grid_ipc::GridRequestFence::default();
         let mut renderer_capture = crate::renderer_services::CaptureBuffer::default();
         loop {
@@ -793,19 +833,15 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
                             Ok(data) => grid_ipc::Wire::Response { seq, ok: true, err: None, data },
                             Err(error) => grid_ipc::Wire::err(seq, error),
                         };
-                        if grid_ipc::write_wire(&mut *writer.lock().unwrap(), &response).is_err() {
-                            break;
-                        }
+                        enqueue_child_critical(response);
                         continue;
                     }
                     if let grid_ipc::GridCmd::ReadReplies { ref id } = cmd {
                         let manager = app.state::<tauri_plugin_browser_tabs::TabManagerState>();
                         let Ok(document) = manager.capture_document(id) else {
-                            if grid_ipc::write_wire(&mut *writer.lock().unwrap(),
-                                &grid_ipc::Wire::err(seq, "GRID_DOCUMENT_STALE")).is_err() { break; }
+                            enqueue_child_critical(grid_ipc::Wire::err(seq, "GRID_DOCUMENT_STALE"));
                             continue;
                         };
-                        let reply_sender = native_read_replies.clone();
                         let result = manager.eval_result_document(
                                 id, &document,
                                 include_str!("../injected/extract-replies.js").to_string(),
@@ -819,36 +855,26 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
                                         },
                                         Err(e) => grid_ipc::Wire::err(seq, e),
                                     };
-                                    if reply_sender.try_send(response).is_err() {
-                                        // Never block a native WebView callback;
-                                        // the original requester observes timeout.
-                                        eprintln!("[grid-child] read reply lane unavailable");
-                                    }
+                                    enqueue_child_critical(response);
                                 },
                             );
                         if result.is_err() {
-                            let _ = grid_ipc::write_wire(
-                                &mut *writer.lock().unwrap(),
-                                &grid_ipc::Wire::err(seq, "GRID_NOT_OPEN"),
-                            );
+                            enqueue_child_critical(grid_ipc::Wire::err(seq, "GRID_NOT_OPEN"));
                         }
                         continue;
                     }
                     if let grid_ipc::GridCmd::HibernationProbe { ref id } = cmd {
                         let manager = app.state::<tauri_plugin_browser_tabs::TabManagerState>();
                         if !manager.download_history_clear(id) {
-                            let _ = grid_ipc::write_wire(&mut *writer.lock().unwrap(),
-                                &grid_ipc::Wire::err(seq, "GRID_HIBERNATION_DOWNLOAD_HISTORY"));
+                            enqueue_child_critical(grid_ipc::Wire::err(seq, "GRID_HIBERNATION_DOWNLOAD_HISTORY"));
                             continue;
                         }
                         let Ok(document) = manager.capture_document(id) else {
-                            if grid_ipc::write_wire(&mut *writer.lock().unwrap(),
-                                &grid_ipc::Wire::err(seq, "GRID_DOCUMENT_STALE")).is_err() { break; }
+                            enqueue_child_critical(grid_ipc::Wire::err(seq, "GRID_DOCUMENT_STALE"));
                             continue;
                         };
                         let probe_manager = std::sync::Arc::clone(manager.inner());
                         let probe_id = id.clone();
-                        let reply_sender = native_read_replies.clone();
                         let result = manager.eval_result_document(
                                 id, &document,
                                 if grid_ipc::is_tab_renderer(index) {
@@ -868,18 +894,11 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
                                         },
                                         Err(e) => grid_ipc::Wire::err(seq, e),
                                     };
-                                    if reply_sender.try_send(response).is_err() {
-                                        // Never block a native WebView callback;
-                                        // the original requester observes timeout.
-                                        eprintln!("[grid-child] read reply lane unavailable");
-                                    }
+                                    enqueue_child_critical(response);
                                 },
                             );
                         if result.is_err() {
-                            let _ = grid_ipc::write_wire(
-                                &mut *writer.lock().unwrap(),
-                                &grid_ipc::Wire::err(seq, "GRID_HIBERNATION_PROBE_FAILED"),
-                            );
+                            enqueue_child_critical(grid_ipc::Wire::err(seq, "GRID_HIBERNATION_PROBE_FAILED"));
                         }
                         continue;
                     }
@@ -887,9 +906,7 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
                         Ok(()) => grid_ipc::Wire::ok(seq),
                         Err(e) => grid_ipc::Wire::err(seq, e),
                     };
-                    if grid_ipc::write_wire(&mut *writer.lock().unwrap(), &resp).is_err() {
-                        break;
-                    }
+                    enqueue_child_critical(resp);
                 }
                 Ok(Some(_)) => {}
                 Ok(None) => {

@@ -1268,6 +1268,8 @@ impl TabManager {
             let uri_app = self.app.clone();
             let uri_revision = document_revision.clone();
             let load_revision = document_revision.clone();
+            let load_app = self.app.clone();
+            let load_id = options.id.clone();
             let _ = webview.with_webview(move |native| {
                 use webkit2gtk::WebViewExt;
                 let gtk_wv = native.inner();
@@ -1275,6 +1277,11 @@ impl TabManager {
                 // behavior. Same-URL reloads also invalidate the capture.
                 gtk_wv.connect_load_changed(move |_, _| {
                     invalidate_capture_document(&load_revision);
+                    // Internal invalidation only: do not change the existing
+                    // navigationFinished/URI-notify address-bar contract.
+                    let _ = load_app.emit("browser-tabs://event", serde_json::json!({
+                        "type": "documentRevision", "id": load_id,
+                    }));
                 });
                 let last_uri = std::cell::RefCell::new(String::new());
                 gtk_wv.connect_uri_notify(move |wv| {
@@ -1802,6 +1809,18 @@ impl TabManager {
         let (_operation, tab) = self.get_tab(id, TabAccessKind::Operation)?;
         if !std::sync::Weak::ptr_eq(&instance.0, &Arc::downgrade(&tab)) {
             return Err(BrowserTabError::Platform("TAB_INSTANCE_STALE".into()));
+        }
+        tab.webview.eval(js)?;
+        Ok(())
+    }
+
+    /// Dispatch-only acknowledgement on the admitted document, not a
+    /// guarantee that JavaScript completed or that its effects are durable.
+    pub fn eval_document(&self, id: &TabId, document: &CaptureDocument, js: &str) -> Result<()> {
+        let (_operation, tab) = self.get_tab(id, TabAccessKind::Operation)?;
+        if !std::sync::Weak::ptr_eq(&document.instance.0, &Arc::downgrade(&tab))
+            || !document.observed_generation_is_current() {
+            return Err(BrowserTabError::Platform("TAB_DOCUMENT_STALE".into()));
         }
         tab.webview.eval(js)?;
         Ok(())

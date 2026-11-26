@@ -201,7 +201,9 @@ impl DownloadObservation {
             "failed" => observation.failed,
             _ => return None,
         };
-        (phase_count > 0).then_some(observation)
+        const MAX_EXACT_JS_COUNT: u64 = (1u64 << 53) - 1;
+        (phase_count > 0 && [observation.requested, observation.succeeded, observation.failed]
+            .into_iter().all(|count| count <= MAX_EXACT_JS_COUNT)).then_some(observation)
     }
     pub(crate) fn advances(self, previous: Self) -> bool {
         self.requested >= previous.requested && self.succeeded >= previous.succeeded
@@ -223,6 +225,8 @@ pub(crate) fn valid_renderer_event(index: u32, name: &str, payload: &serde_json:
         "grid-child-focus" | "grid-child-blur" => {
             payload["index"].as_u64() == Some(u64::from(index))
         }
+        "tab-document-changed" => payload.as_object().is_some_and(|fields| fields.len() == 1)
+            && payload["id"].as_str() == Some(label.as_str()),
         "tab-navigated" | "new-tab-request" => {
             payload["id"].as_str() == Some(label.as_str()) && valid_url()
         }

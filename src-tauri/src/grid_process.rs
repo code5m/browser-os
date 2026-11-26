@@ -829,7 +829,7 @@ impl GridProcessManager {
                                             match name.as_str() {
                                                 "grid-child-focus" => {}
                                                 "grid-child-blur" => state.grid_manager.request_hide_for_blur_async(),
-                                                "renderer-resource" => {}
+                                                "renderer-resource" | "tab-document-changed" => {}
                                                 "renderer-download" => {
                                                     if payload["renderer_drop"] != true && comms_reader.is_current(generation) {
                                                         let _ = app.emit_to("main", "isolated-renderer-download", payload);
@@ -2007,19 +2007,27 @@ impl GridProcessManager {
         self.request_once_with(comms, generation, &cmd, timeout_ms).map(|_| ())
     }
 
-    /// A delayed load retry must retain its original renderer generation.
-    pub(crate) fn retry_failed_navigation(&self, index: u32, generation: u64, url: &str) -> Result<(), String> {
+    /// A delayed load retry retains the native failure's complete identity.
+    pub(crate) fn retry_failed_navigation(&self, binding: crate::grid_ipc::RendererBinding, url: &str) -> Result<(), String> {
+        let index = binding.index;
         let _operation = self.lifecycle.enter()?;
-        let (comms, revision) = {
+        if index as usize >= crate::bridge::MAX_GRID || !crate::grid_ipc::restorable_address(url)
+            || !url::Url::parse(url).is_ok_and(|value| matches!(value.scheme(), "http" | "https")) {
+            return Err("GRID_RETRY_ADDRESS_REJECTED".into());
+        }
+        let comms = {
             let children = self.children.lock().unwrap();
             let child = children.get(&index).ok_or("GRID_RENDERER_NOT_OWNED")?;
-            if !child.comms.is_current(generation) || child.last_url.as_deref() != Some(url) {
+            if !child.document_ready || child.comms.owner_snapshot()? != binding.owner
+                || !child.comms.is_current(binding.generation)
+                || child.navigation_revision != binding.navigation_revision
+                || child.last_url.as_deref() != Some(url) {
                 return Err("GRID_RETRY_SUPERSEDED".into());
             }
-            (Arc::clone(&child.comms), child.navigation_revision)
+            Arc::clone(&child.comms)
         };
         let cmd = GridCmd::Navigate { id: crate::grid_ipc::renderer_label(index), url: url.to_string() };
-        self.request_once_fenced(comms, generation, Some(revision), &cmd, 10000).map(|_| ())
+        self.request_once_fenced(comms, binding.generation, Some(binding.navigation_revision), &cmd, 10000).map(|_| ())
     }
 
     /// Fail-closed native probe of the actual Grid page. Stored last_url is
@@ -2549,6 +2557,18 @@ impl GridProcessManager {
         match name {
             "grid-child-focus" => child.focused = true,
             "grid-child-blur" => child.focused = false,
+            "tab-document-changed" => {
+                let Some(revision) = child.navigation_revision.checked_add(1) else { return false; };
+                child.navigation_revision = revision;
+                comms.navigation_revision.store(revision, Ordering::SeqCst);
+                // Invalidate an in-flight reclaim. Initial load completion
+                // alone must not permanently disqualify a pristine blank
+                // renderer; the native safe-page probe and existing history
+                // checks still decide eligibility after loading.
+                if comms.blank_reclaiming.load(Ordering::SeqCst) {
+                    comms.blank_reclaim_blocked.store(true, Ordering::SeqCst);
+                }
+            }
             "tab-navigated" => {
                 let Some(revision) = child.navigation_revision.checked_add(1) else { return false; };
                 child.navigation_revision = revision;
@@ -2636,7 +2656,10 @@ impl GridProcessManager {
                 };
                 {
                     let mut last = comms.download_observation.lock().unwrap();
-                    if last.as_ref().is_some_and(|(_, previous)| !observation.advances(*previous)) {
+                    if last.as_ref().is_some_and(|(previous_generation, previous)| {
+                        if observation == *previous { *previous_generation == generation }
+                        else { !observation.advances(*previous) }
+                    }) {
                         payload["renderer_drop"] = serde_json::json!(true);
                         return true;
                     }
@@ -2669,6 +2692,9 @@ impl GridProcessManager {
             }
             "grid-load-failed" => {
                 payload["renderer_generation"] = serde_json::json!(generation.to_string());
+                payload["renderer_pid"] = serde_json::json!(child.child.id());
+                payload["renderer_epoch"] = serde_json::json!(comms.spawn_epoch.load(Ordering::SeqCst).to_string());
+                payload["renderer_navigation_revision"] = serde_json::json!(child.navigation_revision.to_string());
             }
             _ => {}
         }

@@ -575,7 +575,8 @@ export const useBrowserStore = defineStore("browser", () => {
       const parsed = new URL(value);
       if (parsed.username || parsed.password) return false;
       return ((parsed.protocol === "http:" || parsed.protocol === "https:") && !!parsed.hostname)
-        || (parsed.protocol === "file:" && (!parsed.hostname || parsed.hostname === "localhost"))
+        || (parsed.protocol === "file:" && (!parsed.hostname || parsed.hostname === "localhost")
+          && !parsed.pathname.startsWith("//") && !/%2f|%5c/i.test(parsed.pathname))
         || value === "about:blank";
     } catch { return false; }
   }
