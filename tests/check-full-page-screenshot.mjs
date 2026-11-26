@@ -30,3 +30,17 @@ assert.match(ui,/bridge\.captureFullPage\(id\)/);
 assert.match(manifest,/browser\.capture\.full-page/);
 assert.doesNotMatch(native,/document\.cookie|access_token|eval_in_tab/);
 console.log("FULL_PAGE_CAPTURE_CONTRACT=PASS");
+
+// Renderer startup must verify both the budget and the parent admission.
+const isolated=read("../src-tauri/src/isolated_capture.rs");
+const supervisor=read("../src-tauri/src/native_supervisor.rs");
+assert.match(isolated,/verify_current_render_budget\(MEMORY_LIMIT\)/);
+assert.match(isolated,/release_start_pipe\(START_MAGIC\)/);
+assert.match(isolated,/validate_worker_admission\(std::io::stdin\(\).lock\(\)\)/);
+assert.match(native,/fn reserve_publication/);
+assert.match(native,/CAPTURE_CANCELLED_BEFORE_PUBLICATION/);
+assert.match(native,/native_entered_at\(\)/);
+assert.match(supervisor,/pending_capture_domain_recovery/);
+assert.match(supervisor,/claim_capture_domain_recovery/);
+assert.match(bridge,/requestCaptureDomainRecovery/);
+assert.match(ui,/target\.epoch,target\.sequence,target\.ticket/);

@@ -59,6 +59,27 @@ async function recoverCapture() {
     if(view.receipt)await bridge.acknowledgeCapture(receipt.ticket);
   }catch{layout.showToast('截图回执尚未确认，请重新查询');}
 }
+const captureRestartTarget=ref<{epoch:string;sequence:string;ticket:string}|null>(null);
+async function prepareCaptureDomainRestart() {
+  captureRestartTarget.value=null;
+  try {
+    const view=await bridge.inspectCapture();
+    if(!view.domain_recovery_available||!view.receipt){
+      layout.showToast('原生截图尚未达到故障域重启条件，或监管器不可用；请先核对或取消任务。');return;
+    }
+    captureRestartTarget.value={epoch:view.epoch,sequence:view.next_sequence,ticket:view.receipt.ticket};
+    layout.showToast('已核对卡死任务。再次打开菜单确认重启整个应用；未保存状态可能丢失。');
+  }catch{layout.showToast('无法核对原生截图故障域，未请求重启。');}
+}
+async function confirmCaptureDomainRestart() {
+  const target=captureRestartTarget.value;
+  captureRestartTarget.value=null;
+  if(!target)return;
+  try {
+    await bridge.requestCaptureDomainRecovery(target.epoch,target.sequence,target.ticket);
+    layout.showToast('已请求监管器核对原故障域并重启；不会重放截图。');
+  }catch{layout.showToast('重启请求未确认或原任务已变化，请重新核对；不会自动重试。');}
+}
 async function cancelCaptureTask() {
   try{
     const view=await bridge.inspectCapture();
@@ -129,12 +150,17 @@ async function toggleMoreActions(event:MouseEvent) {
     {text:'沉浸全屏 · F11',action:toggleImmersive},
     {text:'AI 导航',enabled:layout.mainView==='browser',action:()=>browser.toggleAiNav()},
     {text:'采集选中内容',action:()=>art.collectSelection()},
-    {text:'整页截图 (PNG)',enabled:layout.mainView==='browser' && !!browser.activeTabId && !capturingPage.value,action:()=>void captureCurrentPage()},
-    {text:'独立地址截图（不继承登录）',enabled:layout.mainView==='browser' && !!browser.activeTabId
+    {text:'当前页整页截图（保留登录，尽力而为）',enabled:layout.mainView==='browser' && !!browser.activeTabId && !capturingPage.value,action:()=>void captureCurrentPage()},
+    {text:'独立地址截图（隔离内存，不继承登录）',enabled:layout.mainView==='browser' && !!browser.activeTabId
       && browser.url.startsWith('https://') && !capturingPage.value,
       children:[{text:'确认：以全新配置重新打开当前 HTTPS 地址',action:()=>void captureCurrentPage(true)}]},
     {text:'查询/恢复截图任务',action:()=>void recoverCapture()},
     {text:'请求取消截图任务',action:()=>void cancelCaptureTask()},
+    {text:'核对卡死截图并准备故障域重启',action:()=>void prepareCaptureDomainRestart()},
+    ...(captureRestartTarget.value?[
+      {text:'确认重启整个应用（未保存状态可能丢失）',action:()=>void confirmCaptureDomainRestart()},
+      {text:'取消故障域重启',action:()=>{captureRestartTarget.value=null;}}
+    ]:[]),
     {text:'设置',action:()=>onItem('settings')},
   ];
   await nativeMenu.open(items,menuAnchor(event.currentTarget as Element));
