@@ -66,8 +66,11 @@ pub async fn grid_read_replies(
     if index >= 12 {
         return Err("GRID_INDEX_INVALID".into());
     }
+    // Capture the original cell before worker admission, not when the worker
+    // eventually starts. An archived reply must not come from a replacement.
+    let binding = app.state::<AppState>().grid_manager.grid_eval_binding(index)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let text = app.state::<AppState>().grid_manager.read_replies(index)?;
+        let text = app.state::<AppState>().grid_manager.grid_read_replies_bound(binding)?;
         if text.len() > crate::workbench::MAX_NOTE_BYTES as usize {
             return Err("GRID_RESULT_LIMIT".into());
         }

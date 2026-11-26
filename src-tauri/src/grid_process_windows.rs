@@ -797,15 +797,28 @@ impl GridProcessManager {
     pub(crate) fn grid_eval_bound(
         &self, binding: crate::grid_ipc::RendererBinding, js: String,
     ) -> Result<(), String> {
+        let cmd = GridCmd::Eval { id: crate::grid_ipc::renderer_label(binding.index), js };
+        self.grid_bound_request(binding, cmd, 10000).map(|_| ())
+    }
+
+    /// Only the reviewed Grid data/zoom commands may use this path. Zoom is
+    /// a host preference, not a document operation; it survives navigation
+    /// within the original host, never process/transport replacement.
+    fn grid_bound_request(
+        &self, binding: crate::grid_ipc::RendererBinding, cmd: GridCmd, timeout_ms: u64,
+    ) -> Result<Option<String>, String> {
         let _operation = self.lifecycle.enter()?;
-        if (binding.index as usize) >= crate::bridge::MAX_GRID {
-            return Err("GRID_INDEX_INVALID".into());
+        if (binding.index as usize) >= crate::bridge::MAX_GRID || !cmd.targets(binding.index)
+            || !matches!(&cmd, GridCmd::Eval { .. } | GridCmd::ReadReplies { .. } | GridCmd::SetZoom { .. })
+        {
+            return Err("GRID_REQUEST_TARGET_REJECTED".into());
         }
+        let document_bound = !matches!(&cmd, GridCmd::SetZoom { .. });
         let comms = {
             let children = self.children.lock().unwrap();
             let child = children.get(&binding.index).ok_or("GRID_EVAL_TARGET_STALE")?;
             if child.comms.owner_snapshot()? != binding.owner
-                || child.navigation_revision != binding.navigation_revision
+                || (document_bound && child.navigation_revision != binding.navigation_revision)
                 || !child.comms.is_current(binding.generation)
                 || child.comms.blank_reclaiming.load(Ordering::SeqCst)
             {
@@ -813,8 +826,30 @@ impl GridProcessManager {
             }
             Arc::clone(&child.comms)
         };
-        let cmd = GridCmd::Eval { id: crate::grid_ipc::renderer_label(binding.index), js };
-        self.request_once_with(binding.index, comms, binding.generation, &cmd, 10000).map(|_| ())
+        self.request_once_with(binding.index, comms, binding.generation, &cmd, timeout_ms)
+    }
+
+    pub(crate) fn grid_zoom_bound(&self, binding: crate::grid_ipc::RendererBinding, zoom: f64)
+        -> Result<(), String>
+    {
+        if !zoom.is_finite() || zoom <= 0.1 {
+            return Err("GRID_ZOOM_INVALID".into());
+        }
+        let cmd = GridCmd::SetZoom { id: crate::grid_ipc::renderer_label(binding.index), zoom };
+        self.grid_bound_request(binding, cmd, 3000).map(|_| ())
+    }
+
+    pub(crate) fn grid_read_replies_bound(&self, binding: crate::grid_ipc::RendererBinding)
+        -> Result<String, String>
+    {
+        let cmd = GridCmd::ReadReplies { id: crate::grid_ipc::renderer_label(binding.index) };
+        let result = self.grid_bound_request(binding, cmd, 5000)?
+            .ok_or("GRID_NO_RESULT")?;
+        // An old document's late reply is not the current cell's content.
+        if self.grid_eval_binding(binding.index)? != binding {
+            return Err("GRID_READ_TARGET_STALE".into());
+        }
+        Ok(result)
     }
 
     /// No data service may reconnect or replay on a replacement child.
@@ -1253,20 +1288,7 @@ impl GridProcessManager {
     }
 
     pub fn read_replies(&self, index: u32) -> Result<String, String> {
-        if !self.children.lock().unwrap().contains_key(&index) {
-            return Err("GRID_NOT_OPEN".into());
-        }
-        let (comms, generation) = self.wait_connected(index, 500)?;
-        self.request_once_with(
-            index,
-            comms,
-            generation,
-            &GridCmd::ReadReplies {
-                id: crate::grid_ipc::renderer_label(index),
-            },
-            5000,
-        )?
-        .ok_or_else(|| "GRID_NO_RESULT".into())
+        self.grid_read_replies_bound(self.grid_eval_binding(index)?)
     }
 
     fn request_once_with(

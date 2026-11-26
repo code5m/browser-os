@@ -293,13 +293,7 @@ pub fn create_grid_blocking(app: AppHandle, n: usize, urls: Vec<String>) -> Resu
         }
 
         if created {
-            if let Some(zoom) = state.grid_zooms.lock().unwrap().get(&label).copied() {
-                let app = app.clone();
-                std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_millis(900));
-                    apply_grid_zoom(&app, &label, zoom);
-                });
-            }
+            schedule_grid_zoom(&app, &label);
             if i + 1 < target {
                 // Stagger only cold starts; healthy retained children need no delay.
                 std::thread::sleep(std::time::Duration::from_millis(300));
@@ -388,15 +382,7 @@ pub fn grid_open_blocking(app: AppHandle, index: usize, url: String) -> Result<(
     )?;
     mgr.record_url(index as u32, &target);
     // 页面加载完成后重新应用缩放（CSS zoom 会被新页面重置，需重新注入）
-    let stored = state.grid_zooms.lock().unwrap().get(&label).copied();
-    if let Some(z) = stored {
-        let app3 = app.clone();
-        let label3 = label.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(900));
-            apply_grid_zoom(&app3, &label3, z);
-        });
-    }
+    schedule_grid_zoom(&app, &label);
     Ok(())
 }
 
@@ -433,23 +419,34 @@ fn ensure_grid_child(app: &AppHandle, index: usize) -> Result<(), String> {
             return Err(error);
         }
         manager.record_url(index as u32, &url);
-        if let Some(zoom) = state.grid_zooms.lock().unwrap().get(&label).copied() {
-            let app = app.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_millis(900));
-                apply_grid_zoom(&app, &label, zoom);
-            });
-        }
+        schedule_grid_zoom(app, &label);
     }
     Ok(())
 }
 
 /// 真正给宫格 webview 应用缩放（WebKitGTK 原生 zoom_level，经 UDS 到子进程）。
 /// 仅在页面加载完成后调用，避免加载中设置被重置导致卡顿。
-fn apply_grid_zoom(app: &AppHandle, label: &str, _requested_zoom: f64) {
-    let Some(index) = grid_index_of(label).filter(|index| (*index as usize) < MAX_GRID) else {
-        return;
-    };
+fn schedule_grid_zoom(app: &AppHandle, label: &str) {
+    let Some(index) = grid_index_of(label).filter(|index| (*index as usize) < MAX_GRID) else { return; };
+    let state = app.state::<AppState>();
+    if !state.grid_zooms.lock().unwrap().contains_key(label) { return; }
+    let Ok(binding) = state.grid_manager.grid_eval_binding(index) else { return; };
+    let Ok(permit) = GRID_ZOOM_WORKERS.reserve() else { return; };
+    let app = app.clone();
+    let label = label.to_owned();
+    // Delay is advisory and bounded; it never resolves a replacement host.
+    tauri::async_runtime::spawn(async move {
+        let _ = permit.run(move || {
+            std::thread::sleep(std::time::Duration::from_millis(900));
+            apply_grid_zoom(&app, &label, binding)
+        }).await;
+    });
+}
+
+fn apply_grid_zoom(app: &AppHandle, label: &str, binding: crate::grid_ipc::RendererBinding) -> Result<(), String> {
+    let index = grid_index_of(label).filter(|index| (*index as usize) < MAX_GRID)
+        .ok_or("GRID_INDEX_INVALID")?;
+    if index != binding.index { return Err("GRID_REQUEST_TARGET_REJECTED".into()); }
     let _send = GRID_ZOOM_WRITERS[index as usize]
         .lock()
         .unwrap_or_else(|error| error.into_inner());
@@ -458,20 +455,9 @@ fn apply_grid_zoom(app: &AppHandle, label: &str, _requested_zoom: f64) {
     // replay the value captured before a more recent user zoom.
     let state = app.state::<AppState>();
     let zoom = state.grid_zooms.lock().unwrap().get(label).copied();
-    let Some(zoom) = zoom else {
-        return;
-    };
-    if !zoom.is_finite() || zoom <= 0.1 {
-        return;
-    }
+    let zoom = zoom.ok_or("GRID_ZOOM_INTENT_MISSING")?;
     // 1.0 is a real reset to 100%, not a reason to skip the native command.
-    state.grid_manager.send(
-        index,
-        GridCmd::SetZoom {
-            id: label.to_string(),
-            zoom,
-        },
-    );
+    state.grid_manager.grid_zoom_bound(binding, zoom)
 }
 
 /// Store the desired zoom before dispatch, then serialize only this cell's I/O.
@@ -484,22 +470,21 @@ pub async fn grid_set_zoom(app: AppHandle, index: usize, zoom: f64) -> Result<()
     }
     let permit = GRID_ZOOM_WORKERS.reserve()?;
     let label = format!("grid-{index}");
-    {
+    let binding = {
         let state = app.state::<AppState>();
+        // A sleeping cell retains only a desired preference, not a native
+        // success receipt. The next explicit restore applies that preference.
+        let binding = match state.grid_manager.grid_eval_binding(index as u32) {
+            Ok(binding) => Some(binding),
+            Err(_) if state.grid_manager.is_hibernated(index as u32) => None,
+            Err(error) => return Err(error),
+        };
         let mut zooms = state.grid_zooms.lock().unwrap();
-        if let Some(&prev) = zooms.get(&label) {
-            if (prev - zoom).abs() < 0.02 {
-                return Ok(());
-            }
-        }
         zooms.insert(label.clone(), zoom);
-    }
-    permit
-        .run(move || {
-            apply_grid_zoom(&app, &label, zoom);
-            Ok(())
-        })
-        .await
+        binding
+    };
+    let Some(binding) = binding else { return Ok(()); };
+    permit.run(move || apply_grid_zoom(&app, &label, binding)).await
 }
 
 /// 批量定位所有宫格（前端按网格计算好每个格子的 x/y/w/h 后调用）。
