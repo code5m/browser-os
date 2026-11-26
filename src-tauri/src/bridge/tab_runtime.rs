@@ -296,6 +296,8 @@ pub struct ProcStat {
     pub name: String,
     /// 进程树合计 RSS（MB，含 WebKit 子进程）
     pub rss_mb: f64,
+    /// False if the root disappeared or could not be attributed during sampling.
+    pub rss_known: bool,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -308,6 +310,10 @@ pub struct ResourceStats {
     pub main: ProcStat,
     /// 每宫格子进程树（index 即 grid-N 的 N）
     pub grids: Vec<ProcStat>,
+    /// Live ordinary-tab renderer subtrees, excluded from main.rss_mb.
+    pub isolated_tabs: Vec<ProcStat>,
+    pub isolated_tab_start_budget: usize,
+    pub memory_sample_known: bool,
     /// 页签休眠开关状态
     pub hibernation_enabled: bool,
     /// 当前已休眠页签数
@@ -457,7 +463,34 @@ fn process_tree_rss_kb(procs: &HashMap<u32, (u32, String, u64)>) -> HashMap<u32,
 
 #[cfg(test)]
 mod resource_tree_tests {
-    use super::process_tree_rss_kb;
+    use super::{process_tree_rss_kb, renderer_rss};
+    use crate::grid_ipc::{tab_renderer_index, RendererProcess};
+
+    #[test]
+    fn isolated_tab_rss_is_not_charged_to_grid_or_main_twice() {
+        let procs = HashMap::from([
+            (1, (0, "main".into(), 100)),
+            (2, (1, "grid".into(), 40)),
+            (3, (2, "engine".into(), 30)),
+            (4, (1, "tab".into(), 20)),
+            (5, (4, "engine".into(), 60)),
+            (9, (0, "foreign".into(), 900)),
+        ]);
+        let owners = [
+            RendererProcess { index: 0, pid: 2, spawn_epoch: 1, ready: true, startup_reserved: false },
+            RendererProcess { index: tab_renderer_index("tab-1").unwrap(), pid: 4, spawn_epoch: 1, ready: true, startup_reserved: false },
+            RendererProcess { index: tab_renderer_index("tab-2").unwrap(), pid: 9, spawn_epoch: 1, ready: false, startup_reserved: false },
+        ];
+        let tree = process_tree_rss_kb(&procs);
+        let (grids, tabs, attributed) = renderer_rss(&owners, &procs, &tree, 1);
+        assert_eq!(grids.len(), 1);
+        assert_eq!(tabs.len(), 2);
+        assert_eq!(tabs[0].name, "tab-1");
+        assert!(tabs[0].rss_known);
+        assert!(!tabs[1].rss_known);
+        assert_eq!(attributed, 150);
+        assert_eq!(tree[&1] - attributed, 100);
+    }
     use std::collections::HashMap;
 
     #[test]
@@ -480,7 +513,7 @@ mod resource_tree_tests {
 /// 资源统计缓存仅加速频繁的 UI 采样；必须同时检查进程 PID 以免重建宫格返回旧值。
 /// 前端仍按已有 3/15 秒节奏拉取，命令工作保持在阻塞线程池。
 static RESOURCE_STATS_CACHE: std::sync::OnceLock<
-    Mutex<Option<(std::time::Instant, Vec<(u32, u32)>, ResourceStats)>>,
+    Mutex<Option<(std::time::Instant, Vec<crate::grid_ipc::RendererProcess>, ResourceStats)>>,
 > = std::sync::OnceLock::new();
 
 /// 资源占用统计：主进程树 + 每宫格子进程树的 RSS（含 WebKit 子进程）。
@@ -494,9 +527,9 @@ pub async fn resource_stats(
     tauri::async_runtime::spawn_blocking(move || {
         let cache = RESOURCE_STATS_CACHE.get_or_init(|| Mutex::new(None));
         let mut stored = cache.lock().unwrap_or_else(|error| error.into_inner());
-        let grid_pids = app.state::<AppState>().grid_manager.pids();
-        if let Some((sampled_at, pids, stats)) = stored.as_ref() {
-            if *pids == grid_pids && sampled_at.elapsed() < std::time::Duration::from_millis(750) {
+        let owners = app.state::<AppState>().grid_manager.renderer_processes();
+        if let Some((sampled_at, previous, stats)) = stored.as_ref() {
+            if *previous == owners && sampled_at.elapsed() < std::time::Duration::from_millis(750) {
                 let mut refreshed = stats.clone();
                 let state = app.state::<AppState>();
                 refreshed.hibernation_enabled = state.hibernation_enabled.load(Ordering::Relaxed);
@@ -505,8 +538,14 @@ pub async fn resource_stats(
                 return refreshed;
             }
         }
-        let stats = resource_stats_blocking(app);
-        *stored = Some((std::time::Instant::now(), grid_pids, stats.clone()));
+        let stats = resource_stats_for_owners(&app, &owners);
+        // A spawn/retirement during the OS inventory cannot populate the
+        // cache under the identity of a different native owner.
+        if app.state::<AppState>().grid_manager.renderer_processes() == owners {
+            *stored = Some((std::time::Instant::now(), owners, stats.clone()));
+        } else {
+            *stored = None;
+        }
         stats
     })
     .await
@@ -514,56 +553,78 @@ pub async fn resource_stats(
 }
 
 pub fn resource_stats_blocking(app: AppHandle) -> ResourceStats {
+    let owners = app.state::<AppState>().grid_manager.renderer_processes();
+    resource_stats_for_owners(&app, &owners)
+}
+
+fn renderer_rss(
+    owners: &[crate::grid_ipc::RendererProcess],
+    procs: &HashMap<u32, (u32, String, u64)>,
+    tree_rss: &HashMap<u32, u64>,
+    main_pid: u32,
+) -> (Vec<ProcStat>, Vec<ProcStat>, u64) {
+    let mut grids = Vec::new();
+    let mut tabs = Vec::new();
+    let mut attributed = 0u64;
+    let mut seen = std::collections::HashSet::new();
+    for owner in owners {
+        // Each supervisor root is a direct child. A vanished or reused PID
+        // must not subtract a foreign process from the application total.
+        let observed = procs.get(&owner.pid).is_some_and(|(parent, _, _)| *parent == main_pid)
+            && tree_rss.contains_key(&owner.pid) && seen.insert(owner.pid);
+        let rss = if observed { tree_rss[&owner.pid] } else { 0 };
+        attributed = attributed.saturating_add(rss);
+        let stat = ProcStat {
+            pid: owner.pid,
+            name: crate::grid_ipc::renderer_label(owner.index),
+            rss_mb: rss as f64 / 1024.0,
+            rss_known: observed,
+        };
+        if crate::grid_ipc::is_tab_renderer(owner.index) {
+            tabs.push(stat);
+        } else {
+            grids.push(stat);
+        }
+    }
+    (grids, tabs, attributed)
+}
+
+fn resource_stats_for_owners(app: &AppHandle, owners: &[crate::grid_ipc::RendererProcess]) -> ResourceStats {
     let procs = read_proc_table();
     let tree_rss = process_tree_rss_kb(&procs);
     let main_pid = std::process::id();
-    let grid_pids = app.state::<AppState>().grid_manager.pids();
-    let grid_total_kb: u64 = grid_pids
-        .iter()
-        .map(|(_, pid)| tree_rss.get(pid).copied().unwrap_or(0))
-        .sum();
-    let app_total_kb = tree_rss.get(&main_pid).copied().unwrap_or(0); // 宫格子进程是主进程的子进程，已含
-    let main_only_kb = app_total_kb.saturating_sub(grid_total_kb);
-    let main_name = procs
-        .get(&main_pid)
-        .map(|(_, c, _)| c.clone())
-        .unwrap_or_else(|| "main".to_string());
-    let grids = grid_pids
-        .iter()
-        .map(|(index, pid)| ProcStat {
-            pid: *pid,
-            name: format!("grid-{index}"),
-            rss_mb: tree_rss.get(pid).copied().unwrap_or(0) as f64 / 1024.0,
-        })
-        .collect();
-    let avail = mem_available_mb().unwrap_or(0);
-    let hibernation_enabled = app
-        .state::<AppState>()
-        .hibernation_enabled
-        .load(Ordering::Relaxed);
-    let hibernated_count = app
-        .state::<AppState>()
-        .hibernated_tabs
-        .lock()
-        .unwrap()
-        .len();
-    let grid_indices: Vec<u32> = grid_pids.iter().map(|(index, _)| *index).collect();
+    let (grids, isolated_tabs, attributed_kb) = renderer_rss(owners, &procs, &tree_rss, main_pid);
+    let app_total_kb = tree_rss.get(&main_pid).copied().unwrap_or(0);
+    let main_only_kb = app_total_kb.saturating_sub(attributed_kb);
+    let main_name = procs.get(&main_pid).map(|(_, name, _)| name.clone()).unwrap_or_else(|| "main".into());
+    let available = mem_available_mb();
+    // Use the existing platform adapter, including GlobalMemoryStatusEx on
+    // Windows, rather than a second Linux-only /proc/meminfo implementation.
+    let total = super::grid_runtime::mem_total_mb();
+    let state = app.state::<AppState>();
+    let grid_indices: Vec<u32> = owners.iter().filter(|owner| !crate::grid_ipc::is_tab_renderer(owner.index))
+        .map(|owner| owner.index).collect();
+    let starting = owners.iter().filter(|owner| owner.startup_reserved).count();
+    let isolated_tab_start_budget = renderer_start_budget(available, starting)
+        .min(crate::grid_ipc::MAX_ISOLATED_TAB_RENDERERS.saturating_sub(isolated_tabs.len()));
     ResourceStats {
-        mem_total_mb: mem_total_mb().unwrap_or(0),
-        mem_available_mb: avail,
+        mem_total_mb: total.unwrap_or(0),
+        mem_available_mb: available.unwrap_or(0),
         app_total_mb: app_total_kb as f64 / 1024.0,
         main: ProcStat {
             pid: main_pid,
             name: main_name,
             rss_mb: main_only_kb as f64 / 1024.0,
+            rss_known: tree_rss.contains_key(&main_pid),
         },
         grids,
-        hibernation_enabled,
-        hibernated_count,
-        hibernated_grid_count: app.state::<AppState>().grid_manager.hibernated_count(),
-        // The displayed limit agrees with create_grid and includes already
-        // running Grid children instead of charging their memory twice.
-        grid_budget: affordable_grid_count(avail, &grid_indices, MAX_GRID),
+        isolated_tabs,
+        isolated_tab_start_budget,
+        memory_sample_known: total.is_some() && available.is_some(),
+        hibernation_enabled: state.hibernation_enabled.load(Ordering::Relaxed),
+        hibernated_count: state.hibernated_tabs.lock().unwrap().len(),
+        hibernated_grid_count: state.grid_manager.hibernated_count(),
+        grid_budget: affordable_grid_count(available.unwrap_or(0), &grid_indices, MAX_GRID),
     }
 }
 
@@ -618,19 +679,6 @@ fn accepted_hibernation_scroll(snapshot: &serde_json::Value) -> Option<(f64, f64
     let x = snapshot.get("scrollX")?.as_f64()?;
     let y = snapshot.get("scrollY")?.as_f64()?;
     (x.is_finite() && y.is_finite()).then_some((x, y))
-}
-
-fn mem_total_mb() -> Option<u64> {
-    std::fs::read_to_string("/proc/meminfo")
-        .ok()?
-        .lines()
-        .find_map(|line| line.strip_prefix("MemTotal:"))?
-        .trim()
-        .trim_end_matches("kB")
-        .trim()
-        .parse::<u64>()
-        .ok()
-        .map(|kb| kb / 1024)
 }
 
 /// Settings remain explicit opt-in: adaptive hibernation never destroys a page

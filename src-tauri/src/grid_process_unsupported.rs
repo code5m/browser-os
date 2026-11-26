@@ -120,6 +120,9 @@ impl GridProcessManager {
     pub fn pid_of(&self, _index: u32) -> Option<u32> {
         None
     }
+    pub(crate) fn renderer_processes(&self) -> Vec<crate::grid_ipc::RendererProcess> {
+        Vec::new()
+    }
     pub fn pids(&self) -> Vec<(u32, u32)> {
         Vec::new()
     }

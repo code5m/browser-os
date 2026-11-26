@@ -36,6 +36,21 @@ impl IpcRect {
 // manager or a second IPC transport. A tab route is never a Grid cell index.
 const TAB_RENDERER_BIT: u32 = 1 << 31;
 pub(crate) const MAX_ISOLATED_TAB_RENDERERS: usize = 8;
+/// Reserve estimated startup memory while native children are still warming.
+/// This is host admission accounting, NOT an engine allocation hard limit.
+pub(crate) const RENDERER_STARTUP_RESERVE: std::time::Duration =
+    std::time::Duration::from_secs(10);
+
+/// One sorted, process-owned observation used by telemetry and Agent
+/// metadata. Epoch avoids treating a recycled PID as the previous renderer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RendererProcess {
+    pub index: u32,
+    pub pid: u32,
+    pub spawn_epoch: u64,
+    pub ready: bool,
+    pub startup_reserved: bool,
+}
 
 pub(crate) fn tab_renderer_index(id: &str) -> Option<u32> {
     let n: u32 = id.strip_prefix("tab-")?.parse().ok()?;

@@ -84,6 +84,16 @@ fn require_grid_platform() -> Result<(), String> {
     }
 }
 
+/// Estimated new renderer starts using the existing Grid estimate and
+/// desktop reserve. Charge recently admitted starts conservatively because
+/// the OS memory sample may not yet contain their eventual working sets.
+pub(crate) fn renderer_start_budget(available_mb: Option<u64>, starting: usize) -> usize {
+    let Some(available) = available_mb else { return 0; };
+    let committed = (starting as u64).saturating_mul(GRID_MEM_MB);
+    let remaining = available.saturating_sub(CORE_MEMORY_RESERVE_MB).saturating_sub(committed);
+    usize::try_from(remaining / GRID_MEM_MB).unwrap_or(usize::MAX)
+}
+
 /// Reuse existing Grid children without charging their already-allocated RSS
 /// against free MemAvailable again. Only missing indices consume new budget.
 /// Use the SAME reserve for UI capacity and actual Grid creation.
@@ -109,7 +119,17 @@ pub(crate) fn affordable_grid_count(
 
 #[cfg(test)]
 mod grid_memory_budget_tests {
-    use super::{affordable_grid_count, CORE_MEMORY_RESERVE_MB};
+    use super::{affordable_grid_count, renderer_start_budget, CORE_MEMORY_RESERVE_MB, GRID_MEM_MB};
+
+    #[test]
+    fn renderer_start_budget_accounts_for_unmaterialized_starts_and_unknown_samples() {
+        assert_eq!(renderer_start_budget(None, 0), 0);
+        assert_eq!(renderer_start_budget(Some(CORE_MEMORY_RESERVE_MB - 1), 0), 0);
+        assert_eq!(renderer_start_budget(Some(CORE_MEMORY_RESERVE_MB + GRID_MEM_MB), 0), 1);
+        assert_eq!(renderer_start_budget(Some(CORE_MEMORY_RESERVE_MB + GRID_MEM_MB), 1), 0);
+        assert_eq!(renderer_start_budget(Some(CORE_MEMORY_RESERVE_MB + 3 * GRID_MEM_MB), 2), 1);
+        assert_eq!(renderer_start_budget(Some(1), usize::MAX), 0);
+    }
 
     #[test]
     fn only_new_children_charge_available_memory() {

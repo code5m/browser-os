@@ -279,6 +279,7 @@ pub struct GridChildHandle {
     pub child: Child,
     comms: Arc<ChildComms>,
     focused: bool,
+    spawned_at: std::time::Instant,
     document_ready: bool,
     navigation_revision: u64,
     pub job: JobObject,
@@ -558,6 +559,17 @@ impl GridProcessManager {
         if self.children.lock().unwrap().contains_key(&index) {
             return Err(format!("GRID_CHILD_ALREADY_RUNNING:{index}"));
         }
+        // This is the actual serialized native spawn admission, including
+        // explicit restores; a UI capacity estimate cannot bypass it.
+        if crate::grid_ipc::is_tab_renderer(index) {
+            let recent = self.renderer_processes().iter()
+                .filter(|owner| owner.startup_reserved).count();
+            let available = crate::bridge::mem_available_mb()
+                .ok_or("TAB_RENDERER_MEMORY_SAMPLE_UNAVAILABLE")?;
+            if crate::bridge::renderer_start_budget(Some(available), recent) == 0 {
+                return Err("TAB_RENDERER_MEMORY_BUDGET".into());
+            }
+        }
         let profile_epoch = crate::browser_profile_owner::grid_epoch()?;
         let comms = self.ensure_listener(index)?;
         comms.prepare_spawn()?;
@@ -598,6 +610,7 @@ impl GridProcessManager {
             job,
             comms: Arc::clone(&comms),
             focused: false,
+            spawned_at: std::time::Instant::now(),
             document_ready: false,
             navigation_revision: 0,
             last_url: saved.last_url,
@@ -1991,6 +2004,26 @@ impl GridProcessManager {
     }
 
     /// 所有存活宫格子进程的 (index, pid) 列表（资源统计用）。
+    /// Snapshot each live native owner, including ordinary tabs. Do not
+    /// include retiring owners as live; their residual RSS stays unattributed
+    /// in the parent process tree until operating-system cleanup completes.
+    pub(crate) fn renderer_processes(&self) -> Vec<crate::grid_ipc::RendererProcess> {
+        let children = self.children.lock().unwrap();
+        let mut result: Vec<_> = children.iter().map(|(&index, child)| {
+            let ordinary = crate::grid_ipc::is_tab_renderer(index);
+            crate::grid_ipc::RendererProcess {
+                index,
+                pid: child.child.id(),
+                spawn_epoch: child.comms.spawn_epoch.load(Ordering::SeqCst),
+                ready: child.comms.is_connected() && (!ordinary || child.document_ready),
+                startup_reserved: child.spawned_at.elapsed() < crate::grid_ipc::RENDERER_STARTUP_RESERVE
+                    || (ordinary && !child.document_ready),
+            }
+        }).collect();
+        result.sort_unstable_by_key(|owner| owner.index);
+        result
+    }
+
     pub fn pids(&self) -> Vec<(u32, u32)> {
         self.children
             .lock()
@@ -2154,6 +2187,7 @@ mod windows_grid_tests {
             job,
             comms: Arc::new(ChildComms::new()),
             focused: false,
+            spawned_at: std::time::Instant::now(),
             document_ready: false,
             navigation_revision: 0,
             last_url: None,
