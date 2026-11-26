@@ -494,13 +494,27 @@ impl Session {
             if ready == 0 {
                 continue;
             }
+            if fd.revents & (libc::POLLERR | libc::POLLHUP | libc::POLLNVAL) != 0 {
+                return Err("MCP_PIPE_FAILED".into());
+            }
+            if fd.revents & libc::POLLOUT == 0 { continue; }
+            // poll may wake after cancellation/deadline. Do not begin
+            // another fragment of the original frame on that readiness.
+            if observe_cancellation && self.cancellation.load(Ordering::Acquire) {
+                return Err("MCP_CANCEL_REQUESTED".into());
+            }
+            if Instant::now() >= deadline { return Err("MCP_WRITE_TIMEOUT".into()); }
             match self.input.write(&bytes[offset..]) {
                 Ok(0) => return Err("MCP_WRITE_FAILED".into()),
                 Ok(n) => offset += n,
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
+                Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted) => continue,
                 Err(_) => return Err("MCP_WRITE_FAILED".into()),
             }
         }
+        if observe_cancellation && self.cancellation.load(Ordering::Acquire) {
+            return Err("MCP_CANCEL_REQUESTED".into());
+        }
+        if Instant::now() >= deadline { return Err("MCP_WRITE_TIMEOUT".into()); }
         Ok(())
     }
     fn notify_cancelled(&mut self, id: u64, method: &str) {
@@ -542,6 +556,16 @@ impl Session {
             match mcp_protocol::classify_frame(value, id)? {
                 RpcFrame::Reply(result) => {
                     if let Some(error) = self.reader_error() { return Err(error); }
+                    // A reply queued before the deadline is not a grant
+                    // to accept it after cancellation or expiry.
+                    if self.cancellation.load(Ordering::Acquire) {
+                        self.notify_cancelled(id, method);
+                        return Err("MCP_CANCEL_REQUESTED".into());
+                    }
+                    if Instant::now() >= self.deadline {
+                        self.notify_cancelled(id, method);
+                        return Err("MCP_TIMEOUT_OR_CLOSED".into());
+                    }
                     return Ok(result);
                 },
                 RpcFrame::ServerRequest(reply) => self.send(reply)?,
@@ -686,6 +710,10 @@ pub(super) fn execute_cancelable_with_effect_admission(
                 Ok(json!({"result":result,"untrusted":true}))
             })();
             session.terminate_confirmed()?;
+            // Cancellation during native teardown cannot become a fresh success.
+            if outcome.is_ok() && session.cancellation.load(Ordering::Acquire) {
+                return Err("MCP_CANCEL_REQUESTED".into());
+            }
             outcome
         }
         _ => Err("CONTEXT_ACTION_UNKNOWN".into()),

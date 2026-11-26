@@ -443,6 +443,7 @@ impl Session {
             if observe_cancellation && self.cancellation.load(Ordering::Acquire) {
                 return Err("MCP_CANCEL_REQUESTED".into());
             }
+            if Instant::now() >= deadline { return Err("MCP_WRITE_TIMEOUT".into()); }
             match self.writer.as_ref().ok_or("MCP_WRITE_FAILED")?.try_send(queued) {
                 Ok(()) => break,
                 Err(mpsc::TrySendError::Disconnected(_)) => {
@@ -458,23 +459,31 @@ impl Session {
                 }
             }
         }
-        loop {
+        // Only one frame may own the writer acknowledgement channel.
+        // On uncertain completion close admission permanently; a later
+        // cancellation notification must never consume this frame's ack.
+        let outcome = loop {
             if observe_cancellation && self.cancellation.load(Ordering::Acquire) {
-                return Err("MCP_CANCEL_REQUESTED".into());
+                break Err("MCP_CANCEL_REQUESTED".into());
             }
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
-                return Err("MCP_WRITE_TIMEOUT".into());
+                break Err("MCP_WRITE_TIMEOUT".into());
             }
-            match self
-                .write_result
-                .recv_timeout(remaining.min(Duration::from_millis(100)))
-            {
-                Ok(result) => return result,
+            match self.write_result.recv_timeout(remaining.min(Duration::from_millis(100))) {
+                Ok(result) => {
+                    if observe_cancellation && self.cancellation.load(Ordering::Acquire) {
+                        break Err("MCP_CANCEL_REQUESTED".into());
+                    }
+                    if Instant::now() >= deadline { break Err("MCP_WRITE_TIMEOUT".into()); }
+                    break result;
+                }
                 Err(mpsc::RecvTimeoutError::Timeout) => continue,
-                Err(mpsc::RecvTimeoutError::Disconnected) => return Err("MCP_WRITE_FAILED".into()),
+                Err(mpsc::RecvTimeoutError::Disconnected) => break Err("MCP_WRITE_FAILED".into()),
             }
-        }
+        };
+        if outcome.is_err() { drop(self.writer.take()); }
+        outcome
     }
     fn notify_cancelled(&mut self, id: u64, method: &str) {
         if let Some(notification) = mcp_protocol::cancellation_notification(id, method) {
@@ -543,6 +552,16 @@ impl Session {
                 RpcFrame::Reply(result) => {
                     if let Some(error) = self.reader_fault.lock().unwrap_or_else(|p| p.into_inner()).clone() {
                         return Err(error);
+                    }
+                    // A reply queued before the deadline is not a grant
+                    // to accept it after cancellation or expiry.
+                    if self.cancellation.load(Ordering::Acquire) {
+                        self.notify_cancelled(id, method);
+                        return Err("MCP_CANCEL_REQUESTED".into());
+                    }
+                    if Instant::now() >= self.deadline {
+                        self.notify_cancelled(id, method);
+                        return Err("MCP_TIMEOUT_OR_CLOSED".into());
                     }
                     return Ok(result);
                 },
@@ -648,6 +667,10 @@ pub(super) fn execute_cancelable_with_effect_admission(
     })();
     // On uncertainty SandboxProcess::drop retains native cleanup ownership.
     session.terminate_confirmed()?;
+    // Cancellation during native teardown cannot become a fresh success.
+    if outcome.is_ok() && session.cancellation.load(Ordering::Acquire) {
+        return Err("MCP_CANCEL_REQUESTED".into());
+    }
     outcome
 }
 
