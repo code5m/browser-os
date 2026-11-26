@@ -1,7 +1,8 @@
 //! Opt-in external supervisor of the existing application fault domain.
 //! No GTK/WebView lifetime or layout changes. This is NOT per-tab renderer
 //! isolation. A recovery restarts the whole owned app and can lose volatile
-//! state. Only the explicit --supervised-recovery launch opts into this.
+//! state. Only explicit --supervised-recovery or Linux-only
+//! --supervised-recovery-memory launches opt into this.
 //! No discovery/adoption of an existing PID, no automatic URL replay.
 use std::{
     ffi::OsString,
@@ -15,6 +16,7 @@ use std::{
 use tauri::Manager;
 
 const FLAG: &str = "--supervised-recovery";
+const MEMORY_FLAG: &str = "--supervised-recovery-memory";
 const ADDRESS: &str = "BROWSEROS_SUPERVISOR_ADDRESS";
 const TOKEN: &str = "BROWSEROS_SUPERVISOR_TOKEN";
 const POLL: Duration = Duration::from_millis(250);
@@ -36,12 +38,12 @@ pub(crate) struct OwnedHost {
     assignment_incomplete: bool,
 }
 impl OwnedHost {
-    fn spawn(args: &[OsString], listener: &TcpListener, token: &str) -> Result<Self, String> {
+    fn spawn(args: &[OsString], listener: &TcpListener, token: &str, nested_memory: bool) -> Result<Self, String> {
         let exe = std::env::current_exe().map_err(|_| "SUPERVISOR_EXECUTABLE_UNAVAILABLE")?;
         let mut command = Command::new(exe);
         command.args(args).env(ADDRESS, listener.local_addr().map_err(|_| "SUPERVISOR_LISTENER_FAILED")?.to_string())
             .env(TOKEN, token);
-        Self::spawn_command(command, None, || {
+        Self::spawn_command_with_topology(command, None, nested_memory, || {
             eprintln!("[native-supervisor] spawn cleanup pending; no replacement admitted");
         })
     }
@@ -49,13 +51,27 @@ impl OwnedHost {
     /// Shared owned process domain. An optional budget must be installed
     /// before any worker code can execute; no unbounded fallback.
     pub(crate) fn spawn_command(
-        mut command: Command, memory_limit: Option<usize>, _on_retire_pending: impl FnOnce(),
+        command: Command, memory_limit: Option<usize>, on_retire_pending: impl FnOnce(),
     ) -> Result<Self, String> {
+        Self::spawn_command_with_topology(command, memory_limit, false, on_retire_pending)
+    }
+
+    fn spawn_command_with_topology(
+        mut command: Command, memory_limit: Option<usize>, nested_memory: bool,
+        _on_retire_pending: impl FnOnce(),
+    ) -> Result<Self, String> {
+        if nested_memory && memory_limit.is_some() {
+            return Err("SUPERVISOR_TOPOLOGY_CONFLICT".into());
+        }
         #[cfg(target_os = "linux")]
         {
             let mut scope = crate::shared::process_scope::ProcessScope::prepare()
                 .map_err(|_| "SUPERVISOR_CGROUP_UNAVAILABLE")?
                 .ok_or("SUPERVISOR_DELEGATED_CGROUP_REQUIRED")?;
+            if nested_memory {
+                scope.prepare_nested_memory_host()
+                    .map_err(|_| "SUPERVISOR_NESTED_MEMORY_UNAVAILABLE")?;
+            }
             if let Some(bytes) = memory_limit {
                 scope.configure_memory_limit(bytes).map_err(|_| "SUPERVISOR_MEMORY_BUDGET_UNAVAILABLE")?;
             }
@@ -68,6 +84,7 @@ impl OwnedHost {
         #[cfg(target_os = "windows")]
         {
             use std::os::windows::process::CommandExt;
+            if nested_memory { return Err("SUPERVISOR_MEMORY_TOPOLOGY_LINUX_ONLY".into()); }
             command.creation_flags(crate::windows_process::CREATE_SUSPENDED);
             let job = match memory_limit {
                 Some(bytes) => crate::windows_process::JobObject::create_with_memory_limit(bytes)?,
@@ -257,7 +274,7 @@ fn monitor(owner: &mut OwnedHost, mut stream: TcpStream) -> Result<Outcome, Stri
         thread::sleep(PULSE);
     }
 }
-fn launch(args: Vec<OsString>) -> Result<i32, String> {
+fn launch(args: Vec<OsString>, nested_memory: bool) -> Result<i32, String> {
     // No loop of repeated recovery/relaunch. A normal single-instance
     // forwarding child exit is an ordinary exit, never a reason to restart.
     for attempt in 0..=1 {
@@ -265,7 +282,7 @@ fn launch(args: Vec<OsString>) -> Result<i32, String> {
             .map_err(|_| "SUPERVISOR_LISTENER_FAILED")?;
         listener.set_nonblocking(true).map_err(|_| "SUPERVISOR_LISTENER_FAILED")?;
         let token = uuid::Uuid::new_v4().to_string();
-        let mut owner = OwnedHost::spawn(if attempt == 0 { &args } else { &[] }, &listener, &token)?;
+        let mut owner = OwnedHost::spawn(if attempt == 0 { &args } else { &[] }, &listener, &token, nested_memory)?;
         let outcome = match accepted_stream(&listener, &mut owner, &token) {
             Ok(Some(stream)) => monitor(&mut owner, stream),
             Ok(None) => Ok(match owner.exited() {
@@ -300,16 +317,27 @@ fn launch(args: Vec<OsString>) -> Result<i32, String> {
 
 pub(crate) fn launch_if_requested() -> Option<i32> {
     let mut requested = false;
+    let mut nested_memory = false;
+    let mut conflicting = false;
     let args = std::env::args_os().skip(1).filter(|arg| {
-        if arg == FLAG { requested = true; false } else { true }
+        if arg == FLAG || arg == MEMORY_FLAG {
+            conflicting |= requested;
+            requested = true;
+            nested_memory |= arg == MEMORY_FLAG;
+            false
+        } else { true }
     }).collect::<Vec<_>>();
     if !requested { return None; }
+    if conflicting {
+        eprintln!("[native-supervisor] select exactly one supervisor launch mode");
+        return Some(1);
+    }
     // Never forward an inherited supervisor endpoint to a different owner.
     if std::env::var_os(TOKEN).is_some() || std::env::var_os(ADDRESS).is_some() {
         eprintln!("[native-supervisor] nested supervisor denied");
         return Some(1);
     }
-    Some(match launch(args) {
+    Some(match launch(args, nested_memory) {
         Ok(code) => code,
         Err(code) => { eprintln!("[native-supervisor] {code}; no replacement launched"); 1 }
     })
