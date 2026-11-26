@@ -38,6 +38,8 @@
 //! ```
 
 mod commands;
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+mod native_downloads;
 mod models;
 mod platform;
 

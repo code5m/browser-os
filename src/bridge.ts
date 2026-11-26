@@ -64,6 +64,9 @@ export type DownloadOwnerObservation = {
   requested: number | null; succeeded: number | null; failed: number | null;
   observed_unfinished: number | null; outcome: "unknown";
 };
+export type DownloadTaskTarget = {id:string;pid?:number|null;spawn_epoch?:string|null};
+export type NativeDownloadTask = {transfer_id:string;name:string|null;state:string;received_bytes:string|null;total_bytes:string|null;progress:number|null;controls:("pause"|"resume"|"cancel")[]};
+export type DownloadTaskView = {id:string;pid:number|null;spawn_epoch:string|null;observation:{native_instance:string;coverage:"since_registration";platform:string;limited:boolean;limit:number;control_dispatched:boolean;items:NativeDownloadTask[]}};
 export type DownloadInventory = { live: DownloadOwnerObservation[]; retiring: DownloadOwnerObservation[]; retired: DownloadOwnerObservation[]; retired_limit: number };
 
 // IPC results are runtime data, not TypeScript guarantees. Share one
@@ -135,6 +138,7 @@ type TabOwnerView = {
   renderer_state?: RendererState | null;
   renderer_download?: RendererDownloadObservation | null;
   download_inventory?: DownloadInventory;
+  download_tasks?: DownloadTaskView;
 };
 const terminalTabReceipt = (r: TabReceipt) => ["succeeded", "failed", "cancelled"].includes(r.phase);
 const receiptDelay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -1182,6 +1186,9 @@ export const bridge = {
   inspectDownloadInventory: () => tabReceiptCall({phase:"inspect_downloads"}, true),
   sampleDownload: (row: DownloadOwnerObservation) =>
     tabReceiptCall({phase:"sample_download",id:row.id,pid:row.pid,spawn_epoch:row.spawn_epoch}, true),
+  downloadTasks: (target:DownloadTaskTarget, control?:{transfer_id:string;operation:"pause"|"resume"|"cancel"}) =>
+    tabReceiptCall({phase:"download_tasks",id:target.id,pid:target.pid??null,spawn_epoch:target.spawn_epoch??null,
+      ...(control?{...control,confirmed:true}:{})},true),
   retireRenderer: (target: RendererRecoveryTarget) =>
     ownedTabMutation<void>({kind:"retire_renderer",...target,confirmed:true}),
   parkRenderer: (target: RendererParkTarget, url: string) =>

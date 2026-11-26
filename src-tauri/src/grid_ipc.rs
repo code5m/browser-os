@@ -75,7 +75,7 @@ pub(crate) fn renderer_label(index: u32) -> String {
     }
 }
 
-const RENDERER_PROTOCOL: &str = "browseros-renderer-v4";
+const RENDERER_PROTOCOL: &str = "browseros-renderer-v5";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct NativeDocumentStamp {
@@ -324,6 +324,7 @@ pub enum GridCmd {
     ReadReplies {
         id: String,
     },
+    DownloadTasks { id: String, control: Option<(String,String)> },
     FillCredential { id: String, origin: String, username: String, password: String },
     CaptureStart { id: String, ticket: String },
     CaptureRead { id: String, ticket: String, offset: usize },
@@ -374,7 +375,7 @@ impl GridCmd {
     pub(crate) fn preserves_pristine_blank(&self) -> bool {
         matches!(self, Self::CreateTab { url, .. } if url == "about:blank")
             || matches!(self, Self::UpdateRect { .. } | Self::HideWindow { .. }
-                | Self::HibernationProbe { .. } | Self::Ping)
+                | Self::HibernationProbe { .. } | Self::DownloadTasks { control:None,.. } | Self::Ping)
     }
 
     pub(crate) fn allowed_during_blank_reclaim(&self) -> bool {
@@ -384,7 +385,7 @@ impl GridCmd {
     /// Each child owns exactly one renderer identity. A transport connection
     /// is not permission to address another WebView or create arbitrary tabs.
     pub(crate) fn targets(&self, index: u32) -> bool {
-        if matches!(self, Self::FillCredential { .. } | Self::CaptureStart { .. }
+        if matches!(self, Self::DownloadTasks { .. } | Self::FillCredential { .. } | Self::CaptureStart { .. }
             | Self::CaptureRead { .. } | Self::CaptureRelease { .. })
             && !is_tab_renderer(index)
         {
@@ -396,6 +397,7 @@ impl GridCmd {
             | Self::HideWindow { id }
             | Self::Eval { id, .. }
             | Self::ReadReplies { id }
+            | Self::DownloadTasks { id, .. }
             | Self::FillCredential { id, .. }
             | Self::CaptureStart { id, .. }
             | Self::CaptureRead { id, .. }

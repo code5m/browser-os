@@ -5,7 +5,7 @@ import { ref, computed } from "vue";
 import { useFileStore } from "../../capabilities/workspace/public";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Globe, Plus, X } from '@lucide/vue';
-import { bridge, isDownloadOwnerObservation, type DownloadInventory, type DownloadOwnerObservation } from '../../bridge';
+import { bridge, isDownloadOwnerObservation, type DownloadInventory, type DownloadOwnerObservation, type DownloadTaskTarget, type DownloadTaskView, type NativeDownloadTask } from '../../bridge';
 import { useUnifiedTabs } from "../../composables/useUnifiedTabs";
 import { documentPathName, relativeDocumentPath } from "../../application/documentPaths.mjs";
 
@@ -47,6 +47,54 @@ const downloadInventory = ref<DownloadInventory | null>(null);
 const downloadPanelError = ref("");
 let downloadPanelEpoch = 0;
 const downloadSampleLabel = ref("");
+const taskTarget=ref<DownloadTaskTarget|null>(null);
+const taskView=ref<DownloadTaskView|null>(null);
+const taskBusy=ref(false),taskNotice=ref("");
+const taskConfirm=ref<{target:DownloadTaskTarget;task:NativeDownloadTask;operation:"pause"|"resume"|"cancel"}|null>(null);
+let taskEpoch=0;
+function validTransferView(view:DownloadTaskView,target:DownloadTaskTarget){
+  const data=view?.observation;
+  const epoch=(v:unknown)=>typeof v==='string'&&/^[1-9][0-9]{0,19}$/.test(v)&&(v.length<20||v<='18446744073709551615');
+  const bytes=(v:unknown)=>v===null||(typeof v==='string'&&(v==='0'||epoch(v)));
+  return view?.id===target.id&&view.pid===(target.pid??null)&&view.spawn_epoch===(target.spawn_epoch??null)
+    &&data?.coverage==="since_registration"&&epoch(data.native_instance)&&data.limit===64
+    &&Array.isArray(data.items)&&data.items.length<=64
+    &&new Set(data.items.map(row=>row.transfer_id)).size===data.items.length
+    &&data.items.every(row=>typeof row.transfer_id==='string'
+      &&row.transfer_id.startsWith(data.native_instance+':')&&epoch(row.transfer_id.split(':')[1])
+      &&row.transfer_id.split(':').length===2
+      &&(row.name===null||typeof row.name==='string'&&row.name.length<=360&&!/[\\/]/.test(row.name))
+      &&['in_progress','paused','interrupted','completed','cancelled','failed','unknown'].includes(row.state)
+      &&bytes(row.received_bytes)&&bytes(row.total_bytes)
+      &&(row.progress===null||typeof row.progress==='number'&&Number.isFinite(row.progress)&&row.progress>=0&&row.progress<=1)
+      &&Array.isArray(row.controls)&&row.controls.every(op=>['pause','resume','cancel'].includes(op)));
+}
+async function readDownloadTasks(target:DownloadTaskTarget,control?:{transfer_id:string;operation:"pause"|"resume"|"cancel"}){
+  if(taskBusy.value||!downloadPanelOpen.value)return;
+  const epoch=++taskEpoch;
+  taskTarget.value={id:target.id,pid:target.pid,spawn_epoch:target.spawn_epoch};
+  taskBusy.value=true;taskView.value=null;taskConfirm.value=null;taskNotice.value="";
+  try{
+    const view=(await bridge.downloadTasks(target,control)).download_tasks;
+    if(epoch!==taskEpoch||!downloadPanelOpen.value)return;
+    if(!view||!validTransferView(view,target)||view.observation.control_dispatched!==!!control)throw Error("DOWNLOAD_RESULT_INVALID");
+    taskView.value=view;
+    if(control)taskNotice.value="原生控制已派发，以下为当前观察状态；操作结果尚需核对。";
+  }catch{
+    if(epoch===taskEpoch)taskNotice.value=control?"下载操作结果未确认；不会自动重试，请先重新读取原任务。":"原生下载对象暂不可用，请重新查询。";
+  }finally{taskBusy.value=false;}
+}
+function confirmTask(row:NativeDownloadTask,operation:"pause"|"resume"|"cancel"){
+  if(!taskTarget.value||!taskView.value||taskBusy.value||!row.controls.includes(operation))return;
+  taskConfirm.value={target:{...taskTarget.value},task:{...row},operation};
+}
+function executeTaskControl(){
+  const reviewed=taskConfirm.value;
+  taskConfirm.value=null;
+  if(reviewed&&!taskBusy.value)void readDownloadTasks(reviewed.target,{transfer_id:reviewed.task.transfer_id,operation:reviewed.operation});
+}
+const transferLabels:Record<string,string>={in_progress:"下载中",paused:"已暂停",interrupted:"已中断",completed:"已完成",cancelled:"已取消",failed:"失败",unknown:"未知"};
+const controlLabels={pause:"暂停",resume:"继续",cancel:"取消"};
 async function refreshDownloadInventory(sample?: DownloadOwnerObservation) {
   if (downloadPanelBusy.value || !downloadPanelOpen.value) return;
   const epoch = ++downloadPanelEpoch;
@@ -87,8 +135,10 @@ async function refreshDownloadInventory(sample?: DownloadOwnerObservation) {
 }
 function toggleDownloadInventory() {
   downloadPanelOpen.value = !downloadPanelOpen.value;
-  if (downloadPanelOpen.value) void refreshDownloadInventory();
-  else {
+  if (downloadPanelOpen.value) {
+    if(browser.isolatedRendererMode)void refreshDownloadInventory();
+  } else {
+    ++taskEpoch;taskTarget.value=null;taskView.value=null;taskConfirm.value=null;taskNotice.value="";
     ++downloadPanelEpoch;
     downloadInventory.value = null;
     // Keep the unresolved native request's single-flight ownership until
@@ -289,10 +339,13 @@ async function newTab() {
       <button class="window-close" title="关闭窗口" @click.stop="closeWindow">×</button>
     </div>
   </div>
-  <div v-if="browser.isolatedRendererMode" class="tab-actions" role="group" aria-label="独立宿主下载观察">
-    <button :aria-expanded="downloadPanelOpen" @click="toggleDownloadInventory">下载观察记录</button>
+  <div class="tab-actions" role="group" aria-label="原生下载管理">
+    <button :aria-expanded="downloadPanelOpen" @click="toggleDownloadInventory">下载管理</button>
     <template v-if="downloadPanelOpen">
-      <button :disabled="downloadPanelBusy" @click="refreshDownloadInventory()">重新查询缓存及回收记录</button>
+      <button v-if="browser.isolatedRendererMode" :disabled="downloadPanelBusy||taskBusy" @click="refreshDownloadInventory()">重新查询缓存及回收记录</button>
+      <template v-if="!browser.isolatedRendererMode">
+        <button v-for="tab in browser.tabs" :key="tab.id" :disabled="taskBusy" @click="readDownloadTasks({id:tab.id})">{{tab.id}} 的下载任务</button>
+      </template>
       <span v-if="downloadPanelBusy" role="status">正在核对原生记录…</span>
       <span v-else-if="downloadPanelError" role="status">{{downloadPanelError}}</span>
       <span v-else-if="downloadInventory">当前宿主 {{downloadInventory.live.length}} / 回收中 {{downloadInventory.retiring.length}} / 最近回收 {{downloadInventory.retired.length}}（最多 128）</span>
@@ -302,10 +355,30 @@ async function newTab() {
         <div v-for="row in downloadRows" :key="row.phase + ':' + row.id + ':' + row.pid + ':' + row.spawn_epoch">
           <strong>{{row.id}} · {{row.phase === 'live' ? '当前宿主' : row.phase === 'owner_retiring' ? '回收中' : '已回收'}}</strong>
           <span>{{downloadLabel(row)}}</span>
-          <button v-if="row.phase === 'live'" :disabled="downloadPanelBusy" @click="refreshDownloadInventory(row)">主动采样</button>
+          <button v-if="row.phase === 'live'" :disabled="downloadPanelBusy||taskBusy" @click="refreshDownloadInventory(row)">主动采样</button>
+          <button v-if="row.phase === 'live'" :disabled="taskBusy||downloadPanelBusy" @click="readDownloadTasks(row)">逐项任务</button>
         </div>
       </div>
-      <span>仅本次应用会话内的宿主累计观察，不含下载地址、路径或文件操作。</span>
+      <div v-if="taskTarget" class="download-owner-list">
+        <strong>{{taskTarget.id}} · 原生下载任务</strong>
+        <button :disabled="taskBusy" @click="readDownloadTasks(taskTarget)">重新读取</button>
+        <span v-if="taskBusy" role="status">正在读取原生对象…</span>
+        <span v-if="taskNotice" role="status">{{taskNotice}}</span>
+        <template v-if="taskView">
+          <span>自原生监听注册以来的观察。{{taskView.observation.limited?'记录已达容量限制，部分历史不可见。':''}} {{taskView.observation.platform==='linux'?'WebKitGTK 仅支持取消；不提供原生暂停/继续。':''}}</span>
+          <div v-if="!taskView.observation.items.length">暂无已观察任务</div>
+          <div v-for="task in taskView.observation.items" :key="task.transfer_id">
+            <strong>{{task.name||('下载 '+task.transfer_id)}} · {{transferLabels[task.state]}}</strong>
+            <span>{{task.received_bytes??'未知'}} / {{task.total_bytes??'未知'}} 字节<span v-if="task.progress!==null"> · {{Math.round(task.progress*100)}}%</span></span>
+            <button v-for="operation in task.controls" :key="operation" :disabled="taskBusy" @click="confirmTask(task,operation)">{{controlLabels[operation]}}</button>
+          </div>
+        </template>
+        <div v-if="taskConfirm">
+          <span>确认{{controlLabels[taskConfirm.operation]}} {{taskConfirm.task.name||taskConfirm.task.transfer_id}}？仅作用于原始原生任务。</span>
+          <button :disabled="taskBusy" @click="executeTaskControl">确认执行</button><button @click="taskConfirm=null">返回</button>
+        </div>
+      </div>
+      <span>累计观察与逐项任务仅本次应用会话有效；不显示下载 URL 或完整保存路径。宿主退出后不能继续控制原下载对象。</span>
     </template>
   </div>
   <div v-if="context" class="tab-actions" role="menu" @keydown.esc="context = null">

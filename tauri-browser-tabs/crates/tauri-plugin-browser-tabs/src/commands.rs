@@ -1609,6 +1609,19 @@ impl TabManager {
             webview.hide()?;
         }
 
+        // Attach real engine download-object observation to ordinary tabs
+        // only. Do not alter Wry/Tauri's existing destination or download policy.
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        if self.isolated_ready.is_none() && options.id.starts_with("tab-") {
+            let _ = webview.with_webview(move |native| {
+                #[cfg(target_os = "linux")]
+                crate::native_downloads::attach_linux(native_instance, &native.inner());
+                #[cfg(target_os = "windows")]
+                if let Ok(core) = unsafe { native.controller().CoreWebView2() } {
+                    crate::native_downloads::attach_windows(native_instance, core);
+                }
+            });
+        }
         let entry = Arc::new(ManagedTab {
             webview,
             native_instance,
@@ -1832,9 +1845,53 @@ impl TabManager {
         // dispatches and duplicate lifecycle changes for this identity.
         self.invalidate_tab_document(id, &tab);
         tab.webview.close()?;
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        {
+            let instance=tab.native_instance;
+            let _=self.app.run_on_main_thread(move || crate::native_downloads::detach(instance));
+        }
         self.tabs.write().remove(id);
         platform::forget_native_layout(id);
         Ok(())
+    }
+
+    /// Native-only UI-thread command. A timeout revokes queued work, never
+    /// grants a replacement attempt for already entered engine work.
+    pub fn native_download_tasks(&self, id: &TabId, control: Option<(String,String)>)
+        -> std::result::Result<serde_json::Value,String> {
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        { let _=(id,control);return Err("DOWNLOAD_PLATFORM_UNSUPPORTED".into()); }
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        {
+            use std::sync::atomic::{AtomicU8, Ordering};
+            if !id.starts_with("tab-") {return Err("DOWNLOAD_TRANSFER_STALE".into());}
+            let instance={
+                let (_operation,tab)=self.get_tab(id,TabAccessKind::Operation).map_err(|e|e.to_string())?;
+                tab.native_instance
+            };
+            let manager=Arc::clone(self.app.state::<TabManagerState>().inner());
+            let id=id.clone();
+            let gate=Arc::new(AtomicU8::new(0));
+            let admitted=Arc::clone(&gate);
+            let (tx,rx)=std::sync::mpsc::sync_channel(1);
+            self.app.run_on_main_thread(move || {
+                if admitted.compare_exchange(0,1,Ordering::AcqRel,Ordering::Acquire).is_err(){return;}
+                let result=(||{
+                    let (_operation,tab)=manager.get_tab(&id,TabAccessKind::Operation).map_err(|e|e.to_string())?;
+                    if tab.native_instance!=instance {return Err("DOWNLOAD_TRANSFER_STALE".into());}
+                    crate::native_downloads::request(instance,control.as_ref().map(|(id,op)|(id.as_str(),op.as_str())))
+                })();
+                let _=tx.send(result);
+            }).map_err(|_|"DOWNLOAD_NATIVE_DISPATCH_FAILED")?;
+            match rx.recv_timeout(std::time::Duration::from_secs(3)) {
+                Ok(result)=>result,
+                Err(_)=>{
+                    if gate.compare_exchange(0,2,Ordering::AcqRel,Ordering::Acquire).is_ok(){
+                        Err("DOWNLOAD_NATIVE_NOT_DISPATCHED".into())
+                    }else{Err("DOWNLOAD_NATIVE_OUTCOME_UNKNOWN".into())}
+                }
+            }
+        }
     }
 
     pub fn navigate(&self, id: &TabId, url: &str) -> Result<()> {

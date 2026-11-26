@@ -108,6 +108,12 @@ pub(crate) fn dispatch(app: &AppHandle, buffer: &mut CaptureBuffer, cmd: &GridCm
 {
     let require_document = || document.ok_or_else(|| "GRID_NATIVE_DOCUMENT_STALE".to_string());
     Some(match cmd {
+        GridCmd::DownloadTasks { id, control } => app.state::<TabManagerState>()
+            .native_download_tasks(id,control.clone()).and_then(|value|{
+                let text=serde_json::to_string(&value).map_err(|_|"DOWNLOAD_RESULT_INVALID")?;
+                if text.len()>128*1024 {return Err("DOWNLOAD_RESULT_LIMIT".into());}
+                Ok(Some(text))
+            }),
         GridCmd::FillCredential { id, origin, username, password } =>
             require_document().and_then(|document| fill(app, id, origin, username, password, document)),
         GridCmd::CaptureStart { id, ticket } =>

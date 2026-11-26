@@ -657,6 +657,8 @@ pub(crate) struct OwnerView {
     renderer_download: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     download_inventory: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    download_tasks: Option<Value>,
 }
 fn snapshot(app: &AppHandle) -> Result<OwnerView, String> {
     let mut view = {
@@ -682,6 +684,7 @@ fn snapshot(app: &AppHandle) -> Result<OwnerView, String> {
             renderer_state: None,
             renderer_download: None,
             download_inventory: None,
+            download_tasks: None,
         }
     };
     // Do not hold the Owner mutex while observing app metadata.
@@ -1028,6 +1031,8 @@ pub(crate) enum Request {
     InspectRenderer { id: String },
     InspectDownloads,
     SampleDownload { id: String, pid: u32, spawn_epoch: String },
+    DownloadTasks { id:String, pid:Option<u32>, spawn_epoch:Option<String>,
+        transfer_id:Option<String>, operation:Option<String>, confirmed:Option<bool> },
     Fence {
         epoch: String,
         sequence: String,
@@ -1051,6 +1056,60 @@ pub(crate) async fn tab_mutation(
     request: Request,
 ) -> Result<OwnerView, String> {
     match request {
+        Request::DownloadTasks { id,pid,spawn_epoch,transfer_id,operation,confirmed } => {
+            crate::shared::native_legacy_policy::require_main(&webview,"tab_list")?;
+            crate::shared::native_legacy_policy::bound_text("tab_list","id",&id)?;
+            if !super::is_tab_label(&id){return Err("DOWNLOAD_TRANSFER_STALE".into());}
+            let control=match (transfer_id,operation,confirmed) {
+                (None,None,None)=>None,
+                (Some(transfer),Some(operation),Some(true)) if transfer.len()<=41
+                    && transfer.split_once(':').is_some_and(|(a,b)| [a,b].into_iter().all(|part|
+                        part.parse::<u64>().is_ok_and(|v|v>0 && v.to_string()==part)))
+                    && matches!(operation.as_str(),"pause"|"resume"|"cancel")=>{
+                    Some((transfer,operation))
+                }
+                _=>return Err("DOWNLOAD_CONTROL_INVALID".into()),
+            };
+            let binding=if let Some(index)=super::isolated_tabs::route(&id){
+                let pid=pid.filter(|v|*v>0).ok_or("DOWNLOAD_OWNER_STALE")?;
+                let epoch=spawn_epoch.as_deref().and_then(|v|v.parse::<u64>().ok())
+                    .filter(|v|*v>0).ok_or("DOWNLOAD_OWNER_STALE")?;
+                let binding=app.state::<crate::AppState>().grid_manager.renderer_binding(index)?;
+                if binding.owner!=(pid,epoch){return Err("DOWNLOAD_OWNER_STALE".into());}
+                Some(binding)
+            }else{
+                if pid.is_some()||spawn_epoch.is_some(){return Err("DOWNLOAD_OWNER_STALE".into());}
+                None
+            };
+            DOWNLOAD_SAMPLE_LANE.run(move || {
+                let state=app.state::<crate::AppState>();
+                if state.shutdown_requested.load(std::sync::atomic::Ordering::Acquire)
+                    || !state.tabs.try_lock().map_err(|_|"TAB_DOWNLOAD_SAMPLE_BUSY")?.contains_key(&id){
+                    return Err("DOWNLOAD_OWNER_STALE".into());
+                }
+                let dispatched=control.is_some();
+                let tasks=if let Some(binding)=binding{
+                    let data=state.grid_manager.renderer_request_data(binding,
+                        crate::grid_ipc::GridCmd::DownloadTasks{id:id.clone(),control},4000)?
+                        .ok_or("DOWNLOAD_NATIVE_OUTCOME_UNKNOWN")?;
+                    if data.len()>128*1024 || state.grid_manager.renderer_binding(binding.index)?!=binding {
+                        return Err("DOWNLOAD_OWNER_STALE".into());
+                    }
+                    serde_json::from_str::<Value>(&data).map_err(|_|"DOWNLOAD_RESULT_INVALID")?
+                }else{
+                    app.state::<TabManagerState>().native_download_tasks(&id,control)?
+                };
+                if tasks["coverage"]!="since_registration" || tasks["control_dispatched"].as_bool()!=Some(dispatched)
+                    || tasks["items"].as_array().is_none_or(|items|items.len()>64){
+                    return Err("DOWNLOAD_RESULT_INVALID".into());
+                }
+                let mut view=snapshot(&app)?;
+                view.download_tasks=Some(serde_json::json!({"id":id,
+                    "pid":binding.map(|v|v.owner.0),"spawn_epoch":binding.map(|v|v.owner.1.to_string()),
+                    "observation":tasks}));
+                Ok(view)
+            }).await
+        }
         Request::SampleDownload { id, pid, spawn_epoch } => {
             crate::shared::native_legacy_policy::require_main(&webview, "tab_list")?;
             crate::shared::native_legacy_policy::bound_text("tab_list", "id", &id)?;
@@ -1260,7 +1319,7 @@ fn tab_mutation_control(
             }
         }
         Request::Inspect => {}
-        Request::SampleDownload { .. } => return Err("TAB_DOWNLOAD_SAMPLE_INVALID".into()),
+        Request::SampleDownload { .. } | Request::DownloadTasks { .. } => return Err("TAB_DOWNLOAD_SAMPLE_INVALID".into()),
         Request::InspectDownloads => {
             crate::shared::native_legacy_policy::require_main(&webview, "tab_list")?;
             if !super::isolated_tabs::mode_enabled() {
@@ -1586,6 +1645,7 @@ mod tests {
             renderer_state: None,
             renderer_download: None,
             download_inventory: None,
+            download_tasks: None,
         };
         assert!(state.matches_view(&view));
         state.admit_background().unwrap();
