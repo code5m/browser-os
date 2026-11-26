@@ -367,3 +367,10 @@ Source-only scope; no compilation, tests, install/runtime validation, workflow d
 - Keep the download panel's in-flight request owned across close/reopen; a stale response cannot populate a reopened panel and a new read waits for settlement.
 - Keep the pure MCP JSON protocol/review module available on unsupported targets because common review code imports it; platform-specific process execution remains gated.
 - No stable native transfer ID, cancel/resume, persistent download list, default-mode enablement, compilation, tests, workflow edits or master merge.
+
+## 2026-11-26 — Retain late signed provider evidence across archive and inbox replacement
+
+- Keep up to two immutable encrypted proof sidecars per authenticated existing Run, one per final outcome. The original Run lock and existing private checkpoint encryption, scoped authentication, no-replace publication and sealed-record marker are reused. Never mutate an archived Run or permit a proof to create a Run.
+- Read and reverify retained signed proof against the original provider/account/namespace/idempotency/review binding on each reconciliation, including archived runs. Missing previously sealed history or invalid proof fails closed. Detect a historical conflict even when the provider inbox is removed or replaced with a matching receipt. New archive publication is refused while conflict persists.
+- Persist verified late evidence without changing primary terminal decisions or Task revision semantics. UI separately presents current inbox outcome and retained outcome(s). No effect retry, new provider trust or automated dispute resolution.
+- Source-only implementation; no compilation, test execution, workflow edits or master merge.

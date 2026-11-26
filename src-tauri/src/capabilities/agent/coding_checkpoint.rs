@@ -905,6 +905,52 @@ impl RunCheckpoint {
         }
         Ok(())
     }
+    /// Immutable, separately authenticated late provider proof. At most
+    /// two files per existing Run (one for each signed final outcome).
+    /// Keep the archived Run itself immutable and its lineage intact.
+    fn provider_evidence_location(&self, applied: bool) -> Result<(PathBuf, PathBuf, String), String> {
+        let directory = private_directory(&self.storage, "agent-run-provider-evidence")?;
+        let outcome = if applied { "applied" } else { "not-applied" };
+        let path = directory.join(format!("{}-{outcome}.proof", self.id));
+        let scope = format!("production-run-provider-evidence:v1:{}:{outcome}", self.id);
+        Ok((directory, path, scope))
+    }
+
+    pub(super) fn read_provider_evidence(&self, applied: bool) -> Result<Option<Vec<u8>>, String> {
+        const LIMIT: usize = 4096;
+        let (directory, path, scope) = self.provider_evidence_location(applied)?;
+        let snapshot = safe_paths::read_versioned(&path, &[directory], LIMIT + OVERHEAD)?;
+        let Some(snapshot) = snapshot else {
+            if sealed_marker(&self.storage, &scope, false)? {
+                return Err("MCP_EFFECT_HISTORY_MISSING".into());
+            }
+            return Ok(None);
+        };
+        let bytes = open(&key(&self.storage, false)?, &scope, &snapshot.bytes)?;
+        if bytes.len() > LIMIT {
+            return Err("MCP_EFFECT_HISTORY_LIMIT".into());
+        }
+        sealed_marker(&self.storage, &scope, true)?;
+        Ok(Some(bytes))
+    }
+
+    pub(super) fn retain_provider_evidence(&self, applied: bool, bytes: &[u8]) -> Result<(), String> {
+        const LIMIT: usize = 4096;
+        if bytes.len() > LIMIT { return Err("MCP_EFFECT_HISTORY_LIMIT".into()); }
+        // The Run lock is already held. Never create evidence for a missing
+        // Run, replace a published proof, or make an archived Run active.
+        if self.read()?.is_none() { return Err("AGENT_RUN_NOT_FOUND".into()); }
+        if self.read_provider_evidence(applied)?.is_some() { return Ok(()); }
+        let (directory, path, scope) = self.provider_evidence_location(applied)?;
+        let encrypted = seal(&key(&self.storage, false)?, &scope, bytes)?;
+        safe_paths::create_new_file(&path, &[directory], &encrypted)
+            .map_err(|_| "MCP_EFFECT_HISTORY_PUBLICATION_PENDING")?;
+        if self.read_provider_evidence(applied)?.as_deref() != Some(bytes) {
+            return Err("MCP_EFFECT_HISTORY_PUBLICATION_PENDING".into());
+        }
+        Ok(())
+    }
+
     pub(super) fn write(&self, bytes: &[u8]) -> Result<(), String> {
         if self.archive_snapshot()?.is_some() {
             return Err("AGENT_RUN_ARCHIVED".into());

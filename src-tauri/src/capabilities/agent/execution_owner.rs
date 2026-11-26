@@ -1494,31 +1494,67 @@ impl ProductionExecution {
                 owner.write_record(&record)?;
             }
         }
-        // Preserve a previously settled receipt, including manual evidence.
-        // Later contradictory signatures are reported, never silently applied.
+        // A terminal Run may already be archived. Retain independently
+        // authenticated late proofs without rewriting the original receipt.
+        // Read both outcomes each time: removing/replacing the inbox file
+        // cannot erase an already recorded contradiction.
+        let binding = record.effect.as_ref().and_then(|effect| effect.authority.as_ref())
+            .ok_or("AGENT_RUN_RECEIPT_INVALID")?;
         let stored = record.effect.as_ref().and_then(|effect| effect.provider_proof.as_ref());
-        let state = if let Some(stored) = stored {
-            if proof.is_some_and(|latest| latest.outcome != stored.outcome) {
-                "conflicting_signed_terminal"
+        let manual_outcome = match record.phase.as_str() {
+            "reconciled_applied" => Some(true),
+            "reconciled_not_applied" => Some(false),
+            _ => None,
+        };
+        let terminal_outcome = stored.map(|proof| proof.outcome.applied()).or(manual_outcome);
+        let read_retained = |applied: bool| -> Result<Option<super::mcp_authority::SignedStatus>, String> {
+            let Some(bytes) = owner.checkpoint.read_provider_evidence(applied)? else { return Ok(None); };
+            let retained: super::mcp_authority::SignedStatus =
+                serde_json::from_slice(&bytes).map_err(|_| "MCP_EFFECT_HISTORY_INVALID")?;
+            if retained.outcome.applied() != applied || !retained.verify(binding) {
+                return Err("MCP_EFFECT_HISTORY_INVALID".into());
+            }
+            Ok(Some(retained))
+        };
+        let mut retained = [read_retained(false)?, read_retained(true)?];
+        if terminal_outcome.is_none() && retained.iter().any(Option::is_some) {
+            return Err("MCP_EFFECT_HISTORY_INVALID".into());
+        }
+        if let Some(latest) = proof {
+            let applied = latest.outcome.applied();
+            let position = usize::from(applied);
+            // The primary provider proof already lives in the original
+            // authenticated record. Only independently late evidence needs
+            // the sidecar. Keep at most one verified proof per outcome.
+            if terminal_outcome.is_some() && stored.is_none_or(|original| original.outcome != latest.outcome)
+                && retained[position].is_none()
+            {
+                let bytes = serde_json::to_vec(latest).map_err(|_| "MCP_EFFECT_HISTORY_INVALID")?;
+                owner.checkpoint.retain_provider_evidence(applied, &bytes)?;
+                retained[position] = read_retained(applied)?;
+                if retained[position].is_none() { return Err("MCP_EFFECT_HISTORY_MISSING".into()); }
+            }
+        }
+        let historical_conflict = terminal_outcome.is_some_and(|applied| retained[usize::from(!applied)].is_some());
+        let state = if stored.is_some() {
+            if historical_conflict { "conflicting_signed_terminal" } else { "settled" }
+        } else if let Some(applied) = manual_outcome {
+            if historical_conflict {
+                "conflicts_manual"
+            } else if retained[usize::from(applied)].is_some() {
+                "matches_manual"
             } else {
-                "settled"
+                observed.state()
             }
-        } else if let Some(proof) = proof {
-            match record.phase.as_str() {
-                "reconciled_applied" | "reconciled_not_applied" => {
-                    if proof.outcome.applied() == (record.phase == "reconciled_applied") {
-                        "matches_manual"
-                    } else {
-                        "conflicts_manual"
-                    }
-                }
-                _ => "verified_not_settled",
-            }
+        } else if proof.is_some() {
+            "verified_not_settled"
         } else {
             observed.state()
         };
         let view = serde_json::json!({"state":state,"inbox_state":observed.state(),
-            "observed_outcome":proof.map(|proof| proof.outcome)});
+            "observed_outcome":proof.map(|proof| proof.outcome),
+            "retained_outcomes":retained.iter().flatten().map(|proof| proof.outcome).collect::<Vec<_>>(),
+            "historical_conflict":historical_conflict});
         Ok((record, view))
     }
 
