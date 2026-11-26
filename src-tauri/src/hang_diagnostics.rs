@@ -7,7 +7,7 @@
 use serde_json::{json, Value};
 use std::{
     fs::{self, OpenOptions},
-    io::Write,
+    io::{Read, Write},
     os::unix::fs::OpenOptionsExt,
     path::{Path, PathBuf},
     sync::{
@@ -78,8 +78,17 @@ fn append_bounded(path: &Path, event: &Value) {
     let _ = file.flush();
 }
 
+// Kernel metadata is useful evidence, but each observation is bounded.
+// Truncated reads are explicitly unavailable rather than partial PID lists.
+fn read_proc_bounded(path: impl AsRef<Path>, limit: usize) -> Option<String> {
+    let mut bytes = Vec::new();
+    fs::File::open(path).ok()?.take(limit as u64 + 1).read_to_end(&mut bytes).ok()?;
+    if bytes.len() > limit { return None; }
+    String::from_utf8(bytes).ok()
+}
+
 fn read_status(path: &str) -> Value {
-    let text = fs::read_to_string(path).unwrap_or_default();
+    let text = read_proc_bounded(path, 8192).unwrap_or_default();
     let mut fields = serde_json::Map::new();
     for line in text.lines() {
         for key in ["VmRSS", "VmSize", "VmSwap", "Threads", "PPid", "State"] {
@@ -105,13 +114,13 @@ fn threads_snapshot() -> Vec<Value> {
             continue;
         }
         let task = entry.path();
-        let name = fs::read_to_string(task.join("comm"))
+        let name = read_proc_bounded(task.join("comm"), 128)
             .unwrap_or_default()
             .trim()
             .chars()
             .take(24)
             .collect::<String>();
-        let wchan = fs::read_to_string(task.join("wchan"))
+        let wchan = read_proc_bounded(task.join("wchan"), 256)
             .unwrap_or_default()
             .trim()
             .chars()
@@ -129,15 +138,17 @@ fn children_snapshot() -> Vec<Value> {
     let Ok(entries) = fs::read_dir("/proc/self/task") else {
         return result;
     };
-    for entry in entries.flatten() {
-        let Ok(contents) = fs::read_to_string(entry.path().join("children")) else {
+    let mut seen = std::collections::BTreeSet::new();
+    for entry in entries.flatten().take(MAX_THREADS) {
+        let Some(contents) = read_proc_bounded(entry.path().join("children"), 4096) else {
             continue;
         };
         for token in contents.split_whitespace() {
             if result.len() >= 24 {
                 return result;
             }
-            if !token.bytes().all(|c| c.is_ascii_digit()) {
+            if token.parse::<u32>().ok().filter(|pid| *pid > 0).is_none()
+                || !seen.insert(token.to_owned()) {
                 continue;
             }
             let status = read_status(&format!("/proc/{token}/status"));
@@ -148,7 +159,7 @@ fn children_snapshot() -> Vec<Value> {
 }
 
 fn read_pressure(path: &str) -> Vec<String> {
-    fs::read_to_string(path)
+    read_proc_bounded(path, 1024)
         .unwrap_or_default()
         .lines()
         .take(2)
@@ -157,7 +168,7 @@ fn read_pressure(path: &str) -> Vec<String> {
 }
 
 fn swap_counters() -> Value {
-    let text = fs::read_to_string("/proc/vmstat").unwrap_or_default();
+    let text = read_proc_bounded("/proc/vmstat", 32768).unwrap_or_default();
     let mut counters = serde_json::Map::new();
     for line in text.lines() {
         let mut fields = line.split_whitespace();
@@ -177,7 +188,7 @@ fn snapshot(event: &str, stalled_ms: u64) -> Value {
     // even when the bounded thread inventory contains more than MAX_THREADS.
     let pid = std::process::id();
     let main_thread = format!("/proc/self/task/{pid}");
-    let main_wait = fs::read_to_string(format!("{main_thread}/wchan"))
+    let main_wait = read_proc_bounded(format!("{main_thread}/wchan"), 256)
         .unwrap_or_default()
         .trim()
         .chars()
@@ -196,6 +207,7 @@ fn snapshot(event: &str, stalled_ms: u64) -> Value {
             "wait_channel": main_wait,
             "status": read_status(&format!("{main_thread}/status"))
         },
+        "inventory_limits": {"threads_scanned":MAX_THREADS,"children_returned":24},
         "threads": threads_snapshot(),
         "tab_mutation": crate::bridge::tab_mutation_diagnostic(),
         "capture": crate::capabilities::browser::public_api::capture_diagnostic(),
@@ -222,9 +234,10 @@ pub fn start(app: AppHandle) {
     // Each incident file is size-capped. Never silently remove an older
     // forensic record: it may be the only evidence of a previous hang.
     let path = dir.join(format!(
-        "hang-{}-pid{}.jsonl",
+        "hang-{}-pid{}-{}.jsonl",
         chrono::Local::now().format("%Y%m%d-%H%M%S"),
-        std::process::id()
+        std::process::id(),
+        uuid::Uuid::new_v4()
     ));
     append_bounded(
         &path,
@@ -346,6 +359,14 @@ pub fn start(app: AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn proc_metadata_reader_rejects_truncated_records() {
+        let path = std::env::temp_dir().join(format!("browseros-diag-read-{}", uuid::Uuid::new_v4()));
+        fs::write(&path, b"123 456").unwrap();
+        assert_eq!(read_proc_bounded(&path, 7).as_deref(), Some("123 456"));
+        assert!(read_proc_bounded(&path, 6).is_none());
+        fs::remove_file(path).unwrap();
+    }
     #[test]
     fn full_diagnostic_keeps_latest_recovery_in_bounded_recent_segment() {
         let dir = std::env::temp_dir().join(format!("browseros-diag-{}", uuid::Uuid::new_v4()));
