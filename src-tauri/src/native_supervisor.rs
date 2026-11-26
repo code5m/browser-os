@@ -20,6 +20,9 @@ const TOKEN: &str = "BROWSEROS_SUPERVISOR_TOKEN";
 const POLL: Duration = Duration::from_millis(250);
 const PULSE: Duration = Duration::from_secs(2);
 const HANG: Duration = Duration::from_secs(60);
+// Silence is a transport failure, not proof that the native UI is unresponsive.
+const REPLY_LIMIT: Duration = Duration::from_secs(3);
+const MAX_PENDING_GAP: Duration = Duration::from_secs(6);
 const CLEANUP: Duration = Duration::from_secs(15);
 const STARTUP_WARNING: Duration = Duration::from_secs(120);
 
@@ -29,6 +32,8 @@ pub(crate) struct OwnedHost {
     scope: crate::shared::process_scope::ProcessScope,
     #[cfg(target_os = "windows")]
     job: crate::windows_process::JobObject,
+    #[cfg(target_os = "windows")]
+    assignment_incomplete: bool,
 }
 impl OwnedHost {
     fn spawn(args: &[OsString], listener: &TcpListener, token: &str) -> Result<Self, String> {
@@ -69,7 +74,7 @@ impl OwnedHost {
                 None => crate::windows_process::JobObject::create_for_spawn()?,
             };
             let child = command.spawn().map_err(|_| "SUPERVISOR_SPAWN_FAILED")?;
-            let mut owner = Self { child, job };
+            let mut owner = Self { child, job, assignment_incomplete: true };
             if owner.job.assign_suspended_pid(owner.child.id()).is_err() {
                 // The process may not be in the job if assignment failed.
                 // Only our own Child handle can be used in this error path.
@@ -80,6 +85,7 @@ impl OwnedHost {
                 owner.retire_confirmed(_on_retire_pending);
                 return Err("SUPERVISOR_JOB_ASSIGN_FAILED".into());
             }
+            owner.assignment_incomplete = false;
             Ok(owner)
         }
     }
@@ -105,6 +111,10 @@ impl OwnedHost {
         }
         loop {
             if let Some(status) = self.exited()? { return Ok(status); }
+            // Failed Job assignment may leave the original suspended child
+            // outside the Job. An empty Job is not proof of that child's exit.
+            #[cfg(target_os = "windows")]
+            if self.assignment_incomplete { let _ = self.child.kill(); }
             if Instant::now() >= deadline { return Err("SUPERVISOR_CHILD_EXIT_UNKNOWN".into()); }
             thread::sleep(POLL);
         }
@@ -124,17 +134,69 @@ impl OwnedHost {
         }
     }
 
-    fn wait_without_recovery(&mut self) -> Result<ExitStatus, String> {
-        self.child.wait().map_err(|_| "SUPERVISOR_WAIT_FAILED")?;
-        self.retire()
+    fn wait_without_recovery(&mut self) -> ExitStatus {
+        // Losing the probe is not authority to terminate a healthy app.
+        // Nor may a wait error drop the Job or cgroup owner on this path.
+        let mut warned = false;
+        loop {
+            match self.exited() {
+                Ok(Some(_)) => break,
+                Ok(None) => {},
+                Err(_) if !warned => {
+                    warned = true;
+                    eprintln!("[native-supervisor] child exit unconfirmed; retaining owner without restart");
+                }
+                Err(_) => {},
+            }
+            thread::sleep(POLL);
+        }
+        self.retire_confirmed(report_retirement_pending)
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ProbeDecision { Wait, Recover, NoRecovery }
-fn decision(ready: bool, shutdown: bool, connected: bool, elapsed: Duration) -> ProbeDecision {
-    if !connected { return ProbeDecision::NoRecovery; }
-    if ready && !shutdown && elapsed >= HANG { ProbeDecision::Recover } else { ProbeDecision::Wait }
+/// R = genuine UI acknowledgement, B = live probe thread awaiting a UI
+/// callback, S = recovery suspended. Gaps invalidate pending evidence.
+#[derive(Default)]
+struct ProbeHealth {
+    ready: bool,
+    pending_since: Option<Instant>,
+    last_pending: Option<Instant>,
+}
+impl ProbeHealth {
+    fn observe(&mut self, reply: u8, now: Instant) -> ProbeDecision {
+        match reply {
+            b'R' => {
+                self.ready = true;
+                self.pending_since = None;
+                self.last_pending = None;
+                ProbeDecision::Wait
+            }
+            b'S' => {
+                *self = Self::default();
+                ProbeDecision::Wait
+            }
+            b'B' if self.ready => {
+                if self.last_pending.map_or(true, |previous|
+                    now.saturating_duration_since(previous) > MAX_PENDING_GAP) {
+                    self.pending_since = Some(now);
+                }
+                self.last_pending = Some(now);
+                if self.pending_since.is_some_and(|start|
+                    now.saturating_duration_since(start) >= HANG) {
+                    ProbeDecision::Recover
+                } else {
+                    ProbeDecision::Wait
+                }
+            }
+            b'B' => ProbeDecision::Wait,
+            _ => ProbeDecision::NoRecovery,
+        }
+    }
+}
+fn report_retirement_pending() {
+    eprintln!("[native-supervisor] domain exit unconfirmed; retaining owner, no replacement admitted");
 }
 
 enum Outcome { Exited(ExitStatus), Unresponsive, ProbeUnavailable }
@@ -168,25 +230,27 @@ fn accepted_stream(listener: &TcpListener, owner: &mut OwnedHost, token: &str) -
     }
 }
 fn monitor(owner: &mut OwnedHost, mut stream: TcpStream) -> Result<Outcome, String> {
-    let mut ready = false;
-    let mut shutdown = false;
+    let mut health = ProbeHealth::default();
     loop {
         if let Some(status) = owner.exited()? { return Ok(Outcome::Exited(status)); }
+        let started = Instant::now();
         if stream.write_all(b"P").is_err() { return Ok(Outcome::ProbeUnavailable); }
-        let pending = Instant::now();
         loop {
             if let Some(status) = owner.exited()? { return Ok(Outcome::Exited(status)); }
+            if started.elapsed() >= REPLY_LIMIT { return Ok(Outcome::ProbeUnavailable); }
             let mut reply = [0u8; 1];
             match stream.read_exact(&mut reply) {
-                Ok(()) if reply[0] == b'R' => { ready = true; shutdown = false; break; }
-                Ok(()) if reply[0] == b'S' => { shutdown = true; break; }
-                Ok(()) => return Ok(Outcome::ProbeUnavailable),
-                Err(error) if matches!(error.kind(), io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock) => {
-                    if decision(ready, shutdown, true, pending.elapsed()) == ProbeDecision::Recover {
-                        return Ok(Outcome::Unresponsive);
+                Ok(()) => {
+                    // A buffered reply after supervisor descheduling is
+                    // not fresh evidence of current native health.
+                    if started.elapsed() >= REPLY_LIMIT { return Ok(Outcome::ProbeUnavailable); }
+                    match health.observe(reply[0], Instant::now()) {
+                        ProbeDecision::Recover => return Ok(Outcome::Unresponsive),
+                        ProbeDecision::NoRecovery => return Ok(Outcome::ProbeUnavailable),
+                        ProbeDecision::Wait => break,
                     }
                 }
-                Err(error) if error.kind() == io::ErrorKind::Interrupted => {},
+                Err(error) if matches!(error.kind(), io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted) => {},
                 Err(_) => return Ok(Outcome::ProbeUnavailable),
             }
         }
@@ -204,18 +268,21 @@ fn launch(args: Vec<OsString>) -> Result<i32, String> {
         let mut owner = OwnedHost::spawn(if attempt == 0 { &args } else { &[] }, &listener, &token)?;
         let outcome = match accepted_stream(&listener, &mut owner, &token) {
             Ok(Some(stream)) => monitor(&mut owner, stream),
-            Ok(None) => owner.exited()?.map(Outcome::Exited).ok_or("SUPERVISOR_WAIT_FAILED".into()),
+            Ok(None) => Ok(match owner.exited() {
+                Ok(Some(status)) => Outcome::Exited(status),
+                _ => Outcome::ProbeUnavailable,
+            }),
             Err(_) => Ok(Outcome::ProbeUnavailable),
         };
         drop(listener);
         match outcome {
             Ok(Outcome::Exited(status)) => {
-                owner.retire()?;
+                owner.retire_confirmed(report_retirement_pending);
                 return Ok(status.code().unwrap_or(1));
             }
             Ok(Outcome::Unresponsive) => {
                 eprintln!("[native-supervisor] owned UI unresponsive; terminating its execution domain");
-                owner.retire()?;
+                owner.retire_confirmed(report_retirement_pending);
                 eprintln!("[native-supervisor] execution domain empty and child exit confirmed");
                 // Do not replay original command-line URLs or requests.
                 if attempt == 1 { return Err("SUPERVISOR_RESTART_LIMIT".into()); }
@@ -224,7 +291,7 @@ fn launch(args: Vec<OsString>) -> Result<i32, String> {
                 // A lost control connection is not proof that the UI hung.
                 // Retain the owned process, do not kill/restart on IPC loss.
                 eprintln!("[native-supervisor] probe unavailable; automatic recovery disarmed");
-                return Ok(owner.wait_without_recovery()?.code().unwrap_or(1));
+                return Ok(owner.wait_without_recovery().code().unwrap_or(1));
             }
         }
     }
@@ -276,37 +343,45 @@ pub(crate) fn start_child_probe(app: tauri::AppHandle, endpoint: ChildEndpoint) 
         let Ok(mut stream) = TcpStream::connect_timeout(&endpoint.address, Duration::from_secs(3)) else { return; };
         if stream.set_write_timeout(Some(Duration::from_secs(2))).is_err()
             || stream.write_all(endpoint.token.as_bytes()).is_err() { return; }
-        // Keep an outstanding dispatch across shutdown observations; never
-        // accumulate a second probe while a previous callback is in flight.
+        // One outstanding callback across requests, including shutdown.
+        // A pre-shutdown acknowledgement cannot rearm recovery.
         let mut pending: Option<mpsc::Receiver<()>> = None;
+        let mut discard_ack = false;
+        let exiting = || app.try_state::<crate::ExitLifecycleState>()
+            .is_some_and(|state| state.started.load(Ordering::Acquire));
         loop {
             let mut command = [0u8; 1];
             if stream.read_exact(&mut command).is_err() || command[0] != b'P' { return; }
-            loop {
-                let exiting = app.try_state::<crate::ExitLifecycleState>()
-                    .is_some_and(|state| state.started.load(Ordering::Acquire));
-                if exiting {
-                    if stream.write_all(b"S").is_err() { return; }
-                    break;
-                }
-                if pending.is_none() {
-                    let (reply, receive) = mpsc::sync_channel(1);
-                    if submit.try_send(reply).is_err() { return; }
-                    pending = Some(receive);
-                }
-                match pending.as_ref().expect("pending probe").recv_timeout(POLL) {
-                    Ok(()) => {
-                        pending = None;
-                        // A shutdown may have started during the callback.
-                        let exiting = app.try_state::<crate::ExitLifecycleState>()
-                            .is_some_and(|state| state.started.load(Ordering::Acquire));
-                        if stream.write_all(if exiting { b"S" } else { b"R" }).is_err() { return; }
-                        break;
-                    }
-                    Err(mpsc::RecvTimeoutError::Timeout) => {},
-                    Err(mpsc::RecvTimeoutError::Disconnected) => return,
-                }
+            if exiting() {
+                discard_ack |= pending.is_some();
+                if stream.write_all(b"S").is_err() { return; }
+                continue;
             }
+            if pending.is_none() {
+                let (reply, receive) = mpsc::sync_channel(1);
+                if submit.try_send(reply).is_err() { return; }
+                pending = Some(receive);
+                discard_ack = false;
+            }
+            let reply = match pending.as_ref().expect("pending probe").recv_timeout(POLL) {
+                Ok(()) => {
+                    pending = None;
+                    let suspended = discard_ack || exiting();
+                    discard_ack = false;
+                    if suspended { b'S' } else { b'R' }
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    if exiting() {
+                        discard_ack = true;
+                        b'S'
+                    } else {
+                        // Transport is alive; the native callback is pending.
+                        b'B'
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => return,
+            };
+            if stream.write_all(&[reply]).is_err() { return; }
         }
     });
 }
@@ -315,11 +390,42 @@ pub(crate) fn start_child_probe(app: tauri::AppHandle, endpoint: ChildEndpoint) 
 mod tests {
     use super::*;
     #[test]
-    fn recovery_requires_prior_ui_ack_and_live_probe_and_no_shutdown() {
-        assert_eq!(decision(false, false, true, HANG), ProbeDecision::Wait);
-        assert_eq!(decision(true, true, true, HANG), ProbeDecision::Wait);
-        assert_eq!(decision(true, false, false, HANG), ProbeDecision::NoRecovery);
-        assert_eq!(decision(true, false, true, HANG - Duration::from_secs(1)), ProbeDecision::Wait);
-        assert_eq!(decision(true, false, true, HANG), ProbeDecision::Recover);
+    fn recovery_requires_continuous_pending_evidence_after_a_real_ui_ack() {
+        let now = Instant::now();
+        let mut health = ProbeHealth::default();
+        assert_eq!(health.observe(b'B', now), ProbeDecision::Wait);
+        assert_eq!(health.observe(b'B', now + HANG), ProbeDecision::Wait);
+        let start = now + HANG;
+        assert_eq!(health.observe(b'R', start), ProbeDecision::Wait);
+        for seconds in 1..=60 {
+            assert_eq!(health.observe(b'B', start + Duration::from_secs(seconds)), ProbeDecision::Wait);
+        }
+        assert_eq!(health.observe(b'B', start + Duration::from_secs(61)), ProbeDecision::Recover);
+    }
+
+    #[test]
+    fn shutdown_and_gaps_cannot_be_counted_as_continuous_native_hang() {
+        let now = Instant::now();
+        let mut health = ProbeHealth::default();
+        health.observe(b'R', now);
+        health.observe(b'B', now);
+        assert_eq!(health.observe(b'B', now + HANG), ProbeDecision::Wait);
+        health.observe(b'S', now + HANG);
+        for seconds in 61..=122 {
+            assert_eq!(health.observe(b'B', now + Duration::from_secs(seconds)), ProbeDecision::Wait);
+        }
+        assert_eq!(health.observe(b'?', now + Duration::from_secs(123)), ProbeDecision::NoRecovery);
+    }
+
+    #[test]
+    fn successful_ui_ack_resets_the_pending_interval() {
+        let now = Instant::now();
+        let mut health = ProbeHealth::default();
+        health.observe(b'R', now);
+        for seconds in 0..60 {
+            assert_eq!(health.observe(b'B', now + Duration::from_secs(seconds)), ProbeDecision::Wait);
+        }
+        assert_eq!(health.observe(b'R', now + HANG), ProbeDecision::Wait);
+        assert_eq!(health.observe(b'B', now + HANG), ProbeDecision::Wait);
     }
 }
