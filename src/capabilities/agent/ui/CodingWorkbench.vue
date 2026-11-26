@@ -53,6 +53,7 @@ const releasePathObserver=documentOwnership.onPathInvalidated(CODING_DOCUMENT_OW
 const context=ref<{name:string;text:string}[]>([]), knowledgeQuery=ref(''), preview=ref<{path:string;original:string;content:string}|null>(null);
 const newFilePath=ref(''), resumeId=ref('');
 const recentSessions=ref<any[]>([]), sessionsTruncated=ref(false);
+const archivedSessions=ref<any[]>([]), archivedTruncated=ref(false), archiveTarget=ref(''), archivedDetail=ref<any>(null);
 const sessionRecoveryRequired=ref(false);
 type ResumeCheckpoint={runId:string;profileId:string;mode:'plan'|'build'};
 const resumeCheckpoint=ref<ResumeCheckpoint|null>(null);
@@ -161,7 +162,7 @@ let fileOpenRequest=0;
 class ProjectScopeChanged extends Error {}
 const call=async(request:Record<string,unknown>, onEvent?:Channel<any>):Promise<any>=>{
   const action=String(request.action);
-  if(sessionRecoveryRequired.value&&(['chat','resume_turn','propose','apply','discard','resolve_operation','reconcile_operation','export_changes','claim_operation','execute_operation'].includes(action)||(action==='session'&&request.session_id!==sessionId.value)))throw Error('AGENT_SESSION_RECOVERY_REQUIRED');
+  if(sessionRecoveryRequired.value&&(['chat','resume_turn','propose','apply','discard','resolve_operation','reconcile_operation','export_changes','claim_operation','execute_operation','archive_session'].includes(action)||(action==='session'&&request.session_id!==sessionId.value)))throw Error('AGENT_SESSION_RECOVERY_REQUIRED');
   const epoch=projectEpoch;
   try{const result=await bridge.codingService({root:connectedRoot.value,...request},onEvent);if(epoch!==projectEpoch)throw new ProjectScopeChanged();return result;}
   catch(error){if(epoch!==projectEpoch)throw new ProjectScopeChanged();throw error;}
@@ -268,7 +269,7 @@ async function openProject(){
   if(pendingOperations.value.length){notice.value='请先处理待审批操作，再切换项目';return;}
   if(dirty.value.length){notice.value='请先保存或关闭未保存文件，再切换项目';return;}
   if(changes.value.length){notice.value='请先应用或放弃待审核变更，再切换项目';return;}
-  ++projectEpoch;++searchSequence;++resourceSequence;folderRequests.clear();stopLsp();lspModules.value=false;lspModuleRoot.value='src/main.rs';definitionLocation.value=undefined;lspProfiles.value=[];lspServer.value='';busy.value=true;recentSessions.value=[];sessionsTruncated.value=false;
+  ++projectEpoch;++searchSequence;++resourceSequence;folderRequests.clear();stopLsp();lspModules.value=false;lspModuleRoot.value='src/main.rs';definitionLocation.value=undefined;lspProfiles.value=[];lspServer.value='';busy.value=true;recentSessions.value=[];sessionsTruncated.value=false;archivedSessions.value=[];archivedTruncated.value=false;archiveTarget.value='';archivedDetail.value=null;
   try{await act(async()=>{const nextRoot=root.value.trim();documentKey('',nextRoot);const result=await call({action:'tree',root:nextRoot,path:''});const session=await call({action:'session',root:nextRoot});const approvedRoot=session.root||nextRoot;documentKey('',approvedRoot);buffers.value=[];connectedRoot.value=approvedRoot;tree.value=result.entries||[];active.value='';folders.value={};expanded.value=[];truncatedDirs.value={'':!!result.truncated};directoryPages.value={};updateSession(session);resources.value=[];context.value=[];preview.value=null;searchResults.value=[];searchTruncated.value=false;diagnostics.value=[];output.value='';mcpTools.value=[];mcpServerId.value='';mcpApproved.value=false;notice.value=`已打开 ${connectedRoot.value}`;});}finally{busy.value=false;}
 }
 const folderRequests=new Map<string,symbol>();
@@ -322,7 +323,31 @@ function createFile(){
   if(existing){active.value=existing.path;return;}
   buffers.value.push(newBuffer(path,'',null));active.value=path;preview.value=null;newFilePath.value='';notice.value='新文件将在首次保存时创建';
 }
-async function listSessions(){if(!connectedRoot.value||busy.value)return;await act(async()=>{const result=await call({action:'sessions_list'});recentSessions.value=result.sessions||[];sessionsTruncated.value=!!result.truncated;});}
+async function listSessions(){
+  if(!connectedRoot.value||busy.value)return;
+  await act(async()=>{
+    const result=await call({action:'sessions_list'});
+    recentSessions.value=result.sessions||[];sessionsTruncated.value=!!result.truncated;
+    const archive=await call({action:'archived_sessions_list'});
+    archivedSessions.value=archive.sessions||[];archivedTruncated.value=!!archive.truncated;
+  });
+}
+async function archiveInactiveSession(id:string){
+  if(busy.value||sessionRecoveryRequired.value||mcpRunning.value||id===sessionId.value||archiveTarget.value!==id)return;
+  busy.value=true;
+  try{await act(async()=>{
+    await call({action:'archive_session',session_id:id,confirmed:true});
+    archiveTarget.value='';notice.value='会话已归档；保留原加密记录，不允许重新执行。';
+  });}finally{busy.value=false;}
+  await listSessions();
+}
+async function viewArchivedSession(id:string){
+  if(busy.value||!id.trim())return;
+  busy.value=true;
+  try{await act(async()=>{
+    archivedDetail.value=await call({action:'archived_session',session_id:id.trim()});
+  });}finally{busy.value=false;}
+}
 async function resumeSession(){if(mcpRunning.value){notice.value='MCP 调用进行中，请等待完成后恢复其他会话';return;}if(pendingOperations.value.length){notice.value='请先处理待审批操作，再恢复其他会话';return;}if(!connectedRoot.value||busy.value||dirty.value.length||changes.value.length){notice.value='请先处理草稿与待审核变更';return;}busy.value=true;try{await act(async()=>{updateSession(await call({action:'session',session_id:resumeId.value.trim()}));notice.value='已恢复项目会话';});}finally{busy.value=false;}}
 async function save(){
   const buffer=current.value;
@@ -601,7 +626,7 @@ onBeforeUnmount(()=>{
       <div class="resize vertical" role="separator" aria-label="调整智能体宽度" aria-orientation="vertical" tabindex="0" @pointerdown="resize($event,'right')" @keydown="keyboardResize($event,'right')"/>
       <aside class="agent-chat" :style="{width:rightWidth+'px'}">
         <div class="pane-heading">智能体 <span>{{sessionId?'项目会话':'新会话'}}</span></div>
-        <div class="agent-controls"><select v-model="modelId" :disabled="busy||refreshingModels" aria-label="模型"><option value="" disabled>请选择已配置模型</option><option v-for="model in models" :key="model.id" :value="model.id">{{model.name}} · {{model.model}}</option></select><button type="button" :disabled="busy||refreshingModels" @click="refreshModels()">刷新模型</button><select v-model="mode" :disabled="busy" aria-label="智能体模式"><option value="plan">Plan · 分析规划</option><option value="build">Build · 生成变更</option></select><details><summary>会话恢复</summary><p class="hint">当前会话：{{sessionId||'未打开项目'}}</p><button :disabled="busy||!connectedRoot" @click="listSessions">刷新当前项目会话</button><p v-if="sessionsTruncated" class="hint">会话列表不完整：可能达到扫描上限，或有记录因密钥、权限或损坏无法读取；可输入已知 ID 核对。</p><div v-for="session in recentSessions" :key="session.session_id"><button :disabled="busy" @click="resumeId=session.session_id;resumeSession()">{{new Date(session.modified_ms).toLocaleString()}} · {{session.status}} · {{session.pending_changes}} 个变更 / {{session.pending_operations}} 个待审批</button></div><input v-model="resumeId" aria-label="恢复会话 ID" placeholder="输入已保存的会话 ID"><button :disabled="busy||!resumeId" @click="resumeSession">恢复</button></details></div>
+        <div class="agent-controls"><select v-model="modelId" :disabled="busy||refreshingModels" aria-label="模型"><option value="" disabled>请选择已配置模型</option><option v-for="model in models" :key="model.id" :value="model.id">{{model.name}} · {{model.model}}</option></select><button type="button" :disabled="busy||refreshingModels" @click="refreshModels()">刷新模型</button><select v-model="mode" :disabled="busy" aria-label="智能体模式"><option value="plan">Plan · 分析规划</option><option value="build">Build · 生成变更</option></select><details><summary>会话恢复</summary><p class="hint">当前会话：{{sessionId||'未打开项目'}}</p><button :disabled="busy||!connectedRoot" @click="listSessions">刷新当前项目会话</button><p v-if="sessionsTruncated" class="hint">会话列表不完整：可能达到扫描上限，或有记录因密钥、权限或损坏无法读取；可输入已知 ID 核对。</p><div v-for="session in recentSessions" :key="session.session_id"><button :disabled="busy" @click="resumeId=session.session_id;resumeSession()">{{new Date(session.modified_ms).toLocaleString()}} · {{session.status}} · {{session.pending_changes}} 个变更 / {{session.pending_operations}} 个待审批</button><template v-if="session.can_archive&&session.session_id!==sessionId"><button :disabled="busy||sessionRecoveryRequired||mcpRunning" @click="archiveTarget=session.session_id">归档</button><template v-if="archiveTarget===session.session_id"><p class="hint">归档后仅可查看，不可恢复执行，原审批与记录保留。</p><button :disabled="busy||sessionRecoveryRequired||mcpRunning" @click="archiveInactiveSession(session.session_id)">确认归档</button><button @click="archiveTarget=''">取消</button></template></template></div><input v-model="resumeId" aria-label="恢复会话 ID" placeholder="输入已保存的会话 ID"><button :disabled="busy||!resumeId" @click="resumeSession">恢复</button><button :disabled="busy||!resumeId" @click="viewArchivedSession(resumeId)">查看归档</button><details><summary>只读归档记录</summary><p v-if="archivedTruncated" class="hint">归档列表不完整；可输入已知会话 ID 查看。</p><div v-for="session in archivedSessions" :key="session.session_id"><button :disabled="busy" @click="viewArchivedSession(session.session_id)">{{new Date(session.modified_ms).toLocaleString()}} · {{session.status}} · {{session.session_id.slice(0,8)}}</button></div><section v-if="archivedDetail"><p class="hint">会话 {{archivedDetail.session_id}} · {{archivedDetail.status}} · {{archivedDetail.runs?.length||0}} 次运行（只读）</p><details><summary>查看归档消息</summary><div v-for="(message,index) in sessionMessages(archivedDetail)" :key="index"><strong>{{message.role}}</strong><pre>{{message.content}}</pre></div></details><button @click="archivedDetail=null">关闭查看</button></section></details></details></div>
         <div class="conversation"><p v-if="!messages.length" class="hint">描述目标或问题。智能体可以读取项目与工具上下文，生成的代码变更在审核后应用。</p><article v-for="(message,index) in messages" :key="index" class="message" :class="message.role"><strong>{{message.role==='user'?'你':'智能体'}}</strong><pre>{{message.content}}</pre></article><article v-if="streamingText" class="message assistant streaming"><strong>智能体 · 实时输出</strong><pre>{{streamingText}}</pre></article><article v-for="(tool,index) in tools" :key="'tool'+index" class="tool-call"><strong>{{tool.tool}} · {{tool.ok?'完成':'失败'}}</strong><pre>{{tool.path}}</pre></article><section v-if="changes.length" class="changes"><h4>待审核变更 · {{changes.length}}</h4><p v-if="invalidatedProposals||proposalReviewRequired" class="hint" role="status">目标路径已变化或提案需要重新审核；原提案保留，请放弃后重新生成。</p><button v-for="change in changes" :key="change.path" @click="previewChange(change)">{{change.path}}</button><button class="primary" :disabled="busy||previewLoading||previewFailed||invalidatedProposals||proposalReviewRequired" @click="applyChanges">原地应用（共享文件）</button><button :disabled="busy" @click="discardChanges">放弃本轮变更</button><p class="hint">共享工作区原地保存只能检测已观察到的冲突，无法排除不合作的外部编辑器。需要严格不覆盖时，导出独立变更集。</p><label>变更集相对路径 <input v-model="changesetPath" :disabled="busy" aria-label="独立变更集相对路径"/></label><button :disabled="busy||!changesetPath.trim()" @click="exportChangeset">导出变更集（不覆盖）</button></section></div>
         <form class="composer" @submit.prevent="send()"><div v-for="(item,index) in context" :key="index" class="context-chip"><span>{{item.name}}</span><button type="button" :aria-label="'移除上下文 '+item.name" @click="context.splice(index,1)">×</button></div><textarea v-model="prompt" aria-label="智能体指令" placeholder="描述要构建的功能…" @keydown.ctrl.enter.prevent="send()" @keydown.meta.enter.prevent="send()"/><div><span>Ctrl / ⌘ Enter</span><span v-if="sendDisabledReason" class="composer-hint">{{sendDisabledReason}}</span><button class="primary" :title="sendDisabledReason||'发送智能体指令'" :disabled="!!sendDisabledReason">{{busy?'运行中…':'发送 ↑'}}</button></div></form>
         <div class="operation-list"><template v-if="!sessionRecoveryRequired"><CodingOperationReview v-for="operation in pendingOperations" :key="operation.id" :operation="operation" :root="connectedRoot" :claim-operation="claimOperation" :execute-owned="executeOwned" :diagnostics-available="lspEnabled&&!changes.length" :run-diagnostics="runRequestedDiagnostics" @resolve="resolveOperation"/><button v-if="operations.length&&!pendingOperations.length" :disabled="busy||!!changes.length" @click="continueAfterApproval">根据审批结果继续</button></template><p v-else class="hint">会话状态未知，恢复并核对之前不能重新操作。</p></div>

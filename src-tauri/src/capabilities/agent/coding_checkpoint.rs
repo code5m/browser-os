@@ -59,7 +59,7 @@ fn collect_legacy_inventory(storage: &Path) -> Result<LegacyInventory, String> {
     // These namespaces have never had plaintext records. A missing key
     // initialization marker beside existing encrypted production runs is
     // not a first-run migration, and must never generate a replacement key.
-    for name in ["agent-run-receipts", "agent-run-archive"] {
+    for name in ["agent-run-receipts", "agent-run-archive", "coding-session-archive"] {
         let directory = private_directory(storage, name)?;
         for (index, entry) in std::fs::read_dir(&directory)
             .map_err(|_| "AGENT_CHECKPOINT_KEY_REVIEW_REQUIRED")?.enumerate() {
@@ -359,13 +359,116 @@ fn write_record(storage: &Path, path: &Path, directory: PathBuf, scope: &str, pl
     safe_paths::write_versioned(path, &roots, expected.as_ref(), &encrypted, limit + OVERHEAD, |_| Ok(()))
 }
 
+const SESSION_ARCHIVE: &str = "coding-session-archive";
+const MAX_ARCHIVED_SESSIONS: usize = 4096;
+const MAX_SESSION_ARCHIVE_ENTRIES: usize = 32768;
+
+pub(super) fn session_archive_exists(storage: &Path, id: &str) -> Result<bool, String> {
+    if !canonical_id(id) { return Err("AGENT_SESSION_INVALID".into()); }
+    let directory = private_directory(storage, SESSION_ARCHIVE)?;
+    match std::fs::symlink_metadata(directory.join(format!("{id}.json"))) {
+        Ok(meta) if meta.is_file() && !meta.file_type().is_symlink() => Ok(true),
+        Ok(_) => Err("AGENT_SESSION_ARCHIVE_INVALID".into()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(_) => Err("AGENT_SESSION_ARCHIVE_INVALID".into()),
+    }
+}
+
+/// An archive is an authenticated, immutable copy of the same session,
+/// never a separate session identity or a plaintext migration candidate.
+pub(super) fn read_archived_session(storage: &Path, id: &str, limit: usize) -> Result<Vec<u8>, String> {
+    if !canonical_id(id) { return Err("AGENT_SESSION_INVALID".into()); }
+    let active = private_directory(storage, "coding-sessions")?;
+    let archive = private_directory(storage, SESSION_ARCHIVE)?;
+    let name = format!("{id}.json");
+    let current = safe_paths::read_versioned(&active.join(&name), &[active.clone()], limit + OVERHEAD)?;
+    let archived = safe_paths::read_versioned(&archive.join(&name), &[archive.clone()], limit + OVERHEAD)?
+        .ok_or("AGENT_SESSION_ARCHIVE_NOT_FOUND")?;
+    if current.as_ref().is_some_and(|snapshot| snapshot.bytes != archived.bytes)
+        || !sealed_marker(storage, id, false)? {
+        return Err("AGENT_SESSION_ARCHIVE_CONFLICT".into());
+    }
+    let bytes = open(&key(storage, false)?, id, &archived.bytes)?;
+    if bytes.len() > limit { return Err("AGENT_SESSION_LIMIT".into()); }
+    Ok(bytes)
+}
+
+fn check_session_archive_capacity(directory: &Path) -> Result<(), String> {
+    let mut count = 0usize;
+    for (index, entry) in std::fs::read_dir(directory)
+        .map_err(|_| "AGENT_SESSION_ARCHIVE_INVALID")?.enumerate() {
+        if index >= MAX_SESSION_ARCHIVE_ENTRIES { return Err("AGENT_SESSION_ARCHIVE_FULL".into()); }
+        let entry = entry.map_err(|_| "AGENT_SESSION_ARCHIVE_INVALID")?;
+        let filename = entry.file_name();
+        let name = filename.to_str().ok_or("AGENT_SESSION_ARCHIVE_INVALID")?;
+        if is_cas_sidecar(name) { continue; }
+        if !name.strip_suffix(".json").is_some_and(canonical_id)
+            || !entry.file_type().map_err(|_| "AGENT_SESSION_ARCHIVE_INVALID")?.is_file() {
+            return Err("AGENT_SESSION_ARCHIVE_INVALID".into());
+        }
+        count += 1;
+        if count >= MAX_ARCHIVED_SESSIONS { return Err("AGENT_SESSION_ARCHIVE_FULL".into()); }
+    }
+    Ok(())
+}
+
+/// The caller holds the exact session lock and has authenticated a closed
+/// session with no outstanding approval, transaction or continuation.
+/// Publish the original ciphertext without replacement, then remove only
+/// the matching active snapshot. An interrupted move remains read-only.
+pub(super) fn archive_session(storage: &Path, id: &str, limit: usize) -> Result<(), String> {
+    if !canonical_id(id) { return Err("AGENT_SESSION_INVALID".into()); }
+    let locks = private_directory(storage, "coding-owner-locks")?;
+    let _catalog = AuditLock::acquire_named(&locks.join("session-archive.lock"), Duration::from_secs(2))
+        .map_err(|_| "AGENT_SESSION_ARCHIVE_BUSY")?;
+    let active = private_directory(storage, "coding-sessions")?;
+    let archive = private_directory(storage, SESSION_ARCHIVE)?;
+    let name = format!("{id}.json");
+    let active_path = active.join(&name);
+    let archive_path = archive.join(&name);
+    let roots = [active.clone()];
+    let archive_roots = [archive.clone()];
+    let source = safe_paths::read_versioned(&active_path, &roots, limit + OVERHEAD)?;
+    let mut published = safe_paths::read_versioned(&archive_path, &archive_roots, limit + OVERHEAD)?;
+    if !sealed_marker(storage, id, false)? { return Err("AGENT_SESSION_ARCHIVE_INVALID".into()); }
+    let secret = key(storage, false)?;
+    if let Some(snapshot) = &published {
+        if open(&secret, id, &snapshot.bytes)?.len() > limit
+            || source.as_ref().is_some_and(|current| current.bytes != snapshot.bytes) {
+            return Err("AGENT_SESSION_ARCHIVE_CONFLICT".into());
+        }
+    } else {
+        let current = source.as_ref().ok_or("AGENT_SESSION_NOT_FOUND")?;
+        if open(&secret, id, &current.bytes)?.len() > limit { return Err("AGENT_SESSION_LIMIT".into()); }
+        check_session_archive_capacity(&archive)?;
+        safe_paths::create_new_file(&archive_path, &archive_roots, &current.bytes)
+            .map_err(|_| "AGENT_SESSION_ARCHIVE_PUBLICATION_PENDING")?;
+        published = safe_paths::read_versioned(&archive_path, &archive_roots, limit + OVERHEAD)?;
+        if published.as_ref().map(|snapshot| &snapshot.bytes) != Some(&current.bytes) {
+            return Err("AGENT_SESSION_ARCHIVE_PUBLICATION_PENDING".into());
+        }
+    }
+    if published.is_none() { return Err("AGENT_SESSION_ARCHIVE_PUBLICATION_PENDING".into()); }
+    if let Some(current) = &source {
+        safe_paths::remove_if_unchanged(&active_path, &roots, current, limit + OVERHEAD)?;
+    }
+    if safe_paths::read_versioned(&active_path, &roots, limit + OVERHEAD)?.is_some()
+        || safe_paths::read_versioned(&archive_path, &archive_roots, limit + OVERHEAD)?
+            .as_ref().map(|snapshot| &snapshot.bytes) != published.as_ref().map(|snapshot| &snapshot.bytes) {
+        return Err("AGENT_SESSION_ARCHIVE_PUBLICATION_PENDING".into());
+    }
+    Ok(())
+}
+
 pub(super) fn read(storage: &Path, id: &str, limit: usize) -> Result<Vec<u8>, String> {
+    if session_archive_exists(storage, id)? { return Err("AGENT_SESSION_ARCHIVED".into()); }
     let directory = private_directory(storage, "coding-sessions")?;
     let path = directory.join(format!("{id}.json"));
     read_record(storage, &path, directory, id, limit)
 }
 
 pub(super) fn write(storage: &Path, id: &str, plaintext: &[u8], limit: usize) -> Result<(), String> {
+    if session_archive_exists(storage, id)? { return Err("AGENT_SESSION_ARCHIVED".into()); }
     let directory = private_directory(storage, "coding-sessions")?;
     let path = directory.join(format!("{id}.json"));
     write_record(storage, &path, directory, id, plaintext, limit)

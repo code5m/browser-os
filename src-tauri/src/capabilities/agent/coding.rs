@@ -1662,9 +1662,42 @@ fn session_path(storage: &Path, id: &str) -> Result<PathBuf, String> {
     }
     Ok(storage.join("coding-sessions").join(format!("{id}.json")))
 }
+fn decode_scoped_session(root: &Path, id: &str, bytes: &[u8]) -> Result<Session, String> {
+    let session: Session = serde_json::from_slice(bytes).map_err(|_| "AGENT_SESSION_INVALID")?;
+    if session.root != root.to_string_lossy() { return Err("AGENT_SESSION_ROOT_MISMATCH".into()); }
+    if session.session_id != id { return Err("AGENT_SESSION_INVALID".into()); }
+    verify_workspace_binding(root, session.workspace_identity.as_deref())?;
+    Ok(session)
+}
+fn can_archive_session(session: &Session) -> bool {
+    use browseros_agent_foundation::task::TaskStatus;
+    session.workspace_identity.is_some()
+        && session.changes.is_empty()
+        && !session.operations.iter().any(unresolved_operation)
+        && !session.continuation.as_ref().is_some_and(|checkpoint| checkpoint.resume_pending)
+        && session.foundation_task.as_ref().map_or(true, |task|
+            matches!(task.status, TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Cancelled)
+            && task.pending.is_none())
+        && matches!(session.status.as_str(), "ready" | "complete" | "applied" | "cancelled" | "failed" | "provider_error" | "response_denied")
+}
+fn load_archived_session(root: &Path, storage: &Path, id: &str) -> Result<Session, String> {
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    {
+        let bytes = super::coding_checkpoint::read_archived_session(storage, id, MAX_SESSION)?;
+        let session = decode_scoped_session(root, id, &bytes)?;
+        if !can_archive_session(&session) { return Err("AGENT_SESSION_ARCHIVE_INVALID".into()); }
+        Ok(session)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    { let _ = (root, storage, id); Err("AGENT_PRIVATE_STORAGE_UNAVAILABLE".into()) }
+}
 fn load_without_recovery(root: &Path, storage: &Path, id: Option<&str>) -> Result<Session, String> {
     if let Some(id) = id {
         let path = session_path(storage, id)?;
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        if super::coding_checkpoint::session_archive_exists(storage, id)? {
+            return Err("AGENT_SESSION_ARCHIVED".into());
+        }
         let m = fs::symlink_metadata(&path).map_err(|_| "AGENT_SESSION_NOT_FOUND")?;
         if !m.is_file() || m.file_type().is_symlink() || m.len() > (MAX_SESSION + 33) as u64 {
             return Err("AGENT_SESSION_INVALID".into());
@@ -1673,16 +1706,7 @@ fn load_without_recovery(root: &Path, storage: &Path, id: Option<&str>) -> Resul
         let bytes = super::coding_checkpoint::read(storage, id, MAX_SESSION)?;
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         let bytes: Vec<u8> = Err("AGENT_PRIVATE_STORAGE_UNAVAILABLE")?;
-        let session: Session = serde_json::from_slice(&bytes)
-            .map_err(|_| "AGENT_SESSION_INVALID")?;
-        if session.root != root.to_string_lossy() {
-            return Err("AGENT_SESSION_ROOT_MISMATCH".into());
-        }
-        if session.session_id != id {
-            return Err("AGENT_SESSION_INVALID".into());
-        }
-        verify_workspace_binding(root, session.workspace_identity.as_deref())?;
-        Ok(session)
+        decode_scoped_session(root, id, &bytes)
     } else {
         Ok(Session {
             session_id: uuid::Uuid::new_v4().to_string(),
@@ -1783,8 +1807,8 @@ fn save(storage: &Path, session: &Session) -> Result<Value, String> {
     serde_json::to_value(session).map_err(|_| "AGENT_SESSION_WRITE_FAILED".into())
 }
 
-fn recent_sessions(root: &Path, storage: &Path) -> Result<Value, String> {
-    let directory = storage.join("coding-sessions");
+fn recent_sessions(root: &Path, storage: &Path, archived: bool) -> Result<Value, String> {
+    let directory = storage.join(if archived { "coding-session-archive" } else { "coding-sessions" });
     let entries = match fs::read_dir(&directory) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -1812,9 +1836,11 @@ fn recent_sessions(root: &Path, storage: &Path) -> Result<Value, String> {
         if uuid::Uuid::parse_str(id).map_or(true, |parsed| parsed.to_string() != id) {
             continue;
         }
-        let session = match load_without_recovery(root, storage, Some(id)) {
+        let loaded = if archived { load_archived_session(root, storage, id) }
+            else { load_without_recovery(root, storage, Some(id)) };
+        let session = match loaded {
             Ok(session) => session,
-            Err(error) if matches!(error.as_str(), "AGENT_SESSION_ROOT_MISMATCH" | "AGENT_WORKSPACE_IDENTITY_CHANGED") => continue,
+            Err(error) if matches!(error.as_str(), "AGENT_SESSION_ROOT_MISMATCH" | "AGENT_WORKSPACE_IDENTITY_CHANGED" | "AGENT_SESSION_ARCHIVED") => continue,
             Err(_) => { truncated = true; continue; }
         };
         if session.session_id != id {
@@ -1827,7 +1853,8 @@ fn recent_sessions(root: &Path, storage: &Path) -> Result<Value, String> {
             .map(|duration| duration.as_millis() as u64)
             .unwrap_or(0);
         sessions.push(json!({"session_id":id,"modified_ms":modified,"status":session.status,
-            "pending_changes":session.changes.len(),"pending_operations":session.operations.iter().filter(|o|unresolved_operation(o)).count()}));
+            "pending_changes":session.changes.len(),"pending_operations":session.operations.iter().filter(|o|unresolved_operation(o)).count(),
+            "archived":archived,"can_archive":!archived && can_archive_session(&session)}));
     }
     sessions.sort_by(|a, b| {
         b["modified_ms"]
@@ -2030,7 +2057,8 @@ pub(crate) fn execute_with_bound_adapter(
         "tree_page" => return tree_page(&root, path, &request),
         "read" => return read_file(&root, path),
         "search" => return search(&root, request["query"].as_str().unwrap_or("")),
-        "sessions_list" => return recent_sessions(&root, storage),
+        "sessions_list" => return recent_sessions(&root, storage, false),
+        "archived_sessions_list" => return recent_sessions(&root, storage, true),
         _ => {}
     }
     let supplied_id = request["session_id"].as_str().filter(|id| !id.is_empty());
@@ -2047,6 +2075,42 @@ pub(crate) fn execute_with_bound_adapter(
     let _session_guard = session_mutex.try_lock().map_err(|_| "AGENT_BUSY")?;
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     let _process_session = super::coding_checkpoint::session_owner(storage, &session_id)?;
+    if matches!(action, "archive_session" | "archived_session") {
+        let id = supplied_id.ok_or("AGENT_SESSION_REQUIRED")?;
+        if action == "archive_session" && request["confirmed"] != true {
+            return Err("AGENT_SESSION_ARCHIVE_APPROVAL_REQUIRED".into());
+        }
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        {
+            // Archived reads never enter transaction recovery, model
+            // admission or save. A retry after publish-before-remove only
+            // retires the identical encrypted active copy.
+            if action == "archived_session" || super::coding_checkpoint::session_archive_exists(storage, id)? {
+                let session = load_archived_session(&root, storage, id)?;
+                if action == "archive_session" {
+                    super::coding_checkpoint::archive_session(storage, id, MAX_SESSION)?;
+                    return Ok(json!({"session_id":id,"archived":true}));
+                }
+                let mut value = serde_json::to_value(&session).map_err(|_| "AGENT_SESSION_INVALID")?;
+                value["archived"] = json!(true);
+                return Ok(value);
+            }
+            let session = load(&root, storage, Some(id))?;
+            if !can_archive_session(&session) {
+                return Err("AGENT_SESSION_ARCHIVE_REVIEW_REQUIRED".into());
+            }
+            match fs::symlink_metadata(apply_journal_path(storage, id)?) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+                _ => return Err("AGENT_SESSION_ARCHIVE_REVIEW_REQUIRED".into()),
+            }
+            // The same session owner excludes a concurrent model/approval
+            // or apply request through the entire publication.
+            super::coding_checkpoint::archive_session(storage, id, MAX_SESSION)?;
+            return Ok(json!({"session_id":id,"archived":true}));
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        return Err("AGENT_PRIVATE_STORAGE_UNAVAILABLE".into());
+    }
     let plan = request["mode"].as_str() == Some("plan");
     if plan && ["propose", "apply"].contains(&action) {
         return Err("AGENT_PLAN_READ_ONLY".into());
@@ -2667,6 +2731,53 @@ mod tests {
         assert_eq!(restored["runs"][0]["status"], "interrupted");
         assert_eq!(restored["runs"][1]["status"], "succeeded");
         assert_eq!(restored["runs"][2]["status"], "interrupted");
+    }
+
+    #[test]
+    fn archived_coding_session_is_read_only_and_retry_never_reactivates_it() {
+        let f = Fixture::new();
+        let storage = f.0.join("state");
+        let session = run(&f, json!({"action":"session"})).unwrap();
+        let id = session["session_id"].as_str().unwrap();
+        let active = session_path(&storage, id).unwrap();
+        let original = fs::read(&active).unwrap();
+        assert!(run(&f, json!({"action":"archive_session","session_id":id})).is_err());
+        assert_eq!(run(&f, json!({"action":"archive_session","session_id":id,"confirmed":true})).unwrap()["archived"], true);
+        assert!(!active.exists());
+        let archived = storage.join("coding-session-archive").join(format!("{id}.json"));
+        assert_eq!(fs::read(&archived).unwrap(), original);
+        assert_eq!(run(&f, json!({"action":"archived_session","session_id":id})).unwrap()["session_id"], id);
+        assert_eq!(run(&f, json!({"action":"session","session_id":id})).unwrap_err(), "AGENT_SESSION_ARCHIVED");
+        assert!(execute(&f.0, &storage, json!({"action":"chat","session_id":id,"message":"must not dispatch"}),
+            |_, _| panic!("archived session is read-only")).is_err());
+        assert_eq!(run(&f, json!({"action":"sessions_list"})).unwrap()["sessions"].as_array().unwrap().len(), 0);
+        assert_eq!(run(&f, json!({"action":"archived_sessions_list"})).unwrap()["sessions"][0]["session_id"], id);
+        // Interrupted no-replace publication left an exact active duplicate.
+        fs::write(&active, &original).unwrap();
+        assert!(run(&f, json!({"action":"session","session_id":id})).is_err());
+        assert_eq!(run(&f, json!({"action":"archive_session","session_id":id,"confirmed":true})).unwrap()["archived"], true);
+        assert!(!active.exists());
+        // Never delete a conflicting active file while repairing an archive.
+        fs::write(&active, b"conflicting record").unwrap();
+        assert!(run(&f, json!({"action":"archive_session","session_id":id,"confirmed":true})).is_err());
+        assert_eq!(fs::read(&active).unwrap(), b"conflicting record");
+        let other = f.0.join("other");
+        fs::create_dir(&other).unwrap();
+        assert!(execute(&other, &storage, json!({"action":"archived_session","session_id":id}),
+            |_, _| unreachable!()).is_err());
+    }
+
+    #[test]
+    fn pending_coding_approval_is_not_archiveable() {
+        let f = Fixture::new();
+        let storage = f.0.join("state");
+        let session = execute(&f.0, &storage, json!({"action":"chat","message":"propose"}),
+            |_, _| Ok(json!({"role":"assistant","tool_calls":[{"id":"t1","function":{"name":"request_operation",
+                "arguments":json!({"kind":"mcp","input":{"server_id":"fixture","tool":"echo","arguments":{}}}).to_string()}}]}))).unwrap();
+        let id = &session["session_id"];
+        assert_eq!(run(&f, json!({"action":"archive_session","session_id":id,"confirmed":true})).unwrap_err(),
+            "AGENT_SESSION_ARCHIVE_REVIEW_REQUIRED");
+        assert!(session_path(&storage, id.as_str().unwrap()).unwrap().exists());
     }
 
     #[test]
