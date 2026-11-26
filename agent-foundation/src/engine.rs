@@ -58,9 +58,6 @@ pub struct TurnResult {
 /// Dropping a provider future is only a cooperative transport cancellation;
 /// this gate does not prove a remote provider or external effect stopped.
 pub(crate) struct ModelTurnGate<'a> {
-    tasks: &'a TaskRegistry,
-    id: Uuid,
-    revision: u64,
     deadline: tokio::time::Instant,
     cancellation: tokio::sync::watch::Receiver<bool>,
     _lease: crate::task::ExecutionLease<'a>,
@@ -69,13 +66,13 @@ impl<'a> ModelTurnGate<'a> {
     pub(crate) fn acquire(tasks: &'a TaskRegistry, id: Uuid, revision: u64, limit: Duration) -> Result<Self> {
         let lease = tasks.acquire_execution(id, revision)?;
         let cancellation = tasks.cancellation(id)?;
-        let gate = Self { tasks, id, revision, deadline: tokio::time::Instant::now() + limit,
+        let gate = Self { deadline: tokio::time::Instant::now() + limit,
             cancellation, _lease: lease };
         gate.active()?;
         Ok(gate)
     }
     fn active(&self) -> Result<()> {
-        if *self.cancellation.borrow() || !self.tasks.active_at_revision(self.id, self.revision) {
+        if *self.cancellation.borrow() || !self._lease.is_active() {
             return Err(FoundationError::Cancelled);
         }
         Ok(())
@@ -242,6 +239,21 @@ pub trait FunctionBatchHost {
 pub fn drive_function_batches<H: FunctionBatchHost>(
     host: &mut H, rounds: usize, max_calls: usize,
 ) -> std::result::Result<(), H::Error> {
+    drive_function_batches_checked(host, rounds, max_calls, || true)
+}
+
+/// Production complete-message hosts retain their actual native execution
+/// lease across the synchronous provider and tool batch. Do not acquire a
+/// second competing lease or admit another batch on a stale generation.
+pub fn drive_owned_function_batches<H: FunctionBatchHost>(
+    host: &mut H, lease: &crate::task::ExecutionLease<'_>, rounds: usize, max_calls: usize,
+) -> std::result::Result<(), H::Error> {
+    drive_function_batches_checked(host, rounds, max_calls, || lease.is_active())
+}
+
+fn drive_function_batches_checked<H: FunctionBatchHost>(
+    host: &mut H, rounds: usize, max_calls: usize, active: impl Fn() -> bool,
+) -> std::result::Result<(), H::Error> {
     if !(1..=8).contains(&rounds) || max_calls > 8 {
         return Err(host.invalid_batch(FoundationError::InvalidInput("function turn limits")));
     }
@@ -249,19 +261,19 @@ pub fn drive_function_batches<H: FunctionBatchHost>(
     // not only within a single assistant response.
     let mut admitted_ids = std::collections::HashSet::new();
     for round in 0..rounds {
-        if host.cancelled() { return host.on_cancelled(); }
+        if !active() || host.cancelled() { return host.on_cancelled(); }
         let reply = match host.request() {
             Ok(value) => value,
             Err(error) => {
-                if host.cancelled() { return host.on_cancelled(); }
+                if !active() || host.cancelled() { return host.on_cancelled(); }
                 return Err(host.provider_failure(error));
             }
         };
-        if host.cancelled() { return host.on_cancelled(); }
+        if !active() || host.cancelled() { return host.on_cancelled(); }
         host.validate_reply(&reply)?;
         let calls = crate::model::parse_function_batch(&reply, max_calls)
             .map_err(|error| host.invalid_batch(error))?;
-        if host.cancelled() { return host.on_cancelled(); }
+        if !active() || host.cancelled() { return host.on_cancelled(); }
         if calls.iter().any(|call| !admitted_ids.insert(call.id.clone())) {
             return Err(host.invalid_batch(FoundationError::InvalidInput("duplicate tool call id across rounds")));
         }
@@ -361,6 +373,20 @@ mod tests {
             replies: vec![reply.clone(), reply] };
         assert!(drive_function_batches(&mut host, 2, 8).is_err());
         assert_eq!(host.admitted, 1);
+    }
+
+    #[test]
+    fn owned_batch_driver_rejects_stale_task_before_provider_or_host() {
+        let tasks = TaskRegistry::new(Arc::new(EventJournal::new(16)));
+        let task = tasks.create(Uuid::new_v4(), "fixture", vec![]).unwrap();
+        tasks.start(task.id).unwrap();
+        let lease = tasks.acquire_execution(task.id, tasks.get(task.id).unwrap().revision).unwrap();
+        tasks.pause(task.id).unwrap();
+        assert!(!lease.is_active());
+        let mut host = BatchFixture { cancelled: false, replies: vec![json!({"role":"assistant","content":"unused"})], admitted: 0 };
+        assert_eq!(drive_owned_function_batches(&mut host, &lease, 1, 0), Err(FoundationError::Cancelled));
+        assert_eq!(host.replies.len(), 1);
+        assert_eq!(host.admitted, 0);
     }
 
     struct ScriptedProvider(Vec<ModelEvent>);

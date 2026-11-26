@@ -114,5 +114,5 @@ assert.match(codingOwner, /tasks\.restore_paused_record\(restored\)/);
 assert.match(aiBackend, /public_api::dispatch_coding_request\(/);
 assert.match(codingFacade, /super::coding::execute_with_admission_adapter\(/);
 assert.match(coding, /ProductionExecution::resume_coding\(\s*&root, &session\.session_id, session\.foundation_task\.as_ref\(\)/);
-assert.match(coding, /execution\.acquire_lease\(\)\?;[\s\S]*?engine::drive_function_batches\(/);
+assert.match(coding, /execution\.acquire_lease\(\)\?;[\s\S]*?engine::drive_owned_function_batches\([\s\S]*?&execution_lease, 8, 8/);
 console.log('BROWSER_NAVIGATION_HANG_DIAGNOSTICS_CONTRACT=PASS');

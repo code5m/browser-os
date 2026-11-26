@@ -218,8 +218,7 @@ impl ToolRegistry {
         }
         // Receipt creation is not permission to dispatch a stale generation.
         // A cancelled call remains conservatively unknown for reconciliation.
-        if !tasks.active_at_revision(permit.task_id, permit.revision)
-            || *cancellation.borrow_and_update()
+        if !_lease.is_active() || *cancellation.borrow_and_update()
         {
             return Err(FoundationError::Cancelled);
         }
@@ -240,7 +239,7 @@ impl ToolRegistry {
         };
         // Reject stale results from paused/cancelled/completed/restarted work.
         // For side effects the durable UNKNOWN receipt survives this exit.
-        if !tasks.active_at_revision(permit.task_id, permit.revision) {
+        if !_lease.is_active() {
             return Err(FoundationError::Cancelled);
         }
         #[cfg(feature = "durable-sqlite")]

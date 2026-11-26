@@ -566,7 +566,9 @@ impl ProductionExecution {
         }
         let lease = execution.acquire_lease()?;
         execution.checkpoint("running")?;
+        if !lease.is_active() { return Err("AI_PROVIDER_CANCELLED".into()); }
         let response = provider();
+        if !lease.is_active() { return Err("AI_PROVIDER_CANCELLED".into()); }
         if cancelled() {
             drop(lease);
             execution.cancel()?;

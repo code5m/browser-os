@@ -79,10 +79,18 @@ pub struct TaskRegistry {
 pub struct ExecutionLease<'a> {
     registry: &'a TaskRegistry,
     task_id: Uuid,
+    revision: u64,
     #[cfg(feature = "durable-sqlite")]
     db_lease: Option<Uuid>,
 }
 
+impl ExecutionLease<'_> {
+    /// A retained lease alone is not proof of a live generation. Every
+    /// adapter must recheck its original Task revision at dispatch/return.
+    pub fn is_active(&self) -> bool {
+        self.registry.active_at_revision(self.task_id, self.revision)
+    }
+}
 impl Drop for ExecutionLease<'_> {
     fn drop(&mut self) {
         #[cfg(feature = "durable-sqlite")]
@@ -310,6 +318,7 @@ impl TaskRegistry {
         Ok(ExecutionLease {
             registry: self,
             task_id: id,
+            revision,
             #[cfg(feature = "durable-sqlite")]
             db_lease,
         })
