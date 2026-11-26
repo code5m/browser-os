@@ -158,7 +158,7 @@ impl ExperimentRouter {
     pub fn update(&self, next: ExperimentConfig, expected_revision: u64) -> Result<()> {
         next.validate()?;
         let mut config = self.config.write().unwrap_or_else(|e| e.into_inner());
-        if config.revision != expected_revision || next.revision != expected_revision + 1 {
+        if config.revision != expected_revision || expected_revision.checked_add(1) != Some(next.revision) {
             return Err(FoundationError::InvalidTransition);
         }
         if next.enabled

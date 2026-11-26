@@ -5,6 +5,9 @@ use crate::capabilities::agent::public_api::{
     bounded_channel_json, ChannelAdmission, ChannelInput, ChannelStart, ProductionExecution,
 };
 use crate::shared::blocking::BlockingLane;
+use crate::capabilities::workspace::safe_paths;
+#[cfg(test)]
+use std::fs;
 use browseros_agent_foundation as foundation;
 use foundation::{
     approval::{ApprovalBinding, HostApprovalDecision, HostApprovalIssuer, ResourceBinding},
@@ -17,8 +20,6 @@ use foundation::{
 };
 use serde_json::Value;
 use std::{
-    fs::{self, OpenOptions},
-    io::Write,
     path::{Path, PathBuf},
     sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex},
     time::{Duration, Instant},
@@ -46,71 +47,40 @@ fn config_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(crate::workspace::data_dir(app).join(CONFIG_FILE))
 }
 
-fn load(path: &Path) -> Result<ExperimentConfig, String> {
-    if !path.exists() {
-        return Ok(ExperimentConfig::default());
-    }
-    let meta = fs::symlink_metadata(path).map_err(|_| "AGENT_EXPERIMENT_READ_FAILED")?;
-    if !meta.is_file() || meta.len() > MAX_CONFIG_BYTES {
-        return Err("AGENT_EXPERIMENT_UNSAFE_CONFIG".into());
-    }
-    let bytes = fs::read(path).map_err(|_| "AGENT_EXPERIMENT_READ_FAILED")?;
-    let config: ExperimentConfig =
-        serde_json::from_slice(&bytes).map_err(|_| "AGENT_EXPERIMENT_CORRUPT_CONFIG")?;
-    config
-        .validate()
-        .map_err(|_| "AGENT_EXPERIMENT_INVALID_CONFIG")?;
-    Ok(config)
+fn config_snapshot(path: &Path) -> Result<(ExperimentConfig, Option<safe_paths::FileSnapshot>), String> {
+    let root = path.parent().ok_or("AGENT_EXPERIMENT_PATH")?.to_path_buf();
+    let snapshot = safe_paths::read_versioned(path, &[root], MAX_CONFIG_BYTES as usize)
+        .map_err(|_| "AGENT_EXPERIMENT_UNSAFE_CONFIG")?;
+    let Some(saved) = snapshot.as_ref() else {
+        return Ok((ExperimentConfig::default(), None));
+    };
+    let config: ExperimentConfig = serde_json::from_slice(&saved.bytes)
+        .map_err(|_| "AGENT_EXPERIMENT_CORRUPT_CONFIG")?;
+    config.validate().map_err(|_| "AGENT_EXPERIMENT_INVALID_CONFIG")?;
+    Ok((config, snapshot))
 }
 
-fn persist(path: &Path, config: &ExperimentConfig) -> Result<(), String> {
-    let parent = path.parent().ok_or("AGENT_EXPERIMENT_PATH")?;
-    fs::create_dir_all(parent).map_err(|_| "AGENT_EXPERIMENT_DIRECTORY")?;
-    let parent_meta = fs::symlink_metadata(parent).map_err(|_| "AGENT_EXPERIMENT_DIRECTORY")?;
-    if !parent_meta.is_dir() {
-        return Err("AGENT_EXPERIMENT_UNSAFE_DIR".into());
-    }
-    if path.exists() {
-        let meta = fs::symlink_metadata(path).map_err(|_| "AGENT_EXPERIMENT_READ_FAILED")?;
-        if !meta.is_file() {
-            return Err("AGENT_EXPERIMENT_UNSAFE_CONFIG".into());
-        }
-    }
+fn load(path: &Path) -> Result<ExperimentConfig, String> {
+    config_snapshot(path).map(|(config, _)| config)
+}
+
+fn persist(path: &Path, config: &ExperimentConfig, expected: Option<&safe_paths::FileSnapshot>,
+    root_identity: &str) -> Result<(), String> {
+    let root = path.parent().ok_or("AGENT_EXPERIMENT_PATH")?.to_path_buf();
     let bytes = serde_json::to_vec_pretty(config).map_err(|_| "AGENT_EXPERIMENT_SERIALIZE")?;
     if bytes.len() > MAX_CONFIG_BYTES as usize {
         return Err("AGENT_EXPERIMENT_CONFIG_LIMIT".into());
     }
-    let temp = parent.join(format!(".agent-runtime-{}.tmp", uuid::Uuid::new_v4()));
-    let mut opts = OpenOptions::new();
-    opts.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        opts.mode(0o600);
+    // Recheck the exact approved directory and original file snapshot
+    // through the shared native CAS owner, not an unchecked path rename.
+    safe_paths::write_versioned_approved(path, &[root.clone()], &root, root_identity,
+        expected, &bytes, MAX_CONFIG_BYTES as usize, |_, _| Ok(()))
+        .map_err(|error| format!("AGENT_EXPERIMENT_PUBLICATION_UNCONFIRMED:{error}"))?;
+    let (actual, snapshot) = config_snapshot(path)?;
+    if actual != *config || snapshot.is_none() {
+        return Err("AGENT_EXPERIMENT_PUBLICATION_UNCONFIRMED".into());
     }
-    let saved = (|| {
-        let mut file = opts
-            .open(&temp)
-            .map_err(|_| "AGENT_EXPERIMENT_WRITE_FAILED")?;
-        file.write_all(&bytes)
-            .map_err(|_| "AGENT_EXPERIMENT_WRITE_FAILED")?;
-        file.sync_all()
-            .map_err(|_| "AGENT_EXPERIMENT_FSYNC_FAILED")?;
-        crate::session::atomic_replace_file(&temp, path)
-            .map_err(|_| "AGENT_EXPERIMENT_RENAME_FAILED")?;
-        // Windows directory handles cannot be opened by File::open without
-        // FILE_FLAG_BACKUP_SEMANTICS. MoveFileExW uses WRITE_THROUGH;
-        // explicit fsync of the directory is only required on Unix.
-        #[cfg(unix)]
-        fs::File::open(parent)
-            .and_then(|dir| dir.sync_all())
-            .map_err(|_| "AGENT_EXPERIMENT_FSYNC_FAILED")?;
-        Ok::<(), &str>(())
-    })();
-    if saved.is_err() {
-        let _ = fs::remove_file(temp);
-    }
-    saved.map_err(str::to_string)
+    Ok(())
 }
 
 #[tauri::command]
@@ -119,7 +89,7 @@ pub fn agent_runtime_get_config(
     webview: Webview,
 ) -> Result<ExperimentConfig, String> {
     check_main(&app, &webview, "agent_runtime_get_config")?;
-    let _lock = CONFIG_LOCK.lock().map_err(|_| "AGENT_EXPERIMENT_LOCK")?;
+    let _lock = CONFIG_LOCK.try_lock().map_err(|_| "AGENT_EXPERIMENT_CONFIG_BUSY")?;
     load(&config_path(&app)?)
 }
 
@@ -135,9 +105,12 @@ pub fn agent_runtime_set_config(
     if !confirmed {
         return Err("AGENT_EXPERIMENT_CONFIRM_REQUIRED".into());
     }
-    let _lock = CONFIG_LOCK.lock().map_err(|_| "AGENT_EXPERIMENT_LOCK")?;
+    let _lock = CONFIG_LOCK.try_lock().map_err(|_| "AGENT_EXPERIMENT_CONFIG_BUSY")?;
     let path = config_path(&app)?;
-    let previous = load(&path)?;
+    let parent = path.parent().ok_or("AGENT_EXPERIMENT_PATH")?;
+    let root_identity = safe_paths::directory_identity(parent)
+        .map_err(|_| "AGENT_EXPERIMENT_UNSAFE_DIR")?;
+    let (previous, expected) = config_snapshot(&path)?;
     if previous.revision != expected_revision {
         return Err("AGENT_EXPERIMENT_STALE_REVISION".into());
     }
@@ -149,7 +122,7 @@ pub fn agent_runtime_set_config(
     router
         .update(config.clone(), expected_revision)
         .map_err(|_| "AGENT_EXPERIMENT_INVALID_CONFIG")?;
-    persist(&path, &config)?;
+    persist(&path, &config, expected.as_ref(), &root_identity)?;
     Ok(config)
 }
 
@@ -161,7 +134,7 @@ pub async fn agent_runtime_benchmark(
 ) -> Result<BenchmarkReport, String> {
     check_main(&app, &webview, "agent_runtime_benchmark")?;
     let config = {
-        let _guard = CONFIG_LOCK.lock().map_err(|_| "AGENT_EXPERIMENT_LOCK")?;
+        let _guard = CONFIG_LOCK.try_lock().map_err(|_| "AGENT_EXPERIMENT_CONFIG_BUSY")?;
         load(&config_path(&app)?)?
     };
     if !config.enabled || !config.benchmark_enabled {
@@ -401,7 +374,7 @@ pub async fn agent_runtime_read_tool(
     run_admitted(app, webview, admission).await
 }
 fn enabled_config(app: &AppHandle) -> Result<ExperimentConfig, String> {
-    let _guard = CONFIG_LOCK.lock().map_err(|_| "AGENT_EXPERIMENT_LOCK")?;
+    let _guard = CONFIG_LOCK.try_lock().map_err(|_| "AGENT_EXPERIMENT_CONFIG_BUSY")?;
     let cfg = load(&config_path(app)?)?;
     if !cfg.enabled {
         return Err("AGENT_EXPERIMENT_DISABLED".into());
@@ -679,6 +652,7 @@ mod tests {
         assert!(resource_for("coding_lsp_status", &json!({"root":"/repo","command":"run"})).is_err());
         assert_eq!(resource_for("git_diff", &json!({"repo_id":"test","path":null})).unwrap(), "git:test");
     }
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     #[test]
     fn disk_config_is_atomic_and_cas_ready() {
         let dir = std::env::temp_dir().join(format!(
@@ -696,9 +670,11 @@ mod tests {
             canary_percent: 10,
             ..ExperimentConfig::default()
         };
-        persist(&path, &cfg).unwrap();
+        let identity = safe_paths::directory_identity(&dir).unwrap();
+        persist(&path, &cfg, None, &identity).unwrap();
         assert_eq!(load(&path).unwrap(), cfg);
-        fs::remove_file(&path).unwrap();
-        fs::remove_dir(&dir).unwrap();
+        assert!(persist(&path, &ExperimentConfig::default(), None, &identity).is_err());
+        assert_eq!(load(&path).unwrap(), cfg);
+        fs::remove_dir_all(&dir).unwrap();
     }
 }
