@@ -1314,32 +1314,45 @@ impl GridProcessManager {
         if !crate::grid_ipc::is_tab_renderer(index) {
             return Err("TAB_RENDERER_ROUTE_INVALID".into());
         }
-        let result = {
+        let (expected, result) = {
             let _dispatch = self.visibility_dispatch.lock().unwrap_or_else(|p| p.into_inner());
             if !self.get_or_spawn(index)? {
                 return Err("TAB_RENDERER_ALREADY_RUNNING".into());
             }
-            self.record_hidden(index);
-            self.record_url(index, url);
-            let command = GridCmd::CreateTab {
-                id: crate::grid_ipc::renderer_label(index),
-                url: url.to_owned(),
-            };
-            self.request(index, command, 20000).and_then(|_| {
+            let (expected, original) = {
                 let mut children = self.children.lock().unwrap();
                 let child = children.get_mut(&index).ok_or("TAB_RENDERER_EXITED_BEFORE_CREATE_RECEIPT")?;
-                if !child.comms.is_connected() {
-                    return Err("TAB_RENDERER_EXITED_BEFORE_CREATE_RECEIPT".into());
+                child.hidden = true;
+                child.hidden_since.get_or_insert_with(std::time::Instant::now);
+                child.last_url = Some(url.to_owned());
+                ((child.child.id(), child.comms.spawn_epoch.load(Ordering::SeqCst)), Arc::clone(&child.comms))
+            };
+            let result = (|| -> Result<(), String> {
+                let (comms, generation) = self.wait_connected(index, 15000)?;
+                if !Arc::ptr_eq(&original, &comms) || comms.owner_snapshot()? != expected {
+                    return Err("TAB_RENDERER_CREATE_TARGET_STALE".into());
+                }
+                let command = GridCmd::CreateTab { id: crate::grid_ipc::renderer_label(index), url: url.to_owned() };
+                self.request_once_with(index, Arc::clone(&comms), generation, &command, 20000)?;
+                let mut children = self.children.lock().unwrap();
+                let child = children.get_mut(&index).ok_or("GRID_REQUEST_OUTCOME_UNKNOWN: renderer retired during create")?;
+                let _owner = comms.owner_gate.lock().unwrap();
+                if !Arc::ptr_eq(&child.comms, &comms) || child.child.id() != expected.0
+                    || comms.expected_pid.load(Ordering::SeqCst) != expected.0
+                    || comms.spawn_epoch.load(Ordering::SeqCst) != expected.1
+                    || !comms.is_current(generation) || child.document_ready {
+                    return Err("GRID_REQUEST_OUTCOME_UNKNOWN: renderer create owner changed".into());
                 }
                 child.document_ready = true;
                 Ok(())
-            })
+            })();
+            (expected, result)
         };
         match result {
             Ok(()) => Ok(()),
             Err(error) => {
-                // Retain the generation counter across a failed recovery.
-                match self.close_tab_renderer(index, false) {
+                // Retain listener generation, and never close a newer host.
+                match self.retire_bound_tab_renderer(index, expected) {
                     Ok(()) => Err(error),
                     Err(cleanup) => Err(format!("{error}; {cleanup}")),
                 }
@@ -1380,12 +1393,26 @@ impl GridProcessManager {
     pub(crate) fn position_tab_renderer(
         &self, index: u32, css: (f64, f64, f64, f64),
     ) -> Result<(), String> {
-        if !crate::grid_ipc::is_tab_renderer(index) {
+        let target = self.capture_window_route(index)?;
+        self.position_tab_renderer_bound(index, target, css)
+    }
+
+    pub(crate) fn position_tab_renderer_bound(&self, index: u32,
+        target: Option<crate::grid_ipc::RendererBinding>, css: (f64, f64, f64, f64),
+    ) -> Result<(), String> {
+        if !crate::grid_ipc::is_tab_renderer(index)
+            || target.is_some_and(|binding| binding.index != index) {
             return Err("TAB_RENDERER_ROUTE_INVALID".into());
         }
-        if css.0 <= -20000.0 { return self.hide_tab_renderer(index); }
-        let binding = self.renderer_binding(index)?;
+        if ![css.0, css.1, css.2, css.3].iter().all(|value| value.is_finite())
+            || css.2 < 0.0 || css.3 < 0.0 {
+            return Err("GRID_NATIVE_RECT_INVALID".into());
+        }
         let _dispatch = self.visibility_dispatch.lock().unwrap_or_else(|p| p.into_inner());
+        if css.0 <= -20000.0 {
+            return self.hide_tab_renderer_locked(index, target);
+        }
+        let binding = target.ok_or("TAB_RENDERER_DOCUMENT_UNAVAILABLE")?;
         let app = self.app().ok_or("TAB_RENDERER_HOST_UNAVAILABLE")?;
         let label = crate::grid_ipc::renderer_label(index);
         if app.state::<crate::bridge::AppState>().active_tab.lock().unwrap().as_deref() != Some(label.as_str()) {
@@ -1396,10 +1423,17 @@ impl GridProcessManager {
     }
 
     pub(crate) fn hide_tab_renderer(&self, index: u32) -> Result<(), String> {
-        if !crate::grid_ipc::is_tab_renderer(index) {
+        let target = self.capture_window_route(index)?;
+        self.hide_tab_renderer_bound(index, target)
+    }
+
+    pub(crate) fn hide_tab_renderer_bound(&self, index: u32,
+        target: Option<crate::grid_ipc::RendererBinding>,
+    ) -> Result<(), String> {
+        if !crate::grid_ipc::is_tab_renderer(index)
+            || target.is_some_and(|binding| binding.index != index) {
             return Err("TAB_RENDERER_ROUTE_INVALID".into());
         }
-        let target = self.capture_window_route(index)?;
         let _dispatch = self.visibility_dispatch.lock().unwrap_or_else(|p| p.into_inner());
         self.hide_tab_renderer_locked(index, target)
     }
@@ -1418,7 +1452,39 @@ impl GridProcessManager {
         Ok(())
     }
 
-    // 4. View switches hide the captured Grid topology, including saved
+    pub(crate) fn hide_grid_route(&self, stamp: crate::grid_ipc::GridRouteStamp) -> Result<(), String> {
+        let index = stamp.index;
+        if index as usize >= crate::bridge::MAX_GRID { return Err("GRID_INDEX_INVALID".into()); }
+        let _dispatch = self.visibility_dispatch.lock().unwrap_or_else(|p| p.into_inner());
+        let target = {
+            let _gate = self.lifecycle_lock.try_lock().map_err(|_| "GRID_LIFECYCLE_BUSY")?;
+            self.lifecycle.check()?;
+            if self.grid_route_stamps_locked(&[index]).first() != Some(&stamp) {
+                return Err("GRID_WINDOW_TARGET_STALE".into());
+            }
+            if let Some(saved) = self.hibernated.lock().unwrap().get_mut(&index) {
+                saved.hidden = true;
+                saved.blur_hidden = false;
+            }
+            if let Some((_, saved)) = self.pending_restarts.lock().unwrap().get_mut(&index) {
+                saved.hidden = true;
+                saved.blur_hidden = false;
+            }
+            let mut children = self.children.lock().unwrap();
+            if let Some(child) = children.get_mut(&index) {
+                child.hidden = true;
+                child.blur_hidden = false;
+                child.hidden_since.get_or_insert_with(std::time::Instant::now);
+                Some(Self::window_binding(index, child).ok_or("GRID_WINDOW_TARGET_UNAVAILABLE")?)
+            } else {
+                if self.lifecycle.is_retiring(index) { return Err("GRID_HIDE_CLEANUP_PENDING".into()); }
+                None
+            }
+        };
+        if let Some(binding) = target { self.hide_window_bound(binding) } else { Ok(()) }
+    }
+
+    // View switches hide the captured Grid topology, including saved
     // restart/hibernation intent. Never rediscover live hosts after IPC waits.
     pub(crate) fn hide_grid_renderers(&self) -> Result<(), String> {
         let _dispatch = self.visibility_dispatch.lock().unwrap_or_else(|p| p.into_inner());
@@ -1528,6 +1594,12 @@ impl GridProcessManager {
             return Err("TAB_RENDERER_ROUTE_INVALID".into());
         }
         let binding = self.renderer_binding(index)?;
+        self.navigate_tab_renderer_bound(binding, url)
+    }
+
+    pub(crate) fn navigate_tab_renderer_bound(&self, binding: crate::grid_ipc::RendererBinding, url: &str) -> Result<(), String> {
+        let index = binding.index;
+        if !crate::grid_ipc::is_tab_renderer(index) { return Err("TAB_RENDERER_ROUTE_INVALID".into()); }
         let command = GridCmd::Navigate { id: crate::grid_ipc::renderer_label(index), url: url.to_owned() };
         self.renderer_request_data(binding, command, 10000)?;
         let app = self.app().ok_or("GRID_REQUEST_OUTCOME_UNKNOWN: renderer host unavailable")?;
@@ -1803,7 +1875,7 @@ impl GridProcessManager {
         result
     }
 
-    fn capture_window_route(&self, index: u32)
+    pub(crate) fn capture_window_route(&self, index: u32)
         -> Result<Option<crate::grid_ipc::RendererBinding>, String>
     {
         let children = self.children.lock().unwrap();
@@ -2056,19 +2128,13 @@ impl GridProcessManager {
             let manager = &state.grid_manager;
             let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 while let Some(intent) = manager.visibility.next(&manager.lifecycle) {
-                    {
-                        // Relocation also sends UpdateRect (which shows the
-                        // native window), so it shares this publication order.
-                        let _dispatch = manager
-                            .visibility_dispatch
-                            .lock()
-                            .unwrap_or_else(|p| p.into_inner());
-                        if manager.visibility.is_latest(intent.revision) {
-                            match intent.mode {
-                                VisibilityMode::Show => manager.apply_show_for_focus(&intent),
-                                VisibilityMode::Blur => manager.apply_hide_for_blur_if_no_child_focus(&intent),
-                                VisibilityMode::Minimized => manager.apply_hide_for_blur(&intent),
-                            }
+                    // Each target acquires the dispatch lock separately.
+                    // A stalled window must not retain the lock for a whole batch.
+                    if manager.visibility.is_latest(intent.revision) {
+                        match intent.mode {
+                            VisibilityMode::Show => manager.apply_show_for_focus(&intent),
+                            VisibilityMode::Blur => manager.apply_hide_for_blur_if_no_child_focus(&intent),
+                            VisibilityMode::Minimized => manager.apply_hide_for_blur(&intent),
                         }
                     }
                     if !manager.visibility.finish(intent.revision) {
@@ -2336,7 +2402,14 @@ impl GridProcessManager {
 
     fn apply_hide_for_blur(&self, intent: &lifecycle::VisibilityIntent) {
         for &binding in &intent.targets {
+            let _dispatch = self.visibility_dispatch.lock().unwrap_or_else(|p| p.into_inner());
             if !self.visibility.is_latest(intent.revision) { break; }
+            // Focus can return while an earlier renderer was awaiting a receipt.
+            if intent.mode == VisibilityMode::Blur && (self.any_child_focused()
+                || self.app().and_then(|app| app.get_window("main"))
+                    .and_then(|window| window.is_focused().ok()).unwrap_or(true)) {
+                break;
+            }
             let need = {
                 let mut children = self.children.lock().unwrap();
                 match children.get_mut(&binding.index) {
@@ -2352,9 +2425,24 @@ impl GridProcessManager {
                 }
             };
             if need {
-                self.send_window_bound(binding, GridCmd::HideWindow {
-                    id: crate::grid_ipc::renderer_label(binding.index),
-                });
+                let command = GridCmd::HideWindow { id: crate::grid_ipc::renderer_label(binding.index) };
+                let result = self.request_window_bound(binding, command.clone(), 1500);
+                if let Err(error) = result {
+                    // Hide is idempotent on this exact native host. Do not
+                    // retry a superseded focus intent, or replay any page action.
+                    let focus_still_allows_hide = intent.mode == VisibilityMode::Minimized
+                        || (!self.any_child_focused() && !self.app()
+                            .and_then(|app| app.get_window("main"))
+                            .and_then(|window| window.is_focused().ok()).unwrap_or(true));
+                    if error.starts_with("GRID_REQUEST_OUTCOME_UNKNOWN")
+                        && self.visibility.is_latest(intent.revision) && focus_still_allows_hide {
+                        if let Err(retry) = self.request_window_bound(binding, command, 750) {
+                            eprintln!("[grid-manager] bounded hide reconciliation unconfirmed index={}: {retry}", binding.index);
+                        }
+                    } else {
+                        eprintln!("[grid-manager] hide unconfirmed index={}: {error}", binding.index);
+                    }
+                }
             }
         }
     }
@@ -2366,6 +2454,7 @@ impl GridProcessManager {
 
     fn apply_show_for_focus(&self, intent: &lifecycle::VisibilityIntent) {
         for &binding in &intent.targets {
+            let _dispatch = self.visibility_dispatch.lock().unwrap_or_else(|p| p.into_inner());
             if !self.visibility.is_latest(intent.revision) { break; }
             let css = {
                 let children = self.children.lock().unwrap();

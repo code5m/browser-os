@@ -553,10 +553,19 @@ static CHILD_WRITER: std::sync::OnceLock<std::sync::Arc<std::sync::Mutex<GridStr
 static RENDERER_REPORTS: std::sync::OnceLock<std::sync::mpsc::SyncSender<grid_ipc::Wire>> =
     std::sync::OnceLock::new();
 
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+static LATEST_DOWNLOAD_REPORT: std::sync::Mutex<Option<grid_ipc::Wire>> = std::sync::Mutex::new(None);
+
 /// Resource and title notifications never synchronously write on the native
-/// WebView event thread. Overload drops observations, not lifecycle receipts.
+/// WebView event thread. Download observations have a separate one-item
+/// coalescing slot so the final cumulative count does not compete for space.
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 pub(crate) fn enqueue_renderer_report(name: &str, payload: serde_json::Value) {
+    if name == "renderer-download" {
+        *LATEST_DOWNLOAD_REPORT.lock().unwrap_or_else(|p| p.into_inner()) =
+            Some(grid_ipc::Wire::Event { name: name.to_owned(), payload });
+        return;
+    }
     if let Some(sender) = RENDERER_REPORTS.get() {
         let _ = sender.try_send(grid_ipc::Wire::Event { name: name.to_owned(), payload });
     }
@@ -625,9 +634,18 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
             let (send, recv) = std::sync::mpsc::sync_channel::<grid_ipc::Wire>(32);
             let report_writer = writer.clone();
             if std::thread::Builder::new().name("tab-renderer-reports".into()).spawn(move || {
-                while let Ok(report) = recv.recv() {
-                    if grid_ipc::write_wire(&mut *report_writer.lock().unwrap(), &report).is_err() {
-                        break;
+                loop {
+                    // Never hold the callback's coalescing lock during IPC.
+                    let latest = LATEST_DOWNLOAD_REPORT.lock().unwrap_or_else(|p| p.into_inner()).take();
+                    if let Some(report) = latest {
+                        if grid_ipc::write_wire(&mut *report_writer.lock().unwrap(), &report).is_err() { break; }
+                    }
+                    match recv.recv_timeout(std::time::Duration::from_millis(100)) {
+                        Ok(report) => {
+                            if grid_ipc::write_wire(&mut *report_writer.lock().unwrap(), &report).is_err() { break; }
+                        }
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
                     }
                 }
             }).is_err() {

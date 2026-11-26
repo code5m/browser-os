@@ -111,8 +111,9 @@ pub async fn position_browser(
         .clone()
         .ok_or_else(|| "没有打开的页签".to_string())?;
     if super::isolated_tabs::route(&id).is_some() {
+        let admitted = super::isolated_tabs::capture_layout(&app, &id)?;
         return super::isolated_tabs::on_worker(move || {
-            super::isolated_tabs::position(&app, &id, (x, y, width, height))
+            super::isolated_tabs::position_admitted(&app, &id, (x, y, width, height), admitted)
         }).await;
     }
     if let Err(e) = apply_bounds(&app, &id, x, y, width, height) {
@@ -238,17 +239,19 @@ pub async fn hide_webview(webview: tauri::Webview, app: AppHandle, id: String) -
     crate::shared::native_legacy_policy::require_main(&webview, "hide_webview")?;
     crate::shared::native_legacy_policy::bound_text("hide_webview", "id", &id)?;
     if super::isolated_tabs::route(&id).is_some() {
-        return super::isolated_tabs::on_worker(move || super::isolated_tabs::hide(&app, &id)).await;
+        let admitted = super::isolated_tabs::capture_layout(&app, &id)?;
+        return super::isolated_tabs::on_worker(move || super::isolated_tabs::hide_admitted(&app, &id, admitted)).await;
     }
 
     #[cfg(not(target_os = "linux"))]
     use tauri_plugin_browser_tabs::{LogicalRect, TabManagerState};
     // 宫格已迁子进程：隐藏 = 子进程整个窗口 hide（等价旧方案的移出屏幕）
     if let Some(index) = grid_index_of(&id) {
-        let mgr = &app.state::<AppState>().grid_manager;
-        mgr.record_hidden(index);
-        mgr.send(index, GridCmd::HideWindow { id });
-        return Ok(());
+        let stamp = app.state::<AppState>().grid_manager.grid_route_stamps(&[index])?
+            .into_iter().next().ok_or("GRID_INDEX_INVALID")?;
+        return super::isolated_tabs::on_worker(move || {
+            app.state::<AppState>().grid_manager.hide_grid_route(stamp)
+        }).await;
     }
     #[cfg(target_os = "linux")]
     hide_bounds(&app, &id);
@@ -274,7 +277,7 @@ pub async fn hide_webview(webview: tauri::Webview, app: AppHandle, id: String) -
 #[tauri::command]
 pub async fn hide_all_webviews(webview: tauri::Webview, app: AppHandle) -> Result<(), String> {
     crate::shared::native_legacy_policy::require_main(&webview, "hide_all_webviews")?;
-    if super::isolated_tabs::mode_enabled() {
+    if cfg!(any(target_os = "linux", target_os = "windows")) {
         return super::isolated_tabs::on_worker(move || hide_all_webviews_sync(webview, app)).await;
     }
     hide_all_webviews_sync(webview, app)
@@ -291,16 +294,11 @@ pub(crate) fn hide_all_webviews_sync(webview: tauri::Webview, app: AppHandle) ->
     use tauri_plugin_browser_tabs::TabManagerState;
     let manager = app.state::<TabManagerState>();
     let state = app.state::<AppState>();
-    // 宫格已迁子进程：逐格下发 HideWindow（子进程整个窗口 hide）
-    for index in state.grid_manager.indices() {
-        state.grid_manager.record_hidden(index);
-        state.grid_manager.send(
-            index,
-            GridCmd::HideWindow {
-                id: format!("grid-{index}"),
-            },
-        );
-    }
+    // Also include sleeping and pending-restart Grid routes when embedded
+    // Browser tabs are in use. A partial native hide must not look successful.
+    let grid_result = if cfg!(any(target_os = "linux", target_os = "windows")) {
+        state.grid_manager.hide_grid_renderers()
+    } else { Ok(()) };
     // 页签 id（宫格已不在主进程插件表里，无需穷举 grid-N；
     // 已休眠页签 webview 已销毁，跳过避免 TabNotFound 噪音）
     let ids: Vec<String> = {
@@ -335,6 +333,7 @@ pub(crate) fn hide_all_webviews_sync(webview: tauri::Webview, app: AppHandle) ->
             }
         }
     }
+    grid_result?;
     eprintln!("[hide_all_webviews] 已处理全部子 webview");
     Ok(())
 }

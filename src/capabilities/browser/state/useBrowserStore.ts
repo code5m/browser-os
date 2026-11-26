@@ -59,7 +59,10 @@ export const useBrowserStore = defineStore("browser", () => {
     try {
       const view = await bridge.inspectRendererRecovery(id);
       if (rendererObservations.get(id) !== observation || !tabs.some(item => item === tab)) return null;
-      if (!view.renderer_state) return null;
+      if (!view.renderer_state) {
+        rendererDownloads.delete(id);
+        return null;
+      }
       rendererStates.set(id, view.renderer_state);
       const download = view.renderer_download;
       if (download && view.renderer_recovery_target?.pid === download.pid
@@ -70,7 +73,9 @@ export const useBrowserStore = defineStore("browser", () => {
       }
       return view;
     } catch {
-      // An unreadable observation is not proof of absence or permission to recover.
+      // A failed current query cannot certify old download counts. Do not
+      // let a superseded query clear a later successful observation.
+      if (rendererObservations.get(id) === observation) rendererDownloads.delete(id);
       return null;
     }
   }

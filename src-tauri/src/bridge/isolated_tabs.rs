@@ -5,7 +5,8 @@ use super::*;
 use crate::grid_ipc::{tab_renderer_index, GridCmd};
 
 pub(crate) fn mode_enabled() -> bool {
-    std::env::var("BROWSEROS_EXPERIMENTAL_ISOLATED_TABS").as_deref() == Ok("1")
+    cfg!(any(target_os = "linux", target_os = "windows"))
+        && std::env::var("BROWSEROS_EXPERIMENTAL_ISOLATED_TABS").as_deref() == Ok("1")
         && std::env::var_os("GRID_CHILD_INDEX").is_none()
 }
 
@@ -194,6 +195,26 @@ pub(super) fn eval_bound(
     }, 10000).map(|_| ())
 }
 
+pub(super) type LayoutAdmission = (u32, Option<crate::grid_ipc::RendererBinding>);
+
+pub(super) fn capture_layout(app: &AppHandle, id: &str) -> Result<LayoutAdmission, String> {
+    let index = exists(app, id)?;
+    let target = app.state::<AppState>().grid_manager.capture_window_route(index)?;
+    Ok((index, target))
+}
+
+pub(super) fn position_admitted(app: &AppHandle, id: &str, css: (f64, f64, f64, f64),
+    (index, target): LayoutAdmission,
+) -> Result<(), String> {
+    if exists(app, id)? != index { return Err("TAB_RENDERER_LAYOUT_SUPERSEDED".into()); }
+    app.state::<AppState>().grid_manager.position_tab_renderer_bound(index, target, css)
+}
+
+pub(super) fn hide_admitted(app: &AppHandle, id: &str, (index, target): LayoutAdmission) -> Result<(), String> {
+    if exists(app, id)? != index { return Err("TAB_RENDERER_LAYOUT_SUPERSEDED".into()); }
+    app.state::<AppState>().grid_manager.hide_tab_renderer_bound(index, target)
+}
+
 pub(super) fn position(app: &AppHandle, id: &str, css: (f64, f64, f64, f64)) -> Result<(), String> {
     let index = exists(app, id)?;
     app.state::<AppState>().grid_manager.position_tab_renderer(index, css)
@@ -209,9 +230,14 @@ pub(super) fn hide_all(app: &AppHandle) -> Result<(), String> {
     let state = app.state::<AppState>();
     let mut ids: Vec<_> = state.tabs.lock().unwrap().keys().cloned().collect();
     ids.sort();
+    // Capture all logical peers before the first native wait.
+    let targets: Vec<_> = ids.into_iter().map(|id| {
+        let target = capture_layout(app, &id);
+        (id, target)
+    }).collect();
     let mut errors = Vec::new();
-    for id in ids {
-        if let Err(error) = hide(app, &id) {
+    for (id, target) in targets {
+        if let Err(error) = target.and_then(|admitted| hide_admitted(app, &id, admitted)) {
             errors.push(format!("{id}:{error}"));
         }
     }

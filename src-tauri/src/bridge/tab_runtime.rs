@@ -121,6 +121,13 @@ pub(crate) fn tab_open_impl(
     id: String,
     url: String,
 ) -> Result<(), String> {
+    tab_open_admitted(webview, app, id, url, None)
+}
+
+pub(super) fn tab_open_admitted(
+    webview: tauri::Webview, app: AppHandle, id: String, url: String,
+    binding: Option<crate::grid_ipc::RendererBinding>,
+) -> Result<(), String> {
     crate::shared::native_legacy_policy::require_main(&webview, "tab_open")?;
     crate::shared::native_legacy_policy::bound_text("tab_open", "id", &id)?;
     crate::shared::native_legacy_policy::bound_text("tab_open", "url", &url)?;
@@ -134,9 +141,16 @@ pub(crate) fn tab_open_impl(
 
     let target = normalize_url(&url);
     let _ = Url::parse(&target).map_err(|e| format!("无效网址: {e}"))?;
-    if super::isolated_tabs::route(&id).is_some() {
+    if let Some(index) = super::isolated_tabs::route(&id) {
+        if let Some(binding) = binding {
+            if binding.index != index || !app.state::<AppState>().tabs.lock().unwrap().contains_key(&id) {
+                return Err("TAB_MUTATION_INSTANCE_STALE".into());
+            }
+            return app.state::<AppState>().grid_manager.navigate_tab_renderer_bound(binding, &target);
+        }
         return navigate_tab_webview(&app, &id, &target);
     }
+    if binding.is_some() { return Err("TAB_MUTATION_INSTANCE_STALE".into()); }
     if let Err(e) = navigate_tab_webview(&app, &id, &target) {
         recover_tab_webview(&app, &id, "navigate", &e)?;
         navigate_tab_webview(&app, &id, &target)
@@ -166,11 +180,17 @@ pub async fn tab_position(
     width: f64,
     height: f64,
 ) -> Result<(), String> {
-    // Validate before consuming an isolated-renderer worker permit.
+    // Validate and bind before consuming an isolated-renderer worker permit.
     crate::shared::native_legacy_policy::require_main(&webview, "tab_position")?;
     if super::isolated_tabs::route(&id).is_some() {
+        crate::shared::native_legacy_policy::bound_text("tab_position", "id", &id)?;
+        crate::shared::native_legacy_policy::bound_dimension("tab_position", "x", x)?;
+        crate::shared::native_legacy_policy::bound_dimension("tab_position", "y", y)?;
+        crate::shared::native_legacy_policy::bound_dimension("tab_position", "width", width)?;
+        crate::shared::native_legacy_policy::bound_dimension("tab_position", "height", height)?;
+        let admitted = super::isolated_tabs::capture_layout(&app, &id)?;
         return super::isolated_tabs::on_worker(move || {
-            tab_position_sync(webview, app, id, x, y, width, height)
+            super::isolated_tabs::position_admitted(&app, &id, (x, y, width, height), admitted)
         }).await;
     }
     tab_position_sync(webview, app, id, x, y, width, height)
@@ -708,7 +728,7 @@ pub fn set_tab_hibernation(
 }
 
 fn tab_hibernation_snapshot(app: &AppHandle, id: &str,
-    instance: &tauri_plugin_browser_tabs::TabInstance, expected_url: &str,
+    document: &tauri_plugin_browser_tabs::CaptureDocument, expected_url: &str,
 ) -> Result<(f64, f64), String> {
     use tauri_plugin_browser_tabs::TabManagerState;
     let manager = app.state::<TabManagerState>();
@@ -747,7 +767,7 @@ fn tab_hibernation_snapshot(app: &AppHandle, id: &str,
     })()"#;
     let (tx, rx) = std::sync::mpsc::channel();
     manager
-        .eval_result_instance(&id.to_string(), instance, script.to_string(), move |result| {
+        .eval_result_document(&id.to_string(), document, script.to_string(), move |result| {
             let _ = tx.send(result);
         })
         .map_err(|_| "TAB_HIBERNATION_SNAPSHOT_FAILED")?;
@@ -757,7 +777,7 @@ fn tab_hibernation_snapshot(app: &AppHandle, id: &str,
     let snapshot: serde_json::Value =
         serde_json::from_str(&encoded).map_err(|_| "TAB_HIBERNATION_SNAPSHOT_INVALID")?;
     if snapshot.get("address").and_then(serde_json::Value::as_str) != Some(expected_url)
-        || !manager.is_current_instance(&id.to_string(), instance) {
+        || !manager.is_current_capture_document(&id.to_string(), document) {
         return Err("TAB_HIBERNATION_DOCUMENT_STALE".into());
     }
     accepted_hibernation_scroll(&snapshot)
@@ -808,8 +828,8 @@ fn hibernate_tab(app: &AppHandle, id: &str, idle_window: std::time::Duration) ->
         return false;
     }
     let manager = app.state::<tauri_plugin_browser_tabs::TabManagerState>();
-    let Ok(instance) = manager.instance(&id.to_string()) else { return false; };
-    let scroll = match tab_hibernation_snapshot(app, id, &instance, &expected_url) {
+    let Ok(document) = manager.capture_document(&id.to_string()) else { return false; };
+    let scroll = match tab_hibernation_snapshot(app, id, &document, &expected_url) {
         Ok(scroll) => scroll,
         Err(error) => {
             eprintln!("[hibernation] skip tab={} reason={}", id, error);
@@ -824,10 +844,10 @@ fn hibernate_tab(app: &AppHandle, id: &str, idle_window: std::time::Duration) ->
     let Ok(_transition) = reserve_tab_transition(id) else {
         return false;
     };
-    if !still_idle() || !manager.is_current_instance(&id.to_string(), &instance) {
+    if !still_idle() || !manager.is_current_capture_document(&id.to_string(), &document) {
         return false;
     }
-    if manager.close_tab(&id.to_string()).is_ok() {
+    if manager.close_tab_document(&id.to_string(), &document).is_ok() {
         state.child_layouts.lock().unwrap().remove(id);
         state.layout_revisions.lock().unwrap().remove(id);
         state.last_position_at.lock().unwrap().remove(id);
@@ -1270,8 +1290,11 @@ pub(crate) fn tab_activate_impl(
                 address, x.max(0.0), y.max(0.0)
             );
             let manager = restore_app.state::<TabManagerState>();
+            if !manager.is_current_instance(&restore_id, &instance) { return; }
+            let Ok(document) = manager.capture_document(&restore_id) else { return; };
+            if !manager.is_current_instance(&restore_id, &instance) { return; }
             let (tx, rx) = std::sync::mpsc::channel();
-            if manager.eval_result_instance(&restore_id, &instance, js, move |result| {
+            if manager.eval_result_document(&restore_id, &document, js, move |result| {
                 let _ = tx.send(result);
             }).is_err() {
                 return;
@@ -1281,6 +1304,7 @@ pub(crate) fn tab_activate_impl(
             let confirmed = matches!(rx.recv_timeout(std::time::Duration::from_secs(2)),
                 Ok(Ok(value)) if value == "applied" || value == "skip_nonzero");
             if confirmed && manager.is_current_instance(&restore_id, &instance)
+                && manager.is_current_capture_document(&restore_id, &document)
                 && state.tabs.lock().unwrap().get(&restore_id).is_some_and(|tab| tab.url == expected_url)
                 && state.active_tab.lock().unwrap().as_deref() == Some(restore_id.as_str()) {
                 let mut saved = state.hibernated_scroll.lock().unwrap();

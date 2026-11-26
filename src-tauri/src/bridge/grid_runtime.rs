@@ -437,6 +437,14 @@ pub async fn grid_position(
     width: f64,
     height: f64,
 ) -> Result<(), String> {
+    if ![x, y, width, height].iter().all(|value| value.is_finite()) || width < 0.0 || height < 0.0 {
+        return Err("GRID_NATIVE_RECT_INVALID".into());
+    }
+    if x <= -20000.0 {
+        let stamp = capture_one_grid_route(&app, index)?.into_iter().next().ok_or("GRID_INDEX_INVALID")?;
+        return tauri::async_runtime::spawn_blocking(move || app.state::<AppState>().grid_manager.hide_grid_route(stamp))
+            .await.map_err(|_| "GRID_POSITION_WORKER_FAILED".to_string())?;
+    }
     let admitted = capture_grid_cell(&app, index)?;
     tauri::async_runtime::spawn_blocking(move || {
         grid_position_admitted(app, (x, y, width, height), admitted)
@@ -453,6 +461,13 @@ pub fn grid_position_blocking(
     width: f64,
     height: f64,
 ) -> Result<(), String> {
+    if ![x, y, width, height].iter().all(|value| value.is_finite()) || width < 0.0 || height < 0.0 {
+        return Err("GRID_NATIVE_RECT_INVALID".into());
+    }
+    if x <= -20000.0 {
+        let stamp = capture_one_grid_route(&app, index)?.into_iter().next().ok_or("GRID_INDEX_INVALID")?;
+        return app.state::<AppState>().grid_manager.hide_grid_route(stamp);
+    }
     let admitted = capture_grid_cell(&app, index)?;
     grid_position_admitted(app, (x, y, width, height), admitted)
 }

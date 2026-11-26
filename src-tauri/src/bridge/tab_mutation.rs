@@ -76,7 +76,21 @@ impl Action {
             }
         }
     }
-    fn execute(self, webview: Webview, app: AppHandle) -> Result<Value, String> {
+    fn execute(self, webview: Webview, app: AppHandle, binding: &Binding) -> Result<Value, String> {
+        if let Binding::IsolatedDocument(document) = binding {
+            self.authorize(&webview)?;
+            let state = app.state::<crate::AppState>();
+            if state.shutdown_requested.load(std::sync::atomic::Ordering::Acquire) {
+                return Err("TAB_APPLICATION_SHUTTING_DOWN".into());
+            }
+            return match self {
+                Self::Open { id, url } => tab_open_admitted(webview, app.clone(), id, url, Some(*document)).map(|_| Value::Null),
+                Self::Back { id } => super::isolated_tabs::eval_bound(&app, &id, "if (history.length > 1) { history.back(); }", *document).map(|_| Value::Null),
+                Self::Forward { id } => super::isolated_tabs::eval_bound(&app, &id, "history.forward();", *document).map(|_| Value::Null),
+                Self::Reload { id } => super::isolated_tabs::eval_bound(&app, &id, "location.reload();", *document).map(|_| Value::Null),
+                _ => Err("TAB_MUTATION_INSTANCE_STALE".into()),
+            };
+        }
         match self {
             Self::New { url } => serde_json::to_value(tab_new_impl(webview, app, url)?)
                 .map_err(|_| "TAB_RECEIPT_SERIALIZATION_FAILED".into()),
@@ -133,6 +147,7 @@ enum Binding {
     New,
     Live(TabInstance),
     Isolated(Option<(u32, u64)>),
+    IsolatedDocument(crate::grid_ipc::RendererBinding),
     Hibernated,
 }
 impl Binding {
@@ -160,6 +175,13 @@ impl Binding {
             if owner.is_none() && !matches!(action, Action::Activate { .. } | Action::Close { .. }) {
                 return Err("TAB_RENDERER_RECOVERY_REQUIRED".into());
             }
+            if matches!(action, Action::Open { .. } | Action::Back { .. } | Action::Forward { .. } | Action::Reload { .. }) {
+                let binding = state.grid_manager.renderer_binding(index)?;
+                if Some(binding.owner) != owner {
+                    return Err("TAB_MUTATION_INSTANCE_STALE".into());
+                }
+                return Ok(Self::IsolatedDocument(binding));
+            }
             return Ok(Self::Isolated(owner));
         }
         if state
@@ -186,6 +208,13 @@ impl Binding {
                     let state = app.state::<crate::AppState>();
                     let exists = state.tabs.lock().unwrap().contains_key(id);
                     exists && state.grid_manager.tab_renderer_owner(index).is_ok_and(|owner| owner == *expected)
+                })
+            }
+            (Self::IsolatedDocument(binding), Some(id)) => {
+                super::isolated_tabs::route(id).is_some_and(|index| {
+                    let state = app.state::<crate::AppState>();
+                    let exists = state.tabs.lock().unwrap().contains_key(id);
+                    exists && state.grid_manager.renderer_binding(index).is_ok_and(|current| current == *binding)
                 })
             }
             (Self::Hibernated, Some(id)) => app
@@ -327,9 +356,13 @@ impl Owner {
         if self.recovery_claimed || slot.receipt.phase != Phase::Unknown {
             return None;
         }
-        let Binding::Isolated(Some(expected)) = slot.binding.as_ref()? else { return None };
+        let expected = match slot.binding.as_ref()? {
+            Binding::Isolated(Some(expected)) => *expected,
+            Binding::IsolatedDocument(binding) => binding.owner,
+            _ => return None,
+        };
         let id = slot.action.as_ref()?.target()?;
-        Some((super::isolated_tabs::route(id)?, *expected))
+        Some((super::isolated_tabs::route(id)?, expected))
     }
 
     fn valid_intent(&self, intent: &DomainRecoveryIntent, now: Instant) -> bool {
@@ -773,7 +806,7 @@ pub(crate) fn tab_mutation(
                         // The existing host Owner excludes background hibernation,
                         // direct tab mutation and positioning-triggered recreation.
                         let result = if binding.current(&worker_app, &action) {
-                            action.execute(webview, worker_app.clone())
+                            action.execute(webview, worker_app.clone(), &binding)
                         } else {
                             Err("TAB_MUTATION_INSTANCE_STALE".into())
                         };

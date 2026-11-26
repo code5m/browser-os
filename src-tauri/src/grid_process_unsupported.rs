@@ -49,6 +49,11 @@ impl GridProcessManager {
     pub(crate) fn tab_renderer_download_observation(&self, _index: u32, _expected: (u32, u64))
         -> Result<Option<serde_json::Value>, String> { Err(unsupported()) }
     pub(crate) fn hide_grid_renderers(&self) -> Result<(), String> { Err(unsupported()) }
+    pub(crate) fn hide_grid_route(&self, _stamp: crate::grid_ipc::GridRouteStamp) -> Result<(), String> { Err(unsupported()) }
+    pub(crate) fn capture_window_route(&self, _index: u32) -> Result<Option<crate::grid_ipc::RendererBinding>, String> { Err(unsupported()) }
+    pub(crate) fn position_tab_renderer_bound(&self, _index: u32, _target: Option<crate::grid_ipc::RendererBinding>, _css: (f64, f64, f64, f64)) -> Result<(), String> { Err(unsupported()) }
+    pub(crate) fn hide_tab_renderer_bound(&self, _index: u32, _target: Option<crate::grid_ipc::RendererBinding>) -> Result<(), String> { Err(unsupported()) }
+    pub(crate) fn navigate_tab_renderer_bound(&self, _binding: crate::grid_ipc::RendererBinding, _url: &str) -> Result<(), String> { Err(unsupported()) }
     pub(crate) fn renderer_binding(&self, _index: u32) -> Result<crate::grid_ipc::RendererBinding, String> { Err(unsupported()) }
     pub(crate) fn grid_eval_binding(&self, _index: u32) -> Result<crate::grid_ipc::RendererBinding, String> { Err(unsupported()) }
     pub(crate) fn grid_live_binding(&self, _index: u32) -> Result<Option<crate::grid_ipc::RendererBinding>, String> { Err(unsupported()) }

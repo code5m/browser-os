@@ -1718,13 +1718,27 @@ impl TabManager {
     }
 
     pub fn close_tab(&self, id: &TabId) -> Result<()> {
+        self.close_tab_bound(id, None)
+    }
+
+    pub fn close_tab_document(&self, id: &TabId, document: &CaptureDocument) -> Result<()> {
+        self.close_tab_bound(id, Some(document))
+    }
+
+    fn close_tab_bound(&self, id: &TabId, document: Option<&CaptureDocument>) -> Result<()> {
         let _reservation = self.reserve_lifecycle(id)?;
         // A successful native close may outlive its IPC reply. Retrying an
         // already-closed or hibernated tab is successful and creates no resource.
         let tab = self.tabs.read().get(id).cloned();
         let Some(tab) = tab else {
-            return Ok(());
+            return if document.is_some() {
+                Err(BrowserTabError::Platform("TAB_DOCUMENT_STALE".into()))
+            } else { Ok(()) };
         };
+        if document.is_some_and(|expected| !std::sync::Weak::ptr_eq(&expected.instance.0, &Arc::downgrade(&tab))
+            || !expected.observed_generation_is_current()) {
+            return Err(BrowserTabError::Platform("TAB_DOCUMENT_STALE".into()));
+        }
         // Keep ownership on failure. Admission excludes other synchronous
         // dispatches and duplicate lifecycle changes for this identity.
         invalidate_capture_document(&tab.document_revision);
@@ -2469,19 +2483,26 @@ impl TabManager {
         js: String,
         callback: impl FnOnce(std::result::Result<String, String>) + Send + 'static,
     ) -> Result<()> {
-        self.eval_result_bound(id, None, js, callback)
+        self.eval_result_bound(id, None, None, js, callback)
     }
 
     pub fn eval_result_instance(
         &self, id: &TabId, instance: &TabInstance, js: String,
         callback: impl FnOnce(std::result::Result<String, String>) + Send + 'static,
     ) -> Result<()> {
-        self.eval_result_bound(id, Some(instance), js, callback)
+        self.eval_result_bound(id, Some(instance), None, js, callback)
+    }
+
+    pub fn eval_result_document(
+        &self, id: &TabId, document: &CaptureDocument, js: String,
+        callback: impl FnOnce(std::result::Result<String, String>) + Send + 'static,
+    ) -> Result<()> {
+        self.eval_result_bound(id, Some(&document.instance), Some(document), js, callback)
     }
 
     #[allow(deprecated)]
     fn eval_result_bound(
-        &self, id: &TabId, instance: Option<&TabInstance>, js: String,
+        &self, id: &TabId, instance: Option<&TabInstance>, document: Option<&CaptureDocument>, js: String,
         callback: impl FnOnce(std::result::Result<String, String>) + Send + 'static,
     ) -> Result<()> {
         // Protect dispatch only, never keep a reservation across an
@@ -2489,6 +2510,9 @@ impl TabManager {
         let (_operation, tab) = self.get_tab(id, TabAccessKind::Operation)?;
         if instance.is_some_and(|expected| !std::sync::Weak::ptr_eq(&expected.0, &Arc::downgrade(&tab))) {
             return Err(BrowserTabError::Platform("TAB_INSTANCE_STALE".into()));
+        }
+        if document.is_some_and(|expected| !expected.observed_generation_is_current()) {
+            return Err(BrowserTabError::Platform("TAB_DOCUMENT_STALE".into()));
         }
         let webview = tab.webview.clone();
         #[cfg(target_os = "linux")]
