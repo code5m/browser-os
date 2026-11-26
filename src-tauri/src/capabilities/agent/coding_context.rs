@@ -8,7 +8,10 @@ use std::{
     os::unix::process::CommandExt,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    sync::{mpsc, Arc, atomic::{AtomicBool, Ordering}},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc,
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -21,7 +24,7 @@ fn read(path: &Path) -> Result<String, String> {
     }
     fs::read_to_string(path).map_err(|_| "CONTEXT_NOT_TEXT".into())
 }
-use super::mcp_protocol::{self, sensitive, safe_text, scrub, RpcFrame};
+use super::mcp_protocol::{self, safe_text, scrub, sensitive, RpcFrame};
 fn roots(root: &Path) -> Vec<PathBuf> {
     let mut paths = vec![root.join(".agents/skills"), root.join(".opencode/skills")];
     if let Some(home) = std::env::var_os("HOME") {
@@ -205,17 +208,25 @@ struct Session {
 }
 impl Drop for Session {
     fn drop(&mut self) {
-        if !self.reaped { let _ = self.terminate_confirmed(); }
+        if !self.reaped {
+            let _ = self.terminate_confirmed();
+        }
     }
 }
 impl Session {
     fn terminate_confirmed(&mut self) -> Result<(), String> {
-        if self.reaped { return Err("MCP_TERMINATION_ALREADY_REAPED".into()); }
+        if self.reaped {
+            return Err("MCP_TERMINATION_ALREADY_REAPED".into());
+        }
         let pgid = self.child.id() as i32;
         // Signal the owned group before reaping its leader. Never signal the
         // numeric id again after reaping (it could have been reused).
-        unsafe { libc::kill(-pgid, libc::SIGKILL); }
-        if let Some(scope) = &self.scope { let _ = scope.request_kill(); }
+        unsafe {
+            libc::kill(-pgid, libc::SIGKILL);
+        }
+        if let Some(scope) = &self.scope {
+            let _ = scope.request_kill();
+        }
         let _ = self.child.kill();
         // Never signal a numeric PGID again after a wait attempt with an
         // unknown receipt. The pinned cgroup remains an independent owner.
@@ -223,18 +234,27 @@ impl Session {
         self.child.wait().map_err(|_| "MCP_TERMINATION_UNKNOWN")?;
         let deadline = Instant::now() + Duration::from_secs(5);
         if let Some(scope) = &self.scope {
-            scope.terminate_and_confirm(deadline).map_err(|_| "MCP_TERMINATION_UNKNOWN")?;
+            scope
+                .terminate_and_confirm(deadline)
+                .map_err(|_| "MCP_TERMINATION_UNKNOWN")?;
         } else {
             loop {
                 if unsafe { libc::kill(-pgid, 0) } != 0
-                    && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) { break; }
-                if Instant::now() >= deadline { return Err("MCP_TERMINATION_UNKNOWN".into()); }
+                    && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+                {
+                    break;
+                }
+                if Instant::now() >= deadline {
+                    return Err("MCP_TERMINATION_UNKNOWN".into());
+                }
                 thread::sleep(Duration::from_millis(20));
             }
         }
         if let Some(reader) = &self.reader {
             while !reader.is_finished() {
-                if Instant::now() >= deadline { return Err("MCP_TERMINATION_UNKNOWN".into()); }
+                if Instant::now() >= deadline {
+                    return Err("MCP_TERMINATION_UNKNOWN".into());
+                }
                 thread::sleep(Duration::from_millis(20));
             }
         }
@@ -327,20 +347,34 @@ impl Session {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
-        let mut scope = crate::shared::process_scope::ProcessScope::prepare().map_err(|_| "MCP_CGROUP_UNAVAILABLE")?;
-        if let Some(scope) = &scope { scope.attach(&mut cmd).map_err(|_| "MCP_CGROUP_UNAVAILABLE")?; }
+        let mut scope = crate::shared::process_scope::ProcessScope::prepare()
+            .map_err(|_| "MCP_CGROUP_UNAVAILABLE")?;
+        if let Some(scope) = &scope {
+            scope
+                .attach(&mut cmd)
+                .map_err(|_| "MCP_CGROUP_UNAVAILABLE")?;
+        }
         let mut child = cmd.spawn().map_err(|_| "MCP_START_FAILED")?;
-        if let Some(scope) = &mut scope { scope.mark_spawned(); }
+        if let Some(scope) = &mut scope {
+            scope.mark_spawned();
+        }
         let terminate_start_failure = |child: &mut Child| {
             let pgid = child.id() as i32;
-            unsafe { libc::kill(-pgid, libc::SIGKILL); }
-            if let Some(scope) = &scope { let _ = scope.request_kill(); }
+            unsafe {
+                libc::kill(-pgid, libc::SIGKILL);
+            }
+            if let Some(scope) = &scope {
+                let _ = scope.request_kill();
+            }
             let _ = child.kill();
             let _ = child.wait();
         };
         let input = match child.stdin.take() {
             Some(input) => input,
-            None => { terminate_start_failure(&mut child); return Err("MCP_STDIN_FAILED".into()); }
+            None => {
+                terminate_start_failure(&mut child);
+                return Err("MCP_STDIN_FAILED".into());
+            }
         };
         let fd = input.as_raw_fd();
         // O_NONBLOCK plus poll keeps a server that stops reading from freezing the caller.
@@ -357,35 +391,43 @@ impl Session {
         }
         let output = match child.stdout.take() {
             Some(output) => output,
-            None => { terminate_start_failure(&mut child); return Err("MCP_STDOUT_FAILED".into()); }
+            None => {
+                terminate_start_failure(&mut child);
+                return Err("MCP_STDOUT_FAILED".into());
+            }
         };
         let (tx, rx) = mpsc::sync_channel(32);
-        let reader = match thread::Builder::new().name("browseros-mcp-reader".into()).spawn(move || {
-            let mut reader = BufReader::new(output);
-            loop {
-                let mut bytes = vec![];
-                match reader
-                    .by_ref()
-                    .take(LIMIT + 1)
-                    .read_until(b'\n', &mut bytes)
-                {
-                    Ok(0) => break,
-                    Ok(_) if bytes.len() as u64 <= LIMIT => {
-                        let value =
-                            serde_json::from_slice(&bytes).map_err(|_| "MCP_INVALID_FRAME".into());
-                        if tx.try_send(value).is_err() {
+        let reader = match thread::Builder::new()
+            .name("browseros-mcp-reader".into())
+            .spawn(move || {
+                let mut reader = BufReader::new(output);
+                loop {
+                    let mut bytes = vec![];
+                    match reader
+                        .by_ref()
+                        .take(LIMIT + 1)
+                        .read_until(b'\n', &mut bytes)
+                    {
+                        Ok(0) => break,
+                        Ok(_) if bytes.len() as u64 <= LIMIT => {
+                            let value = serde_json::from_slice(&bytes)
+                                .map_err(|_| "MCP_INVALID_FRAME".into());
+                            if tx.try_send(value).is_err() {
+                                break;
+                            }
+                        }
+                        _ => {
+                            let _ = tx.try_send(Err("MCP_FRAME_LIMIT".into()));
                             break;
                         }
                     }
-                    _ => {
-                        let _ = tx.try_send(Err("MCP_FRAME_LIMIT".into()));
-                        break;
-                    }
                 }
-            }
-        }) {
+            }) {
             Ok(reader) => reader,
-            Err(_) => { terminate_start_failure(&mut child); return Err("MCP_READER_START_FAILED".into()); }
+            Err(_) => {
+                terminate_start_failure(&mut child);
+                return Err("MCP_READER_START_FAILED".into());
+            }
         };
         Ok(Self {
             child,
@@ -407,7 +449,9 @@ impl Session {
         bytes.push(b'\n');
         let mut offset = 0;
         while offset < bytes.len() {
-            if self.cancellation.load(Ordering::Acquire) { return Err("MCP_CANCEL_REQUESTED".into()); }
+            if self.cancellation.load(Ordering::Acquire) {
+                return Err("MCP_CANCEL_REQUESTED".into());
+            }
             let remaining = self.deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 return Err("MCP_WRITE_TIMEOUT".into());
@@ -436,18 +480,27 @@ impl Session {
     fn rpc(&mut self, id: u64, method: &str, params: Value) -> Result<Value, String> {
         self.send(json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}))?;
         loop {
-            if self.cancellation.load(Ordering::Acquire) { return Err("MCP_CANCEL_REQUESTED".into()); }
+            if self.cancellation.load(Ordering::Acquire) {
+                return Err("MCP_CANCEL_REQUESTED".into());
+            }
             let remaining = self.deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() { return Err("MCP_TIMEOUT_OR_CLOSED".into()); }
-            let value = match self.rx.recv_timeout(remaining.min(Duration::from_millis(100))) {
+            if remaining.is_zero() {
+                return Err("MCP_TIMEOUT_OR_CLOSED".into());
+            }
+            let value = match self
+                .rx
+                .recv_timeout(remaining.min(Duration::from_millis(100)))
+            {
                 Ok(value) => value?,
                 Err(mpsc::RecvTimeoutError::Timeout) => continue,
-                Err(mpsc::RecvTimeoutError::Disconnected) => return Err("MCP_TIMEOUT_OR_CLOSED".into()),
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err("MCP_TIMEOUT_OR_CLOSED".into())
+                }
             };
             match mcp_protocol::classify_frame(value, id)? {
                 RpcFrame::Reply(result) => return Ok(result),
                 RpcFrame::ServerRequest(reply) => self.send(reply)?,
-                RpcFrame::Ignore => {},
+                RpcFrame::Ignore => {}
             }
         }
     }
@@ -456,15 +509,25 @@ impl Session {
 pub fn execute(root: &Path, storage: &Path, request: Value) -> Result<Value, String> {
     execute_cancelable(root, storage, request, Arc::new(AtomicBool::new(false)))
 }
-pub(crate) fn execute_cancelable(root: &Path, storage: &Path, request: Value, cancellation: Arc<AtomicBool>) -> Result<Value, String> {
+pub(crate) fn execute_cancelable(
+    root: &Path,
+    storage: &Path,
+    request: Value,
+    cancellation: Arc<AtomicBool>,
+) -> Result<Value, String> {
     execute_cancelable_with_admission(root, storage, request, cancellation, |_| Ok(()))
 }
 
 /// The native owner publishes intent only after local validation and
 /// immediately before starting an external MCP executable. The callback
 /// is host-only, not supplied by the request, model or server.
-pub(super) fn execute_cancelable_with_admission(root: &Path, storage: &Path, request: Value,
-    cancellation: Arc<AtomicBool>, before_spawn: impl FnOnce(&Value) -> Result<(), String>) -> Result<Value, String> {
+pub(super) fn execute_cancelable_with_admission(
+    root: &Path,
+    storage: &Path,
+    request: Value,
+    cancellation: Arc<AtomicBool>,
+    before_spawn: impl FnOnce(&Value) -> Result<(), String>,
+) -> Result<Value, String> {
     let root = root.canonicalize().map_err(|_| "CONTEXT_ROOT_INVALID")?;
     match request["action"].as_str().unwrap_or("") {
         "skills_list" => Ok(
@@ -528,7 +591,9 @@ pub(super) fn execute_cancelable_with_admission(root: &Path, storage: &Path, req
                 storage,
                 prepared.config["env_refs"].as_object(),
             )?;
-            if cancellation.load(Ordering::Acquire) { return Err("MCP_CANCEL_REQUESTED".into()); }
+            if cancellation.load(Ordering::Acquire) {
+                return Err("MCP_CANCEL_REQUESTED".into());
+            }
             before_spawn(&request)?;
             let mut session = Session::start_with_credentials(
                 &root,
@@ -538,13 +603,14 @@ pub(super) fn execute_cancelable_with_admission(root: &Path, storage: &Path, req
             )?;
             session.cancellation = cancellation;
             let outcome = (|| -> Result<Value, String> {
-            let initialized = session.rpc(1, "initialize", mcp_protocol::initialize_params())?;
-            mcp_protocol::validate_initialize(&initialized)?;
-            session.send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}))?;
-            let mut result = session.rpc(2, method, params)?;
-            // Server outputs are untrusted context and must never become permission instructions.
-            scrub(&mut result, &session.secrets);
-            Ok(json!({"result":result,"untrusted":true}))
+                let initialized =
+                    session.rpc(1, "initialize", mcp_protocol::initialize_params())?;
+                mcp_protocol::validate_initialize(&initialized)?;
+                session.send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}))?;
+                let mut result = session.rpc(2, method, params)?;
+                // Server outputs are untrusted context and must never become permission instructions.
+                scrub(&mut result, &session.secrets);
+                Ok(json!({"result":result,"untrusted":true}))
             })();
             session.terminate_confirmed()?;
             outcome
@@ -575,10 +641,16 @@ mod tests {
 
     #[test]
     fn missing_approval_never_calls_native_admission() {
-        let root = std::env::temp_dir().join(format!("browseros-mcp-admit-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("browseros-mcp-admit-{}", uuid::Uuid::new_v4()));
         fs::create_dir(&root).unwrap();
-        let result = execute_cancelable_with_admission(&root, &root, json!({"action":"mcp_call","tool":"fixture"}),
-            Arc::new(AtomicBool::new(false)), |_| panic!("invalid request must not admit a process"));
+        let result = execute_cancelable_with_admission(
+            &root,
+            &root,
+            json!({"action":"mcp_call","tool":"fixture"}),
+            Arc::new(AtomicBool::new(false)),
+            |_| panic!("invalid request must not admit a process"),
+        );
         assert_eq!(result.unwrap_err(), "MCP_EXPLICIT_APPROVAL_REQUIRED");
         fs::remove_dir_all(root).unwrap();
     }

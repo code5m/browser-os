@@ -59,8 +59,11 @@ fn send_local(body: &str) -> Result<String, String> {
     let mut buf = [0u8; 4096];
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() { return Err("AGENT_PROVIDER_TIMEOUT".into()); }
-        socket.set_read_timeout(Some(remaining.min(Duration::from_secs(25))))
+        if remaining.is_zero() {
+            return Err("AGENT_PROVIDER_TIMEOUT".into());
+        }
+        socket
+            .set_read_timeout(Some(remaining.min(Duration::from_secs(25))))
             .map_err(|_| "AGENT_PROVIDER_IO")?;
         let n = socket
             .read(&mut buf)
@@ -97,16 +100,25 @@ pub fn local_chat(req: LocalChatRequest) -> Result<LocalChatAnswer, String> {
     })
     .to_string();
     use browseros_agent_foundation::{engine::drive_text_turn, FoundationError};
-    let answer = drive_text_turn(|| -> Result<serde_json::Value, String> {
-        let text = send_local(&body)?;
-        let parsed: serde_json::Value = serde_json::from_str(&text).map_err(|_| "AGENT_PROVIDER_INVALID_RESPONSE")?;
-        let response = parsed.get("response").and_then(|x| x.as_str())
-            .ok_or("AGENT_PROVIDER_INVALID_RESPONSE")?;
-        Ok(serde_json::json!({"role":"assistant","content":response}))
-    }, || false, |error| match error {
-        FoundationError::Provider(code) if code == "MODEL_TEXT_EMPTY" => "AGENT_PROVIDER_EMPTY_RESPONSE".into(),
-        _ => "AGENT_PROVIDER_INVALID_RESPONSE".into(),
-    })?;
+    let answer = drive_text_turn(
+        || -> Result<serde_json::Value, String> {
+            let text = send_local(&body)?;
+            let parsed: serde_json::Value =
+                serde_json::from_str(&text).map_err(|_| "AGENT_PROVIDER_INVALID_RESPONSE")?;
+            let response = parsed
+                .get("response")
+                .and_then(|x| x.as_str())
+                .ok_or("AGENT_PROVIDER_INVALID_RESPONSE")?;
+            Ok(serde_json::json!({"role":"assistant","content":response}))
+        },
+        || false,
+        |error| match error {
+            FoundationError::Provider(code) if code == "MODEL_TEXT_EMPTY" => {
+                "AGENT_PROVIDER_EMPTY_RESPONSE".into()
+            }
+            _ => "AGENT_PROVIDER_INVALID_RESPONSE".into(),
+        },
+    )?;
     Ok(LocalChatAnswer {
         provider: "ollama_local".into(),
         model: req.model,
@@ -153,10 +165,18 @@ pub async fn agent_local_chat(
         let input = serde_json::json!({"provider":"ollama_local","model":request.model,
             "message":request.message,"system":request.system});
         let result = super::execution_owner::ProductionExecution::run_checkpointed_text(
-            &storage, "local_chat", run, input, || false,
-            || serde_json::to_value(local_chat(request)?).map_err(|_| "AGENT_RUN_RECEIPT_INVALID".into()))?;
+            &storage,
+            "local_chat",
+            run,
+            input,
+            || false,
+            || {
+                serde_json::to_value(local_chat(request)?)
+                    .map_err(|_| "AGENT_RUN_RECEIPT_INVALID".into())
+            },
+        )?;
         serde_json::from_value(result).map_err(|_| "AGENT_RUN_RECEIPT_INVALID".into())
     })
-        .await
-        .map_err(|_| "AGENT_PROVIDER_WORKER_FAILED".to_string())?
+    .await
+    .map_err(|_| "AGENT_PROVIDER_WORKER_FAILED".to_string())?
 }

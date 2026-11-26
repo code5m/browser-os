@@ -19,13 +19,22 @@ pub fn execute(_root: &Path, _storage: &Path, request: Value) -> Result<Value, S
     ))
 }
 
-
-pub(crate) fn execute_cancelable(root: &Path, storage: &Path, request: Value, _cancellation: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Result<Value, String> {
+pub(crate) fn execute_cancelable(
+    root: &Path,
+    storage: &Path,
+    request: Value,
+    _cancellation: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Result<Value, String> {
     execute(root, storage, request)
 }
 
 /// Unsupported platforms cannot admit any external execution.
-pub(super) fn execute_cancelable_with_admission(root: &Path, storage: &Path, request: Value,
-    cancellation: std::sync::Arc<std::sync::atomic::AtomicBool>, _before_spawn: impl FnOnce(&Value) -> Result<(), String>) -> Result<Value, String> {
+pub(super) fn execute_cancelable_with_admission(
+    root: &Path,
+    storage: &Path,
+    request: Value,
+    cancellation: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    _before_spawn: impl FnOnce(&Value) -> Result<(), String>,
+) -> Result<Value, String> {
     execute_cancelable(root, storage, request, cancellation)
 }

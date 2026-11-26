@@ -6,12 +6,12 @@ use serde_json::{json, Value};
 use std::fs;
 use std::os::windows::fs::MetadataExt;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, atomic::AtomicBool};
+use std::sync::{atomic::AtomicBool, Arc};
 
 const MAX_READ: usize = 128 * 1024;
 const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
 
-use super::mcp_protocol::{sensitive, safe_text};
+use super::mcp_protocol::{safe_text, sensitive};
 fn read(path: &Path, allowed: &Path) -> Result<String, String> {
     let data = crate::capabilities::workspace::safe_paths::read_regular(
         path,
@@ -140,15 +140,25 @@ fn skill_files(root: &Path) -> Vec<PathBuf> {
 pub fn execute(root: &Path, storage: &Path, request: Value) -> Result<Value, String> {
     execute_cancelable(root, storage, request, Arc::new(AtomicBool::new(false)))
 }
-pub(crate) fn execute_cancelable(root: &Path, storage: &Path, request: Value, cancellation: Arc<AtomicBool>) -> Result<Value, String> {
+pub(crate) fn execute_cancelable(
+    root: &Path,
+    storage: &Path,
+    request: Value,
+    cancellation: Arc<AtomicBool>,
+) -> Result<Value, String> {
     execute_cancelable_with_admission(root, storage, request, cancellation, |_| Ok(()))
 }
 
 /// The native owner publishes intent only after local validation and
 /// immediately before starting an external MCP executable. The callback
 /// is host-only, not supplied by the request, model or server.
-pub(super) fn execute_cancelable_with_admission(root: &Path, storage: &Path, request: Value,
-    cancellation: Arc<AtomicBool>, before_spawn: impl FnOnce(&Value) -> Result<(), String>) -> Result<Value, String> {
+pub(super) fn execute_cancelable_with_admission(
+    root: &Path,
+    storage: &Path,
+    request: Value,
+    cancellation: Arc<AtomicBool>,
+    before_spawn: impl FnOnce(&Value) -> Result<(), String>,
+) -> Result<Value, String> {
     if !no_reparse_path(root) {
         return Err("CONTEXT_ROOT_INVALID".into());
     }
@@ -238,7 +248,13 @@ pub(super) fn execute_cancelable_with_admission(root: &Path, storage: &Path, req
         }
         "mcp_list" => Ok(super::coding_mcp_windows::discover(&root, storage)),
         "mcp_review" | "mcp_tools" | "mcp_call" => {
-            super::coding_mcp_windows::execute_cancelable_with_admission(&root, storage, request, cancellation, before_spawn)
+            super::coding_mcp_windows::execute_cancelable_with_admission(
+                &root,
+                storage,
+                request,
+                cancellation,
+                before_spawn,
+            )
         }
         _ => Err("CONTEXT_ACTION_UNKNOWN".into()),
     }

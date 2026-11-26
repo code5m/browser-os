@@ -36,9 +36,9 @@ pub mod coding_lsp;
 #[cfg(target_os = "windows")]
 pub mod coding_mcp_windows;
 pub mod local_provider;
-pub(crate) mod mcp_review;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 mod mcp_protocol;
+pub(crate) mod mcp_review;
 #[cfg(target_os = "windows")]
 pub mod windows_sandbox;
 
