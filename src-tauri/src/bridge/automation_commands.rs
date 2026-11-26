@@ -450,14 +450,14 @@ pub fn run_command(
     expected_revision: String,
 ) -> Result<RunSnapshot, String> {
     check_invocation_source(&webview, "run_command", None, &app)?;
-    run_reviewed_command(app, id, values, expected_revision, None, || Ok(()))
+    run_reviewed_command(app, id, values, expected_revision, None, || Ok(())).map(|started| started.snapshot())
 }
 
 fn run_reviewed_command(
     app: AppHandle, id: String, values: HashMap<String, String>,
     expected_revision: String, owned_id: Option<uuid::Uuid>,
     before_spawn: impl FnOnce() -> Result<(), String>,
-) -> Result<RunSnapshot, String> {
+) -> Result<crate::script_runner::StartedRun, String> {
     crate::images::check_id(&id, "命令片段 id")?;
     let snippet = get_enabled_snippet(&app, &id)?;
     if expected_revision.len() != 64
@@ -485,8 +485,8 @@ fn run_reviewed_command(
         owned_id,
         || before_spawn().map_err(RunError::AdmissionRejected),
     );
-    let run_id = match start {
-        Ok(rid) => rid,
+    let started = match start {
+        Ok(started) => started,
         Err(e) => {
             if let RunError::InvalidParam(ref inner) = e {
                 workspace::log_audit(
@@ -498,18 +498,15 @@ fn run_reviewed_command(
             return Err(map_run_error(e));
         }
     };
-    let snapshot = table
-        .snapshot(&run_id)
-        .ok_or_else(|| "UNKNOWN_RUN".to_string())?;
     workspace::log_audit(
         &app,
         "cmd.run.start",
         format!(
             "id={} run_id={} count={} dangerous={}",
-            snippet.id, run_id, count, snippet.dangerous
+            snippet.id, started.run_id(), count, snippet.dangerous
         ),
     );
-    Ok(snapshot)
+    Ok(started)
 }
 
 /// Coding's native owner invokes the same reviewed snippet runner, including
@@ -535,8 +532,7 @@ pub(crate) fn run_command_for_coding(
         }
         before_spawn()
     })?;
-    let table = Arc::clone(&app.state::<AppState>().script_runs);
-    let completed = table.wait_for_supervisor(&started.run_id, cancellation).map_err(map_run_error)?;
+    let completed = started.wait_for_supervisor(cancellation);
     // Full command output can contain secrets. Keep it in the existing user
     // command history; persist only native receipt metadata in model context.
     Ok(serde_json::json!({

@@ -221,6 +221,33 @@ struct RunEntry {
     output: Arc<Mutex<OutputRing>>,
 }
 
+/// Native admission returns the exact supervisor handles, not a later
+/// lookup into the bounded UI history. Eviction never revokes a caller's
+/// existing ownership or substitutes another run's result.
+#[derive(Debug)]
+pub(crate) struct StartedRun {
+    run_id: String,
+    state: Arc<Mutex<RunSnapshot>>,
+    cancel: Arc<AtomicBool>,
+}
+impl StartedRun {
+    pub(crate) fn run_id(&self) -> &str { &self.run_id }
+    pub(crate) fn snapshot(&self) -> RunSnapshot {
+        self.state.lock().unwrap_or_else(|p| p.into_inner()).clone()
+    }
+    pub(crate) fn wait_for_supervisor(&self, requested: &AtomicBool) -> RunSnapshot {
+        loop {
+            if requested.load(Ordering::Acquire) { self.cancel.store(true, Ordering::Release); }
+            {
+                let snapshot = self.state.lock().unwrap_or_else(|p| p.into_inner());
+                if snapshot.status.is_terminal() { return snapshot.clone(); }
+            }
+            // Do not copy the output ring on every poll.
+            thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
+        }
+    }
+}
+
 /// 脚本进程表：`run_id -> RunEntry`。终态 entry **保留**（供状态查询），超容量只淘汰终态。
 pub struct ScriptProcessTable {
     runs: Mutex<HashMap<String, RunEntry>>,
@@ -281,21 +308,12 @@ impl ScriptProcessTable {
     /// Pin the existing supervisor's state, even if the table later evicts a
     /// finished entry. Only the supervisor publishes a terminal state.
     pub(crate) fn wait_for_supervisor(&self, run_id: &str, requested: &AtomicBool) -> Result<RunSnapshot, RunError> {
-        let (state, cancel) = {
+        let started = {
             let runs = self.lock_runs();
             let entry = runs.get(run_id).ok_or_else(|| RunError::UnknownRun(run_id.to_owned()))?;
-            (Arc::clone(&entry.state), Arc::clone(&entry.cancel))
+            StartedRun { run_id: run_id.to_owned(), state: Arc::clone(&entry.state), cancel: Arc::clone(&entry.cancel) }
         };
-        loop {
-            if requested.load(Ordering::Acquire) { cancel.store(true, Ordering::Release); }
-            {
-                let snapshot = state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-                if snapshot.status.is_terminal() { return Ok(snapshot.clone()); }
-            }
-            // A Running snapshot may hold megabytes of output. Only copy
-            // it once after terminal publication, not at every poll.
-            thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
-        }
+        Ok(started.wait_for_supervisor(requested))
     }
     /// 请求取消：**只置信号位，立即返回，不阻塞**（真正的 kill 由 supervisor 线程执行）。
     /// 对已终态的 run 为幂等 no-op（R13）。
@@ -927,6 +945,7 @@ fn start_argv_run(
     records_file: Option<PathBuf>,
 ) -> Result<String, RunError> {
     start_argv_run_owned(table, script_id, timeout_secs, argv, cwd, home_dir, app, records_file, None, || Ok(()))
+        .map(|started| started.run_id)
 }
 
 fn start_argv_run_owned(
@@ -940,7 +959,7 @@ fn start_argv_run_owned(
     records_file: Option<PathBuf>,
     owned_id: Option<uuid::Uuid>,
     before_spawn: impl FnOnce() -> Result<(), RunError>,
-) -> Result<String, RunError> {
+) -> Result<StartedRun, RunError> {
     let timeout = effective_timeout(timeout_secs)?;
 
     // --- 1) 并发检查 + 占位注册（同一锁内，原子） ---
@@ -1138,6 +1157,7 @@ fn start_argv_run_owned(
         entry.pgid = Some(pgid);
         entry.output = Arc::clone(&output);
     }
+    let started = StartedRun { run_id, state: Arc::clone(&state), cancel: Arc::clone(&cancel) };
     let st = Arc::clone(&state);
     thread::spawn(move || {
         supervise(
@@ -1157,7 +1177,7 @@ fn start_argv_run_owned(
         );
     });
 
-    Ok(run_id)
+    Ok(started)
 }
 
 /// 启动一次脚本运行，返回 `run_id`。
@@ -1227,6 +1247,7 @@ pub(crate) fn start_command_owned(
     owned_id: Option<uuid::Uuid>,
 ) -> Result<String, RunError> {
     start_command_owned_with_admission(table, snippet, values, roots, home_dir, app, records_file, owned_id, || Ok(()))
+        .map(|started| started.run_id)
 }
 
 /// Same reviewed argv/runner path; the optional host-owned fence executes
@@ -1241,7 +1262,7 @@ pub(crate) fn start_command_owned_with_admission(
     records_file: Option<PathBuf>,
     owned_id: Option<uuid::Uuid>,
     before_spawn: impl FnOnce() -> Result<(), RunError>,
-) -> Result<String, RunError> {
+) -> Result<StartedRun, RunError> {
     let argv = build_command_argv(snippet, values, roots)?;
     start_argv_run_owned(
         table, &snippet.id, snippet.timeout_secs, argv,
@@ -2071,7 +2092,18 @@ mod script_runner_tests {
                 runs.insert(id.clone(), mk_entry(&id, true));
             }
         }
+        // Model the original caller retaining its native handle before
+        // the bounded UI history evicts the terminal entry.
+        let pinned = {
+            let runs = table.lock_runs();
+            let entry = runs.get("t000").unwrap();
+            entry.state.lock().unwrap().finished_at = Some(Utc::now() - chrono::Duration::seconds(60));
+            StartedRun { run_id:"t000".into(), state:Arc::clone(&entry.state), cancel:Arc::clone(&entry.cancel) }
+        };
         table.evict_if_needed();
+        assert!(table.snapshot("t000").is_none());
+        assert_eq!(pinned.wait_for_supervisor(&AtomicBool::new(false)).run_id, "t000");
+        assert_eq!(pinned.snapshot().status, RunStatus::Succeeded);
 
         let runs = table.lock_runs();
         assert_eq!(runs.len(), MAX_TABLE_ENTRIES, "应淘汰到容量上限");
