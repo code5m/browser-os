@@ -45,4 +45,15 @@ assert.match(bridge,/requestCaptureDomainRecovery/);
 assert.match(ui,/target\.epoch,target\.sequence,target\.ticket/);
 assert.match(native,/slot\.cancel_intent = true/);
 assert.match(native,/isolated_capture::checked_png\(bytes\)/);
+// Interactive mode must capture the same live worker document only after
+// an exact native owner request, not use the shared profile or auto replay.
+assert.match(isolated,/INTERACTIVE_CHILD_FLAG/);
+assert.match(isolated,/validate_capture_command\(std::io::stdin\(\).lock\(\)\)/);
+assert.match(isolated,/endpoint\.write_all\(&\[CAPTURE_BYTE\]\)/);
+assert.match(isolated,/let mut deadline = Instant::now\(\) \+ DEADLINE/);
+assert.match(native,/fn request_interactive_capture/);
+assert.match(native,/CaptureRequest::CaptureNow/);
+assert.match(native,/CaptureMode::InteractiveAddress/);
+assert.match(bridge,/captureInteractiveNow/);
+assert.match(ui,/bridge\.captureInteractiveNow\(view\.epoch,view\.next_sequence,view\.receipt\.ticket\)/);
 console.log("FULL_PAGE_CAPTURE_CONTRACT=PASS");

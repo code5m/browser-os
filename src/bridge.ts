@@ -211,13 +211,13 @@ async function ownedTabMutation<T>(action: TabAction): Promise<T> {
   throw new Error("TAB_MUTATION_OUTCOME_UNKNOWN");
 }
 
-type CaptureMode = "current_document"|"independent_address";
+type CaptureMode = "current_document"|"independent_address"|"interactive_address";
 type CaptureReceipt = {
   ticket: string; tab_id: string; mode?: CaptureMode;
   phase: "running"|"cancel_requested"|"succeeded"|"failed"|"cancelled"|"unknown";
   path: string|null; error: string|null;
 };
-type CaptureView = {epoch:string;next_sequence:string;receipt:CaptureReceipt|null;last_completed:CaptureReceipt|null;domain_recovery_available:boolean;publishing:boolean};
+type CaptureView = {epoch:string;next_sequence:string;receipt:CaptureReceipt|null;last_completed:CaptureReceipt|null;domain_recovery_available:boolean;publishing:boolean;interactive_stage:"opening"|"awaiting_user"|"capture_requested"|null};
 const captureControl = (request: Record<string, unknown>, recovery = false) => {
   const phase = String(request.phase);
   return boundedReceiptControl<CaptureView>("capture-" + phase, JSON.stringify(request),
@@ -232,12 +232,12 @@ function ensureCaptureListener() {
     if(captureTerminal(event.payload))captureEvent=event.payload;
   }).catch(()=>{captureListenerStarted=false;});
 }
-async function ownedCapture(id: string, expectedUrl?: string): Promise<string> {
+async function ownedCapture(id: string, expectedUrl?: string, interactive = false): Promise<string> {
   ensureCaptureListener();
   const initial=await captureControl({phase:"inspect"});
   if(initial.receipt)throw Error("CAPTURE_RECOVERY_REQUIRED");
   const ticket=crypto.randomUUID();
-  const mode: CaptureMode = expectedUrl === undefined ? "current_document" : "independent_address";
+  const mode: CaptureMode = expectedUrl === undefined ? "current_document" : interactive ? "interactive_address" : "independent_address";
   const request={phase:"start",id,ticket,epoch:initial.epoch,sequence:initial.next_sequence,mode,
     ...(expectedUrl === undefined ? {} : {expected_url:expectedUrl})};
   // Start only once. A lost start reply never causes a second screenshot.
@@ -245,7 +245,9 @@ async function ownedCapture(id: string, expectedUrl?: string): Promise<string> {
   void captureControl(request).catch(error=>{startError=error;});
   // The independent renderer has a 60-second native deadline and a
   // separate retirement budget. Frontend waiting is not termination proof.
-  const deadline=performance.now()+(mode==="independent_address"?85000:35000);
+  // Interactive capture has a bounded startup, user-login and capture phase.
+  // The frontend timeout cannot establish native process exit.
+  const deadline=performance.now()+(mode==="interactive_address"?750000:mode==="independent_address"?85000:35000);
   while(performance.now()<deadline) {
     if(startError && /CAPTURE_(?:INVALID_TICKET|TAB_UNAVAILABLE|APPLICATION_SHUTTING_DOWN|STALE_EPOCH|STALE_SEQUENCE|BUSY|MODE_INVALID|ADDRESS_REQUIRED|ADDRESS_CHANGED|URL_INVALID|HTTPS_URL_REQUIRED|INDEPENDENT_UNSUPPORTED)|CAPTURE_MAIN_ONLY/.test(String(startError))) throw startError;
     let receipt=(captureEvent as CaptureReceipt|null)?.ticket===ticket?captureEvent:null;
@@ -265,7 +267,7 @@ async function ownedCapture(id: string, expectedUrl?: string): Promise<string> {
       if(receipt.phase==="succeeded"&&receipt.path)return receipt.path;
       throw Error(receipt.error||"CAPTURE_FAILED");
     }
-    await receiptDelay(400);
+    await receiptDelay(mode==="interactive_address"?1000:400);
   }
   // Cancel is advisory. The original task remains queryable until its
   // callback/worker actually finishes; UI can recover it from the menu.
@@ -1123,6 +1125,9 @@ export const bridge = {
   // Native full-document PNG capture, returns the saved local path (not image bytes).
   captureFullPage: (id: string) => ownedCapture(id),
   captureIndependentAddress: (id: string, expectedUrl: string) => ownedCapture(id,expectedUrl),
+  captureInteractiveAddress: (id: string, expectedUrl: string) => ownedCapture(id,expectedUrl,true),
+  captureInteractiveNow: (epoch:string,sequence:string,ticket:string) =>
+    captureControl({phase:"capture_now",epoch,sequence,ticket,confirmed:true},true),
   inspectCapture: () => captureControl({phase:"inspect"},true),
   fenceCapture: (epoch: string, sequence: string) => captureControl({phase:"fence",epoch,sequence},true),
   cancelCapture: (ticket: string) => captureControl({phase:"cancel",ticket},true),

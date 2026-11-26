@@ -23,23 +23,26 @@ import { createNativeMenu, menuAnchor, type NativeMenuEntry } from '../../compos
 const layout = useLayoutStore();
 const browser = useBrowserStore();
 const capturingPage = ref(false);
-async function captureCurrentPage(independent = false) {
+async function captureCurrentPage(independent = false, interactive = false) {
   const id = browser.activeTabId;
   const address = browser.url;
   if (!id || capturingPage.value || layout.mainView !== 'browser') return;
   capturingPage.value = true;
   try {
-    const path = independent
-      ? await bridge.captureIndependentAddress(id,address)
-      : await bridge.captureFullPage(id);
+    if(interactive)layout.showToast('请在独立窗口登录并打开目标页面，加载完成后回到主窗口菜单，选择“已登录，截取独立窗口当前页”。临时会话最长等待10分钟。');
+    const path = interactive
+      ? await bridge.captureInteractiveAddress(id,address)
+      : independent
+        ? await bridge.captureIndependentAddress(id,address)
+        : await bridge.captureFullPage(id);
     const directory = path.replace(/[\\/]webpage-[^\\/]+\.png$/, '');
     addHomeDirectoryShortcut(directory);
-    layout.showToast((independent?'独立地址截图':'整页截图')+'已保存；主页已加入“截图目录”');
+    layout.showToast((interactive?'独立登录截图':independent?'独立地址截图':'整页截图')+'已保存；主页已加入“截图目录”');
   } catch (error) {
     const code = String(error).match(/(?:CAPTURE|TAB_CONTROL)_[A-Z_]+/)?.[0] ?? 'CAPTURE_FAILED';
     layout.showToast(code==='CAPTURE_RECOVERY_REQUIRED'||code==='CAPTURE_OUTCOME_UNKNOWN'||code==='TAB_CONTROL_REPLY_TIMEOUT'
       ? '截图状态未确认，请通过菜单查询或取消截图任务；不会自动重试。'
-      : (independent?'独立地址截图失败：':'整页截图失败：') + code);
+      : (interactive?'独立登录截图失败：':independent?'独立地址截图失败：':'整页截图失败：') + code);
   } finally { capturingPage.value = false; }
 }
 async function recoverCapture() {
@@ -49,15 +52,31 @@ async function recoverCapture() {
     const receipt=view.receipt??view.last_completed;
     if(!receipt){layout.showToast('没有待恢复的截图任务');return;}
     if(!['succeeded','failed','cancelled'].includes(receipt.phase)){
+      if(receipt.mode==='interactive_address'&&view.interactive_stage==='awaiting_user'){
+        layout.showToast('独立窗口可操作。登录并加载目标页后，从主窗口菜单确认截图。');return;
+      }
+      if(receipt.mode==='interactive_address'&&view.interactive_stage==='opening'){
+        layout.showToast('独立登录窗口正在启动，尚未确认就绪。');return;
+      }
       layout.showToast('截图仍未获得终态：'+receipt.phase+'；原生容量保持占用');return;
     }
     if(receipt.phase==='succeeded'&&receipt.path){
       const directory=receipt.path.replace(/[\\/]webpage-[^\\/]+\.png$/, '');
       addHomeDirectoryShortcut(directory);
-      layout.showToast((receipt.mode==='independent_address'?'独立地址截图':'截图')+'已保存；主页已加入截图目录');
+      layout.showToast((receipt.mode==='interactive_address'?'独立登录截图':receipt.mode==='independent_address'?'独立地址截图':'截图')+'已保存；主页已加入截图目录');
     }else{layout.showToast('截图终态：'+(receipt.error||receipt.phase));}
     if(view.receipt)await bridge.acknowledgeCapture(receipt.ticket);
   }catch{layout.showToast('截图回执尚未确认，请重新查询');}
+}
+async function captureLoggedInDocument() {
+  try {
+    const view=await bridge.inspectCapture();
+    if(view.receipt?.mode!=='interactive_address'||view.interactive_stage!=='awaiting_user'){
+      layout.showToast('没有已就绪、等待确认的独立登录窗口；不会重复截图。');return;
+    }
+    await bridge.captureInteractiveNow(view.epoch,view.next_sequence,view.receipt.ticket);
+    layout.showToast('已请求截取独立窗口当前文档。请勿继续操作该窗口；等待截图和进程退出回执。');
+  }catch{layout.showToast('截图请求尚未确认，请查询原任务；不会自动重放。');}
 }
 const captureRestartTarget=ref<{epoch:string;sequence:string;ticket:string}|null>(null);
 async function prepareCaptureDomainRestart() {
@@ -154,6 +173,10 @@ async function toggleMoreActions(event:MouseEvent) {
     {text:'独立地址截图（隔离内存，不继承登录）',enabled:layout.mainView==='browser' && !!browser.activeTabId
       && browser.url.startsWith('https://') && !capturingPage.value,
       children:[{text:'确认：以全新配置重新打开当前 HTTPS 地址',action:()=>void captureCurrentPage(true)}]},
+    {text:'独立登录截图（临时会话、隔离内存）',enabled:layout.mainView==='browser' && !!browser.activeTabId
+      && browser.url.startsWith('https://') && !capturingPage.value,
+      children:[{text:'确认：打开独立窗口并重新登录，不复制现有会话',action:()=>void captureCurrentPage(false,true)}]},
+    {text:'已登录，截取独立窗口当前页',action:()=>void captureLoggedInDocument()},
     {text:'查询/恢复截图任务',action:()=>void recoverCapture()},
     {text:'请求取消截图任务',action:()=>void cancelCaptureTask()},
     {text:'核对卡死截图并准备故障域重启',action:()=>void prepareCaptureDomainRestart()},
