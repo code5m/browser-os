@@ -65,6 +65,9 @@ export const useSettingsStore = defineStore("settings", () => {
   // 自适应资源休眠：默认关。开启后按内存压力缩短后台闲置阈值，
   // 保护正在编辑/播放/选择文件的页面，销毁闲置 WebView 与隐藏 Grid 子进程。
   const tabHibernation = ref(false);
+  const tabHibernationBusy = ref(false);
+  const tabHibernationKnown = ref(false);
+  const tabHibernationError = ref("");
   const actionLabels = ACTION_LABELS;
 
   const currentKeymap = computed(() => KEYMAP_SCHEMES[keymapScheme.value]);
@@ -94,10 +97,21 @@ export const useSettingsStore = defineStore("settings", () => {
     } catch {}
   }
 
-  function setTabHibernation(v: boolean) {
-    tabHibernation.value = v;
-    save();
-    bridge.setTabHibernation(v).catch(() => {});
+  async function setTabHibernation(v: boolean) {
+    if (tabHibernationBusy.value) return;
+    tabHibernationBusy.value = true;
+    tabHibernationKnown.value = false;
+    tabHibernationError.value = "";
+    try {
+      await bridge.setTabHibernation(v);
+      tabHibernation.value = v;
+      tabHibernationKnown.value = true;
+      save();
+    } catch {
+      // Do not publish the desired preference as applied when the native
+      // policy gate is busy or the transport outcome was not confirmed.
+      tabHibernationError.value = "原生休眠开关未确认；当前显示上次保存的设置，请手动重新应用。";
+    } finally { tabHibernationBusy.value = false; }
   }
 
   function applyTheme() {
@@ -118,12 +132,15 @@ export const useSettingsStore = defineStore("settings", () => {
   load();
   applyTheme();
   // 启动时把持久化的休眠开关同步给后端（后端默认关）
-  if (tabHibernation.value) bridge.setTabHibernation(true).catch(() => {});
+  void setTabHibernation(tabHibernation.value);
 
   return {
     theme,
     keymapScheme,
     tabHibernation,
+    tabHibernationBusy,
+    tabHibernationKnown,
+    tabHibernationError,
     actionLabels,
     currentKeymap,
     setTheme,

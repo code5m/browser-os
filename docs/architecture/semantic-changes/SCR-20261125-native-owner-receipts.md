@@ -395,3 +395,10 @@ Source-only scope; no compilation, tests, install/runtime validation, workflow d
 - Native read result encoding stays on the original bounded blocking worker; oversize is rejected without constructing an unlimited encoded copy on the async runtime. Recheck the cancellation/deadline after bounded encoding.
 - Local-return checkpoint still records the terminal local return even when an oversized or credential-bearing payload must be withheld; no replay is authorized. Existing decoded values and lower-level provider/OS allocations are not hard memory bounded by this change.
 - Source-only implementation; compilation, tests, workflow changes and master merge not performed.
+
+## 2026-11-26 — Fence automatic hibernation against policy changes
+
+- Each automatic embedded, independent-tab and Grid reclaim captures the enabled policy revision. A final nonblocking policy guard rechecks the same revision and shutdown state before destructive native admission; a disable/re-enable cycle cannot reuse an earlier probe. Policy setting uses the same guard and refuses busy rather than acknowledging a change concurrent with retirement admission.
+- Windows Grid sweeps no longer retain the lifecycle lock across IPC hide/probe waits; use the same final nonblocking lifecycle admission pattern as Linux. Explicit user-requested suspension is unaffected.
+- Settings publish and persist a changed preference only after native acknowledgement. Pending, rejected and unknown settings are visible, with explicit manual reapply. Clarify that independent tabs and Grid are automatic blank-only; embedded tabs retain their existing URL/scroll restoration.
+- This serializes host policy changes with automatic reclaim admission, not arbitrary page-internal mutation. Source only; no build, test, CI workflow change, default mode enablement or master merge.

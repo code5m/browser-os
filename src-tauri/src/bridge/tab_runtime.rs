@@ -736,6 +736,30 @@ fn accepted_hibernation_scroll(snapshot: &serde_json::Value) -> Option<(f64, f64
     (x.is_finite() && y.is_finite()).then_some((x, y))
 }
 
+// Policy generations prevent a disable/re-enable cycle from authorizing
+// a probe collected under the earlier setting. The final admission guard
+// serializes acknowledged policy changes with destructive reclaim.
+static HIBERNATION_POLICY_REVISION: std::sync::Mutex<u64> = std::sync::Mutex::new(1);
+
+pub(crate) fn hibernation_policy_revision(app: &AppHandle) -> Option<u64> {
+    let revision = HIBERNATION_POLICY_REVISION.try_lock().ok()?;
+    let state = app.state::<AppState>();
+    (state.hibernation_enabled.load(Ordering::Acquire)
+        && !state.shutdown_requested.load(Ordering::Acquire)).then_some(*revision)
+}
+
+pub(crate) fn claim_hibernation_policy(app: &AppHandle, expected: u64)
+    -> Option<std::sync::MutexGuard<'static, u64>>
+{
+    let revision = HIBERNATION_POLICY_REVISION.try_lock().ok()?;
+    let state = app.state::<AppState>();
+    if *revision != expected || !state.hibernation_enabled.load(Ordering::Acquire)
+        || state.shutdown_requested.load(Ordering::Acquire) {
+        return None;
+    }
+    Some(revision)
+}
+
 /// Settings remain explicit opt-in: adaptive hibernation never destroys a page
 /// until the user enables the existing browser resource policy.
 #[tauri::command]
@@ -746,9 +770,13 @@ pub fn set_tab_hibernation(
 ) -> Result<(), String> {
     crate::shared::native_legacy_policy::require_main(&webview, "set_tab_hibernation")?;
 
-    app.state::<AppState>()
-        .hibernation_enabled
-        .store(enabled, Ordering::Relaxed);
+    let mut revision = HIBERNATION_POLICY_REVISION.try_lock()
+        .map_err(|_| "TAB_HIBERNATION_POLICY_BUSY")?;
+    let state = app.state::<AppState>();
+    if state.hibernation_enabled.load(Ordering::Acquire) != enabled {
+        *revision = revision.checked_add(1).ok_or("TAB_HIBERNATION_POLICY_EXHAUSTED")?;
+        state.hibernation_enabled.store(enabled, Ordering::Release);
+    }
     eprintln!("[hibernation] 自适应资源休眠 = {}", enabled);
     Ok(())
 }
@@ -825,6 +853,7 @@ fn hibernate_tab(app: &AppHandle, id: &str, idle_window: std::time::Duration) ->
     if super::isolated_tabs::route(id).is_some() {
         return super::isolated_tabs::hibernate_blank(app, id, idle_window);
     }
+    let Some(policy_revision) = hibernation_policy_revision(app) else { return false; };
     let state = app.state::<AppState>();
     let expected_url = match state.tabs.lock().unwrap().get(id) {
         Some(tab) => tab.url.clone(),
@@ -834,7 +863,8 @@ fn hibernate_tab(app: &AppHandle, id: &str, idle_window: std::time::Duration) ->
     let still_idle = || {
         // The user may disable the policy or navigate/activate the tab while a
         // two-second WebKit snapshot is in flight. Cancel on any such change.
-        if !state.hibernation_enabled.load(Ordering::Relaxed)
+        if !state.hibernation_enabled.load(Ordering::Acquire)
+            || state.shutdown_requested.load(Ordering::Acquire)
             || state.active_tab.lock().unwrap().as_deref() == Some(id)
         {
             return false;
@@ -876,6 +906,7 @@ fn hibernate_tab(app: &AppHandle, id: &str, idle_window: std::time::Duration) ->
     let Ok(_transition) = reserve_tab_transition(id) else {
         return false;
     };
+    let Some(_policy) = claim_hibernation_policy(app, policy_revision) else { return false; };
     if !still_idle() || !manager.is_current_capture_document(&id.to_string(), &document) {
         return false;
     }

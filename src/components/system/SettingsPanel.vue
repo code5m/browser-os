@@ -90,11 +90,17 @@ onMounted(refreshDefaultBrowser);
         <input
           type="checkbox"
           :checked="settings.tabHibernation"
-          @change="settings.setTabHibernation(($event.target as HTMLInputElement).checked)"
+          :disabled="settings.tabHibernationBusy"
+          @click.prevent="settings.setTabHibernation(!settings.tabHibernation)"
         />
         <span class="setting-desc">
-          默认关闭。开启后根据可用内存自动采用 10 分钟 / 2 分钟 / 30 秒闲置阈值，休眠后台页签和已隐藏宫格并释放 WebView/子进程。正在播放媒体、焦点编辑器、未保存表单和文件选择会阻止休眠；仅恢复网址与滚动位置，不保存表单内容。
+          默认关闭。开启后根据可用内存自动采用 10 分钟 / 2 分钟 / 30 秒闲置阈值。嵌入式页签尝试保留网址与滚动位置；独立进程页签及宫格自动回收仅限通过安全检查的空白页，不保存表单内容。
         </span>
+        <span v-if="settings.tabHibernationBusy" role="status">等待原生设置回执…</span>
+        <template v-else-if="!settings.tabHibernationKnown">
+          <span role="status">{{settings.tabHibernationError || '原生开关状态未确认'}}</span>
+          <button type="button" @click="settings.setTabHibernation(settings.tabHibernation)">重新应用保存设置</button>
+        </template>
       </div>
     </div>
 

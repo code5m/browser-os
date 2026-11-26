@@ -1457,6 +1457,7 @@ impl GridProcessManager {
         let _operation = self.lifecycle.enter()?;
         let Ok(_visibility) = self.visibility_dispatch.try_lock() else { return Ok(false); };
         let app = self.app().ok_or("TAB_RENDERER_HOST_UNAVAILABLE")?;
+        let Some(policy_revision) = crate::bridge::hibernation_policy_revision(&app) else { return Ok(false); };
         let state = app.state::<crate::bridge::AppState>();
         let id = crate::grid_ipc::renderer_label(index);
         let eligible = |child: &GridChildHandle| {
@@ -1489,6 +1490,7 @@ impl GridProcessManager {
         let Ok(_gate) = self.lifecycle_lock.try_lock() else { return Ok(false); };
         self.lifecycle.check()?;
         {
+            let Some(_policy) = crate::bridge::claim_hibernation_policy(&app, policy_revision) else { return Ok(false); };
             let mut children = self.children.lock().unwrap();
             let Some(child) = children.get(&index) else { return Ok(false); };
             if !Arc::ptr_eq(&child.comms, &comms) || !comms.is_current(binding.generation)
@@ -2324,13 +2326,15 @@ impl GridProcessManager {
         let Ok(_operation) = self.lifecycle.enter() else {
             return Vec::new();
         };
-        let _lifecycle = self.lifecycle_lock.lock().unwrap();
+        if self.ensure_cleanup().is_err() { return Vec::new(); }
         if self.lifecycle.is_stopping() {
             return Vec::new();
         }
         if max_children == 0 {
             return Vec::new();
         }
+        let Some(app) = self.app() else { return Vec::new(); };
+        let Some(policy_revision) = crate::bridge::hibernation_policy_revision(&app) else { return Vec::new(); };
         let now = std::time::Instant::now();
         let mut candidates: Vec<(std::time::Instant, u32)> = self
             .children
@@ -2387,8 +2391,10 @@ impl GridProcessManager {
                 Some(binding.navigation_revision), &command, 1500), Ok(Some(encoded)) if grid_hibernation_probe_safe(&encoded)) {
                 continue;
             }
-            // Windows already holds lifecycle_lock for this sweep.
+            // Like Linux, do not hold the lifecycle lock over IPC probes.
+            let Ok(_gate) = self.lifecycle_lock.try_lock() else { continue; };
             if self.lifecycle.is_stopping() { break; }
+            let Some(_policy) = crate::bridge::claim_hibernation_policy(&app, policy_revision) else { break; };
             let mut children = self.children.lock().unwrap();
             let still_eligible = children.get(&index).is_some_and(|child|
                 Arc::ptr_eq(&child.comms, &comms)
