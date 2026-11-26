@@ -88,7 +88,14 @@ export const useBrowserStore = defineStore("browser", () => {
     return (carry ? "1" : "") + digits.join("");
   }
 
-  async function recoverNativeTabs() {
+  // A remounted frontend has no authority to cancel a previous native
+  // operation. Initial attachment can observe or acknowledge terminal
+  // receipts, but cancellation remains an explicit recovery action.
+  async function initializeNativeTabs() {
+    await recoverNativeTabs(false);
+  }
+
+  async function recoverNativeTabs(allowCancellation = true) {
     if (tabRecoveryBusy.value) return;
     tabRecoveryBusy.value = true;
     // Recovery supersedes all queued user intents. Do not dispatch one while
@@ -98,14 +105,15 @@ export const useBrowserStore = defineStore("browser", () => {
       let view = await bridge.inspectTabMutation();
       const receipt = view.receipt;
       if (runningMutation) {
-        if (receipt?.phase === "prepared" || receipt?.phase === "running") {
+        if (allowCancellation && (receipt?.phase === "prepared" || receipt?.phase === "running")) {
           view = await bridge.cancelTabMutation(receipt.ticket);
         }
-        tabRecoveryMessage.value = "本地操作仍持有执行权；已查询/请求取消，等待原生终态。";
+        tabRecoveryMessage.value = "本地操作仍持有执行权；等待原生终态。";
         return;
       }
       tabRecoveryRequired.value = true;
-      if (receipt?.phase === "prepared" || receipt?.phase === "running") {
+      tabNativeState.value = "unknown";
+      if (allowCancellation && (receipt?.phase === "prepared" || receipt?.phase === "running")) {
         view = await bridge.cancelTabMutation(receipt.ticket);
       }
       const current = view.receipt;
@@ -698,6 +706,7 @@ export const useBrowserStore = defineStore("browser", () => {
     tabRecoveryBusy,
     tabRecoveryMessage,
     recoverNativeTabs,
+    initializeNativeTabs,
     aiFiltered,
     tabNew,
     consumeActiveBlankTab,

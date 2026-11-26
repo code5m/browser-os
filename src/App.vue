@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onBeforeUnmount, onErrorCaptured, ref } from "vue";
+import { computed, nextTick, onMounted, onBeforeUnmount, onErrorCaptured, ref, watch } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { bridge } from "./bridge";
 import { recordShellHeartbeat, recordNavigationApplied } from "./application/shellDiagnostics";
@@ -78,6 +78,7 @@ const appHeight = ref<string>("100vh");
 let unlistenResize: (() => void) | null = null;
 let unlistenChildShortcut: (() => void) | null = null;
 let unlistenExitStatus: (() => void) | null = null;
+let stopPendingOpenWatch: (() => void) | null = null;
 let uiHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let layoutBusy = false;
 
@@ -131,6 +132,7 @@ onBeforeUnmount(() => {
   unlistenResize?.();
   unlistenChildShortcut?.();
   unlistenExitStatus?.();
+  stopPendingOpenWatch?.();
   if (uiHeartbeatTimer !== null) clearInterval(uiHeartbeatTimer);
   uiHeartbeatTimer = null;
 });
@@ -159,6 +161,9 @@ onMounted(async () => {
   if (!(window as any).__TAURI_INTERNALS__) {
     return;
   }
+  // Reattach to the native Browser owner after a frontend reload.
+  // This does not replay an old URL or cancel an outstanding operation.
+  await browser.initializeNativeTabs();
   unlistenExitStatus = await bridge.onExitStatus((event) => {
     if (event.phase === "blocked") {
       layout.setExitSaveNotice("退出已取消：会话保存未完成，页签仍保留。请稍后重试；若反复失败，请检查存储空间和权限。");
@@ -236,20 +241,45 @@ onMounted(async () => {
   });
   // M1-4：外部打开 URL（xdg-open / 默认浏览器路由）。后端统一进 pending 队列，
   // 前端拉取即清空（天然去重）；就绪后新到的 URL 经 pending 提示触发立即拉取。
+  // Keep at most one dequeued native batch. While recovery is required,
+  // leave later URLs in the native queue. Never replay an attempted URL
+  // whose receipt may be unknown, and retain only undispatched entries.
+  let pendingOpenUrls: string[] = [];
+  let pendingOpenWake = false;
+  let pendingOpenDraining = false;
+  const openBlocked = () => browser.tabRecoveryRequired || browser.tabRecoveryBusy;
   async function drainPendingOpenUrls() {
+    pendingOpenWake = true;
+    if (pendingOpenDraining || openBlocked()) return;
+    pendingOpenDraining = true;
     try {
-      const urls = await bridge.takePendingOpenUrls();
-      for (const url of urls) {
-        layout.showToast("🌐 外部链接已打开");
-        browser.tabNew(url);
+      while (!openBlocked() && (pendingOpenWake || pendingOpenUrls.length)) {
+        if (!pendingOpenUrls.length) {
+          pendingOpenWake = false;
+          pendingOpenUrls = await bridge.takePendingOpenUrls();
+          if (openBlocked()) break;
+        }
+        const url = pendingOpenUrls.shift();
+        if (url === undefined) continue;
+        try {
+          if (await browser.tabNew(url)) layout.showToast("🌐 外部链接已打开");
+          else layout.showToast("外部链接未打开，请重新发起。");
+        } catch {
+          layout.showToast("外部链接打开未确认，请核对页签后重新发起。");
+        }
       }
-    } catch (e) {
-      // eslint-disable-next-line no-console
-      console.warn("[open-url] drain pending failed", e);
+    } catch {
+      console.warn("[open-url] drain pending failed");
+    } finally {
+      pendingOpenDraining = false;
     }
   }
+  stopPendingOpenWatch = watch(
+    () => [browser.tabRecoveryRequired, browser.tabRecoveryBusy],
+    () => { if (!openBlocked()) void drainPendingOpenUrls(); },
+  );
   bridge.onOpenUrlPending(() => {
-    drainPendingOpenUrls();
+    void drainPendingOpenUrls();
   });
   bridge.onOpenUrlRejected(() => {
     layout.showToast("⚠️ 已拒绝非 http/https 链接");
@@ -334,7 +364,8 @@ onMounted(async () => {
   window.addEventListener("keydown", onGlobalKeydown);
 
   // STAGE H-C：改走 browser 能力 public 动作，Shell 不再直连 native 销毁重资源（NATIVE-03）。
-  window.addEventListener("beforeunload", () => browser.closeBrowser().catch(() => {}));
+  // A frontend unload is not a native shutdown or a user close intent.
+  // The native graceful-exit coordinator owns actual destruction.
   // Exit saving is owned by the native reversible preflight. An unload
   // callback cannot await failures and must not race or repeat that write.
   window.addEventListener("click", art.closeCtx);

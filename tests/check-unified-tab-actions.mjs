@@ -201,6 +201,39 @@ function callerView(store) {
   assert.deepEqual(closed, ["hung", "later"]);
 }
 {
+  const { browser, native, calls } = fixture();
+  let sequence = "1";
+  const view = () => ({epoch:"reload-epoch", next_sequence:sequence,
+    internal_active:false, active_known:true, active_tab_id:"existing", receipt:null});
+  native.inspectTabMutation = async () => view();
+  native.fenceTabMutation = async (epoch, expected) => {
+    assert.equal(epoch, "reload-epoch");
+    assert.equal(expected, "1");
+    sequence = "2"; return view();
+  };
+  native.reconcileTabList = async () => [{id:"existing", url:"https://existing.test", title:"Existing"}];
+  await browser.initializeNativeTabs();
+  assert.equal(browser.tabNativeState, "ready");
+  assert.equal(browser.activeTabId, "existing");
+  assert.equal(browser.tabs.length, 1);
+  assert.equal(browser.recentlyClosed.length, 0);
+  assert.ok(!calls.some(([kind]) => kind === "new" || kind === "close"), "reattach must not replay or destroy native tabs");
+}
+{
+  const { browser, native, calls } = fixture();
+  let cancelled = 0;
+  native.inspectTabMutation = async () => ({epoch:"reload-epoch",next_sequence:"1",
+    internal_active:false,active_known:false,active_tab_id:null,receipt:{ticket:"old-ticket",phase:"running"}});
+  native.cancelTabMutation = async () => { cancelled++; throw Error("startup must not cancel"); };
+  native.reconcileTabList = async () => { throw Error("cannot read an unresolved owner"); };
+  await browser.initializeNativeTabs();
+  assert.equal(cancelled, 0);
+  assert.equal(browser.tabNativeState, "unknown");
+  assert.equal(browser.tabRecoveryRequired, true);
+  await assert.rejects(browser.tabNew("https://new.test"), /TAB_NATIVE_OPERATION_STALLED/);
+  assert.ok(!calls.some(([kind]) => kind === "new" || kind === "close"));
+}
+{
   const { browser, native } = fixture();
   browser.tabs.push({ id: "held", url: "https://fixture.test" }, { id: "current", url: "https://current.test" });
   browser.activeTabId = "current";
