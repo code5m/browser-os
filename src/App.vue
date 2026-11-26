@@ -78,6 +78,7 @@ const appHeight = ref<string>("100vh");
 let unlistenResize: (() => void) | null = null;
 let unlistenChildShortcut: (() => void) | null = null;
 let unlistenExitStatus: (() => void) | null = null;
+let unlistenRendererRecovery: (() => void) | null = null;
 let stopPendingOpenWatch: (() => void) | null = null;
 let uiHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let layoutBusy = false;
@@ -132,6 +133,7 @@ onBeforeUnmount(() => {
   unlistenResize?.();
   unlistenChildShortcut?.();
   unlistenExitStatus?.();
+  unlistenRendererRecovery?.();
   stopPendingOpenWatch?.();
   if (uiHeartbeatTimer !== null) clearInterval(uiHeartbeatTimer);
   uiHeartbeatTimer = null;
@@ -237,6 +239,9 @@ onMounted(async () => {
   // 不再挂接任何关闭拦截器 / 确认框（旧的关闭确认弹窗已撤销）。
   bridge.onTabRecovery((d) => browser.handleTabRecovery(d));
   bridge.onIsolatedRendererExited((event) => { void browser.handleIsolatedRendererExited(event); });
+  unlistenRendererRecovery = await bridge.onIsolatedRendererRecoveryChanged((event) => {
+    if (typeof event?.id === "string") void browser.refreshRendererState(event.id);
+  });
   bridge.onNewTabRequest((u) => {
     setTimeout(() => browser.tabNew(u.url), 0);
   });

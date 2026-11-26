@@ -1237,9 +1237,22 @@ impl GridProcessManager {
                 return Err("TAB_RENDERER_RECOVERY_STALE".into());
             }
         }
-        self.lifecycle.wait_route_retired_until(
+        // Both capture and Browser fault recovery use this retirement owner.
+        // Publish an advisory state change, not an exit code or a success
+        // receipt. The UI must re-inspect and never replay an old operation.
+        let notify = || {
+            if let Some(app) = self.app() {
+                let _ = app.emit_to("main", "isolated-tab-renderer-recovery-changed",
+                    serde_json::json!({"id": crate::grid_ipc::renderer_label(index)}));
+            }
+        };
+        notify();
+        let result = self.lifecycle.wait_route_retired_until(
             index, std::time::Instant::now() + std::time::Duration::from_secs(5),
-        )
+        );
+        drop(_gate);
+        notify();
+        result
     }
 
     /// Background reclaim is intentionally limited to pristine blank ordinary

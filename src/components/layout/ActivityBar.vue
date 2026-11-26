@@ -68,6 +68,11 @@ async function recoverCapture() {
       const directory=receipt.path.replace(/[\\/]webpage-[^\\/]+\.png$/, '');
       addHomeDirectoryShortcut(directory);
       layout.showToast((receipt.mode==='interactive_address'?'独立登录截图':receipt.mode==='independent_address'?'独立地址截图':'截图')+'已保存；主页已加入截图目录');
+    }else if(receipt.error==='CAPTURE_RENDERER_RETIRED_REACTIVATE'){
+      // Recovery is terminal for the old capture only. Re-inspect Browser
+      // rather than marking a possibly already replaced logical tab absent.
+      await browser.refreshRendererState(receipt.tab_id);
+      layout.showToast('原截图宿主已回收；请核对页签状态后重新激活。不会重放截图。');
     }else if(receipt.error==='CAPTURE_INTERACTIVE_PROFILE_CLEANUP_FAILED'){
       layout.showToast('独立登录进程已退出，但临时登录资料清理失败；未发布截图。请查看应用日志中的保留目录。');
     }else{layout.showToast('截图终态：'+(receipt.error||receipt.phase));}
@@ -106,6 +111,7 @@ async function confirmCaptureDomainRestart() {
   if(!target)return;
   try {
     await bridge.requestCaptureDomainRecovery(target.epoch,target.sequence,target.ticket,target.scope);
+    if(target.scope==="renderer")void browser.refreshRendererState(target.tabId);
     layout.showToast(target.scope==="renderer"?'已请求仅回收原独立页签；请查询截图任务确认原进程退出，不会重放截图。':'已请求监管器核对原故障域并重启；不会重放截图。');
   }catch{layout.showToast('恢复请求未确认或原任务/范围已变化，请重新核对；不会自动重试。');}
 }

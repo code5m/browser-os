@@ -885,6 +885,7 @@ export const useBrowserStore = defineStore("browser", () => {
     isolatedRendererMode,
     rendererUnavailable,
     rendererStateLabel,
+    refreshRendererState,
     tabRecoveryRequired,
     tabRecoveryBusy,
     tabRecoveryMessage,

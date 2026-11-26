@@ -1172,6 +1172,9 @@ export const bridge = {
   // Only the native supervisor produces this advisory process-exit event.
   onIsolatedRendererExited: (cb: (event: { id: string; exit_code: number }) => void) =>
     listen<{ id: string; exit_code: number }>("isolated-tab-renderer-exited", (e) => cb(e.payload)),
+  // Advisory recovery invalidation shared by screenshot and tab mutation owners.
+  onIsolatedRendererRecoveryChanged: (cb: (event: { id: string }) => void) =>
+    listen<{ id: string }>("isolated-tab-renderer-recovery-changed", (e) => cb(e.payload)),
 
   // ====== M1-4 默认浏览器接入（外部打开 URL 路由） ======
   // 拉取并清空后端 pending 队列（冷启动 argv / 单实例转发 / RunEvent::Opened
