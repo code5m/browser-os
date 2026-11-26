@@ -183,6 +183,17 @@ function callerView(store) {
   assert.equal(browser.recentlyClosed.length, 0, "unknown is not a completed close");
   finish();
   await new Promise(resolve => setImmediate(resolve));
+  assert.equal(browser.tabNativeState, "unknown", "late settlement does not bypass native recovery");
+  await assert.rejects(browser.tabClose("later"), /TAB_NATIVE_OPERATION_STALLED/);
+  let sequence = "1";
+  const controlView = () => ({epoch:"fixture-epoch", next_sequence:sequence, internal_active:false, active_known:true, active_tab_id:null, receipt:null});
+  native.inspectTabMutation = async () => controlView();
+  native.fenceTabMutation = async (epoch, expected) => {
+    assert.equal(epoch, "fixture-epoch"); assert.equal(expected, sequence);
+    sequence = "2"; return controlView();
+  };
+  native.reconcileTabList = async () => [{ id: "later", url: "https://later.test" }];
+  await browser.recoverNativeTabs();
   assert.equal(browser.tabNativeState, "ready");
   assert.deepEqual(closed, ["hung"], "discarded requests cannot reappear after a late receipt");
   assert.equal(browser.tabs.some(tab => tab.id === "hung"), false);

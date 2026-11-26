@@ -124,6 +124,8 @@ export const useFileStore = defineStore("files", () => {
   let editorJournalTimer: ReturnType<typeof setTimeout> | null = null;
   let inlineJournalTimer: ReturnType<typeof setTimeout> | null = null;
   let journalChain: Promise<void> = Promise.resolve();
+  let pendingEditorJournal: (() => void) | null = null;
+  let pendingInlineJournal: (() => void) | null = null;
   // An attempted save has three independent facts: the original baseline,
   // the user's local text, and the most recently observed disk contents.
   // Keep them separate even when the native write may have succeeded.
@@ -305,7 +307,7 @@ export const useFileStore = defineStore("files", () => {
     try {
       documentPathKey("", target);
       release = documentOwnership.beginSave("workspace-overlay", target);
-      if (editorJournalTimer) { clearTimeout(editorJournalTimer); editorJournalTimer = null; }
+      if (editorJournalTimer) { clearTimeout(editorJournalTimer); editorJournalTimer = null; pendingEditorJournal = null; }
       await queueJournalStrict(async () => {
         const saved = await bridge.editorDraftUpdateRecovered(recovery.id, recovery.revision, text);
         recovery.revision = saved.revision;
@@ -330,10 +332,15 @@ export const useFileStore = defineStore("files", () => {
   }
   // Serialize same-process saves and clears; otherwise a late debounced save
   // could recreate a discarded or already-saved draft after successful save.
-  watch([editorFilePath, fileContent, editorSavedContent, editorRecoverySession], () => {
+  watch([editorFilePath, fileContent, editorSavedContent, editorRecoverySession], (_current, previous) => {
     documentOwnership.replace("workspace-overlay", editorFilePath.value
       ? [{path:editorFilePath.value, dirty:editorDirty.value}] : []);
     if (editorJournalTimer) clearTimeout(editorJournalTimer);
+    editorJournalTimer = null;
+    // Changing documents must enqueue the old captured draft before the
+    // new document can replace its debounce. Never read the new buffer here.
+    if (previous && previous[0] !== editorFilePath.value) pendingEditorJournal?.();
+    pendingEditorJournal = null;
     if (!editorDirty.value) return;
     const path = editorFilePath.value;
     const content = fileContent.value;
@@ -341,8 +348,9 @@ export const useFileStore = defineStore("files", () => {
     // Capture the recovery edit session as well as the content. A later file
     // switch cannot redirect this queued write to another encrypted journal.
     const recovery = editorRecoverySession.value;
-    editorJournalTimer = setTimeout(() => {
+    pendingEditorJournal = () => {
       editorJournalTimer = null;
+      pendingEditorJournal = null;
       void queueJournal(async () => {
         if (recovery) {
           const saved = await bridge.editorDraftUpdateRecovered(recovery.id, recovery.revision, content);
@@ -351,19 +359,26 @@ export const useFileStore = defineStore("files", () => {
           await bridge.editorDraftSave(path, editorDraftSession, baseline, content);
         }
       });
-    }, 650);
+    };
+    editorJournalTimer = setTimeout(pendingEditorJournal, 650);
   }, { flush: "sync" });
-  watch([inlineFile, inlineText, inlineSavedText], () => {
+  watch([inlineFile, inlineText, inlineSavedText], (_current, previous) => {
     documentOwnership.replace("workspace-inline", inlineFile.value
       ? [{path:inlineFile.value, dirty:inlineText.value !== inlineSavedText.value}] : []);
     if (inlineJournalTimer) clearTimeout(inlineJournalTimer);
+    inlineJournalTimer = null;
+    if (previous && previous[0] !== inlineFile.value) pendingInlineJournal?.();
+    pendingInlineJournal = null;
     if (!inlineFile.value || inlineText.value === inlineSavedText.value) return;
     const path = inlineFile.value;
     const content = inlineText.value;
     const baseline = inlineSavedText.value;
-    inlineJournalTimer = setTimeout(() => {
+    pendingInlineJournal = () => {
+      inlineJournalTimer = null;
+      pendingInlineJournal = null;
       void queueJournal(() => bridge.editorDraftSave(path, inlineDraftSession, baseline, content));
-    }, 650);
+    };
+    inlineJournalTimer = setTimeout(pendingInlineJournal, 650);
   }, { flush: "sync" });
   let previewImageGeneration = 0;
   let previewImageActive = 0;
@@ -918,7 +933,9 @@ export const useFileStore = defineStore("files", () => {
       await saveWithDraft(path, inlineDraftSession, baseline, text);
     } catch (error: any) {
       void inspectSaveConflict("inline", path, documentRevision, String(error).slice(0, 160));
-      layout.showToast("保存结果未确认；保留本地编辑，请使用冲突恢复区检查磁盘版本。");
+      layout.showToast(!releaseSave && String(error).includes("DOCUMENT_PATH_CHANGED")
+        ? "原文件已移动或删除；保留本地草稿，请另存为新文件。"
+        : "保存结果未确认；保留本地编辑，请使用冲突恢复区检查磁盘版本。");
       return;
     } finally {
       releaseSave?.();
@@ -927,11 +944,14 @@ export const useFileStore = defineStore("files", () => {
     if (stillSameInlineFile) {
       inlineConflict.value = null;
       inlineSavedText.value = text;
-      if (inlineJournalTimer) { clearTimeout(inlineJournalTimer); inlineJournalTimer = null; }
+      if (inlineJournalTimer) { clearTimeout(inlineJournalTimer); inlineJournalTimer = null; pendingInlineJournal = null; }
     }
     // Snapshot before enqueueing; global inlineText can belong to another file
     // by the time an earlier encrypted journal operation finishes.
-    const currentText = stillSameInlineFile ? inlineText.value : text;
+    // A different document now owns the surface. Preserve its predecessor's
+    // queued recovery record rather than clearing bytes from a stale completion.
+    if (!stillSameInlineFile) return;
+    const currentText = inlineText.value;
     try {
       await queueJournalStrict(() => {
         // A reopened instance of the same path owns the surface journal now.
@@ -1257,9 +1277,12 @@ export const useFileStore = defineStore("files", () => {
       if (stillSameEditorFile) {
         editorConflict.value = null;
         editorSavedContent.value = text;
-        if (editorJournalTimer) { clearTimeout(editorJournalTimer); editorJournalTimer = null; }
+        if (editorJournalTimer) { clearTimeout(editorJournalTimer); editorJournalTimer = null; pendingEditorJournal = null; }
       }
-      const currentText = stillSameEditorFile ? fileContent.value : text;
+      // Preserve the departed document's recovery journal when a late save
+      // finishes after navigation. Its baseline may need explicit reconciliation.
+      if (!stillSameEditorFile) return;
+      const currentText = fileContent.value;
       try {
         await queueJournalStrict(() => {
           if (editorFilePath.value === path && editorDocumentRevision !== documentRevision) return Promise.resolve();
@@ -1279,7 +1302,9 @@ export const useFileStore = defineStore("files", () => {
       layout.showToast("已保存: " + documentPathName(path));
     } catch (error: any) {
       void inspectSaveConflict("editor", path, documentRevision, String(error).slice(0, 160));
-      layout.showToast("保存结果未确认；保留本地编辑，请使用冲突恢复区检查磁盘版本。");
+      layout.showToast(!releaseSave && String(error).includes("DOCUMENT_PATH_CHANGED")
+        ? "原文件已移动或删除；保留本地草稿，请另存为新文件。"
+        : "保存结果未确认；保留本地编辑，请使用冲突恢复区检查磁盘版本。");
     } finally {
       releaseSave?.();
     }

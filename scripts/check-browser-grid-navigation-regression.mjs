@@ -14,6 +14,11 @@ function ownerFunction(source, name, indent = "  ") {
   const end = start < 0 ? -1 : source.indexOf("\n" + indent + "}", start);
   return end < 0 ? "" : source.slice(start, end);
 }
+function mutateNavigation(source, from, to) {
+  const body = ownerFunction(source, "navigateCurrent");
+  if (!body.includes(from)) throw Error("negative navigation fixture anchor missing: " + from);
+  return source.replace(body, body.replace(from, to));
+}
 function preservesCurrentTab(source) {
   const body = ownerFunction(source, "navigateCurrent");
   const reserve = body.indexOf('const publish = layout.prepareViewChange("browser");');
@@ -40,9 +45,9 @@ const cases = [
   ["grid startup guarded against overlap", /let gridBuilding = false;[\s\S]*?async function buildGrid\(\) \{\s*if \(gridBuilding\)/.test(grid)],
   ["grid startup clears guard on failure", /catch \(error\)[\s\S]*?finally \{[\s\S]*?gridBuilding = false;/.test(grid) && /finally \{\s*gridStarting\.value = false;\s*gridBuilding = false;/.test(grid)],
   ["no obsolete browser grid lifecycle calls", !/browser\.(?:gridOpen|layoutGrid|openGrid)\b/.test(tabs)],
-  ["negative: occupied tab cannot enter the create branch", !preservesCurrentTab(browser.replace("if (!current) {", "if (true) {"))],
-  ["negative: queued navigation must check its reservation", !preservesCurrentTab(browser.replace("!isBrowserResourceAllowed() || !publish.isCurrent()) return false;\n      await bridge.tabOpen(current.id, target);", "!isBrowserResourceAllowed()) return false;\n      await bridge.tabOpen(current.id, target);"))],
-  ["negative: native navigation cannot retarget the latest selection", !preservesCurrentTab(browser.replace("await bridge.tabOpen(current.id, target);", "await bridge.tabOpen(activeTabId.value, target);"))],
+  ["negative: occupied tab cannot enter the create branch", !preservesCurrentTab(mutateNavigation(browser, "if (!current) {", "if (true) {"))],
+  ["negative: queued navigation must check its reservation", !preservesCurrentTab(mutateNavigation(browser, "!isBrowserResourceAllowed() || !publish.isCurrent()) return false;\n      await bridge.tabOpen(current.id, target);", "!isBrowserResourceAllowed()) return false;\n      await bridge.tabOpen(current.id, target);"))],
+  ["negative: native navigation cannot retarget the latest selection", !preservesCurrentTab(mutateNavigation(browser, "await bridge.tabOpen(current.id, target);", "await bridge.tabOpen(activeTabId.value, target);"))],
   ["negative: the new-tab action cannot become a reload", !hasExplicitNewTab(tabs.replace("await browser.tabNew();", "await browser.reloadActive();"))],
 ];
 let failures = 0;
