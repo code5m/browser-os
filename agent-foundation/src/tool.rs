@@ -295,7 +295,7 @@ impl ToolRegistry {
             return Err(FoundationError::InvalidInput("tool timeout"));
         }
         let deadline = tokio::time::Instant::now() + timeout;
-        if !tasks.active_at_revision(permit.task_id, permit.revision) {
+        if !permit.belongs_to(tasks) || !tasks.active_at_revision(permit.task_id, permit.revision) {
             return Err(FoundationError::PermissionDenied);
         }
         // Model and tool execution share one non-reentrant task slot.

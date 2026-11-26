@@ -464,3 +464,9 @@ Source-only scope; no compilation, tests, install/runtime validation, workflow d
 - A new-address recovery review contains the Browser Owner epoch/sequence and the retained native listener's spawn epoch (zero if no listener exists). The frontend keeps this exact review until confirmation, rechecks it, then consumes the form once. A later absent incarnation or any intervening Owner admission cannot silently inherit the old confirmation.
 - Native prepare compares the reviewed Owner identity before reserving the isolated-absence binding. The worker checks absence again, and both native process managers consume the absence epoch under lifecycle admission immediately before spawn. Pending cleanup is not absence. Retain the admitted process operation through create settlement, and keep the existing partial-recovery policy.
 - This is an exact explicit new-address recovery fence, not arbitrary website state serialization or automatic navigation replay. Existing hibernated-tab policy, supported addresses and no-new-Agent-write privilege stay unchanged. Source only; no compilation, tests, workflow edits or master merge.
+
+## 2026-11-26 — Bind consumed Agent permits to the actual TaskRegistry instance
+
+- An in-memory one-shot ApprovedOperation now retains a private shared registry identity, checked by both registered ToolRegistry execution and native-owner claim. Matching UUID/revision in another restored registry cannot transfer a live grant. Identity is not serialized and cannot be recreated from a checkpoint.
+- The signed approval path consumes the exact task revision under the TaskRegistry mutation lock, instead of relying on the earlier detached snapshot. Existing signed claim format and historical receipt evidence are unchanged; no new browser write capability or persistent approval reconstruction.
+- Source only; no build/test execution, workflow edits or master merge.

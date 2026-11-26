@@ -59,13 +59,23 @@ pub struct TaskRecord {
 /// One-shot permit: only TaskRegistry::resolve_approval can construct it;
 /// not serializable, not cloneable, cannot be forged through model JSON.
 pub struct ApprovedOperation {
+    // Non-serializable provenance: a restored task with matching UUID and
+    // revision in another registry is not the registry that granted this call.
+    registry_identity: Arc<()>,
     pub(crate) task_id: Uuid,
     pub(crate) revision: u64,
     pub(crate) operation: PendingOperation,
     pub(crate) binding: Option<crate::approval::ApprovalBinding>,
 }
 
+impl ApprovedOperation {
+    pub(crate) fn belongs_to(&self, registry: &TaskRegistry) -> bool {
+        Arc::ptr_eq(&self.registry_identity, &registry.identity)
+    }
+}
+
 pub struct TaskRegistry {
+    identity: Arc<()>,
     tasks: Mutex<HashMap<Uuid, TaskRecord>>,
     signals: Mutex<HashMap<Uuid, watch::Sender<bool>>>,
     journal: Arc<EventJournal>,
@@ -140,6 +150,7 @@ impl Drop for ExecutionLease<'_> {
 impl TaskRegistry {
     pub fn new(journal: Arc<EventJournal>) -> Self {
         Self {
+            identity: Arc::new(()),
             tasks: Mutex::new(HashMap::new()),
             signals: Mutex::new(HashMap::new()),
             journal,
@@ -603,9 +614,22 @@ impl TaskRegistry {
         call_id: Uuid,
         accepted: bool,
     ) -> Result<Option<ApprovedOperation>> {
+        self.resolve_approval_checked(id, call_id, accepted, None)
+    }
+
+    pub(crate) fn resolve_approval_at_revision(
+        &self, id: Uuid, call_id: Uuid, accepted: bool, revision: u64,
+    ) -> Result<Option<ApprovedOperation>> {
+        self.resolve_approval_checked(id, call_id, accepted, Some(revision))
+    }
+
+    fn resolve_approval_checked(
+        &self, id: Uuid, call_id: Uuid, accepted: bool, revision: Option<u64>,
+    ) -> Result<Option<ApprovedOperation>> {
         let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
         let previous = tasks.get(&id).ok_or(FoundationError::NotFound)?.clone();
-        if previous.status != TaskStatus::AwaitingApproval {
+        if previous.status != TaskStatus::AwaitingApproval
+            || revision.is_some_and(|expected| previous.revision != expected) {
             return Err(FoundationError::InvalidTransition);
         }
         let pending = previous
@@ -636,6 +660,7 @@ impl TaskRegistry {
         drop(tasks);
         if accepted {
             Ok(Some(ApprovedOperation {
+                registry_identity: Arc::clone(&self.identity),
                 task_id: id,
                 revision,
                 operation: pending,
