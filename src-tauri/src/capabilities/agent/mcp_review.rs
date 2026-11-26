@@ -119,18 +119,16 @@ pub(crate) fn prepare(
         Some(Value::Object(env)) if env.len() <= 64 => env.keys().cloned().collect::<Vec<_>>(),
         _ => return Err("MCP_ENV_INVALID".into()),
     };
-    let arguments = request
-        .get("arguments")
-        .cloned()
-        .unwrap_or_else(|| json!({}));
+    let arguments = if action == "mcp_call" {
+        super::mcp_protocol::checked_arguments(request)?
+    } else {
+        Value::Null
+    };
     let tool = if action == "mcp_call" {
         let tool = request["tool"]
             .as_str()
             .filter(|tool| !tool.is_empty() && tool.len() <= 200)
             .ok_or("MCP_TOOL_REQUIRED")?;
-        if !arguments.is_object() {
-            return Err("MCP_ARGUMENTS_INVALID".into());
-        }
         Some(tool)
     } else {
         None

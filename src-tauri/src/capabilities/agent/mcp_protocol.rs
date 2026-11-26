@@ -4,6 +4,46 @@
 use serde_json::{json, Value};
 
 pub(super) const VERSION: &str = "2024-11-05";
+const ARGUMENT_LIMIT: usize = 128 * 1024;
+
+/// Bound the locally encoded JSON before writing to an external process.
+/// This does not cap the already decoded input Value or OS/SDK allocations.
+pub(super) fn encode_bounded(value: &Value, limit: usize) -> Result<Vec<u8>, String> {
+    use std::io::{Error, ErrorKind, Write};
+    struct Capped {
+        bytes: Vec<u8>,
+        limit: usize,
+        overflow: bool,
+    }
+    impl Write for Capped {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if bytes.len() > self.limit.saturating_sub(self.bytes.len()) {
+                self.overflow = true;
+                return Err(Error::new(ErrorKind::InvalidData, "MCP_REQUEST_LIMIT"));
+            }
+            self.bytes.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+    }
+    let mut sink = Capped { bytes: Vec::new(), limit, overflow: false };
+    match serde_json::to_writer(&mut sink, value) {
+        Ok(()) => Ok(sink.bytes),
+        Err(_) if sink.overflow => Err("MCP_REQUEST_LIMIT".into()),
+        Err(_) => Err("MCP_ENCODE_FAILED".into()),
+    }
+}
+
+/// Share shape and size admission between review and actual dispatch.
+/// A full JSON-RPC frame has its own additional envelope budget.
+pub(super) fn checked_arguments(request: &Value) -> Result<Value, String> {
+    let Some(arguments) = request.get("arguments") else { return Ok(json!({})); };
+    if !arguments.is_object() {
+        return Err("MCP_ARGUMENTS_INVALID".into());
+    }
+    encode_bounded(arguments, ARGUMENT_LIMIT)?;
+    Ok(arguments.clone())
+}
 
 pub(super) fn initialize_params() -> Value {
     json!({"protocolVersion":VERSION,"capabilities":{},"clientInfo":{"name":"BrowserOS","version":"0.1.0"}})
@@ -33,13 +73,7 @@ pub(super) fn tool_request(action: &str, request: &Value) -> Result<(&'static st
                 .as_str()
                 .filter(|v| !v.is_empty() && v.len() <= 200)
                 .ok_or("MCP_TOOL_REQUIRED")?;
-            let arguments = request
-                .get("arguments")
-                .cloned()
-                .unwrap_or_else(|| json!({}));
-            if !arguments.is_object() {
-                return Err("MCP_ARGUMENTS_INVALID".into());
-            }
+            let arguments = checked_arguments(request)?;
             Ok(("tools/call", json!({"name":tool,"arguments":arguments})))
         }
         _ => Err("MCP_ACTION_UNKNOWN".into()),

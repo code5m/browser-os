@@ -245,6 +245,11 @@ export const useBrowserStore = defineStore("browser", () => {
           || confirmed.receipt?.phase !== current?.phase) {
         throw new Error("TAB_MUTATION_RECOVERY_CHANGED");
       }
+      // Reject an inconsistent logical list before retiring its receipt.
+      const ids = new Set(actual.map(tab => tab.id));
+      if (ids.size !== actual.length || (view.active_tab_id && !ids.has(view.active_tab_id))) {
+        throw new Error("TAB_MUTATION_RECOVERY_LIST_INCONSISTENT");
+      }
       if (current) {
         // ACK retires the old sequence. Before adopting the list, require
         // an empty owner and exactly one advancement: any intervening
@@ -263,12 +268,17 @@ export const useBrowserStore = defineStore("browser", () => {
       const ordered = tabs.flatMap(tab => byId.has(tab.id) ? [byId.get(tab.id)!] : []);
       const seen = new Set(ordered.map(tab => tab.id));
       ordered.push(...actual.filter(tab => !seen.has(tab.id)));
+      // All previous renderer observations predate the reconciled list,
+      // including those belonging to surviving logical tabs.
       rendererObservations.clear();
-      for (const id of rendererStates.keys()) if (!byId.has(id)) clearRendererState(id);
+      rendererStates.clear();
+      rendererDownloads.clear();
+      for (const id of nativeTabFailures.keys()) {
+        if (!byId.has(id)) nativeTabFailures.delete(id);
+      }
       isolatedRendererMode.value = view.isolated_renderer_mode === true;
-      if (!isolatedRendererMode.value) {
-        rendererStates.clear();
-        rendererDownloads.clear();
+      if (isolatedRendererMode.value) {
+        for (const id of byId.keys()) rendererStates.set(id, "unknown");
       }
       tabs.splice(0, tabs.length, ...ordered);
       activeTabId.value = view.active_tab_id && byId.has(view.active_tab_id) ? view.active_tab_id : "";
@@ -495,12 +505,16 @@ export const useBrowserStore = defineStore("browser", () => {
     try {
       await mutateTabs(async () => {
         if (!isBrowserResourceAllowed() || !tabs.some(tab => tab.id === target.id)) return;
-        rendererObservations.delete(target.id);
+        clearRendererState(target.id);
+        rendererStates.set(target.id, "unknown");
         await bridge.retireRenderer(target);
         clearRendererState(target.id);
-        rendererStates.set(target.id, "absent");
+        rendererStates.set(target.id, "unknown");
         void refreshRendererState(target.id);
-        layout.showToast("原生页签已回收；点击该页签重新打开记录的网址。");
+        const address = tabs.find(tab => tab.id === target.id)?.url;
+        layout.showToast(address && reopenableAddress(address)
+          ? "原生页签已回收；可重新打开记录的网址，页内未保存状态可能丢失。"
+          : "原生页签已回收；原地址无法安全恢复，请手动打开新地址。");
       });
     } catch {
       void refreshRendererState(target.id);
@@ -520,8 +534,10 @@ export const useBrowserStore = defineStore("browser", () => {
       const target = tabs.find((t) => t.id === id);
       if (!target || (onlyBlank && target.url !== "about:blank")) return false;
       const download = rendererDownloads.get(id);
-      const downloadUncertain = isolatedRendererMode.value && download?.connection_current
-        && (download.observed_unfinished === null || download.observed_unfinished > 0);
+      // A disconnected owner cannot certify its last cumulative count.
+      // Do not suppress warnings solely because the observation is stale.
+      const downloadUncertain = isolatedRendererMode.value && !!download
+        && (!download.connection_current || download.observed_unfinished === null || download.observed_unfinished > 0);
       await closeNativeTab(id);
       if (downloadUncertain) {
         layout.showToast("页签已关闭；此前观察到未完成或结果不明的下载，最终状态待核对。");

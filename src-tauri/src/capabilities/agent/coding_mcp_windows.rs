@@ -393,10 +393,13 @@ impl Session {
         })
     }
     fn send(&mut self, value: Value) -> Result<(), String> {
-        let mut bytes = serde_json::to_vec(&value).map_err(|_| "MCP_ENCODE_FAILED")?;
-        if bytes.len() as u64 > LIMIT {
-            return Err("MCP_REQUEST_LIMIT".into());
+        if self.cancellation.load(Ordering::Acquire) {
+            return Err("MCP_CANCEL_REQUESTED".into());
         }
+        if Instant::now() >= self.deadline {
+            return Err("MCP_WRITE_TIMEOUT".into());
+        }
+        let mut bytes = mcp_protocol::encode_bounded(&value, LIMIT as usize)?;
         bytes.push(b'\n');
         let remaining = self.deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {

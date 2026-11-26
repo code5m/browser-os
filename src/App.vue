@@ -254,8 +254,8 @@ onMounted(async () => {
       // An old retirement must not overwrite a newly activated renderer.
       // Even a confirmed process exit does not prove any transfer failed.
       if (!target && view.renderer_state === "absent" && event.outcome === "unknown"
-          && (event.observed_unfinished ?? 0) > 0) {
-        layout.showToast("原下载宿主已回收；曾观察到未完成下载，最终结果待核对。");
+          && (event.observed_unfinished === null || event.observed_unfinished > 0)) {
+        layout.showToast("原下载宿主已回收；曾观察到未完成或无法对账的下载，最终结果待核对。");
       }
       return;
     }

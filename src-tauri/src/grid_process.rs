@@ -1878,24 +1878,33 @@ impl GridProcessManager {
         if !failures.is_empty() {
             return Err(format!("TAB_RENDERER_ACTIVATION_PARTIAL:{}", failures.join("; ")));
         }
+        // Peers may already be hidden. A later rejection is a partial
+        // activation, not a no-effect failure that may be silently retired.
+        let post_hide_error = |error: &str| {
+            if others.is_empty() {
+                error.to_owned()
+            } else {
+                format!("TAB_RENDERER_ACTIVATION_PARTIAL:{error}")
+            }
+        };
         if state.shutdown_requested.load(Ordering::Acquire) {
-            return Err("TAB_APPLICATION_SHUTTING_DOWN".into());
+            return Err(post_hide_error("TAB_APPLICATION_SHUTTING_DOWN"));
         }
         // Hiding peers may wait on native IPC. Revalidate the original
         // process/transport under the native owner gates before publication.
         let children = self.children.lock().unwrap();
-        let child = children.get(&index).ok_or("TAB_RENDERER_ACTIVATION_STALE")?;
+        let child = children.get(&index).ok_or_else(|| post_hide_error("TAB_RENDERER_ACTIVATION_STALE"))?;
         let _owner = child.comms.owner_gate.lock().unwrap();
         if !child.document_ready
             || child.comms.expected_pid.load(Ordering::SeqCst) != target.owner.0
             || child.comms.spawn_epoch.load(Ordering::SeqCst) != target.owner.1
             || !child.comms.is_current(target.generation)
         {
-            return Err("TAB_RENDERER_ACTIVATION_STALE".into());
+            return Err(post_hide_error("TAB_RENDERER_ACTIVATION_STALE"));
         }
         let label = crate::grid_ipc::renderer_label(index);
         if !state.tabs.lock().unwrap().contains_key(&label) {
-            return Err("TAB_RENDERER_ACTIVATION_STALE".into());
+            return Err(post_hide_error("TAB_RENDERER_ACTIVATION_STALE"));
         }
         *state.active_tab.lock().unwrap() = Some(label);
         Ok(())

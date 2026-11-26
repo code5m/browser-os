@@ -156,23 +156,33 @@ pub(super) fn activate_admitted(app: &AppHandle, id: &str, admitted: Option<Opti
             return Err("TAB_RESTORE_URL_UNSUPPORTED".into());
         }
         state.grid_manager.start_tab_renderer(index, &url)?;
-        let binding = state.grid_manager.renderer_binding(index)?;
+        // A recreated host is no longer a hibernated native page, even if
+        // binding or selection fails. Retain a partial activation receipt.
         state.hibernated_tabs.lock().unwrap().remove(id);
-        binding
+        state.grid_manager.renderer_binding(index)
+            .map_err(|error| format!("TAB_RENDERER_ACTIVATION_PARTIAL:{id}:{error}"))?
     } else {
         let binding = state.grid_manager.renderer_binding(index)?;
         if Some(binding.owner) != owner {
             return Err("TAB_RENDERER_ACTIVATION_STALE".into());
         }
         state.grid_manager.renderer_request_data(binding, GridCmd::Ping, 3000)?;
-        if state.grid_manager.renderer_binding(index)? != binding {
+        // Activation and Ping are process-scoped; normal navigation must
+        // not invalidate selection of the same authenticated native host.
+        let current = state.grid_manager.renderer_binding(index)?;
+        if current.owner != binding.owner || current.generation != binding.generation {
             return Err("TAB_RENDERER_ACTIVATION_STALE".into());
         }
         state.hibernated_tabs.lock().unwrap().remove(id);
         binding
     };
     // The normal frontend position command supplies the new active rectangle.
-    select_bound(app, id, binding)
+    let selected = select_bound(app, id, binding);
+    if owner.is_none() {
+        selected.map_err(|error| format!("TAB_RENDERER_ACTIVATION_PARTIAL:{id}:{error}"))
+    } else {
+        selected
+    }
 }
 
 pub(super) fn navigate(app: &AppHandle, id: &str, url: &str) -> Result<(), String> {
