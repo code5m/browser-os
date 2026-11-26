@@ -245,6 +245,9 @@ pub fn drive_function_batches<H: FunctionBatchHost>(
     if !(1..=8).contains(&rounds) || max_calls > 8 {
         return Err(host.invalid_batch(FoundationError::InvalidInput("function turn limits")));
     }
+    // IDs must remain unique throughout this bounded model/tool loop,
+    // not only within a single assistant response.
+    let mut admitted_ids = std::collections::HashSet::new();
     for round in 0..rounds {
         if host.cancelled() { return host.on_cancelled(); }
         let reply = match host.request() {
@@ -259,6 +262,9 @@ pub fn drive_function_batches<H: FunctionBatchHost>(
         let calls = crate::model::parse_function_batch(&reply, max_calls)
             .map_err(|error| host.invalid_batch(error))?;
         if host.cancelled() { return host.on_cancelled(); }
+        if calls.iter().any(|call| !admitted_ids.insert(call.id.clone())) {
+            return Err(host.invalid_batch(FoundationError::InvalidInput("duplicate tool call id across rounds")));
+        }
         match host.accept_batch(round, round + 1 == rounds, reply, calls)? {
             BatchFlow::Stop => return Ok(()),
             BatchFlow::Continue if round + 1 < rounds => {}
@@ -344,6 +350,17 @@ mod tests {
         assert_eq!(host.admitted, 0);
         host.cancelled = true;
         assert_eq!(drive_function_batches(&mut host, 1, 8), Err(FoundationError::Cancelled));
+    }
+
+    #[test]
+    fn complete_batch_driver_rejects_reused_call_id_before_second_admission() {
+        let reply = json!({"role":"assistant","tool_calls":[
+            {"id":"one","function":{"name":"read_file","arguments":"{}"}}
+        ]});
+        let mut host = BatchFixture { cancelled: false, admitted: 0,
+            replies: vec![reply.clone(), reply] };
+        assert!(drive_function_batches(&mut host, 2, 8).is_err());
+        assert_eq!(host.admitted, 1);
     }
 
     struct ScriptedProvider(Vec<ModelEvent>);

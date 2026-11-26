@@ -1025,6 +1025,7 @@ fn continuation_schema(plan: bool) -> Result<String, String> {
 /// re-execute an approved external operation.
 fn complete_resume_boundary(messages: &[Value]) -> bool {
     let mut pending = std::collections::VecDeque::<String>::new();
+    let mut admitted_ids = std::collections::HashSet::new();
     for message in messages {
         if let Some(call_id) = pending.pop_front() {
             if message["role"] != "tool" || message["tool_call_id"].as_str() != Some(call_id.as_str())
@@ -1037,7 +1038,10 @@ fn complete_resume_boundary(messages: &[Value]) -> bool {
                 let Ok(calls) = browseros_agent_foundation::model::parse_function_batch(message, 8) else {
                     return false;
                 };
-                pending.extend(calls.into_iter().map(|call| call.id));
+                for call in calls {
+                    if !admitted_ids.insert(call.id.clone()) { return false; }
+                    pending.push_back(call.id);
+                }
             }
             _ => return false,
         }
@@ -2157,6 +2161,15 @@ impl<P: FnMut(&[Value], &[Value]) -> Result<Value, String>>
         if reply["tool_calls"].as_array().is_some_and(|calls| calls.len() > 8) {
             return Err("AGENT_TOOL_LIMIT".into());
         }
+        // A resumed/continued invocation has an earlier transcript not
+        // represented by the Foundation driver's in-memory round set.
+        let prior_ids: std::collections::HashSet<&str> = self.messages.iter()
+            .filter(|message| message["role"] == "tool")
+            .filter_map(|message| message["tool_call_id"].as_str()).collect();
+        if reply["tool_calls"].as_array().is_some_and(|calls| calls.iter()
+            .filter_map(|call| call["id"].as_str()).any(|id| prior_ids.contains(id))) {
+            return Err("AGENT_REPLY_INVALID".into());
+        }
         Ok(())
     }
     fn invalid_batch(&mut self, _: browseros_agent_foundation::FoundationError) -> String {
@@ -3007,7 +3020,9 @@ mod tests {
         let user = json!({"role":"user","content":"inspect"});
         let assistant = json!({"role":"assistant","tool_calls":[{"id":"one","function":{"name":"read_file","arguments":"{}"}}]});
         assert!(!complete_resume_boundary(&[user.clone(),assistant.clone()]));
-        assert!(complete_resume_boundary(&[user,assistant,json!({"role":"tool","tool_call_id":"one","content":"{}"})]));
+        let tool = json!({"role":"tool","tool_call_id":"one","content":"{}"});
+        assert!(complete_resume_boundary(&[user.clone(),assistant.clone(),tool.clone()]));
+        assert!(!complete_resume_boundary(&[user,assistant.clone(),tool.clone(),assistant,tool]));
     }
 
     #[test]
