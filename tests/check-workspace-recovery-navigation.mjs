@@ -35,7 +35,8 @@ bridge.editorDraftList = async () => [];
 bridge.getStartDirs = async () => [];
 bridge.listDir = async () => [];
 bridge.editorDraftClear = async () => {};
-bridge.readFile = async path => path.endsWith('b.txt') ? 'document B' : 'document A';
+let diskA = 'document A';
+bridge.readFile = async path => path.endsWith('b.txt') ? 'document B' : diskA;
 setActivePinia(createPinia());
 const files = useFileStore(), layout = useLayoutStore();
 await files.openFile({ path: '/work/a.txt', name: 'a.txt', is_dir: false, size: 10 });
@@ -48,7 +49,11 @@ bridge.editorDraftSave = async (path, session, baseline, content) => {
 };
 files.setFileContent('saved A');
 flushDraftTimers();
-bridge.writeFileCas = () => cas.promise;
+bridge.writeFileCas = async (_path, baseline, content) => {
+  assert.equal(diskA, baseline);
+  await cas.promise;
+  diskA = content;
+};
 const saving = files.saveFile();
 files.setFileContent('newer A');
 cas.resolve();

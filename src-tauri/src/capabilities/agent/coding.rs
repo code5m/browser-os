@@ -3404,13 +3404,24 @@ pub(crate) fn execute_with_admission_adapter(
             }
             messages.extend(session.messages.clone());
             let turn_result = browseros_agent_foundation::engine::drive_owned_function_batches(
-                &mut CodingBatchHost { root: &root, storage, session: &mut session,
-                    messages: &mut messages, plan, provider: &mut provider },
-                &execution_lease, 8, 8,
+                &mut CodingBatchHost {
+                    root: &root,
+                    storage,
+                    session: &mut session,
+                    messages: &mut messages,
+                    plan,
+                    provider: &mut provider,
+                },
+                &execution_lease,
+                8,
+                8,
             );
-            if turn_result.is_err() && session.status == "running" { session.status = "failed".into(); }
+            if turn_result.is_err() && session.status == "running" {
+                session.status = "failed".into();
+            }
             let run_status = session.status.clone();
-            let model_finished = turn_result.is_ok() && matches!(run_status.as_str(), "complete" | "review");
+            let model_finished =
+                turn_result.is_ok() && matches!(run_status.as_str(), "complete" | "review");
             if let Some(checkpoint) = &mut session.continuation {
                 checkpoint.resume_pending = !model_finished;
             }

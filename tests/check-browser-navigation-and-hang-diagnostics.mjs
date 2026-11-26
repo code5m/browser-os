@@ -31,7 +31,7 @@ assert.match(plugin, /PageLoadEvent::Started\s*=>\s*BrowserTabEvent::NavigationS
 assert.match(plugin, /PageLoadEvent::Finished\s*=>\s*BrowserTabEvent::NavigationFinished/);
 // Normal tabs remain permissive; an isolated screenshot Worker must
 // invalidate the document and restrict every redirect to credential-free HTTPS.
-assert.match(plugin, /\.on_navigation\(move \|url\| \{\s*if let Some\(ready\) = &nav_ready \{[\s\S]*?invalidate_capture_document\(&nav_revision\);[\s\S]*?url\.scheme\(\) == "https" && url\.host_str\(\)\.is_some\(\)[\s\S]*?url\.username\(\)\.is_empty\(\) && url\.password\(\)\.is_none\(\)\s*\} else \{ true \}/);
+assert.match(plugin, /\.on_navigation\(move \|url\| \{\s*if let Some\(ready\) = &nav_ready \{[\s\S]*?invalidate_capture_document\(&nav_revision\);[\s\S]*?url\.scheme\(\) == "https"\s*&& url\.host_str\(\)\.is_some\(\)[\s\S]*?url\.username\(\)\.is_empty\(\)\s*&& url\.password\(\)\.is_none\(\)\s*\} else \{\s*true\s*\}/);
 assert.doesNotMatch(plugin, /on_navigation\(move \|url, navigate\| \{ callback\(navigate\); \}\)/);
 
 // Frontend must not apply late events for a closed tab, and omnibox must
@@ -109,10 +109,10 @@ assert.match(main, /fn begin_graceful_shutdown\(/);
 // Existing coding work binds to the actual session identity, not a random UUID.
 assert.match(codingOwner, /fn coding_scope\(root: &Path, session_id: Option<&str>\)/);
 assert.match(codingOwner, /fn resume_coding\([\s\S]*?coding_scope\(root, Some\(session_id\)\)[\s\S]*?Self::begin_scoped\("coding", workspace, session, context\)/);
-assert.match(codingOwner, /record\.workspace_id != workspace \|\| record\.session_id != session/);
-assert.match(codingOwner, /tasks\.restore_paused_record\(restored\)/);
+assert.match(codingOwner, /record\.workspace_id != workspace\s*\|\| record\.session_id != session/);
+assert.match(codingOwner, /tasks\s*\.restore_paused_record\(restored\)/);
 assert.match(aiBackend, /public_api::dispatch_coding_request\(/);
 assert.match(codingFacade, /super::coding::execute_with_admission_adapter\(/);
-assert.match(coding, /ProductionExecution::resume_coding\(\s*&root, &session\.session_id, session\.foundation_task\.as_ref\(\)/);
-assert.match(coding, /execution\.acquire_lease\(\)\?;[\s\S]*?engine::drive_owned_function_batches\([\s\S]*?&execution_lease, 8, 8/);
+assert.match(coding, /ProductionExecution::resume_coding\(\s*&root,\s*&session\.session_id,\s*session\.foundation_task\.as_ref\(\)/);
+assert.match(coding, /execution\.acquire_lease\(\)\?;[\s\S]*?engine::drive_owned_function_batches\([\s\S]*?&execution_lease,\s*8,\s*8/);
 console.log('BROWSER_NAVIGATION_HANG_DIAGNOSTICS_CONTRACT=PASS');
