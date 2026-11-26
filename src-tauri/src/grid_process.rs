@@ -704,12 +704,14 @@ impl GridProcessManager {
         if self.lifecycle.is_retiring(index) {
             return Err("GRID_PROCESS_CLEANUP_PENDING".into());
         }
+        let profile_epoch = crate::browser_profile_owner::grid_epoch()?;
         self.ensure_listener(index)?;
         let exe = std::env::current_exe().map_err(|e| format!("获取当前可执行文件失败: {e}"))?;
         let child = Command::new(exe)
             .arg("--grid-child")
             .arg(index.to_string())
             .env("GRID_CHILD_INDEX", index.to_string())
+            .env(crate::browser_profile_owner::GRID_EPOCH_ENV, profile_epoch)
             .env("GRID_SOCK_PATH", Self::socket_path(index))
             .process_group(0)
             .stdin(Stdio::null())

@@ -2,6 +2,8 @@
 
 // (capabilities/agent + capabilities/skill declared under `mod capabilities` below)
 mod bridge;
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+mod browser_profile_owner;
 #[cfg(test)]
 #[path = "../build_support/output_layout.rs"]
 mod build_output_layout;

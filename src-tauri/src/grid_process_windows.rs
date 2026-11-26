@@ -471,6 +471,7 @@ impl GridProcessManager {
         if self.children.lock().unwrap().contains_key(&index) {
             return Err(format!("GRID_CHILD_ALREADY_RUNNING:{index}"));
         }
+        let profile_epoch = crate::browser_profile_owner::grid_epoch()?;
         self.ensure_listener(index)?;
         let exe = std::env::current_exe().map_err(|e| format!("获取当前可执行文件失败: {e}"))?;
         let mut command = Command::new(exe);
@@ -481,6 +482,7 @@ impl GridProcessManager {
             // main.rs 已 set_var，子进程经环境继承获得）；额外注入子进程索引
             // （crashlog 角色区分）与 UDS socket 路径。
             .env("GRID_CHILD_INDEX", index.to_string())
+            .env(crate::browser_profile_owner::GRID_EPOCH_ENV, profile_epoch)
             .env("GRID_PARENT_PID", std::process::id().to_string())
             .env("GRID_SOCK_PATH", Self::socket_path(index))
             // Windows Job Object owns the entire WebView2 process subtree.

@@ -68,6 +68,13 @@ fn release_pending_open_urls(app: &AppHandle) -> io::Result<()> {
 
 pub fn prepare_workspace(app: &AppHandle) -> io::Result<()> {
     crate::workspace::prepare_data_dir(app)?;
+    // Before TabManager profile preparation, native window creation or
+    // opening pending URLs, join the existing application profile epoch.
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    crate::browser_profile_owner::prepare(
+        &crate::workspace::data_dir(app),
+        crate::parse_grid_child_arg().is_some(),
+    )?;
     #[cfg(not(target_os = "linux"))]
     if let Err(error) = crate::crashlog::use_private_directory(&crate::workspace::data_dir(app)) {
         // Diagnostics are optional. Never fall back to a public temporary file.
