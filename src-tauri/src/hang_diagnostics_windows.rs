@@ -16,7 +16,7 @@ const MAX_EVENT_BYTES: usize = 32768;
 
 fn create_log(path: &Path) -> io::Result<File> {
     let mut options = OpenOptions::new();
-    options.append(true).create_new(true);
+    options.write(true).append(true).create_new(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;

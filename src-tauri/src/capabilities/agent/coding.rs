@@ -1760,40 +1760,97 @@ fn native_approval_matches_input(operation: &Operation, claim: &browseros_agent_
             == Some(claim.arguments_sha256.as_str())
 }
 
-fn verify_native_return(operation: &Operation, task: Option<&browseros_agent_foundation::task::TaskRecord>,
-    runs: &[RunReceipt], workspace_identity: &str, session_id: &str) -> bool {
-    use browseros_agent_foundation::{task::TaskStatus, tool::ToolEffect};
-    let (Some(receipt), Some(task)) = (&operation.execution, task) else { return false; };
-    let Some(claim) = receipt.approval.as_ref() else { return false; };
-    let expected = match operation.kind.as_str() {
-        "command" => ("coding.command", ToolEffect::ExecuteProcess),
-        "mcp" => ("coding.mcp", ToolEffect::ExternalSideEffect),
-        _ => return false,
+/// The same historical approval proof is required at return recovery,
+/// final native result acceptance and explicit user reconciliation.
+fn operation_approval_bound(operation: &Operation, task: &browseros_agent_foundation::task::TaskRecord,
+    runs: &[RunReceipt], workspace_identity: &str, session_id: &str, delta: u64,
+    allowed_run_statuses: &[&str]) -> bool {
+    use browseros_agent_foundation::{approval::approval_argument_digest, tool::ToolEffect};
+    let Some(receipt) = &operation.execution else { return false; };
+    let Some(claim) = &receipt.approval else { return false; };
+    let approval_matches = if external_operation(&operation.kind) {
+        let identity = if operation.kind == "command" {
+            receipt.native_run_id.as_deref() == Some(format!("run-{}", operation.id).as_str())
+        } else { receipt.native_run_id.is_none() };
+        receipt.owner_epoch.is_none() && identity && native_approval_matches_input(operation, claim)
+    } else {
+        let tool = match operation.kind.as_str() {
+            "git_context" => "coding.git_context",
+            "database_context" => "coding.database_context",
+            "browser_context" => "coding.browser_context",
+            "code_diagnostics" => "coding.code_diagnostics",
+            _ => return false,
+        };
+        let Ok(encoded) = serde_json::to_vec(&operation.input) else { return false; };
+        let revision = hash(&encoded);
+        let args = json!({"operation_id":operation.id,"input_digest":revision});
+        receipt.owner_epoch.is_some() && receipt.native_run_id.is_none()
+            && claim.tool_name == tool && claim.effect == ToolEffect::ReadOnly
+            && claim.resource.resource_revision == revision
+            && approval_argument_digest(tool, &args, &ToolEffect::ReadOnly).ok().as_deref()
+                == Some(claim.arguments_sha256.as_str())
     };
-    let identity = if operation.kind == "command" {
-        receipt.native_run_id.as_deref() == Some(format!("run-{}", operation.id).as_str())
-    } else { receipt.native_run_id.is_none() };
-    let bound = receipt.phase == "return_checkpoint" && receipt.run_id == operation.id
+    approval_matches && receipt.run_id == operation.id
         && receipt.workspace_identity.as_deref() == Some(workspace_identity)
-        && receipt.owner_epoch.is_none() && identity
-        && task.status == TaskStatus::Running && task.pending.is_none() && task.goal == "coding"
-        && task.session_id.to_string() == session_id
+        && task.pending.is_none() && task.goal == "coding" && task.session_id.to_string() == session_id
         && claim.accepted && claim.task_id == task.id && claim.session_id == task.session_id
-        && claim.workspace_id == task.workspace_id && claim.task_revision.checked_add(1) == Some(task.revision)
-        && claim.tool_name == expected.0 && claim.effect == expected.1
-        && native_approval_matches_input(operation, claim)
+        && claim.workspace_id == task.workspace_id && claim.task_revision.checked_add(delta) == Some(task.revision)
         && claim.resource.resource_id == format!("workspace:{}", task.workspace_id)
         && runs.iter().filter(|run| run.id == receipt.run_id).count() == 1
-        && runs.iter().any(|run| run.id == receipt.run_id && run.task_id == task.id && run.status == "running")
+        && runs.iter().any(|run| run.id == receipt.run_id && run.task_id == task.id
+            && allowed_run_statuses.contains(&run.status.as_str()))
         && operation.reconciliation.is_none()
+}
+
+fn verify_native_return(operation: &Operation, task: Option<&browseros_agent_foundation::task::TaskRecord>,
+    runs: &[RunReceipt], workspace_identity: &str, session_id: &str) -> bool {
+    use browseros_agent_foundation::task::TaskStatus;
+    let (Some(receipt), Some(task)) = (&operation.execution, task) else { return false; };
+    if !external_operation(&operation.kind) { return false; }
+    let (delta, run_status) = match (receipt.phase.as_str(), task.status, operation.status.as_str()) {
+        ("return_checkpoint", TaskStatus::Running, "result_ready" | "unknown") => (1, "running"),
+        ("returned", TaskStatus::Paused, "result_ready") => (2, "operation_review"),
+        ("returned", TaskStatus::Paused, "unknown") => (2, "operation_unknown"),
+        _ => return false,
+    };
+    let bound = operation_approval_bound(operation, task, runs, workspace_identity, session_id, delta, &[run_status])
         && operation.result.as_ref().is_some_and(|text| text.len() <= 20_000 && !secret(text))
         && match operation.status.as_str() {
             "result_ready" => operation.review_revision.is_none(),
             "unknown" => operation.review_revision.is_some(),
             _ => false,
         };
-    bound && native_return_digest(operation, task).ok().as_deref() == receipt.return_digest.as_deref()
+    // The digest describes the original running Task revision, not the
+    // later paused review revision. Reconstruct only the historical value;
+    // no live Task or approval permit is created.
+    let mut original = task.clone();
+    if delta == 2 {
+        let Some(revision) = task.revision.checked_sub(1) else { return false; };
+        original.revision = revision;
+    }
+    bound && native_return_digest(operation, &original).ok().as_deref() == receipt.return_digest.as_deref()
         && receipt.return_digest.is_some()
+}
+
+fn frontend_return_bound(operation: &Operation, task: Option<&browseros_agent_foundation::task::TaskRecord>,
+    runs: &[RunReceipt], workspace_identity: &str, session_id: &str) -> bool {
+    use browseros_agent_foundation::task::TaskStatus;
+    !external_operation(&operation.kind) && operation.status == "executing"
+        && operation.execution.as_ref().is_some_and(|receipt|
+            receipt.phase == "frontend_claimed" && receipt.owner_epoch == Some(frontend_owner_epoch()))
+        && task.is_some_and(|task| task.status == TaskStatus::Paused
+            && operation_approval_bound(operation, task, runs, workspace_identity, session_id, 2, &["awaiting_result"]))
+}
+
+fn can_reconcile_operation(operation: &Operation, task: Option<&browseros_agent_foundation::task::TaskRecord>,
+    runs: &[RunReceipt], workspace_identity: &str, session_id: &str) -> bool {
+    use browseros_agent_foundation::task::TaskStatus;
+    operation.status == "unknown" && operation.review_revision.is_some()
+        && operation.execution.as_ref().is_some_and(|receipt|
+            matches!(receipt.phase.as_str(), "interrupted" | "returned"))
+        && task.is_some_and(|task| task.status == TaskStatus::Paused
+            && operation_approval_bound(operation, task, runs, workspace_identity, session_id, 2,
+                &["operation_unknown", "interrupted", "unknown"]))
 }
 
 fn checkpoint_native_return(session: &mut Session, index: usize, response: Result<Value, String>) -> Result<(), String> {
@@ -1841,10 +1898,25 @@ fn load(root: &Path, storage: &Path, id: Option<&str>) -> Result<Session, String
         let mut interrupted_external = false;
         let mut not_dispatched = Vec::new();
         let mut native_returns = Vec::new();
+        let mut invalid_return_runs = Vec::new();
         let workspace_identity = super::execution_owner::workspace_identity(root)?;
         // This function runs only under the same OS session lock used by
         // execute_operation. Surviving execution records are never replayed.
         for operation in &mut session.operations {
+            // A persisted result_ready receipt also needs validation on
+            // subsequent reads, not just on the initial crash recovery.
+            if external_operation(&operation.kind) && operation.status == "result_ready"
+                && operation.execution.as_ref().is_some_and(|receipt| receipt.phase == "returned")
+                && !verify_native_return(operation, session.foundation_task.as_ref(), &session.runs,
+                    &workspace_identity, &session.session_id)
+            {
+                operation.status = "unknown".into();
+                operation.result = Some("AGENT_NATIVE_RETURN_EVIDENCE_INVALID".into());
+                operation.review_revision = Some(uuid::Uuid::new_v4());
+                if let Some(receipt) = &mut operation.execution { receipt.phase = "interrupted".into(); }
+                invalid_return_runs.push(operation.id.clone());
+                interrupted_external = true;
+            }
             if operation.execution.as_ref().is_some_and(|receipt| receipt.phase == "return_checkpoint") {
                 // Only an authenticated return checkpoint of the exact
                 // original approved operation can finish the local Run.
@@ -1857,6 +1929,8 @@ fn load(root: &Path, storage: &Path, id: Option<&str>) -> Result<Session, String
                 }
                 // Invalid proof cannot authorize the result or auto-replay.
                 operation.status = "unknown".into();
+                operation.result = Some("AGENT_NATIVE_RETURN_EVIDENCE_INVALID".into());
+                invalid_return_runs.push(operation.id.clone());
                 operation.review_revision = Some(uuid::Uuid::new_v4());
                 if let Some(receipt) = &mut operation.execution {
                     receipt.phase = "interrupted".into();
@@ -1888,9 +1962,8 @@ fn load(root: &Path, storage: &Path, id: Option<&str>) -> Result<Session, String
                 continue;
             }
             if operation.status == "executing" && (external_operation(&operation.kind)
-                || !operation.execution.as_ref().is_some_and(|receipt|
-                    receipt.phase == "frontend_claimed" && receipt.owner_epoch == Some(frontend_owner_epoch())
-                    && receipt.approval.is_some()))
+                || !frontend_return_bound(operation, session.foundation_task.as_ref(), &session.runs,
+                    &workspace_identity, &session.session_id))
             {
                 operation.status = "unknown".into();
                 if let Some(receipt) = &mut operation.execution { receipt.phase = "interrupted".into(); }
@@ -1916,6 +1989,10 @@ fn load(root: &Path, storage: &Path, id: Option<&str>) -> Result<Session, String
             }
         }
         for run in &mut session.runs {
+            if invalid_return_runs.iter().any(|id| id == &run.id) {
+                run.status = "interrupted".into();
+                continue;
+            }
             if let Some((_, status)) = native_returns.iter().find(|(id, _)| id == &run.id) {
                 run.status = (*status).into();
                 continue;
@@ -1961,7 +2038,22 @@ fn save(storage: &Path, session: &Session) -> Result<Value, String> {
         let _ = (storage, session, bytes);
         return Err("AGENT_PRIVATE_STORAGE_UNAVAILABLE".into());
     }
-    serde_json::to_value(session).map_err(|_| "AGENT_SESSION_WRITE_FAILED".into())
+    let mut value = serde_json::to_value(session).map_err(|_| "AGENT_SESSION_WRITE_FAILED")?;
+    // Presentation-only eligibility derived from authenticated state;
+    // never trust a caller-supplied flag as an approval.
+    if session.operations.iter().any(|op| op.status == "unknown") {
+        let identity = super::execution_owner::workspace_identity(Path::new(&session.root)).ok();
+        if let Some(operations) = value["operations"].as_array_mut() {
+            for (view, operation) in operations.iter_mut().zip(&session.operations) {
+                if operation.status == "unknown" {
+                    view["can_reconcile"] = json!(identity.as_ref().is_some_and(|identity|
+                        can_reconcile_operation(operation, session.foundation_task.as_ref(), &session.runs,
+                            identity, &session.session_id)));
+                }
+            }
+        }
+    }
+    Ok(value)
 }
 
 fn recent_sessions(root: &Path, storage: &Path, archived: bool) -> Result<Value, String> {
@@ -2463,6 +2555,13 @@ pub(crate) fn execute_with_admission_adapter(
             let submitted = request["result"].as_str().unwrap_or("");
             if submitted.len() > 20000 || secret(submitted) { return Err("AGENT_OPERATION_CONTENT_DENIED".into()); }
             if reconcile && submitted.trim().is_empty() { return Err("AGENT_RECONCILIATION_EVIDENCE_REQUIRED".into()); }
+            // Reconciliation and native acceptance share the actual
+            // workspace owner with dispatch and file transaction recovery.
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
+            let _review_workspace = if reconcile || status == "accepted" {
+                Some(super::coding_checkpoint::workspace_owner(storage, &root)?)
+            } else { None };
+            let identity = super::execution_owner::workspace_identity(&root)?;
             let operation = session.operations.iter_mut().find(|op| op.id == id).ok_or("AGENT_OPERATION_NOT_PENDING")?;
             let external = external_operation(&operation.kind);
             // Also fence accepting native returns and frontend read receipts;
@@ -2473,6 +2572,9 @@ pub(crate) fn execute_with_admission_adapter(
                 // Same user-attestation protocol as manual MCP, fenced by
                 // this exact encrypted operation revision and native root.
                 if operation.status != "unknown" { return Err("AGENT_OPERATION_NOT_PENDING".into()); }
+                if !can_reconcile_operation(operation, session.foundation_task.as_ref(), &session.runs, &identity, &session.session_id) {
+                    return Err("AGENT_EFFECT_APPROVAL_EVIDENCE_REQUIRED".into());
+                }
                 let revision = operation.review_revision.ok_or("AGENT_EFFECT_REVIEW_STALE")?.to_string();
                 if request["review_revision"].as_str() != Some(revision.as_str()) {
                     return Err("AGENT_EFFECT_REVIEW_STALE".into());
@@ -2484,12 +2586,10 @@ pub(crate) fn execute_with_admission_adapter(
             } else if operation.status == "pending" && status == "rejected" {
                 ("rejected", submitted.to_owned())
             } else if external && operation.status == "result_ready" && status == "accepted"
-                && operation.execution.as_ref().is_some_and(|receipt| receipt.phase == "returned") {
+                && verify_native_return(operation, session.foundation_task.as_ref(), &session.runs, &identity, &session.session_id) {
                 ("succeeded", operation.result.clone().ok_or("AGENT_OPERATION_RECEIPT_MISSING")?)
             } else if !external && operation.status == "executing" && !matches!(status, "rejected" | "accepted")
-                && operation.execution.as_ref().is_some_and(|receipt|
-                    receipt.phase == "frontend_claimed" && receipt.owner_epoch == Some(frontend_owner_epoch())
-                    && receipt.approval.is_some()) {
+                && frontend_return_bound(operation, session.foundation_task.as_ref(), &session.runs, &identity, &session.session_id) {
                 (if matches!(status, "timeout" | "cancelled" | "unknown") { "unknown" } else { status }, submitted.to_owned())
             } else { return Err("AGENT_OPERATION_NOT_PENDING".into()); };
             operation.status = next.into();
@@ -3070,6 +3170,33 @@ mod tests {
         assert_eq!(reviewed["operations"][0]["result"],"fixture native output");
         assert!(!reviewed["messages"].to_string().contains("forged frontend output"));
     }
+
+    #[test]
+    fn terminal_native_review_rejects_changed_result_and_unbound_approval() {
+        let f = Fixture::new();
+        let storage = f.0.join("state");
+        let initial = execute(&f.0,&storage,json!({"action":"chat","message":"propose"}), |_,_| {
+            Ok(json!({"role":"assistant","tool_calls":[{"id":"t1","function":{"name":"request_operation","arguments":json!({"kind":"mcp","input":{"server_id":"fixture","tool":"echo","arguments":{}}}).to_string()}}]}))
+        }).unwrap();
+        let id = initial["session_id"].as_str().unwrap();
+        let op = initial["operations"][0]["id"].as_str().unwrap();
+        execute_with_adapter(&f.0,&storage,json!({"action":"execute_operation","session_id":id,"operation_id":op,"approved":true}),|_,_|unreachable!(),|_,_,_,_|Ok(json!({"status":"succeeded","result":"fixture return"}))).unwrap();
+        let mut saved = load_without_recovery(&f.0,&storage,Some(id)).unwrap();
+        saved.operations[0].result = Some("changed result".into());
+        save(&storage,&saved).unwrap();
+        let recovered = run(&f,json!({"action":"session","session_id":id})).unwrap();
+        assert_eq!(recovered["operations"][0]["status"],"unknown");
+        assert_eq!(recovered["operations"][0]["can_reconcile"],true);
+        assert!(run(&f,json!({"action":"resolve_operation","session_id":id,"operation_id":op,"status":"accepted"})).is_err());
+        let mut saved = load_without_recovery(&f.0,&storage,Some(id)).unwrap();
+        saved.operations[0].execution.as_mut().unwrap().approval.as_mut().unwrap().arguments_sha256 = "0".repeat(64);
+        save(&storage,&saved).unwrap();
+        let recovered = run(&f,json!({"action":"session","session_id":id})).unwrap();
+        assert_eq!(recovered["operations"][0]["can_reconcile"],false);
+        assert!(run(&f,json!({"action":"reconcile_operation","session_id":id,"operation_id":op,"status":"not_applied",
+            "confirmed":true,"execution_ended":true,"review_revision":recovered["operations"][0]["review_revision"],
+            "result":"fixture termination and effect evidence"})).is_err());
+    }
     #[test]
     fn native_preflight_rejection_consumes_run_without_unknown_effect() {
         let f = Fixture::new();
@@ -3156,7 +3283,7 @@ mod tests {
         assert_eq!(reviewed["operations"][0]["status"],"succeeded");
         // Even a newly computed return digest cannot authorize an input
         // different from the original approval.
-        let mut wrong_input = checkpoint.clone();
+        let mut wrong_input: Session = serde_json::from_value(serde_json::to_value(&checkpoint).unwrap()).unwrap();
         wrong_input.operations[0].input["tool"] = json!("different");
         let digest = native_return_digest(&wrong_input.operations[0], wrong_input.foundation_task.as_ref().unwrap()).unwrap();
         wrong_input.operations[0].execution.as_mut().unwrap().return_digest = Some(digest);
