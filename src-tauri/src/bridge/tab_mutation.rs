@@ -216,7 +216,7 @@ fn agent_action(input: &Value) -> Result<Action, String> {
         Action::Close { .. } | Action::Back { .. } | Action::Forward { .. } | Action::Reload { .. } => {}
         _ => return Err("AGENT_BROWSER_ACTION_DENIED".into()),
     }
-    if action.target().is_some_and(|id| !super::tab_runtime::is_tab_label(id)) {
+    if action.target().is_some_and(|id| !super::is_tab_label(id)) {
         return Err("AGENT_BROWSER_ARGUMENT_INVALID".into());
     }
     Ok(action)
@@ -395,6 +395,9 @@ struct Slot {
     binding: Option<Binding>,
     since: std::time::Instant,
     entered: bool,
+    // Agent-owned prepared work may enter only after the Coding durable
+    // effect fence. Main-window Start must not bypass that owner.
+    agent_owned: bool,
 }
 impl Slot {
     /// A queued worker is revocable only under this same Owner lock.
@@ -881,6 +884,7 @@ pub(crate) fn execute_agent_browser_action(
                 command: action.command(), phase: Phase::Prepared, value: None, error: None },
             action: Some(action.clone()), binding: Some(review.binding.clone()),
             since: Instant::now(), entered: false,
+            agent_owned: true,
         });
     }
     if !current() {
@@ -1157,6 +1161,7 @@ fn tab_mutation_control(
                         binding: Some(binding),
                         since: std::time::Instant::now(),
                         entered: false,
+            agent_owned: false,
                     });
                 }
                 drop(reservation);
@@ -1170,6 +1175,9 @@ fn tab_mutation_control(
                     return Err("TAB_MUTATION_OWNER_BUSY".into());
                 }
                 let slot = matching(&mut state, &ticket)?;
+                if slot.agent_owned {
+                    return Err("AGENT_BROWSER_NATIVE_OWNER_REQUIRED".into());
+                }
                 if slot.receipt.phase != Phase::Prepared {
                     None
                 } else {
@@ -1435,6 +1443,7 @@ pub(super) async fn legacy_action<T: serde::de::DeserializeOwned + Send + 'stati
             binding: Some(binding.clone()),
             since: std::time::Instant::now(),
             entered: false,
+            agent_owned: false,
         });
     }
     drop(reservation);
@@ -1523,6 +1532,7 @@ mod tests {
             binding: Some(Binding::New),
             since: std::time::Instant::now() - std::time::Duration::from_secs(31),
             entered: false,
+            agent_owned: false,
         });
         state.expire_prepared();
         assert_eq!(state.slot.as_ref().unwrap().receipt.phase, Phase::Cancelled);
@@ -1544,6 +1554,7 @@ mod tests {
             binding: None,
             since: std::time::Instant::now(),
             entered: false,
+            agent_owned: false,
         };
         slot.cancel();
         assert_eq!(slot.receipt.phase, Phase::Cancelled);
@@ -1631,6 +1642,7 @@ mod tests {
             binding: None,
             since: now,
             entered: false,
+            agent_owned: false,
         });
         let later = now + DOMAIN_STALL + Duration::from_secs(1);
         assert!(state.recovery_target(later).is_none());

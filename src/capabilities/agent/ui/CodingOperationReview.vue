@@ -41,7 +41,9 @@ async function reviewBrowser(){
       operation_id:props.operation.id,input:JSON.parse(JSON.stringify(props.operation.input))});
     if(disposed||sequence!==reviewSequence)return;
     if(!review||review.operation_id!==props.operation.id||typeof review.token!=='string'
-        ||JSON.stringify(review.input)!==JSON.stringify(props.operation.input))throw Error('AGENT_BROWSER_REVIEW_INVALID');
+        ||!review.input||typeof review.input!=='object'
+        ||Object.keys(review.input).length!==Object.keys(props.operation.input).length
+        ||Object.keys(props.operation.input).some(key=>review.input[key]!==props.operation.input[key]))throw Error('AGENT_BROWSER_REVIEW_INVALID');
     browserReview.value=review;
     notice.value='核对目标和原网页，90 秒内批准；任何宿主或文档变化都会使确认失效。';
   }catch(error){if(!disposed&&sequence===reviewSequence)notice.value=String(error);}
