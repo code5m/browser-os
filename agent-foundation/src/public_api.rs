@@ -130,6 +130,8 @@ impl AgentTool for PublicReadTool {
             Ok(())
         };
         check()?;
+        if !args.is_object(){return Err(FoundationError::InvalidInput("public read arguments"));}
+        crate::model::validate_serialized_arguments(args)?;
         self.host.validate(&self.spec, binding, args)?;
         check()
     }
@@ -142,9 +144,11 @@ impl AgentTool for PublicReadTool {
     fn call_authorized<'a>(&'a self, call: crate::tool::AuthorizedCall) -> ToolFuture<'a> {
         Box::pin(async move {
             self.validate_binding(&call.binding, &call.arguments)?;
-            self.host
-                .call(&self.spec, call.binding, call.arguments)
-                .await
+            // Bounded input was validated above. Retain the exact proof
+            // and arguments for read-result release, never a new grant.
+            let result=self.host.call(&self.spec,call.binding.clone(),call.arguments.clone()).await?;
+            self.validate_binding(&call.binding,&call.arguments)?;
+            Ok(result)
         })
     }
 }

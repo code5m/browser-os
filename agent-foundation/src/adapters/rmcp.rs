@@ -87,16 +87,19 @@ impl AgentTool for RmcpReadOnlyTool {
     fn call_authorized<'a>(&'a self, call: AuthorizedCall) -> ToolFuture<'a> {
         Box::pin(async move {
             self.validate_binding(&call.binding, &call.arguments)?;
-            let Value::Object(map) = call.arguments else {
-                return Err(FoundationError::InvalidInput("mcp arguments"));
-            };
-            let request = CallToolRequestParams::new(self.tool_name.clone()).with_arguments(map);
+            let map=call.arguments.as_object().ok_or(FoundationError::InvalidInput("mcp arguments"))?;
+            let request = CallToolRequestParams::new(self.tool_name.clone()).with_arguments(map.clone());
             let response = self
                 .client
                 .call_tool(request)
                 .await
                 .map_err(|_| FoundationError::Tool("MCP_REMOTE_CALL_FAILED".into()))?;
-            strict_result(response)
+            // Resource authorization may expire or be revoked while the
+            // server is reading. Never disclose a result on an old proof.
+            self.validate_binding(&call.binding,&call.arguments)?;
+            let result=strict_result(response)?;
+            self.validate_binding(&call.binding,&call.arguments)?;
+            Ok(result)
         })
     }
 }

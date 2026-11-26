@@ -565,13 +565,10 @@ impl TaskRegistry {
             || !tool_name
                 .bytes()
                 .all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c))
-            || serde_json::to_vec(&arguments)
-                .map_err(|e| FoundationError::Serialization(e.to_string()))?
-                .len()
-                > 16_384
         {
             return Err(FoundationError::InvalidInput("tool proposal"));
         }
+        crate::model::validate_serialized_arguments(&arguments)?;
         let pending = PendingOperation {
             call_id: Uuid::new_v4(),
             tool_name,

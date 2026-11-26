@@ -592,3 +592,11 @@ Agent-owned Browser receipt slots explicitly reject the ordinary Start control, 
 - Explicit hide and hide-all propagate submission failures. Hide-all includes created native ordinary windows even before logical metadata publication; all attempted hides and Grid hide results are aggregated. Embedded tab create/activate receipts propagate peer hide rejection as partial activation, retain the existing lost-callback classification and skip hibernated peers. A submitted rectangle is not compositor paint confirmation.
 - Legacy open_browser/close_browser aliases now use the same receipt-backed tab mutation admission rather than directly creating/closing embedded WebViews. Existing trusted internal GUI driver entry points remain separate.
 - Source only; no compilation, tests, workflow edits, master merge or default renderer change.
+
+### Fence SDK and native read-result publication against revoked admission
+
+- Task proposal validation counts serialized argument bytes through a bounded sink, preserving the 16 KiB policy without allocating a complete duplicate. Public read arguments are objects and use the same bound before copies.
+- ToolRegistry rechecks cancellation and the absolute deadline after a provider poll returns; a late successful effect is not promoted to confirmed and retains durable unknown evidence. This is a local result fence, not remote cancellation.
+- Public API and RMCP read-only adapters retain the exact bounded arguments and proof for result-release authorization. The native Channel worker additionally checks current enablement, main-webview authority and reviewed binding after dispatch and before return. No new grant or write permission, and no claim of an immutable resource snapshot.
+- ACP projection consumes the common event and aggregate text budgets, including events it does not project, and rejects nil session identity even with empty input. It remains a protocol projection, not a production execution owner.
+- Source only; no compilation, tests, workflow changes or master merge.

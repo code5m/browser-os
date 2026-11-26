@@ -415,9 +415,15 @@ impl ToolRegistry {
         };
         // Reject stale results from paused/cancelled/completed/restarted work.
         // For side effects the durable UNKNOWN receipt survives this exit.
-        if !_lease.is_active() {
+        if !_lease.is_active() || *cancellation.borrow_and_update() {
             return Err(FoundationError::Cancelled);
         }
+        // A provider future can do synchronous work within one poll. A
+        // biased select alone does not fence a result that returns after
+        // the absolute deadline. For effects retain the UNKNOWN receipt.
+        let result = if tokio::time::Instant::now() >= deadline {
+            Err(FoundationError::Timeout)
+        } else { result };
         #[cfg(feature = "durable-sqlite")]
         if effect_store.is_some() && result.is_ok() {
             _lease.confirm_effect(permit.operation.call_id, &idempotency_key,

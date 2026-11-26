@@ -298,6 +298,7 @@ impl PublicApiHost for NativeOwnerHost {
         binding: &'a ApprovalBinding,
         args: &'a Value,
     ) -> foundation::Result<()> {
+        enabled_config(&self.app).map_err(|_|foundation::FoundationError::PermissionDenied)?;
         validate_read_binding(spec, binding, args)
             .map_err(|_| foundation::FoundationError::PermissionDenied)?;
         check_main(&self.app, &self.webview, &spec.command)
@@ -334,8 +335,13 @@ impl PublicApiHost for NativeOwnerHost {
                     let read = validate_read_binding(&approved_spec, &proof, &args)?;
                     check_main(&app, &webview, &approved_spec.command)?;
                     check_waiter()?;
-                    let result = read.dispatch(app, webview)?;
+                    let result = read.dispatch(app.clone(), webview.clone())?;
                     check_waiter()?;
+                    // Native worker must not publish a read after the
+                    // feature or original main-webview authority changed.
+                    enabled_config(&app)?;
+                    validate_read_binding(&approved_spec,&proof,&args)?;
+                    check_main(&app,&webview,&approved_spec.command)?;
                     // Check while the worker owns its permit; do not copy a
                     // potentially huge native result onto the async runtime.
                     bounded_channel_json(&result, MAX_RESULT_BYTES)?;

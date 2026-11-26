@@ -23,19 +23,24 @@ pub fn text_update(session: Uuid, text: &str) -> Result<SessionNotification> {
 /// ACP typed events projected from safe model output. The host is responsible
 /// for v1 protocol lifecycle/session notifications and explicit human approval.
 pub fn project_events(session: Uuid, events: &[ModelEvent]) -> Result<Vec<SessionNotification>> {
+    if session.is_nil(){return Err(FoundationError::InvalidInput("acp session"));}
+    let mut budget=crate::engine::ModelAdmissionBudget::new(crate::engine::TurnLimits::default())?;
+    // Even ignored transport events consume admission budget. Bound
+    // aggregate text before materializing SDK notification copies.
+    budget.admit_events(events.len())?;
     let mut projected = Vec::new();
     for event in events {
         match event {
-            ModelEvent::TextDelta { text } => projected.push(text_update(session, text)?),
+            ModelEvent::TextDelta { text } => {
+                budget.admit_text(text.len())?;
+                projected.push(text_update(session,text)?);
+            },
             ModelEvent::Usage { .. } | ModelEvent::Finished => {}
             // A tool suggestion must remain in the BrowserOS PermissionBroker.
             ModelEvent::ToolSuggestion { .. } => {}
             ModelEvent::Failed { .. } => {
                 return Err(FoundationError::Provider("ACP_MODEL_FAILURE".into()));
             }
-        }
-        if projected.len() > 256 {
-            return Err(FoundationError::InvalidInput("acp update limit"));
         }
     }
     Ok(projected)

@@ -58,6 +58,21 @@ pub trait ModelProvider: Send + Sync {
     fn stream<'a>(&'a self, request: ModelRequest) -> ModelFuture<'a>;
 }
 
+/// Bound already-decoded arguments without allocating another JSON buffer.
+pub(crate) fn validate_serialized_arguments(value: &serde_json::Value) -> Result<()> {
+    struct Budget(usize);
+    impl std::io::Write for Budget {
+        fn write(&mut self, bytes:&[u8])->std::io::Result<usize>{
+            self.0=self.0.checked_sub(bytes.len()).ok_or_else(||
+                std::io::Error::new(std::io::ErrorKind::InvalidData,"tool arguments too large"))?;
+            Ok(bytes.len())
+        }
+        fn flush(&mut self)->std::io::Result<()> {Ok(())}
+    }
+    serde_json::to_writer(&mut Budget(16_384),value)
+        .map_err(|_|FoundationError::InvalidInput("tool arguments too large"))
+}
+
 /// Shared bounded argument parsing for streaming and batched model adapters.
 /// This is syntax/size validation, not tool authorization. The capability
 /// owner must still validate the tool's arguments and effects.
