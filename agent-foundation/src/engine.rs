@@ -79,7 +79,7 @@ impl<'a> ModelTurnGate<'a> {
         gate.active()?;
         Ok(gate)
     }
-    fn active(&self) -> Result<()> {
+    pub(crate) fn active(&self) -> Result<()> {
         if *self.cancellation.borrow() || !self._lease.is_active() {
             return Err(FoundationError::Cancelled);
         }
@@ -320,7 +320,13 @@ fn drive_function_batches_checked<H: FunctionBatchHost>(
                 "duplicate tool call id across rounds",
             )));
         }
-        match host.accept_batch(round, round + 1 == rounds, reply, calls)? {
+        let flow = host.accept_batch(round, round + 1 == rounds, reply, calls)?;
+        // No successful completion or next round may be accepted after a
+        // host callback has returned on a superseded task generation.
+        if !active() || host.cancelled() {
+            return host.on_cancelled();
+        }
+        match flow {
             BatchFlow::Stop => return Ok(()),
             BatchFlow::Continue if round + 1 < rounds => {}
             BatchFlow::Continue => {
@@ -384,10 +390,30 @@ where
         Ok(BatchFlow::Stop)
     }
 }
+/// Non-production convenience adapter. Production text callers must pass
+/// the existing task lease to drive_owned_text_turn instead.
 pub fn drive_text_turn<E>(
     request: impl FnMut() -> std::result::Result<serde_json::Value, E>,
     cancelled: impl Fn() -> bool,
     error: impl Fn(FoundationError) -> E,
+) -> std::result::Result<String, E> {
+    drive_text_turn_checked(request, cancelled, error, || true)
+}
+
+pub fn drive_owned_text_turn<E>(
+    lease: &crate::task::ExecutionLease<'_>,
+    request: impl FnMut() -> std::result::Result<serde_json::Value, E>,
+    cancelled: impl Fn() -> bool,
+    error: impl Fn(FoundationError) -> E,
+) -> std::result::Result<String, E> {
+    drive_text_turn_checked(request, cancelled, error, || lease.is_active())
+}
+
+fn drive_text_turn_checked<E>(
+    request: impl FnMut() -> std::result::Result<serde_json::Value, E>,
+    cancelled: impl Fn() -> bool,
+    error: impl Fn(FoundationError) -> E,
+    active: impl Fn() -> bool,
 ) -> std::result::Result<String, E> {
     let mut host = TextOnlyHost {
         request,
@@ -395,8 +421,8 @@ pub fn drive_text_turn<E>(
         error,
         result: None,
     };
-    drive_function_batches(&mut host, 1, 0)?;
-    if (host.cancelled)() {
+    drive_function_batches_checked(&mut host, 1, 0, &active)?;
+    if !active() || (host.cancelled)() {
         return Err((host.error)(FoundationError::Cancelled));
     }
     host.result
@@ -488,6 +514,34 @@ mod tests {
         };
         assert!(drive_function_batches(&mut host, 2, 8).is_err());
         assert_eq!(host.admitted, 1);
+    }
+
+    #[test]
+    fn owned_text_driver_rejects_a_return_after_task_generation_changes() {
+        let tasks = TaskRegistry::new(std::sync::Arc::new(crate::event::EventJournal::new(32)));
+        let task = tasks.create(Uuid::new_v4(), "text", vec![]).unwrap();
+        tasks.start(task.id).unwrap();
+        let lease = tasks
+            .acquire_execution(task.id, tasks.get(task.id).unwrap().revision)
+            .unwrap();
+        let result = drive_owned_text_turn(
+            &lease,
+            || {
+                tasks.pause(task.id).unwrap();
+                Ok(serde_json::json!({"role":"assistant","content":"stale"}))
+            },
+            || false,
+            |error| error,
+        );
+        assert_eq!(result, Err(FoundationError::Cancelled));
+        assert_eq!(tasks.get(task.id).unwrap().status, TaskStatus::Paused);
+        let result = drive_owned_text_turn(
+            &lease,
+            || panic!("stale lease must never contact a provider"),
+            || false,
+            |error| error,
+        );
+        assert_eq!(result, Err(FoundationError::Cancelled));
     }
 
     #[test]

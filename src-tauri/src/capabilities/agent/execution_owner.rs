@@ -8,7 +8,7 @@ use browseros_agent_foundation::{
     approval::{ApprovalClaims, HostApprovalDecision, HostApprovalIssuer, ResourceBinding},
     context::{ContextGrant, ContextKind, ContextRef},
     event::EventJournal,
-    task::{ApprovedOperation, TaskRecord, TaskRegistry, TaskStatus},
+    task::{ApprovedOperation, ExecutionLease, TaskRecord, TaskRegistry, TaskStatus},
     tool::ToolEffect,
 };
 use serde_json::Value;
@@ -738,7 +738,7 @@ impl ProductionExecution {
         run: Uuid,
         input: serde_json::Value,
         cancelled: impl Fn() -> bool,
-        provider: impl FnOnce() -> Result<serde_json::Value, String>,
+        provider: impl FnOnce(&ExecutionLease<'static>) -> Result<serde_json::Value, String>,
     ) -> Result<serde_json::Value, String> {
         #[cfg(any(target_os = "linux", target_os = "windows"))]
         {
@@ -790,7 +790,7 @@ impl ProductionExecution {
         mut execution: Self,
         input: serde_json::Value,
         cancelled: impl Fn() -> bool,
-        provider: impl FnOnce() -> Result<serde_json::Value, String>,
+        provider: impl FnOnce(&ExecutionLease<'static>) -> Result<serde_json::Value, String>,
     ) -> Result<serde_json::Value, String> {
         durable.text = Some(TextRunPayload {
             input,
@@ -807,7 +807,7 @@ impl ProductionExecution {
         if !lease.is_active() {
             return Err("AI_PROVIDER_CANCELLED".into());
         }
-        let response = provider();
+        let response = provider(&lease);
         if !lease.is_active() {
             return Err("AI_PROVIDER_CANCELLED".into());
         }
@@ -1035,7 +1035,7 @@ impl ProductionExecution {
         prepare: impl FnOnce(&str, &serde_json::Value) -> Result<P, String>,
     ) -> Result<serde_json::Value, String>
     where
-        P: FnOnce() -> Result<serde_json::Value, String>,
+        P: FnOnce(&ExecutionLease<'static>) -> Result<serde_json::Value, String>,
     {
         #[cfg(any(target_os = "linux", target_os = "windows"))]
         {
@@ -2074,7 +2074,7 @@ mod tests {
                 id,
                 input.clone(),
                 || false,
-                || Ok(expected.clone())
+                |_| Ok(expected.clone())
             )
             .unwrap(),
             expected
@@ -2086,7 +2086,7 @@ mod tests {
                 id,
                 input,
                 || false,
-                || panic!("a committed response must not contact the provider")
+                |_| panic!("a committed response must not contact the provider")
             )
             .unwrap(),
             expected
@@ -2097,7 +2097,7 @@ mod tests {
             id,
             serde_json::json!({"model":"other"}),
             || false,
-            || panic!("mismatched input must not dispatch")
+            |_| panic!("mismatched input must not dispatch")
         )
         .is_err());
         let raw =
@@ -2136,7 +2136,7 @@ mod tests {
                 id,
                 input,
                 || false,
-                || panic!("committed local return must not replay"),
+                |_| panic!("committed local return must not replay"),
             );
             if withheld {
                 assert_eq!(recovered.unwrap_err(), "AGENT_RUN_RESULT_UNAVAILABLE");
@@ -2175,7 +2175,7 @@ mod tests {
                 id,
                 input,
                 || false,
-                || panic!("unknown dispatch may not replay")
+                |_| panic!("unknown dispatch may not replay")
             )
             .unwrap_err(),
             "AGENT_RUN_RECOVERY_REQUIRED"
@@ -2246,7 +2246,7 @@ mod tests {
                 |kind, saved| {
                     assert_eq!(kind, "chat");
                     assert_eq!(saved, &input);
-                    Ok(|| Ok(answer.clone()))
+                    Ok(|_: &ExecutionLease<'static>| Ok(answer.clone()))
                 }
             )
             .unwrap(),
@@ -2261,7 +2261,7 @@ mod tests {
             Uuid::new_v4(),
             "",
             || false,
-            |_, _| Ok(|| panic!("second successor must be rejected"))
+            |_, _| Ok(|_: &ExecutionLease<'static>| panic!("second successor must be rejected"))
         )
         .is_err());
         assert_eq!(
@@ -2271,7 +2271,7 @@ mod tests {
                 second,
                 "",
                 || false,
-                |_, _| Ok(|| panic!("committed successor must not replay"))
+                |_, _| Ok(|_: &ExecutionLease<'static>| panic!("committed successor must not replay"))
             )
             .unwrap(),
             answer
@@ -2291,7 +2291,7 @@ mod tests {
                 second,
                 "",
                 || false,
-                |_, _| Ok(|| panic!("compacted predecessor must only recover committed child"))
+                |_, _| Ok(|_: &ExecutionLease<'static>| panic!("compacted predecessor must only recover committed child"))
             )
             .unwrap(),
             answer
@@ -2307,7 +2307,7 @@ mod tests {
             second,
             "",
             || false,
-            |_, _| Ok(|| panic!("forgotten successor must not replay"))
+            |_, _| Ok(|_: &ExecutionLease<'static>| panic!("forgotten successor must not replay"))
         )
         .is_err());
         std::fs::remove_dir_all(storage).unwrap();

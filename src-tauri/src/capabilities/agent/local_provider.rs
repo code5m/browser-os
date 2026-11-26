@@ -40,13 +40,16 @@ pub(crate) fn check(req: &LocalChatRequest) -> Result<(), String> {
     }
     Ok(())
 }
-fn send_local(body: &str) -> Result<String, String> {
+fn send_local(body: &str, cancelled: &dyn Fn() -> bool) -> Result<String, String> {
+    if cancelled() {
+        return Err("AI_PROVIDER_CANCELLED".into());
+    }
     let deadline = Instant::now() + Duration::from_secs(30);
     let mut socket = TcpStream::connect_timeout(&ADDRESS.into(), Duration::from_secs(2))
         .map_err(|_| "AGENT_PROVIDER_OFFLINE")?;
-    socket
-        .set_read_timeout(Some(Duration::from_secs(25)))
-        .map_err(|_| "AGENT_PROVIDER_IO")?;
+    if cancelled() {
+        return Err("AI_PROVIDER_CANCELLED".into());
+    }
     socket
         .set_write_timeout(Some(Duration::from_secs(3)))
         .map_err(|_| "AGENT_PROVIDER_IO")?;
@@ -58,16 +61,30 @@ fn send_local(body: &str) -> Result<String, String> {
     let mut response = Vec::new();
     let mut buf = [0u8; 4096];
     loop {
+        if cancelled() {
+            return Err("AI_PROVIDER_CANCELLED".into());
+        }
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
             return Err("AGENT_PROVIDER_TIMEOUT".into());
         }
         socket
-            .set_read_timeout(Some(remaining.min(Duration::from_secs(25))))
+            .set_read_timeout(Some(remaining.min(Duration::from_millis(250))))
             .map_err(|_| "AGENT_PROVIDER_IO")?;
-        let n = socket
-            .read(&mut buf)
-            .map_err(|_| "AGENT_PROVIDER_TIMEOUT")?;
+        let n = match socket.read(&mut buf) {
+            Ok(n) => n,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::TimedOut
+                        | std::io::ErrorKind::WouldBlock
+                        | std::io::ErrorKind::Interrupted
+                ) =>
+            {
+                continue;
+            }
+            Err(_) => return Err("AGENT_PROVIDER_IO".into()),
+        };
         if n == 0 {
             break;
         }
@@ -92,17 +109,23 @@ fn send_local(body: &str) -> Result<String, String> {
     }
     Ok(payload.to_owned())
 }
-pub fn local_chat(req: LocalChatRequest) -> Result<LocalChatAnswer, String> {
+pub(crate) fn local_chat(
+    req: LocalChatRequest,
+    lease: &browseros_agent_foundation::task::ExecutionLease<'_>,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<LocalChatAnswer, String> {
     check(&req)?;
     let body = serde_json::json!({
        "model":req.model,"prompt":req.message,"system":req.system,
        "stream":false,"options":{"num_predict":1024}
     })
     .to_string();
-    use browseros_agent_foundation::{engine::drive_text_turn, FoundationError};
-    let answer = drive_text_turn(
+    use browseros_agent_foundation::{engine::drive_owned_text_turn, FoundationError};
+    let inactive = || cancelled() || !lease.is_active();
+    let answer = drive_owned_text_turn(
+        lease,
         || -> Result<serde_json::Value, String> {
-            let text = send_local(&body)?;
+            let text = send_local(&body, &inactive)?;
             let parsed: serde_json::Value =
                 serde_json::from_str(&text).map_err(|_| "AGENT_PROVIDER_INVALID_RESPONSE")?;
             let response = parsed
@@ -111,8 +134,9 @@ pub fn local_chat(req: LocalChatRequest) -> Result<LocalChatAnswer, String> {
                 .ok_or("AGENT_PROVIDER_INVALID_RESPONSE")?;
             Ok(serde_json::json!({"role":"assistant","content":response}))
         },
-        || false,
+        &inactive,
         |error| match error {
+            FoundationError::Cancelled => "AI_PROVIDER_CANCELLED".into(),
             FoundationError::Provider(code) if code == "MODEL_TEXT_EMPTY" => {
                 "AGENT_PROVIDER_EMPTY_RESPONSE".into()
             }
@@ -170,8 +194,8 @@ pub async fn agent_local_chat(
             run,
             input,
             || false,
-            || {
-                serde_json::to_value(local_chat(request)?)
+            |lease| {
+                serde_json::to_value(local_chat(request, lease, &|| false)?)
                     .map_err(|_| "AGENT_RUN_RECEIPT_INVALID".into())
             },
         )?;

@@ -895,11 +895,14 @@ fn text_model_turn(
     profile: &ProviderProfile,
     messages: &[Value],
     cancelled: &(dyn Fn() -> bool + Sync),
+    lease: &browseros_agent_foundation::task::ExecutionLease<'_>,
 ) -> Result<String, String> {
-    use browseros_agent_foundation::{engine::drive_text_turn, FoundationError};
-    drive_text_turn(
-        || provider_turn_cancelable(profile, messages, &[], cancelled),
-        cancelled,
+    use browseros_agent_foundation::{engine::drive_owned_text_turn, FoundationError};
+    let inactive = || cancelled() || !lease.is_active();
+    drive_owned_text_turn(
+        lease,
+        || provider_turn_cancelable(profile, messages, &[], &inactive),
+        &inactive,
         |error| match error {
             FoundationError::Cancelled => "AI_PROVIDER_CANCELLED".into(),
             FoundationError::Provider(code) if code == "MODEL_TEXT_EMPTY" => {
@@ -935,12 +938,17 @@ fn text_checkpoint_input(
 
 // Restore only the normalized text-only input. Recheck the current
 // provider selection and acquire its credential in the native adapter.
+type RestoredTextProvider<'a> = Box<
+    dyn FnOnce(&browseros_agent_foundation::task::ExecutionLease<'static>) -> Result<Value, String>
+        + 'a,
+>;
+
 fn prepare_restored_text_provider<'a>(
     config: &AiConfig,
     kind: &str,
     input: &Value,
     cancelled: &'a (dyn Fn() -> bool + Sync),
-) -> Result<Box<dyn FnOnce() -> Result<Value, String> + 'a>, String> {
+) -> Result<RestoredTextProvider<'a>, String> {
     if kind == "local_chat" {
         use crate::capabilities::agent::public_api::{
             local_chat, validate_local_chat, LocalChatRequest,
@@ -963,11 +971,8 @@ fn prepare_restored_text_provider<'a>(
                 .into(),
         };
         validate_local_chat(&request)?;
-        return Ok(Box::new(move || {
-            if cancelled() {
-                return Err("AI_PROVIDER_CANCELLED".into());
-            }
-            serde_json::to_value(local_chat(request)?)
+        return Ok(Box::new(move |lease| {
+            serde_json::to_value(local_chat(request, lease, cancelled)?)
                 .map_err(|_| "AGENT_RUN_RECEIPT_INVALID".into())
         }));
     }
@@ -1016,8 +1021,8 @@ fn prepare_restored_text_provider<'a>(
     {
         return Err("AGENT_RUN_CONTEXT_INVALID".into());
     }
-    Ok(Box::new(move || {
-        let content = text_model_turn(&profile, &messages, cancelled)?;
+    Ok(Box::new(move |lease| {
+        let content = text_model_turn(&profile, &messages, cancelled, lease)?;
         Ok(if let Some(agent) = agent {
             json!({"content":content,"model":profile.model,"agent_id":agent,"tools_executed":false})
         } else {
@@ -1035,8 +1040,12 @@ fn chat_with_history(
     cancelled: &(dyn Fn() -> bool + Sync),
 ) -> Result<Value, String> {
     let messages = build_chat_messages(message, scope, history)?;
-    let content = text_model_turn(profile, &messages, cancelled)?;
-    Ok(json!({"content":content,"model":profile.model}))
+    let execution = crate::capabilities::agent::public_api::ProductionExecution::begin("chat")?;
+    let lease = execution.acquire_lease()?;
+    let result = text_model_turn(profile, &messages, cancelled, &lease);
+    drop(lease);
+    execution.finish(result.is_ok())?;
+    Ok(json!({"content":result?,"model":profile.model}))
 }
 
 fn provider_turn_cancelable(
@@ -1928,8 +1937,8 @@ pub fn execute(path: &Path, request: AiRequest) -> Result<Value, String> {
                 run,
                 input,
                 cancelled,
-                || {
-                    text_model_turn(&profile, &messages, &cancelled)
+                |lease| {
+                    text_model_turn(&profile, &messages, &cancelled, lease)
                     .map(|content| json!({"content":content,"model":profile.model,"agent_id":agent.id,"tools_executed":false}))
                 },
             )
@@ -1963,8 +1972,8 @@ pub fn execute(path: &Path, request: AiRequest) -> Result<Value, String> {
                 run,
                 input,
                 cancelled,
-                || {
-                    text_model_turn(&profile, &messages, &cancelled)
+                |lease| {
+                    text_model_turn(&profile, &messages, &cancelled, lease)
                         .map(|content| json!({"content":content,"model":profile.model}))
                 },
             )

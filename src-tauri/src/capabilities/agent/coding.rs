@@ -2486,13 +2486,14 @@ struct CodingBatchHost<'a, P> {
     messages: &'a mut Vec<Value>,
     plan: bool,
     provider: &'a mut P,
+    lease: &'a browseros_agent_foundation::task::ExecutionLease<'static>,
 }
 impl<P: FnMut(&[Value], &[Value]) -> Result<Value, String>>
     browseros_agent_foundation::engine::FunctionBatchHost for CodingBatchHost<'_, P>
 {
     type Error = String;
     fn cancelled(&self) -> bool {
-        cancelled(self.root, &self.session.session_id)
+        !self.lease.is_active() || cancelled(self.root, &self.session.session_id)
     }
     fn on_cancelled(&mut self) -> Result<(), String> {
         self.session.status = "cancelled".into();
@@ -2552,6 +2553,11 @@ impl<P: FnMut(&[Value], &[Value]) -> Result<Value, String>>
         verify_workspace_binding(root, session.workspace_identity.as_deref())?;
         let messages = &mut *self.messages;
         let plan = self.plan;
+        let lease = self.lease;
+        if !lease.is_active() || cancelled(root, &session.session_id) {
+            session.status = "cancelled".into();
+            return Ok(browseros_agent_foundation::engine::BatchFlow::Stop);
+        }
         session.messages.push(reply.clone());
         messages.push(reply);
         if calls.is_empty() {
@@ -2566,7 +2572,7 @@ impl<P: FnMut(&[Value], &[Value]) -> Result<Value, String>>
         for call in calls {
             let name = call.name.as_str();
             let arguments = call.arguments;
-            let output = if cancelled(root, &session.session_id) {
+            let output = if !lease.is_active() || cancelled(root, &session.session_id) {
                 Err("AGENT_CANCELLED".into())
             } else {
                 match name {
@@ -2608,7 +2614,7 @@ impl<P: FnMut(&[Value], &[Value]) -> Result<Value, String>>
             session.messages.push(message.clone());
             messages.push(message);
         }
-        if cancelled(root, &session.session_id) {
+        if !lease.is_active() || cancelled(root, &session.session_id) {
             session.status = "cancelled".into();
             return Ok(browseros_agent_foundation::engine::BatchFlow::Stop);
         }
@@ -3411,6 +3417,7 @@ pub(crate) fn execute_with_admission_adapter(
                     messages: &mut messages,
                     plan,
                     provider: &mut provider,
+                    lease: &execution_lease,
                 },
                 &execution_lease,
                 8,
