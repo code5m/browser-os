@@ -4177,6 +4177,55 @@ mod tests {
         .is_err());
     }
     #[test]
+    fn coding_mcp_signed_final_receipt_reconciles_original_operation_only() {
+        use super::super::mcp_authority::{fixture_binding, fixture_proof, FinalOutcome};
+        let f = Fixture::new();
+        let storage = f.0.join("state");
+        let proposed = execute(&f.0, &storage, json!({"action":"chat","message":"propose"}), |_, _| {
+            Ok(json!({"role":"assistant","tool_calls":[{"id":"t1","function":{
+                "name":"request_operation","arguments":json!({"kind":"mcp",
+                "input":{"server_id":"fixture","tool":"echo","arguments":{}}}).to_string()
+            }}]}))
+        }).unwrap();
+        let session_id = &proposed["session_id"];
+        let operation = &proposed["operations"][0]["id"];
+        let (mut binding, key) = fixture_binding();
+        binding.run_id = run_id(operation.as_str().unwrap()).unwrap();
+        let request = json!({"action":"execute_operation","session_id":session_id,
+            "operation_id":operation,"approved":true,"review_revision":binding.review_revision});
+        let unknown = execute_with_effect_adapter(
+            &f.0, &storage, request.clone(), None, |_, _| unreachable!(),
+            |kind, _, _, _, run, admit| {
+                assert_eq!(kind, "mcp");
+                assert_eq!(run, binding.run_id);
+                admit(Some(&binding))?;
+                Ok(json!({"status":"succeeded","result":{"content":[]}}))
+            },
+        ).unwrap();
+        assert_eq!(unknown["operations"][0]["status"], "unknown");
+        let directory = storage.join("mcp-effect-status");
+        crate::capabilities::workspace::safe_paths::ensure_private_directory(&directory).unwrap();
+        let path = directory.join(format!("{}.json", binding.effect_id));
+        let mut wrong = fixture_proof(&binding, &key, FinalOutcome::AppliedFinal);
+        wrong.run_id = uuid::Uuid::new_v4();
+        fs::write(&path, serde_json::to_vec(&wrong).unwrap()).unwrap();
+        let read = || execute(&f.0, &storage, json!({"action":"session","session_id":session_id}), |_, _| unreachable!());
+        assert_eq!(read().unwrap()["operations"][0]["status"], "unknown");
+        let proof = fixture_proof(&binding, &key, FinalOutcome::AppliedFinal);
+        fs::write(&path, serde_json::to_vec(&proof).unwrap()).unwrap();
+        let resolved = read().unwrap();
+        assert_eq!(resolved["operations"][0]["status"], "reconciled_succeeded");
+        assert_eq!(resolved["operations"][0]["execution"]["phase"], "provider_reconciled");
+        assert_eq!(resolved["operations"][0]["execution"]["provider_proof"], json!(proof));
+        fs::remove_file(&path).unwrap();
+        let restored = read().unwrap();
+        assert_eq!(restored["foundation_task"], resolved["foundation_task"]);
+        assert_eq!(restored["messages"], resolved["messages"]);
+        assert!(execute_with_effect_adapter(&f.0, &storage, request, None,
+            |_, _| unreachable!(), |_, _, _, _, _, _| panic!("old approval must never replay")).is_err());
+    }
+
+    #[test]
     fn native_operation_receipt_blocks_replay_and_requires_review() {
         let f = Fixture::new();
         let storage = f.0.join("state");

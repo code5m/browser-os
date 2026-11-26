@@ -2425,6 +2425,79 @@ mod tests {
 
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     #[test]
+    fn signed_manual_mcp_final_status_survives_receipt_recovery_without_replay() {
+        use super::super::mcp_authority::{fixture_binding, fixture_proof, FinalOutcome};
+        let root = std::env::temp_dir().join(format!("browseros-mcp-signed-{}", Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let storage = root.join("store");
+        for outcome in [FinalOutcome::AppliedFinal, FinalOutcome::NotAppliedFinal] {
+            let (binding, key) = fixture_binding();
+            let run = binding.run_id;
+            let mut execution =
+                ProductionExecution::begin_workspace_run(&storage, "manual_mcp", &root, run)
+                    .unwrap();
+            let request = serde_json::json!({
+                "action":"mcp_call","tool":"fixture","review_revision":binding.review_revision
+            });
+            let digest = format!("{:x}", Sha256::digest(serde_json::to_vec(&request).unwrap()));
+            let arguments = serde_json::json!({"run_id":run,"review_digest":digest});
+            let (claim, permit) = execution
+                .approve_native(
+                    "coding.manual_mcp_call",
+                    arguments.clone(),
+                    ToolEffect::ExternalSideEffect,
+                    digest.clone(),
+                )
+                .unwrap();
+            execution.checkpoint_approval(claim.clone()).unwrap();
+            let lease = execution
+                .acquire_approved_native(permit, &claim, &arguments)
+                .unwrap();
+            execution
+                .checkpoint_manual_mcp(&root, digest, &request, Some(&binding))
+                .unwrap();
+            assert!(
+                !execution
+                    .record_manual_mcp_return(
+                        &Ok(serde_json::json!({"result":{"content":[]},"untrusted":true})),
+                        true
+                    )
+                    .unwrap()
+            );
+            drop(lease);
+            execution.finish_unknown().unwrap();
+            let directory = storage.join("mcp-effect-status");
+            crate::capabilities::workspace::safe_paths::ensure_private_directory(&directory)
+                .unwrap();
+            let path = directory.join(format!("{}.json", binding.effect_id));
+            let before = ProductionExecution::read_manual_mcp(&storage, &root, run).unwrap();
+            assert_eq!(before["phase"], "operation_unknown");
+            let proof = fixture_proof(&binding, &key, outcome);
+            let mut forged = proof.clone();
+            forged.review_revision = "b".repeat(64);
+            std::fs::write(&path, serde_json::to_vec(&forged).unwrap()).unwrap();
+            let unknown = ProductionExecution::read_manual_mcp(&storage, &root, run).unwrap();
+            assert_eq!(unknown["phase"], "operation_unknown");
+            assert_eq!(unknown["revision"], before["revision"]);
+            std::fs::write(&path, serde_json::to_vec(&proof).unwrap()).unwrap();
+            let resolved = ProductionExecution::read_manual_mcp(&storage, &root, run).unwrap();
+            assert_eq!(
+                resolved["phase"],
+                if outcome.applied() { "provider_applied" } else { "provider_not_applied" }
+            );
+            assert_eq!(resolved["provider_outcome"], serde_json::json!(outcome));
+            assert_eq!(resolved["can_resolve"], false);
+            std::fs::remove_file(path).unwrap();
+            let recovered = ProductionExecution::read_manual_mcp(&storage, &root, run).unwrap();
+            assert_eq!(resolved["revision"], recovered["revision"]);
+            assert_eq!(resolved["provider_proof"], recovered["provider_proof"]);
+            assert!(ProductionExecution::begin_workspace_run(&storage, "manual_mcp", &root, run).is_err());
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[test]
     fn manual_effect_observation_does_not_release_unknown_or_allow_replay() {
         let root = std::env::temp_dir().join(format!("browseros-mcp-review-{}", Uuid::new_v4()));
         std::fs::create_dir(&root).unwrap();
