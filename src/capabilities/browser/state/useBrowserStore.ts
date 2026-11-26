@@ -425,6 +425,10 @@ export const useBrowserStore = defineStore("browser", () => {
         // Native failure never publishes a new visible view or activeTabId.
         if (isolatedRendererMode.value) void refreshRendererState(id);
         void syncViewVisibility();
+        if (String(error).includes("TAB_RESTORE_URL_UNSUPPORTED")) {
+          layout.showToast("原地址无法安全恢复；请保留或关闭该页签，并手动打开新地址");
+          return false;
+        }
         throw error;
       }
       if (!isBrowserResourceAllowed() || !tabs.some((tab) => tab.id === id) || !publish()) {
@@ -536,11 +540,13 @@ export const useBrowserStore = defineStore("browser", () => {
   // this memory-only history. Transient documents have no recoverable
   // URL; never reinterpret their address as a search query.
   function reopenableAddress(value: string): boolean {
-    if (!value || value.trim() !== value) return false;
+    if (!value || value.length > 8192 || value.trim() !== value || /[\u0000-\u001f\u007f-\u009f]/.test(value)) return false;
     try {
       const parsed = new URL(value);
-      return parsed.protocol === "http:" || parsed.protocol === "https:"
-        || parsed.protocol === "file:" || value === "about:blank";
+      if (parsed.username || parsed.password) return false;
+      return ((parsed.protocol === "http:" || parsed.protocol === "https:") && !!parsed.hostname)
+        || (parsed.protocol === "file:" && (!parsed.hostname || parsed.hostname === "localhost"))
+        || value === "about:blank";
     } catch { return false; }
   }
   // Commit only after the native close acknowledgement.

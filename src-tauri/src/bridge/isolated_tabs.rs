@@ -139,6 +139,11 @@ pub(super) fn activate(app: &AppHandle, id: &str) -> Result<(), String> {
     if state.grid_manager.tab_renderer_owner(index)?.is_none() {
         let url = state.tabs.lock().unwrap().get(id).map(|tab| tab.url.clone())
             .ok_or("TAB_NOT_FOUND")?;
+        // A crash is not authorization to re-execute a transient document
+        // or reopen an embedded-credential URL. Keep the logical tab.
+        if !crate::grid_ipc::restorable_address(&url) {
+            return Err("TAB_RESTORE_URL_UNSUPPORTED".into());
+        }
         state.grid_manager.start_tab_renderer(index, &url)?;
         state.hibernated_tabs.lock().unwrap().remove(id);
     } else {

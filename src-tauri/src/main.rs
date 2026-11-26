@@ -788,7 +788,7 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
                                 &grid_ipc::Wire::err(seq, "GRID_HIBERNATION_DOWNLOAD_HISTORY"));
                             continue;
                         }
-                        let probe_manager = Arc::clone(manager.inner());
+                        let probe_manager = std::sync::Arc::clone(manager.inner());
                         let probe_id = id.clone();
                         let reply_writer = writer.clone();
                         let result = manager.eval_result(

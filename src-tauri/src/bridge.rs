@@ -301,8 +301,9 @@ pub struct AppState {
     pub tab_idle_since: Mutex<HashMap<String, std::time::Instant>>,
     /// 已休眠页签（webview 已销毁，URL 保留在 tabs 表，激活时重建）
     pub hibernated_tabs: Mutex<std::collections::HashSet<String>>,
-    /// Scroll-only restore metadata; form/password/file values are never persisted.
-    pub hibernated_scroll: Mutex<HashMap<String, (f64, f64)>>,
+    /// Scroll-only, memory-only restore metadata bound to the original URL.
+    /// Form/password/file values are never persisted.
+    pub hibernated_scroll: Mutex<HashMap<String, (String, (f64, f64))>>,
     /// tab-N 主进程 WebView 恢复预算，防止失败路径进入无限重建。
     pub tab_recovery: Mutex<HashMap<String, TabRecoveryBudget>>,
     /// M1-4：外部打开 URL 缓存队列（xdg-open 冷启动 argv / 单实例转发 /

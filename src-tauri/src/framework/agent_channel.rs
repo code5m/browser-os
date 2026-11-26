@@ -210,26 +210,79 @@ fn as_text<'a>(value: &'a Value, name: &str, max: usize) -> Result<&'a str, Stri
     Ok(text)
 }
 
-fn resource_for(command: &str, args: &Value) -> Result<String, String> {
-    match command {
-        // The existing browser projection is an argument-free read. Never
-        // accept hidden JS, URLs, target IDs or other effect-shaped arguments
-        // as if they had been authorized by the tab-list approval.
-        "tab_list" if args.as_object().is_some_and(|fields| fields.is_empty()) =>
-            Ok("browser:tabs".into()),
-        "tab_list" => Err("AGENT_BROWSER_READ_ARGUMENT_INVALID".into()),
-        "db_list_connections" => Ok("database:profiles".into()),
-        "coding_lsp_status" => Ok(format!("coding:{}", as_text(args, "root", 4096)?)),
-        "git_status" | "git_diff" => Ok(format!("git:{}", as_text(args, "repo_id", 100)?)),
-        _ => Err("AGENT_EXPERIMENT_TOOL_DENIED".into()),
+/// The same typed request determines approval scope and native dispatch.
+/// No unknown field or malformed optional value is silently discarded.
+enum NativeRead {
+    BrowserTabs,
+    DatabaseProfiles,
+    GitStatus { repo_id: String },
+    GitDiff { repo_id: String, path: Option<String> },
+    CodingLsp { root: String },
+}
+
+impl NativeRead {
+    fn parse(command: &str, args: &Value) -> Result<Self, String> {
+        let fields = args.as_object().ok_or("AGENT_EXPERIMENT_ARGUMENT_INVALID")?;
+        let exact_keys = |allowed: &[&str]| {
+            fields.keys().all(|key| allowed.contains(&key.as_str()))
+        };
+        match command {
+            "tab_list" if fields.is_empty() => Ok(Self::BrowserTabs),
+            "tab_list" => Err("AGENT_BROWSER_READ_ARGUMENT_INVALID".into()),
+            "db_list_connections" if fields.is_empty() => Ok(Self::DatabaseProfiles),
+            "git_status" if exact_keys(&["repo_id"]) => Ok(Self::GitStatus {
+                repo_id: as_text(args, "repo_id", 100)?.to_owned(),
+            }),
+            "git_diff" if exact_keys(&["repo_id", "path"]) => {
+                let path = match fields.get("path") {
+                    None | Some(Value::Null) => None,
+                    Some(_) => Some(as_text(args, "path", 1024)?.to_owned()),
+                };
+                Ok(Self::GitDiff { repo_id: as_text(args, "repo_id", 100)?.to_owned(), path })
+            }
+            "coding_lsp_status" if exact_keys(&["root"]) => Ok(Self::CodingLsp {
+                root: as_text(args, "root", 4096)?.to_owned(),
+            }),
+            "db_list_connections" | "git_status" | "git_diff" | "coding_lsp_status" =>
+                Err("AGENT_EXPERIMENT_ARGUMENT_INVALID".into()),
+            _ => Err("AGENT_EXPERIMENT_TOOL_DENIED".into()),
+        }
     }
+
+    fn resource(&self) -> String {
+        match self {
+            Self::BrowserTabs => "browser:tabs".into(),
+            Self::DatabaseProfiles => "database:profiles".into(),
+            Self::GitStatus { repo_id } | Self::GitDiff { repo_id, .. } => format!("git:{repo_id}"),
+            Self::CodingLsp { root } => format!("coding:{root}"),
+        }
+    }
+
+    fn dispatch(self, app: AppHandle, webview: Webview) -> Result<Value, String> {
+        match self {
+            Self::BrowserTabs => Ok(crate::capabilities::browser::public_api::agent_tab_summary(app)),
+            Self::DatabaseProfiles =>
+                crate::capabilities::database::public_api::agent_connection_summary(app, webview),
+            Self::GitStatus { repo_id } =>
+                crate::capabilities::git::public_api::agent_status(app, webview, repo_id),
+            Self::GitDiff { repo_id, path } =>
+                crate::capabilities::git::public_api::agent_diff(app, webview, repo_id, path),
+            Self::CodingLsp { root } =>
+                crate::capabilities::agent::public_api::coding_lsp_summary(app, webview, &root),
+        }
+    }
+}
+
+fn resource_for(command: &str, args: &Value) -> Result<String, String> {
+    Ok(NativeRead::parse(command, args)?.resource())
 }
 
 // Both the initial host validation and worker admission enforce the same
 // approval binding. A valid proposal is not an evergreen read capability.
 fn validate_read_binding(spec: &PublicApiSpec, binding: &ApprovalBinding, args: &Value)
-    -> Result<(), String>
+    -> Result<NativeRead, String>
 {
+    let read = NativeRead::parse(&spec.command, args)?;
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
         .map_err(|_| "AGENT_APPROVAL_CLOCK_INVALID")?.as_millis();
     if !current_public_api_catalog().contains(spec)
@@ -240,11 +293,11 @@ fn validate_read_binding(spec: &PublicApiSpec, binding: &ApprovalBinding, args: 
         || binding.session_id.is_nil()
         || binding.resource.resource_revision != "local-main-ui-v1"
         || now >= u128::from(binding.expires_at_unix_ms)
-        || binding.resource.resource_id != resource_for(&spec.command, args)?
+        || binding.resource.resource_id != read.resource()
     {
         return Err("AGENT_READ_APPROVAL_STALE_OR_DENIED".into());
     }
-    Ok(())
+    Ok(read)
 }
 
 struct NativeOwnerHost {
@@ -282,36 +335,9 @@ impl PublicApiHost for NativeOwnerHost {
                     // Recheck the exact approved catalog entry, resource,
                     // argument shape, deadline, source and enablement.
                     enabled_config(&app)?;
-                    validate_read_binding(&approved_spec, &proof, &args)?;
+                    let read = validate_read_binding(&approved_spec, &proof, &args)?;
                     check_main(&app, &webview, &approved_spec.command)?;
-                    match approved_spec.command.as_str() {
-                        "tab_list" => Ok(crate::capabilities::browser::public_api::agent_tab_summary(app)),
-                        "db_list_connections" => {
-                            crate::capabilities::database::public_api::agent_connection_summary(
-                                app, webview,
-                            )
-                        }
-                        "git_status" => {
-                            let repo_id = as_text(&args, "repo_id", 100)?.to_owned();
-                            crate::capabilities::git::public_api::agent_status(
-                                app, webview, repo_id,
-                            )
-                        }
-                        "git_diff" => {
-                            let repo_id = as_text(&args, "repo_id", 100)?.to_owned();
-                            let path = args.get("path").and_then(Value::as_str).map(str::to_owned);
-                            crate::capabilities::git::public_api::agent_diff(
-                                app, webview, repo_id, path,
-                            )
-                        }
-                        "coding_lsp_status" => {
-                            let root = as_text(&args, "root", 4096)?.to_owned();
-                            crate::capabilities::agent::public_api::coding_lsp_summary(
-                                app, webview, &root,
-                            )
-                        }
-                        _ => Err("AGENT_EXPERIMENT_TOOL_DENIED".into()),
-                    }
+                    read.dispatch(app, webview)
                 })
                 .await
                 .map_err(|_| {
@@ -627,6 +653,11 @@ mod tests {
             "git:test"
         );
         assert!(resource_for("git_status", &json!({"repo_id":"../\n"})).is_err());
+        assert!(resource_for("db_list_connections", &json!({"sql":"SELECT 1"})).is_err());
+        assert!(resource_for("git_status", &json!({"repo_id":"test","path":"other"})).is_err());
+        assert!(resource_for("git_diff", &json!({"repo_id":"test","path":42})).is_err());
+        assert!(resource_for("coding_lsp_status", &json!({"root":"/repo","command":"run"})).is_err());
+        assert_eq!(resource_for("git_diff", &json!({"repo_id":"test","path":null})).unwrap(), "git:test");
     }
     #[test]
     fn disk_config_is_atomic_and_cas_ready() {

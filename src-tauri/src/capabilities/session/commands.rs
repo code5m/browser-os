@@ -531,12 +531,9 @@ pub async fn session_restore(
     let (url, resource_count) = SESSION_IO.run(move || {
         let session = crate::session::load_session(&workspace::sessions_dir(&read_app), &read_id)?;
         let url = session.url;
-        let parsed = url::Url::parse(&url).map_err(|_| "SESSION_RESTORE_URL_INVALID")?;
-        // Never reinterpret an archive address as a search query or execute a
-        // transient document scheme. Preserve normal HTTP(S), local files and
-        // the ordinary blank page already supported by Browser.
-        if url.trim() != url || !(matches!(parsed.scheme(), "http" | "https" | "file")
-            || url == "about:blank") {
+        // The same recovery policy is used by native host recreation. It
+        // rejects transient documents, embedded credentials and remote files.
+        if !crate::grid_ipc::restorable_address(&url) {
             return Err("SESSION_RESTORE_URL_UNSUPPORTED".into());
         }
         Ok((url, session.resource_count))

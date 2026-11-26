@@ -771,6 +771,7 @@ fn hibernate_tab(app: &AppHandle, id: &str, idle_window: std::time::Duration) ->
         Some(tab) => tab.url.clone(),
         None => return false,
     };
+    if !crate::grid_ipc::restorable_address(&expected_url) { return false; }
     let still_idle = || {
         // The user may disable the policy or navigate/activate the tab while a
         // two-second WebKit snapshot is in flight. Cancel on any such change.
@@ -829,7 +830,7 @@ fn hibernate_tab(app: &AppHandle, id: &str, idle_window: std::time::Duration) ->
             .hibernated_scroll
             .lock()
             .unwrap()
-            .insert(id.to_string(), scroll);
+            .insert(id.to_string(), (expected_url, scroll));
         state.tab_recovery.lock().unwrap().remove(id);
         eprintln!(
             "[hibernation] tab={} webview destroyed; URL and scroll retained",
@@ -1198,6 +1199,9 @@ pub(crate) fn tab_activate_impl(
             .get(&id)
             .map(|t| t.url.clone())
             .ok_or("TAB_NOT_FOUND")?;
+        if !crate::grid_ipc::restorable_address(&url) {
+            return Err("TAB_RESTORE_URL_UNSUPPORTED".into());
+        }
         // Keep the hibernated marker until the native WebView is recreated.
         spawn_child_window(
             &app,
@@ -1228,8 +1232,8 @@ pub(crate) fn tab_activate_impl(
         .lock()
         .unwrap()
         .get(&id)
-        .copied();
-    if let Some((x, y)) = scroll {
+        .cloned();
+    if let Some((expected_url, (x, y))) = scroll {
         let instance = active_instance.clone();
         let restore_app = app.clone();
         let restore_id = id.clone();
@@ -1241,19 +1245,22 @@ pub(crate) fn tab_activate_impl(
             let Ok(_transition) = reserve_tab_transition(&restore_id) else {
                 return;
             };
-            if !restore_app
-                .state::<AppState>()
-                .tabs
-                .lock()
-                .unwrap()
-                .contains_key(&restore_id)
+            let state = restore_app.state::<AppState>();
+            if state.shutdown_requested.load(Ordering::Acquire)
+                || state.active_tab.lock().unwrap().as_deref() != Some(restore_id.as_str())
+                || !state.tabs.lock().unwrap().get(&restore_id)
+                    .is_some_and(|tab| tab.url == expected_url)
+                || !state.hibernated_scroll.lock().unwrap().get(&restore_id)
+                    .is_some_and(|saved| saved.0 == expected_url && saved.1 == (x, y))
             {
                 return;
             }
+            // Native metadata is only an observation; check the actual
+            // document address inside the already instance-bound script.
+            let Ok(address) = serde_json::to_string(&expected_url) else { return; };
             let js = format!(
-                "if (window.scrollX === 0 && window.scrollY === 0) window.scrollTo({:.3},{:.3});",
-                x.max(0.0),
-                y.max(0.0)
+                "if (location.href === {} && window.scrollX === 0 && window.scrollY === 0) window.scrollTo({:.3},{:.3});",
+                address, x.max(0.0), y.max(0.0)
             );
             if restore_app
                 .state::<TabManagerState>()
