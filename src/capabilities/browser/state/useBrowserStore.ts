@@ -7,6 +7,7 @@ import { useLayoutStore } from "../../../stores/useLayoutStore";
 import { classifyNativeTabLoadFailure, recentNativeTabLoadFailure, type NativeTabLoadFailureRecord } from "../model/nativeTabLoadFailure.mjs";
 import { recordRecentUrl } from "../../../composables/recentsNav";
 import { registerBrowserLifecycleBinding } from "../lifecycle";
+import { nativeSurfaceBlocked, nativeSurfaceIssue, settleNativeLayouts } from "../../../utils/nativeSurfaceSync";
 import type { RecentlyClosedEntry, TabRecoveryEvent } from "../../../types";
 
 export interface AISite {
@@ -42,10 +43,15 @@ export const useBrowserStore = defineStore("browser", () => {
     const state = rendererStates.get(id);
     return isolatedRendererMode.value && state !== undefined && state !== "ready";
   }
+  function rendererWindowUnavailable(id: string): boolean {
+    const state = rendererStates.get(id);
+    return isolatedRendererMode.value && state !== undefined && state !== "ready" && state !== "loading";
+  }
   function rendererStateLabel(id: string): string {
     switch (rendererStates.get(id)) {
       case "cleanup_pending": return "原进程域回收中";
       case "absent": return "待重新激活";
+      case "loading": return "网页文档加载中";
       case "not_ready": return "原生宿主未就绪";
       case "unknown": return "原生状态待核对";
       case "hibernated": return "已休眠";
@@ -54,7 +60,7 @@ export const useBrowserStore = defineStore("browser", () => {
   }
   function rendererDownloadLabel(id: string): string {
     const download = rendererDownloads.get(id);
-    if (!download?.connection_current || rendererStates.get(id) !== "ready") return "";
+    if (!download?.connection_current || rendererWindowUnavailable(id)) return "";
     if (download.observed_unfinished === null) return "下载结果待核对";
     if (download.observed_unfinished > 0) return "下载未完观察 " + download.observed_unfinished;
     return "下载回调 " + download.succeeded + " 成功 / " + download.failed + " 失败";
@@ -67,7 +73,7 @@ export const useBrowserStore = defineStore("browser", () => {
     try {
       const view = await bridge.inspectRendererRecovery(id);
       if (rendererObservations.get(id) !== observation || !tabs.some(item => item === tab)) return null;
-      if (!view.renderer_state || !["ready","not_ready","cleanup_pending","absent","hibernated"].includes(view.renderer_state)) {
+      if (!view.renderer_state || !["ready","loading","not_ready","cleanup_pending","absent","hibernated"].includes(view.renderer_state)) {
         rendererStates.set(id, "unknown");
         rendererDownloads.delete(id);
         return null;
@@ -805,8 +811,11 @@ export const useBrowserStore = defineStore("browser", () => {
     await mutateTabs(async () => {
       if (!isBrowserResourceAllowed() || activeTabId.value !== id ||
           !tabs.some(tab => tab === target)) return;
+      if (rendererUnavailable(id)) await refreshRendererState(id);
+      if (!isBrowserResourceAllowed() || activeTabId.value !== id ||
+          !tabs.some(tab => tab === target)) return;
       if (rendererUnavailable(id)) {
-        layout.showToast("当前页签宿主不可用，请先重新激活；不会重放历史操作");
+        layout.showToast("当前页签文档尚未就绪，请先重新核对；不会重放历史操作");
         return;
       }
       await operation(id);
@@ -879,7 +888,10 @@ export const useBrowserStore = defineStore("browser", () => {
           tab.title = native.title || native.url;
           if (changed && tab.id === activeTabId.value && layout.mainView === "browser") url.value = tab.url;
           if (changed) row.applied?.(tab.url);
-          if (tab.id === activeTabId.value) nextTick(relocate);
+          if (tab.id === activeTabId.value) {
+            if (isolatedRendererMode.value && rendererUnavailable(tab.id)) void refreshRendererState(tab.id);
+            nextTick(relocate);
+          }
         }
       } catch {
         // A failed advisory read cannot manufacture current metadata.
@@ -1005,6 +1017,7 @@ export const useBrowserStore = defineStore("browser", () => {
   let schedulePosition: () => void = () => {};
   function bindPositionScheduler(fn: () => void) {
     schedulePosition = fn;
+    return () => { if (schedulePosition === fn) schedulePosition = () => {}; };
   }
   // 供编辑器/侧栏切换后强制重新定位
   function relocate() {
@@ -1056,46 +1069,69 @@ export const useBrowserStore = defineStore("browser", () => {
   // 切到非浏览器视图（编辑器/文件/终端等）时，主 UI 的 addrbar/TabBar 会因
   // v-if 不渲染，但子 webview 仍盖在屏幕上（遮住主区、看似"没有地址栏"）。
   // 因此必须在视图切换时显式把子 webview 移出屏幕 / 移回。
-  function hideAllWebviews() {
-    // 统一走后端 hide_all_webviews：用无去重的 hide_bounds 强制移出屏幕。
-    // 之前逐个调 tabPosition/gridPosition 会被 apply_bounds 的 50ms 去重丢弃，
-    // 导致刚定位过的宫格/页签没被移出、切视图后仍残留显示。
-    bridge.hideAllWebviews().catch(() => {});
+  let visibilityRevision = 0;
+  let visibilityWork: Promise<boolean> | null = null;
+  function syncViewVisibility(): Promise<boolean> {
+    ++visibilityRevision;
+    nativeSurfaceBlocked.value = true;
+    nativeSurfaceIssue.value = "";
+    if (visibilityWork) return visibilityWork;
+    visibilityWork = Promise.resolve().then(async () => {
+      for (;;) {
+        const revision = visibilityRevision;
+        try {
+          await settleNativeLayouts();
+          if (revision !== visibilityRevision) continue;
+          // Both Browser and Grid observe the same closed layout gate.
+          // Hide every old native surface, including when switching to Grid;
+          // only the latest view may reposition after this call settles.
+          await bridge.hideAllWebviews();
+          if (revision !== visibilityRevision) continue;
+          visibilityWork = null;
+          nativeSurfaceBlocked.value = false;
+          syncFreeze();
+          nextTick(relocate);
+          return true;
+        } catch {
+          if (revision !== visibilityRevision) continue;
+          visibilityWork = null;
+          nativeSurfaceIssue.value = "原生窗口显隐未确认；请重新同步显示或切换视图，旧操作不会自动重放。";
+          layout.showToast(nativeSurfaceIssue.value);
+          return false;
+        }
+      }
+    });
+    return visibilityWork;
+  }
+  async function requireVisibilitySettlement() {
+    // A capability transition may fail, but must not release or duplicate
+    // a still-running native hide operation.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const ok = await Promise.race([
+        syncViewVisibility(),
+        new Promise<boolean>(resolve => {timer=setTimeout(()=>resolve(false),15000);}),
+      ]);
+      if (!ok) throw new Error("NATIVE_VISIBILITY_UNCONFIRMED");
+    } finally { if (timer !== undefined) clearTimeout(timer); }
   }
 
-  // 按当前视图同步子 webview 显隐：browser/grid 视图重新定位显示，其它视图移出屏幕
-  async function syncViewVisibility() {
-    bridge.debugLog(`syncViewVisibility view=${layout.mainView} browserVisible=${layout.mainView === "browser"}`);
-    if (layout.mainView === "browser") {
-      await bridge.hideAllWebviews().catch(() => {});
-      relocate();
-    } else if (layout.mainView === "grid") {
-      if (activeTabId.value) await bridge.hideWebview(activeTabId.value).catch(() => {});
-    } else {
-      hideAllWebviews();
-    }
-    syncFreeze();
-  }
-
-  // 监听视图切换，自动同步子 webview 显隐
-  watch(
-    () => layout.mainView,
-    () => {
-      // 等 Vue 完成 DOM 更新（v-if 切换）后再定位/隐藏
-      nextTick(syncViewVisibility);
-    }
-  );
+  // Close layout admission in the same synchronous view transition, before
+  // a queued animation frame or a second Grid IPC can enter.
+  watch(() => layout.mainView, () => { void syncViewVisibility(); }, {flush:"sync"});
 
   registerBrowserLifecycleBinding({
-    resume: () => nextTick(syncViewVisibility),
-    suspend: () => {
+    resume: async () => { await nextTick(); await syncViewVisibility(); },
+    suspend: async () => {
       if (layout.mainView === "browser") layout.setView("home");
-      hideAllWebviews();
+      await requireVisibilitySettlement();
       syncFreeze();
     },
     deactivate: async () => {
       if (layout.mainView === "browser") layout.setView("home");
-      hideAllWebviews();
+      // Keep native close independent of a failed geometry receipt, but
+      // report unresolved visibility if close itself cannot settle.
+      void syncViewVisibility();
       await mutateTabs(async () => {
         const closing = tabs.map(({ id }) => id);
         const failed: string[] = [];
@@ -1140,6 +1176,7 @@ export const useBrowserStore = defineStore("browser", () => {
     tabNativeState,
     isolatedRendererMode,
     rendererUnavailable,
+    rendererWindowUnavailable,
     rendererStateLabel,
     rendererDownloadLabel,
     refreshRendererState,
@@ -1185,6 +1222,7 @@ export const useBrowserStore = defineStore("browser", () => {
     openBrowserAt,
     navigateCurrent,
     bindPositionScheduler,
+    syncViewVisibility,
     relocate,
   };
 });

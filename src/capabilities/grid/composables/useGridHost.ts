@@ -3,6 +3,7 @@ import { bridge } from "../../../bridge";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
 import { useGridStore } from "../public";
 import { isGridResourceAllowed } from "../resource/guard";
+import { nativeSurfaceBlocked, trackNativeLayout } from "../../../utils/nativeSurfaceSync";
 import {
   GRID_GAP, gridCellHostRect, gridCellRect, normalizeZoom, type GridLayoutMode,
 } from "../../../utils/browserLayout";
@@ -41,6 +42,7 @@ function flush(index: number) {
     if (pending.has(index)) flush(index);
   });
   running.set(index, task);
+  trackNativeLayout(task);
 }
 async function settleIssuedLayout(): Promise<void> {
   // Called only after the store's synchronous suspension gate invalidates
@@ -70,7 +72,7 @@ export function useGridHost(browserHost: Ref<HTMLElement | null>) {
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
   function eligible() {
-    return !disposed && grid.gridOpen && !grid.gridStarting && !grid.gridClosing
+    return !disposed && !nativeSurfaceBlocked.value && grid.gridOpen && !grid.gridStarting && !grid.gridClosing
       && !grid.gridCleanupUnconfirmed && !grid.gridLayoutSuspended
       && layout.mainView === "grid" && isGridResourceAllowed();
   }
@@ -134,7 +136,7 @@ export function useGridHost(browserHost: Ref<HTMLElement | null>) {
   // Invalidate synchronously on topology/visibility changes, before a pending
   // microtask, animation frame, delayed retry or second IPC can enter.
   watch(
-    () => [layout.mainView, grid.gridOpen, grid.gridStarting, grid.gridClosing,
+    () => [layout.mainView, nativeSurfaceBlocked.value, grid.gridOpen, grid.gridStarting, grid.gridClosing,
       grid.gridCleanupUnconfirmed, grid.gridLayoutSuspended, grid.gridSession,
       grid.gridCount, grid.gridLayout] as const,
     () => { invalidate(); if (eligible()) scheduleGrid(); },

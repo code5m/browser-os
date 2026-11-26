@@ -45,7 +45,7 @@ export type RendererReopenTarget = { id: string; review_owner_epoch: string; rev
 export type RendererRecoveryTarget = { id: string; pid: number; spawn_epoch: string };
 export type RendererParkTarget = RendererRecoveryTarget & { renderer_generation: string; navigation_revision: string };
 export type GridReplySource = { index: number; pid: number; spawn_epoch: string; generation: string; navigation_revision: string };
-export type RendererState = "ready" | "not_ready" | "cleanup_pending" | "absent" | "hibernated";
+export type RendererState = "ready" | "loading" | "not_ready" | "cleanup_pending" | "absent" | "hibernated";
 export type RendererDownloadObservation = {
   pid: number; spawn_epoch: string; renderer_generation: string;
   connection_current: boolean; requested: number; succeeded: number;

@@ -1308,8 +1308,9 @@ impl GridProcessManager {
         if pid == 0 || epoch == 0 || comms.expected_pid.load(Ordering::SeqCst) != pid {
             return Err("TAB_RENDERER_OBSERVATION_STALE".into());
         }
-        let ready = child.document_ready && comms.is_connected()
-            && !comms.blank_reclaiming.load(Ordering::SeqCst)
+        let window_ready = child.document_ready && comms.is_connected()
+            && !comms.blank_reclaiming.load(Ordering::SeqCst);
+        let ready = window_ready
             && comms.native_document.try_lock().map_err(|_| "TAB_RENDERER_OBSERVATION_BUSY")?.is_some_and(|stamp| stamp.usable());
         let observed = *comms.download_observation.try_lock().map_err(|_| "TAB_RENDERER_OBSERVATION_BUSY")?;
         let download = observed.map(|(generation, counts)| serde_json::json!({
@@ -1319,7 +1320,7 @@ impl GridProcessManager {
             "requested": counts.requested, "succeeded": counts.succeeded,
             "failed": counts.failed, "observed_unfinished": counts.observed_unfinished(),
         }));
-        Ok((Some((pid, epoch)), if ready { "ready" } else { "not_ready" }, download))
+        Ok((Some((pid, epoch)), if ready { "ready" } else if window_ready { "loading" } else { "not_ready" }, download))
     }
 
     pub(crate) fn tab_renderer_observation(&self, index: u32)

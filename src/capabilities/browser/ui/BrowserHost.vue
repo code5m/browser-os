@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useBrowserStore } from "../state/useBrowserStore";
 import { useBrowserHost } from "../../../composables/useBrowserHost";
+import { nativeSurfaceBlocked, nativeSurfaceIssue } from "../../../utils/nativeSurfaceSync";
 
 const browser = useBrowserStore();
 const { browserHost } = useBrowserHost();
@@ -14,7 +15,11 @@ const { browserHost } = useBrowserHost();
     class="browser-host"
     :style="{ visibility: browser.isBrowserVisible ? 'visible' : 'hidden' }"
   >
-    <div v-if="!browser.tabs.length" class="host-hint">
+    <div v-if="nativeSurfaceBlocked && nativeSurfaceIssue" class="host-hint" role="status">
+      {{nativeSurfaceIssue}}
+      <button @click="browser.syncViewVisibility()">重新同步显示</button>
+    </div>
+    <div v-else-if="!browser.tabs.length" class="host-hint">
       点「打开浏览」或「＋ 页签」在此内嵌网页（可多页签并排切换）
     </div>
   </div>
