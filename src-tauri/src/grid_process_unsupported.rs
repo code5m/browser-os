@@ -34,6 +34,8 @@ impl GridProcessManager {
         Err(unsupported())
     }
     pub(crate) fn renderer_binding(&self, _index: u32) -> Result<crate::grid_ipc::RendererBinding, String> { Err(unsupported()) }
+    pub(crate) fn grid_eval_binding(&self, _index: u32) -> Result<crate::grid_ipc::RendererBinding, String> { Err(unsupported()) }
+    pub(crate) fn grid_eval_bound(&self, _binding: crate::grid_ipc::RendererBinding, _js: String) -> Result<(), String> { Err(unsupported()) }
     pub(crate) fn renderer_request_data(&self, _binding: crate::grid_ipc::RendererBinding, _cmd: GridCmd, _timeout_ms: u64) -> Result<Option<String>, String> { Err(unsupported()) }
     pub(crate) fn retire_bound_tab_renderer(&self, _index: u32, _expected: (u32, u64)) -> Result<(), String> { Err(unsupported()) }
     pub(crate) fn hibernate_blank_tab_renderer(&self, _index: u32, _idle_for: std::time::Duration) -> Result<bool, String> {

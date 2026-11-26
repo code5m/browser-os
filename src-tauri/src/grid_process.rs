@@ -1024,6 +1024,51 @@ impl GridProcessManager {
         })
     }
 
+    /// Grid Eval is admitted against the currently connected host, before the
+    /// caller enters a blocking lane. Grid host readiness is not a paint or
+    /// document-creation receipt (the ordinary-tab flag has different semantics).
+    pub(crate) fn grid_eval_binding(&self, index: u32) -> Result<crate::grid_ipc::RendererBinding, String> {
+        if (index as usize) >= crate::bridge::MAX_GRID {
+            return Err("GRID_INDEX_INVALID".into());
+        }
+        self.lifecycle.check()?;
+        let children = self.children.lock().unwrap();
+        let child = children.get(&index).ok_or("GRID_EVAL_HOST_UNAVAILABLE")?;
+        let owner = child.comms.owner_snapshot()?;
+        let generation = child.comms.generation.load(Ordering::SeqCst);
+        if !child.comms.is_current(generation) || child.comms.blank_reclaiming.load(Ordering::SeqCst) {
+            return Err("GRID_EVAL_HOST_UNAVAILABLE".into());
+        }
+        Ok(crate::grid_ipc::RendererBinding {
+            index, owner, generation, navigation_revision: child.navigation_revision,
+        })
+    }
+
+    /// Only this exact original Grid host/connection may accept the queued
+    /// Eval. No wait_connected, spawn, retry or arbitrary command substitution.
+    pub(crate) fn grid_eval_bound(
+        &self, binding: crate::grid_ipc::RendererBinding, js: String,
+    ) -> Result<(), String> {
+        let _operation = self.lifecycle.enter()?;
+        if (binding.index as usize) >= crate::bridge::MAX_GRID {
+            return Err("GRID_INDEX_INVALID".into());
+        }
+        let comms = {
+            let children = self.children.lock().unwrap();
+            let child = children.get(&binding.index).ok_or("GRID_EVAL_TARGET_STALE")?;
+            if child.comms.owner_snapshot()? != binding.owner
+                || child.navigation_revision != binding.navigation_revision
+                || !child.comms.is_current(binding.generation)
+                || child.comms.blank_reclaiming.load(Ordering::SeqCst)
+            {
+                return Err("GRID_EVAL_TARGET_STALE".into());
+            }
+            Arc::clone(&child.comms)
+        };
+        let cmd = GridCmd::Eval { id: crate::grid_ipc::renderer_label(binding.index), js };
+        self.request_once_with(comms, binding.generation, &cmd, 10000).map(|_| ())
+    }
+
     /// No data service may reconnect or replay on a replacement child.
     pub(crate) fn renderer_request_data(
         &self, binding: crate::grid_ipc::RendererBinding, cmd: GridCmd, timeout_ms: u64,

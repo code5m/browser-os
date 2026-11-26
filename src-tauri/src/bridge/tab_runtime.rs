@@ -1094,16 +1094,16 @@ pub(crate) fn eval_in_tab_sync(
 }
 
 enum EvalBinding {
-    Grid,
+    Grid(crate::grid_ipc::RendererBinding),
     Isolated(crate::grid_ipc::RendererBinding),
     Embedded(tauri_plugin_browser_tabs::TabInstance),
 }
 
 fn capture_eval_binding(app: &AppHandle, id: &str) -> Result<EvalBinding, String> {
-    if grid_index_of(id).is_some() {
-        return Ok(EvalBinding::Grid);
-    }
     let state = app.state::<AppState>();
+    if let Some(index) = grid_index_of(id) {
+        return state.grid_manager.grid_eval_binding(index).map(EvalBinding::Grid);
+    }
     if state.hibernated_tabs.lock().unwrap().contains(id) {
         return Err("TAB_RENDERER_HIBERNATED_ACTIVATE_FIRST".into());
     }
@@ -1119,10 +1119,11 @@ fn capture_eval_binding(app: &AppHandle, id: &str) -> Result<EvalBinding, String
 fn eval_in_tab_blocking(app: AppHandle, id: String, js: String,
     binding: EvalBinding) -> Result<String, String> {
     match binding {
-        EvalBinding::Grid => {
-            let index = grid_index_of(&id).ok_or("TAB_RENDERER_ROUTE_INVALID")?;
-            app.state::<AppState>().grid_manager
-                .request(index, GridCmd::Eval { id, js }, 10000)?;
+        EvalBinding::Grid(binding) => {
+            if grid_index_of(&id) != Some(binding.index) {
+                return Err("GRID_EVAL_TARGET_STALE".into());
+            }
+            app.state::<AppState>().grid_manager.grid_eval_bound(binding, js)?;
         }
         EvalBinding::Isolated(binding) => {
             let _owner = super::tab_mutation::reserve_internal()?;
