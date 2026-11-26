@@ -160,6 +160,16 @@ impl OwnedHost {
         }
     }
 
+    /// One-shot, bounded handoff for a child that waits on its inherited
+    /// stdin. Dropping the pipe is part of the admission protocol.
+    pub(crate) fn release_start_pipe(&mut self, magic: &[u8]) -> Result<(), String> {
+        if magic.is_empty() || magic.len() > 64 {
+            return Err("SUPERVISOR_START_MESSAGE_INVALID".into());
+        }
+        let mut pipe = self.child.stdin.take().ok_or("SUPERVISOR_START_PIPE_REQUIRED")?;
+        pipe.write_all(magic).map_err(|_| "SUPERVISOR_START_PIPE_FAILED".into())
+    }
+
     pub(crate) fn exited(&mut self) -> Result<Option<ExitStatus>, String> {
         #[cfg(target_os = "linux")]
         self.scope.observe_orphan_guard();

@@ -346,6 +346,43 @@ fn membership_path() -> io::Result<PathBuf> {
     fs::canonicalize(Path::new(MOUNT).join(membership.trim_start_matches('/')))
 }
 
+/// Verify the isolated renderer's own kernel membership and installed
+/// limits before it initializes the engine. Environment alone is not
+/// evidence. This is lifecycle containment, not a same-UID sandbox.
+pub(crate) fn verify_current_render_budget(bytes: usize) -> io::Result<()> {
+    let configured = std::env::var_os(ROOT_ENV).map(PathBuf::from).ok_or_else(denied)?;
+    let current = membership_path()?;
+    let mount = fs::canonicalize(MOUNT)?;
+    if current == mount
+        || !current.starts_with(&mount)
+        || configured != current
+        || unsafe { libc::geteuid() } == 0
+    {
+        return Err(denied());
+    }
+    let name = current.file_name().and_then(|name| name.to_str()).ok_or_else(denied)?;
+    let id = name.strip_prefix("browseros-run-").ok_or_else(denied)?;
+    if !uuid::Uuid::parse_str(id).is_ok_and(|id| id.get_version_num() == 4) {
+        return Err(denied());
+    }
+    let group = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(&current)?;
+    cgroup_fs(&group)?;
+    let read = |name: &'static [u8]| -> io::Result<String> {
+        read_control(&group, CStr::from_bytes_with_nul(name).map_err(|_| denied())?)
+    };
+    if !sole_pid(&read(b"cgroup.procs\0")?, std::process::id())
+        || read(b"memory.max\0")?.trim() != bytes.to_string()
+        || read(b"memory.swap.max\0")?.trim() != "0"
+        || read(b"memory.oom.group\0")?.trim() != "1"
+    {
+        return Err(denied());
+    }
+    Ok(())
+}
+
 /// The private user-scope bootstrap derives its authority from actual
 /// kernel membership, never from a caller-supplied cgroup pathname.
 pub(crate) fn user_scope_name(id: uuid::Uuid) -> String {

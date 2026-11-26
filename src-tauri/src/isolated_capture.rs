@@ -7,8 +7,9 @@ use crate::capabilities::workspace::safe_paths;
 use crate::native_supervisor::OwnedHost;
 use std::{
     ffi::OsStr,
+    io::Read,
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
     sync::{mpsc, Arc},
     thread,
     time::{Duration, Instant},
@@ -20,6 +21,7 @@ const PARENT_FLAG: &str = "--isolated-capture";
 const CHILD_FLAG: &str = "--isolated-capture-worker";
 const URL_ENV: &str = "BROWSEROS_CAPTURE_JOB_URL";
 const ROOT_ENV: &str = "BROWSEROS_CAPTURE_JOB_ROOT";
+const START_MAGIC: &[u8] = b"browseros-render-admission-v1\n";
 const MAX_BYTES: usize = 32 * 1024 * 1024;
 const MEMORY_LIMIT: usize = 2 * 1024 * 1024 * 1024;
 const DEADLINE: Duration = Duration::from_secs(60);
@@ -151,9 +153,43 @@ pub(crate) fn render_job(
         command
             .arg(CHILD_FLAG)
             .env(URL_ENV, url)
-            .env(ROOT_ENV, &root);
-        let mut owner = OwnedHost::spawn_command(command, Some(MEMORY_LIMIT), &on_retire_pending)?;
+            .env(ROOT_ENV, &root)
+            .stdin(Stdio::piped())
+            .env_remove("BROWSEROS_SUPERVISOR_ADDRESS")
+            .env_remove("BROWSEROS_SUPERVISOR_TOKEN");
+        // Overrides inherited from the GUI/shell must not silently redirect
+        // a fresh worker to a persistent profile or a remote debugger.
+        #[cfg(target_os = "windows")]
+        for name in [
+            "WEBVIEW2_USER_DATA_FOLDER",
+            "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+            "WEBVIEW2_BROWSER_EXECUTABLE_FOLDER",
+            "WEBVIEW2_RELEASE_CHANNEL_PREFERENCE",
+            "WEBVIEW2_PIPE_FOR_SCRIPT_DEBUGGER",
+            "WEBVIEW2_WAIT_FOR_SCRIPT_DEBUGGER",
+        ] {
+            command.env_remove(name);
+        }
+        #[cfg(target_os = "linux")]
+        for name in ["WEBKIT_INSPECTOR_SERVER", "WEBKIT_INSPECTOR_HTTP_SERVER"] {
+            command.env_remove(name);
+        }
         let deadline = Instant::now() + DEADLINE;
+        let mut owner = OwnedHost::spawn_command(command, Some(MEMORY_LIMIT), &on_retire_pending)?;
+        // Child startup is gated on the existing kernel domain assignment.
+        // A failed handoff cannot drop an assigned Child or permit publication.
+        if cancelled() || Instant::now() >= deadline {
+            owner.retire_confirmed(&on_retire_pending);
+            return Err(if cancelled() {
+                "CAPTURE_ISOLATED_CANCELLED"
+            } else {
+                "CAPTURE_DEADLINE_EXCEEDED"
+            }.into());
+        }
+        if owner.release_start_pipe(START_MAGIC).is_err() {
+            owner.retire_confirmed(&on_retire_pending);
+            return Err("CAPTURE_WORKER_ADMISSION_FAILED".into());
+        }
         let render = loop {
             if cancelled() {
                 break Err("CAPTURE_ISOLATED_CANCELLED".to_owned());
@@ -716,7 +752,28 @@ fn run_render(manager: Arc<TabManager>, root: PathBuf, url: String) -> Result<()
     safe_paths::create_new_file(&root.join("capture.png"), &[root], &bytes)
         .map_err(|_| "CAPTURE_WORKER_OUTPUT_FAILED".into())
 }
+fn validate_worker_admission(mut input: impl Read) -> Result<(), String> {
+    let mut magic = [0u8; START_MAGIC.len()];
+    input.read_exact(&mut magic).map_err(|_| "CAPTURE_WORKER_ADMISSION_FAILED")?;
+    let mut extra = [0u8; 1];
+    if magic.as_slice() != START_MAGIC
+        || input.read(&mut extra).map_err(|_| "CAPTURE_WORKER_ADMISSION_FAILED")? != 0
+    {
+        return Err("CAPTURE_WORKER_ADMISSION_FAILED".into());
+    }
+    Ok(())
+}
+
 fn run_child() -> Result<(), String> {
+    // The internal CLI role cannot start an unbudgeted renderer even when
+    // invoked directly with a valid scratch path and URL. Verify kernel
+    // membership independently, before creating Tauri or any WebView.
+    #[cfg(target_os = "linux")]
+    crate::shared::process_scope::verify_current_render_budget(MEMORY_LIMIT)
+        .map_err(|_| "CAPTURE_WORKER_MEMORY_OWNER_UNCONFIRMED")?;
+    #[cfg(target_os = "windows")]
+    crate::windows_process::verify_current_render_budget(MEMORY_LIMIT)?;
+    validate_worker_admission(std::io::stdin().lock())?;
     let root = worker_root()?;
     let url = checked_url(&std::env::var(URL_ENV).map_err(|_| "CAPTURE_WORKER_URL_REQUIRED")?)?;
     // Clear request-specific state before the native engine starts any
@@ -799,6 +856,16 @@ pub(crate) fn launch_if_requested() -> Option<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn internal_worker_requires_exact_closed_admission_pipe() {
+        assert!(validate_worker_admission(START_MAGIC).is_ok());
+        assert!(validate_worker_admission(&START_MAGIC[..START_MAGIC.len() - 1]).is_err());
+        assert!(validate_worker_admission(b"wrong".as_slice()).is_err());
+        let mut extra = START_MAGIC.to_vec();
+        extra.push(0);
+        assert!(validate_worker_admission(extra.as_slice()).is_err());
+    }
+
     #[test]
     fn explicit_mode_rejects_non_https_and_embedded_credentials() {
         assert!(checked_url("https://example.com/").is_ok());

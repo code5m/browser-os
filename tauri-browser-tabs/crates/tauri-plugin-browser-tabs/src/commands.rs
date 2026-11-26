@@ -1770,7 +1770,7 @@ impl TabManager {
             let capture_app = self.app.clone();
             let capture_id = id.clone();
             webview.with_webview(move |native| {
-                let _dispatch_permit = dispatch_permit;
+                let dispatch_permit = Arc::new(dispatch_permit);
                 if !cancellation.enter_native() {
                     callback(Err("CAPTURE_CANCELLED_BEFORE_DISPATCH".into()));
                     return;
@@ -1797,8 +1797,10 @@ impl TabManager {
                     .collect();
                 let empty_params: Vec<u16> =
                     "{}".encode_utf16().chain(std::iter::once(0)).collect();
+                let metrics_permit = dispatch_permit.clone();
                 let metrics_completion = CallDevToolsProtocolMethodCompletedHandler::create(
                     Box::new(move |status, json| {
+                        let _permit = &metrics_permit;
                         if cancellation.is_cancelled() {
                             complete_capture(
                                 &metrics_reply,
@@ -1839,8 +1841,10 @@ impl TabManager {
                         let image_reply = metrics_reply.clone();
                         let image_cancel = cancellation.clone();
                         let image_document = capture_document.clone();
+                        let image_permit = metrics_permit.clone();
                         let completion = CallDevToolsProtocolMethodCompletedHandler::create(
                             Box::new(move |status, json| {
+                                let _permit = &image_permit;
                                 if image_cancel.is_cancelled()
                                     || !image_document.observed_generation_is_current()
                                 {
@@ -1869,6 +1873,7 @@ impl TabManager {
                                 let worker = std::thread::Builder::new()
                                     .name("browseros-screenshot-decode".into())
                                     .spawn(move || {
+                                        let _permit = image_permit;
                                         decode_capture_png(&json, || {
                                             image_cancel.is_cancelled()
                                                 || !image_document.observed_generation_is_current()

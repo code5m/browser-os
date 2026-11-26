@@ -27,6 +27,29 @@ const WAIT_OBJECT_0: u32 = 0;
 const SYNCHRONIZE: u32 = 0x0010_0000;
 const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
 
+/// Query the current process's innermost Job (NULL handle). The worker
+/// must independently observe the exact memory and kill-on-close limits
+/// before it starts a WebView. Do not accept environment-only admission.
+pub(crate) fn verify_current_render_budget(bytes: usize) -> Result<(), String> {
+    unsafe {
+        let mut actual: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+        if QueryInformationJobObject(
+            ptr::null_mut(),
+            JobObjectExtendedLimitInformation,
+            &mut actual as *mut _ as *mut std::ffi::c_void,
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            ptr::null_mut(),
+        ) == 0
+            || actual.BasicLimitInformation.LimitFlags & JOB_OBJECT_LIMIT_JOB_MEMORY == 0
+            || actual.BasicLimitInformation.LimitFlags & JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE == 0
+            || actual.JobMemoryLimit != bytes
+        {
+            return Err("CAPTURE_WORKER_MEMORY_OWNER_UNCONFIRMED".into());
+        }
+    }
+    Ok(())
+}
+
 /// RAII owner of one Windows Job Object. Every child must be assigned before
 /// its primary thread is resumed; KILL_ON_JOB_CLOSE covers every descendant.
 pub struct JobObject(HANDLE);
