@@ -1691,6 +1691,11 @@ impl GridProcessManager {
         {
             let mut children = self.children.lock().unwrap();
             let child = children.get(&binding.index).ok_or("TAB_RENDERER_PARK_STALE")?;
+            let comms = Arc::clone(&child.comms);
+            // Exclude an admitted writer that has not yet populated pending.
+            // Keep the writer locked through native owner revocation. Never
+            // block waiting on a stuck pipe with the children map held.
+            let _writer = comms.writer.try_lock().map_err(|_| "TAB_RENDERER_PARK_BUSY")?;
             {
                 let _owner = child.comms.owner_gate.try_lock().map_err(|_| "TAB_RENDERER_PARK_BUSY")?;
                 if !eligible(child)

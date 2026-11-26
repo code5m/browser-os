@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { ref, reactive, computed, nextTick, watch } from "vue";
-import { bridge, isRendererDownloadObservation, type RendererRecoveryTarget, type RendererState, type RendererDownloadObservation } from "../../../bridge";
+import { bridge, isRendererDownloadObservation, type RendererRecoveryTarget, type RendererParkTarget, type RendererState, type RendererDownloadObservation } from "../../../bridge";
 import { WEBVIEW_FREEZE_JS, WEBVIEW_UNFREEZE_JS } from "../../../utils/webviewFreeze";
 import { isBrowserResourceAllowed } from "../resource/guard";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
@@ -502,7 +502,7 @@ export const useBrowserStore = defineStore("browser", () => {
       : "该页签当前没有独立宿主，可尝试重新激活。");
     return null;
   }
-  async function prepareRendererPark(id: string): Promise<{target: RendererRecoveryTarget; address: string} | null> {
+  async function prepareRendererPark(id: string): Promise<{target: RendererParkTarget; address: string} | null> {
     const tab = tabs.find(item => item.id === id);
     if (!tab || !isolatedRendererMode.value || !isBrowserResourceAllowed()
         || activeTabId.value === id || !reopenableAddress(tab.url)
@@ -512,14 +512,14 @@ export const useBrowserStore = defineStore("browser", () => {
     }
     const address = tab.url;
     const view = await refreshRendererState(id);
-    if (!view || view.renderer_state !== "ready" || view.renderer_recovery_target?.id !== id
+    if (!view || view.renderer_state !== "ready" || view.renderer_park_target?.id !== id
         || !tabs.some(item => item === tab) || tab.url !== address || activeTabId.value === id) {
       layout.showToast("页签原生身份尚不可核对。");
       return null;
     }
-    return {target:view.renderer_recovery_target,address};
+    return {target:view.renderer_park_target,address};
   }
-  async function parkRenderer(selection: {target: RendererRecoveryTarget; address: string}): Promise<boolean> {
+  async function parkRenderer(selection: {target: RendererParkTarget; address: string}): Promise<boolean> {
     const {target,address} = selection;
     try {
       return await mutateTabs(async () => {
@@ -527,8 +527,11 @@ export const useBrowserStore = defineStore("browser", () => {
         if (!tab || tab.url !== address || activeTabId.value === target.id
             || !isolatedRendererMode.value || !isBrowserResourceAllowed()) return false;
         const view = await refreshRendererState(target.id);
-        if (view?.renderer_state !== "ready" || view.renderer_recovery_target?.pid !== target.pid
-            || view.renderer_recovery_target?.spawn_epoch !== target.spawn_epoch
+        const current = view?.renderer_park_target;
+        if (view?.renderer_state !== "ready" || !current || current.id !== target.id
+            || current.pid !== target.pid || current.spawn_epoch !== target.spawn_epoch
+            || current.renderer_generation !== target.renderer_generation
+            || current.navigation_revision !== target.navigation_revision
             || tab.url !== address || activeTabId.value === target.id) {
           layout.showToast("页签身份或地址已变化，未执行休眠。");
           return false;

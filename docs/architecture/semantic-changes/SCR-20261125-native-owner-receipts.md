@@ -374,3 +374,10 @@ Source-only scope; no compilation, tests, install/runtime validation, workflow d
 - Read and reverify retained signed proof against the original provider/account/namespace/idempotency/review binding on each reconciliation, including archived runs. Missing previously sealed history or invalid proof fails closed. Detect a historical conflict even when the provider inbox is removed or replaced with a matching receipt. New archive publication is refused while conflict persists.
 - Persist verified late evidence without changing primary terminal decisions or Task revision semantics. UI separately presents current inbox outcome and retained outcome(s). No effect retry, new provider trust or automated dispute resolution.
 - Source-only implementation; no compilation, test execution, workflow edits or master merge.
+
+## 2026-11-26 — Bind explicit suspension confirmation to the reviewed document revision
+
+- Return a separate suspension-review target including the original process/connection and parent navigation revision. Require the exact target at frontend confirmation and native admission, including same-address reloads and connection replacement. Recovery/retirement remains separately process-scoped.
+- Both native backends take the writer nonblockingly before final suspension checks and hold it through original-owner revocation, excluding a host dispatch that had not yet populated the pending map. Refuse contention rather than waiting with the native registry locked.
+- This fences the host-observed document and dispatch race; it is not an engine transaction preventing arbitrary webpage scripts, unobserved navigation or new downloads from changing state. No automatic nonblank suspension is enabled.
+- Source-only implementation; compilation, tests, CI and master unchanged.

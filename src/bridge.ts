@@ -40,8 +40,9 @@ type TabAction =
   | { kind: "close" | "activate" | "back" | "forward" | "reload"; id: string }
   | { kind: "retire_renderer"; id: string; pid: number; spawn_epoch: string; confirmed: true }
   | { kind: "reopen_renderer"; id: string; url: string; confirmed: true }
-  | { kind: "park_renderer"; id: string; url: string; pid: number; spawn_epoch: string; confirmed: true };
+  | ({ kind: "park_renderer"; url: string; confirmed: true } & RendererParkTarget);
 export type RendererRecoveryTarget = { id: string; pid: number; spawn_epoch: string };
+export type RendererParkTarget = RendererRecoveryTarget & { renderer_generation: string; navigation_revision: string };
 export type RendererState = "ready" | "not_ready" | "cleanup_pending" | "absent" | "hibernated";
 export type RendererDownloadObservation = {
   pid: number; spawn_epoch: string; renderer_generation: string;
@@ -126,6 +127,7 @@ type TabOwnerView = {
   domain_recovery_available: boolean;
   recovery_scope?: "renderer" | "application" | null;
   renderer_recovery_target?: RendererRecoveryTarget | null;
+  renderer_park_target?: RendererParkTarget | null;
   isolated_renderer_mode?: boolean;
   renderer_state?: RendererState | null;
   renderer_download?: RendererDownloadObservation | null;
@@ -1176,7 +1178,7 @@ export const bridge = {
   inspectDownloadInventory: () => tabReceiptCall({phase:"inspect_downloads"}, true),
   retireRenderer: (target: RendererRecoveryTarget) =>
     ownedTabMutation<void>({kind:"retire_renderer",...target,confirmed:true}),
-  parkRenderer: (target: RendererRecoveryTarget, url: string) =>
+  parkRenderer: (target: RendererParkTarget, url: string) =>
     ownedTabMutation<void>({kind:"park_renderer",...target,url,confirmed:true}),
   reopenRenderer: (id: string, url: string) =>
     ownedTabMutation<TabInfo>({kind:"reopen_renderer",id,url,confirmed:true}),

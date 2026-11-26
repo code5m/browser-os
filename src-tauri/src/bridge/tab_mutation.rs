@@ -22,7 +22,8 @@ pub(crate) enum Action {
     Reload { id: String },
     RetireRenderer { id: String, pid: u32, spawn_epoch: String, confirmed: bool },
     ReopenRenderer { id: String, url: String, confirmed: bool },
-    ParkRenderer { id: String, url: String, pid: u32, spawn_epoch: String, confirmed: bool },
+    ParkRenderer { id: String, url: String, pid: u32, spawn_epoch: String,
+        renderer_generation: String, navigation_revision: String, confirmed: bool },
 }
 impl Action {
     fn command(&self) -> &'static str {
@@ -79,12 +80,15 @@ impl Action {
                 }
                 Ok(())
             }
-            Self::ParkRenderer { id, url, pid, spawn_epoch, confirmed } => {
+            Self::ParkRenderer { id, url, pid, spawn_epoch, renderer_generation, navigation_revision, confirmed } => {
                 bound_text(cmd, "id", id)?;
                 bound_text(cmd, "url", url)?;
                 if !confirmed || *pid == 0 || !crate::grid_ipc::restorable_address(url)
                     || spawn_epoch.parse::<u64>().ok().filter(|n| *n > 0)
                         .is_none_or(|n| n.to_string() != *spawn_epoch)
+                    || [renderer_generation, navigation_revision].iter().any(|value|
+                        value.parse::<u64>().ok().filter(|n| *n > 0)
+                            .is_none_or(|n| n.to_string().as_str() != value.as_str()))
                     || super::isolated_tabs::route(id).is_none() {
                     return Err("TAB_RENDERER_PARK_INVALID".into());
                 }
@@ -244,7 +248,7 @@ impl Binding {
                     return Err("TAB_RENDERER_RECOVERY_STALE".into());
                 }
             }
-            if let Action::ParkRenderer { pid, spawn_epoch, url, .. } = action {
+            if let Action::ParkRenderer { pid, spawn_epoch, url, renderer_generation, navigation_revision, .. } = action {
                 let epoch = spawn_epoch.parse::<u64>().map_err(|_| "TAB_RENDERER_PARK_INVALID")?;
                 if owner != Some((*pid, epoch))
                     || state.active_tab.try_lock().map_err(|_| "TAB_MUTATION_INSTANCE_UNAVAILABLE")?.as_deref() == Some(id)
@@ -252,6 +256,14 @@ impl Binding {
                         .get(id).is_some_and(|tab| tab.url == *url) {
                     return Err("TAB_RENDERER_PARK_STALE".into());
                 }
+                let binding = state.grid_manager.renderer_binding(index)?;
+                if binding.owner != (*pid, epoch)
+                    || binding.generation.to_string() != *renderer_generation
+                    || binding.navigation_revision.to_string() != *navigation_revision {
+                    return Err("TAB_RENDERER_PARK_STALE".into());
+                }
+                // Never take a second binding after checking the reviewed one.
+                return Ok(Self::IsolatedDocument(binding));
             }
             if matches!(action, Action::ReopenRenderer { .. }) {
                 let (observed, status, _) = state.grid_manager.tab_renderer_inspection(index)?;
@@ -559,6 +571,15 @@ struct RendererRecoveryTarget {
 }
 
 #[derive(Clone, Debug, Serialize)]
+struct RendererParkTarget {
+    id: String,
+    pid: u32,
+    spawn_epoch: String,
+    renderer_generation: String,
+    navigation_revision: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
 pub(crate) struct OwnerView {
     epoch: String,
     next_sequence: String,
@@ -570,6 +591,7 @@ pub(crate) struct OwnerView {
     domain_recovery_available: bool,
     recovery_scope: Option<&'static str>,
     renderer_recovery_target: Option<RendererRecoveryTarget>,
+    renderer_park_target: Option<RendererParkTarget>,
     isolated_renderer_mode: bool,
     renderer_state: Option<&'static str>,
     // Advisory native counts, not per-transfer state or filesystem access.
@@ -595,6 +617,7 @@ fn snapshot(app: &AppHandle) -> Result<OwnerView, String> {
                 else if supervisor_ready() && state.recovery_target(Instant::now()).is_some() { Some("application") }
                 else { None },
             renderer_recovery_target: None,
+            renderer_park_target: None,
             isolated_renderer_mode: super::isolated_tabs::mode_enabled(),
             renderer_state: None,
             renderer_download: None,
@@ -991,6 +1014,18 @@ pub(crate) fn tab_mutation(
             } else { status });
             if let Some((pid, epoch)) = observed_owner {
                 view.renderer_download = download;
+                if status == "ready" && view.active_known
+                    && view.active_tab_id.as_deref() != Some(id.as_str()) {
+                    if let Ok(binding) = state.grid_manager.renderer_binding(index) {
+                        if binding.owner == (pid, epoch) {
+                            view.renderer_park_target = Some(RendererParkTarget {
+                                id: id.clone(), pid, spawn_epoch: epoch.to_string(),
+                                renderer_generation: binding.generation.to_string(),
+                                navigation_revision: binding.navigation_revision.to_string(),
+                            });
+                        }
+                    }
+                }
                 view.renderer_recovery_target = Some(RendererRecoveryTarget {
                     id, pid, spawn_epoch: epoch.to_string(),
                 });
@@ -1251,6 +1286,7 @@ mod tests {
             domain_recovery_available: false,
             recovery_scope: None,
             renderer_recovery_target: None,
+            renderer_park_target: None,
             isolated_renderer_mode: false,
             renderer_state: None,
             renderer_download: None,
