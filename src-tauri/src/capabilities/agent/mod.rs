@@ -36,7 +36,8 @@ pub mod coding_lsp;
 #[cfg(target_os = "windows")]
 pub mod coding_mcp_windows;
 pub mod local_provider;
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+// Pure JSON protocol/review helpers are also required by the unsupported
+// platform's configuration validation. Native adapters stay platform-gated.
 mod mcp_protocol;
 pub(crate) mod mcp_review;
 mod mcp_authority;

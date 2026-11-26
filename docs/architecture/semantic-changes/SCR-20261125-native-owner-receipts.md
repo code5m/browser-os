@@ -358,3 +358,12 @@ Source-only scope; no compilation, tests, install/runtime validation, workflow d
 - Recheck the provider inbox before archiving and reject archival while currently observed signed evidence conflicts. The UI shows the original persisted outcome and latest signed observation separately, and allows explicit reinspection for settled/manual records as well as unknown records.
 - Clear stale detail/approval forms after unsuccessful receipt queries, reconciliation or archive attempts; verify the returned Run identity and update the visible history from successful queries. No automatic retry.
 - Source-only changes; no build, test or installed acceptance. The provider must still publish a signed final status independently; no generic remote cancellation guarantee is introduced.
+
+## 2026-11-26 — Download observation schema, retirement notification and monotonic sampling
+
+- Linux and Windows strict suspension preflight rejects a regressive Ping sample even if a newer callback already populated the cache; only a valid monotonic sample counts as fresh. Ordinary advisory refresh still tolerates absent optional data, without certifying zero.
+- Share runtime IPC validation for download events, owner inventory and per-tab observation. Check native PID, canonical bounded epochs, logical tab ID, phase, safe integer counts, null-vs-zero consistency and unfinished-count arithmetic. Retired owner records cannot assert a current connection. Reject duplicate inventory identities and invalid renderer state.
+- Model retirement events separately from live callbacks, with nullable counters as actually emitted by native retirement. Preserve the incomplete-download warning after final logical tab close and after confirmed suspension, but do not publish old state to a replacement tab. Bound duplicate retirement notices to 128 owner identities in session memory.
+- Keep the download panel's in-flight request owned across close/reopen; a stale response cannot populate a reopened panel and a new read waits for settlement.
+- Keep the pure MCP JSON protocol/review module available on unsupported targets because common review code imports it; platform-specific process execution remains gated.
+- No stable native transfer ID, cancel/resume, persistent download list, default-mode enablement, compilation, tests, workflow edits or master merge.

@@ -244,21 +244,31 @@ onMounted(async () => {
   unlistenRendererRecovery = await bridge.onIsolatedRendererRecoveryChanged((event) => {
     if (typeof event?.id === "string") void browser.refreshRendererState(event.id);
   });
+  const notifiedRetirements = new Set<string>();
   unlistenRendererDownload = await bridge.onIsolatedDownload(async (event) => {
-    if (typeof event?.id !== "string" || !Number.isSafeInteger(event.pid)
-        || !["requested", "succeeded", "failed", "owner_retired"].includes(event.phase)) return;
-    const view = await browser.refreshRendererState(event.id);
-    if (!view) return;
-    const target = view.renderer_recovery_target;
+    // The bridge already validated the runtime payload and count arithmetic.
+    const hadLogicalTab = browser.tabs.some(tab => tab.id === event.id);
+    const view = hadLogicalTab ? await browser.refreshRendererState(event.id) : null;
+    const target = view?.renderer_recovery_target;
     if (event.phase === "owner_retired") {
-      // An old retirement must not overwrite a newly activated renderer.
-      // Even a confirmed process exit does not prove any transfer failed.
-      if (!target && view.renderer_state === "absent" && event.outcome === "unknown"
+      // A final close removes the logical tab before the retirement notice.
+      // Keep that notice useful without publishing state onto a replacement.
+      const stillExists = browser.tabs.some(tab => tab.id === event.id);
+      const retired = !stillExists || (!target &&
+        (view?.renderer_state === "absent" || view?.renderer_state === "hibernated"));
+      const key = event.id + ":" + event.pid + ":" + event.spawn_epoch;
+      if (retired && event.outcome === "unknown" && !notifiedRetirements.has(key)
           && (event.observed_unfinished === null || event.observed_unfinished > 0)) {
+        if (notifiedRetirements.size >= 128) {
+          const oldest = notifiedRetirements.values().next().value;
+          if (oldest !== undefined) notifiedRetirements.delete(oldest);
+        }
+        notifiedRetirements.add(key);
         layout.showToast("原下载宿主已回收；曾观察到未完成或无法对账的下载，最终结果待核对。");
       }
       return;
     }
+    if (!view) return;
     const observed = view.renderer_download;
     // Only the latest authenticated owner/connection observation can notify.
     // Cumulative counts are advisory; never infer a per-transfer identity.

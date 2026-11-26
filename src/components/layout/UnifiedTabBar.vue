@@ -5,7 +5,7 @@ import { ref, computed } from "vue";
 import { useFileStore } from "../../capabilities/workspace/public";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Globe, Plus, X } from '@lucide/vue';
-import { bridge, type DownloadInventory, type DownloadOwnerObservation } from '../../bridge';
+import { bridge, isDownloadOwnerObservation, type DownloadInventory, type DownloadOwnerObservation } from '../../bridge';
 import { useUnifiedTabs } from "../../composables/useUnifiedTabs";
 import { documentPathName, relativeDocumentPath } from "../../application/documentPaths.mjs";
 
@@ -56,23 +56,20 @@ async function refreshDownloadInventory() {
     const view = await bridge.inspectDownloadInventory();
     if (epoch !== downloadPanelEpoch || !downloadPanelOpen.value) return;
     const data = view.download_inventory;
-    const valid = (row: DownloadOwnerObservation) =>
-      typeof row.id === "string" && Number.isSafeInteger(row.pid) && row.pid > 0
-      && typeof row.spawn_epoch === "string" && /^[1-9][0-9]*$/.test(row.spawn_epoch)
-      && typeof row.connection_current === "boolean"
-      && [row.requested, row.succeeded, row.failed, row.observed_unfinished].every(
-        value => value === null || (Number.isSafeInteger(value) && value >= 0));
     if (!data || !Array.isArray(data.live) || !Array.isArray(data.retired)
         || data.retired_limit !== 128 || data.retired.length > 128
-        || data.live.some(row => !valid(row) || row.phase !== "live")
-        || data.retired.some(row => !valid(row) || row.phase !== "owner_retired")) {
+        || data.live.some(row => !isDownloadOwnerObservation(row) || row.phase !== "live")
+        || data.retired.some(row => !isDownloadOwnerObservation(row) || row.phase !== "owner_retired")
+        || new Set(data.live.map(row => row.id)).size !== data.live.length
+        || new Set(data.retired.map(row => row.id + ":" + row.pid + ":" + row.spawn_epoch)).size !== data.retired.length) {
       throw new Error("invalid download inventory");
     }
     downloadInventory.value = data;
   } catch {
     if (epoch === downloadPanelEpoch) downloadPanelError.value = "原生下载观察暂不可核实，请手动重新查询。";
   } finally {
-    if (epoch === downloadPanelEpoch) downloadPanelBusy.value = false;
+    downloadPanelBusy.value = false;
+    if (epoch !== downloadPanelEpoch && downloadPanelOpen.value) void refreshDownloadInventory();
   }
 }
 function toggleDownloadInventory() {
@@ -81,7 +78,8 @@ function toggleDownloadInventory() {
   else {
     ++downloadPanelEpoch;
     downloadInventory.value = null;
-    downloadPanelBusy.value = false;
+    // Keep the unresolved native request's single-flight ownership until
+    // it actually settles. A reopened panel can refresh after settlement.
     downloadPanelError.value = "";
   }
 }

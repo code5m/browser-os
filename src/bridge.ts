@@ -48,10 +48,11 @@ export type RendererDownloadObservation = {
   connection_current: boolean; requested: number; succeeded: number;
   failed: number; observed_unfinished: number | null;
 };
-export type RendererDownloadEvent = Omit<RendererDownloadObservation, "connection_current"> & {
-  id: string; phase: "requested" | "succeeded" | "failed" | "owner_retired";
-  outcome?: "unknown";
-};
+export type RendererDownloadEvent =
+  | (Omit<RendererDownloadObservation, "connection_current"> & {
+      id: string; phase: "requested" | "succeeded" | "failed";
+    })
+  | (DownloadOwnerObservation & { phase: "owner_retired" });
 // Native owner observations only. Null means the count was never observed;
  // an exited owner does not certify a transfer's terminal outcome.
 export type DownloadOwnerObservation = {
@@ -61,6 +62,59 @@ export type DownloadOwnerObservation = {
   observed_unfinished: number | null; outcome: "unknown";
 };
 export type DownloadInventory = { live: DownloadOwnerObservation[]; retired: DownloadOwnerObservation[]; retired_limit: number };
+
+// IPC results are runtime data, not TypeScript guarantees. Share one
+// non-mutating validator across notification, tab inspection and inventory.
+const nativeCounter = (value: unknown): value is number =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+const nativeEpoch = (value: unknown): value is string =>
+  typeof value === "string" && /^[1-9][0-9]{0,19}$/.test(value)
+  && (value.length < 20 || value <= "18446744073709551615");
+function nativeDownloadIdentity(row: Record<string, unknown>): boolean {
+  return nativeCounter(row.pid) && row.pid > 0 && row.pid <= 0xffffffff && nativeEpoch(row.spawn_epoch);
+}
+function nativeDownloadCounts(row: Record<string, unknown>): boolean {
+  const requested = row.requested, succeeded = row.succeeded, failed = row.failed;
+  if (!nativeCounter(requested) || !nativeCounter(succeeded) || !nativeCounter(failed)) return false;
+  // Avoid overflowing JS safe integers when combining completion counters.
+  const remaining = requested - succeeded;
+  const unfinished = remaining >= failed ? remaining - failed : null;
+  return row.observed_unfinished === unfinished;
+}
+function downloadRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown> : null;
+}
+function nativeTabId(value: unknown): value is string {
+  return typeof value === "string" && /^tab-[1-9][0-9]{0,9}$/.test(value);
+}
+export function isRendererDownloadObservation(value: unknown): value is RendererDownloadObservation {
+  const row = downloadRecord(value);
+  return !!row && nativeDownloadIdentity(row) && nativeEpoch(row.renderer_generation)
+    && typeof row.connection_current === "boolean" && nativeDownloadCounts(row);
+}
+export function isDownloadOwnerObservation(value: unknown): value is DownloadOwnerObservation {
+  const row = downloadRecord(value);
+  if (!row || !nativeTabId(row.id) || !nativeDownloadIdentity(row)
+      || (row.phase !== "live" && row.phase !== "owner_retired")
+      || typeof row.connection_current !== "boolean" || row.outcome !== "unknown"
+      || (row.phase === "owner_retired" && row.connection_current)) return false;
+  if (row.renderer_generation === null) {
+    return !row.connection_current && row.requested === null && row.succeeded === null
+      && row.failed === null && row.observed_unfinished === null;
+  }
+  return nativeEpoch(row.renderer_generation) && nativeDownloadCounts(row);
+}
+export function isRendererDownloadEvent(value: unknown): value is RendererDownloadEvent {
+  const row = downloadRecord(value);
+  if (!row || !nativeTabId(row.id)) return false;
+  if (row.phase === "owner_retired") return isDownloadOwnerObservation(row);
+  if (!nativeDownloadIdentity(row) || !nativeEpoch(row.renderer_generation)
+      || !nativeDownloadCounts(row)) return false;
+  const counter = row.phase === "requested" ? row.requested
+    : row.phase === "succeeded" ? row.succeeded : row.phase === "failed" ? row.failed : null;
+  return nativeCounter(counter) && counter > 0;
+}
 type TabReceipt = {
   ticket: string; client_id: string; command: string;
   phase: "prepared" | "running" | "cancel_requested" | "succeeded" | "failed" | "cancelled" | "unknown";
@@ -1203,7 +1257,9 @@ export const bridge = {
   onIsolatedRendererRecoveryChanged: (cb: (event: { id: string }) => void) =>
     listen<{ id: string }>("isolated-tab-renderer-recovery-changed", (e) => cb(e.payload)),
   onIsolatedDownload: (cb: (event: RendererDownloadEvent) => void) =>
-    listen<RendererDownloadEvent>("isolated-renderer-download", (e) => cb(e.payload)),
+    listen<unknown>("isolated-renderer-download", (e) => {
+      if (isRendererDownloadEvent(e.payload)) cb(e.payload);
+    }),
 
   // ====== M1-4 默认浏览器接入（外部打开 URL 路由） ======
   // 拉取并清空后端 pending 队列（冷启动 argv / 单实例转发 / RunEvent::Opened

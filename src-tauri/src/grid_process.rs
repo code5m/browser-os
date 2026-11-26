@@ -1382,9 +1382,13 @@ impl GridProcessManager {
         }
         let Some(observation) = observation else { return Ok(false); };
         let mut last = child.comms.download_observation.lock().unwrap();
-        if last.as_ref().is_none_or(|(_, previous)| observation == *previous || observation.advances(*previous)) {
-            *last = Some((binding.generation, observation));
+        if last.as_ref().is_some_and(|(_, previous)| observation != *previous && !observation.advances(*previous)) {
+            // A concurrent newer report (or inconsistent peer) means this
+            // Ping did not establish a fresh monotonic snapshot. A strict
+            // discard preflight cannot use the old reply as evidence.
+            return Ok(false);
         }
+        *last = Some((binding.generation, observation));
         if observation.requested > 0 || observation.succeeded > 0 || observation.failed > 0 {
             child.comms.blank_reclaim_blocked.store(true, Ordering::SeqCst);
         }

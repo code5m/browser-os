@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { ref, reactive, computed, nextTick, watch } from "vue";
-import { bridge, type RendererRecoveryTarget, type RendererState, type RendererDownloadObservation } from "../../../bridge";
+import { bridge, isRendererDownloadObservation, type RendererRecoveryTarget, type RendererState, type RendererDownloadObservation } from "../../../bridge";
 import { WEBVIEW_FREEZE_JS, WEBVIEW_UNFREEZE_JS } from "../../../utils/webviewFreeze";
 import { isBrowserResourceAllowed } from "../resource/guard";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
@@ -60,14 +60,15 @@ export const useBrowserStore = defineStore("browser", () => {
     try {
       const view = await bridge.inspectRendererRecovery(id);
       if (rendererObservations.get(id) !== observation || !tabs.some(item => item === tab)) return null;
-      if (!view.renderer_state) {
+      if (!view.renderer_state || !["ready","not_ready","cleanup_pending","absent","hibernated"].includes(view.renderer_state)) {
         rendererStates.set(id, "unknown");
         rendererDownloads.delete(id);
         return null;
       }
       rendererStates.set(id, view.renderer_state);
       const download = view.renderer_download;
-      if (download && view.renderer_recovery_target?.pid === download.pid
+      if (isRendererDownloadObservation(download) && view.renderer_recovery_target?.id === id
+          && view.renderer_recovery_target?.pid === download.pid
           && view.renderer_recovery_target?.spawn_epoch === download.spawn_epoch) {
         rendererDownloads.set(id, download);
       } else {
