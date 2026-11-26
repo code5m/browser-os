@@ -133,6 +133,24 @@ pub(crate) fn is_renderer_ready(index: u32, frame: &Wire) -> bool {
     )
 }
 
+/// An address can be reopened without carrying an original document or
+/// embedded HTTP credentials. Explicit navigation policy is unchanged.
+pub(crate) fn restorable_address(address: &str) -> bool {
+    if address.is_empty() || address.len() > 8192 || address.trim() != address
+        || address.chars().any(char::is_control)
+    {
+        return false;
+    }
+    let Ok(url) = url::Url::parse(address) else { return false; };
+    if !url.username().is_empty() || url.password().is_some() { return false; }
+    match url.scheme() {
+        "http" | "https" => url.has_host(),
+        "file" => url.host_str().is_none() || url.host_str() == Some("localhost"),
+        "about" => address == "about:blank",
+        _ => false,
+    }
+}
+
 /// A denied popup is not a corrupt renderer connection. The parent may
 /// reopen an ordinary address but cannot transfer a transient document,
 /// opener, script URL, or remote-page access to local files.

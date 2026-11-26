@@ -1118,6 +1118,11 @@ impl GridProcessManager {
         {
             return Err("GRID_BUILD_TARGET_STALE".into());
         }
+        if target.pid.is_some() && !self.children.lock().unwrap().get(&index)
+            .is_some_and(|child| child.document_ready)
+        {
+            return Err("GRID_BUILD_TARGET_NOT_READY".into());
+        }
         let saved = if target.pid.is_none() {
             self.hibernated.lock().unwrap().get(&index).cloned().or_else(|| {
                 self.pending_restarts.lock().unwrap().get(&index).map(|(_, state)| state.clone())
@@ -1300,6 +1305,10 @@ impl GridProcessManager {
         let comms = {
             let children = self.children.lock().unwrap();
             let child = children.get(&binding.index).ok_or("GRID_EVAL_TARGET_STALE")?;
+            let creating = matches!(&cmd, GridCmd::CreateTab { .. });
+            if creating == child.document_ready {
+                return Err("GRID_DOCUMENT_NOT_READY_OR_ALREADY_CREATED".into());
+            }
             if child.comms.owner_snapshot()? != binding.owner
                 || (document_bound && child.navigation_revision != binding.navigation_revision)
                 || !child.comms.is_current(binding.generation)
@@ -1319,7 +1328,7 @@ impl GridProcessManager {
     {
         let cmd = GridCmd::Navigate { id: crate::grid_ipc::renderer_label(binding.index), url: url.to_owned() };
         self.grid_bound_request(binding, cmd, 10000)?;
-        self.grid_publish_address(binding, url)
+        self.grid_publish_address(binding, url, false)
     }
 
     pub(crate) fn grid_create_bound(&self, binding: crate::grid_ipc::RendererBinding, url: &str)
@@ -1327,10 +1336,10 @@ impl GridProcessManager {
     {
         let cmd = GridCmd::CreateTab { id: crate::grid_ipc::renderer_label(binding.index), url: url.to_owned() };
         self.grid_bound_request(binding, cmd, 20000)?;
-        self.grid_publish_address(binding, url)
+        self.grid_publish_address(binding, url, true)
     }
 
-    fn grid_publish_address(&self, binding: crate::grid_ipc::RendererBinding, url: &str)
+    fn grid_publish_address(&self, binding: crate::grid_ipc::RendererBinding, url: &str, created: bool)
         -> Result<(), String>
     {
         let mut children = self.children.lock().unwrap();
@@ -1345,6 +1354,7 @@ impl GridProcessManager {
         if child.navigation_revision == binding.navigation_revision {
             child.last_url = Some(url.to_owned());
         }
+        if created { child.document_ready = true; }
         Ok(())
     }
 
@@ -1848,23 +1858,6 @@ impl GridProcessManager {
 
     /// Fail-closed native probe of the actual Grid page. Stored last_url is
     /// only a navigation target and cannot prove the live DOM is empty.
-    fn confirmed_blank_grid(&self, index: u32) -> bool {
-        let Ok((comms, generation)) = self.wait_connected(index, 500) else {
-            return false;
-        };
-        match self.request_once_with(
-            comms,
-            generation,
-            &GridCmd::HibernationProbe {
-                id: crate::grid_ipc::renderer_label(index),
-            },
-            1000,
-        ) {
-            Ok(Some(encoded)) => grid_hibernation_probe_safe(&encoded),
-            _ => false,
-        }
-    }
-
     pub fn read_replies(&self, index: u32) -> Result<String, String> {
         self.grid_read_replies_bound(self.grid_eval_binding(index)?)
     }
@@ -1954,8 +1947,7 @@ impl GridProcessManager {
 
     /// 发后即忘（高频定位/显隐），错误只记日志。
     pub fn send(&self, index: u32, cmd: GridCmd) {
-        if crate::grid_ipc::is_tab_renderer(index)
-            && !self.children.lock().unwrap().get(&index).is_some_and(|child| child.document_ready)
+        if !self.children.lock().unwrap().get(&index).is_some_and(|child| child.document_ready)
         {
             return;
         }
@@ -2094,81 +2086,50 @@ impl GridProcessManager {
         candidates.sort_unstable();
         let mut hibernated = Vec::new();
         for (hidden_since, index) in candidates.into_iter().take(max_children) {
-            let eligible = || {
-                self.children.lock().unwrap().get(&index).is_some_and(|child| {
-                    child.hidden_since == Some(hidden_since)
-                        && grid_content_reclaimable(child.last_url.as_deref())
-                        && grid_child_is_hibernatable(
-                            child.hidden,
-                            child.blur_hidden,
-                            child.focused,
-                            child.hidden_since,
-                            std::time::Instant::now(),
-                            idle_for,
-                        )
+            let Ok(_visibility) = self.visibility_dispatch.try_lock() else { continue; };
+            let eligible = |child: &GridChildHandle| {
+                child.document_ready && child.hidden_since == Some(hidden_since)
+                    && !child.comms.blank_reclaim_blocked.load(Ordering::SeqCst)
+                    && grid_content_reclaimable(child.last_url.as_deref())
+                    && grid_child_is_hibernatable(child.hidden, child.blur_hidden, child.focused,
+                        child.hidden_since, std::time::Instant::now(), idle_for)
+            };
+            let (comms, binding) = {
+                let children = self.children.lock().unwrap();
+                let Some(child) = children.get(&index) else { continue; };
+                if !eligible(child) { continue; }
+                let Ok(owner) = child.comms.owner_snapshot() else { continue; };
+                (Arc::clone(&child.comms), crate::grid_ipc::RendererBinding {
+                    index, owner, generation: child.comms.generation.load(Ordering::SeqCst),
+                    navigation_revision: child.navigation_revision,
                 })
             };
-            if !eligible() || !self.confirmed_blank_grid(index) || !eligible() {
+            let Some(_claim) = comms.try_claim_blank_reclaim(binding.generation) else { continue; };
+            let command = GridCmd::HideWindow { id: crate::grid_ipc::renderer_label(index) };
+            if self.request_once_with(Arc::clone(&comms), binding.generation, &command, 1500).is_err() { continue; }
+            let command = GridCmd::HibernationProbe { id: crate::grid_ipc::renderer_label(index) };
+            if !matches!(self.request_once_with(Arc::clone(&comms), binding.generation, &command, 1500), Ok(Some(encoded)) if grid_hibernation_probe_safe(&encoded)) {
                 continue;
             }
-            // Graceful native close for the empty WebView; if a user resumes
-            // it during IPC, do not kill the process. Rebuild a blank WebView
-            // when CloseTab won the race, preserving the user's fresh layout.
-            let closed = self.request(
-                index,
-                GridCmd::CloseTab {
-                    id: crate::grid_ipc::renderer_label(index),
-                },
-                1000,
-            );
-            if !eligible() {
-                if closed.is_ok() {
-                    self.replay(index);
-                }
-                continue;
-            }
-            // Revalidate under the child map lock, then kill the old process
-            // before another get_or_spawn can reuse the same Grid index/socket.
-            let _gate = self.lifecycle_lock.lock().unwrap();
-            if self.lifecycle.is_stopping() {
-                break;
-            }
+            let Ok(_gate) = self.lifecycle_lock.try_lock() else { continue; };
+            if self.lifecycle.is_stopping() { break; }
             let mut children = self.children.lock().unwrap();
-            let still_eligible = children.get(&index).is_some_and(|child| {
-                child.hidden_since == Some(hidden_since)
-                    && grid_content_reclaimable(child.last_url.as_deref())
-                    && grid_child_is_hibernatable(
-                        child.hidden,
-                        child.blur_hidden,
-                        child.focused,
-                        child.hidden_since,
-                        std::time::Instant::now(),
-                        idle_for,
-                    )
-            });
-            if !still_eligible {
-                drop(children);
-                if closed.is_ok() {
-                    self.replay(index);
-                }
-                continue;
-            }
+            let still_eligible = children.get(&index).is_some_and(|child|
+                Arc::ptr_eq(&child.comms, &comms)
+                    && child.child.id() == binding.owner.0
+                    && comms.spawn_epoch.load(Ordering::SeqCst) == binding.owner.1
+                    && comms.is_current(binding.generation)
+                    && child.navigation_revision == binding.navigation_revision
+                    && eligible(child));
+            if !still_eligible { continue; }
             if let Some(child) = children.remove(&index) {
-                // Publish retirement before releasing the map/gate. Activation
-                // rejects this index until the complete process group is gone.
-                self.hibernated.lock().unwrap().insert(
-                    index,
-                    SavedChildState {
-                        last_url: child.last_url.clone(),
-                        last_rect: child.last_rect,
-                        hidden: true,
-                        blur_hidden: false,
-                    },
-                );
+                self.hibernated.lock().unwrap().insert(index, SavedChildState {
+                    last_url: child.last_url.clone(), last_rect: child.last_rect,
+                    hidden: true, blur_hidden: false,
+                });
                 self.pending_restarts.lock().unwrap().remove(&index);
                 self.lifecycle.retire(index, child);
                 hibernated.push(index);
-                eprintln!("[grid-manager] hibernated empty grid-child-{}", index);
             }
         }
         hibernated
@@ -2624,89 +2585,68 @@ impl GridProcessManager {
                     }
                     eprintln!("[grid-manager] restart failed index={index}: {error}");
                 } else {
-                    replay.push(index);
+                    replay.push((self.grid_route_stamps_locked(&[index])[0], saved));
                 }
             }
         }
-        for index in replay {
-            self.replay(index);
+        for (stamp, saved) in replay {
+            self.replay(stamp, saved);
         }
     }
 
-    /// 重启后状态重放：等 UDS 重连 → 重建 webview（url）→ 恢复定位（若可见）→ 恢复缩放。
-    fn replay(&self, index: u32) {
+    /// Crash replay binds the new process under the spawn gate. No worker
+    /// may look up a later owner by Grid index or claim that its DOM survived.
+    fn replay(&self, stamp: crate::grid_ipc::GridRouteStamp, saved: SavedChildState) {
+        let index = stamp.index;
         if crate::grid_ipc::is_tab_renderer(index) { return; }
-        let (url, rect, visible) = {
-            let children = self.children.lock().unwrap();
-            match children.get(&index) {
-                Some(h) => (h.last_url.clone(), h.last_rect, !h.hidden && !h.blur_hidden),
-                None => return,
-            }
-        };
-        let zoom = self
-            .app()
-            .map(|app| {
-                app.state::<crate::bridge::AppState>()
-                    .grid_zooms
-                    .lock()
-                    .unwrap()
-                    .get(&format!("grid-{index}"))
-                    .copied()
-                    .unwrap_or(1.0)
-            })
-            .unwrap_or(1.0);
-        let Some(url) = url else {
-            eprintln!("[grid-manager] grid-child-{} 无历史 url，跳过重放", index);
-            return;
-        };
-        // 重放等待连接可能数秒，放独立线程避免阻塞监控循环。
-        let app = self.app();
-        let replay_owner = Arc::clone(&self.lifecycle);
+        let Some(app) = self.app() else { return; };
         let started = self.spawn_worker("grid-replay", move || {
-            if replay_owner.is_stopping() {
-                return;
-            }
-            let Some(app) = app else { return };
             let state = app.state::<crate::bridge::AppState>();
             let manager = &state.grid_manager;
-            let label = crate::grid_ipc::renderer_label(index);
-            if let Err(e) = manager.request(
-                index,
-                GridCmd::CreateTab {
-                    id: label.clone(),
-                    url: url.clone(),
-                },
-                15000,
-            ) {
-                eprintln!(
-                    "[grid-manager] grid-child-{} 重放 CreateTab 失败: {e}",
-                    index
-                );
-                return;
-            }
-            if visible {
-                if let Some(css) = rect {
-                    if let Some(abs) = manager.abs_rect(css) {
-                        manager.send(
-                            index,
-                            GridCmd::UpdateRect {
-                                id: label.clone(),
-                                rect: abs,
-                            },
-                        );
-                    }
+            let url = saved.last_url.as_deref().filter(|url| crate::grid_ipc::restorable_address(url))
+                .unwrap_or("about:blank");
+            let prepared = crate::grid_ipc::GridPreparedSlot {
+                stamp, created: true, previous_url: saved.last_url.clone(), saved: Some(saved.clone()),
+            };
+            let creation = manager.grid_binding_for_stamp(stamp)
+                .and_then(|binding| manager.grid_create_bound(binding, url).map(|_| binding));
+            let binding = match creation {
+                Ok(binding) => binding,
+                Err(error) => {
+                    eprintln!("[grid-manager] replay creation unconfirmed index={index}: {error}");
+                    let _ = manager.rollback_grid_creation(&prepared);
+                    return;
+                }
+            };
+            // Re-read visibility/geometry after taking the same native
+            // dispatch lock as ordinary positioning and focus changes.
+            {
+                let _visibility = manager.visibility_dispatch.lock().unwrap_or_else(|p| p.into_inner());
+                let css = {
+                    let children = manager.children.lock().unwrap();
+                    children.get(&index).filter(|child|
+                        child.child.id() == binding.owner.0
+                            && child.comms.spawn_epoch.load(Ordering::SeqCst) == binding.owner.1
+                            && child.comms.is_current(binding.generation)
+                            && !child.hidden && !child.blur_hidden)
+                        .and_then(|child| child.last_rect)
+                };
+                if let Some(rect) = css.and_then(|css| manager.abs_rect(css)) {
+                    let _ = manager.grid_bound_request(binding, GridCmd::UpdateRect {
+                        id: crate::grid_ipc::renderer_label(index), rect,
+                    }, 3000);
                 }
             }
-            if zoom > 0.1 && (zoom - 1.0).abs() > 0.01 {
-                manager.send(index, GridCmd::SetZoom { id: label, zoom });
+            let zoom = state.grid_zooms.lock().unwrap()
+                .get(&crate::grid_ipc::renderer_label(index)).copied().unwrap_or(1.0);
+            if let Err(error) = manager.grid_zoom_bound(binding, zoom) {
+                eprintln!("[grid-manager] replay zoom unconfirmed index={index}: {error}");
             }
-            eprintln!(
-                "[grid-manager] grid-child-{} 状态重放完成 url={}",
-                index, url
-            );
         });
         if let Err(error) = started {
-            eprintln!("[grid-manager] replay unavailable: {error}");
+            // The unready process remains visible to native inspection; do
+            // not silently start a second replay or target a replacement.
+            eprintln!("[grid-manager] replay unavailable index={index}: {error}");
         }
     }
 
@@ -2794,10 +2734,10 @@ impl GridProcessManager {
                 index,
                 pid: child.child.id(),
                 spawn_epoch: child.comms.spawn_epoch.load(Ordering::SeqCst),
-                ready: child.comms.is_connected() && (!ordinary || child.document_ready)
+                ready: child.comms.is_connected() && child.document_ready
                     && !child.comms.blank_reclaiming.load(Ordering::SeqCst),
                 startup_reserved: child.spawned_at.elapsed() < crate::grid_ipc::RENDERER_STARTUP_RESERVE
-                    || (ordinary && !child.document_ready),
+                    || !child.document_ready,
             }
         }).collect();
         result.sort_unstable_by_key(|owner| owner.index);
