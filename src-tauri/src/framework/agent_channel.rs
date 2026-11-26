@@ -30,6 +30,11 @@ static CONFIG_LOCK: Mutex<()> = Mutex::new(());
 const CONFIG_FILE: &str = "agent-runtime-experiment.json";
 const MAX_CONFIG_BYTES: u64 = 16_384;
 const MAX_RESULT_BYTES: usize = 64 * 1024;
+// Run ownership includes durable admission, execution and publication.
+// A separate history lane remains available while a Run is executing.
+static CHANNEL_RUN_LANE: BlockingLane = BlockingLane::new(2, "AGENT_CHANNEL_RUN_BUSY", "AGENT_RUN_WORKER_FAILED");
+static CHANNEL_HISTORY_LANE: BlockingLane = BlockingLane::new(2, "AGENT_CHANNEL_HISTORY_BUSY", "AGENT_RUN_WORKER_FAILED");
+static CHANNEL_BENCHMARK_LANE: BlockingLane = BlockingLane::new(1, "AGENT_CHANNEL_BENCHMARK_BUSY", "AGENT_RUN_WORKER_FAILED");
 static READ_LANE: BlockingLane = BlockingLane::new(
     1,
     "AGENT_CHANNEL_READ_BUSY",
@@ -140,11 +145,14 @@ pub async fn agent_runtime_benchmark(
     if !config.enabled || !config.benchmark_enabled {
         return Err("AGENT_EXPERIMENT_BENCHMARK_DISABLED".into());
     }
-    // This benchmark is deterministic offline orchestration ONLY. Never runs
-    // native read/write tools or calls real provider credentials.
-    run_benchmark_suite(repeats)
-        .await
-        .map_err(|_| "AGENT_EXPERIMENT_BENCHMARK_FAILED".into())
+    let permit = CHANNEL_BENCHMARK_LANE.reserve()?;
+    // Offline orchestration still owns admission until settlement, even if
+    // the main window disappears while awaiting the result.
+    tauri::async_runtime::spawn(async move {
+        let _permit = permit;
+        run_benchmark_suite(repeats).await
+            .map_err(|_| "AGENT_EXPERIMENT_BENCHMARK_FAILED".to_string())
+    }).await.map_err(|_| "AGENT_RUN_WORKER_FAILED".to_string())?
 }
 
 /// One newly allocated task driven by the CURRENT persisted routing policy.
@@ -159,16 +167,12 @@ pub async fn agent_runtime_run_fixture(
     check_main(&app, &webview, "agent_runtime_run_fixture")?;
     let config = enabled_config(&app)?;
     let storage = crate::workspace::data_dir(&app);
-    let admission = tauri::async_runtime::spawn_blocking(move || {
+    let result = run_channel_owned(app, webview, move || {
         ProductionExecution::begin_channel(
-            &storage,
-            uuid::Uuid::new_v4(),
-            ChannelStart::Fixture { fixture_id, config },
+            &storage, uuid::Uuid::new_v4(), ChannelStart::Fixture { fixture_id, config },
         )
-    })
-    .await
-    .map_err(|_| "AGENT_RUN_WORKER_FAILED")??;
-    serde_json::from_value(run_admitted(app, webview, admission).await?)
+    }).await?;
+    serde_json::from_value(result)
         .map_err(|_| "AGENT_RUN_RECEIPT_INVALID".into())
 }
 
@@ -366,12 +370,9 @@ pub async fn agent_runtime_read_tool(
     enabled_config(&app)?;
     let start = checked_read(command, args)?;
     let storage = crate::workspace::data_dir(&app);
-    let admission = tauri::async_runtime::spawn_blocking(move || {
+    run_channel_owned(app, webview, move || {
         ProductionExecution::begin_channel(&storage, uuid::Uuid::new_v4(), start)
-    })
-    .await
-    .map_err(|_| "AGENT_RUN_WORKER_FAILED")??;
-    run_admitted(app, webview, admission).await
+    }).await
 }
 fn enabled_config(app: &AppHandle) -> Result<ExperimentConfig, String> {
     let _guard = CONFIG_LOCK.try_lock().map_err(|_| "AGENT_EXPERIMENT_CONFIG_BUSY")?;
@@ -398,6 +399,27 @@ fn checked_read(command: String, args: Value) -> Result<ChannelStart, String> {
         resource,
     })
 }
+async fn run_channel_owned(
+    app: AppHandle,
+    webview: Webview,
+    admit: impl FnOnce() -> Result<ChannelAdmission, String> + Send + 'static,
+) -> Result<Value, String> {
+    let permit = CHANNEL_RUN_LANE.reserve()?;
+    // Detach one owned task before starting admission. Dropping the IPC
+    // waiter cannot strand a prepared Run or release a running permit.
+    tauri::async_runtime::spawn(async move {
+        let _permit = permit;
+        let owner_app = app.clone();
+        let owner_webview = webview.clone();
+        let admission = tauri::async_runtime::spawn_blocking(move || {
+            check_main(&owner_app, &owner_webview, "ai_service")?;
+            enabled_config(&owner_app)?;
+            admit()
+        }).await.map_err(|_| "AGENT_RUN_WORKER_FAILED".to_string())??;
+        run_admitted(app, webview, admission).await
+    }).await.map_err(|_| "AGENT_RUN_WORKER_FAILED".to_string())?
+}
+
 async fn run_admitted(
     app: AppHandle,
     webview: Webview,
@@ -555,31 +577,25 @@ pub(crate) async fn dispatch_recovery(
             } else {
                 Some(parse(&request.id)?)
             };
-            return tauri::async_runtime::spawn_blocking(move || {
+            return CHANNEL_HISTORY_LANE.run(move || {
                 ProductionExecution::channel_catalog(&storage, cursor)
-            })
-            .await
-            .map_err(|_| "AGENT_RUN_WORKER_FAILED")?;
+            }).await;
         }
         "channel_restore" => {
             let id = parse(&request.id)?;
-            return tauri::async_runtime::spawn_blocking(move || {
+            return CHANNEL_HISTORY_LANE.run(move || {
                 ProductionExecution::read_channel(&storage, id)
-            })
-            .await
-            .map_err(|_| "AGENT_RUN_WORKER_FAILED")?;
+            }).await;
         }
         "channel_forget" => {
             if !request.confirmed {
                 return Err("AGENT_RUN_FORGET_APPROVAL_REQUIRED".into());
             }
             let id = parse(&request.id)?;
-            return tauri::async_runtime::spawn_blocking(move || {
+            return CHANNEL_HISTORY_LANE.run(move || {
                 let archived = ProductionExecution::forget_channel(&storage, id)?;
                 Ok(serde_json::json!({"forgotten":true,"archived":archived}))
-            })
-            .await
-            .map_err(|_| "AGENT_RUN_WORKER_FAILED")?;
+            }).await;
         }
         _ => {}
     }
@@ -588,19 +604,13 @@ pub(crate) async fn dispatch_recovery(
     }
     let config = enabled_config(&app)?;
     let run = parse(&request.request_id)?;
-    let admission = match request.action.as_str() {
+    match request.action.as_str() {
         "channel_fixture" => {
-            tauri::async_runtime::spawn_blocking(move || {
+            run_channel_owned(app, webview, move || {
                 ProductionExecution::begin_channel(
-                    &storage,
-                    run,
-                    ChannelStart::Fixture {
-                        fixture_id: request.id,
-                        config,
-                    },
+                    &storage, run, ChannelStart::Fixture { fixture_id: request.id, config },
                 )
-            })
-            .await
+            }).await
         }
         "channel_read" => {
             if request.message.len() > 4096 {
@@ -609,22 +619,18 @@ pub(crate) async fn dispatch_recovery(
             let args = serde_json::from_str(&request.message)
                 .map_err(|_| "AGENT_EXPERIMENT_ARGUMENT_INVALID")?;
             let start = checked_read(request.id, args)?;
-            tauri::async_runtime::spawn_blocking(move || {
+            run_channel_owned(app, webview, move || {
                 ProductionExecution::begin_channel(&storage, run, start)
-            })
-            .await
+            }).await
         }
         "channel_resume" => {
             let previous = parse(&request.id)?;
-            tauri::async_runtime::spawn_blocking(move || {
+            run_channel_owned(app, webview, move || {
                 ProductionExecution::resume_channel(&storage, previous, run)
-            })
-            .await
+            }).await
         }
-        _ => return Err("AGENT_EXPERIMENT_ACTION_DENIED".into()),
+        _ => Err("AGENT_EXPERIMENT_ACTION_DENIED".into()),
     }
-    .map_err(|_| "AGENT_RUN_WORKER_FAILED")??;
-    run_admitted(app, webview, admission).await
 }
 
 #[cfg(test)]
