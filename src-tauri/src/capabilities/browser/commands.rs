@@ -483,7 +483,17 @@ pub enum CaptureMode {
     #[default]
     CurrentDocument,
     IndependentAddress,
+    InteractiveAddress,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+enum InteractiveStage {
+    Opening,
+    AwaitingUser,
+    CaptureRequested,
+}
+
 #[derive(Clone, serde::Serialize)]
 struct CaptureReceipt {
     ticket: String,
@@ -503,6 +513,7 @@ struct CaptureSlot {
     // Cancellation is committed under the owner mutex, even when the
     // receipt must remain Unknown until the original renderer retires.
     cancel_intent: bool,
+    interactive_stage: Option<InteractiveStage>,
 }
 
 const CAPTURE_DOMAIN_STALL: std::time::Duration = std::time::Duration::from_secs(60);
@@ -545,8 +556,10 @@ impl CaptureOwner {
             }),
             // Only the independent process owner reports this retirement
             // uncertainty. Lost frontend IPC alone is not authority.
-            CaptureMode::IndependentAddress => slot.receipt.phase == CapturePhase::Unknown
-                && slot.receipt.error.as_deref() == Some("CAPTURE_ISOLATED_EXIT_PENDING"),
+            CaptureMode::IndependentAddress | CaptureMode::InteractiveAddress => {
+                slot.receipt.phase == CapturePhase::Unknown
+                    && slot.receipt.error.as_deref() == Some("CAPTURE_ISOLATED_EXIT_PENDING")
+            }
         };
         eligible.then(|| CaptureRecoveryTarget {
             epoch: self.epoch.clone(),
@@ -582,6 +595,61 @@ impl CaptureOwner {
         self.recovery_intent = None;
         self.recovery_claimed = true;
         true
+    }
+
+    fn interactive_slot(&mut self, ticket: &str) -> Result<&mut CaptureSlot, String> {
+        if self.recovery_claimed {
+            return Err("CAPTURE_ISOLATED_CANCELLED".into());
+        }
+        let slot = self.slot.as_mut()
+            .filter(|slot| slot.receipt.ticket == ticket
+                && slot.receipt.mode == CaptureMode::InteractiveAddress)
+            .ok_or("CAPTURE_STALE_TICKET")?;
+        if slot.cancel_intent || slot.cancellation.is_cancelled()
+            || slot.receipt.phase != CapturePhase::Running || slot.native_returned
+        {
+            return Err("CAPTURE_ISOLATED_CANCELLED".into());
+        }
+        Ok(slot)
+    }
+
+    fn mark_interactive_ready(&mut self, ticket: &str) -> Result<(), String> {
+        let slot = self.interactive_slot(ticket)?;
+        if slot.interactive_stage != Some(InteractiveStage::Opening) {
+            return Err("CAPTURE_INTERACTIVE_STATE_INVALID".into());
+        }
+        slot.interactive_stage = Some(InteractiveStage::AwaitingUser);
+        Ok(())
+    }
+
+    fn request_interactive_capture(
+        &mut self,
+        epoch: &str,
+        sequence: &str,
+        ticket: &str,
+    ) -> Result<(), String> {
+        if self.epoch != epoch {
+            return Err("CAPTURE_STALE_EPOCH".into());
+        }
+        if self.next_sequence.to_string() != sequence {
+            return Err("CAPTURE_STALE_SEQUENCE".into());
+        }
+        let slot = self.interactive_slot(ticket)?;
+        match slot.interactive_stage {
+            Some(InteractiveStage::AwaitingUser) => {
+                slot.interactive_stage = Some(InteractiveStage::CaptureRequested);
+                Ok(())
+            }
+            // A lost control reply may be inspected or repeated without
+            // dispatching a second renderer request.
+            Some(InteractiveStage::CaptureRequested) => Ok(()),
+            _ => Err("CAPTURE_INTERACTIVE_NOT_READY".into()),
+        }
+    }
+
+    fn interactive_capture_requested(&mut self, ticket: &str) -> Result<bool, String> {
+        let slot = self.interactive_slot(ticket)?;
+        Ok(slot.interactive_stage == Some(InteractiveStage::CaptureRequested))
     }
 
     fn mark_returned(&mut self, ticket: &str) -> Result<(), String> {
@@ -631,6 +699,7 @@ struct CaptureView {
     last_completed: Option<CaptureReceipt>,
     domain_recovery_available: bool,
     publishing: bool,
+    interactive_stage: Option<InteractiveStage>,
 }
 /// Non-blocking metadata only: no document, image or filesystem path.
 pub(crate) fn capture_diagnostic() -> serde_json::Value {
@@ -657,6 +726,9 @@ fn capture_view() -> Result<CaptureView, String> {
         domain_recovery_available: capture_supervisor_ready()
             && owner.recovery_target(std::time::Instant::now()).is_some(),
         publishing: owner.slot.as_ref().is_some_and(|slot| slot.publishing),
+        interactive_stage: owner.slot.as_ref()
+            .filter(|slot| slot.receipt.phase == CapturePhase::Running && !slot.native_returned)
+            .and_then(|slot| slot.interactive_stage),
     })
 }
 
@@ -980,6 +1052,7 @@ async fn run_independent_capture(
     ticket: String,
     address: String,
     cancellation: CaptureCancellation,
+    interactive: bool,
 ) {
     let mut guard = CaptureWorkerGuard {
         app: app.clone(),
@@ -989,18 +1062,32 @@ async fn run_independent_capture(
     let worker_app = app.clone();
     let worker_ticket = ticket.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
-        let bytes = crate::isolated_capture::render_job(
-            &address,
-            || cancellation.is_cancelled(),
-            || {
-                capture_finish(
-                    &worker_app,
-                    &worker_ticket,
-                    CapturePhase::Unknown,
-                    Err("CAPTURE_ISOLATED_EXIT_PENDING".into()),
-                );
-            },
-        );
+        let cancelled = || cancellation.is_cancelled();
+        let pending = || {
+            capture_finish(
+                &worker_app,
+                &worker_ticket,
+                CapturePhase::Unknown,
+                Err("CAPTURE_ISOLATED_EXIT_PENDING".into()),
+            );
+        };
+        let bytes = if interactive {
+            let ready = || CAPTURE_OWNER.lock().map_err(|_| "CAPTURE_OWNER_UNKNOWN")?
+                .mark_interactive_ready(&worker_ticket);
+            let requested = || CAPTURE_OWNER.lock().map_err(|_| "CAPTURE_OWNER_UNKNOWN")?
+                .interactive_capture_requested(&worker_ticket);
+            crate::isolated_capture::render_interactive_job(
+                &address,
+                cancelled,
+                pending,
+                crate::isolated_capture::InteractiveControl {
+                    ready: &ready,
+                    capture_requested: &requested,
+                },
+            )
+        } else {
+            crate::isolated_capture::render_job(&address, cancelled, pending)
+        };
         // The owner returns only before launch or after confirmed retirement.
         capture_returned(&worker_ticket)?;
         let bytes = bytes?;
@@ -1021,7 +1108,7 @@ async fn run_independent_capture(
 enum CaptureWork {
     Current(CaptureDocument),
     #[cfg(any(target_os = "linux", target_os = "windows"))]
-    Independent(String),
+    Independent(String, bool),
 }
 
 fn begin_capture(
@@ -1057,7 +1144,7 @@ fn begin_capture(
                     .map_err(|_| "CAPTURE_TAB_UNAVAILABLE")?,
             )
         }
-        CaptureMode::IndependentAddress => {
+        CaptureMode::IndependentAddress | CaptureMode::InteractiveAddress => {
             #[cfg(any(target_os = "linux", target_os = "windows"))]
             {
                 let expected_url = expected_url.ok_or("CAPTURE_ADDRESS_REQUIRED")?;
@@ -1072,7 +1159,10 @@ fn begin_capture(
                 if current.url != expected_url {
                     return Err("CAPTURE_ADDRESS_CHANGED".into());
                 }
-                CaptureWork::Independent(crate::isolated_capture::checked_url(&expected_url)?)
+                CaptureWork::Independent(
+                    crate::isolated_capture::checked_url(&expected_url)?,
+                    mode == CaptureMode::InteractiveAddress,
+                )
             }
             #[cfg(not(any(target_os = "linux", target_os = "windows")))]
             {
@@ -1132,6 +1222,8 @@ fn begin_capture(
             native_returned: false,
             publishing: false,
             cancel_intent: false,
+            interactive_stage: (mode == CaptureMode::InteractiveAddress)
+                .then_some(InteractiveStage::Opening),
         });
     }
     // Spawn independent work before returning the receipt. No callback needs
@@ -1142,12 +1234,13 @@ fn begin_capture(
                 tauri::async_runtime::spawn(run_capture(app, id, ticket, document, cancellation));
         }
         #[cfg(any(target_os = "linux", target_os = "windows"))]
-        CaptureWork::Independent(address) => {
+        CaptureWork::Independent(address, interactive) => {
             let _ = tauri::async_runtime::spawn(run_independent_capture(
                 app,
                 ticket,
                 address,
                 cancellation,
+                interactive,
             ));
         }
     }
@@ -1164,7 +1257,7 @@ pub(crate) fn prepare_capture_exit(app: &AppHandle) -> Result<(), String> {
             .slot
             .as_ref()
             .filter(|slot| {
-                slot.receipt.mode == CaptureMode::IndependentAddress
+                slot.receipt.mode != CaptureMode::CurrentDocument
                     && !slot.receipt.phase.terminal()
             })
             .map(|slot| slot.receipt.ticket.clone())
@@ -1228,6 +1321,12 @@ pub enum CaptureRequest {
     },
     Ack {
         ticket: String,
+    },
+    CaptureNow {
+        epoch: String,
+        sequence: String,
+        ticket: String,
+        confirmed: bool,
     },
     RecoverDomain {
         epoch: String,
@@ -1343,6 +1442,18 @@ pub async fn capture_full_page(
             )?,
             CaptureRequest::Cancel { ticket } => capture_cancel(&app, &ticket)?,
             CaptureRequest::Ack { ticket } => capture_ack(&ticket)?,
+            CaptureRequest::CaptureNow { epoch, sequence, ticket, confirmed } => {
+                if !confirmed {
+                    return Err("CAPTURE_INTERACTIVE_CONFIRMATION_REQUIRED".into());
+                }
+                if app.state::<crate::ExitLifecycleState>().started.load(Ordering::Acquire)
+                    || app.state::<AppState>().shutdown_requested.load(Ordering::Acquire)
+                {
+                    return Err("CAPTURE_APPLICATION_SHUTTING_DOWN".into());
+                }
+                CAPTURE_OWNER.lock().map_err(|_| "CAPTURE_OWNER_UNKNOWN")?
+                    .request_interactive_capture(&epoch, &sequence, &ticket)?;
+            }
             CaptureRequest::RecoverDomain { epoch, sequence, ticket, confirmed } => {
                 if !confirmed {
                     return Err("CAPTURE_DOMAIN_RECOVERY_CONFIRMATION_REQUIRED".into());
@@ -1465,6 +1576,7 @@ mod capture_storage_tests {
                 native_returned: false,
                 publishing: false,
                 cancel_intent: false,
+                interactive_stage: None,
             }),
             last_completed: None,
             recovery_intent: None,
@@ -1518,6 +1630,33 @@ mod capture_storage_tests {
         slot.receipt.mode = CaptureMode::IndependentAddress;
         slot.receipt.error = Some("CAPTURE_WORKER_OUTCOME_UNKNOWN".into());
         assert!(owner.recovery_target(std::time::Instant::now()).is_none());
+    }
+
+    #[test]
+    fn interactive_capture_requires_ready_exact_owner_and_one_request() {
+        let mut owner = capture_fixture();
+        let slot = owner.slot.as_mut().unwrap();
+        slot.receipt.mode = CaptureMode::InteractiveAddress;
+        slot.receipt.phase = CapturePhase::Running;
+        slot.receipt.error = None;
+        slot.interactive_stage = Some(InteractiveStage::Opening);
+        assert_eq!(
+            owner.request_interactive_capture("fixture", "7", "old").unwrap_err(),
+            "CAPTURE_INTERACTIVE_NOT_READY"
+        );
+        assert!(owner.mark_interactive_ready("replacement").is_err());
+        owner.mark_interactive_ready("old").unwrap();
+        assert!(!owner.interactive_capture_requested("old").unwrap());
+        assert!(owner.mark_interactive_ready("old").is_err());
+        assert!(owner.request_interactive_capture("new", "7", "old").is_err());
+        assert!(owner.request_interactive_capture("fixture", "6", "old").is_err());
+        assert!(owner.request_interactive_capture("fixture", "7", "replacement").is_err());
+        owner.request_interactive_capture("fixture", "7", "old").unwrap();
+        owner.request_interactive_capture("fixture", "7", "old").unwrap();
+        assert!(owner.interactive_capture_requested("old").unwrap());
+        owner.slot.as_mut().unwrap().cancel_intent = true;
+        assert!(owner.interactive_capture_requested("old").is_err());
+        assert!(owner.request_interactive_capture("fixture", "7", "old").is_err());
     }
 
     #[test]
