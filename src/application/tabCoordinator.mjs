@@ -2,7 +2,7 @@
  * Route logical tab intents to their existing owners. The projection remains
  * read-only; this coordinator owns no tab records or native resources.
  */
-export function createTabCoordinator({ resources, activate, close, enabled = () => true }) {
+export function createTabCoordinator({ resources, activate, close, enabled = () => true, needsReactivation = () => false }) {
   let tail = Promise.resolve();
   const find = (key) => resources().find((tab) => tab.key === key);
   const run = (operation) => {
@@ -13,7 +13,9 @@ export function createTabCoordinator({ resources, activate, close, enabled = () 
   async function activateOne(key) {
     const target = find(key);
     if (!target) return false;
-    if (target.active) return true;
+    // An active logical tab may have lost its independent native host.
+    // Let the Browser owner decide whether an explicit activation is needed.
+    if (target.active && !needsReactivation(target)) return true;
     return (await activate(target)) !== false;
   }
   async function closeOne(key) {

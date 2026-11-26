@@ -496,9 +496,11 @@ export const useBrowserStore = defineStore("browser", () => {
       let activateNext = "";
       if (activeTabId.value === id) {
         const next = tabs[idx] || tabs[idx - 1];
-        activeTabId.value = next ? next.id : "";
+        // The independent close receipt clears native active identity. Do
+        // not invent a selected replacement before its activation succeeds.
+        activeTabId.value = isolatedRendererMode.value ? "" : (next?.id ?? "");
         if (layout.mainView === "browser") {
-          url.value = next?.url ?? "";
+          url.value = isolatedRendererMode.value ? "" : (next?.url ?? "");
           activateNext = next?.id ?? "";
         }
       }
@@ -506,8 +508,21 @@ export const useBrowserStore = defineStore("browser", () => {
       // the visible module. Ordinary close remains direct, with no save/prompt.
       try {
         if (activateNext) {
-          await bridge.tabActivate(activateNext);
-          rendererActivated(activateNext);
+          rendererObservations.delete(activateNext);
+          try {
+            await bridge.tabActivate(activateNext);
+            rendererActivated(activateNext);
+            if (isolatedRendererMode.value) {
+              const next = tabs.find(tab => tab.id === activateNext);
+              if (next) {
+                activeTabId.value = next.id;
+                if (layout.mainView === "browser") url.value = next.url;
+              }
+            }
+          } catch (error) {
+            if (isolatedRendererMode.value) void refreshRendererState(activateNext);
+            throw error;
+          }
         }
       } finally {
         await nextTick();

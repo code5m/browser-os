@@ -22,6 +22,7 @@ function bindUnifiedTabs(layout: ReturnType<typeof useLayoutStore>) {
   const coordinator = createTabCoordinator({
     resources: () => projectedTabs.value,
     enabled: () => !useTerminalStore().m0Cfg?.driver,
+    needsReactivation: (tab) => tab.kind === "web" && browser.rendererUnavailable(tab.id),
     activate: async (tab) => {
       if (tab.kind === "web") return browser.tabSwitch(tab.id);
       if (tab.kind !== "module") return false;

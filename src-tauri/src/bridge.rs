@@ -506,7 +506,13 @@ fn close_tab(app: &AppHandle, id: &str) -> Result<(), String> {
     state.tabs.lock().unwrap().remove(id);
     let mut active = state.active_tab.lock().unwrap();
     if active.as_deref() == Some(id) {
-        *active = state.tabs.lock().unwrap().keys().next().cloned();
+        // Independent hosts are explicitly activated by Browser Owner. An
+        // arbitrary surviving logical tab is not a native activation receipt.
+        *active = if isolated_tabs::route(id).is_some() {
+            None
+        } else {
+            state.tabs.lock().unwrap().keys().next().cloned()
+        };
     }
     Ok(())
 }
