@@ -600,3 +600,10 @@ Agent-owned Browser receipt slots explicitly reject the ordinary Start control, 
 - Public API and RMCP read-only adapters retain the exact bounded arguments and proof for result-release authorization. The native Channel worker additionally checks current enablement, main-webview authority and reviewed binding after dispatch and before return. No new grant or write permission, and no claim of an immutable resource snapshot.
 - ACP projection consumes the common event and aggregate text budgets, including events it does not project, and rejects nil session identity even with empty input. It remains a protocol projection, not a production execution owner.
 - Source only; no compilation, tests, workflow changes or master merge.
+
+### Bind Rig run tool inventory, receipt origin and retained SDK history
+
+- An admitted multi-turn driver pins the exact ToolRegistry identity and digest of its ordered bounded tool definitions alongside TaskRegistry, task revision and model label. It cannot resume on a replacement tool registry or altered schemas. The opaque tool receipt now also attests to its actual ToolRegistry, and the driver rejects receipts from a different registry even when the task/call/revision match.
+- Reject unknown, parallel, duplicate and oversized tool proposals before copying the completion into SDK state. Cap serialized definitions at 64 KiB, each accepted tool result at 64 KiB, total retained tool results at 256 KiB and serialized diagnostic SDK snapshots at 1 MiB. Validation counts serialized bytes without allocating a second unbounded buffer.
+- If an entered SDK tool-result transition fails, seal the driver and settle its still-current task as failed rather than attempting to advance partially mutated SDK state. A rejection before SDK entry does not consume the pending call.
+- These fences bind Rig's own execution and receipt handoff, not a new provider credential or proof of remote cancellation. The driver remains feature-gated, and Coding production routing remains native. Source only; no compilation, tests, workflow changes or master merge.

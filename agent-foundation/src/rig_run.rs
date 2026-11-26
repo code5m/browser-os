@@ -42,6 +42,8 @@ impl RigRunPilot {
     }
 
     pub fn snapshot(&self) -> Result<String> {
+        crate::model::serialized_size(&self.run,1_048_576)
+            .map_err(|_|FoundationError::InvalidInput("rig run snapshot"))?;
         serde_json::to_string(&self.run).map_err(|e| FoundationError::Serialization(e.to_string()))
     }
     pub fn restore(text: &str) -> Result<Self> {

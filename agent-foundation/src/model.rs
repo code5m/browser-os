@@ -58,8 +58,8 @@ pub trait ModelProvider: Send + Sync {
     fn stream<'a>(&'a self, request: ModelRequest) -> ModelFuture<'a>;
 }
 
-/// Bound already-decoded arguments without allocating another JSON buffer.
-pub(crate) fn validate_serialized_arguments(value: &serde_json::Value) -> Result<()> {
+/// Count a serialized value without allocating another JSON buffer.
+pub(crate) fn serialized_size(value: &(impl serde::Serialize + ?Sized), limit:usize) -> Result<usize> {
     struct Budget(usize);
     impl std::io::Write for Budget {
         fn write(&mut self, bytes:&[u8])->std::io::Result<usize>{
@@ -69,7 +69,14 @@ pub(crate) fn validate_serialized_arguments(value: &serde_json::Value) -> Result
         }
         fn flush(&mut self)->std::io::Result<()> {Ok(())}
     }
-    serde_json::to_writer(&mut Budget(16_384),value)
+    let mut budget=Budget(limit);
+    serde_json::to_writer(&mut budget,value)
+        .map_err(|_|FoundationError::InvalidInput("serialized value exceeds budget"))?;
+    Ok(limit-budget.0)
+}
+
+pub(crate) fn validate_serialized_arguments(value: &serde_json::Value) -> Result<()> {
+    serialized_size(value,16_384).map(|_|())
         .map_err(|_|FoundationError::InvalidInput("tool arguments too large"))
 }
 

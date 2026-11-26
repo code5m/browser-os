@@ -105,6 +105,7 @@ pub trait AgentTool: Send + Sync {
 /// actual registry, task generation and one-shot approved call.
 pub struct ToolExecutionReceipt<'a> {
     tasks: &'a TaskRegistry,
+    registry_identity: Arc<()>,
     task_id: uuid::Uuid,
     call_id: uuid::Uuid,
     revision: u64,
@@ -127,6 +128,10 @@ impl ToolExecutionReceipt<'_> {
             && self.revision == revision
     }
 
+    pub(crate) fn belongs_to_tool_registry(&self, identity:&Arc<()>) -> bool {
+        Arc::ptr_eq(&self.registry_identity,identity)
+    }
+
     pub fn value(&self) -> &Value {
         &self.value
     }
@@ -138,10 +143,12 @@ impl ToolExecutionReceipt<'_> {
 
 #[derive(Default)]
 pub struct ToolRegistry {
+    identity: Arc<()>,
     tools: RwLock<HashMap<String, Arc<dyn AgentTool>>>,
 }
 
 impl ToolRegistry {
+    pub(crate) fn execution_identity(&self) -> Arc<()> { Arc::clone(&self.identity) }
     pub fn register(&self, tool: Arc<dyn AgentTool>) -> Result<()> {
         let name = tool.name();
         if name.is_empty()
@@ -448,6 +455,7 @@ impl ToolRegistry {
         )?;
         result.map(|value| ToolExecutionReceipt {
             tasks,
+            registry_identity: self.execution_identity(),
             task_id: permit.task_id,
             call_id: permit.operation.call_id,
             revision: permit.revision,

@@ -52,6 +52,8 @@ pub enum RigDriverStep {
 
 struct DriverOwner {
     registry: Arc<()>,
+    tools: Arc<()>,
+    definitions_digest: [u8;32],
     task: Uuid,
     revision: u64,
     model: String,
@@ -62,6 +64,7 @@ pub struct RigMultiTurnDriver {
     owner: Option<DriverOwner>,
     budget: crate::engine::ModelAdmissionBudget,
     call_ids: BTreeSet<String>,
+    tool_result_bytes: usize,
     in_flight: bool,
     finished: bool,
 }
@@ -74,6 +77,7 @@ impl RigMultiTurnDriver {
             owner: None,
             budget: crate::engine::ModelAdmissionBudget::new(crate::engine::TurnLimits::complete_message())?,
             call_ids: BTreeSet::new(),
+            tool_result_bytes: 0,
             in_flight: false,
             finished: false,
         })
@@ -96,6 +100,13 @@ impl RigMultiTurnDriver {
                 "rig driver model or tool limit",
             ));
         }
+        // Bound schema and description material before SDK copies. Exact
+        // ordered definitions are part of this run, not a replaceable grant.
+        crate::model::serialized_size(definitions,64*1024)?;
+        use sha2::{Digest,Sha256};
+        let definitions_digest:[u8;32]=Sha256::digest(serde_json::to_vec(definitions)
+            .map_err(|_|FoundationError::InvalidInput("rig definitions"))?).into();
+        let tools_identity=registry.execution_identity();
         let mut names = BTreeSet::new();
         for def in definitions {
             if !registry.is_registered_read_only(&def.name) || !names.insert(def.name.clone()) {
@@ -109,7 +120,9 @@ impl RigMultiTurnDriver {
         let revision = start.revision;
         let identity = tasks.execution_identity();
         if self.owner.as_ref().is_some_and(|owner|
-            !Arc::ptr_eq(&owner.registry,&identity) || owner.task!=task_id
+            !Arc::ptr_eq(&owner.registry,&identity)
+                || !Arc::ptr_eq(&owner.tools,&tools_identity)
+                || owner.definitions_digest!=definitions_digest || owner.task!=task_id
                 || owner.revision!=revision || owner.model!=model_id) {
             return Err(FoundationError::ApprovalMismatch);
         }
@@ -122,7 +135,8 @@ impl RigMultiTurnDriver {
         let mut gate =
             crate::engine::ModelTurnGate::acquire(tasks, task_id, revision, limits.deadline)?;
         if self.owner.is_none() {
-            self.owner=Some(DriverOwner{registry:identity,task:task_id,revision,model:model_id.to_owned()});
+            self.owner=Some(DriverOwner{registry:identity,tools:tools_identity,definitions_digest,
+                task:task_id,revision,model:model_id.to_owned()});
         }
         // If the awaiting future is dropped, this flag remains set. The
         // partially advanced SDK state is not a resumable host receipt.
@@ -155,11 +169,16 @@ impl RigMultiTurnDriver {
                         // Budget belongs to the complete SDK run, not a
                         // single invocation between user approval pauses.
                         self.budget.admit_events(response.choice.len())?;
+                        let mut suggested=false;
                         for content in response.choice.iter() {
                             match content {
                                 AssistantContent::Text(text) => self.budget.admit_text(text.text.len())
                                     .map_err(|_| FoundationError::Provider("RIG_OUTPUT_LIMIT".into()))?,
                                 AssistantContent::ToolCall(call) => {
+                                    if suggested || !names.contains(call.function.name.as_ref()) {
+                                        return Err(FoundationError::PermissionDenied);
+                                    }
+                                    suggested=true;
                                     let id=call.id.to_string();
                                     if id.is_empty() || id.len()>256 || id.chars().any(|c| c.is_control() || c.is_whitespace())
                                         || !self.call_ids.insert(id) {
@@ -168,6 +187,7 @@ impl RigMultiTurnDriver {
                                     if !call.function.arguments.is_object() {
                                         return Err(FoundationError::InvalidInput("rig tool arguments"));
                                     }
+                                    crate::model::validate_serialized_arguments(&call.function.arguments)?;
                                 }
                                 AssistantContent::Reasoning(_) | AssistantContent::Image(_) =>
                                     return Err(FoundationError::Provider("RIG_UNSUPPORTED_CONTENT".into())),
@@ -196,11 +216,7 @@ impl RigMultiTurnDriver {
                         if !names.contains(call.function.name.as_ref()) {
                             return Err(FoundationError::PermissionDenied);
                         }
-                        let json = serde_json::to_vec(&call.function.arguments)
-                            .map_err(|e| FoundationError::Serialization(e.to_string()))?;
-                        if json.len() > 16_384 {
-                            return Err(FoundationError::InvalidInput("rig tool arguments"));
-                        }
+                        crate::model::validate_serialized_arguments(&call.function.arguments)?;
                         let tool_name = call.function.name.to_string();
                         let approved_revision = revision
                             .checked_add(2)
@@ -270,21 +286,22 @@ impl RigMultiTurnDriver {
         let (task_id, call_id, approved_revision) = (*task_id, *call_id, *approved_revision);
         if self.finished || self.in_flight || !self.owner.as_ref().is_some_and(|owner|
             Arc::ptr_eq(&owner.registry,&tasks.execution_identity()) && owner.task==task_id
-                && owner.revision.checked_add(2)==Some(approved_revision))
+                && owner.revision.checked_add(2)==Some(approved_revision)
+                && receipt.belongs_to_tool_registry(&owner.tools))
             || !receipt.matches_approval(tasks, task_id, call_id, approved_revision) {
             return Err(FoundationError::ApprovalMismatch);
         }
-        if serde_json::to_vec(receipt.value())
-            .map_err(|e| FoundationError::Serialization(e.to_string()))?
-            .len()
-            > 64 * 1024
-        {
-            return Err(FoundationError::InvalidInput("rig tool result"));
-        }
+        // Bound each result and the entire run's retained tool context.
+        // The SDK history retains earlier results across approval pauses.
+        let bytes=crate::model::serialized_size(receipt.value(),
+            (64*1024).min((256*1024usize).saturating_sub(self.tool_result_bytes)))
+            .map_err(|_|FoundationError::InvalidInput("rig tool result"))?;
         // Exclude a competing model or tool execution even during the SDK
         // state transition. A rejected receipt leaves the pending call intact.
         let _lease = tasks.acquire_execution(task_id, approved_revision)?;
-        tasks.with_active_revision(task_id, approved_revision, || {
+        let mut entered=false;
+        let accepted=tasks.with_active_revision(task_id, approved_revision, || {
+            entered=true;
             self.pilot
                 .state()
                 .tool_results(vec![UserContent::ToolResult(ToolResult {
@@ -293,7 +310,17 @@ impl RigMultiTurnDriver {
                     content: vec![ToolResultContent::json(receipt.value().clone())],
                 })])
                 .map_err(|_| FoundationError::Provider("RIG_TOOL_RESULTS".into()))
-        })?;
+        });
+        if let Err(error)=accepted {
+            // A rejected SDK transition may already have changed SDK state.
+            // A failure before entry still leaves the pending call untouched.
+            if entered {
+                self.finished=true;
+                let _=tasks.finish_at_revision(task_id,false,approved_revision);
+            }
+            return Err(error);
+        }
+        self.tool_result_bytes+=bytes;
         // Only a consumed, matching tool receipt may advance the driver's
         // expected task revision. A pause/resume or restored task cannot.
         self.owner.as_mut().ok_or(FoundationError::ApprovalMismatch)?.revision=approved_revision;
@@ -304,7 +331,8 @@ impl RigMultiTurnDriver {
     pub fn snapshot(&self) -> Result<String> {
         // Never checkpoint a run with a pending host approval: run state and
         // approval must commit atomically in the hosting durable store.
-        if self.pending.is_some() || self.in_flight {
+        if self.pending.is_some() || self.in_flight
+            || (self.finished && self.owner.is_none()) {
             return Err(FoundationError::InvalidTransition);
         }
         self.pilot.snapshot()
@@ -423,7 +451,8 @@ mod tests {
             ToolFunction::new(ToolName::new("demo.inspect").unwrap(), json!({})),
         );
         let mut driver = RigMultiTurnDriver::new("Review", 2).unwrap();
-        driver.owner=Some(DriverOwner{registry:tasks.execution_identity(),task:task.id,
+        driver.owner=Some(DriverOwner{registry:tasks.execution_identity(),tools:tools.execution_identity(),
+            definitions_digest:[0;32],task:task.id,
             revision:revision.checked_sub(2).unwrap(),model:"model-mock".into()});
         driver.pending = Some((task.id, call_id, revision, call));
         tasks.pause(task.id).unwrap();
