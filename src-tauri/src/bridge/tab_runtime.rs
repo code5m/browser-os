@@ -1096,7 +1096,17 @@ fn eval_in_tab_blocking(app: AppHandle, id: String, js: String) -> Result<String
             .request(index, GridCmd::Eval { id, js }, 10000)?;
         return Ok("ok".to_string());
     }
-    plugin_eval(&app, &id, &js)?;
+    if let Some(index) = super::isolated_tabs::route(&id) {
+        // Trusted-main generic Eval is a page effect. It cannot bypass a
+        // prepared Browser mutation, concurrent lifecycle transition, or a
+        // renderer generation captured before the admission check.
+        let binding = app.state::<AppState>().grid_manager.renderer_binding(index)?;
+        let _owner = super::tab_mutation::reserve_internal()?;
+        let _transition = reserve_tab_transition(&id)?;
+        super::isolated_tabs::eval_bound(&app, &id, &js, binding)?;
+    } else {
+        plugin_eval(&app, &id, &js)?;
+    }
     Ok("ok".to_string())
 }
 

@@ -164,6 +164,22 @@ pub(super) fn eval(app: &AppHandle, id: &str, js: &str) -> Result<(), String> {
     // receipt, but bind the native route before any IPC wait. An Agent/UI
     // caller cannot follow a replacement renderer or wake a sleeping page.
     let binding = state.grid_manager.renderer_binding(index)?;
+    eval_bound(app, id, js, binding)
+}
+
+/// Reuse the authenticated request path without taking a fresh owner after
+/// admission. This is a dispatch acknowledgement, not a JS-completion proof.
+pub(super) fn eval_bound(
+    app: &AppHandle, id: &str, js: &str, binding: crate::grid_ipc::RendererBinding,
+) -> Result<(), String> {
+    let index = exists(app, id)?;
+    if index != binding.index {
+        return Err("TAB_RENDERER_DOCUMENT_STALE".into());
+    }
+    let state = app.state::<AppState>();
+    if state.hibernated_tabs.lock().unwrap().contains(id) {
+        return Err("TAB_RENDERER_HIBERNATED_ACTIVATE_FIRST".into());
+    }
     state.grid_manager.renderer_request_data(binding, GridCmd::Eval {
         id: id.to_owned(), js: js.to_owned(),
     }, 10000).map(|_| ())

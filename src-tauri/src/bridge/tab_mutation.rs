@@ -495,6 +495,12 @@ fn owner() -> Result<std::sync::MutexGuard<'static, Owner>, String> {
         .lock()
         .map_err(|_| "TAB_MUTATION_OWNER_UNKNOWN".into())
 }
+fn recovery_scope_matches(requested: Option<&str>, renderer_only: bool) -> bool {
+    // Historical clients only offered a whole-app confirmation. Require a
+    // fresh explicit scope for a newly available renderer-only recovery.
+    requested.unwrap_or("application") == if renderer_only { "renderer" } else { "application" }
+}
+
 fn supervisor_ready() -> bool {
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     {
@@ -629,6 +635,8 @@ pub(crate) enum Request {
         sequence: String,
         ticket: Option<String>,
         confirmed: bool,
+        #[serde(default)]
+        scope: Option<String>,
     },
 }
 #[tauri::command]
@@ -822,6 +830,7 @@ pub(crate) fn tab_mutation(
             sequence,
             ticket,
             confirmed,
+            scope,
         } => {
             if !confirmed {
                 return Err("TAB_DOMAIN_RECOVERY_CONFIRMATION_REQUIRED".into());
@@ -833,7 +842,13 @@ pub(crate) fn tab_mutation(
                 if state.recovery_target(Instant::now()).as_ref() != Some(&target) {
                     return Err("TAB_DOMAIN_RECOVERY_NOT_ELIGIBLE".into());
                 }
-                if let Some((index, expected)) = state.local_renderer_recovery() {
+                let renderer = state.local_renderer_recovery();
+                // The user confirmed an exact recovery scope, not permission
+                // for a renderer-only recovery to escalate to application exit.
+                if !recovery_scope_matches(scope.as_deref(), renderer.is_some()) {
+                    return Err("TAB_DOMAIN_RECOVERY_SCOPE_CHANGED".into());
+                }
+                if let Some((index, expected)) = renderer {
                     let ticket = target.ticket.clone().ok_or("TAB_MUTATION_INVALID_ACTION")?;
                     state.recovery_intent = None;
                     state.recovery_claimed = true;
@@ -966,6 +981,17 @@ pub(crate) fn tab_mutation_diagnostic() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn recovery_scope_cannot_change_after_confirmation() {
+        assert!(recovery_scope_matches(Some("renderer"), true));
+        assert!(recovery_scope_matches(Some("application"), false));
+        assert!(!recovery_scope_matches(Some("renderer"), false));
+        assert!(!recovery_scope_matches(Some("application"), true));
+        assert!(recovery_scope_matches(None, false));
+        assert!(!recovery_scope_matches(None, true));
+        assert!(!recovery_scope_matches(Some("all"), false));
+    }
+
     #[test]
     fn expired_preparation_never_admits_a_late_start() {
         let mut state = Owner::default();

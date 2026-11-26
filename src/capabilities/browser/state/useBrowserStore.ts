@@ -97,7 +97,7 @@ export const useBrowserStore = defineStore("browser", () => {
     if (!tabRecoveryRequired.value || tabRecoveryBusy.value) return;
     tabRecoveryBusy.value = true;
     try {
-      await bridge.requestTabDomainRecovery(target.epoch, target.sequence, target.ticket);
+      await bridge.requestTabDomainRecovery(target.epoch, target.sequence, target.ticket, target.scope);
       tabRecoveryMessage.value = target.scope === "renderer"
         ? "已请求回收原故障页签进程；核对回执后可重新激活，不会重放原操作。"
         : "已请求监管器核对并重启应用故障域；旧进程退出前不会启动替代进程。";
@@ -672,6 +672,9 @@ export const useBrowserStore = defineStore("browser", () => {
   // Browser only freezes ordinary tab WebViews; Grid owns grid-* processes.
   function syncFreeze() {
     for (const t of tabs) {
+      // An empty new tab has no site activity to throttle; generic Eval
+      // would otherwise permanently disqualify pristine-blank hibernation.
+      if (t.url === "about:blank") continue;
       const visible = layout.mainView === "browser" && t.id === activeTabId.value;
       bridge.evalInTab(t.id, visible ? WEBVIEW_UNFREEZE_JS : WEBVIEW_FREEZE_JS).catch(() => {});
     }

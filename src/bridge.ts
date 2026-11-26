@@ -1113,8 +1113,8 @@ export const bridge = {
   fenceTabMutation: (epoch: string, sequence: string) => tabReceiptCall({ phase: "fence", epoch, sequence }, true),
   cancelTabMutation: (ticket: string) => tabReceiptCall({ phase: "cancel", ticket }, true),
   acknowledgeTabMutation: (ticket: string) => tabReceiptCall({ phase: "ack", ticket }, true),
-  requestTabDomainRecovery: (epoch: string, sequence: string, ticket: string | null) =>
-    tabReceiptCall({ phase: "recover_domain", epoch, sequence, ticket, confirmed: true }, true),
+  requestTabDomainRecovery: (epoch: string, sequence: string, ticket: string | null, scope: "renderer" | "application" = "application") =>
+    tabReceiptCall({ phase: "recover_domain", epoch, sequence, ticket, scope, confirmed: true }, true),
   // Read-only recovery lane with independent bounded transport.
   reconcileTabList: () => boundedReceiptControl<TabInfo[]>("reconcile-list", "tab-list", () => invoke<TabInfo[]>("tab_list"), true, true),
 

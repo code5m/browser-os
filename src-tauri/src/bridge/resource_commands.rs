@@ -298,10 +298,24 @@ fn report_title_inner(
 fn scan_resources(app: &AppHandle, id: &str) -> Result<(), String> {
     // A pristine blank isolated tab has no resource list to scan. Avoid
     // injecting generic JavaScript into a candidate for safe blank reclaim.
-    if super::isolated_tabs::route(id).is_some()
-        && app.state::<AppState>().tabs.lock().unwrap().get(id).is_some_and(|tab| tab.url == "about:blank")
-    {
-        return Ok(());
+    if let Some(index) = super::isolated_tabs::route(id) {
+        let state = app.state::<AppState>();
+        if state.tabs.lock().unwrap().get(id).is_none_or(|tab| tab.url == "about:blank")
+            || state.active_tab.lock().unwrap().as_deref() != Some(id)
+        {
+            return Ok(());
+        }
+        let Ok(_transition) = super::tab_runtime::reserve_tab_transition(id) else {
+            return Ok(());
+        };
+        // Single document-bound observation, not two separate Eval calls
+        // which could run on different renderer generations.
+        let binding = state.grid_manager.renderer_binding(index)?;
+        let script = concat!(
+            include_str!("../../injected/resources_eval.js"),
+            ";\nwindow.__TAURI__ && window.__TAURI__.core.invoke('report_title', { title: document.title });"
+        );
+        return super::isolated_tabs::eval_bound(app, id, script, binding);
     }
     // 执行资源扫描脚本（脚本内部会把结果经 ipc 回传，由前端 onBrowserResources 接收）
     let js = include_str!("../../injected/resources_eval.js");
