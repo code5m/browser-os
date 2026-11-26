@@ -1,5 +1,6 @@
-//! Explicit fresh-URL capture process. No session migration, no normal
-//! app/remote command handlers, no shared browser profile, no live-tab reload.
+//! Explicit independent capture process, optionally with an interactive
+//! login session. No session migration, normal app/remote command handlers,
+//! shared browser profile, or live-tab reload.
 //! The parent owns a memory-limited native process domain and publishes output
 //! only after recursive-empty accounting and the original child exit.
 //! This is process lifecycle containment, NOT a hostile same-UID sandbox.
@@ -7,7 +8,7 @@ use crate::capabilities::workspace::safe_paths;
 use crate::native_supervisor::OwnedHost;
 use std::{
     ffi::OsStr,
-    io::Read,
+    io::{Read, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{mpsc, Arc},
@@ -19,6 +20,11 @@ use tauri_plugin_browser_tabs::{CaptureCancellation, CreateTabOptions, LogicalRe
 
 const PARENT_FLAG: &str = "--isolated-capture";
 const CHILD_FLAG: &str = "--isolated-capture-worker";
+const INTERACTIVE_CHILD_FLAG: &str = "--isolated-interactive-capture-worker";
+const READY_FILE: &str = "interactive-ready";
+const READY_MAGIC: &[u8] = b"browseros-render-ready-v1\n";
+const CAPTURE_BYTE: u8 = b'C';
+const INTERACTIVE_WAIT: Duration = Duration::from_secs(600);
 const URL_ENV: &str = "BROWSEROS_CAPTURE_JOB_URL";
 const ROOT_ENV: &str = "BROWSEROS_CAPTURE_JOB_ROOT";
 const START_MAGIC: &[u8] = b"browseros-render-admission-v1\n";
@@ -134,10 +140,33 @@ fn cleanup(parent: &Path, root: &Path, identity: &str) -> Result<(), String> {
 /// Same execution path for the explicit CLI and Browser Owner. Cancellation
 /// does not return until the owned process domain has really been retired.
 /// The pending callback is metadata-only; it never releases admission.
+pub(crate) struct InteractiveControl<'a> {
+    pub ready: &'a dyn Fn() -> Result<(), String>,
+    pub capture_requested: &'a dyn Fn() -> Result<bool, String>,
+}
+
 pub(crate) fn render_job(
     raw: &str,
     cancelled: impl Fn() -> bool,
     on_retire_pending: impl Fn(),
+) -> Result<Vec<u8>, String> {
+    render_owned_job(raw, cancelled, on_retire_pending, None)
+}
+
+pub(crate) fn render_interactive_job(
+    raw: &str,
+    cancelled: impl Fn() -> bool,
+    on_retire_pending: impl Fn(),
+    control: InteractiveControl<'_>,
+) -> Result<Vec<u8>, String> {
+    render_owned_job(raw, cancelled, on_retire_pending, Some(control))
+}
+
+fn render_owned_job(
+    raw: &str,
+    cancelled: impl Fn() -> bool,
+    on_retire_pending: impl Fn(),
+    interactive: Option<InteractiveControl<'_>>,
 ) -> Result<Vec<u8>, String> {
     let url = checked_url(raw)?;
     if cancelled() {
@@ -151,7 +180,7 @@ pub(crate) fn render_job(
         let exe = std::env::current_exe().map_err(|_| "CAPTURE_EXECUTABLE_UNAVAILABLE")?;
         let mut command = Command::new(exe);
         command
-            .arg(CHILD_FLAG)
+            .arg(if interactive.is_some() { INTERACTIVE_CHILD_FLAG } else { CHILD_FLAG })
             .env(URL_ENV, url)
             .env(ROOT_ENV, &root)
             .stdin(Stdio::piped())
@@ -174,7 +203,7 @@ pub(crate) fn render_job(
         for name in ["WEBKIT_INSPECTOR_SERVER", "WEBKIT_INSPECTOR_HTTP_SERVER"] {
             command.env_remove(name);
         }
-        let deadline = Instant::now() + DEADLINE;
+        let mut deadline = Instant::now() + DEADLINE;
         let mut owner = OwnedHost::spawn_command(command, Some(MEMORY_LIMIT), &on_retire_pending)?;
         // Child startup is gated on the existing kernel domain assignment.
         // A failed handoff cannot drop an assigned Child or permit publication.
@@ -186,31 +215,65 @@ pub(crate) fn render_job(
                 "CAPTURE_DEADLINE_EXCEEDED"
             }.into());
         }
-        if owner.release_start_pipe(START_MAGIC).is_err() {
-            owner.retire_confirmed(&on_retire_pending);
-            return Err("CAPTURE_WORKER_ADMISSION_FAILED".into());
-        }
-        let render = loop {
-            if cancelled() {
-                break Err("CAPTURE_ISOLATED_CANCELLED".to_owned());
-            }
-            // The admission and execution consume one parent deadline.
-            // A completion only observed after it cannot publish output.
-            if Instant::now() >= deadline {
-                break Err("CAPTURE_DEADLINE_EXCEEDED".to_owned());
-            }
-            match owner.exited() {
-                Ok(Some(status)) => {
-                    break if status.success() {
+        // All fallible work after spawn stays inside this boundary.
+        // In particular, readiness or pipe errors cannot return past retirement.
+        let render = (|| -> Result<(), String> {
+            let mut pipe = if interactive.is_some() {
+                Some(owner.open_start_pipe(START_MAGIC)?)
+            } else {
+                owner.release_start_pipe(START_MAGIC)?;
+                None
+            };
+            let mut ready = false;
+            let mut triggered = false;
+            loop {
+                if cancelled() {
+                    return Err("CAPTURE_ISOLATED_CANCELLED".into());
+                }
+                if Instant::now() >= deadline {
+                    return Err("CAPTURE_DEADLINE_EXCEEDED".into());
+                }
+                if let Some(status) = owner.exited()? {
+                    return if status.success() && (interactive.is_none() || triggered) {
                         Ok(())
                     } else {
-                        Err("CAPTURE_WORKER_FAILED".to_owned())
+                        Err("CAPTURE_WORKER_FAILED".into())
+                    };
+                }
+                if let Some(control) = &interactive {
+                    if !ready {
+                        let marker = safe_paths::read_versioned(
+                            &root.join(READY_FILE),
+                            &[root.clone()],
+                            READY_MAGIC.len(),
+                        )?;
+                        if let Some(marker) = marker {
+                            if marker.bytes != READY_MAGIC
+                                || safe_paths::directory_identity(&root)
+                                    .map_err(|_| "CAPTURE_TEMP_IDENTITY_FAILED")? != identity
+                            {
+                                return Err("CAPTURE_WORKER_READY_INVALID".into());
+                            }
+                            (control.ready)()?;
+                            ready = true;
+                            deadline = Instant::now() + INTERACTIVE_WAIT;
+                        }
+                    }
+                    if ready && !triggered && (control.capture_requested)()? {
+                        if cancelled() {
+                            return Err("CAPTURE_ISOLATED_CANCELLED".into());
+                        }
+                        let mut endpoint = pipe.take().ok_or("CAPTURE_WORKER_ADMISSION_FAILED")?;
+                        endpoint.write_all(&[CAPTURE_BYTE]).map_err(|_| "CAPTURE_WORKER_TRIGGER_FAILED")?;
+                        // EOF proves the one-shot command is complete.
+                        drop(endpoint);
+                        triggered = true;
+                        deadline = Instant::now() + DEADLINE;
                     }
                 }
-                Ok(None) => thread::sleep(POLL.min(deadline.saturating_duration_since(Instant::now()))),
-                Err(error) => break Err(error),
+                thread::sleep(POLL.min(deadline.saturating_duration_since(Instant::now())));
             }
-        };
+        })();
         // An exit request or a deadline does not release the GUI's capture
         // slot. Even if the first cleanup budget expires, retain the exact
         // owner and keep trying until the kernel and Child agree on exit.
@@ -694,7 +757,12 @@ fn capture_linux_viewports(
     Ok(Some(output.0))
 }
 
-fn run_render(manager: Arc<TabManager>, root: PathBuf, url: String) -> Result<(), String> {
+fn run_render(
+    manager: Arc<TabManager>,
+    root: PathBuf,
+    url: String,
+    interactive: bool,
+) -> Result<(), String> {
     manager
         .prepare_storage()
         .map_err(|_| "CAPTURE_PROFILE_PREPARE_FAILED")?;
@@ -711,13 +779,26 @@ fn run_render(manager: Arc<TabManager>, root: PathBuf, url: String) -> Result<()
             initialization_script: None,
         })
         .map_err(|_| "CAPTURE_RENDER_CREATE_FAILED")?;
-    let deadline = Instant::now() + DEADLINE;
+    let mut deadline = Instant::now() + DEADLINE;
     // Actual page-load Finished notification, not a fixed sleep or URI change.
     while !manager.isolated_document_ready() {
         if Instant::now() >= deadline {
             return Err("CAPTURE_DOCUMENT_LOADING".into());
         }
         thread::sleep(POLL);
+    }
+    if interactive {
+        // The same WebView remains available for login and navigation.
+        // Never copy the ordinary browser profile or re-open the URL.
+        safe_paths::create_new_file(&root.join(READY_FILE), &[root.clone()], READY_MAGIC)
+            .map_err(|_| "CAPTURE_WORKER_READY_FAILED")?;
+        // The parent owns the bounded wait and can retire the entire domain.
+        // This read is on the dedicated render thread, not the GUI thread.
+        validate_capture_command(std::io::stdin().lock())?;
+        deadline = Instant::now() + DEADLINE;
+        if !manager.isolated_document_ready() {
+            return Err("CAPTURE_DOCUMENT_LOADING".into());
+        }
     }
     let document = manager
         .capture_document(&id)
@@ -730,10 +811,16 @@ fn run_render(manager: Arc<TabManager>, root: PathBuf, url: String) -> Result<()
     // Fallback only before a scroll is attempted; never call a FullDocument
     // capture after a failed or stale viewport stitching attempt.
     #[cfg(target_os = "linux")]
-    let bytes = if let Some(bytes) = capture_linux_viewports(&manager, &id, &document, deadline)? {
+    let bytes = if let Some(bytes) = if interactive {
+        // Do not scroll an authenticated interactive document. FullDocument
+        // is permitted here only inside the already budgeted process domain.
+        None
+    } else {
+        capture_linux_viewports(&manager, &id, &document, deadline)?
+    } {
         bytes
     } else {
-        eprintln!("[isolated-capture] viewport tiling ineligible; full-document mode");
+        eprintln!("[isolated-capture] full-document mode");
         let cancellation = CaptureCancellation::new();
         let (tx, rx) = mpsc::sync_channel(1);
         manager
@@ -756,19 +843,36 @@ fn run_render(manager: Arc<TabManager>, root: PathBuf, url: String) -> Result<()
     safe_paths::create_new_file(&root.join("capture.png"), &[root], &bytes)
         .map_err(|_| "CAPTURE_WORKER_OUTPUT_FAILED".into())
 }
-fn validate_worker_admission(mut input: impl Read) -> Result<(), String> {
+fn validate_worker_prefix(mut input: impl Read) -> Result<(), String> {
     let mut magic = [0u8; START_MAGIC.len()];
     input.read_exact(&mut magic).map_err(|_| "CAPTURE_WORKER_ADMISSION_FAILED")?;
-    let mut extra = [0u8; 1];
-    if magic.as_slice() != START_MAGIC
-        || input.read(&mut extra).map_err(|_| "CAPTURE_WORKER_ADMISSION_FAILED")? != 0
-    {
+    if magic.as_slice() != START_MAGIC {
         return Err("CAPTURE_WORKER_ADMISSION_FAILED".into());
     }
     Ok(())
 }
 
-fn run_child() -> Result<(), String> {
+fn validate_worker_admission(mut input: impl Read) -> Result<(), String> {
+    validate_worker_prefix(&mut input)?;
+    let mut extra = [0u8; 1];
+    if input.read(&mut extra).map_err(|_| "CAPTURE_WORKER_ADMISSION_FAILED")? != 0 {
+        return Err("CAPTURE_WORKER_ADMISSION_FAILED".into());
+    }
+    Ok(())
+}
+
+fn validate_capture_command(mut input: impl Read) -> Result<(), String> {
+    let mut byte = [0u8; 1];
+    input.read_exact(&mut byte).map_err(|_| "CAPTURE_WORKER_TRIGGER_FAILED")?;
+    if byte[0] != CAPTURE_BYTE
+        || input.read(&mut byte).map_err(|_| "CAPTURE_WORKER_TRIGGER_FAILED")? != 0
+    {
+        return Err("CAPTURE_WORKER_TRIGGER_FAILED".into());
+    }
+    Ok(())
+}
+
+fn run_child(interactive: bool) -> Result<(), String> {
     // The internal CLI role cannot start an unbudgeted renderer even when
     // invoked directly with a valid scratch path and URL. Verify kernel
     // membership independently, before creating Tauri or any WebView.
@@ -777,7 +881,11 @@ fn run_child() -> Result<(), String> {
         .map_err(|_| "CAPTURE_WORKER_MEMORY_OWNER_UNCONFIRMED")?;
     #[cfg(target_os = "windows")]
     crate::windows_process::verify_current_render_budget(MEMORY_LIMIT)?;
-    validate_worker_admission(std::io::stdin().lock())?;
+    if interactive {
+        validate_worker_prefix(std::io::stdin().lock())?;
+    } else {
+        validate_worker_admission(std::io::stdin().lock())?;
+    }
     let root = worker_root()?;
     let url = checked_url(&std::env::var(URL_ENV).map_err(|_| "CAPTURE_WORKER_URL_REQUIRED")?)?;
     // Clear request-specific state before the native engine starts any
@@ -798,8 +906,13 @@ fn run_child() -> Result<(), String> {
         // normal main/tab/grid capabilities. The worker is not a sandbox.
         .setup(move |app| {
             tauri::window::WindowBuilder::new(app, HOST)
-                .title("BrowserOS independent capture (fresh profile)")
+                .title(if interactive {
+                    "BrowserOS isolated login capture - temporary session"
+                } else {
+                    "BrowserOS independent capture (fresh profile)"
+                })
                 .inner_size(1280.0, 720.0)
+                .resizable(!interactive)
                 .build()?;
             // Register the exact private manager before dispatch. Windows' CDP
             // metrics callback checks this managed state before taking the image.
@@ -816,7 +929,7 @@ fn run_child() -> Result<(), String> {
             let url = url.clone();
             thread::Builder::new()
                 .name("browseros-isolated-render".into())
-                .spawn(move || match run_render(manager, root, url) {
+                .spawn(move || match run_render(manager, root, url, interactive) {
                     Ok(()) => std::process::exit(0),
                     Err(_) => std::process::exit(2),
                 })?;
@@ -839,11 +952,11 @@ pub(crate) fn launch_if_requested() -> Option<i32> {
                 None => Err("CAPTURE_URL_INVALID".into()),
             }
         }
-    } else if first == OsStr::new(CHILD_FLAG) {
+    } else if first == OsStr::new(CHILD_FLAG) || first == OsStr::new(INTERACTIVE_CHILD_FLAG) {
         if args.len() != 1 {
             Err("CAPTURE_WORKER_ARGUMENTS_INVALID".into())
         } else {
-            run_child()
+            run_child(first == OsStr::new(INTERACTIVE_CHILD_FLAG))
         }
     } else {
         return None;
@@ -868,6 +981,18 @@ mod tests {
         let mut extra = START_MAGIC.to_vec();
         extra.push(0);
         assert!(validate_worker_admission(extra.as_slice()).is_err());
+    }
+
+    #[test]
+    fn interactive_pipe_accepts_only_one_capture_command() {
+        let mut admission = START_MAGIC.to_vec();
+        admission.push(CAPTURE_BYTE);
+        let mut input = std::io::Cursor::new(admission);
+        assert!(validate_worker_prefix(&mut input).is_ok());
+        assert!(validate_capture_command(&mut input).is_ok());
+        assert!(validate_capture_command(b"".as_slice()).is_err());
+        assert!(validate_capture_command(b"CC".as_slice()).is_err());
+        assert!(validate_capture_command(b"X".as_slice()).is_err());
     }
 
     #[test]

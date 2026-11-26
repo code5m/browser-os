@@ -163,11 +163,20 @@ impl OwnedHost {
     /// One-shot, bounded handoff for a child that waits on its inherited
     /// stdin. Dropping the pipe is part of the admission protocol.
     pub(crate) fn release_start_pipe(&mut self, magic: &[u8]) -> Result<(), String> {
+        // The non-interactive worker requires EOF immediately after admission.
+        drop(self.open_start_pipe(magic)?);
+        Ok(())
+    }
+
+    /// Transfer the exact owned child's write endpoint, not a reconnectable
+    /// address. The interactive renderer accepts one further capture byte.
+    pub(crate) fn open_start_pipe(&mut self, magic: &[u8]) -> Result<std::process::ChildStdin, String> {
         if magic.is_empty() || magic.len() > 64 {
             return Err("SUPERVISOR_START_MESSAGE_INVALID".into());
         }
         let mut pipe = self.child.stdin.take().ok_or("SUPERVISOR_START_PIPE_REQUIRED")?;
-        pipe.write_all(magic).map_err(|_| "SUPERVISOR_START_PIPE_FAILED".into())
+        pipe.write_all(magic).map_err(|_| "SUPERVISOR_START_PIPE_FAILED")?;
+        Ok(pipe)
     }
 
     pub(crate) fn exited(&mut self) -> Result<Option<ExitStatus>, String> {
