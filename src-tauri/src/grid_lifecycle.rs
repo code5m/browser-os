@@ -17,10 +17,11 @@ pub(super) enum VisibilityMode {
     Minimized,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(super) struct VisibilityIntent {
     pub(super) revision: u64,
     pub(super) mode: VisibilityMode,
+    pub(super) targets: Vec<crate::grid_ipc::RendererBinding>,
     ready_at: Instant,
 }
 #[derive(Default)]
@@ -36,12 +37,15 @@ pub(super) struct LatestVisibility {
     wake: Condvar,
 }
 impl LatestVisibility {
-    pub(super) fn request(&self, mode: VisibilityMode, delay: Duration) -> bool {
+    pub(super) fn request(&self, mode: VisibilityMode, delay: Duration,
+        targets: Vec<crate::grid_ipc::RendererBinding>,
+    ) -> bool {
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
         state.revision = state.revision.wrapping_add(1);
         state.pending = Some(VisibilityIntent {
             revision: state.revision,
             mode,
+            targets,
             ready_at: Instant::now() + delay,
         });
         let start = !state.running;
@@ -57,13 +61,13 @@ impl LatestVisibility {
                 state.running = false;
                 return None;
             }
-            let Some(intent) = state.pending else {
+            let Some(intent) = state.pending.as_ref() else {
                 state.running = false;
                 return None;
             };
             let remaining = intent.ready_at.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
-                return Some(intent);
+                return Some(intent.clone());
             }
             // The existing 150 ms focus policy is interruptible by a newer
             // intent. A short bound also observes application shutdown.
@@ -74,10 +78,15 @@ impl LatestVisibility {
                 .0;
         }
     }
+    pub(super) fn is_latest(&self, revision: u64) -> bool {
+        self.state.lock().unwrap_or_else(|p| p.into_inner()).pending.as_ref()
+            .is_some_and(|intent| intent.revision == revision)
+    }
     pub(super) fn finish(&self, revision: u64) -> bool {
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
         if state
             .pending
+            .as_ref()
             .is_some_and(|intent| intent.revision != revision)
         {
             return true;
@@ -259,6 +268,7 @@ impl GridLifecycle {
             match outcome {
                 Ok(Ok(true)) => {
                     let index = owner.index();
+                    let download_retired = owner.download_retired.clone();
                     drop(owner);
                     let removed = {
                         let mut queue = self.retired.lock().unwrap();
@@ -279,6 +289,15 @@ impl GridLifecycle {
                         };
                         self.retiring_total.fetch_sub(1, Ordering::SeqCst);
                         self.wake.notify_all();
+                        if !self.is_stopping() {
+                            if let Some(payload) = download_retired {
+                                if let Some(app) = self.retirement_app.lock().unwrap().clone() {
+                                    // Only after the exact native retirement is confirmed.
+                                    // Unknown is not a failure or file-deletion receipt.
+                                    let _ = app.emit_to("main", "isolated-renderer-download", payload);
+                                }
+                            }
+                        }
                         if route_complete && crate::grid_ipc::is_tab_renderer(index)
                             && !self.is_stopping()
                         {
@@ -502,26 +521,26 @@ mod tests {
     fn focus_intents_coalesce_and_replay_the_latest_after_an_inflight_send() {
         let lifecycle = GridLifecycle::default();
         let pending = LatestVisibility::default();
-        assert!(pending.request(VisibilityMode::Blur, Duration::ZERO));
+        assert!(pending.request(VisibilityMode::Blur, Duration::ZERO, Vec::new()));
         let old = pending.next(&lifecycle).unwrap();
-        assert!(!pending.request(VisibilityMode::Show, Duration::ZERO));
+        assert!(!pending.request(VisibilityMode::Show, Duration::ZERO, Vec::new()));
         assert!(pending.finish(old.revision));
         let current = pending.next(&lifecycle).unwrap();
         assert_eq!(current.mode, VisibilityMode::Show);
         assert!(!pending.finish(current.revision));
-        assert!(pending.request(VisibilityMode::Minimized, Duration::ZERO));
-        assert!(!pending.request(VisibilityMode::Show, Duration::ZERO));
+        assert!(pending.request(VisibilityMode::Minimized, Duration::ZERO, Vec::new()));
+        assert!(!pending.request(VisibilityMode::Show, Duration::ZERO, Vec::new()));
         assert_eq!(pending.next(&lifecycle).unwrap().mode, VisibilityMode::Show);
     }
 
     #[test]
     fn failed_visibility_start_keeps_one_retryable_intent() {
         let pending = LatestVisibility::default();
-        assert!(pending.request(VisibilityMode::Blur, Duration::from_millis(150)));
+        assert!(pending.request(VisibilityMode::Blur, Duration::from_millis(150), Vec::new()));
         pending.spawn_failed();
         assert!(pending.reserve_pending());
         assert!(!pending.reserve_pending());
-        assert!(!pending.request(VisibilityMode::Show, Duration::ZERO));
+        assert!(!pending.request(VisibilityMode::Show, Duration::ZERO, Vec::new()));
         let lifecycle = GridLifecycle::default();
         let latest = pending.next(&lifecycle).unwrap();
         assert_eq!(latest.mode, VisibilityMode::Show);

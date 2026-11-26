@@ -153,7 +153,12 @@ pub(crate) fn restorable_address(address: &str) -> bool {
     if !url.username().is_empty() || url.password().is_some() { return false; }
     match url.scheme() {
         "http" | "https" => url.has_host(),
-        "file" => url.host_str().is_none() || url.host_str() == Some("localhost"),
+        "file" => {
+            let path = url.path().to_ascii_lowercase();
+            (url.host_str().is_none() || url.host_str() == Some("localhost"))
+                && !path.starts_with("//") && !path.contains("%2f") && !path.contains("%5c")
+                && url.to_file_path().is_ok()
+        },
         "about" => address == "about:blank",
         _ => false,
     }
@@ -163,16 +168,47 @@ pub(crate) fn restorable_address(address: &str) -> bool {
 /// reopen an ordinary address but cannot transfer a transient document,
 /// opener, script URL, or remote-page access to local files.
 pub(crate) fn popup_address_supported(address: &str, source: Option<&str>) -> bool {
-    if address.is_empty() || address.len() > 8192 || address.trim() != address {
-        return false;
-    }
+    if !restorable_address(address) { return false; }
     let Ok(url) = url::Url::parse(address) else { return false; };
     match url.scheme() {
         "http" | "https" => url.has_host(),
         "about" => address == "about:blank",
-        "file" => source.and_then(|source| url::Url::parse(source).ok())
+        "file" => source.filter(|source| restorable_address(source))
+            .and_then(|source| url::Url::parse(source).ok())
             .is_some_and(|source| source.scheme() == "file"),
         _ => false,
+    }
+}
+
+/// Cumulative native callbacks, scoped to one spawned renderer. Counts
+/// are observations, not a per-download correlation or completion receipt.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct DownloadObservation {
+    pub requested: u64,
+    pub succeeded: u64,
+    pub failed: u64,
+}
+impl DownloadObservation {
+    pub(crate) fn from_report(payload: &serde_json::Value) -> Option<Self> {
+        let observation = Self {
+            requested: payload["requested"].as_u64()?,
+            succeeded: payload["succeeded"].as_u64()?,
+            failed: payload["failed"].as_u64()?,
+        };
+        let phase_count = match payload["phase"].as_str()? {
+            "requested" => observation.requested,
+            "succeeded" => observation.succeeded,
+            "failed" => observation.failed,
+            _ => return None,
+        };
+        (phase_count > 0).then_some(observation)
+    }
+    pub(crate) fn advances(self, previous: Self) -> bool {
+        self.requested >= previous.requested && self.succeeded >= previous.succeeded
+            && self.failed >= previous.failed && self != previous
+    }
+    pub(crate) fn observed_unfinished(self) -> Option<u64> {
+        self.requested.checked_sub(self.succeeded.checked_add(self.failed)?)
     }
 }
 
@@ -205,9 +241,9 @@ pub(crate) fn valid_renderer_event(index: u32, name: &str, payload: &serde_json:
             && payload["page_url"].as_str().is_some_and(|url| url.len() <= 8192)
             && payload["items"].as_array().is_some_and(|items| items.len() <= 100),
         "renderer-download" => is_tab_renderer(index)
-            && payload.as_object().is_some_and(|fields| fields.len() == 2)
+            && payload.as_object().is_some_and(|fields| fields.len() == 5)
             && payload["id"].as_str() == Some(label.as_str())
-            && matches!(payload["phase"].as_str(), Some("requested" | "succeeded" | "failed")),
+            && DownloadObservation::from_report(payload).is_some(),
         "browser-tabs://shell-shortcut" => is_tab_renderer(index)
             && payload["id"].as_str() == Some(label.as_str())
             && matches!(payload["action"].as_str(), Some("immersive" | "compact" | "address")),

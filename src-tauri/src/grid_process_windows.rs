@@ -45,6 +45,7 @@ pub struct ChildComms {
     // disqualifies automatic pristine-blank reclaim.
     blank_reclaiming: AtomicBool,
     blank_reclaim_blocked: AtomicBool,
+    download_observation: Mutex<Option<(u64, crate::grid_ipc::DownloadObservation)>>,
     closing: AtomicBool,
     cancellation: Mutex<Option<UnixStream>>,
     listener: Mutex<Option<Arc<UnixListener>>>,
@@ -64,6 +65,7 @@ impl ChildComms {
             connected: AtomicBool::new(false),
             blank_reclaiming: AtomicBool::new(false),
             blank_reclaim_blocked: AtomicBool::new(false),
+            download_observation: Mutex::new(None),
             closing: AtomicBool::new(false),
             cancellation: Mutex::new(None),
             listener: Mutex::new(None),
@@ -79,6 +81,7 @@ impl ChildComms {
         let _owner = self.owner_gate.lock().unwrap();
         self.blank_reclaiming.store(false, Ordering::SeqCst);
         self.blank_reclaim_blocked.store(false, Ordering::SeqCst);
+        *self.download_observation.lock().unwrap() = None;
         self.expected_pid.store(0, Ordering::SeqCst);
         self.ready_generation.store(0, Ordering::SeqCst);
         self.connected.store(false, Ordering::SeqCst);
@@ -94,6 +97,19 @@ impl ChildComms {
             .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_add(1))
             .map_err(|_| "GRID_SPAWN_EPOCH_EXHAUSTED".to_string())?;
         Ok(())
+    }
+
+    fn download_retirement(&self, index: u32, pid: u32) -> Option<serde_json::Value> {
+        if !crate::grid_ipc::is_tab_renderer(index) { return None; }
+        let (generation, observation) = (*self.download_observation.lock().unwrap())?;
+        Some(serde_json::json!({
+            "id": crate::grid_ipc::renderer_label(index), "phase": "owner_retired",
+            "pid": pid, "spawn_epoch": self.spawn_epoch.load(Ordering::SeqCst).to_string(),
+            "renderer_generation": generation.to_string(),
+            "requested": observation.requested, "succeeded": observation.succeeded,
+            "failed": observation.failed, "observed_unfinished": observation.observed_unfinished(),
+            "outcome": "unknown"
+        }))
     }
 
     fn block_blank_reclaim_for(&self, generation: u64) {
@@ -1128,6 +1144,25 @@ impl GridProcessManager {
         Ok(())
     }
 
+    pub(crate) fn publish_grid_zoom(&self, stamp: crate::grid_ipc::GridRouteStamp, zoom: f64)
+        -> Result<(), String>
+    {
+        if stamp.index as usize >= crate::bridge::MAX_GRID || !zoom.is_finite() || zoom <= 0.1 {
+            return Err("GRID_ZOOM_INVALID".into());
+        }
+        self.lifecycle.check()?;
+        let _gate = self.lifecycle_lock.try_lock().map_err(|_| "GRID_LIFECYCLE_BUSY")?;
+        if self.grid_route_stamps_locked(&[stamp.index]).first() != Some(&stamp)
+            || (stamp.pid.is_none() && !self.is_hibernated(stamp.index))
+        {
+            return Err("GRID_ZOOM_TARGET_STALE".into());
+        }
+        let app = self.app().ok_or("GRID_HOST_UNAVAILABLE")?;
+        app.state::<crate::bridge::AppState>().grid_zooms.lock().unwrap()
+            .insert(crate::grid_ipc::renderer_label(stamp.index), zoom);
+        Ok(())
+    }
+
     pub(crate) fn grid_zoom_bound(&self, binding: crate::grid_ipc::RendererBinding, zoom: f64)
         -> Result<(), String>
     {
@@ -1667,24 +1702,53 @@ impl GridProcessManager {
     }
 
     /// 发后即忘（高频定位/显隐），错误只记日志。
+    fn window_binding(index: u32, child: &GridChildHandle) -> Option<crate::grid_ipc::RendererBinding> {
+        let owner = child.comms.owner_snapshot().ok()?;
+        let generation = child.comms.generation.load(Ordering::SeqCst);
+        if !child.document_ready || !child.comms.is_current(generation)
+            || child.comms.blank_reclaiming.load(Ordering::SeqCst) {
+            return None;
+        }
+        Some(crate::grid_ipc::RendererBinding {
+            index, owner, generation, navigation_revision: child.navigation_revision,
+        })
+    }
+
+    fn window_binding_matches(child: &GridChildHandle, binding: crate::grid_ipc::RendererBinding) -> bool {
+        // Window geometry/visibility survives navigation within the SAME host.
+        child.document_ready && child.child.id() == binding.owner.0
+            && child.comms.spawn_epoch.load(Ordering::SeqCst) == binding.owner.1
+            && child.comms.is_current(binding.generation)
+            && !child.comms.blank_reclaiming.load(Ordering::SeqCst)
+    }
+
+    fn visibility_targets(&self) -> Vec<crate::grid_ipc::RendererBinding> {
+        self.children.lock().unwrap().iter()
+            .filter_map(|(&index, child)| Self::window_binding(index, child)).collect()
+    }
+
     pub fn send(&self, index: u32, cmd: GridCmd) {
-        if !self.children.lock().unwrap().get(&index).is_some_and(|child| child.document_ready)
-        {
-            return;
-        }
-        let Ok(_operation) = self.lifecycle.enter() else {
-            return;
+        let binding = self.children.lock().unwrap().get(&index)
+            .and_then(|child| Self::window_binding(index, child));
+        if let Some(binding) = binding { self.send_window_bound(binding, cmd); }
+    }
+
+    // Dispatch-only observation, not a native visibility success receipt.
+    // Never look up a replacement listener after the caller's snapshot.
+    fn send_window_bound(&self, binding: crate::grid_ipc::RendererBinding, cmd: GridCmd) {
+        let index = binding.index;
+        let Ok(_operation) = self.lifecycle.enter() else { return; };
+        if !cmd.targets(index) { return; }
+        let comms = {
+            let children = self.children.lock().unwrap();
+            let Some(child) = children.get(&index) else { return; };
+            if !Self::window_binding_matches(child, binding) { return; }
+            Arc::clone(&child.comms)
         };
-        if !cmd.targets(index) {
-            return;
-        }
-        let comms = match self.listeners.lock().unwrap().get(&index).cloned() {
-            Some(c) => c,
-            None => return,
-        };
-        let generation = comms.generation.load(Ordering::SeqCst);
+        let generation = binding.generation;
         let mut guard = comms.writer.lock().unwrap();
         if self.lifecycle.is_stopping() || !comms.is_current(generation)
+            || comms.owner_snapshot().ok() != Some(binding.owner)
             || comms.blank_reclaiming.load(Ordering::SeqCst)
         {
             return;
@@ -1900,7 +1964,9 @@ impl GridProcessManager {
         if self.lifecycle.is_stopping() {
             return;
         }
-        if self.visibility.request(mode, delay) {
+        // A queued focus event may only address the hosts alive at publication.
+        let targets = self.visibility_targets();
+        if self.visibility.request(mode, delay, targets) {
             self.start_visibility_worker();
         }
     }
@@ -1928,10 +1994,12 @@ impl GridProcessManager {
                             .visibility_dispatch
                             .lock()
                             .unwrap_or_else(|p| p.into_inner());
-                        match intent.mode {
-                            VisibilityMode::Show => manager.apply_show_for_focus(),
-                            VisibilityMode::Blur => manager.apply_hide_for_blur_if_no_child_focus(),
-                            VisibilityMode::Minimized => manager.apply_hide_for_blur(),
+                        if manager.visibility.is_latest(intent.revision) {
+                            match intent.mode {
+                                VisibilityMode::Show => manager.apply_show_for_focus(&intent),
+                                VisibilityMode::Blur => manager.apply_hide_for_blur_if_no_child_focus(&intent),
+                                VisibilityMode::Minimized => manager.apply_hide_for_blur(&intent),
+                            }
                         }
                     }
                     if !manager.visibility.finish(intent.revision) {
@@ -2013,27 +2081,16 @@ impl GridProcessManager {
     /// Worker thread only: recompute latest CSS→screen rectangles and emit UDS
     /// writes in sequence. Visibility checks remain the source of truth.
     pub fn reposition_visible(&self) {
-        let _dispatch = self
-            .visibility_dispatch
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
-        let items: Vec<(u32, (f64, f64, f64, f64))> = self
-            .children
-            .lock()
-            .unwrap()
-            .iter()
+        let _dispatch = self.visibility_dispatch.lock().unwrap_or_else(|p| p.into_inner());
+        let items: Vec<_> = self.children.lock().unwrap().iter()
             .filter(|(_, h)| !h.hidden && !h.blur_hidden)
-            .filter_map(|(i, h)| h.last_rect.map(|r| (*i, r)))
+            .filter_map(|(&index, child)| Some((Self::window_binding(index, child)?, child.last_rect?)))
             .collect();
-        for (index, css) in items {
+        for (binding, css) in items {
             if let Some(rect) = self.abs_rect(css) {
-                self.send(
-                    index,
-                    GridCmd::UpdateRect {
-                        id: crate::grid_ipc::renderer_label(index),
-                        rect,
-                    },
-                );
+                self.send_window_bound(binding, GridCmd::UpdateRect {
+                    id: crate::grid_ipc::renderer_label(binding.index), rect,
+                });
             }
         }
     }
@@ -2134,6 +2191,17 @@ impl GridProcessManager {
                 // Even an early native observation disqualifies blank
                 // reclaim. Notification is advisory and only for a live tab.
                 comms.blank_reclaim_blocked.store(true, Ordering::SeqCst);
+                let Some(observation) = crate::grid_ipc::DownloadObservation::from_report(payload) else {
+                    return false;
+                };
+                {
+                    let mut last = comms.download_observation.lock().unwrap();
+                    if last.as_ref().is_some_and(|(_, previous)| !observation.advances(*previous)) {
+                        payload["renderer_drop"] = serde_json::json!(true);
+                        return true;
+                    }
+                    *last = Some((generation, observation));
+                }
                 let id = crate::grid_ipc::renderer_label(index);
                 let live = self.app().is_some_and(|app| {
                     let state = app.state::<crate::bridge::AppState>();
@@ -2143,6 +2211,8 @@ impl GridProcessManager {
                 payload["renderer_drop"] = serde_json::json!(!live);
                 payload["pid"] = serde_json::json!(child.child.id());
                 payload["spawn_epoch"] = serde_json::json!(comms.spawn_epoch.load(Ordering::SeqCst).to_string());
+                payload["renderer_generation"] = serde_json::json!(generation.to_string());
+                payload["observed_unfinished"] = serde_json::json!(observation.observed_unfinished());
             }
             "browser-tabs://shell-shortcut" => {
                 let id = crate::grid_ipc::renderer_label(index);
@@ -2175,7 +2245,7 @@ impl GridProcessManager {
         self.request_hide_for_blur_async();
     }
 
-    fn apply_hide_for_blur_if_no_child_focus(&self) {
+    fn apply_hide_for_blur_if_no_child_focus(&self, intent: &lifecycle::VisibilityIntent) {
         if self.any_child_focused() {
             return;
         }
@@ -2187,7 +2257,7 @@ impl GridProcessManager {
         if main_focused {
             return;
         }
-        self.apply_hide_for_blur();
+        self.apply_hide_for_blur(intent);
     }
 
     /// 主窗失焦：隐藏所有可见宫格子进程窗口（标记 blur_hidden，聚焦时恢复）。
@@ -2195,13 +2265,16 @@ impl GridProcessManager {
         self.request_visibility(VisibilityMode::Minimized, std::time::Duration::ZERO);
     }
 
-    fn apply_hide_for_blur(&self) {
-        let indices = self.all_renderer_indices();
-        for index in indices {
+    fn apply_hide_for_blur(&self, intent: &lifecycle::VisibilityIntent) {
+        for &binding in &intent.targets {
+            if !self.visibility.is_latest(intent.revision) { break; }
             let need = {
                 let mut children = self.children.lock().unwrap();
-                match children.get_mut(&index) {
-                    Some(h) if !h.hidden && !h.blur_hidden && h.last_rect.is_some() => {
+                match children.get_mut(&binding.index) {
+                    Some(h) if Self::window_binding_matches(h, binding)
+                        && !h.hidden && !h.blur_hidden && h.last_rect.is_some() => {
+                        // Desired state, not a native receipt. A newer show can
+                        // compensate even if the hide's outcome is unknown.
                         h.blur_hidden = true;
                         true
                     }
@@ -2209,12 +2282,9 @@ impl GridProcessManager {
                 }
             };
             if need {
-                self.send(
-                    index,
-                    GridCmd::HideWindow {
-                        id: crate::grid_ipc::renderer_label(index),
-                    },
-                );
+                self.send_window_bound(binding, GridCmd::HideWindow {
+                    id: crate::grid_ipc::renderer_label(binding.index),
+                });
             }
         }
     }
@@ -2224,28 +2294,27 @@ impl GridProcessManager {
         self.request_show_for_focus_async();
     }
 
-    fn apply_show_for_focus(&self) {
-        let items: Vec<(u32, (f64, f64, f64, f64))> = {
-            let mut children = self.children.lock().unwrap();
-            children
-                .iter_mut()
-                .filter(|(_, h)| h.blur_hidden && !h.hidden)
-                .filter_map(|(i, h)| {
-                    h.blur_hidden = false;
-                    h.last_rect.map(|r| (*i, r))
-                })
-                .collect()
-        };
-        for (index, css) in items {
-            if let Some(rect) = self.abs_rect(css) {
-                self.send(
-                    index,
-                    GridCmd::UpdateRect {
-                        id: crate::grid_ipc::renderer_label(index),
-                        rect,
-                    },
-                );
+    fn apply_show_for_focus(&self, intent: &lifecycle::VisibilityIntent) {
+        for &binding in &intent.targets {
+            if !self.visibility.is_latest(intent.revision) { break; }
+            let css = {
+                let children = self.children.lock().unwrap();
+                children.get(&binding.index).filter(|child|
+                    Self::window_binding_matches(child, binding) && child.blur_hidden && !child.hidden)
+                    .and_then(|child| child.last_rect)
+            };
+            let Some(rect) = css.and_then(|css| self.abs_rect(css)) else { continue; };
+            {
+                let mut children = self.children.lock().unwrap();
+                let Some(child) = children.get_mut(&binding.index) else { continue; };
+                if !Self::window_binding_matches(child, binding) || child.hidden || !child.blur_hidden {
+                    continue;
+                }
+                child.blur_hidden = false;
             }
+            self.send_window_bound(binding, GridCmd::UpdateRect {
+                id: crate::grid_ipc::renderer_label(binding.index), rect,
+            });
         }
     }
 
@@ -2420,9 +2489,7 @@ impl GridProcessManager {
                     }, 3000);
                 }
             }
-            let zoom = state.grid_zooms.lock().unwrap()
-                .get(&crate::grid_ipc::renderer_label(index)).copied().unwrap_or(1.0);
-            if let Err(error) = manager.grid_zoom_bound(binding, zoom) {
+            if let Err(error) = crate::bridge::apply_grid_zoom(&app, binding) {
                 eprintln!("[grid-manager] replay zoom unconfirmed index={index}: {error}");
             }
         });
@@ -2617,13 +2684,16 @@ impl GridProcessManager {
 /// A parent exit alone never establishes that WebView2 descendants are gone.
 struct GridRetirement {
     index: u32,
+    download_retired: Option<serde_json::Value>,
     owner: GridChildHandle,
     root_reaped: bool,
 }
 impl GridRetirement {
     fn new(index: u32, owner: GridChildHandle) -> Self {
+        let download_retired = owner.comms.download_retirement(index, owner.child.id());
         Self {
             index,
+            download_retired,
             owner,
             root_reaped: false,
         }

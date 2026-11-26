@@ -468,9 +468,25 @@ fn run_grid_child(index: u32) {
                             enqueue_renderer_report("browser-tabs://shell-shortcut", payload);
                         }
                     });
+                let download_counts = std::sync::Mutex::new(grid_ipc::DownloadObservation::default());
                 app.state::<tauri_plugin_browser_tabs::TabManagerState>()
                     .set_native_download_sink(move |id, phase| {
-                        let payload = serde_json::json!({"id": id, "phase": phase});
+                        // Serialize callback observations and include cumulative
+                        // counts: the bounded best-effort report queue may drop
+                        // intermediate events. No URL/path leaves the child.
+                        let mut counts = download_counts.lock().unwrap_or_else(|p| p.into_inner());
+                        let count = match phase {
+                            "requested" => &mut counts.requested,
+                            "succeeded" => &mut counts.succeeded,
+                            "failed" => &mut counts.failed,
+                            _ => return,
+                        };
+                        let Some(next) = count.checked_add(1) else { return; };
+                        *count = next;
+                        let payload = serde_json::json!({
+                            "id": id, "phase": phase, "requested": counts.requested,
+                            "succeeded": counts.succeeded, "failed": counts.failed
+                        });
                         if grid_ipc::valid_renderer_event(index, "renderer-download", &payload) {
                             enqueue_renderer_report("renderer-download", payload);
                         }

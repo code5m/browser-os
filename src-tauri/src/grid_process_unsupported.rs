@@ -50,6 +50,7 @@ impl GridProcessManager {
     pub(crate) fn grid_eval_binding(&self, _index: u32) -> Result<crate::grid_ipc::RendererBinding, String> { Err(unsupported()) }
     pub(crate) fn grid_live_binding(&self, _index: u32) -> Result<Option<crate::grid_ipc::RendererBinding>, String> { Err(unsupported()) }
     pub(crate) fn grid_eval_bound(&self, _binding: crate::grid_ipc::RendererBinding, _js: String) -> Result<(), String> { Err(unsupported()) }
+    pub(crate) fn publish_grid_zoom(&self, _stamp: crate::grid_ipc::GridRouteStamp, _zoom: f64) -> Result<(), String> { Err(unsupported()) }
     pub(crate) fn grid_zoom_bound(&self, _binding: crate::grid_ipc::RendererBinding, _zoom: f64) -> Result<(), String> { Err(unsupported()) }
     pub(crate) fn grid_navigate_bound(&self, _binding: crate::grid_ipc::RendererBinding, _url: &str) -> Result<(), String> { Err(unsupported()) }
     pub(crate) fn grid_position_bound(&self, _binding: crate::grid_ipc::RendererBinding, _css: (f64, f64, f64, f64), _rect: crate::grid_ipc::IpcRect) -> Result<(), String> { Err(unsupported()) }

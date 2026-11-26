@@ -224,26 +224,29 @@ fn create_grid_admitted(app: AppHandle, n: usize, urls: Vec<String>,
         let requested_url = urls.get(i).map(String::as_str);
         let target_url = requested_grid_url(requested_url, previous_url)
             .unwrap_or_else(|| "about:blank".to_string());
-        let operation = (|| -> Result<(), String> {
+        let operation = (|| -> Result<crate::grid_ipc::RendererBinding, String> {
             let binding = manager.grid_binding_for_stamp(prepared.stamp)?;
             if prepared.created {
                 manager.grid_create_bound(binding, &target_url)?;
             } else if grid_url_needs_navigation(previous_url, requested_grid_url(requested_url, None).as_deref()) {
                 manager.grid_navigate_bound(binding, &target_url)?;
             }
-            Ok(())
+            Ok(binding)
         })();
-        if let Err(error) = operation {
+        let binding = match operation {
+            Ok(binding) => binding,
+            Err(error) => {
             let compensation = if prepared.created {
                 manager.rollback_grid_creation(&prepared)
                     .map(|_| "original new cell retired".to_string())
                     .unwrap_or_else(|e| format!("rollback unconfirmed:{e}"))
             } else { "retained cell not replayed".to_string() };
             return Err(format!("GRID_BUILD_PARTIAL:{i}:{error};{compensation}"));
-        }
+            }
+        };
         prepared_stamps.push(prepared.stamp);
         if prepared.created {
-            schedule_grid_zoom(&app, &format!("grid-{i}"));
+            schedule_grid_zoom(&app, binding);
             if i + 1 < target {
                 std::thread::sleep(std::time::Duration::from_millis(300));
             }
@@ -336,14 +339,15 @@ fn grid_open_admitted(app: AppHandle, url: String, admitted: GridCellAdmission)
     }
     let state = app.state::<AppState>();
     let mgr = &state.grid_manager;
-    if let Some(binding) = admitted.binding {
+    let binding = if let Some(binding) = admitted.binding {
         mgr.grid_navigate_bound(binding, &target)?;
+        binding
     } else {
         // Create at the actual target rather than replaying an intermediate
         // URL, then navigating whichever process is currently in the slot.
-        create_grid_cell(&app, admitted.stamp, Some(&target))?;
-    }
-    schedule_grid_zoom(&app, &crate::grid_ipc::renderer_label(admitted.stamp.index));
+        create_grid_cell(&app, admitted.stamp, Some(&target))?
+    };
+    schedule_grid_zoom(&app, binding);
     Ok(())
 }
 
@@ -371,42 +375,38 @@ fn create_grid_cell(app: &AppHandle, stamp: crate::grid_ipc::GridRouteStamp, tar
 
 /// 真正给宫格 webview 应用缩放（WebKitGTK 原生 zoom_level，经 UDS 到子进程）。
 /// 仅在页面加载完成后调用，避免加载中设置被重置导致卡顿。
-fn schedule_grid_zoom(app: &AppHandle, label: &str) {
-    let Some(index) = grid_index_of(label).filter(|index| (*index as usize) < MAX_GRID) else { return; };
+fn schedule_grid_zoom(app: &AppHandle, binding: crate::grid_ipc::RendererBinding) {
+    if binding.index as usize >= MAX_GRID { return; }
     let state = app.state::<AppState>();
-    if !state.grid_zooms.lock().unwrap().contains_key(label) { return; }
-    let Ok(binding) = state.grid_manager.grid_eval_binding(index) else { return; };
+    let label = crate::grid_ipc::renderer_label(binding.index);
+    if !state.grid_zooms.lock().unwrap().contains_key(&label) { return; }
     let Ok(permit) = GRID_ZOOM_WORKERS.reserve() else { return; };
     let app = app.clone();
-    let label = label.to_owned();
-    // Delay is advisory and bounded; it never resolves a replacement host.
+    // Never resolve the index again after navigation/creation admission.
     tauri::async_runtime::spawn(async move {
         let _ = permit.run(move || {
             std::thread::sleep(std::time::Duration::from_millis(900));
-            apply_grid_zoom(&app, &label, binding)
+            apply_grid_zoom(&app, binding)
         }).await;
     });
 }
 
-fn apply_grid_zoom(app: &AppHandle, label: &str, binding: crate::grid_ipc::RendererBinding) -> Result<(), String> {
-    let index = grid_index_of(label).filter(|index| (*index as usize) < MAX_GRID)
-        .ok_or("GRID_INDEX_INVALID")?;
-    if index != binding.index { return Err("GRID_REQUEST_TARGET_REJECTED".into()); }
-    let _send = GRID_ZOOM_WRITERS[index as usize]
+/// The same writer is used by explicit zoom, delayed navigation replay and
+/// automatic process restart. Re-read the latest intent inside the lock.
+pub(crate) fn apply_grid_zoom(app: &AppHandle, binding: crate::grid_ipc::RendererBinding) -> Result<(), String> {
+    let index = binding.index as usize;
+    if index >= MAX_GRID { return Err("GRID_INDEX_INVALID".into()); }
+    let _send = GRID_ZOOM_WRITERS[index]
         .lock()
         .unwrap_or_else(|error| error.into_inner());
-    // A delayed page-load replay and an older blocking worker must both read
-    // the current owner intent after acquiring the cell's send lock. Never
-    // replay the value captured before a more recent user zoom.
     let state = app.state::<AppState>();
-    let zoom = state.grid_zooms.lock().unwrap().get(label).copied();
-    let zoom = zoom.ok_or("GRID_ZOOM_INTENT_MISSING")?;
-    // 1.0 is a real reset to 100%, not a reason to skip the native command.
+    let label = crate::grid_ipc::renderer_label(binding.index);
+    let zoom = state.grid_zooms.lock().unwrap().get(&label).copied().unwrap_or(1.0);
     state.grid_manager.grid_zoom_bound(binding, zoom)
 }
 
-/// Store the desired zoom before dispatch, then serialize only this cell's I/O.
-/// A saturated lane rejects before changing intent; no unbounded task queue.
+/// Store desired zoom only against the admitted route, then serialize I/O.
+/// A sleeping cell keeps a preference, not a native success receipt.
 #[tauri::command]
 pub async fn grid_set_zoom(app: AppHandle, index: usize, zoom: f64) -> Result<(), String> {
     require_grid_platform()?;
@@ -414,22 +414,13 @@ pub async fn grid_set_zoom(app: AppHandle, index: usize, zoom: f64) -> Result<()
         return Err("GRID_ZOOM_INVALID".into());
     }
     let permit = GRID_ZOOM_WORKERS.reserve()?;
-    let label = format!("grid-{index}");
-    let binding = {
-        let state = app.state::<AppState>();
-        // A sleeping cell retains only a desired preference, not a native
-        // success receipt. The next explicit restore applies that preference.
-        let binding = match state.grid_manager.grid_eval_binding(index as u32) {
-            Ok(binding) => Some(binding),
-            Err(_) if state.grid_manager.is_hibernated(index as u32) => None,
-            Err(error) => return Err(error),
-        };
-        let mut zooms = state.grid_zooms.lock().unwrap();
-        zooms.insert(label.clone(), zoom);
-        binding
-    };
-    let Some(binding) = binding else { return Ok(()); };
-    permit.run(move || apply_grid_zoom(&app, &label, binding)).await
+    let admitted = capture_grid_cell(&app, index)?;
+    if admitted.binding.is_none() && !admitted.sleeping {
+        return Err("GRID_ZOOM_TARGET_UNAVAILABLE".into());
+    }
+    app.state::<AppState>().grid_manager.publish_grid_zoom(admitted.stamp, zoom)?;
+    let Some(binding) = admitted.binding else { return Ok(()); };
+    permit.run(move || apply_grid_zoom(&app, binding)).await
 }
 
 /// 批量定位所有宫格（前端按网格计算好每个格子的 x/y/w/h 后调用）。
@@ -488,7 +479,7 @@ fn grid_position_admitted(app: AppHandle, css: (f64, f64, f64, f64),
             // The captured absent-slot revision rejects a close/reopen
             // during the queue delay, even when no PID was present.
             let binding = create_grid_cell(&app, admitted.stamp, None)?;
-            schedule_grid_zoom(&app, &crate::grid_ipc::renderer_label(admitted.stamp.index));
+            schedule_grid_zoom(&app, binding);
             binding
         }
         None => return Err("GRID_POSITION_TARGET_UNAVAILABLE".into()),
