@@ -37,6 +37,9 @@ pub struct ChildComms {
     generation: AtomicU64,
     // Published only after the exact spawned Child has entered the owner map.
     expected_pid: AtomicU32,
+    owner_gate: Mutex<()>,
+    spawn_epoch: AtomicU64,
+    ready_generation: AtomicU64,
     connected: AtomicBool,
     closing: AtomicBool,
     cancellation: Mutex<Option<UnixStream>>,
@@ -51,6 +54,9 @@ impl ChildComms {
             seq: AtomicU64::new(1),
             generation: AtomicU64::new(0),
             expected_pid: AtomicU32::new(0),
+            owner_gate: Mutex::new(()),
+            spawn_epoch: AtomicU64::new(0),
+            ready_generation: AtomicU64::new(0),
             connected: AtomicBool::new(false),
             closing: AtomicBool::new(false),
             cancellation: Mutex::new(None),
@@ -64,7 +70,9 @@ impl ChildComms {
     /// launched. Do not recycle request identities across process generations.
     fn prepare_spawn(&self) -> Result<(), String> {
         let mut writer = self.writer.lock().unwrap();
+        let _owner = self.owner_gate.lock().unwrap();
         self.expected_pid.store(0, Ordering::SeqCst);
+        self.ready_generation.store(0, Ordering::SeqCst);
         self.connected.store(false, Ordering::SeqCst);
         if let Some(control) = self.cancellation.lock().unwrap().take() {
             let _ = control.cancel_io();
@@ -74,7 +82,66 @@ impl ChildComms {
         self.generation
             .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_add(1))
             .map_err(|_| "GRID_CONNECTION_GENERATION_EXHAUSTED".to_string())?;
+        self.spawn_epoch
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_add(1))
+            .map_err(|_| "GRID_SPAWN_EPOCH_EXHAUSTED".to_string())?;
         Ok(())
+    }
+
+    fn publish_owner(&self, pid: u32) {
+        let _owner = self.owner_gate.lock().unwrap();
+        self.expected_pid.store(pid, Ordering::SeqCst);
+    }
+
+    /// Retirement admission revokes the old route before OS cleanup.
+    /// Never acquire the potentially blocked writer here.
+    fn revoke_owner(&self, pid: u32) {
+        let _owner = self.owner_gate.lock().unwrap();
+        if self.expected_pid.load(Ordering::SeqCst) != pid {
+            return;
+        }
+        self.expected_pid.store(0, Ordering::SeqCst);
+        self.ready_generation.store(0, Ordering::SeqCst);
+        self.connected.store(false, Ordering::SeqCst);
+        if let Some(control) = self.cancellation.lock().unwrap().as_ref() {
+            let _ = control.cancel_io();
+        }
+        self.fail_pending("GRID_REQUEST_OUTCOME_UNKNOWN: renderer retirement admitted");
+    }
+
+    fn owner_snapshot(&self) -> Result<(u32, u64), String> {
+        let _owner = self.owner_gate.lock().unwrap();
+        let pid = self.expected_pid.load(Ordering::SeqCst);
+        if !self.accepts_peer(pid) {
+            return Err("GRID_RENDERER_NOT_OWNED".into());
+        }
+        Ok((pid, self.spawn_epoch.load(Ordering::SeqCst)))
+    }
+
+    fn ready_for_owner(&self, expected: (u32, u64)) -> Result<Option<u64>, String> {
+        let _owner = self.owner_gate.lock().unwrap();
+        if !self.accepts_peer(expected.0) || self.spawn_epoch.load(Ordering::SeqCst) != expected.1 {
+            return Err("GRID_RENDERER_OWNER_CHANGED".into());
+        }
+        Ok(self.is_connected().then(|| self.generation.load(Ordering::SeqCst)))
+    }
+
+    fn mark_ready(&self, generation: u64) -> bool {
+        let _owner = self.owner_gate.lock().unwrap();
+        if !self.is_transport_current(generation) || self.ready_generation.load(Ordering::SeqCst) != 0 {
+            return false;
+        }
+        self.ready_generation.store(generation, Ordering::SeqCst);
+        true
+    }
+
+    fn complete_response(&self, generation: u64, seq: u64, result: Result<Option<String>, String>) {
+        let _owner = self.owner_gate.lock().unwrap();
+        if self.is_current(generation) {
+            if let Some(tx) = self.pending.lock().unwrap().remove(&seq) {
+                let _ = tx.send(result);
+            }
+        }
     }
 
     fn accepts_peer(&self, pid: u32) -> bool {
@@ -85,6 +152,7 @@ impl ChildComms {
     fn attach(&self, stream: UnixStream, peer_pid: u32) -> Result<u64, String> {
         let control = stream.try_clone().map_err(|error| error.to_string())?;
         let mut writer = self.writer.lock().unwrap();
+        let _owner = self.owner_gate.lock().unwrap();
         if !self.accepts_peer(peer_pid) {
             let _ = control.cancel_io();
             return Err("GRID_PEER_NOT_OWNED".into());
@@ -96,6 +164,7 @@ impl ChildComms {
             .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_add(1))
             .map_err(|_| "GRID_CONNECTION_GENERATION_EXHAUSTED".to_string())? + 1;
         *writer = Some(stream);
+        self.ready_generation.store(0, Ordering::SeqCst);
         self.connected.store(true, Ordering::SeqCst);
         self.fail_pending("GRID_REQUEST_OUTCOME_UNKNOWN: renderer connection replaced");
         Ok(generation)
@@ -135,6 +204,7 @@ impl ChildComms {
 
     fn detach_if_current(&self, generation: u64) {
         let mut writer = self.writer.lock().unwrap();
+        let _owner = self.owner_gate.lock().unwrap();
         if self.generation.load(Ordering::SeqCst) != generation {
             return;
         }
@@ -142,18 +212,26 @@ impl ChildComms {
             let _ = control.cancel_io();
         }
         *writer = None;
+        self.ready_generation.store(0, Ordering::SeqCst);
         self.connected.store(false, Ordering::SeqCst);
         self.fail_pending("GRID_REQUEST_OUTCOME_UNKNOWN: renderer connection closed");
     }
 
-    fn is_current(&self, generation: u64) -> bool {
+    fn is_transport_current(&self, generation: u64) -> bool {
         !self.closing.load(Ordering::SeqCst)
+            && self.expected_pid.load(Ordering::SeqCst) != 0
             && self.connected.load(Ordering::SeqCst)
             && self.generation.load(Ordering::SeqCst) == generation
     }
 
+    fn is_current(&self, generation: u64) -> bool {
+        self.is_transport_current(generation)
+            && generation != 0
+            && self.ready_generation.load(Ordering::SeqCst) == generation
+    }
+
     fn is_connected(&self) -> bool {
-        !self.closing.load(Ordering::SeqCst) && self.connected.load(Ordering::SeqCst)
+        self.is_current(self.generation.load(Ordering::SeqCst))
     }
 }
 
@@ -199,6 +277,8 @@ pub struct GridChildHandle {
     // index is the key in GridProcessManager::children;
     // communication state is retained in GridProcessManager::listeners.
     pub child: Child,
+    comms: Arc<ChildComms>,
+    focused: bool,
     pub job: JobObject,
     /// 最近一次导航 url（崩溃重启重放用）
     pub last_url: Option<String>,
@@ -229,9 +309,6 @@ pub struct GridProcessManager {
     /// Crash budget per grid cell; normal user-triggered shutdown is not counted.
     crash_history: Mutex<HashMap<u32, VecDeque<std::time::Instant>>>,
     pending_restarts: Mutex<HashMap<u32, (std::time::Instant, SavedChildState)>>,
-    /// 子进程窗口焦点状态（子进程经 UDS Event 上报）：主窗 blur 时据此区分
-    /// "用户点了宫格"（不隐藏）与"切到其它应用"（隐藏防幽灵浮层）
-    child_focused: Mutex<HashMap<u32, bool>>,
     // One coalescing relocation worker, regardless of GTK move/resize rate.
     // The version is a latest-value notification, never an unbounded channel.
     reposition_pending: AtomicU64,
@@ -353,6 +430,14 @@ impl GridProcessManager {
                     let reader_lifecycle = Arc::clone(&accept_lifecycle);
                     let reader_spawn = accept_lifecycle.spawn("grid-reader", move || {
                         let mut r = BufReader::new(reader);
+                        let ready = matches!(
+                            crate::grid_ipc::read_wire(&mut r),
+                            Ok(Some(frame)) if crate::grid_ipc::is_renderer_ready(index, &frame)
+                        );
+                        if !ready || !comms_reader.mark_ready(generation) {
+                            comms_reader.detach_if_current(generation);
+                            return;
+                        }
                         loop {
                             if reader_lifecycle.is_stopping()
                                 || !comms_reader.is_current(generation)
@@ -366,57 +451,27 @@ impl GridProcessManager {
                             }
                             match frame {
                                 Ok(Some(Wire::Response { seq, ok, err, data })) => {
-                                    let tx = comms_reader.pending.lock().unwrap().remove(&seq);
-                                    if let Some(tx) = tx {
-                                        let _ = tx.send(if ok {
-                                            Ok(data)
-                                        } else {
-                                            Err(err.unwrap_or_else(|| "子进程执行失败".into()))
-                                        });
-                                    }
+                                    comms_reader.complete_response(
+                                        generation,
+                                        seq,
+                                        if ok { Ok(data) } else { Err(err.unwrap_or_else(|| "子进程执行失败".into())) },
+                                    );
                                 }
-                                Ok(Some(Wire::Event { name, payload })) => {
+                                Ok(Some(Wire::Event { name, mut payload })) => {
                                     if let Some(app) = &app_reader {
+                                        let state = app.state::<crate::bridge::AppState>();
+                                        if !state.grid_manager.accept_renderer_event(index, &comms_reader, generation, &name, &mut payload) {
+                                            break;
+                                        }
                                         match name.as_str() {
-                                            // 内部事件：子窗口焦点上报，不转发前端
-                                            "grid-child-focus" => {
-                                                let state = app.state::<crate::bridge::AppState>();
-                                                state.grid_manager.set_child_focus(index, true);
-                                            }
-                                            "grid-child-blur" => {
-                                                let state = app.state::<crate::bridge::AppState>();
-                                                state.grid_manager.set_child_focus(index, false);
-                                                // 从宫格切到其它应用时主窗不会再次 blur，
-                                                // 子窗口 blur 后若主窗也无焦点 → 隐藏防幽灵浮层
-                                                state.grid_manager.request_hide_for_blur_async();
-                                            }
-                                            "tab-navigated" => {
-                                                // Keep the native memory guard in sync with
-                                                // same-WebView redirects and in-page links.
-                                                // Only accept navigation for this Grid child.
-                                                if let (Some(id), Some(url)) = (
-                                                    payload.get("id").and_then(|v| v.as_str()),
-                                                    payload.get("url").and_then(|v| v.as_str()),
-                                                ) {
-                                                    if id == format!("grid-{index}")
-                                                        && !url.is_empty()
-                                                    {
-                                                        app.state::<crate::bridge::AppState>()
-                                                            .grid_manager
-                                                            .record_url(index, url);
-                                                    }
-                                                }
-                                                let _ = app.emit(&name, payload);
-                                            }
-                                            _ => {
-                                                let _ = app.emit(&name, payload);
-                                            }
+                                            "grid-child-focus" => {}
+                                            "grid-child-blur" => state.grid_manager.request_hide_for_blur_async(),
+                                            _ if comms_reader.is_current(generation) => { let _ = app.emit(&name, payload); }
+                                            _ => break,
                                         }
                                     }
                                 }
-                                Ok(Some(Wire::Request { .. })) => {
-                                    // 主进程不会收到 Request，忽略
-                                }
+                                Ok(Some(Wire::Request { .. })) => break,
                                 Ok(None) => {
                                     eprintln!("[grid-manager] grid-child-{} UDS 对端关闭", index);
                                     break;
@@ -520,6 +575,8 @@ impl GridProcessManager {
         let owner = GridChildHandle {
             child,
             job,
+            comms: Arc::clone(&comms),
+            focused: false,
             last_url: saved.last_url,
             last_rect: saved.last_rect,
             hidden: saved.hidden,
@@ -537,7 +594,7 @@ impl GridProcessManager {
                 return Err(error);
             }
             children.insert(index, owner);
-            comms.expected_pid.store(pid, Ordering::SeqCst);
+            comms.publish_owner(pid);
         }
         // The in-flight permit covers the check/insert race. The cleanup
         // service drains any publication that raced the application's latch.
@@ -615,30 +672,24 @@ impl GridProcessManager {
     }
 
     /// 等待该 index 的 UDS 连接就绪（子进程冷启动需 1~3 秒）。
-    fn wait_connected(&self, index: u32, timeout_ms: u64) -> Result<Arc<ChildComms>, String> {
-        let comms = self
-            .listeners
-            .lock()
-            .unwrap()
-            .get(&index)
-            .cloned()
-            .ok_or_else(|| format!("grid-{index} 无 UDS listener（未 spawn？）"))?;
+    fn wait_connected(&self, index: u32, timeout_ms: u64) -> Result<(Arc<ChildComms>, u64), String> {
         self.lifecycle.check()?;
-        let start = std::time::Instant::now();
-        while !comms.is_connected() {
+        let comms = self.listeners.lock().unwrap().get(&index).cloned()
+            .ok_or_else(|| format!("grid-{index} has no renderer listener"))?;
+        let expected = comms.owner_snapshot()?;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
+        loop {
             self.lifecycle.check()?;
-            if start.elapsed().as_millis() as u64 > timeout_ms {
-                return Err(format!("等待 grid-child-{index} UDS 连接超时"));
+            if let Some(generation) = comms.ready_for_owner(expected)? {
+                return Ok((comms, generation));
             }
-            if self
-                .lifecycle
-                .wait_or_stop(std::time::Duration::from_millis(50))
-            {
+            if std::time::Instant::now() >= deadline {
+                return Err(format!("GRID_RENDERER_READY_TIMEOUT:{index}"));
+            }
+            if self.lifecycle.wait_or_stop(std::time::Duration::from_millis(50)) {
                 return Err("GRID_SHUTDOWN_IN_PROGRESS".into());
             }
         }
-        self.lifecycle.check()?;
-        Ok(comms)
     }
 
     /// Wait for initial admission, then dispatch at most once. A missing
@@ -648,18 +699,31 @@ impl GridProcessManager {
         if !cmd.targets(index) {
             return Err("GRID_REQUEST_TARGET_REJECTED".into());
         }
-        let comms = self.wait_connected(index, 15000)?;
-        let generation = comms.generation.load(Ordering::SeqCst);
+        let (comms, generation) = self.wait_connected(index, 15000)?;
         self.request_once_with(index, comms, generation, &cmd, timeout_ms).map(|_| ())
+    }
+
+    /// A delayed load retry must retain its original renderer generation.
+    pub(crate) fn retry_failed_navigation(&self, index: u32, generation: u64, url: &str) -> Result<(), String> {
+        let _operation = self.lifecycle.enter()?;
+        let comms = {
+            let children = self.children.lock().unwrap();
+            let child = children.get(&index).ok_or("GRID_RENDERER_NOT_OWNED")?;
+            if !child.comms.is_current(generation) || child.last_url.as_deref() != Some(url) {
+                return Err("GRID_RETRY_SUPERSEDED".into());
+            }
+            Arc::clone(&child.comms)
+        };
+        let cmd = GridCmd::Navigate { id: format!("grid-{index}"), url: url.to_string() };
+        self.request_once_with(index, comms, generation, &cmd, 10000).map(|_| ())
     }
 
     /// Fail-closed native probe of the actual Grid page. Stored last_url is
     /// only a navigation target and cannot prove the live DOM is empty.
     fn confirmed_blank_grid(&self, index: u32) -> bool {
-        let Ok(comms) = self.wait_connected(index, 500) else {
+        let Ok((comms, generation)) = self.wait_connected(index, 500) else {
             return false;
         };
-        let generation = comms.generation.load(Ordering::SeqCst);
         match self.request_once_with(
             index,
             comms,
@@ -678,8 +742,7 @@ impl GridProcessManager {
         if !self.children.lock().unwrap().contains_key(&index) {
             return Err("GRID_NOT_OPEN".into());
         }
-        let comms = self.wait_connected(index, 500)?;
-        let generation = comms.generation.load(Ordering::SeqCst);
+        let (comms, generation) = self.wait_connected(index, 500)?;
         self.request_once_with(
             index,
             comms,
@@ -716,7 +779,13 @@ impl GridProcessManager {
             peer_pid = comms.expected_pid.load(Ordering::SeqCst);
             let result = match guard.as_mut() {
                 Some(w) => {
-                    comms.pending.lock().unwrap().insert(seq, tx);
+                    {
+                        let _owner = comms.owner_gate.lock().unwrap();
+                        if !comms.is_current(generation) {
+                            return Err("GRID_CONNECTION_GENERATION_CHANGED".into());
+                        }
+                        comms.pending.lock().unwrap().insert(seq, tx);
+                    }
                     crate::grid_ipc::write_wire(w, &Wire::Request { seq, cmd: cmd.clone() })
                 }
                 None => Err(std::io::Error::new(std::io::ErrorKind::NotConnected, "GRID_NOT_CONNECTED")),
@@ -858,7 +927,6 @@ impl GridProcessManager {
             return Vec::new();
         }
         let now = std::time::Instant::now();
-        let focused = self.child_focused.lock().unwrap().clone();
         let mut candidates: Vec<(std::time::Instant, u32)> = self
             .children
             .lock()
@@ -868,7 +936,7 @@ impl GridProcessManager {
                 if !grid_child_is_hibernatable(
                     child.hidden,
                     child.blur_hidden,
-                    focused.get(index).copied().unwrap_or(false),
+                    child.focused,
                     child.hidden_since,
                     now,
                     idle_for,
@@ -884,30 +952,18 @@ impl GridProcessManager {
         let mut hibernated = Vec::new();
         for (hidden_since, index) in candidates.into_iter().take(max_children) {
             let eligible = || {
-                !self
-                    .child_focused
-                    .lock()
-                    .unwrap()
-                    .get(&index)
-                    .copied()
-                    .unwrap_or(false)
-                    && self
-                        .children
-                        .lock()
-                        .unwrap()
-                        .get(&index)
-                        .is_some_and(|child| {
-                            child.hidden_since == Some(hidden_since)
-                                && grid_content_reclaimable(child.last_url.as_deref())
-                                && grid_child_is_hibernatable(
-                                    child.hidden,
-                                    child.blur_hidden,
-                                    false,
-                                    child.hidden_since,
-                                    std::time::Instant::now(),
-                                    idle_for,
-                                )
-                        })
+                self.children.lock().unwrap().get(&index).is_some_and(|child| {
+                    child.hidden_since == Some(hidden_since)
+                        && grid_content_reclaimable(child.last_url.as_deref())
+                        && grid_child_is_hibernatable(
+                            child.hidden,
+                            child.blur_hidden,
+                            child.focused,
+                            child.hidden_since,
+                            std::time::Instant::now(),
+                            idle_for,
+                        )
+                })
             };
             if !eligible() || !self.confirmed_blank_grid(index) || !eligible() {
                 continue;
@@ -930,19 +986,6 @@ impl GridProcessManager {
             }
             // Revalidate under the child map lock, then kill the old process
             // before another get_or_spawn can reuse the same Grid index/socket.
-            let focused_now = self
-                .child_focused
-                .lock()
-                .unwrap()
-                .get(&index)
-                .copied()
-                .unwrap_or(false);
-            if focused_now {
-                if closed.is_ok() {
-                    self.replay(index);
-                }
-                continue;
-            }
             let mut children = self.children.lock().unwrap();
             let still_eligible = children.get(&index).is_some_and(|child| {
                 child.hidden_since == Some(hidden_since)
@@ -950,7 +993,7 @@ impl GridProcessManager {
                     && grid_child_is_hibernatable(
                         child.hidden,
                         child.blur_hidden,
-                        false,
+                        child.focused,
                         child.hidden_since,
                         std::time::Instant::now(),
                         idle_for,
@@ -1162,13 +1205,32 @@ impl GridProcessManager {
         }
     }
 
-    /// 记录子进程窗口焦点状态（子进程经 UDS Event 上报）。
-    pub fn set_child_focus(&self, index: u32, focused: bool) {
-        self.child_focused.lock().unwrap().insert(index, focused);
+    /// Publish renderer metadata only for the live child and connection.
+    fn accept_renderer_event(&self, index: u32, comms: &Arc<ChildComms>, generation: u64,
+        name: &str, payload: &mut serde_json::Value) -> bool {
+        if !crate::grid_ipc::valid_renderer_event(index, name, payload) {
+            return false;
+        }
+        let mut children = self.children.lock().unwrap();
+        let Some(child) = children.get_mut(&index) else { return false };
+        let _owner = comms.owner_gate.lock().unwrap();
+        if !Arc::ptr_eq(&child.comms, comms) || !comms.is_current(generation) {
+            return false;
+        }
+        match name {
+            "grid-child-focus" => child.focused = true,
+            "grid-child-blur" => child.focused = false,
+            "tab-navigated" => child.last_url = payload["url"].as_str().map(str::to_owned),
+            "grid-load-failed" => {
+                payload["renderer_generation"] = serde_json::json!(generation.to_string());
+            }
+            _ => {}
+        }
+        true
     }
 
     fn any_child_focused(&self) -> bool {
-        self.child_focused.lock().unwrap().values().any(|f| *f)
+        self.children.lock().unwrap().values().any(|child| child.focused && child.comms.is_connected())
     }
 
     /// 主窗失焦（或子窗口失焦）后的统一入口：若焦点在任一宫格子窗口内则不动，
@@ -1700,6 +1762,8 @@ mod windows_grid_tests {
         let owner = GridChildHandle {
             child,
             job,
+            comms: Arc::new(ChildComms::new()),
+            focused: false,
             last_url: None,
             last_rect: None,
             hidden: false,

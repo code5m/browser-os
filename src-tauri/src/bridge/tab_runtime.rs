@@ -212,6 +212,11 @@ pub fn start_grid_load_retry(app: AppHandle) {
             Some(i) => i,
             None => return,
         };
+        let Some(generation) = payload["renderer_generation"].as_str()
+            .and_then(|value| value.parse::<u64>().ok()).filter(|value| *value != 0)
+        else {
+            return;
+        };
         let url = payload["url"].as_str().unwrap_or("").to_string();
         if url.is_empty() {
             return;
@@ -239,17 +244,9 @@ pub fn start_grid_load_retry(app: AppHandle) {
                 return;
             }
             let mgr = &state.grid_manager;
-            if let Err(e) = mgr.request(
-                index,
-                GridCmd::Navigate {
-                    id: format!("grid-{index}"),
-                    url: url.clone(),
-                },
-                10000,
-            ) {
+            if let Err(e) = mgr.retry_failed_navigation(index, generation, &url) {
                 eprintln!("[grid] grid-{index} 自动重试导航失败: {e}");
             } else {
-                mgr.record_url(index, &url);
                 eprintln!("[grid] grid-{index} 自动重试导航已下发");
             }
         });

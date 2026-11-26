@@ -31,6 +31,10 @@ impl GridProcessManager {
         Err(unsupported())
     }
 
+    pub(crate) fn retry_failed_navigation(&self, _index: u32, _generation: u64, _url: &str) -> Result<(), String> {
+        Err(unsupported())
+    }
+
     pub fn read_replies(&self, _index: u32) -> Result<String, String> {
         Err(unsupported())
     }
@@ -66,7 +70,6 @@ impl GridProcessManager {
     pub fn request_show_for_focus_async(&self) {}
     pub fn request_reposition_async(&self) {}
     pub fn reposition_visible(&self) {}
-    pub fn set_child_focus(&self, _index: u32, _focused: bool) {}
     pub fn hide_for_blur_if_no_child_focus(&self) {}
     pub fn hide_for_blur(&self) {}
     pub fn show_for_focus(&self) {}

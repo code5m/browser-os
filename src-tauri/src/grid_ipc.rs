@@ -15,6 +15,66 @@ pub struct IpcRect {
     pub h: f64,
 }
 
+impl IpcRect {
+    /// Preserve negative monitor/offscreen coordinates but reject invalid
+    /// float-to-native conversions and unbounded renderer viewports.
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        if !self.x.is_finite()
+            || !self.y.is_finite()
+            || !(i32::MIN as f64..=i32::MAX as f64).contains(&self.x)
+            || !(i32::MIN as f64..=i32::MAX as f64).contains(&self.y)
+            || !(1.0..=32768.0).contains(&self.w)
+            || !(1.0..=32768.0).contains(&self.h)
+        {
+            return Err("GRID_NATIVE_RECT_INVALID".into());
+        }
+        Ok(())
+    }
+}
+
+const RENDERER_PROTOCOL: &str = "browseros-renderer-v1";
+
+pub(crate) fn renderer_ready(index: u32) -> Wire {
+    Wire::Event {
+        name: "renderer-ready".into(),
+        payload: serde_json::json!({ "index": index, "protocol": RENDERER_PROTOCOL }),
+    }
+}
+
+pub(crate) fn is_renderer_ready(index: u32, frame: &Wire) -> bool {
+    matches!(
+        frame,
+        Wire::Event { name, payload }
+            if name == "renderer-ready"
+                && payload["index"].as_u64() == Some(u64::from(index))
+                && payload["protocol"].as_str() == Some(RENDERER_PROTOCOL)
+    )
+}
+
+/// Only existing renderer events may cross the process boundary.
+pub(crate) fn valid_renderer_event(index: u32, name: &str, payload: &serde_json::Value) -> bool {
+    let label = format!("grid-{index}");
+    let index_text = index.to_string();
+    let valid_url = || {
+        payload["url"].as_str().is_some_and(|url| !url.is_empty() && url.len() <= 8192)
+    };
+    match name {
+        "grid-child-focus" | "grid-child-blur" => {
+            payload["index"].as_u64() == Some(u64::from(index))
+        }
+        "tab-navigated" | "new-tab-request" => {
+            payload["id"].as_str() == Some(label.as_str()) && valid_url()
+        }
+        "grid-load-failed" => {
+            payload["index"].as_str() == Some(index_text.as_str()) && valid_url()
+        }
+        "open-terminal" => payload.is_null(),
+        "note-saved" => payload.is_string(),
+        "artifact-collected" => payload.is_object(),
+        _ => false,
+    }
+}
+
 /// 主进程 → 子进程 命令。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "cmd", rename_all = "snake_case")]
@@ -242,6 +302,31 @@ pub fn read_wire<R: std::io::BufRead>(r: &mut R) -> std::io::Result<Option<Wire>
 #[cfg(test)]
 mod framing_tests {
     use super::*;
+    #[test]
+    fn renderer_ready_and_event_route_are_exact() {
+        use serde_json::json;
+        let ready = renderer_ready(2);
+        assert!(is_renderer_ready(2, &ready));
+        assert!(!is_renderer_ready(3, &ready));
+        assert!(!is_renderer_ready(2, &Wire::ok(1)));
+        assert!(valid_renderer_event(2, "tab-navigated", &json!({"id":"grid-2","url":"about:blank"})));
+        assert!(!valid_renderer_event(2, "tab-navigated", &json!({"id":"tab-2","url":"about:blank"})));
+        assert!(!valid_renderer_event(2, "grid-load-failed", &json!({"index":"3","url":"about:blank"})));
+        assert!(!valid_renderer_event(2, "renderer-ready", &json!({"index":2})));
+        assert!(!valid_renderer_event(2, "arbitrary-host-event", &json!(null)));
+        assert!(valid_renderer_event(2, "open-terminal", &json!(null)));
+    }
+
+    #[test]
+    fn invalid_native_geometry_is_rejected() {
+        let rect = IpcRect { x: -30000.0, y: 10.0, w: 800.0, h: 600.0 };
+        assert!(rect.validate().is_ok());
+        assert!(IpcRect { w: f64::NAN, ..rect }.validate().is_err());
+        assert!(IpcRect { h: 0.0, ..rect }.validate().is_err());
+        assert!(IpcRect { x: f64::INFINITY, ..rect }.validate().is_err());
+        assert!(IpcRect { w: 32769.0, ..rect }.validate().is_err());
+    }
+
     #[test]
     fn worker_route_and_sequence_are_fenced_before_native_dispatch() {
         let mut fence = GridRequestFence::default();

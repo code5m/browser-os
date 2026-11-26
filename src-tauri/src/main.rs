@@ -555,6 +555,7 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
                 std::process::exit(1);
             }
         };
+        let mut initial_writer = writer.lock().unwrap();
         let _ = CHILD_WRITER.set(writer.clone());
 
         // 插件事件（宫格 webview 内导航完成 / window.open）→ 主进程。
@@ -565,6 +566,10 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
                     Ok(v) => v,
                     Err(_) => return,
                 };
+                let label = format!("grid-{index}");
+                if payload.get("id").and_then(|id| id.as_str()) != Some(label.as_str()) {
+                    return;
+                }
                 match payload.get("type").and_then(|t| t.as_str()) {
                     Some("newWindowRequested") => {
                         if let Some(url) = payload.get("url").and_then(|u| u.as_str()) {
@@ -572,7 +577,7 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
                                 &mut *w.lock().unwrap(),
                                 &grid_ipc::Wire::Event {
                                     name: "new-tab-request".to_string(),
-                                    payload: serde_json::json!({ "url": url }),
+                                    payload: serde_json::json!({ "id": label, "url": url }),
                                 },
                             );
                         }
@@ -633,6 +638,11 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
                 );
             });
         }
+
+        if grid_ipc::write_wire(&mut *initial_writer, &grid_ipc::renderer_ready(index)).is_err() {
+            std::process::exit(1);
+        }
+        drop(initial_writer);
 
         // 命令循环：Request → 本地执行 → Response。主进程断开（EOF/错误）→ 退出，
         // 避免主进程退出后残留置顶孤儿窗口。
@@ -768,39 +778,39 @@ fn dispatch_grid_cmd(
             }
         }
         GridCmd::UpdateRect { id, rect } => {
+            rect.validate()?;
             // 注意用 get_window 而非 get_webview_window：后者在本场景返回 None
             // （实测），插件 host_window() 同样走 get_window。窗口操作 Window 都有。
             let win = app
                 .get_window(host_label)
                 .ok_or_else(|| "子进程壳窗口不存在".to_string())?;
-            win.set_position(tauri::PhysicalPosition::new(rect.x as i32, rect.y as i32))
-                .map_err(|e| format!("set_position 失败: {e}"))?;
-            win.set_size(tauri::PhysicalSize::new(
-                (rect.w as u32).max(1),
-                (rect.h as u32).max(1),
-            ))
-            .map_err(|e| format!("set_size 失败: {e}"))?;
-            // 关键：显式把宫格 webview 铺满壳窗口。创建时是 400x300 + auto_resize，
-            // 但 GDK_BACKEND=x11 下 auto_resize 不可靠（WebKitGTK size_allocate
-            // 老问题），webview 会保持小尺寸/漂移（实测"大白壳+小内容"）。
-            // rect 是屏幕绝对物理坐标，webview 用相对壳窗口的逻辑坐标 (0,0,w,h)。
-            let scale = win.scale_factor().unwrap_or(1.0);
-            let lw = (rect.w / scale).max(1.0);
-            let lh = (rect.h / scale).max(1.0);
-            {
-                use tauri_plugin_browser_tabs::{LogicalRect, TabManagerState};
+            // A successful native receipt requires every layout stage.
+            let result = (|| -> Result<(), String> {
+                win.set_position(tauri::PhysicalPosition::new(rect.x as i32, rect.y as i32))
+                    .map_err(|e| format!("set_position 失败: {e}"))?;
+                win.set_size(tauri::PhysicalSize::new(rect.w as u32, rect.h as u32))
+                    .map_err(|e| format!("set_size 失败: {e}"))?;
+                let scale = win.scale_factor().map_err(|e| format!("scale_factor 失败: {e}"))?;
+                if !scale.is_finite() || scale <= 0.0 {
+                    return Err("GRID_NATIVE_SCALE_INVALID".into());
+                }
+                let lw = (rect.w / scale).max(1.0);
+                let lh = (rect.h / scale).max(1.0);
                 let manager = app.state::<TabManagerState>();
-                let _ = manager.update_rect(&id, LogicalRect::new(0.0, 0.0, lw, lh));
+                manager.update_rect(&id, LogicalRect::new(0.0, 0.0, lw, lh))
+                    .map_err(|e| format!("GRID_NATIVE_LAYOUT_FAILED:{e}"))?;
+                win.show().map_err(|e| format!("show 失败: {e}"))?;
+                app.state::<AppState>().child_layouts.lock().unwrap()
+                    .insert(id.clone(), (0.0, 0.0, lw, lh));
+                Ok(())
+            })();
+            if result.is_err() {
+                app.state::<AppState>().child_layouts.lock().unwrap().remove(&id);
+                if let Err(error) = win.hide() {
+                    return Err(format!("GRID_NATIVE_LAYOUT_HIDE_FAILED:{error}"));
+                }
             }
-            // 记录到 child_layouts：子进程的 layout enforcer 每 400ms 重放纠偏
-            // （GTK 布局循环会把子 webview 拉回"自然位置"，与主进程页签同款问题）
-            app.state::<AppState>()
-                .child_layouts
-                .lock()
-                .unwrap()
-                .insert(id, (0.0, 0.0, lw, lh));
-            win.show().map_err(|e| format!("show 失败: {e}"))?;
-            Ok(())
+            result
         }
         GridCmd::HideWindow { .. } => {
             let win = app
@@ -828,15 +838,12 @@ fn dispatch_grid_cmd(
                 .map_err(|e| format!("set_zoom {id} 失败: {e}"))
         }
         GridCmd::CloseTab { id } => {
-            app.state::<AppState>()
-                .child_layouts
-                .lock()
-                .unwrap()
-                .remove(&id);
             let manager = app.state::<TabManagerState>();
             match manager.close_tab(&id) {
-                Ok(()) => Ok(()),
-                Err(tauri_plugin_browser_tabs::BrowserTabError::TabNotFound(_)) => Ok(()),
+                Ok(()) | Err(tauri_plugin_browser_tabs::BrowserTabError::TabNotFound(_)) => {
+                    app.state::<AppState>().child_layouts.lock().unwrap().remove(&id);
+                    Ok(())
+                }
                 Err(e) => Err(format!("close_tab {id} 失败: {e}")),
             }
         }

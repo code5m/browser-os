@@ -509,6 +509,11 @@ pub fn grid_position_blocking(
     height: f64,
 ) -> Result<(), String> {
     require_grid_platform()?;
+    if index >= MAX_GRID || ![x, y, width, height].iter().all(|value| value.is_finite())
+        || width < 0.0 || height < 0.0
+    {
+        return Err("GRID_NATIVE_RECT_INVALID".into());
+    }
     // Repeated suspend/blur notifications must not wake a cell that is already
     // hibernated. A positive/visible rectangle below is the explicit resume path.
     if x <= -20000.0
@@ -521,27 +526,14 @@ pub fn grid_position_blocking(
     }
     ensure_grid_child(&app, index)?;
     let label = format!("grid-{index}");
-    // 后端去重：仅"rect 相同且 <50ms"才丢弃（防 IPC 洪泛），rect 变了必须应用
-    {
-        let state = app.state::<AppState>();
-        let mut last = state.last_position_at.lock().unwrap();
-        let now = std::time::Instant::now();
-        if let Some((t, lx, ly, lw, lh)) = last.get(&label) {
-            let same_rect = (lx - x).abs() < 0.5
-                && (ly - y).abs() < 0.5
-                && (lw - width).abs() < 0.5
-                && (lh - height).abs() < 0.5;
-            if same_rect && now.duration_since(*t).as_millis() < 50 {
-                return Ok(());
-            }
-        }
-        last.insert(label.clone(), (now, x, y, width, height));
-    }
+    // Do not return success from a speculative position cache. Existing
+    // native move/visibility coalescers remain in charge of rate limiting.
     let state = app.state::<AppState>();
     let mgr = &state.grid_manager;
     let rect = mgr
         .abs_rect((x, y, width, height))
         .ok_or_else(|| "主窗不可用，无法换算屏幕坐标".to_string())?;
+    rect.validate()?;
     mgr.record_rect(index as u32, (x, y, width, height));
     // Grid suspend uses the established off-screen hide contract (x=-30000,
     // unchanged cell dimensions); record it as explicitly hidden so the adaptive

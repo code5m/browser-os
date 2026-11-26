@@ -194,6 +194,7 @@ impl GridLifecycle {
     }
 
     pub(super) fn retire(&self, index: u32, child: GridChildHandle) {
+        child.comms.revoke_owner(child.child.id());
         *self.retiring.lock().unwrap().entry(index).or_insert(0) += 1;
         self.retiring_total.fetch_add(1, Ordering::SeqCst);
         self.retired
