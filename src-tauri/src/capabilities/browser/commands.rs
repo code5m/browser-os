@@ -1859,6 +1859,7 @@ mod capture_storage_tests {
     fn renderer_capture_recovery_requires_unknown_native_outcome() {
         let mut owner = capture_fixture();
         let slot = owner.slot.as_mut().unwrap();
+        slot.receipt.mode = CaptureMode::CurrentDocument;
         slot.renderer_binding = Some(crate::grid_ipc::RendererBinding {
             index: crate::grid_ipc::tab_renderer_index("tab-1").unwrap(),
             owner: (42, 1), generation: 2, navigation_revision: 0,

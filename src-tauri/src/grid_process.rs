@@ -1366,7 +1366,7 @@ impl GridProcessManager {
         loop {
             if self.lifecycle.is_stopping() || comms.closing.load(Ordering::SeqCst) {
                 comms.pending.lock().unwrap().remove(&seq);
-                return Err("GRID_SHUTDOWN_IN_PROGRESS".into());
+                return Err("GRID_REQUEST_OUTCOME_UNKNOWN: shutdown after dispatch".into());
             }
             let remaining = deadline.saturating_duration_since(std::time::Instant::now());
             if remaining.is_zero() {
@@ -1758,7 +1758,12 @@ impl GridProcessManager {
                     let live = state.tabs.lock().unwrap().contains_key(&id);
                     if live && !state.shutdown_requested.load(Ordering::Acquire) {
                         if let Ok(raw) = serde_json::from_value::<crate::bridge::RawResourceEvent>(payload["resource"].clone()) {
-                            crate::bridge::on_resource_received(&app, &id, raw);
+                            if raw.url.len() <= 8192
+                                && raw.method.as_ref().is_none_or(|v| v.len() <= 32)
+                                && raw.mime.as_ref().is_none_or(|v| v.len() <= 256)
+                            {
+                                crate::bridge::on_resource_received(&app, &id, raw);
+                            }
                         }
                     }
                 }

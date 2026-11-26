@@ -75,7 +75,7 @@ fn fill(app: &AppHandle, id: &String, origin: &str, username: &str, password: &s
     let (send, receive) = std::sync::mpsc::sync_channel(1);
     manager.eval_result(id, js, move |value| { let _ = send.send(value); })
         .map_err(|_| "CREDENTIAL_FILL_OUTCOME_UNKNOWN")?;
-    let code = receive.recv_timeout(std::time::Duration::from_secs(3))
+    let code = receive.recv()
         .map_err(|_| "CREDENTIAL_FILL_OUTCOME_UNKNOWN")?
         .map_err(|_| "CREDENTIAL_FILL_OUTCOME_UNKNOWN")?;
     if !manager.is_current_capture_document(id, &document) {

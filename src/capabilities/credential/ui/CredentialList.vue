@@ -62,7 +62,8 @@ const MESSAGES: Record<string, string> = {
   CROSS_ORIGIN_IFRAME_UNSUPPORTED: "登录框位于跨域 iframe，暂不支持",
   KEYRING_READ_FAILED: "读取系统密钥库失败，未填充",
   CREDENTIAL_NOT_FOUND: "账号句柄已失效，请重新打开账号列表",
-  FILL_FAILED: "填充失败，未填充",
+  FILL_FAILED: "填充失败，未能确认填写结果",
+  FILL_OUTCOME_UNKNOWN: "填写结果尚未确认，请检查网页，不要重复点击填充",
 };
 
 async function fill(item: BrowserCredentialItem) {

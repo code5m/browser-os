@@ -1115,7 +1115,7 @@ impl GridProcessManager {
         loop {
             if let Err(error) = self.lifecycle.check() {
                 comms.pending.lock().unwrap().remove(&seq);
-                return Err(error);
+                return Err(format!("GRID_REQUEST_OUTCOME_UNKNOWN: {error}"));
             }
             let remaining = deadline.saturating_duration_since(std::time::Instant::now());
             if remaining.is_zero() {
@@ -1565,7 +1565,12 @@ impl GridProcessManager {
                     let live = state.tabs.lock().unwrap().contains_key(&id);
                     if live && !state.shutdown_requested.load(Ordering::Acquire) {
                         if let Ok(raw) = serde_json::from_value::<crate::bridge::RawResourceEvent>(payload["resource"].clone()) {
-                            crate::bridge::on_resource_received(&app, &id, raw);
+                            if raw.url.len() <= 8192
+                                && raw.method.as_ref().is_none_or(|v| v.len() <= 32)
+                                && raw.mime.as_ref().is_none_or(|v| v.len() <= 256)
+                            {
+                                crate::bridge::on_resource_received(&app, &id, raw);
+                            }
                         }
                     }
                 }

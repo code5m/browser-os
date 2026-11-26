@@ -643,6 +643,13 @@ mod browser_credential_tests {
     }
 
     #[test]
+    fn autofill_template_values_are_not_reinterpreted_as_markers() {
+        let script = build_autofill_script("https://example.test", "__PASSWORD__", "fictional-secret");
+        assert!(script.contains("var U = \"__PASSWORD__\";"));
+        assert!(script.contains("var P = \"fictional-secret\";"));
+    }
+
+    #[test]
     fn autofill_script_escapes_secrets_and_never_submits() {
         let pw = "Fake\"\\Pass\nword";
         let js = build_autofill_script("https://sql.ainfinit.com", "test_user_001", pw);
