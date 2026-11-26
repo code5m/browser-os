@@ -133,6 +133,9 @@ pub(crate) fn valid_renderer_event(index: u32, name: &str, payload: &serde_json:
             && payload["id"].as_str() == Some(label.as_str())
             && payload["page_url"].as_str().is_some_and(|url| url.len() <= 8192)
             && payload["items"].as_array().is_some_and(|items| items.len() <= 100),
+        "browser-tabs://shell-shortcut" => is_tab_renderer(index)
+            && payload["id"].as_str() == Some(label.as_str())
+            && matches!(payload["action"].as_str(), Some("immersive" | "compact" | "address")),
         "open-terminal" => payload.is_null(),
         "note-saved" => payload.is_string(),
         "artifact-collected" => payload.is_object(),
@@ -461,6 +464,11 @@ mod framing_tests {
         assert!(!valid_renderer_event(2, "renderer-ready", &json!({"index":2})));
         assert!(!valid_renderer_event(2, "arbitrary-host-event", &json!(null)));
         assert!(valid_renderer_event(2, "open-terminal", &json!(null)));
+        let tab = tab_renderer_index("tab-2").unwrap();
+        assert!(valid_renderer_event(tab, "browser-tabs://shell-shortcut", &json!({"id":"tab-2","action":"address"})));
+        assert!(!valid_renderer_event(tab, "browser-tabs://shell-shortcut", &json!({"id":"tab-3","action":"address"})));
+        assert!(!valid_renderer_event(tab, "browser-tabs://shell-shortcut", &json!({"id":"tab-2","action":"arbitrary"})));
+        assert!(!valid_renderer_event(2, "browser-tabs://shell-shortcut", &json!({"id":"grid-2","action":"address"})));
     }
 
     #[test]

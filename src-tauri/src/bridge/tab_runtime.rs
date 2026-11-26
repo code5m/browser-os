@@ -1069,8 +1069,9 @@ pub async fn eval_in_tab(
     crate::shared::native_legacy_policy::require_main(&webview, "eval_in_tab")?;
     crate::shared::native_legacy_policy::bound_text("eval_in_tab", "id", &id)?;
     crate::shared::native_legacy_policy::bound_text("eval_in_tab", "js", &js)?;
+    let binding = capture_eval_binding(&app, &id)?;
     TAB_EVAL_WORKERS
-        .run(move || eval_in_tab_blocking(app, id, js))
+        .run(move || eval_in_tab_blocking(app, id, js, binding))
         .await
 }
 
@@ -1086,21 +1087,33 @@ pub(crate) fn eval_in_tab_sync(
     crate::shared::native_legacy_policy::bound_text("eval_in_tab", "id", &id)?;
     crate::shared::native_legacy_policy::bound_text("eval_in_tab", "js", &js)?;
 
-    eval_in_tab_blocking(app, id, js)
+    let binding = capture_eval_binding(&app, &id)?;
+    eval_in_tab_blocking(app, id, js, binding)
 }
 
-fn eval_in_tab_blocking(app: AppHandle, id: String, js: String) -> Result<String, String> {
+fn capture_eval_binding(app: &AppHandle, id: &str)
+    -> Result<Option<crate::grid_ipc::RendererBinding>, String>
+{
+    let Some(index) = super::isolated_tabs::route(id) else { return Ok(None); };
+    let state = app.state::<AppState>();
+    if state.hibernated_tabs.lock().unwrap().contains(id) {
+        return Err("TAB_RENDERER_HIBERNATED_ACTIVATE_FIRST".into());
+    }
+    state.grid_manager.renderer_binding(index).map(Some)
+}
+
+fn eval_in_tab_blocking(app: AppHandle, id: String, js: String,
+    binding: Option<crate::grid_ipc::RendererBinding>) -> Result<String, String> {
     if let Some(index) = grid_index_of(&id) {
         app.state::<AppState>()
             .grid_manager
             .request(index, GridCmd::Eval { id, js }, 10000)?;
         return Ok("ok".to_string());
     }
-    if let Some(index) = super::isolated_tabs::route(&id) {
-        // Trusted-main generic Eval is a page effect. It cannot bypass a
-        // prepared Browser mutation, concurrent lifecycle transition, or a
-        // renderer generation captured before the admission check.
-        let binding = app.state::<AppState>().grid_manager.renderer_binding(index)?;
+    if super::isolated_tabs::route(&id).is_some() {
+        // Capture the exact original owner before the worker admission.
+        // A delayed worker cannot select the replacement renderer.
+        let binding = binding.ok_or("TAB_RENDERER_DOCUMENT_STALE")?;
         let _owner = super::tab_mutation::reserve_internal()?;
         let _transition = reserve_tab_transition(&id)?;
         super::isolated_tabs::eval_bound(&app, &id, &js, binding)?;

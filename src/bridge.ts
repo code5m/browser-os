@@ -1166,6 +1166,9 @@ export const bridge = {
   // tab-N 主进程 WebView 恢复状态（有限预算；失败/耗尽可被前端提示和日志观测）。
   onTabRecovery: (cb: (d: TabRecoveryEvent) => void) =>
     listen<TabRecoveryEvent>("tab-recovery", (e) => cb(e.payload)),
+  // Only the native supervisor produces this advisory process-exit event.
+  onIsolatedRendererExited: (cb: (event: { id: string; exit_code: number }) => void) =>
+    listen<{ id: string; exit_code: number }>("isolated-tab-renderer-exited", (e) => cb(e.payload)),
 
   // ====== M1-4 默认浏览器接入（外部打开 URL 路由） ======
   // 拉取并清空后端 pending 队列（冷启动 argv / 单实例转发 / RunEvent::Opened

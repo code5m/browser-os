@@ -795,6 +795,11 @@ impl GridProcessManager {
                                                 "grid-child-focus" => {}
                                                 "grid-child-blur" => state.grid_manager.request_hide_for_blur_async(),
                                                 "renderer-resource" => {}
+                                                "browser-tabs://shell-shortcut" => {
+                                                    if payload["renderer_drop"] != true && comms_reader.is_current(generation) {
+                                                        let _ = app.emit_to("main", "browser-tabs://shell-shortcut", payload);
+                                                    }
+                                                }
                                                 "tab-title" | "browser-resources" if payload["renderer_drop"] == true => {}
                                                 "tab-title" | "browser-resources" => {
                                                     if comms_reader.is_current(generation) {
@@ -1966,6 +1971,19 @@ impl GridProcessManager {
                     }
                 }
                 payload["renderer_drop"] = serde_json::json!(drop_event);
+            }
+            "browser-tabs://shell-shortcut" => {
+                let id = crate::grid_ipc::renderer_label(index);
+                let allowed = child.document_ready && child.focused && !child.hidden
+                    && !child.blur_hidden && self.app().is_some_and(|app| {
+                        let state = app.state::<crate::bridge::AppState>();
+                        let active = state.active_tab.lock().unwrap().as_deref() == Some(id.as_str());
+                        let live = state.tabs.lock().unwrap().contains_key(&id);
+                        active && live && !state.shutdown_requested.load(Ordering::Acquire)
+                    });
+                // A valid delayed shortcut from an inactive renderer is an
+                // ignored observation, not a reason to disconnect that tab.
+                payload["renderer_drop"] = serde_json::json!(!allowed);
             }
             "grid-load-failed" => {
                 payload["renderer_generation"] = serde_json::json!(generation.to_string());

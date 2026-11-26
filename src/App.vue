@@ -236,6 +236,7 @@ onMounted(async () => {
   // 关闭入口统一走 browser.tabClose → closeTabNow（内部写入 recentlyClosed 内存栈）。
   // 不再挂接任何关闭拦截器 / 确认框（旧的关闭确认弹窗已撤销）。
   bridge.onTabRecovery((d) => browser.handleTabRecovery(d));
+  bridge.onIsolatedRendererExited((event) => { void browser.handleIsolatedRendererExited(event); });
   bridge.onNewTabRequest((u) => {
     setTimeout(() => browser.tabNew(u.url), 0);
   });

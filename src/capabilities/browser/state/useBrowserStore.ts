@@ -561,6 +561,20 @@ export const useBrowserStore = defineStore("browser", () => {
     }
     if (id === activeTabId.value && layout.mainView === "browser") url.value = navUrl;
   }
+  async function handleIsolatedRendererExited(event: { id: string; exit_code: number }) {
+    const tab = tabs.find(item => item.id === event.id);
+    if (!tab || !Number.isInteger(event.exit_code)) return;
+    try {
+      const view = await bridge.inspectRendererRecovery(event.id);
+      // Never treat a late native event as authority to close/reopen a new
+      // renderer. A failed observation cannot authorize an automatic retry.
+      if (view.renderer_recovery_target || !tabs.some(item => item === tab)) return;
+      layout.showToast("独立页签进程已退出：" + event.id + "。点击该页签可重新打开记录的网址，页内未保存状态可能丢失。");
+    } catch {
+      // Keep existing logical metadata. Normal user activation/recovery
+      // remains available; no automatic destructive action follows an event.
+    }
+  }
   function handleTabRecovery(event: TabRecoveryEvent) {
     const failureKind = classifyNativeTabLoadFailure(event.status, event.message);
     if (failureKind && (event.status === "load-failed" || !getRecentNativeTabFailure(event.id))) {
@@ -789,6 +803,7 @@ export const useBrowserStore = defineStore("browser", () => {
     setTitle,
     setNavigated,
     handleTabRecovery,
+    handleIsolatedRendererExited,
     getRecentNativeTabFailure,
     closeBrowser,
     setResources,

@@ -601,6 +601,16 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
                 std::process::exit(1);
             }
             let _ = RENDERER_REPORTS.set(send);
+            // Native GTK shortcut events already exist in the browser-tabs
+            // plugin. Reuse the bounded observation lane without making a
+            // GUI callback wait on the IPC writer or exposing a new command.
+            app.listen("browser-tabs://shell-shortcut", move |event| {
+                if let Ok(payload) = serde_json::from_str::<serde_json::Value>(event.payload()) {
+                    if grid_ipc::valid_renderer_event(index, "browser-tabs://shell-shortcut", &payload) {
+                        enqueue_renderer_report("browser-tabs://shell-shortcut", payload);
+                    }
+                }
+            });
         }
 
         // 插件事件（宫格 webview 内导航完成 / window.open）→ 主进程。

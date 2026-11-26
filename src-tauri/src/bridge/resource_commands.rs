@@ -300,14 +300,13 @@ fn scan_resources(app: &AppHandle, id: &str) -> Result<(), String> {
     // injecting generic JavaScript into a candidate for safe blank reclaim.
     if let Some(index) = super::isolated_tabs::route(id) {
         let state = app.state::<AppState>();
-        if state.tabs.lock().unwrap().get(id).is_none_or(|tab| tab.url == "about:blank")
-            || state.active_tab.lock().unwrap().as_deref() != Some(id)
-        {
+        let blank_or_missing = state.tabs.lock().unwrap().get(id).is_none_or(|tab| tab.url == "about:blank");
+        let active = state.active_tab.lock().unwrap().as_deref() == Some(id);
+        if blank_or_missing || !active {
             return Ok(());
         }
-        let Ok(_transition) = super::tab_runtime::reserve_tab_transition(id) else {
-            return Ok(());
-        };
+        // Observational polling does not monopolize the tab lifecycle owner.
+        // Parent/child identity and actual source URL checks fence reporting.
         // Single document-bound observation, not two separate Eval calls
         // which could run on different renderer generations.
         let binding = state.grid_manager.renderer_binding(index)?;
