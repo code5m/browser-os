@@ -23,68 +23,7 @@ fn admission_error(error: String) -> String {
     }
 }
 
-fn sensitive(text: &str) -> bool {
-    let lower = text.to_ascii_lowercase();
-    [
-        "api_key",
-        "apikey",
-        "password",
-        "authorization:",
-        "bearer ",
-        "private key",
-        "sk-",
-        "access_token",
-        "secret=",
-    ]
-    .iter()
-    .any(|item| lower.contains(item))
-}
-fn safe_text(text: &str) -> String {
-    text.lines()
-        .map(|line| {
-            if sensitive(line) {
-                "[credential-bearing line omitted]"
-            } else {
-                line
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-fn scrub(value: &mut Value, secrets: &[String]) {
-    match value {
-        Value::String(text) => {
-            *text = safe_text(text);
-            for secret in secrets.iter().filter(|secret| !secret.is_empty()) {
-                *text = text.replace(secret, "[redacted]");
-            }
-        }
-        Value::Array(items) => {
-            for item in items {
-                scrub(item, secrets);
-            }
-        }
-        Value::Object(items) => {
-            // JSON keys are untrusted MCP output too. A server can embed
-            // credentials in a property name, bypassing value-only masking.
-            let previous = std::mem::take(items);
-            for (index, (name, mut item)) in previous.into_iter().enumerate() {
-                scrub(&mut item, secrets);
-                let sensitive_name = sensitive(&name)
-                    || secrets
-                        .iter()
-                        .any(|secret| !secret.is_empty() && name.contains(secret));
-                let safe_name = if sensitive_name {
-                    format!("[redacted-key-{index}]")
-                } else {
-                    name
-                };
-                items.insert(safe_name, item);
-            }
-        }
-        _ => {}
-    }
-}
+use super::mcp_protocol::{self, sensitive, safe_text, scrub, RpcFrame};
 fn read_config(path: &Path) -> Result<String, String> {
     // Config sources come from a fixed set of workspace/owner paths. Never
     // follow a junction/symlink to a different file before authorizing it.
@@ -521,17 +460,10 @@ impl Session {
         self.send(json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}))?;
         loop {
             let value = self.recv_frame()?;
-            if value["id"] == json!(id) {
-                if value.get("error").is_some() {
-                    return Err("MCP_REMOTE_ERROR".into());
-                }
-                return value
-                    .get("result")
-                    .cloned()
-                    .ok_or("MCP_RESULT_MISSING".into());
-            }
-            if value.get("method").is_some() && value.get("id").is_some() {
-                self.send(json!({"jsonrpc":"2.0","id":value["id"],"error":{"code":-32601,"message":"Client requests unsupported"}}))?;
+            match mcp_protocol::classify_frame(value, id)? {
+                RpcFrame::Reply(result) => return Ok(result),
+                RpcFrame::ServerRequest(reply) => self.send(reply)?,
+                RpcFrame::Ignore => {},
             }
         }
     }
@@ -570,7 +502,7 @@ pub(crate) fn execute_cancelable(root: &Path, storage: &Path, request: Value, ca
     )?;
     session.cancellation = cancellation;
     let outcome = (|| -> Result<Value, String> {
-    let initialized = session.rpc(1, "initialize", json!({"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"BrowserOS","version":"0.1.0"}}));
+    let initialized = session.rpc(1, "initialize", mcp_protocol::initialize_params());
     #[cfg(test)]
     if let Err(ref error) = initialized {
         // Test-only diagnostics; never leak keyring or config-supplied secrets.
@@ -583,21 +515,10 @@ pub(crate) fn execute_cancelable(root: &Path, storage: &Path, request: Value, ca
             session.process.exit_code()
         );
     }
-    initialized?;
+    mcp_protocol::validate_initialize(&initialized?)?;
     session.send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}))?;
-    let mut result = if action == "mcp_tools" {
-        session.rpc(2, "tools/list", json!({}))?
-    } else {
-        let tool = request["tool"]
-            .as_str()
-            .filter(|tool| tool.len() <= 200)
-            .ok_or("MCP_TOOL_REQUIRED")?;
-        session.rpc(
-            2,
-            "tools/call",
-            json!({"name":tool,"arguments":request.get("arguments").cloned().unwrap_or(json!({}))}),
-        )?
-    };
+    let (method, params) = mcp_protocol::tool_request(action, &request)?;
+    let mut result = session.rpc(2, method, params)?;
     scrub(&mut result, &session.secrets);
     Ok(json!({"result":result,"untrusted":true,"sandbox":"appcontainer-no-network"}))
     })();

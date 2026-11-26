@@ -11,34 +11,7 @@ use std::sync::{Arc, atomic::AtomicBool};
 const MAX_READ: usize = 128 * 1024;
 const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
 
-fn sensitive(text: &str) -> bool {
-    let low = text.to_ascii_lowercase();
-    [
-        "api_key",
-        "apikey",
-        "password",
-        "authorization:",
-        "bearer ",
-        "private key",
-        "sk-",
-        "access_token",
-        "secret=",
-    ]
-    .iter()
-    .any(|secret| low.contains(secret))
-}
-fn safe_text(text: &str) -> String {
-    text.lines()
-        .map(|line| {
-            if sensitive(line) {
-                "[credential-bearing line omitted]"
-            } else {
-                line
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
+use super::mcp_protocol::{sensitive, safe_text};
 fn read(path: &Path, allowed: &Path) -> Result<String, String> {
     let data = crate::capabilities::workspace::safe_paths::read_regular(
         path,
