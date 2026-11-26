@@ -1294,6 +1294,31 @@ mod tests {
         let requested=super::super::coding::execute(&root,&storage,json!({"action":"chat","message":"check code","mode":"build"}),|_,_|Ok(json!({"role":"assistant","tool_calls":[{"id":"diagnostic-request","type":"function","function":{"name":"request_operation","arguments":"{\"kind\":\"code_diagnostics\",\"input\":{\"path\":\"main.rs\"}}"}}]}))).unwrap();
         assert_eq!(requested["status"], "approval_required");
         assert_eq!(fs::read_to_string(root.join("main.rs")).unwrap(), content);
+        let id = &requested["session_id"];
+        let operation = &requested["operations"][0]["id"];
+        // A frontend result cannot replace the exact pending approval.
+        assert_eq!(
+            super::super::coding::execute(
+                &root,
+                &storage,
+                json!({"action":"resolve_operation","session_id":id,"operation_id":operation,"status":"succeeded","result":"unapproved fixture result"}),
+                |_, _| panic!("recording must not call a model"),
+            )
+            .unwrap_err(),
+            "AGENT_OPERATION_NOT_PENDING"
+        );
+        let claimed = super::super::coding::execute(
+            &root,
+            &storage,
+            json!({"action":"claim_operation","session_id":id,"operation_id":operation}),
+            |_, _| panic!("approval must not call a model"),
+        )
+        .unwrap();
+        assert_eq!(claimed["operations"][0]["status"], "executing");
+        assert_eq!(
+            claimed["operations"][0]["execution"]["approval"]["tool_name"],
+            "coding.code_diagnostics"
+        );
         let server = profiles()
             .into_iter()
             .next()
@@ -1304,9 +1329,14 @@ mod tests {
             .is_some_and(|items| !items.is_empty()));
         assert_eq!(diagnosed["document_hash"].as_str().unwrap().len(), 64);
         let recorded=json!({"path":"main.rs","diagnostics":diagnosed["diagnostics"],"document_hash":diagnosed["document_hash"],"compilation_verified":false}).to_string();
-        let id = &requested["session_id"];
-        let operation = &requested["operations"][0]["id"];
-        super::super::coding::execute(&root,&storage,json!({"action":"resolve_operation","session_id":id,"operation_id":operation,"status":"succeeded","result":recorded}),|_,_|panic!("recording must not call a model")).unwrap();
+        let reviewed = super::super::coding::execute(
+            &root,
+            &storage,
+            json!({"action":"resolve_operation","session_id":id,"operation_id":operation,"status":"succeeded","result":recorded}),
+            |_, _| panic!("recording must not call a model"),
+        )
+        .unwrap();
+        assert_eq!(reviewed["operations"][0]["status"], "succeeded");
         let mut rounds = 0;
         let repaired=super::super::coding::execute(&root,&storage,json!({"action":"chat","session_id":id,"message":"use reviewed diagnostics","mode":"build"}),|messages,_|{
             rounds+=1;

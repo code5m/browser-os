@@ -524,13 +524,39 @@ console.log("PANEL_OWNER_ACTIONS=PASS");
   const { browser, native, lifecycle } = fixture();
   browser.tabs.push({ id: "closed", url: "https://closed.test" }, { id: "retry", url: "https://retry.test" });
   browser.activeTabId = "closed";
-  native.tabClose = async (id) => { if (id === "retry") throw Error("native close unavailable"); };
+  native.tabClose = async (id) => { if (id === "retry") throw Error("TAB_MUTATION_TERMINAL_FAILURE:native close unavailable"); };
   await assert.rejects(lifecycle.deactivate(), /BROWSER_CLEANUP_FAILED/);
   assert.deepEqual(Array.from(browser.tabs, tab => tab.id), ["retry"]);
   assert.equal(browser.activeTabId, "retry");
-  native.tabClose = async () => {};
+  assert.equal(browser.tabNativeState, "unknown");
+  let retried = 0;
+  native.tabClose = async () => { retried++; };
+  await assert.rejects(lifecycle.deactivate(), /TAB_NATIVE_OPERATION_STALLED/);
+  assert.equal(retried, 0, "cleanup cannot retry before authoritative reconciliation");
+  let sequence = "12";
+  const ownerView = () => ({epoch:"cleanup-epoch", next_sequence:sequence, internal_active:false,
+    active_known:true, active_tab_id:"retry", receipt:null});
+  native.inspectTabMutation = async () => ownerView();
+  native.fenceTabMutation = async (epoch, expected) => {
+    assert.equal(epoch, "cleanup-epoch"); assert.equal(expected, sequence);
+    sequence = "14"; return ownerView();
+  };
+  let reads = 0;
+  native.reconcileTabList = async () => { reads++; return [{id:"retry", url:"https://retry.test"}]; };
+  await browser.recoverNativeTabs();
+  assert.equal(browser.tabNativeState, "unknown", "a skipped admission sequence is not our fence");
+  assert.equal(reads, 0, "no list may be adopted after an invalid fence");
+  await assert.rejects(lifecycle.deactivate(), /TAB_NATIVE_OPERATION_STALLED/);
+  native.fenceTabMutation = async (epoch, expected) => {
+    assert.equal(epoch, "cleanup-epoch"); assert.equal(expected, "14");
+    sequence = "15"; return ownerView();
+  };
+  await browser.recoverNativeTabs();
+  assert.equal(browser.tabNativeState, "ready");
+  assert.equal(reads, 1);
   await lifecycle.deactivate();
-  assert.equal(browser.tabs.length, 0, "a failed cleanup remains retryable");
+  assert.equal(retried, 1);
+  assert.equal(browser.tabs.length, 0, "a reconciled failed cleanup remains retryable");
 }
 {
   const { layout, browser, native } = fixture();

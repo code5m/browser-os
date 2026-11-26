@@ -114,8 +114,12 @@ export const useBrowserStore = defineStore("browser", () => {
         return;
       }
       if (!current) {
-        view = await bridge.fenceTabMutation(view.epoch, view.next_sequence);
-        if (view.receipt || view.internal_active) throw new Error("TAB_MUTATION_RECOVERY_CHANGED");
+        const epoch = view.epoch;
+        const sequence = incrementAdmissionSequence(view.next_sequence);
+        view = await bridge.fenceTabMutation(epoch, view.next_sequence);
+        // Require exactly our own fence, not an intervening native admission.
+        if (view.epoch !== epoch || view.next_sequence !== sequence ||
+            view.receipt || view.internal_active) throw new Error("TAB_MUTATION_RECOVERY_CHANGED");
       }
       if (!view.active_known) throw new Error("TAB_NATIVE_ACTIVE_UNKNOWN");
       const actual = await bridge.reconcileTabList();
@@ -154,6 +158,7 @@ export const useBrowserStore = defineStore("browser", () => {
       nextTick(syncViewVisibility);
     } catch {
       tabRecoveryRequired.value = true;
+      tabNativeState.value = "unknown";
       tabRecoveryMessage.value = "控制面未确认，原生执行权仍受保护；可再次查询，必要时正常退出应用后重新打开。";
     } finally { tabRecoveryBusy.value = false; }
   }
