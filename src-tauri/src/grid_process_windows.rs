@@ -525,6 +525,11 @@ impl GridProcessManager {
                                                         let _ = app.emit_to("main", "browser-tabs://shell-shortcut", payload);
                                                     }
                                                 }
+                                                "new-tab-request" => {
+                                                    if payload["renderer_drop"] != true && comms_reader.is_current(generation) {
+                                                        let _ = app.emit_to("main", "new-tab-request", payload);
+                                                    }
+                                                }
                                                 "tab-title" | "browser-resources" if payload["renderer_drop"] == true => {}
                                                 "tab-title" | "browser-resources" => {
                                                     if comms_reader.is_current(generation) {
@@ -1846,6 +1851,23 @@ impl GridProcessManager {
                     }
                 }
                 payload["renderer_drop"] = serde_json::json!(drop_event);
+            }
+            "new-tab-request" => {
+                let allowed = self.app().is_some_and(|app| {
+                    let state = app.state::<crate::bridge::AppState>();
+                    let logical_live = if crate::grid_ipc::is_tab_renderer(index) {
+                        child.document_ready && state.tabs.lock().unwrap()
+                            .contains_key(&crate::grid_ipc::renderer_label(index))
+                    } else {
+                        (index as usize) < crate::bridge::MAX_GRID
+                    };
+                    logical_live && !state.shutdown_requested.load(Ordering::Acquire)
+                        && payload["url"].as_str().is_some_and(|url|
+                            crate::grid_ipc::popup_address_supported(url, child.last_url.as_deref()))
+                });
+                // Background pages retain the existing popup policy; stale,
+                // unpublished, shutdown and unsupported sources cannot open.
+                payload["renderer_drop"] = serde_json::json!(!allowed);
             }
             "browser-tabs://shell-shortcut" => {
                 let id = crate::grid_ipc::renderer_label(index);

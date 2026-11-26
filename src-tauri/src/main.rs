@@ -631,13 +631,17 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
                 match payload.get("type").and_then(|t| t.as_str()) {
                     Some("newWindowRequested") => {
                         if let Some(url) = payload.get("url").and_then(|u| u.as_str()) {
-                            let _ = grid_ipc::write_wire(
-                                &mut *w.lock().unwrap(),
-                                &grid_ipc::Wire::Event {
-                                    name: "new-tab-request".to_string(),
-                                    payload: serde_json::json!({ "id": label, "url": url }),
-                                },
-                            );
+                            let report = serde_json::json!({ "id": label, "url": url });
+                            // Oversized/invalid popup observations are denied,
+                            // not sent as malformed frames that disconnect a host.
+                            if grid_ipc::valid_renderer_event(index, "new-tab-request", &report) {
+                                let _ = grid_ipc::write_wire(
+                                    &mut *w.lock().unwrap(),
+                                    &grid_ipc::Wire::Event {
+                                        name: "new-tab-request".to_string(), payload: report,
+                                    },
+                                );
+                            }
                         }
                     }
                     Some("navigationFinished") => {

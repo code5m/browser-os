@@ -105,6 +105,23 @@ pub(crate) fn is_renderer_ready(index: u32, frame: &Wire) -> bool {
     )
 }
 
+/// A denied popup is not a corrupt renderer connection. The parent may
+/// reopen an ordinary address but cannot transfer a transient document,
+/// opener, script URL, or remote-page access to local files.
+pub(crate) fn popup_address_supported(address: &str, source: Option<&str>) -> bool {
+    if address.is_empty() || address.len() > 8192 || address.trim() != address {
+        return false;
+    }
+    let Ok(url) = url::Url::parse(address) else { return false; };
+    match url.scheme() {
+        "http" | "https" => url.has_host(),
+        "about" => address == "about:blank",
+        "file" => source.and_then(|source| url::Url::parse(source).ok())
+            .is_some_and(|source| source.scheme() == "file"),
+        _ => false,
+    }
+}
+
 /// Only existing renderer events may cross the process boundary.
 pub(crate) fn valid_renderer_event(index: u32, name: &str, payload: &serde_json::Value) -> bool {
     let label = renderer_label(index);
