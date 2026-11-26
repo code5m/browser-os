@@ -141,6 +141,14 @@ pub fn execute(root: &Path, storage: &Path, request: Value) -> Result<Value, Str
     execute_cancelable(root, storage, request, Arc::new(AtomicBool::new(false)))
 }
 pub(crate) fn execute_cancelable(root: &Path, storage: &Path, request: Value, cancellation: Arc<AtomicBool>) -> Result<Value, String> {
+    execute_cancelable_with_admission(root, storage, request, cancellation, |_| Ok(()))
+}
+
+/// The native owner publishes intent only after local validation and
+/// immediately before starting an external MCP executable. The callback
+/// is host-only, not supplied by the request, model or server.
+pub(super) fn execute_cancelable_with_admission(root: &Path, storage: &Path, request: Value,
+    cancellation: Arc<AtomicBool>, before_spawn: impl FnOnce(&Value) -> Result<(), String>) -> Result<Value, String> {
     if !no_reparse_path(root) {
         return Err("CONTEXT_ROOT_INVALID".into());
     }
@@ -230,7 +238,7 @@ pub(crate) fn execute_cancelable(root: &Path, storage: &Path, request: Value, ca
         }
         "mcp_list" => Ok(super::coding_mcp_windows::discover(&root, storage)),
         "mcp_review" | "mcp_tools" | "mcp_call" => {
-            super::coding_mcp_windows::execute_cancelable(&root, storage, request, cancellation)
+            super::coding_mcp_windows::execute_cancelable_with_admission(&root, storage, request, cancellation, before_spawn)
         }
         _ => Err("CONTEXT_ACTION_UNKNOWN".into()),
     }

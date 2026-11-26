@@ -473,6 +473,14 @@ pub fn execute(root: &Path, storage: &Path, request: Value) -> Result<Value, Str
     execute_cancelable(root, storage, request, Arc::new(AtomicBool::new(false)))
 }
 pub(crate) fn execute_cancelable(root: &Path, storage: &Path, request: Value, cancellation: Arc<AtomicBool>) -> Result<Value, String> {
+    execute_cancelable_with_admission(root, storage, request, cancellation, |_| Ok(()))
+}
+
+/// The native owner publishes intent only after local validation and
+/// immediately before starting an external MCP executable. The callback
+/// is host-only, not supplied by the request, model or server.
+pub(super) fn execute_cancelable_with_admission(root: &Path, storage: &Path, request: Value,
+    cancellation: Arc<AtomicBool>, before_spawn: impl FnOnce(&Value) -> Result<(), String>) -> Result<Value, String> {
     if request["action"] == "mcp_review" {
         let root = root.canonicalize().map_err(|_| "CONTEXT_ROOT_INVALID")?;
         let config = resolved_config(&root, storage, &request)?;
@@ -489,11 +497,13 @@ pub(crate) fn execute_cancelable(root: &Path, storage: &Path, request: Value, ca
     let config = resolved_config(&root, storage, &request)?;
     let prepared = super::mcp_review::prepare(&root, storage, &request, config)?;
     super::mcp_review::authorize(&prepared, &request)?;
+    let (method, params) = mcp_protocol::tool_request(action, &request)?;
     let credentials = crate::framework::ai::mcp_credential_snapshot(
         storage,
         prepared.config["env_refs"].as_object(),
     )?;
     if cancellation.load(Ordering::Acquire) { return Err("MCP_CANCEL_REQUESTED".into()); }
+    before_spawn(&request)?;
     let mut session = Session::start_with_credentials(
         &root,
         &prepared.config,
@@ -517,7 +527,6 @@ pub(crate) fn execute_cancelable(root: &Path, storage: &Path, request: Value, ca
     }
     mcp_protocol::validate_initialize(&initialized?)?;
     session.send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}))?;
-    let (method, params) = mcp_protocol::tool_request(action, &request)?;
     let mut result = session.rpc(2, method, params)?;
     scrub(&mut result, &session.secrets);
     Ok(json!({"result":result,"untrusted":true,"sandbox":"appcontainer-no-network"}))
@@ -552,6 +561,16 @@ mod tests {
             request["approved_environment_names"] = review["environment_names"].clone();
         }
         super::execute(root, storage, request)
+    }
+
+    #[test]
+    fn missing_approval_never_calls_native_admission() {
+        let root = std::env::temp_dir().join(format!("browseros-mcp-admit-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&root).unwrap();
+        let result = execute_cancelable_with_admission(&root, &root, json!({"action":"mcp_call","tool":"fixture"}),
+            Arc::new(AtomicBool::new(false)), |_| panic!("invalid request must not admit a process"));
+        assert_eq!(result.unwrap_err(), "MCP_EXPLICIT_APPROVAL_REQUIRED");
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

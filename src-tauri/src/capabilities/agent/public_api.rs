@@ -187,15 +187,36 @@ pub(crate) fn dispatch_coding_request(
             execution.cancel_manual_before_dispatch()?;
             return Ok(cancelled_receipt());
         }
-        // The authenticated dispatch fence is the last durable write before
-        // calling the adapter. A crash before this fence is distinguishable
-        // from a crash after it; neither permits replay of the old Run.
-        execution.checkpoint_manual_mcp(&canonical, revision, &request)?;
+        // Validate config, review revision, credentials and method before
+        // publishing the effect fence. No error-string inference: only the
+        // native pre-spawn callback can establish that admission was attempted.
         let result_action = action.to_owned();
-        let result = super::coding_context::execute_cancelable(&canonical, storage, request, cancellation);
-        drop(lease);
+        let mut attempted = false;
+        let mut published = false;
+        let result = super::coding_context::execute_cancelable_with_admission(&canonical, storage, request, cancellation.clone(), |request| {
+            attempted = true;
+            execution.checkpoint_manual_mcp(&canonical, revision, request)?;
+            published = true;
+            Ok(())
+        });
+        if !attempted {
+            drop(lease);
+            execution.cancel_manual_before_dispatch()?;
+            // Preserve local validation errors for the UI; its receipt
+            // query can still recover the terminal no-dispatch evidence.
+            return if cancellation.load(std::sync::atomic::Ordering::Acquire) {
+                Ok(cancelled_receipt())
+            } else { result.and_then(|_| Err("AGENT_OPERATION_NOT_DISPATCHED".into())) };
+        }
+        if !published {
+            // A failed durable write may have published bytes. Do not
+            // overwrite its evidence or dispatch an external process.
+            drop(lease);
+            return result.and_then(|_| Err("AGENT_RUN_RECEIPT_INVALID".into()));
+        }
         let reported_success = result.as_ref().is_ok_and(|value| mcp_transport_reported_success(&result_action, value));
         execution.record_manual_mcp_return(&result, reported_success)?;
+        drop(lease);
         if reported_success {
             execution.finish(true)?;
         } else {
