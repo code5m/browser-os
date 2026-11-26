@@ -33,6 +33,9 @@ impl GridProcessManager {
     pub(crate) fn navigate_tab_renderer(&self, _index: u32, _url: &str) -> Result<(), String> {
         Err(unsupported())
     }
+    pub(crate) fn renderer_binding(&self, _index: u32) -> Result<crate::grid_ipc::RendererBinding, String> { Err(unsupported()) }
+    pub(crate) fn renderer_request_data(&self, _binding: crate::grid_ipc::RendererBinding, _cmd: GridCmd, _timeout_ms: u64) -> Result<Option<String>, String> { Err(unsupported()) }
+    pub(crate) fn retire_bound_tab_renderer(&self, _index: u32, _expected: (u32, u64)) -> Result<(), String> { Err(unsupported()) }
     pub(crate) fn start_tab_renderer(&self, _index: u32, _url: &str) -> Result<(), String> {
         Err(unsupported())
     }

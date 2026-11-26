@@ -726,11 +726,18 @@ impl GridProcessManager {
                                             match name.as_str() {
                                                 "grid-child-focus" => {}
                                                 "grid-child-blur" => state.grid_manager.request_hide_for_blur_async(),
+                                                "renderer-resource" => {}
+                                                "tab-title" | "browser-resources" if payload["renderer_drop"] == true => {}
+                                                "tab-title" | "browser-resources" => {
+                                                    if comms_reader.is_current(generation) {
+                                                        let _ = app.emit(&name, payload);
+                                                    }
+                                                }
                                                 "grid-load-failed" if crate::grid_ipc::is_tab_renderer(index) => {
                                                     let id = crate::grid_ipc::renderer_label(index);
                                                     let url = payload["url"].as_str().unwrap_or_default();
                                                     let error = payload["error"].as_str().unwrap_or("renderer load failed");
-                                                    crate::bridge::report_tab_load_failed(app, &id, url, error);
+                                                    crate::bridge::report_tab_load_failed(app, &id, url, if error.is_empty() { "renderer load failed" } else { "native renderer load failed" });
                                                 }
                                                 _ if comms_reader.is_current(generation) => { let _ = app.emit(&name, payload); }
                                                 _ => break,
@@ -898,6 +905,73 @@ impl GridProcessManager {
         }
         let children = self.children.lock().unwrap();
         children.get(&index).map(|child| child.comms.owner_snapshot()).transpose()
+    }
+
+    pub(crate) fn renderer_binding(&self, index: u32) -> Result<crate::grid_ipc::RendererBinding, String> {
+        if !crate::grid_ipc::is_tab_renderer(index) {
+            return Err("TAB_RENDERER_ROUTE_INVALID".into());
+        }
+        let children = self.children.lock().unwrap();
+        let child = children.get(&index).ok_or("TAB_RENDERER_DOCUMENT_UNAVAILABLE")?;
+        let owner = child.comms.owner_snapshot()?;
+        let generation = child.comms.generation.load(Ordering::SeqCst);
+        if !child.document_ready || !child.comms.is_current(generation) {
+            return Err("TAB_RENDERER_DOCUMENT_UNAVAILABLE".into());
+        }
+        Ok(crate::grid_ipc::RendererBinding {
+            index, owner, generation, navigation_revision: child.navigation_revision,
+        })
+    }
+
+    /// No data service may reconnect or replay on a replacement child.
+    pub(crate) fn renderer_request_data(
+        &self, binding: crate::grid_ipc::RendererBinding, cmd: GridCmd, timeout_ms: u64,
+    ) -> Result<Option<String>, String> {
+        let _operation = self.lifecycle.enter()?;
+        if !cmd.targets(binding.index) || self.renderer_binding(binding.index)? != binding {
+            return Err("TAB_RENDERER_DOCUMENT_STALE".into());
+        }
+        let comms = {
+            let children = self.children.lock().unwrap();
+            let child = children.get(&binding.index).ok_or("TAB_RENDERER_DOCUMENT_UNAVAILABLE")?;
+            if child.comms.owner_snapshot()? != binding.owner || child.navigation_revision != binding.navigation_revision {
+                return Err("TAB_RENDERER_DOCUMENT_STALE".into());
+            }
+            Arc::clone(&child.comms)
+        };
+        self.request_once_with(comms, binding.generation, &cmd, timeout_ms)
+    }
+
+    /// Recover only the exact original Child/Job, without the potentially
+    /// blocked visibility or writer locks. Keep the listener across recovery.
+    pub(crate) fn retire_bound_tab_renderer(
+        &self, index: u32, expected: (u32, u64),
+    ) -> Result<(), String> {
+        if !crate::grid_ipc::is_tab_renderer(index) || expected.0 == 0 {
+            return Err("TAB_RENDERER_ROUTE_INVALID".into());
+        }
+        let _operation = self.lifecycle.enter()?;
+        self.lifecycle.ensure_cleanup(Arc::clone(&self.children), Arc::clone(&self.listeners))?;
+        let _gate = self.lifecycle_lock.lock().unwrap();
+        self.lifecycle.check()?;
+        {
+            let mut children = self.children.lock().unwrap();
+            if let Some(child) = children.get(&index) {
+                if child.child.id() != expected.0
+                    || child.comms.spawn_epoch.load(Ordering::SeqCst) != expected.1
+                {
+                    return Err("TAB_RENDERER_RECOVERY_STALE".into());
+                }
+                let child = children.remove(&index).ok_or("TAB_RENDERER_RECOVERY_STALE")?;
+                self.lifecycle.retire(index, child);
+            } else if self.listeners.lock().unwrap().get(&index).is_some_and(|comms|
+                comms.spawn_epoch.load(Ordering::SeqCst) != expected.1) {
+                return Err("TAB_RENDERER_RECOVERY_STALE".into());
+            }
+        }
+        self.lifecycle.wait_route_retired_until(
+            index, std::time::Instant::now() + std::time::Duration::from_secs(5),
+        )
     }
 
     pub(crate) fn start_tab_renderer(&self, index: u32, url: &str) -> Result<(), String> {
@@ -1677,6 +1751,42 @@ impl GridProcessManager {
                     }
                 }
             },
+            "renderer-resource" => {
+                if let Some(app) = self.app() {
+                    let state = app.state::<crate::bridge::AppState>();
+                    let id = crate::grid_ipc::renderer_label(index);
+                    let live = state.tabs.lock().unwrap().contains_key(&id);
+                    if live && !state.shutdown_requested.load(Ordering::Acquire) {
+                        if let Ok(raw) = serde_json::from_value::<crate::bridge::RawResourceEvent>(payload["resource"].clone()) {
+                            crate::bridge::on_resource_received(&app, &id, raw);
+                        }
+                    }
+                }
+            }
+            "tab-title" | "browser-resources" => {
+                let id = crate::grid_ipc::renderer_label(index);
+                let url = if name == "tab-title" { payload["url"].as_str() } else { payload["page_url"].as_str() };
+                let mut drop_event = true;
+                if let Some(app) = self.app() {
+                    let state = app.state::<crate::bridge::AppState>();
+                    let is_active = state.active_tab.lock().unwrap().as_deref() == Some(id.as_str());
+                    let mut tabs = state.tabs.lock().unwrap();
+                    if let Some(tab) = tabs.get_mut(&id) {
+                        if !state.shutdown_requested.load(Ordering::Acquire)
+                            && url == Some(tab.url.as_str())
+                            && (name == "tab-title" || is_active)
+                        {
+                            drop_event = false;
+                            if name == "tab-title" {
+                                if let Some(title) = payload["title"].as_str() {
+                                    tab.title = title.to_owned();
+                                }
+                            }
+                        }
+                    }
+                }
+                payload["renderer_drop"] = serde_json::json!(drop_event);
+            }
             "grid-load-failed" => {
                 payload["renderer_generation"] = serde_json::json!(generation.to_string());
             }

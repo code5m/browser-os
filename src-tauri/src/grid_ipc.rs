@@ -57,7 +57,18 @@ pub(crate) fn renderer_label(index: u32) -> String {
     }
 }
 
-const RENDERER_PROTOCOL: &str = "browseros-renderer-v2";
+const RENDERER_PROTOCOL: &str = "browseros-renderer-v3";
+
+/// Parent-owned native identity, never supplied by a remote page or frontend.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RendererBinding {
+    pub index: u32,
+    pub owner: (u32, u64),
+    pub generation: u64,
+    pub navigation_revision: u64,
+}
+pub(crate) const MAX_RENDERER_CAPTURE_BYTES: usize = 32 * 1024 * 1024;
+pub(crate) const RENDERER_CAPTURE_CHUNK_BYTES: usize = 192 * 1024;
 
 pub(crate) fn renderer_ready(index: u32) -> Wire {
     Wire::Event {
@@ -93,6 +104,17 @@ pub(crate) fn valid_renderer_event(index: u32, name: &str, payload: &serde_json:
         "grid-load-failed" => {
             payload["index"].as_str() == Some(index_text.as_str()) && valid_url()
         }
+        "renderer-resource" => is_tab_renderer(index)
+            && payload["id"].as_str() == Some(label.as_str())
+            && payload["resource"].is_object(),
+        "tab-title" => is_tab_renderer(index)
+            && payload["id"].as_str() == Some(label.as_str())
+            && valid_url()
+            && payload["title"].as_str().is_some_and(|title| title.len() <= 8192),
+        "browser-resources" => is_tab_renderer(index)
+            && payload["id"].as_str() == Some(label.as_str())
+            && payload["page_url"].as_str().is_some_and(|url| url.len() <= 8192)
+            && payload["items"].as_array().is_some_and(|items| items.len() <= 100),
         "open-terminal" => payload.is_null(),
         "note-saved" => payload.is_string(),
         "artifact-collected" => payload.is_object(),
@@ -101,7 +123,7 @@ pub(crate) fn valid_renderer_event(index: u32, name: &str, payload: &serde_json:
 }
 
 /// 主进程 → 子进程 命令。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "cmd", rename_all = "snake_case")]
 pub enum GridCmd {
     /// 在子进程主窗内 add_child 创建宫格 webview（id 即 label，如 "grid-0"）。
@@ -126,6 +148,10 @@ pub enum GridCmd {
     ReadReplies {
         id: String,
     },
+    FillCredential { id: String, origin: String, username: String, password: String },
+    CaptureStart { id: String, ticket: String },
+    CaptureRead { id: String, ticket: String, offset: usize },
+    CaptureRelease { id: String, ticket: String },
     /// Read-only native WebView safety probe before discarding an empty Grid.
     /// Absence of an explicit safe response must fail closed.
     HibernationProbe {
@@ -148,16 +174,32 @@ pub enum GridCmd {
     Ping,
 }
 
+impl std::fmt::Debug for GridCmd {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("GridCmd(<private payload>)")
+    }
+}
+
 impl GridCmd {
     /// Each child owns exactly one renderer identity. A transport connection
     /// is not permission to address another WebView or create arbitrary tabs.
     pub(crate) fn targets(&self, index: u32) -> bool {
+        if matches!(self, Self::FillCredential { .. } | Self::CaptureStart { .. }
+            | Self::CaptureRead { .. } | Self::CaptureRelease { .. })
+            && !is_tab_renderer(index)
+        {
+            return false;
+        }
         let id = match self {
             Self::CreateTab { id, .. }
             | Self::UpdateRect { id, .. }
             | Self::HideWindow { id }
             | Self::Eval { id, .. }
             | Self::ReadReplies { id }
+            | Self::FillCredential { id, .. }
+            | Self::CaptureStart { id, .. }
+            | Self::CaptureRead { id, .. }
+            | Self::CaptureRelease { id, .. }
             | Self::HibernationProbe { id }
             | Self::Navigate { id, .. }
             | Self::SetZoom { id, .. }
@@ -346,6 +388,21 @@ mod framing_tests {
             &serde_json::json!({"id":"tab-2","url":"about:blank"})));
         assert!(!valid_renderer_event(tab, "tab-navigated",
             &serde_json::json!({"id":"grid-2","url":"about:blank"})));
+    }
+
+    #[test]
+    fn private_services_are_route_bound_and_debug_redacted() {
+        let index = tab_renderer_index("tab-4").unwrap();
+        let fill = GridCmd::FillCredential { id: "tab-4".into(), origin: "https://example.test".into(),
+            username: "fixture-user".into(), password: "fixture-secret".into() };
+        assert!(fill.targets(index));
+        assert!(!fill.targets(4));
+        assert!(!fill.targets(tab_renderer_index("tab-5").unwrap()));
+        assert!(!format!("{fill:?}").contains("fixture-secret"));
+        let capture = GridCmd::CaptureRead { id: "tab-4".into(), ticket: "fixture".into(), offset: 0 };
+        assert!(capture.targets(index));
+        assert!(!capture.targets(4));
+        assert!(!valid_renderer_event(4, "renderer-resource", &serde_json::json!({"id":"grid-4","resource":{}})));
     }
 
     #[test]
