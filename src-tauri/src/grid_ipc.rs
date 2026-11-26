@@ -186,6 +186,14 @@ pub(crate) fn restorable_address(address: &str) -> bool {
     }
 }
 
+/// An explicit recovery opens a NEW document in an existing logical tab.
+/// Require an absolute safe address rather than normalizing arbitrary text,
+/// and do not reinterpret a transient or credential-bearing old page.
+pub(crate) fn explicit_reopen_address(address: &str) -> bool {
+    restorable_address(address)
+        && url::Url::parse(address).is_ok_and(|url| matches!(url.scheme(), "http" | "https" | "file" | "about"))
+}
+
 /// A denied popup is not a corrupt renderer connection. The parent may
 /// reopen an ordinary address but cannot transfer a transient document,
 /// opener, script URL, or remote-page access to local files.

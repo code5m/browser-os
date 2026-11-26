@@ -38,7 +38,8 @@ type TabAction =
   | { kind: "new"; url: string }
   | { kind: "open"; id: string; url: string }
   | { kind: "close" | "activate" | "back" | "forward" | "reload"; id: string }
-  | { kind: "retire_renderer"; id: string; pid: number; spawn_epoch: string; confirmed: true };
+  | { kind: "retire_renderer"; id: string; pid: number; spawn_epoch: string; confirmed: true }
+  | { kind: "reopen_renderer"; id: string; url: string; confirmed: true };
 export type RendererRecoveryTarget = { id: string; pid: number; spawn_epoch: string };
 export type RendererState = "ready" | "not_ready" | "cleanup_pending" | "absent" | "hibernated";
 export type RendererDownloadObservation = {
@@ -142,7 +143,7 @@ function ensureTabReceiptListener() {
   }).catch(() => { receiptListenerStarted = false; });
 }
 function receiptErrorIsAuthoritative(error: unknown) {
-  return /TAB_MUTATION_OWNER_BUSY|TAB_MUTATION_INVALID_ID|TAB_MUTATION_STALE_EPOCH|TAB_MUTATION_STALE_SEQUENCE|TAB_MUTATION_INSTANCE_UNAVAILABLE|TAB_RENDERER_RECOVERY_INVALID_TARGET|TAB_RENDERER_RECOVERY_STALE|TAB_RENDERER_ROUTE_INVALID|TAB_NOT_FOUND|NATIVE_LEGACY_ARGUMENT_|NATIVE_SOURCE_DENIED/.test(String(error));
+  return /TAB_MUTATION_OWNER_BUSY|TAB_MUTATION_INVALID_ID|TAB_MUTATION_STALE_EPOCH|TAB_MUTATION_STALE_SEQUENCE|TAB_MUTATION_INSTANCE_UNAVAILABLE|TAB_RENDERER_RECOVERY_INVALID_TARGET|TAB_RENDERER_RECOVERY_STALE|TAB_RENDERER_REOPEN_INVALID|TAB_RENDERER_REOPEN_STALE|TAB_RENDERER_ROUTE_INVALID|TAB_NOT_FOUND|NATIVE_LEGACY_ARGUMENT_|NATIVE_SOURCE_DENIED/.test(String(error));
 }
 async function acknowledgeTabReceipt(ticket: string, epoch: string, deadline: number): Promise<void> {
   while (performance.now() < deadline) {
@@ -1109,6 +1110,8 @@ export const bridge = {
   inspectRendererRecovery: (id: string) => tabReceiptCall({phase:"inspect_renderer",id}, true),
   retireRenderer: (target: RendererRecoveryTarget) =>
     ownedTabMutation<void>({kind:"retire_renderer",...target,confirmed:true}),
+  reopenRenderer: (id: string, url: string) =>
+    ownedTabMutation<TabInfo>({kind:"reopen_renderer",id,url,confirmed:true}),
 
   // 激活页签：后端隐藏其它页签的子 webview 并恢复目标页签显示
   tabActivate: (id: string) => ownedTabMutation<void>({ kind: "activate", id }),

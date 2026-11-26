@@ -185,6 +185,28 @@ pub(super) fn activate_admitted(app: &AppHandle, id: &str, admitted: Option<Opti
     }
 }
 
+/// Explicit user recovery at a NEW address, not automatic replay of the
+/// previous document. Caller owns Browser admission and tab transition.
+/// Keep the logical tab and do not implicitly select a background tab.
+pub(super) fn reopen_absent(app: &AppHandle, id: &str, url: &str) -> Result<TabInfo, String> {
+    let index = exists(app, id)?;
+    if !crate::grid_ipc::explicit_reopen_address(url) {
+        return Err("TAB_RENDERER_REOPEN_INVALID".into());
+    }
+    let state = app.state::<AppState>();
+    let (owner, status, _) = state.grid_manager.tab_renderer_inspection(index)?;
+    if owner.is_some() || status != "absent" {
+        return Err("TAB_RENDERER_REOPEN_STALE".into());
+    }
+    state.grid_manager.start_tab_renderer(index, url)?;
+    state.hibernated_tabs.lock().unwrap().remove(id);
+    state.hibernated_scroll.lock().unwrap().remove(id);
+    let binding = state.grid_manager.renderer_binding(index)
+        .map_err(|error| format!("TAB_RENDERER_REOPEN_PARTIAL:{id}:{error}"))?;
+    state.grid_manager.publish_reopened_tab(binding)
+        .map_err(|error| format!("TAB_RENDERER_REOPEN_PARTIAL:{id}:{error}"))
+}
+
 pub(super) fn navigate(app: &AppHandle, id: &str, url: &str) -> Result<(), String> {
     let index = exists(app, id)?;
     app.state::<AppState>().grid_manager.navigate_tab_renderer(index, url)

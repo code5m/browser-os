@@ -44,6 +44,8 @@ impl GridProcessManager {
         -> Result<crate::domain::TabInfo, String> {
         Err(unsupported())
     }
+    pub(crate) fn publish_reopened_tab(&self, _binding: crate::grid_ipc::RendererBinding)
+        -> Result<crate::domain::TabInfo, String> { Err(unsupported()) }
     pub(crate) fn navigate_tab_renderer(&self, _index: u32, _url: &str) -> Result<(), String> {
         Err(unsupported())
     }

@@ -21,6 +21,7 @@ pub(crate) enum Action {
     Forward { id: String },
     Reload { id: String },
     RetireRenderer { id: String, pid: u32, spawn_epoch: String, confirmed: bool },
+    ReopenRenderer { id: String, url: String, confirmed: bool },
 }
 impl Action {
     fn command(&self) -> &'static str {
@@ -33,6 +34,7 @@ impl Action {
             Self::Forward { .. } => "tab_go_forward",
             Self::Reload { .. } => "tab_reload",
             Self::RetireRenderer { .. } => "tab_renderer_retire",
+            Self::ReopenRenderer { .. } => "tab_open",
         }
     }
     fn target(&self) -> Option<&str> {
@@ -44,7 +46,8 @@ impl Action {
             | Self::Back { id }
             | Self::Forward { id }
             | Self::Reload { id }
-            | Self::RetireRenderer { id, .. } => Some(id),
+            | Self::RetireRenderer { id, .. }
+            | Self::ReopenRenderer { id, .. } => Some(id),
         }
     }
     fn authorize(&self, webview: &Webview) -> Result<(), String> {
@@ -64,6 +67,15 @@ impl Action {
             | Self::Back { id }
             | Self::Forward { id }
             | Self::Reload { id } => bound_text(cmd, "id", id),
+            Self::ReopenRenderer { id, url, confirmed } => {
+                bound_text(cmd, "id", id)?;
+                bound_text(cmd, "url", url)?;
+                if !confirmed || super::isolated_tabs::route(id).is_none()
+                    || !crate::grid_ipc::explicit_reopen_address(url) {
+                    return Err("TAB_RENDERER_REOPEN_INVALID".into());
+                }
+                Ok(())
+            }
             Self::RetireRenderer { id, pid, spawn_epoch, confirmed } => {
                 bound_text(cmd, "id", id)?;
                 if !confirmed || *pid == 0 || spawn_epoch.parse::<u64>().ok().filter(|n| *n > 0)
@@ -132,6 +144,14 @@ impl Action {
             Self::Back { id } => tab_go_back_impl(webview, app, id).map(|_| Value::Null),
             Self::Forward { id } => tab_go_forward_impl(webview, app, id).map(|_| Value::Null),
             Self::Reload { id } => tab_reload_impl(webview, app, id).map(|_| Value::Null),
+            Self::ReopenRenderer { id, url, .. } => {
+                if !matches!(binding, Binding::Isolated(None)) {
+                    return Err("TAB_RENDERER_REOPEN_STALE".into());
+                }
+                let _transition = reserve_tab_transition(&id)?;
+                serde_json::to_value(super::isolated_tabs::reopen_absent(&app, &id, &url)?)
+                    .map_err(|_| "TAB_RENDERER_REOPEN_PARTIAL: receipt serialization".into())
+            }
             Self::RetireRenderer { id, pid, spawn_epoch, .. } => {
                 let index = super::isolated_tabs::route(&id).ok_or("TAB_RENDERER_ROUTE_INVALID")?;
                 let epoch = spawn_epoch.parse::<u64>().map_err(|_| "TAB_RENDERER_RECOVERY_INVALID_TARGET")?;
@@ -205,6 +225,13 @@ impl Binding {
                     return Err("TAB_RENDERER_RECOVERY_STALE".into());
                 }
             }
+            if matches!(action, Action::ReopenRenderer { .. }) {
+                let (observed, status, _) = state.grid_manager.tab_renderer_inspection(index)?;
+                if owner.is_some() || observed.is_some() || status != "absent" {
+                    return Err("TAB_RENDERER_REOPEN_STALE".into());
+                }
+                return Ok(Self::Isolated(None));
+            }
             if owner.is_none() && !matches!(action, Action::Activate { .. } | Action::Close { .. }) {
                 return Err("TAB_RENDERER_RECOVERY_REQUIRED".into());
             }
@@ -252,6 +279,9 @@ impl Binding {
                     let state = app.state::<crate::AppState>();
                     let exists = state.tabs.lock().unwrap().contains_key(id);
                     exists && state.grid_manager.tab_renderer_owner(index).is_ok_and(|owner| owner == *expected)
+                        && (!matches!(action, Action::ReopenRenderer { .. })
+                            || state.grid_manager.tab_renderer_inspection(index)
+                                .is_ok_and(|(owner, status, _)| owner.is_none() && status == "absent"))
                 })
             }
             (Self::IsolatedDocument(binding), Some(id)) => {
@@ -1061,7 +1091,8 @@ pub(super) async fn legacy_action<T: serde::de::DeserializeOwned + Send + 'stati
         };
         if let Err(error) = &result {
             if completion_unknown(error) || error.contains("TAB_CREATED_ACTIVATION_PARTIAL")
-                || error.contains("TAB_RENDERER_ACTIVATION_PARTIAL") {
+                || error.contains("TAB_RENDERER_ACTIVATION_PARTIAL")
+                || error.contains("TAB_RENDERER_REOPEN_PARTIAL") {
                 finish(&ticket, Err(error.clone()));
                 notify(&app, &ticket);
                 guard.completed = true;

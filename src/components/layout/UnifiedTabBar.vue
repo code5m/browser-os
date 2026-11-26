@@ -20,6 +20,27 @@ const tabActions = useUnifiedTabs();
 const projectedTabs = tabActions.projectedTabs;
 const restartTarget = ref<Awaited<ReturnType<typeof browser.inspectNativeDomainRecovery>>>(null);
 const rendererTarget = ref<Awaited<ReturnType<typeof browser.inspectRendererRecovery>>>(null);
+const reopenTarget = ref<{id: string; address: string} | null>(null);
+const reopening = ref(false);
+async function prepareRendererReopen() {
+  const selected = context.value;
+  if (!selected || selected.kind !== 'web') return;
+  const eligible = await browser.prepareRendererReopen(selected.id);
+  if (context.value !== selected) return;
+  context.value = null;
+  if (eligible) reopenTarget.value = { id: selected.id, address: "about:blank" };
+}
+async function confirmRendererReopen() {
+  const target = reopenTarget.value;
+  if (!target || reopening.value) return;
+  reopening.value = true;
+  try {
+    const success = await browser.reopenRenderer(target.id, target.address);
+    if (success && reopenTarget.value === target) reopenTarget.value = null;
+  } finally {
+    reopening.value = false;
+  }
+}
 async function prepareRendererRetire() {
   const selected = context.value;
   if (!selected || selected.kind !== 'web') return;
@@ -188,6 +209,7 @@ async function newTab() {
     <button role="menuitem" @click="closeContext()">关闭</button>
     <button role="menuitem" @click="closeContext(true)">关闭其他</button>
     <button v-if="context.kind === 'web' && browser.isolatedRendererMode" role="menuitem" @click="prepareRendererRetire">核对并恢复独立页签</button>
+    <button v-if="context.kind === 'web' && browser.isolatedRendererMode" role="menuitem" @click="prepareRendererReopen">更换故障页签恢复地址</button>
     <template v-if="contextPath">
       <span class="tab-actions-sep" aria-hidden="true"></span>
       <button role="menuitem" @click="revealHere">在文件管理器中显示</button>
@@ -196,6 +218,12 @@ async function newTab() {
     </template>
     <button role="menuitem" @click="context = null">取消</button>
   </div>
+  <form v-if="reopenTarget" class="tab-actions" aria-label="独立页签新地址恢复" @submit.prevent="confirmRendererReopen">
+    <span>在原逻辑页签 {{ reopenTarget.id }} 打开新地址，不恢复原页面内容。</span>
+    <input v-model="reopenTarget.address" aria-label="完整恢复地址" :disabled="reopening" maxlength="8192" required />
+    <button type="submit" :disabled="reopening || browser.tabRecoveryBusy || browser.tabRecoveryRequired || !reopenTarget.address.trim()">确认重开</button>
+    <button type="button" :disabled="reopening" @click="reopenTarget = null">取消</button>
+  </form>
   <div v-if="rendererTarget" class="tab-actions" role="group" aria-label="独立页签恢复确认">
     <span>回收 {{ rendererTarget.id }} 的原生进程？页内未保存状态可能丢失，不会自动重放原操作。</span>
     <button :disabled="browser.tabRecoveryBusy || browser.tabRecoveryRequired" @click="confirmRendererRetire">确认回收</button>

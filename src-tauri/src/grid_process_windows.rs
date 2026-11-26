@@ -1662,6 +1662,34 @@ impl GridProcessManager {
         Ok(info)
     }
 
+    /// Publish only the original recovered native owner and its latest
+    /// observed navigation. Never overwrite a newer redirect with input URL.
+    pub(crate) fn publish_reopened_tab(&self, binding: crate::grid_ipc::RendererBinding)
+        -> Result<crate::domain::TabInfo, String>
+    {
+        if !crate::grid_ipc::is_tab_renderer(binding.index) {
+            return Err("TAB_RENDERER_ROUTE_INVALID".into());
+        }
+        let app = self.app().ok_or("TAB_RENDERER_HOST_UNAVAILABLE")?;
+        let state = app.state::<crate::bridge::AppState>();
+        let children = self.children.lock().unwrap();
+        let child = children.get(&binding.index).ok_or("TAB_RENDERER_REOPEN_STALE")?;
+        let _owner = child.comms.owner_gate.lock().unwrap();
+        if !Self::window_binding_matches(child, binding) {
+            return Err("TAB_RENDERER_REOPEN_STALE".into());
+        }
+        let address = child.last_url.as_ref().ok_or("TAB_RENDERER_REOPEN_ADDRESS_UNKNOWN")?;
+        let mut tabs = state.tabs.lock().unwrap();
+        if state.shutdown_requested.load(Ordering::Acquire) {
+            return Err("TAB_APPLICATION_SHUTTING_DOWN".into());
+        }
+        let tab = tabs.get_mut(&crate::grid_ipc::renderer_label(binding.index)).ok_or("TAB_NOT_FOUND")?;
+        tab.url = address.clone();
+        tab.title = url::Url::parse(address).ok()
+            .and_then(|value| value.host_str().map(str::to_owned)).unwrap_or_else(|| "Recovered tab".to_owned());
+        Ok(tab.clone())
+    }
+
     pub(crate) fn navigate_tab_renderer(&self, index: u32, url: &str) -> Result<(), String> {
         if !crate::grid_ipc::is_tab_renderer(index) {
             return Err("TAB_RENDERER_ROUTE_INVALID".into());

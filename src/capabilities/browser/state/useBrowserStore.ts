@@ -501,6 +501,62 @@ export const useBrowserStore = defineStore("browser", () => {
       : "该页签当前没有独立宿主，可尝试重新激活。");
     return null;
   }
+  async function prepareRendererReopen(id: string): Promise<boolean> {
+    if (!isolatedRendererMode.value || !isBrowserResourceAllowed()
+        || !tabs.some(tab => tab.id === id) || tabRecoveryRequired.value || tabRecoveryBusy.value) return false;
+    const view = await refreshRendererState(id);
+    if (view?.renderer_state !== "absent" || view.renderer_recovery_target) {
+      layout.showToast("仅已确认无原生宿主的页签支持更换恢复地址；休眠页签请直接激活。");
+      return false;
+    }
+    return true;
+  }
+  async function reopenRenderer(id: string, address: string): Promise<boolean> {
+    const tab = tabs.find(item => item.id === id);
+    const target = address.trim();
+    if (!tab || !target || !reopenableAddress(target)) {
+      layout.showToast("请输入可安全打开的完整地址。");
+      return false;
+    }
+    try {
+      return await mutateTabs(async () => {
+        if (!isolatedRendererMode.value || !isBrowserResourceAllowed()
+            || !tabs.some(item => item === tab)) return false;
+        const view = await refreshRendererState(id);
+        if (view?.renderer_state !== "absent" || view.renderer_recovery_target) {
+          layout.showToast("原生宿主状态已变化，未执行重开。");
+          return false;
+        }
+        const previousUrl = tab.url;
+        clearRendererState(id);
+        rendererStates.set(id, "unknown");
+        const restored = await bridge.reopenRenderer(id, target);
+        if (!restored || restored.id !== id || typeof restored.url !== "string"
+            || typeof restored.title !== "string" || !tabs.some(item => item === tab)) {
+          throw new Error("TAB_MUTATION_TERMINAL_FAILURE: reopen receipt inconsistent");
+        }
+        // A native navigation event may have arrived after the receipt.
+        // Do not overwrite it with the earlier restoration snapshot.
+        if (tab.url === previousUrl || tab.url === restored.url) {
+          tab.url = restored.url;
+          tab.title = restored.title;
+        }
+        nativeTabFailures.delete(id);
+        rendererActivated(id);
+        if (activeTabId.value === id && layout.mainView === "browser") {
+          url.value = tab.url;
+          await nextTick();
+          relocate();
+        }
+        layout.showToast("已在原逻辑页签重开新地址，旧页面状态未重放。");
+        return true;
+      });
+    } catch {
+      void refreshRendererState(id);
+      layout.showToast("重开结果未确认，请核对页签状态；不会自动重试。");
+      return false;
+    }
+  }
   async function retireRenderer(target: RendererRecoveryTarget) {
     try {
       await mutateTabs(async () => {
@@ -988,6 +1044,8 @@ export const useBrowserStore = defineStore("browser", () => {
     inspectNativeDomainRecovery,
     requestNativeDomainRecovery,
     inspectRendererRecovery,
+    prepareRendererReopen,
+    reopenRenderer,
     retireRenderer,
     aiFiltered,
     tabNew,
