@@ -511,7 +511,7 @@ fn validate_linux_capture_metrics(json: &str, native_scale: f64) -> std::result:
 }
 
 #[cfg(target_os = "linux")]
-fn copy_capture_pixels(surface: gtk::cairo::Surface)
+fn copy_capture_pixels(surface: gtk::cairo::Surface, visible_only: bool)
     -> std::result::Result<(Vec<u8>, gtk::cairo::Format, i32, i32, i32), String>
 {
     let mut surface = gtk::cairo::ImageSurface::try_from(surface)
@@ -519,6 +519,9 @@ fn copy_capture_pixels(surface: gtk::cairo::Surface)
     let (width, height, stride, format) =
         (surface.width(), surface.height(), surface.stride(), surface.format());
     checked_capture_pixels(f64::from(width), f64::from(height), 1.0)?;
+    if visible_only && i64::from(width) * i64::from(height) > 1_000_000 {
+        return Err("CAPTURE_BAND_LIMIT".into());
+    }
     if !matches!(format, gtk::cairo::Format::ARgb32 | gtk::cairo::Format::Rgb24)
         || stride <= 0 || i64::from(stride) < i64::from(width) * 4
     {
@@ -1436,12 +1439,32 @@ impl TabManager {
         self.capture_bound_document(id, document, cancellation, callback)
     }
 
-    #[allow(deprecated)] // Keep support for the pinned WebKitGTK 2.22 API.
     pub fn capture_bound_document(
+        &self, id: &TabId, document: CaptureDocument, cancellation: CaptureCancellation,
+        callback: impl FnOnce(std::result::Result<Vec<u8>, String>) + Send + 'static,
+    ) -> Result<()> {
+        self.capture_bound_region(id, document, cancellation, false, callback)
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn capture_isolated_visible(
+        &self, id: &TabId, document: CaptureDocument, cancellation: CaptureCancellation,
+        callback: impl FnOnce(std::result::Result<Vec<u8>, String>) + Send + 'static,
+    ) -> Result<()> {
+        if self.isolated_profile.is_none() || !self.isolated_document_ready() {
+            callback(Err("CAPTURE_ISOLATED_DOCUMENT_REQUIRED".into()));
+            return Ok(());
+        }
+        self.capture_bound_region(id, document, cancellation, true, callback)
+    }
+
+    #[allow(deprecated)] // Keep support for the pinned WebKitGTK 2.22 API.
+    fn capture_bound_region(
         &self,
         id: &TabId,
         capture_document: CaptureDocument,
         cancellation: CaptureCancellation,
+        _visible_only: bool,
         callback: impl FnOnce(std::result::Result<Vec<u8>, String>) + Send + 'static,
     ) -> Result<()> {
         // Bind the admitted document, not whichever native instance happens
@@ -1464,7 +1487,6 @@ impl TabManager {
         #[cfg(target_os = "linux")]
         {
             webview.with_webview(move |native| {
-                let _dispatch_permit = dispatch_permit;
                 if !cancellation.enter_native() {
                     callback(Err("CAPTURE_CANCELLED_BEFORE_DISPATCH".into()));
                     return;
@@ -1522,7 +1544,8 @@ impl TabManager {
                         // This is a conservative preflight, not a proof against
                         // an in-place resize between measurement and allocation.
                         metrics_view.snapshot(
-                            webkit2gtk::SnapshotRegion::FullDocument,
+                            if _visible_only { webkit2gtk::SnapshotRegion::Visible }
+                            else { webkit2gtk::SnapshotRegion::FullDocument },
                             webkit2gtk::SnapshotOptions::NONE,
                             Some(&snapshot_cancel),
                             move |result| {
@@ -1533,7 +1556,7 @@ impl TabManager {
                                     return;
                                 }
                                 let pixels = result.map_err(|_| "CAPTURE_ENGINE_FAILED".to_string())
-                                    .and_then(copy_capture_pixels);
+                                    .and_then(|surface| copy_capture_pixels(surface, _visible_only));
                                 let (bytes, format, width, height, stride) = match pixels {
                                     Ok(pixels) => pixels,
                                     Err(error) => { callback(Err(error)); return; }
@@ -1545,7 +1568,7 @@ impl TabManager {
                                 let worker = std::thread::Builder::new()
                                     .name("browseros-screenshot-png".into())
                                     .spawn(move || -> std::result::Result<Vec<u8>, String> {
-                                        
+                                            let _permit = dispatch_permit;
                                             if cancellation.is_cancelled()
                                                 || !capture_document.observed_generation_is_current()
                                             {
@@ -1701,6 +1724,103 @@ impl TabManager {
         }
         #[cfg(not(any(target_os = "windows", target_os = "linux")))]
         callback(Err("CAPTURE_PLATFORM_UNSUPPORTED".into()));
+        Ok(())
+    }
+
+    /// Fixed isolated-world scroll and metrics for the fresh Worker only.
+    /// No caller-provided JavaScript or live-tab scrolling.
+    #[cfg(target_os = "linux")]
+    #[allow(deprecated)]
+    pub fn capture_isolated_linux_metrics(
+        &self, id: &TabId, document: CaptureDocument, cancellation: CaptureCancellation,
+        target: Option<i32>,
+        callback: impl FnOnce(std::result::Result<Vec<u8>, String>) + Send + 'static,
+    ) -> Result<()> {
+        if self.isolated_profile.is_none() || !self.isolated_document_ready() {
+            callback(Err("CAPTURE_ISOLATED_DOCUMENT_REQUIRED".into()));
+            return Ok(());
+        }
+        if target.is_some_and(|y| !(0..=16_384).contains(&y)) {
+            callback(Err("CAPTURE_BAND_LIMIT".into()));
+            return Ok(());
+        }
+        let Ok((_operation, tab)) = self.get_tab(id, TabAccessKind::Operation) else {
+            callback(Err("CAPTURE_INSTANCE_STALE".into()));
+            return Ok(());
+        };
+        if !std::sync::Weak::ptr_eq(&document.instance.0, &Arc::downgrade(&tab))
+            || !document.observed_generation_is_current() {
+            callback(Err("CAPTURE_DOCUMENT_STALE".into()));
+            return Ok(());
+        }
+        let Some(permit) = CaptureDispatchPermit::acquire() else {
+            callback(Err("CAPTURE_NATIVE_DISPATCH_BUSY".into()));
+            return Ok(());
+        };
+        let js = format!("({})({})", r#"function(target) {
+            const root = document.scrollingElement;
+            const vv = window.visualViewport;
+            if (!root || !document.body || document.readyState !== 'complete' ||
+                document.compatMode !== 'CSS1Compat') return JSON.stringify({eligible:false});
+            const nodes = document.querySelectorAll('*');
+            if (nodes.length > 8000 || document.querySelector('iframe,frame,video,canvas,object,embed,svg,marquee,[loading="lazy"]'))
+                return JSON.stringify({eligible:false});
+            if (typeof document.getAnimations !== 'function' || document.getAnimations().length)
+                return JSON.stringify({eligible:false});
+            for (const n of nodes) {
+                const s = getComputedStyle(n);
+                if (n.shadowRoot || n.localName.includes('-') ||
+                    s.position === 'fixed' || s.position === 'sticky' ||
+                    s.backgroundAttachment.split(',').some(x=>x.trim()==='fixed') ||
+                    s.scrollBehavior !== 'auto' || (s.scrollSnapType && s.scrollSnapType !== 'none') ||
+                    s.animationName !== 'none' ||
+                    ((n.scrollHeight > n.clientHeight+1 || n.scrollWidth > n.clientWidth+1) &&
+                        n !== root && n !== document.body && /auto|scroll/.test(s.overflowX+' '+s.overflowY)))
+                    return JSON.stringify({eligible:false});
+            }
+            if (!globalThis.__browserosViewportCapture) {
+                const state = {revision:0};
+                state.observer = new MutationObserver(()=>{state.revision=Math.min(state.revision+1,2147483647)});
+                state.observer.observe(document.documentElement,{subtree:true,attributes:true,childList:true,characterData:true});
+                globalThis.__browserosViewportCapture = state;
+            }
+            const state = globalThis.__browserosViewportCapture;
+            if (state.observer.takeRecords().length) state.revision=Math.min(state.revision+1,2147483647);
+            if (target !== null) window.scrollTo(0,target);
+            return JSON.stringify({eligible:true,width:root.scrollWidth,height:root.scrollHeight,
+                client_width:root.clientWidth,client_height:root.clientHeight,
+                viewport_width:innerWidth,viewport_height:innerHeight,scale:devicePixelRatio,
+                visual_scale:vv?vv.scale:1,x:scrollX,y:scrollY,revision:state.revision});
+        }"#, target.map(|y| y.to_string()).unwrap_or_else(|| "null".into()));
+        let webview = tab.webview.clone();
+        webview.with_webview(move |native| {
+            use gtk::prelude::WidgetExt;
+            use java_script_core::ValueExt;
+            use webkit2gtk::WebViewExt;
+            let view = native.inner().clone();
+            if !cancellation.enter_native() || !document.observed_generation_is_current() || view.is_loading() {
+                callback(Err("CAPTURE_CANCELLED_OR_STALE".into()));
+                return;
+            }
+            if view.scale_factor() != 1 || view.zoom_level() != 1.0 {
+                callback(Ok(br#"{"eligible":false}"#.to_vec()));
+                return;
+            }
+            let current = view.clone();
+            let native_cancel = cancellation.native.clone();
+            view.run_javascript_in_world(&js, "browseros.capture.viewport.v1", Some(&native_cancel), move |result| {
+                let _permit = permit;
+                if cancellation.is_cancelled() || !document.observed_generation_is_current() || current.is_loading() {
+                    callback(Err("CAPTURE_CANCELLED_OR_STALE".into()));
+                    return;
+                }
+                callback(result.map_err(|_| "CAPTURE_METRICS_FAILED".to_string())
+                    .and_then(|value| value.js_value().map(|v| v.to_str().to_string())
+                        .ok_or_else(|| "CAPTURE_METRICS_UNAVAILABLE".to_string()))
+                    .and_then(|json| if json.len() <= 4096 { Ok(json.into_bytes()) }
+                        else { Err("CAPTURE_METRICS_INVALID".into()) }));
+            });
+        })?;
         Ok(())
     }
 

@@ -202,7 +202,7 @@ impl BandPlan {
     }
 }
 
-#[cfg(any(target_os = "windows", test))]
+#[cfg(any(target_os = "windows", target_os = "linux", test))]
 fn rgba_band(bytes: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
     if width == 0 || height == 0 || u64::from(width) * u64::from(height) > 1_000_000
         || bytes.len() > 6 * 1024 * 1024 {
@@ -247,10 +247,10 @@ fn rgba_band(bytes: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
     Ok(rgba)
 }
 
-#[cfg(any(target_os = "windows", test))]
+#[cfg(any(target_os = "windows", target_os = "linux", test))]
 #[derive(Default)]
 struct BoundedOutput(Vec<u8>);
-#[cfg(any(target_os = "windows", test))]
+#[cfg(any(target_os = "windows", target_os = "linux", test))]
 impl std::io::Write for BoundedOutput {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
         if bytes.len() > MAX_BYTES - self.0.len() {
@@ -319,6 +319,109 @@ fn capture_windows_bands(
     Ok(output.0)
 }
 
+#[cfg(any(target_os = "linux", test))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LinuxViewportPlan { width: u32, height: u32, viewport_width: u32, viewport_height: u32, revision: u64 }
+#[cfg(any(target_os = "linux", test))]
+impl LinuxViewportPlan {
+    fn parse(value: &serde_json::Value) -> Result<Option<Self>, String> {
+        if value["eligible"] == false { return Ok(None); }
+        if value["eligible"] != true { return Err("CAPTURE_METRICS_INVALID".into()); }
+        let field = |name: &str| -> Result<u32, String> {
+            value[name].as_u64().filter(|n| (1..=16_384).contains(n))
+                .map(|n| n as u32).ok_or_else(|| "CAPTURE_METRICS_INVALID".into())
+        };
+        let width = field("width")?;
+        let height = field("height")?;
+        let viewport_width = field("viewport_width")?;
+        let viewport_height = field("viewport_height")?;
+        if u64::from(width) * u64::from(height) > 16_000_000 { return Err("CAPTURE_DIMENSION_LIMIT".into()); }
+        if value["scale"].as_f64() != Some(1.0) || value["visual_scale"].as_f64() != Some(1.0)
+            || value["client_width"].as_u64() != Some(u64::from(width))
+            || value["client_height"].as_u64() != Some(u64::from(viewport_height))
+            || value["x"].as_f64() != Some(0.0)
+            || width > viewport_width || height < viewport_height
+            || u64::from(viewport_width) * u64::from(viewport_height) > 1_000_000
+        { return Ok(None); }
+        Ok(Some(Self { width, height, viewport_width, viewport_height,
+            revision:value["revision"].as_u64().ok_or("CAPTURE_METRICS_INVALID")? }))
+    }
+    fn bands(&self) -> impl Iterator<Item = (u32,u32,u32)> + '_ {
+        (0..self.height).step_by(self.viewport_height as usize).map(move |top| {
+            let target = top.min(self.height - self.viewport_height);
+            (target, top - target, self.viewport_height.min(self.height - top))
+        })
+    }
+    fn check_position(&self, value: &serde_json::Value, y: u32) -> Result<(), String> {
+        if Self::parse(value)?.as_ref() != Some(self) || value["y"].as_f64() != Some(f64::from(y)) {
+            return Err("CAPTURE_LAYOUT_OR_SCROLL_CHANGED".into());
+        }
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn capture_linux_viewports(
+    manager: &TabManager, id: &String, document: &tauri_plugin_browser_tabs::CaptureDocument,
+    deadline: Instant,
+) -> Result<Option<Vec<u8>>, String> {
+    use std::io::Write;
+    let current = || manager.isolated_document_ready() && manager.is_current_capture_document(id, document);
+    let request = |target: Option<i32>, snapshot: bool| -> Result<Vec<u8>, String> {
+        if Instant::now() >= deadline { return Err("CAPTURE_DEADLINE_EXCEEDED".into()); }
+        if !current() { return Err("CAPTURE_DOCUMENT_STALE".into()); }
+        let cancellation = CaptureCancellation::new();
+        let (tx, rx) = mpsc::sync_channel(1);
+        let callback = move |result| { let _ = tx.try_send(result); };
+        let dispatched = if snapshot {
+            manager.capture_isolated_visible(id, document.clone(), cancellation.clone(), callback)
+        } else {
+            manager.capture_isolated_linux_metrics(id, document.clone(), cancellation.clone(), target, callback)
+        };
+        dispatched.map_err(|_| "CAPTURE_RENDER_DISPATCH_FAILED")?;
+        let bytes = match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+            Ok(result) => result?,
+            Err(_) => { cancellation.cancel(); return Err("CAPTURE_RENDER_OUTCOME_UNKNOWN".into()); }
+        };
+        if !current() { return Err("CAPTURE_DOCUMENT_STALE".into()); }
+        Ok(bytes)
+    };
+    let metrics = |target| -> Result<serde_json::Value, String> {
+        serde_json::from_slice(&request(target, false)?).map_err(|_| "CAPTURE_METRICS_INVALID".into())
+    };
+    let initial = metrics(None)?;
+    let Some(plan) = LinuxViewportPlan::parse(&initial)? else { return Ok(None); };
+    if initial["y"].as_f64() != Some(0.0) { return Ok(None); }
+    let mut output = BoundedOutput::default();
+    {
+        let mut encoder = png::Encoder::new(&mut output, plan.width, plan.height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().map_err(|_| "CAPTURE_PNG_ENCODE_FAILED")?;
+        {
+            let mut stream = writer.stream_writer().map_err(|_| "CAPTURE_PNG_ENCODE_FAILED")?;
+            for (target, skip, rows) in plan.bands() {
+                plan.check_position(&metrics(Some(target as i32))?, target)?;
+                // A bounded repaint opportunity, not proof of atomic paint.
+                thread::sleep(Duration::from_millis(32));
+                plan.check_position(&metrics(None)?, target)?;
+                let bytes = request(None, true)?;
+                let pixels = rgba_band(&bytes, plan.viewport_width, plan.viewport_height)?;
+                plan.check_position(&metrics(None)?, target)?;
+                let stride = plan.viewport_width as usize * 4;
+                let row_width = plan.width as usize * 4;
+                for row in pixels.chunks_exact(stride).skip(skip as usize).take(rows as usize) {
+                    stream.write_all(&row[..row_width]).map_err(|_| "CAPTURE_PNG_ENCODE_FAILED")?;
+                }
+            }
+            stream.finish().map_err(|_| "CAPTURE_PNG_ENCODE_FAILED")?;
+        }
+        writer.finish().map_err(|_| "CAPTURE_PNG_ENCODE_FAILED")?;
+    }
+    if !current() { return Err("CAPTURE_DOCUMENT_STALE".into()); }
+    Ok(Some(output.0))
+}
+
 fn run_render(manager: Arc<TabManager>, root: PathBuf, url: String) -> Result<(), String> {
     manager.prepare_storage().map_err(|_| "CAPTURE_PROFILE_PREPARE_FAILED")?;
     let id = PAGE.to_string();
@@ -337,11 +440,13 @@ fn run_render(manager: Arc<TabManager>, root: PathBuf, url: String) -> Result<()
     if !manager.isolated_document_ready() { return Err("CAPTURE_DOCUMENT_STALE".into()); }
     #[cfg(target_os = "windows")]
     let bytes = capture_windows_bands(&manager, &id, &document, deadline)?;
-    // WebKitGTK exposes a whole-document snapshot, not a native CSS clip.
-    // Keep its explicit independent process budget; never pretend a cropped
-    // full raster is tiled rendering or silently change scroll semantics.
+    // Fallback only before a scroll is attempted; never call a FullDocument
+    // capture after a failed or stale viewport stitching attempt.
     #[cfg(target_os = "linux")]
-    let bytes = {
+    let bytes = if let Some(bytes) = capture_linux_viewports(&manager, &id, &document, deadline)? {
+        bytes
+    } else {
+        eprintln!("[isolated-capture] viewport tiling ineligible; full-document mode");
         let cancellation = CaptureCancellation::new();
         let (tx, rx) = mpsc::sync_channel(1);
         manager.capture_bound_document(&id, document.clone(), cancellation.clone(), move |result| {
@@ -454,6 +559,23 @@ mod tests {
         let idat = bytes.windows(4).position(|chunk| chunk == b"IDAT").unwrap();
         bytes[idat + 4] ^= 1;
         assert!(checked_png(&bytes).is_err());
+    }
+
+    #[test]
+    fn linux_viewports_cover_clamped_final_scroll_without_duplicate_rows() {
+        let initial = serde_json::json!({"eligible":true,"width":1265,"height":1500,
+            "client_width":1265,"client_height":720,"viewport_width":1280,"viewport_height":720,
+            "scale":1,"visual_scale":1,"x":0,"y":0,"revision":0});
+        let plan = LinuxViewportPlan::parse(&initial).unwrap().unwrap();
+        assert_eq!(plan.bands().collect::<Vec<_>>(), vec![(0,0,720),(720,0,720),(780,660,60)]);
+        let mut changed = initial.clone();
+        changed["y"] = serde_json::json!(720);
+        assert!(plan.check_position(&changed,720).is_ok());
+        changed["revision"] = serde_json::json!(1);
+        assert!(plan.check_position(&changed,720).is_err());
+        changed["scale"] = serde_json::json!(2);
+        assert!(LinuxViewportPlan::parse(&changed).unwrap().is_none());
+        assert!(LinuxViewportPlan::parse(&serde_json::json!({"eligible":false})).unwrap().is_none());
     }
 
     #[test]
