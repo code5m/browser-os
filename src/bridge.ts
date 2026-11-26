@@ -51,6 +51,15 @@ export type RendererDownloadEvent = Omit<RendererDownloadObservation, "connectio
   id: string; phase: "requested" | "succeeded" | "failed" | "owner_retired";
   outcome?: "unknown";
 };
+// Native owner observations only. Null means the count was never observed;
+ // an exited owner does not certify a transfer's terminal outcome.
+export type DownloadOwnerObservation = {
+  id: string; phase: "live" | "owner_retired"; pid: number; spawn_epoch: string;
+  renderer_generation: string | null; connection_current: boolean;
+  requested: number | null; succeeded: number | null; failed: number | null;
+  observed_unfinished: number | null; outcome: "unknown";
+};
+export type DownloadInventory = { live: DownloadOwnerObservation[]; retired: DownloadOwnerObservation[]; retired_limit: number };
 type TabReceipt = {
   ticket: string; client_id: string; command: string;
   phase: "prepared" | "running" | "cancel_requested" | "succeeded" | "failed" | "cancelled" | "unknown";
@@ -65,6 +74,7 @@ type TabOwnerView = {
   isolated_renderer_mode?: boolean;
   renderer_state?: RendererState | null;
   renderer_download?: RendererDownloadObservation | null;
+  download_inventory?: DownloadInventory;
 };
 const terminalTabReceipt = (r: TabReceipt) => ["succeeded", "failed", "cancelled"].includes(r.phase);
 const receiptDelay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -131,7 +141,7 @@ function boundedReceiptControl<T>(
 const tabReceiptCall = (request: Record<string, unknown>, recovery = false) => {
   const phase = String(request.phase);
   return boundedReceiptControl<TabOwnerView>("tab-" + phase, JSON.stringify(request),
-    () => invoke<TabOwnerView>("tab_mutation", { request }), recovery, phase === "inspect" || phase === "inspect_renderer" || phase === "poll");
+    () => invoke<TabOwnerView>("tab_mutation", { request }), recovery, phase === "inspect" || phase === "inspect_renderer" || phase === "inspect_downloads" || phase === "poll");
 };
 let terminalEvent: TabReceipt | null = null;
 let receiptListenerStarted = false;
@@ -1108,6 +1118,7 @@ export const bridge = {
   tabClose: (id: string) => ownedTabMutation<void>({ kind: "close", id }),
 
   inspectRendererRecovery: (id: string) => tabReceiptCall({phase:"inspect_renderer",id}, true),
+  inspectDownloadInventory: () => tabReceiptCall({phase:"inspect_downloads"}, true),
   retireRenderer: (target: RendererRecoveryTarget) =>
     ownedTabMutation<void>({kind:"retire_renderer",...target,confirmed:true}),
   reopenRenderer: (id: string, url: string) =>

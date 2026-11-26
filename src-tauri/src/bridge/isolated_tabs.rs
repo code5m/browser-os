@@ -166,7 +166,7 @@ pub(super) fn activate_admitted(app: &AppHandle, id: &str, admitted: Option<Opti
         if Some(binding.owner) != owner {
             return Err("TAB_RENDERER_ACTIVATION_STALE".into());
         }
-        state.grid_manager.renderer_request_data(binding, GridCmd::Ping, 3000)?;
+        state.grid_manager.refresh_tab_downloads(binding, 3000)?;
         // Activation and Ping are process-scoped; normal navigation must
         // not invalidate selection of the same authenticated native host.
         let current = state.grid_manager.renderer_binding(index)?;
@@ -195,7 +195,8 @@ pub(super) fn reopen_absent(app: &AppHandle, id: &str, url: &str) -> Result<TabI
     }
     let state = app.state::<AppState>();
     let (owner, status, _) = state.grid_manager.tab_renderer_inspection(index)?;
-    if owner.is_some() || status != "absent" {
+    if owner.is_some() || status != "absent"
+        || state.hibernated_tabs.lock().unwrap().contains(id) {
         return Err("TAB_RENDERER_REOPEN_STALE".into());
     }
     state.grid_manager.start_tab_renderer(index, url)?;

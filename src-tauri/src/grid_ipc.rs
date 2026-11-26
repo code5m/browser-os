@@ -219,21 +219,27 @@ pub(crate) struct DownloadObservation {
     pub failed: u64,
 }
 impl DownloadObservation {
-    pub(crate) fn from_report(payload: &serde_json::Value) -> Option<Self> {
+    /// An authenticated native Ping can return all three counts, including
+    /// zero. This is a point-in-time observation, not a terminal receipt.
+    pub(crate) fn from_counts(payload: &serde_json::Value) -> Option<Self> {
         let observation = Self {
             requested: payload["requested"].as_u64()?,
             succeeded: payload["succeeded"].as_u64()?,
             failed: payload["failed"].as_u64()?,
         };
+        const MAX_EXACT_JS_COUNT: u64 = (1u64 << 53) - 1;
+        [observation.requested, observation.succeeded, observation.failed]
+            .into_iter().all(|count| count <= MAX_EXACT_JS_COUNT).then_some(observation)
+    }
+    pub(crate) fn from_report(payload: &serde_json::Value) -> Option<Self> {
+        let observation = Self::from_counts(payload)?;
         let phase_count = match payload["phase"].as_str()? {
             "requested" => observation.requested,
             "succeeded" => observation.succeeded,
             "failed" => observation.failed,
             _ => return None,
         };
-        const MAX_EXACT_JS_COUNT: u64 = (1u64 << 53) - 1;
-        (phase_count > 0 && [observation.requested, observation.succeeded, observation.failed]
-            .into_iter().all(|count| count <= MAX_EXACT_JS_COUNT)).then_some(observation)
+        (phase_count > 0).then_some(observation)
     }
     pub(crate) fn advances(self, previous: Self) -> bool {
         self.requested >= previous.requested && self.succeeded >= previous.succeeded

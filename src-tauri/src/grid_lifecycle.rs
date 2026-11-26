@@ -122,6 +122,9 @@ pub(super) struct GridLifecycle {
     // The existing cleanup worker is the source of completion, even when
     // a foreground recovery waiter has already returned Pending.
     retirement_app: Mutex<Option<AppHandle>>,
+    // Bounded in-memory observations of retired independent renderer owners.
+    // Never persist paths, URLs or an invented per-transfer outcome.
+    download_history: Mutex<VecDeque<serde_json::Value>>,
     cleanup_worker: Mutex<Option<JoinHandle<()>>>,
     cleanup_done: AtomicBool,
     wake_lock: Mutex<()>,
@@ -141,6 +144,18 @@ impl Drop for GridOperation {
 impl GridLifecycle {
     pub(super) fn set_retirement_app(&self, app: AppHandle) {
         *self.retirement_app.lock().unwrap() = Some(app);
+    }
+
+    pub(super) fn download_history(&self) -> Result<Vec<serde_json::Value>, String> {
+        let history = self.download_history.try_lock().map_err(|_| "TAB_DOWNLOAD_HISTORY_BUSY")?;
+        Ok(history.iter().rev().cloned().collect())
+    }
+
+    fn remember_download_retirement(&self, payload: &serde_json::Value) {
+        const LIMIT: usize = 128;
+        let mut history = self.download_history.lock().unwrap_or_else(|p| p.into_inner());
+        if history.len() == LIMIT { history.pop_front(); }
+        history.push_back(payload.clone());
     }
 
     pub(super) fn check(&self) -> Result<(), String> {
@@ -277,6 +292,9 @@ impl GridLifecycle {
                     };
                     if removed.is_some() {
                         drop(removed);
+                        if let Some(payload) = download_retired.as_ref() {
+                            self.remember_download_retirement(payload);
+                        }
                         let route_complete = {
                             let mut retiring = self.retiring.lock().unwrap();
                             if let Some(count) = retiring.get_mut(&index) {
@@ -290,7 +308,10 @@ impl GridLifecycle {
                         self.retiring_total.fetch_sub(1, Ordering::SeqCst);
                         self.wake.notify_all();
                         if !self.is_stopping() {
-                            if let Some(payload) = download_retired {
+                            if let Some(payload) = download_retired.filter(|p|
+                                p["requested"].as_u64().is_some_and(|v| v > 0)
+                                    || p["succeeded"].as_u64().is_some_and(|v| v > 0)
+                                    || p["failed"].as_u64().is_some_and(|v| v > 0)) {
                                 if let Some(app) = self.retirement_app.lock().unwrap().clone() {
                                     // Only after the exact native retirement is confirmed.
                                     // Unknown is not a failure or file-deletion receipt.

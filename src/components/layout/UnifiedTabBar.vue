@@ -5,7 +5,7 @@ import { ref, computed } from "vue";
 import { useFileStore } from "../../capabilities/workspace/public";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Globe, Plus, X } from '@lucide/vue';
-import { bridge } from '../../bridge';
+import { bridge, type DownloadInventory, type DownloadOwnerObservation } from '../../bridge';
 import { useUnifiedTabs } from "../../composables/useUnifiedTabs";
 import { documentPathName, relativeDocumentPath } from "../../application/documentPaths.mjs";
 
@@ -22,6 +22,58 @@ const restartTarget = ref<Awaited<ReturnType<typeof browser.inspectNativeDomainR
 const rendererTarget = ref<Awaited<ReturnType<typeof browser.inspectRendererRecovery>>>(null);
 const reopenTarget = ref<{id: string; address: string} | null>(null);
 const reopening = ref(false);
+const downloadPanelOpen = ref(false);
+const downloadPanelBusy = ref(false);
+const downloadInventory = ref<DownloadInventory | null>(null);
+const downloadPanelError = ref("");
+let downloadPanelEpoch = 0;
+async function refreshDownloadInventory() {
+  if (downloadPanelBusy.value || !downloadPanelOpen.value) return;
+  const epoch = ++downloadPanelEpoch;
+  downloadPanelBusy.value = true;
+  downloadInventory.value = null;
+  downloadPanelError.value = "";
+  try {
+    const view = await bridge.inspectDownloadInventory();
+    if (epoch !== downloadPanelEpoch || !downloadPanelOpen.value) return;
+    const data = view.download_inventory;
+    const valid = (row: DownloadOwnerObservation) =>
+      typeof row.id === "string" && Number.isSafeInteger(row.pid) && row.pid > 0
+      && typeof row.spawn_epoch === "string" && /^[1-9][0-9]*$/.test(row.spawn_epoch)
+      && typeof row.connection_current === "boolean"
+      && [row.requested, row.succeeded, row.failed, row.observed_unfinished].every(
+        value => value === null || (Number.isSafeInteger(value) && value >= 0));
+    if (!data || !Array.isArray(data.live) || !Array.isArray(data.retired)
+        || data.retired_limit !== 128 || data.retired.length > 128
+        || data.live.some(row => !valid(row) || row.phase !== "live")
+        || data.retired.some(row => !valid(row) || row.phase !== "owner_retired")) {
+      throw new Error("invalid download inventory");
+    }
+    downloadInventory.value = data;
+  } catch {
+    if (epoch === downloadPanelEpoch) downloadPanelError.value = "原生下载观察暂不可核实，请手动重新查询。";
+  } finally {
+    if (epoch === downloadPanelEpoch) downloadPanelBusy.value = false;
+  }
+}
+function toggleDownloadInventory() {
+  downloadPanelOpen.value = !downloadPanelOpen.value;
+  if (downloadPanelOpen.value) void refreshDownloadInventory();
+  else {
+    ++downloadPanelEpoch;
+    downloadInventory.value = null;
+    downloadPanelBusy.value = false;
+    downloadPanelError.value = "";
+  }
+}
+const downloadRows = computed(() => downloadInventory.value
+  ? [...downloadInventory.value.live, ...downloadInventory.value.retired] : []);
+function downloadLabel(row: DownloadOwnerObservation) {
+  if (row.requested === null) return "尚无可信计数；结果待核对";
+  const counts = `请求 ${row.requested} / 成功回调 ${row.succeeded} / 失败回调 ${row.failed}`;
+  const pending = row.observed_unfinished === null ? "计数无法对账" : `未完成观察 ${row.observed_unfinished}`;
+  return counts + "；" + pending + (row.phase === "owner_retired" || !row.connection_current ? "；最终结果未知" : "；非逐项完成回执");
+}
 async function prepareRendererReopen() {
   const selected = context.value;
   if (!selected || selected.kind !== 'web') return;
@@ -205,6 +257,23 @@ async function newTab() {
       <button class="window-close" title="关闭窗口" @click.stop="closeWindow">×</button>
     </div>
   </div>
+  <div v-if="browser.isolatedRendererMode" class="tab-actions" role="group" aria-label="独立宿主下载观察">
+    <button :aria-expanded="downloadPanelOpen" @click="toggleDownloadInventory">下载观察记录</button>
+    <template v-if="downloadPanelOpen">
+      <button :disabled="downloadPanelBusy" @click="refreshDownloadInventory">重新查询</button>
+      <span v-if="downloadPanelBusy" role="status">正在核对原生记录…</span>
+      <span v-else-if="downloadPanelError" role="status">{{downloadPanelError}}</span>
+      <span v-else-if="downloadInventory">当前宿主 {{downloadInventory.live.length}} / 最近回收 {{downloadInventory.retired.length}}（最多 128）</span>
+      <div v-if="downloadInventory" class="download-owner-list">
+        <div v-if="!downloadRows.length">暂无宿主观察</div>
+        <div v-for="row in downloadRows" :key="row.phase + ':' + row.id + ':' + row.pid + ':' + row.spawn_epoch">
+          <strong>{{row.id}} · {{row.phase === 'live' ? '当前宿主' : '已回收'}}</strong>
+          <span>{{downloadLabel(row)}}</span>
+        </div>
+      </div>
+      <span>仅本次应用会话内的宿主累计观察，不含下载地址、路径或文件操作。</span>
+    </template>
+  </div>
   <div v-if="context" class="tab-actions" role="menu" @keydown.esc="context = null">
     <button role="menuitem" @click="closeContext()">关闭</button>
     <button role="menuitem" @click="closeContext(true)">关闭其他</button>
@@ -232,6 +301,8 @@ async function newTab() {
 </template>
 
 <style scoped>
+.download-owner-list {flex-basis:100%;max-height:200px;overflow:auto;font-size:12px;display:grid;gap:4px}
+.download-owner-list>div {display:flex;flex-wrap:wrap;gap:8px;padding:3px 0;border-bottom:1px solid #e5e6eb}
 .tab-actions { display:flex; flex-wrap:wrap; align-items:center; flex:none; gap:6px; padding:4px 8px; background:#f2f4f6; border-bottom:1px solid #e5e6eb; }
 .tab-actions button { border:1px solid #d5dbe7; background:#fff; color:#4e5969; font-size:12px; padding:3px 8px; border-radius:5px; cursor:pointer; }
 .tab-actions button:hover { background:#eef1f6; color:#2b6cb0; }

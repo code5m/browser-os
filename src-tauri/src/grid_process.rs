@@ -110,13 +110,16 @@ impl ChildComms {
 
     fn download_retirement(&self, index: u32, pid: u32) -> Option<serde_json::Value> {
         if !crate::grid_ipc::is_tab_renderer(index) { return None; }
-        let (generation, observation) = (*self.download_observation.lock().unwrap())?;
+        let observed = *self.download_observation.lock().unwrap_or_else(|p| p.into_inner());
         Some(serde_json::json!({
             "id": crate::grid_ipc::renderer_label(index), "phase": "owner_retired",
             "pid": pid, "spawn_epoch": self.spawn_epoch.load(Ordering::SeqCst).to_string(),
-            "renderer_generation": generation.to_string(),
-            "requested": observation.requested, "succeeded": observation.succeeded,
-            "failed": observation.failed, "observed_unfinished": observation.observed_unfinished(),
+            "renderer_generation": observed.map(|(generation, _)| generation.to_string()),
+            "connection_current": false,
+            "requested": observed.map(|(_, observation)| observation.requested),
+            "succeeded": observed.map(|(_, observation)| observation.succeeded),
+            "failed": observed.map(|(_, observation)| observation.failed),
+            "observed_unfinished": observed.and_then(|(_, observation)| observation.observed_unfinished()),
             "outcome": "unknown"
         }))
     }
@@ -1301,6 +1304,63 @@ impl GridProcessManager {
         self.tab_renderer_inspection(index).map(|(owner, state, _)| (owner, state))
     }
 
+    /// Main-only advisory inventory. No IPC or OS wait on the UI thread.
+    /// Live snapshots and bounded retired observations are not effect receipts.
+    pub(crate) fn tab_download_inventory(&self) -> Result<serde_json::Value, String> {
+        let children = self.children.try_lock().map_err(|_| "TAB_DOWNLOAD_HISTORY_BUSY")?;
+        let mut live = Vec::new();
+        for (&index, child) in children.iter() {
+            if !crate::grid_ipc::is_tab_renderer(index) { continue; }
+            let comms = &child.comms;
+            let _owner = comms.owner_gate.try_lock().map_err(|_| "TAB_DOWNLOAD_HISTORY_BUSY")?;
+            let observed = *comms.download_observation.try_lock().map_err(|_| "TAB_DOWNLOAD_HISTORY_BUSY")?;
+            live.push(serde_json::json!({
+                "id":crate::grid_ipc::renderer_label(index), "phase":"live",
+                "pid":child.child.id(),
+                "spawn_epoch":comms.spawn_epoch.load(Ordering::SeqCst).to_string(),
+                "renderer_generation":observed.map(|(generation, _)| generation.to_string()),
+                "connection_current":observed.is_some_and(|(generation, _)| comms.is_current(generation)),
+                "requested":observed.map(|(_, counts)| counts.requested),
+                "succeeded":observed.map(|(_, counts)| counts.succeeded),
+                "failed":observed.map(|(_, counts)| counts.failed),
+                "observed_unfinished":observed.and_then(|(_, counts)| counts.observed_unfinished()),
+                "outcome":"unknown"
+            }));
+        }
+        live.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
+        drop(children);
+        let retired = self.lifecycle.download_history()?;
+        Ok(serde_json::json!({"live":live,"retired":retired,"retired_limit":128}))
+    }
+
+    /// Optional counters carried by the original authenticated Ping. Late or
+    /// coalesced replies cannot replace a newer cumulative observation.
+    pub(crate) fn refresh_tab_downloads(&self, binding: crate::grid_ipc::RendererBinding, timeout_ms: u64)
+        -> Result<(), String>
+    {
+        if !crate::grid_ipc::is_tab_renderer(binding.index) { return Err("TAB_RENDERER_ROUTE_INVALID".into()); }
+        let Some(data) = self.renderer_request_data(binding, GridCmd::Ping, timeout_ms)? else { return Ok(()); };
+        if data.len() > 256 { return Err("TAB_DOWNLOAD_SNAPSHOT_INVALID".into()); }
+        let value: serde_json::Value = serde_json::from_str(&data).map_err(|_| "TAB_DOWNLOAD_SNAPSHOT_INVALID")?;
+        let observation = crate::grid_ipc::DownloadObservation::from_counts(&value)
+            .filter(|_| value.as_object().is_some_and(|fields| fields.len() == 3))
+            .ok_or("TAB_DOWNLOAD_SNAPSHOT_INVALID")?;
+        let children = self.children.lock().unwrap();
+        let child = children.get(&binding.index).ok_or("TAB_RENDERER_DOCUMENT_STALE")?;
+        let _owner = child.comms.owner_gate.lock().unwrap();
+        if !Self::window_binding_matches(child, binding) {
+            return Err("TAB_RENDERER_DOCUMENT_STALE".into());
+        }
+        let mut last = child.comms.download_observation.lock().unwrap();
+        if last.as_ref().is_none_or(|(_, previous)| observation == *previous || observation.advances(*previous)) {
+            *last = Some((binding.generation, observation));
+        }
+        if observation.requested > 0 || observation.succeeded > 0 || observation.failed > 0 {
+            child.comms.blank_reclaim_blocked.store(true, Ordering::SeqCst);
+        }
+        Ok(())
+    }
+
     pub(crate) fn tab_renderer_download_observation(&self, index: u32, expected: (u32, u64))
         -> Result<Option<serde_json::Value>, String>
     {
@@ -1681,6 +1741,13 @@ impl GridProcessManager {
             return Err("TAB_RENDERER_ROUTE_INVALID".into());
         }
         let _operation = self.lifecycle.enter()?;
+        // Explicit ordinary close may sample the exact connected host once.
+        // Do not delay emergency retirement, retry or make close depend on it.
+        if let Ok(binding) = self.renderer_binding(index) {
+            if expected.is_none_or(|owner| owner == Some(binding.owner)) {
+                let _ = self.refresh_tab_downloads(binding, 600);
+            }
+        }
         let _dispatch = self.visibility_dispatch.lock().unwrap_or_else(|p| p.into_inner());
         self.lifecycle.ensure_cleanup(Arc::clone(&self.children), Arc::clone(&self.listeners))?;
         let _gate = self.lifecycle_lock.lock().unwrap();

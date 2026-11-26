@@ -227,7 +227,8 @@ impl Binding {
             }
             if matches!(action, Action::ReopenRenderer { .. }) {
                 let (observed, status, _) = state.grid_manager.tab_renderer_inspection(index)?;
-                if owner.is_some() || observed.is_some() || status != "absent" {
+                if owner.is_some() || observed.is_some() || status != "absent"
+                    || state.hibernated_tabs.lock().unwrap().contains(id) {
                     return Err("TAB_RENDERER_REOPEN_STALE".into());
                 }
                 return Ok(Self::Isolated(None));
@@ -281,7 +282,8 @@ impl Binding {
                     exists && state.grid_manager.tab_renderer_owner(index).is_ok_and(|owner| owner == *expected)
                         && (!matches!(action, Action::ReopenRenderer { .. })
                             || state.grid_manager.tab_renderer_inspection(index)
-                                .is_ok_and(|(owner, status, _)| owner.is_none() && status == "absent"))
+                                .is_ok_and(|(owner, status, _)| owner.is_none() && status == "absent")
+                                && !state.hibernated_tabs.lock().unwrap().contains(id))
                 })
             }
             (Self::IsolatedDocument(binding), Some(id)) => {
@@ -544,6 +546,8 @@ pub(crate) struct OwnerView {
     renderer_state: Option<&'static str>,
     // Advisory native counts, not per-transfer state or filesystem access.
     renderer_download: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    download_inventory: Option<Value>,
 }
 fn snapshot(app: &AppHandle) -> Result<OwnerView, String> {
     let mut view = {
@@ -566,6 +570,7 @@ fn snapshot(app: &AppHandle) -> Result<OwnerView, String> {
             isolated_renderer_mode: super::isolated_tabs::mode_enabled(),
             renderer_state: None,
             renderer_download: None,
+            download_inventory: None,
         }
     };
     // Do not hold the Owner mutex while observing app metadata.
@@ -740,6 +745,7 @@ pub(crate) enum Request {
     },
     Inspect,
     InspectRenderer { id: String },
+    InspectDownloads,
     Fence {
         epoch: String,
         sequence: String,
@@ -923,6 +929,16 @@ pub(crate) fn tab_mutation(
             }
         }
         Request::Inspect => {}
+        Request::InspectDownloads => {
+            crate::shared::native_legacy_policy::require_main(&webview, "tab_list")?;
+            if !super::isolated_tabs::mode_enabled() {
+                return Err("TAB_RENDERER_ROUTE_INVALID".into());
+            }
+            let mut view = snapshot(&app)?;
+            view.download_inventory = Some(app.state::<crate::AppState>()
+                .grid_manager.tab_download_inventory()?);
+            return Ok(view);
+        }
         Request::InspectRenderer { id } => {
             crate::shared::native_legacy_policy::require_main(&webview, "tab_close")?;
             crate::shared::native_legacy_policy::bound_text("tab_close", "id", &id)?;
@@ -1201,6 +1217,7 @@ mod tests {
             isolated_renderer_mode: false,
             renderer_state: None,
             renderer_download: None,
+            download_inventory: None,
         };
         assert!(state.matches_view(&view));
         state.admit_background().unwrap();

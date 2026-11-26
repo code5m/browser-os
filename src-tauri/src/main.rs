@@ -477,13 +477,12 @@ fn run_grid_child(index: u32) {
                             enqueue_renderer_report("browser-tabs://shell-shortcut", payload);
                         }
                     });
-                let download_counts = std::sync::Mutex::new(grid_ipc::DownloadObservation::default());
                 app.state::<tauri_plugin_browser_tabs::TabManagerState>()
                     .set_native_download_sink(move |id, phase| {
                         // Serialize callback observations and include cumulative
                         // counts: the bounded best-effort report queue may drop
                         // intermediate events. No URL/path leaves the child.
-                        let mut counts = download_counts.lock().unwrap_or_else(|p| p.into_inner());
+                        let mut counts = CHILD_DOWNLOAD_COUNTS.lock().unwrap_or_else(|p| p.into_inner());
                         let count = match phase {
                             "requested" => &mut counts.requested,
                             "succeeded" => &mut counts.succeeded,
@@ -565,6 +564,12 @@ static RENDERER_REPORTS: std::sync::OnceLock<std::sync::mpsc::SyncSender<grid_ip
 
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 static LATEST_DOWNLOAD_REPORT: std::sync::Mutex<Option<grid_ipc::Wire>> = std::sync::Mutex::new(None);
+
+// Native callback owner; Ping can observe this even when an advisory event
+// was coalesced or has not yet reached the parent.
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+static CHILD_DOWNLOAD_COUNTS: std::sync::Mutex<grid_ipc::DownloadObservation> =
+    std::sync::Mutex::new(grid_ipc::DownloadObservation { requested: 0, succeeded: 0, failed: 0 });
 
 /// Resource and title notifications never synchronously write on the native
 /// WebView event thread. Download observations have a separate one-item
@@ -864,6 +869,13 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
                         }
                         None
                     };
+                    if matches!(&cmd, grid_ipc::GridCmd::Ping) && grid_ipc::is_tab_renderer(index) {
+                        let counts = *CHILD_DOWNLOAD_COUNTS.lock().unwrap_or_else(|p| p.into_inner());
+                        let data = serde_json::json!({"requested":counts.requested,
+                            "succeeded":counts.succeeded,"failed":counts.failed}).to_string();
+                        enqueue_child_critical(grid_ipc::Wire::Response { seq, ok: true, err: None, data: Some(data) });
+                        continue;
+                    }
                     if let Some(result) = crate::renderer_services::dispatch(&app, &mut renderer_capture, &cmd, document.as_ref()) {
                         let response = match result {
                             Ok(data) => grid_ipc::Wire::Response { seq, ok: true, err: None, data },
