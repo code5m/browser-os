@@ -76,7 +76,8 @@ pub fn prepare_workspace(app: &AppHandle) -> io::Result<()> {
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     crate::browser_profile_owner::prepare(
         &crate::workspace::data_dir(app),
-        &tabs.expected_browser_profile().map_err(|error| io::Error::other(error.to_string()))?,
+        &tabs.expected_browser_profile()
+            .map_err(|error| io::Error::other(error.to_string()))?,
         crate::parse_grid_child_arg().is_some(),
     )?;
     #[cfg(not(target_os = "linux"))]
@@ -109,7 +110,8 @@ pub fn prepare_workspace(app: &AppHandle) -> io::Result<()> {
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     crate::browser_profile_owner::bind_prepared(
         &crate::workspace::data_dir(app),
-        &tabs.prepared_browser_profile().map_err(|error| io::Error::other(error.to_string()))?,
+        &tabs.prepared_browser_profile()
+            .map_err(|error| io::Error::other(error.to_string()))?,
     )?;
     release_pending_open_urls(app)
 }

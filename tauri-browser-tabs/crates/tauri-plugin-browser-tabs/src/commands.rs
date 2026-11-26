@@ -965,8 +965,8 @@ impl TabManager {
     }
 
     /// Call in app setup before creating any WebView or accepting tab commands.
-    /// Full preparation never runs under the tab collection lock. Windows Grid
-    /// children join the same native preparation epoch as the main process.
+    /// Full preparation never runs under the tab collection lock. Linux and
+    /// Windows retain the original prepared profile root for the host lifetime.
     pub fn prepare_storage(&self) -> Result<()> {
         #[cfg(target_os = "linux")]
         {

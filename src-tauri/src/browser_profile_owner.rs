@@ -75,7 +75,10 @@ impl LockFile {
         {
             return Err(denied("BROWSER_PROFILE_OWNER_LOCK_DENIED"));
         }
-        Ok(Self { file, _directory: parent })
+        Ok(Self {
+            file,
+            _directory: parent,
+        })
     }
 
     #[cfg(target_os = "windows")]
@@ -206,7 +209,11 @@ impl ProfileLease {
             .ok_or_else(|| denied("BROWSER_PROFILE_MEMBER_LOCK_BUSY"))?;
         let epoch = Uuid::new_v4();
         publish_epoch(&gate, epoch)?;
-        Ok(Self { epoch, _member: member, leader: Some(leader) })
+        Ok(Self {
+            epoch,
+            _member: member,
+            leader: Some(leader),
+        })
     }
 
     fn grid(directory: &Path, expected: Uuid) -> io::Result<Self> {
@@ -221,7 +228,11 @@ impl ProfileLease {
         if read_epoch(&gate)? != expected {
             return Err(denied("BROWSER_PROFILE_STALE_EPOCH"));
         }
-        Ok(Self { epoch: expected, _member: member, leader: None })
+        Ok(Self {
+            epoch: expected,
+            _member: member,
+            leader: None,
+        })
     }
 
     fn bind_or_verify_profile(&self, directory: &Path, path: &Path) -> io::Result<()> {
@@ -257,7 +268,15 @@ pub(crate) fn prepare(data_dir: &Path, profile: &Path, grid: bool) -> io::Result
         return Err(denied("BROWSER_PROFILE_ALREADY_ADMITTED"));
     }
     let directory = data_dir.join(DIRECTORY);
+    #[cfg(target_os = "linux")]
     crate::capabilities::workspace::safe_paths::ensure_private_directory(&directory)?;
+    // Each fixed child is separately audited when opened. A joining Grid
+    // host must not attempt a recursive ACL migration on active lock files.
+    #[cfg(target_os = "windows")]
+    browseros_platform_security::windows::ensure_private_directory_root(
+        &directory,
+        &browseros_platform_security::windows::PrivateTreeOptions::default(),
+    )?;
     let lease = if grid {
         let raw = std::env::var(GRID_EPOCH_ENV)
             .map_err(|_| denied("BROWSER_PROFILE_PARENT_EPOCH_REQUIRED"))?;
@@ -284,7 +303,10 @@ pub(crate) fn bind_prepared(data_dir: &Path, profile: &Path) -> io::Result<()> {
     lease.bind_or_verify_profile(&data_dir.join(DIRECTORY), profile)?;
     HOST_PROFILE_BOUND.set(())
         .map_err(|_| denied("BROWSER_PROFILE_ALREADY_BOUND"))?;
-    eprintln!("BROWSER_PROFILE_HOST_READY role={}", if lease.leader.is_some() { "main" } else { "grid" });
+    eprintln!(
+        "BROWSER_PROFILE_HOST_READY role={}",
+        if lease.leader.is_some() { "main" } else { "grid" }
+    );
     Ok(())
 }
 

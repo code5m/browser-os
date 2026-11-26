@@ -61,8 +61,9 @@ const DEFAULT_HOST_WINDOW: &str = "main";
 /// The plugin is bound to the default `Wry` runtime, which covers all
 /// desktop targets (Windows, macOS, Linux). Hosts must call
 /// `TabManager::prepare_storage` in app setup before creating any WebViews.
-/// On Windows this performs a shared cold preparation; create_tab never
-/// migrates or deeply audits a live profile.
+/// Linux retains the prepared directory object, and Windows performs shared
+/// cold preparation. create_tab checks the original root; it never migrates
+/// or deeply audits a live profile.
 pub fn init() -> TauriPlugin<Wry> {
     init_with_host(DEFAULT_HOST_WINDOW)
 }
