@@ -545,6 +545,7 @@ struct CaptureReceipt {
 struct CaptureSlot {
     receipt: CaptureReceipt,
     cancellation: CaptureCancellation,
+    renderer_binding: Option<crate::grid_ipc::RendererBinding>,
     since: std::time::Instant,
     // A live native callback return is not a shared renderer exit receipt.
     native_returned: bool,
@@ -589,6 +590,9 @@ impl CaptureOwner {
             return None;
         }
         let eligible = match slot.receipt.mode {
+            CaptureMode::CurrentDocument if slot.renderer_binding.is_some() => {
+                slot.receipt.phase == CapturePhase::Unknown
+            }
             CaptureMode::CurrentDocument => slot.cancellation.native_entered_at().is_some_and(|entered| {
                 slot.receipt.phase == CapturePhase::Unknown
                     || now.saturating_duration_since(entered) >= CAPTURE_DOMAIN_STALL
@@ -762,8 +766,9 @@ fn capture_view() -> Result<CaptureView, String> {
         next_sequence: owner.next_sequence.to_string(),
         receipt: owner.slot.as_ref().map(|slot| slot.receipt.clone()),
         last_completed: owner.last_completed.clone(),
-        domain_recovery_available: capture_supervisor_ready()
-            && owner.recovery_target(std::time::Instant::now()).is_some(),
+        domain_recovery_available: owner.recovery_target(std::time::Instant::now()).is_some()
+            && (owner.slot.as_ref().is_some_and(|slot| slot.renderer_binding.is_some())
+                || capture_supervisor_ready()),
         publishing: owner.slot.as_ref().is_some_and(|slot| slot.publishing),
         interactive_stage: owner.slot.as_ref()
             .filter(|slot| slot.receipt.phase == CapturePhase::Running && !slot.native_returned)
@@ -898,6 +903,7 @@ fn capture_cancel(app: &AppHandle, ticket: &str) -> Result<(), String> {
         if !slot.native_returned
             && !slot.publishing
             && slot.receipt.mode == CaptureMode::CurrentDocument
+            && slot.renderer_binding.is_none()
             && slot.cancellation.revoke_pending_native()
         {
             // This is proof that neither isolated-world layout measurement
@@ -1151,8 +1157,134 @@ async fn run_independent_capture(
     guard.completed = true;
 }
 
+/// The renderer returns only a byte count and bounded chunks of the same
+/// native document. The existing main capture owner alone publishes PNGs.
+async fn run_renderer_capture(
+    app: AppHandle, id: String, ticket: String,
+    binding: crate::grid_ipc::RendererBinding, cancellation: CaptureCancellation,
+) {
+    let mut guard = CaptureWorkerGuard { app: app.clone(), ticket: ticket.clone(), completed: false };
+    let worker_app = app.clone();
+    let worker_ticket = ticket.clone();
+    let worker_cancel = cancellation.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
+        use base64::Engine as _;
+        use crate::grid_ipc::{GridCmd, MAX_RENDERER_CAPTURE_BYTES, RENDERER_CAPTURE_CHUNK_BYTES};
+        let state = worker_app.state::<AppState>();
+        let manager = &state.grid_manager;
+        if worker_cancel.is_cancelled() {
+            capture_returned(&worker_ticket)?;
+            return Err("CAPTURE_CANCELLED_BEFORE_DISPATCH".into());
+        }
+        let started = manager.renderer_request_data(binding, GridCmd::CaptureStart {
+            id: id.clone(), ticket: worker_ticket.clone(),
+        }, 30000);
+        // Lost native capture completion is not a terminal receipt. Only
+        // a genuine reply or explicit retirement of the original process
+        // resolves the old native work.
+        if started.as_ref().is_err_and(|error| error.contains("OUTCOME_UNKNOWN")) {
+            return Err("CAPTURE_RENDERER_OUTCOME_UNKNOWN".into());
+        }
+        capture_returned(&worker_ticket)?;
+        let total = started?.and_then(|size| size.parse::<usize>().ok())
+            .filter(|size| *size > 0 && *size <= MAX_RENDERER_CAPTURE_BYTES)
+            .ok_or("CAPTURE_IMAGE_LIMIT")?;
+        let collect = (|| -> Result<Vec<u8>, String> {
+            let mut bytes = Vec::new();
+            bytes.try_reserve_exact(total).map_err(|_| "CAPTURE_IMAGE_LIMIT")?;
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            while bytes.len() < total {
+                if worker_cancel.is_cancelled() { return Err("CAPTURE_CANCELLED_AT_COMPLETION".into()); }
+                let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                if remaining.is_zero() { return Err("CAPTURE_CHUNK_DEADLINE".into()); }
+                let offset = bytes.len();
+                let data = manager.renderer_request_data(binding, GridCmd::CaptureRead {
+                    id: id.clone(), ticket: worker_ticket.clone(), offset,
+                }, remaining.as_millis().min(3000).max(1) as u64)?.ok_or("CAPTURE_CHUNK_MISSING")?;
+                let expected = (total - offset).min(RENDERER_CAPTURE_CHUNK_BYTES);
+                // Bound the encoded input before allocating the decoded chunk.
+                if data.len() > (expected + 2) / 3 * 4 {
+                    return Err("CAPTURE_CHUNK_INVALID".into());
+                }
+                let chunk = base64::engine::general_purpose::STANDARD.decode(data)
+                    .map_err(|_| "CAPTURE_CHUNK_INVALID")?;
+                if chunk.len() != expected { return Err("CAPTURE_CHUNK_INVALID".into()); }
+                bytes.extend_from_slice(&chunk);
+            }
+            Ok(bytes)
+        })();
+        // Always release an acknowledged completed capture. The renderer
+        // retains at most one bounded buffer if the connection is lost.
+        let release = manager.renderer_request_data(binding, GridCmd::CaptureRelease {
+            id, ticket: worker_ticket.clone(),
+        }, 3000);
+        let bytes = collect?;
+        release?;
+        if manager.renderer_binding(binding.index)? != binding {
+            return Err("CAPTURE_DOCUMENT_STALE".into());
+        }
+        if worker_cancel.is_cancelled() {
+            return Err("CAPTURE_CANCELLED_AT_COMPLETION".into());
+        }
+        capture_publish(&worker_app, &worker_ticket, &bytes)
+    }).await;
+    match result {
+        Ok(Ok(path)) => capture_finish(&app, &ticket, CapturePhase::Succeeded, Ok(path)),
+        Ok(Err(error)) if error == "CAPTURE_RENDERER_OUTCOME_UNKNOWN" =>
+            capture_finish(&app, &ticket, CapturePhase::Unknown, Err(error)),
+        Ok(Err(error)) if error.starts_with("CAPTURE_CANCELLED") =>
+            capture_finish(&app, &ticket, CapturePhase::Cancelled, Err(error)),
+        Ok(Err(error)) => capture_finish(&app, &ticket, CapturePhase::Failed, Err(error)),
+        Err(_) => return,
+    }
+    guard.completed = true;
+}
+
+/// Existing recovery confirmation can retire one independent renderer,
+/// rather than escalating an unknown capture to the entire application.
+fn recover_renderer_capture(app: &AppHandle, target: &CaptureRecoveryTarget) -> Result<bool, String> {
+    let binding = {
+        let mut owner = CAPTURE_OWNER.lock().map_err(|_| "CAPTURE_OWNER_UNKNOWN")?;
+        if owner.recovery_target(std::time::Instant::now()).as_ref() != Some(target) {
+            return Err("CAPTURE_DOMAIN_RECOVERY_NOT_ELIGIBLE".into());
+        }
+        let Some(binding) = owner.slot.as_ref().and_then(|slot| slot.renderer_binding) else {
+            return Ok(false);
+        };
+        owner.recovery_intent = None;
+        owner.recovery_claimed = true;
+        binding
+    };
+    let worker_app = app.clone();
+    let ticket = target.ticket.clone();
+    let started = std::thread::Builder::new().name("capture-renderer-recovery".into()).spawn(move || {
+        let result = worker_app.state::<AppState>().grid_manager
+            .retire_bound_tab_renderer(binding.index, binding.owner);
+        let receipt = CAPTURE_OWNER.lock().ok().and_then(|mut owner| {
+            owner.recovery_claimed = false;
+            let slot = owner.slot.as_mut().filter(|slot| slot.receipt.ticket == ticket)?;
+            if slot.receipt.phase != CapturePhase::Unknown { return None; }
+            if result.is_ok() {
+                slot.native_returned = true;
+                slot.receipt.phase = if slot.cancel_intent { CapturePhase::Cancelled } else { CapturePhase::Failed };
+                slot.receipt.error = Some("CAPTURE_RENDERER_RETIRED_REACTIVATE".into());
+            } else {
+                slot.receipt.error = Some("CAPTURE_RENDERER_CLEANUP_PENDING".into());
+            }
+            Some(slot.receipt.clone())
+        });
+        if let Some(receipt) = receipt { capture_notify(&worker_app, receipt); }
+    });
+    if started.is_err() {
+        CAPTURE_OWNER.lock().map_err(|_| "CAPTURE_OWNER_UNKNOWN")?.recovery_claimed = false;
+        return Err("CAPTURE_RENDERER_RECOVERY_WORKER_FAILED".into());
+    }
+    Ok(true)
+}
+
 enum CaptureWork {
     Current(CaptureDocument),
+    Renderer(crate::grid_ipc::RendererBinding),
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     Independent(String, bool),
 }
@@ -1181,19 +1313,22 @@ fn begin_capture(
     }
     let work = match mode {
         CaptureMode::CurrentDocument => {
-            if crate::bridge::isolated_tabs::route(&id).is_some() {
-                // Never reload the isolated tab URL or capture another document
-                // to impersonate a current-document screenshot.
-                return Err("CAPTURE_ISOLATED_TAB_NOT_YET_SUPPORTED".into());
-            }
             if expected_url.is_some() {
                 return Err("CAPTURE_MODE_INVALID".into());
             }
-            CaptureWork::Current(
-                app.state::<TabManagerState>()
-                    .capture_document(&id)
-                    .map_err(|_| "CAPTURE_TAB_UNAVAILABLE")?,
-            )
+            if let Some(index) = crate::bridge::isolated_tabs::route(&id) {
+                let state = app.state::<AppState>();
+                if !state.tabs.lock().unwrap().contains_key(&id) {
+                    return Err("CAPTURE_TAB_UNAVAILABLE".into());
+                }
+                CaptureWork::Renderer(state.grid_manager.renderer_binding(index)?)
+            } else {
+                CaptureWork::Current(
+                    app.state::<TabManagerState>()
+                        .capture_document(&id)
+                        .map_err(|_| "CAPTURE_TAB_UNAVAILABLE")?,
+                )
+            }
         }
         CaptureMode::IndependentAddress | CaptureMode::InteractiveAddress => {
             #[cfg(any(target_os = "linux", target_os = "windows"))]
@@ -1269,6 +1404,7 @@ fn begin_capture(
                 error: None,
             },
             cancellation: cancellation.clone(),
+            renderer_binding: match &work { CaptureWork::Renderer(binding) => Some(*binding), _ => None },
             since: std::time::Instant::now(),
             native_returned: false,
             publishing: false,
@@ -1283,6 +1419,9 @@ fn begin_capture(
         CaptureWork::Current(document) => {
             let _ =
                 tauri::async_runtime::spawn(run_capture(app, id, ticket, document, cancellation));
+        }
+        CaptureWork::Renderer(binding) => {
+            let _ = tauri::async_runtime::spawn(run_renderer_capture(app, id, ticket, binding, cancellation));
         }
         #[cfg(any(target_os = "linux", target_os = "windows"))]
         CaptureWork::Independent(address, interactive) => {
@@ -1511,12 +1650,15 @@ pub async fn capture_full_page(
                 if !confirmed {
                     return Err("CAPTURE_DOMAIN_RECOVERY_CONFIRMATION_REQUIRED".into());
                 }
-                if !capture_supervisor_ready() {
-                    return Err("CAPTURE_DOMAIN_SUPERVISOR_UNAVAILABLE".into());
-                }
                 let sequence = sequence.parse::<u64>().map_err(|_| "CAPTURE_STALE_SEQUENCE")?;
-                CAPTURE_OWNER.lock().map_err(|_| "CAPTURE_OWNER_UNKNOWN")?
-                    .request_recovery(CaptureRecoveryTarget { epoch, sequence, ticket }, std::time::Instant::now())?;
+                let target = CaptureRecoveryTarget { epoch, sequence, ticket };
+                if !recover_renderer_capture(&app, &target)? {
+                    if !capture_supervisor_ready() {
+                        return Err("CAPTURE_DOMAIN_SUPERVISOR_UNAVAILABLE".into());
+                    }
+                    CAPTURE_OWNER.lock().map_err(|_| "CAPTURE_OWNER_UNKNOWN")?
+                        .request_recovery(target, std::time::Instant::now())?;
+                }
             }
         }
         return serde_json::to_value(capture_view()?).map_err(|_| "CAPTURE_RECEIPT_FAILED".into());
@@ -1625,6 +1767,7 @@ mod capture_storage_tests {
                     error: Some("CAPTURE_ISOLATED_EXIT_PENDING".into()),
                 },
                 cancellation: CaptureCancellation::new(),
+                renderer_binding: None,
                 since: std::time::Instant::now(),
                 native_returned: false,
                 publishing: false,
@@ -1710,6 +1853,22 @@ mod capture_storage_tests {
         owner.slot.as_mut().unwrap().cancel_intent = true;
         assert!(owner.interactive_capture_requested("old").is_err());
         assert!(owner.request_interactive_capture("fixture", "7", "old").is_err());
+    }
+
+    #[test]
+    fn renderer_capture_recovery_requires_unknown_native_outcome() {
+        let mut owner = capture_fixture();
+        let slot = owner.slot.as_mut().unwrap();
+        slot.renderer_binding = Some(crate::grid_ipc::RendererBinding {
+            index: crate::grid_ipc::tab_renderer_index("tab-1").unwrap(),
+            owner: (42, 1), generation: 2, navigation_revision: 0,
+        });
+        slot.receipt.phase = CapturePhase::Running;
+        assert!(owner.recovery_target(std::time::Instant::now()).is_none());
+        owner.slot.as_mut().unwrap().receipt.phase = CapturePhase::Unknown;
+        assert!(owner.recovery_target(std::time::Instant::now()).is_some());
+        owner.slot.as_mut().unwrap().native_returned = true;
+        assert!(owner.recovery_target(std::time::Instant::now()).is_none());
     }
 
     #[test]

@@ -94,10 +94,14 @@ pub(crate) fn dispatch(app: &AppHandle, buffer: &mut CaptureBuffer, cmd: &GridCm
         GridCmd::FillCredential { id, origin, username, password } => fill(app, id, origin, username, password),
         GridCmd::CaptureStart { id, ticket } => capture_start(app, buffer, id, ticket),
         GridCmd::CaptureRead { id, ticket, offset } => capture_read(app, buffer, id, ticket, *offset),
-        GridCmd::CaptureRelease { ticket, .. } => {
+        GridCmd::CaptureRelease { id, ticket } => {
             if buffer.0.as_ref().is_some_and(|value| value.ticket == *ticket) {
-                buffer.0 = None;
-                Ok(None)
+                let capture = buffer.0.take().expect("same owned capture");
+                if app.state::<TabManagerState>().is_current_capture_document(id, &capture.document) {
+                    Ok(None)
+                } else {
+                    Err("CAPTURE_DOCUMENT_STALE".into())
+                }
             } else { Err("CAPTURE_STALE_TICKET".into()) }
         }
         _ => return None,

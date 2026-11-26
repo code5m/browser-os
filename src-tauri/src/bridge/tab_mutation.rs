@@ -288,6 +288,16 @@ impl Owner {
         })
     }
 
+    fn local_renderer_recovery(&self) -> Option<(u32, (u32, u64))> {
+        let slot = self.slot.as_ref()?;
+        if self.recovery_claimed || slot.receipt.phase != Phase::Unknown {
+            return None;
+        }
+        let Binding::Isolated(Some(expected)) = slot.binding.as_ref()? else { return None };
+        let id = slot.action.as_ref()?.target()?;
+        Some((super::isolated_tabs::route(id)?, *expected))
+    }
+
     fn valid_intent(&self, intent: &DomainRecoveryIntent, now: Instant) -> bool {
         now.saturating_duration_since(intent.issued) < RECOVERY_INTENT_TTL
             && self.recovery_target(now).as_ref() == Some(&intent.target)
@@ -393,8 +403,8 @@ fn snapshot(app: &AppHandle) -> Result<OwnerView, String> {
             internal_active: state.internal_active,
             active_known: false,
             active_tab_id: None,
-            domain_recovery_available: supervisor_ready()
-                && state.recovery_target(Instant::now()).is_some(),
+            domain_recovery_available: state.local_renderer_recovery().is_some()
+                || (supervisor_ready() && state.recovery_target(Instant::now()).is_some()),
         }
     };
     // Do not hold the Owner mutex while observing app metadata.
@@ -410,9 +420,9 @@ fn snapshot(app: &AppHandle) -> Result<OwnerView, String> {
         view.active_known = false;
         view.active_tab_id = None;
     }
-    if !supervisor_ready()
-        || !state.matches_view(&view)
-        || state.recovery_target(Instant::now()).is_none()
+    if !state.matches_view(&view)
+        || (state.local_renderer_recovery().is_none()
+            && (!supervisor_ready() || state.recovery_target(Instant::now()).is_none()))
     {
         view.domain_recovery_available = false;
     }
@@ -751,20 +761,51 @@ pub(crate) fn tab_mutation(
             if !confirmed {
                 return Err("TAB_DOMAIN_RECOVERY_CONFIRMATION_REQUIRED".into());
             }
-            if !supervisor_ready() {
-                return Err("TAB_DOMAIN_SUPERVISOR_UNAVAILABLE".into());
+            let sequence = sequence.parse::<u64>().map_err(|_| "TAB_MUTATION_STALE_SEQUENCE")?;
+            let target = RecoveryTarget { epoch, sequence, ticket };
+            let local = {
+                let mut state = owner()?;
+                if state.recovery_target(Instant::now()).as_ref() != Some(&target) {
+                    return Err("TAB_DOMAIN_RECOVERY_NOT_ELIGIBLE".into());
+                }
+                if let Some((index, expected)) = state.local_renderer_recovery() {
+                    let ticket = target.ticket.clone().ok_or("TAB_MUTATION_INVALID_ACTION")?;
+                    state.recovery_intent = None;
+                    state.recovery_claimed = true;
+                    Some((index, expected, ticket))
+                } else {
+                    if !supervisor_ready() {
+                        return Err("TAB_DOMAIN_SUPERVISOR_UNAVAILABLE".into());
+                    }
+                    state.request_recovery(target, Instant::now())?;
+                    None
+                }
+            };
+            if let Some((index, expected, ticket)) = local {
+                let worker_app = app.clone();
+                let started = std::thread::Builder::new().name("tab-renderer-recovery".into()).spawn(move || {
+                    let result = worker_app.state::<crate::AppState>().grid_manager.retire_bound_tab_renderer(index, expected);
+                    if let Ok(mut state) = owner() {
+                        state.recovery_claimed = false;
+                        if let Ok(slot) = matching(&mut state, &ticket) {
+                            if slot.receipt.phase == Phase::Unknown {
+                                match result {
+                                    Ok(()) => {
+                                        slot.receipt.phase = Phase::Failed;
+                                        slot.receipt.error = Some("TAB_RENDERER_RETIRED_REACTIVATE: original effect was unknown".into());
+                                    }
+                                    Err(_) => slot.receipt.error = Some("TAB_RENDERER_CLEANUP_PENDING".into()),
+                                }
+                            }
+                        }
+                    }
+                    notify(&worker_app, &ticket);
+                });
+                if started.is_err() {
+                    owner()?.recovery_claimed = false;
+                    return Err("TAB_RENDERER_RECOVERY_WORKER_FAILED".into());
+                }
             }
-            let sequence = sequence
-                .parse::<u64>()
-                .map_err(|_| "TAB_MUTATION_STALE_SEQUENCE")?;
-            owner()?.request_recovery(
-                RecoveryTarget {
-                    epoch,
-                    sequence,
-                    ticket,
-                },
-                Instant::now(),
-            )?;
         }
         Request::Fence { epoch, sequence } => {
             let mut state = owner()?;
