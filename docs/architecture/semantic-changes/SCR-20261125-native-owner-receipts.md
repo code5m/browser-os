@@ -446,3 +446,9 @@ Source-only scope; no compilation, tests, install/runtime validation, workflow d
 - All fixture/read/resume entrypoints reserve one of two Run permits before creating a durable Run, then transfer it to a detached task spanning native admission, execution and terminal receipt. Waiter drop does not release that permit or abandon the admitted continuation. Recheck the main source and enabled configuration in the admission worker. The original exact approval and historical receipt checks remain unchanged.
 - Use an independent two-worker history lane for catalog, restore and confirmed forget and a single owned offline benchmark lane. Busy admission rejects rather than scheduling unbounded blocking work. This does not grant browser writes, cancel an OS operation, or convert the experimental Channel into the general production tool loop.
 - Source only; no compilation, tests, workflow edits or master merge.
+
+## 2026-11-26 — Manual MCP stdout transport faults fail closed before reply admission
+
+- Both native adapters retain the first malformed/oversized frame, read error or output queue overflow as an out-of-band terminal transport fault, not a normal EOF or a queued advisory error that an earlier buffered reply can hide. Check the fault before submitting a new RPC, after dequeuing and immediately before accepting a reply. Use the same finite 32-frame queue and fail-fast backpressure policy on both platforms.
+- A reply already accepted before a later fault is not retroactively changed; this is a local transport admission rule, not provider-effect proof. Existing durable unknown outcome, independent signed final status and native cleanup semantics remain authoritative. No new provider cancellation guarantee.
+- Source only; no compilation, tests, workflow edits or master merge.

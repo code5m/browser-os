@@ -1,7 +1,7 @@
 //! Short-lived MCP stdio sessions inside a no-network Windows AppContainer.
 #![cfg(windows)]
 
-use super::windows_sandbox::{send_bounded, SandboxChild, SandboxProcess, SandboxProfile};
+use super::windows_sandbox::{SandboxChild, SandboxProcess, SandboxProfile};
 use serde_json::{json, Value};
 use std::collections::hash_map::DefaultHasher;
 use std::fs;
@@ -382,25 +382,31 @@ impl Session {
                 let mut reader = BufReader::new(stdout);
                 loop {
                     let mut bytes = Vec::new();
-                    let (value, fatal) = match reader
+                    let value = match reader
                         .by_ref()
                         .take(LIMIT + 2)
                         .read_until(b'\n', &mut bytes)
                     {
                         Ok(0) => break,
-                        Ok(_) => {
-                            let value = mcp_protocol::decode_line(&bytes, LIMIT as usize);
-                            let fatal = value.is_err();
-                            (value, fatal)
+                        Ok(_) => match mcp_protocol::decode_line(&bytes, LIMIT as usize) {
+                            Ok(value) => value,
+                            Err(error) => {
+                                *on_read_failure.lock().unwrap_or_else(|p| p.into_inner()) = Some(error);
+                                break;
+                            }
                         },
-                        Err(_) => (Err("MCP_FRAME_READ".into()), true),
+                        Err(_) => {
+                            *on_read_failure.lock().unwrap_or_else(|p| p.into_inner()) =
+                                Some("MCP_FRAME_READ".into());
+                            break;
+                        }
                     };
-                    if send_bounded(&reader_tx, value, Duration::from_secs(2)).is_err() {
+                    // Match Linux's bounded queue: once a frame cannot be
+                    // retained, the session is faulted instead of silently
+                    // accepting the earlier buffered reply.
+                    if reader_tx.try_send(Ok(value)).is_err() {
                         *on_read_failure.lock().unwrap_or_else(|p| p.into_inner()) =
                             Some("MCP_OUTPUT_BACKPRESSURE".into());
-                        break;
-                    }
-                    if fatal {
                         break;
                     }
                 }
@@ -524,6 +530,9 @@ impl Session {
         }
     }
     fn rpc(&mut self, id: u64, method: &str, params: Value) -> Result<Value, String> {
+        if let Some(error) = self.reader_fault.lock().unwrap_or_else(|p| p.into_inner()).clone() {
+            return Err(error);
+        }
         self.send(json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}))?;
         loop {
             let value = match self.recv_frame() {
@@ -538,7 +547,12 @@ impl Session {
                 }
             };
             match mcp_protocol::classify_frame(value, id)? {
-                RpcFrame::Reply(result) => return Ok(result),
+                RpcFrame::Reply(result) => {
+                    if let Some(error) = self.reader_fault.lock().unwrap_or_else(|p| p.into_inner()).clone() {
+                        return Err(error);
+                    }
+                    return Ok(result);
+                },
                 RpcFrame::ServerRequest(reply) => self.send(reply)?,
                 RpcFrame::Ignore => {}
             }

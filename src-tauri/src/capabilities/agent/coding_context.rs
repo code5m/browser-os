@@ -10,7 +10,7 @@ use std::{
     process::{Child, Command, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
-        mpsc, Arc,
+        mpsc, Arc, Mutex,
     },
     thread,
     time::{Duration, Instant},
@@ -212,6 +212,7 @@ struct Session {
     child: Child,
     input: std::process::ChildStdin,
     rx: mpsc::Receiver<Result<Value, String>>,
+    reader_fault: Arc<Mutex<Option<String>>>,
     deadline: Instant,
     secrets: Vec<String>,
     cancellation: Arc<AtomicBool>,
@@ -410,6 +411,8 @@ impl Session {
             }
         };
         let (tx, rx) = mpsc::sync_channel(32);
+        let reader_fault = Arc::new(Mutex::new(None));
+        let on_read_failure = Arc::clone(&reader_fault);
         let reader = match thread::Builder::new()
             .name("browseros-mcp-reader".into())
             .spawn(move || {
@@ -423,14 +426,22 @@ impl Session {
                     {
                         Ok(0) => break,
                         Ok(_) => {
-                            let value = mcp_protocol::decode_line(&bytes, LIMIT as usize);
-                            let fatal = value.is_err();
-                            if tx.try_send(value).is_err() || fatal {
+                            let value = match mcp_protocol::decode_line(&bytes, LIMIT as usize) {
+                                Ok(value) => value,
+                                Err(error) => {
+                                    *on_read_failure.lock().unwrap_or_else(|p| p.into_inner()) = Some(error);
+                                    break;
+                                }
+                            };
+                            if tx.try_send(Ok(value)).is_err() {
+                                *on_read_failure.lock().unwrap_or_else(|p| p.into_inner()) =
+                                    Some("MCP_OUTPUT_BACKPRESSURE".into());
                                 break;
                             }
                         }
                         Err(_) => {
-                            let _ = tx.try_send(Err("MCP_FRAME_READ".into()));
+                            *on_read_failure.lock().unwrap_or_else(|p| p.into_inner()) =
+                                Some("MCP_FRAME_READ".into());
                             break;
                         }
                     }
@@ -446,6 +457,7 @@ impl Session {
             child,
             input,
             rx,
+            reader_fault,
             deadline: Instant::now() + Duration::from_secs(seconds.clamp(1, 60)),
             secrets,
             cancellation: Arc::new(AtomicBool::new(false)),
@@ -504,9 +516,14 @@ impl Session {
             let _ = self.send_until(notification, Instant::now() + Duration::from_millis(200), false);
         }
     }
+    fn reader_error(&self) -> Option<String> {
+        self.reader_fault.lock().unwrap_or_else(|p| p.into_inner()).clone()
+    }
     fn rpc(&mut self, id: u64, method: &str, params: Value) -> Result<Value, String> {
+        if let Some(error) = self.reader_error() { return Err(error); }
         self.send(json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}))?;
         loop {
+            if let Some(error) = self.reader_error() { return Err(error); }
             if self.cancellation.load(Ordering::Acquire) {
                 self.notify_cancelled(id, method);
                 return Err("MCP_CANCEL_REQUESTED".into());
@@ -523,11 +540,17 @@ impl Session {
                 Ok(value) => value?,
                 Err(mpsc::RecvTimeoutError::Timeout) => continue,
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    return Err("MCP_TIMEOUT_OR_CLOSED".into())
+                    return Err(self.reader_error().unwrap_or_else(|| "MCP_TIMEOUT_OR_CLOSED".into()))
                 }
             };
+            // A full queue or invalid frame ends the transport. A reply
+            // buffered before that fault must not silently hide the loss.
+            if let Some(error) = self.reader_error() { return Err(error); }
             match mcp_protocol::classify_frame(value, id)? {
-                RpcFrame::Reply(result) => return Ok(result),
+                RpcFrame::Reply(result) => {
+                    if let Some(error) = self.reader_error() { return Err(error); }
+                    return Ok(result);
+                },
                 RpcFrame::ServerRequest(reply) => self.send(reply)?,
                 RpcFrame::Ignore => {}
             }
