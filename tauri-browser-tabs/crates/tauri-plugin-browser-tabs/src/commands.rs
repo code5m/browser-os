@@ -494,7 +494,7 @@ fn checked_capture_pixels(width: f64, height: f64, scale: f64) -> std::result::R
 }
 
 #[cfg(any(target_os = "linux", test))]
-fn validate_linux_capture_metrics(json: &str, native_scale: f64) -> std::result::Result<(), String> {
+fn validate_linux_capture_metrics(json: &str, native_scale: f64, visible_only: bool) -> std::result::Result<(), String> {
     if json.len() > 1024 || !native_scale.is_finite() || native_scale <= 0.0 {
         return Err("CAPTURE_METRICS_INVALID".into());
     }
@@ -507,7 +507,14 @@ fn validate_linux_capture_metrics(json: &str, native_scale: f64) -> std::result:
         return Err("CAPTURE_METRICS_INVALID".into());
     }
     // Use the larger of the native and isolated-world scale estimates.
-    checked_capture_pixels(number("width")?, number("height")?, scale.max(native_scale).max(1.0))
+    let effective_scale = scale.max(native_scale).max(1.0);
+    let width = number("width")?;
+    let height = number("height")?;
+    checked_capture_pixels(width, height, effective_scale)?;
+    if visible_only && ((width * effective_scale).ceil() * (height * effective_scale).ceil()) > 1_000_000.0 {
+        return Err("CAPTURE_BAND_LIMIT".into());
+    }
+    Ok(())
 }
 
 #[cfg(target_os = "linux")]
@@ -616,12 +623,15 @@ mod capture_request_tests {
 
     #[test]
     fn linux_preflight_counts_physical_pixels_and_rejects_invalid_measurements() {
-        assert!(validate_linux_capture_metrics(r#"{"width":1200,"height":4000,"scale":1}"#, 1.0).is_ok());
-        assert!(validate_linux_capture_metrics(r#"{"width":1200,"height":4000,"scale":2}"#, 1.0).is_err());
-        assert!(validate_linux_capture_metrics(r#"{"width":1200,"height":4000,"scale":1}"#, 2.0).is_err());
-        assert!(validate_linux_capture_metrics(r#"{"width":0,"height":100,"scale":1}"#, 1.0).is_err());
-        assert!(validate_linux_capture_metrics("null", 1.0).is_err());
-        assert!(validate_linux_capture_metrics(r#"{"width":100,"height":100,"scale":1}"#, f64::NAN).is_err());
+        assert!(validate_linux_capture_metrics(r#"{"width":1200,"height":4000,"scale":1}"#, 1.0, false).is_ok());
+        assert!(validate_linux_capture_metrics(r#"{"width":1200,"height":4000,"scale":1}"#, 1.0, true).is_err());
+        assert!(validate_linux_capture_metrics(r#"{"width":1280,"height":720,"scale":1}"#, 1.0, true).is_ok());
+        assert!(validate_linux_capture_metrics(r#"{"width":1280,"height":720,"scale":1}"#, 2.0, true).is_err());
+        assert!(validate_linux_capture_metrics(r#"{"width":1200,"height":4000,"scale":2}"#, 1.0, false).is_err());
+        assert!(validate_linux_capture_metrics(r#"{"width":1200,"height":4000,"scale":1}"#, 2.0, false).is_err());
+        assert!(validate_linux_capture_metrics(r#"{"width":0,"height":100,"scale":1}"#, 1.0, false).is_err());
+        assert!(validate_linux_capture_metrics("null", 1.0, false).is_err());
+        assert!(validate_linux_capture_metrics(r#"{"width":100,"height":100,"scale":1}"#, f64::NAN, false).is_err());
     }
 
     #[test]
@@ -1508,7 +1518,14 @@ impl TabManager {
                 let native_scale = f64::from(gtk_wv.scale_factor()) * gtk_wv.zoom_level();
                 let metrics_view = gtk_wv.clone();
                 let metrics_cancel = cancellation.native.clone();
-                gtk_wv.run_javascript_in_world(
+                // Measure the region actually requested. Full-document
+                // preflight remains unchanged for current-page captures.
+                // A band must satisfy its own pixel budget before snapshot.
+                let metrics_script = if _visible_only {
+                    r#"(() => JSON.stringify({
+                        width: innerWidth, height: innerHeight, scale: devicePixelRatio
+                    }))()"#
+                } else {
                     r#"(() => {
                         const root = document.documentElement;
                         if (!root) return "null";
@@ -1520,7 +1537,10 @@ impl TabManager {
                                 body?.scrollHeight || 0, body?.offsetHeight || 0, innerHeight),
                             scale: devicePixelRatio
                         });
-                    })()"#,
+                    })()"#
+                };
+                gtk_wv.run_javascript_in_world(
+                    metrics_script,
                     "browseros.capture.metrics.v1",
                     Some(&metrics_cancel),
                     move |result| {
@@ -1534,7 +1554,7 @@ impl TabManager {
                             .and_then(|value| value.js_value()
                                 .map(|v| v.to_str().to_string())
                                 .ok_or_else(|| "CAPTURE_METRICS_UNAVAILABLE".to_string()))
-                            .and_then(|json| validate_linux_capture_metrics(&json, native_scale));
+                            .and_then(|json| validate_linux_capture_metrics(&json, native_scale, _visible_only));
                         if let Err(error) = measurement {
                             callback(Err(error));
                             return;
@@ -1761,7 +1781,11 @@ impl TabManager {
             const root = document.scrollingElement;
             const vv = window.visualViewport;
             if (!root || !document.body || document.readyState !== 'complete' ||
-                document.compatMode !== 'CSS1Compat') return JSON.stringify({eligible:false});
+                document.compatMode !== 'CSS1Compat' || root.clientLeft !== 0 || root.clientTop !== 0 ||
+                getComputedStyle(root).direction !== 'ltr' ||
+                getComputedStyle(document.body).direction !== 'ltr' ||
+                (vv && (vv.offsetLeft !== 0 || vv.offsetTop !== 0)))
+                return JSON.stringify({eligible:false});
             const nodes = document.querySelectorAll('*');
             if (nodes.length > 8000 || document.querySelector('iframe,frame,video,canvas,object,embed,svg,marquee,[loading="lazy"]'))
                 return JSON.stringify({eligible:false});
@@ -1803,22 +1827,26 @@ impl TabManager {
                 return;
             }
             if view.scale_factor() != 1 || view.zoom_level() != 1.0 {
+                drop(permit);
                 callback(Ok(br#"{"eligible":false}"#.to_vec()));
                 return;
             }
             let current = view.clone();
             let native_cancel = cancellation.native.clone();
             view.run_javascript_in_world(&js, "browseros.capture.viewport.v1", Some(&native_cancel), move |result| {
-                let _permit = permit;
-                if cancellation.is_cancelled() || !document.observed_generation_is_current() || current.is_loading() {
-                    callback(Err("CAPTURE_CANCELLED_OR_STALE".into()));
-                    return;
-                }
-                callback(result.map_err(|_| "CAPTURE_METRICS_FAILED".to_string())
-                    .and_then(|value| value.js_value().map(|v| v.to_str().to_string())
-                        .ok_or_else(|| "CAPTURE_METRICS_UNAVAILABLE".to_string()))
-                    .and_then(|json| if json.len() <= 4096 { Ok(json.into_bytes()) }
-                        else { Err("CAPTURE_METRICS_INVALID".into()) }));
+                let result = if cancellation.is_cancelled() || !document.observed_generation_is_current() || current.is_loading() {
+                    Err("CAPTURE_CANCELLED_OR_STALE".into())
+                } else {
+                    result.map_err(|_| "CAPTURE_METRICS_FAILED".to_string())
+                        .and_then(|value| value.js_value().map(|v| v.to_str().to_string())
+                            .ok_or_else(|| "CAPTURE_METRICS_UNAVAILABLE".to_string()))
+                        .and_then(|json| if json.len() <= 4096 { Ok(json.into_bytes()) }
+                            else { Err("CAPTURE_METRICS_INVALID".into()) })
+                };
+                // Native metrics have returned. Release admission before
+                // notifying the sequential Worker of this terminal result.
+                drop(permit);
+                callback(result);
             });
         })?;
         Ok(())
