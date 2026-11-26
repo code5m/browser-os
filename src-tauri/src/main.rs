@@ -459,7 +459,7 @@ fn run_grid_child(index: u32) {
                 startup::report_failure(&error);
                 std::process::exit(1);
             }
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
             if grid_ipc::is_tab_renderer(index) {
                 app.state::<tauri_plugin_browser_tabs::TabManagerState>()
                     .set_native_shell_shortcut_sink(move |id, action| {

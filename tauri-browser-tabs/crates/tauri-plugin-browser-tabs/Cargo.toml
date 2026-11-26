@@ -25,7 +25,7 @@ base64 = "0.22"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 browseros-platform-security = { path = "../../../crates/browseros-platform-security" }
-windows-sys = { version = "=0.60.2", features = ["Win32_System_SystemInformation"] }
+windows-sys = { version = "=0.60.2", features = ["Win32_System_SystemInformation", "Win32_UI_Input_KeyboardAndMouse"] }
 windows = "=0.61.3"
 webview2-com = "=0.38.2"
 

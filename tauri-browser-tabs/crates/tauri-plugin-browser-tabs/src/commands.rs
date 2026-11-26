@@ -909,9 +909,9 @@ pub struct TabManager {
     lifecycle_busy: RwLock<HashMap<TabId, TabAccess>>,
     app: AppHandle<Wry>,
     host_label: String,
-    // Native-only callback installed by the independent GTK host. Remote
+    // Native-only callback installed by the independent browser host. Remote
     // WebView event emitters cannot reach this function pointer.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     shell_shortcut_sink: RwLock<Option<Arc<dyn Fn(&str, &str) + Send + Sync>>>,
     // Native host-only alternate profile. Never selected by an IPC caller.
     #[cfg(any(target_os = "linux", target_os = "windows"))]
@@ -930,7 +930,7 @@ impl TabManager {
             lifecycle_busy: RwLock::new(HashMap::new()),
             app,
             host_label: host_label.into(),
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
             shell_shortcut_sink: RwLock::new(None),
             #[cfg(any(target_os = "linux", target_os = "windows"))]
             isolated_profile: None,
@@ -942,7 +942,7 @@ impl TabManager {
 
     /// Set in native application setup before creating any browser tab.
     /// This is not a Tauri command and does not add a remote event permission.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     pub fn set_native_shell_shortcut_sink(
         &self, sink: impl Fn(&str, &str) + Send + Sync + 'static,
     ) {
@@ -1311,6 +1311,68 @@ impl TabManager {
                     }
                 });
             });
+        }
+
+        // Windows WebView2 accelerator callbacks are native, focused input.
+        // Restrict this to hosts with the typed sink, matching the independent
+        // renderer's existing trusted reporting path (no page-JS fallback).
+        #[cfg(target_os = "windows")]
+        if let Some(sink) = self.shell_shortcut_sink.read().clone() {
+            let id_key = options.id.clone();
+            let registration = webview.with_webview(move |native| {
+                use webview2_com::AcceleratorKeyPressedEventHandler;
+                use webview2_com::Microsoft::Web::WebView2::Win32::COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN;
+                use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+                    GetKeyState, VK_CONTROL, VK_SHIFT, VK_MENU, VK_LWIN, VK_RWIN, VK_F11,
+                };
+                let handler = AcceleratorKeyPressedEventHandler::create(Box::new(move |_, args| {
+                    let Some(args) = args else { return Ok(()); };
+                    unsafe {
+                        let mut kind = COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN;
+                        args.KeyEventKind(&mut kind)?;
+                        if kind != COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN {
+                            return Ok(());
+                        }
+                        let mut key = 0u32;
+                        let mut lparam = 0i32;
+                        args.VirtualKey(&mut key)?;
+                        args.KeyEventLParam(&mut lparam)?;
+                        let down = |vk: u16| GetKeyState(i32::from(vk)) < 0;
+                        let ctrl = down(VK_CONTROL);
+                        let shift = down(VK_SHIFT);
+                        if down(VK_MENU) || down(VK_LWIN) || down(VK_RWIN) {
+                            return Ok(());
+                        }
+                        let action = if key == u32::from(VK_F11) && !ctrl && !shift {
+                            Some("immersive")
+                        } else if key == u32::from(VK_F11) && ctrl && shift {
+                            Some("compact")
+                        } else if key == u32::from(b'L') && ctrl && !shift {
+                            Some("address")
+                        } else {
+                            None
+                        };
+                        if let Some(action) = action {
+                            // Set Handled before the bounded native report. Do
+                            // not perform cross-process COM or blocking IPC.
+                            args.SetHandled(true)?;
+                            if lparam & (1 << 30) == 0 {
+                                sink(&id_key, action);
+                            }
+                        }
+                    }
+                    Ok(())
+                }));
+                let mut token = 0i64;
+                // The controller retains its handler until native destruction.
+                // There is no captured controller or cyclic ownership.
+                if unsafe { native.controller().add_AcceleratorKeyPressed(&handler, &mut token) }.is_err() {
+                    eprintln!("[browser-tabs] native Windows shell shortcut registration failed");
+                }
+            });
+            if registration.is_err() {
+                eprintln!("[browser-tabs] native Windows shell shortcut dispatch failed");
+            }
         }
 
         // 加载失败上报（Linux）：WebKit 内部错误页不注入用户脚本，前端无法感知
