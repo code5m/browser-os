@@ -18,6 +18,15 @@ const context = ref<{ id: string; kind: 'web' | 'module' } | null>(null);
 // Read-only projection and actions are shared with the global shortcuts.
 const tabActions = useUnifiedTabs();
 const projectedTabs = tabActions.projectedTabs;
+const restartTarget = ref<Awaited<ReturnType<typeof browser.inspectNativeDomainRecovery>>>(null);
+async function prepareDomainRestart() {
+  restartTarget.value = await browser.inspectNativeDomainRecovery();
+}
+async function confirmDomainRestart() {
+  const target = restartTarget.value;
+  restartTarget.value = null;
+  if (target) await browser.requestNativeDomainRecovery(target);
+}
 
 // Resolve the native window only after an explicit user action so a browser/dev
 // preview can render the shell even when Tauri APIs are unavailable.
@@ -140,6 +149,14 @@ async function newTab() {
     <button v-if="browser.tabNativeState === 'unknown' || browser.tabRecoveryRequired"
       class="native-recovery" :disabled="browser.tabRecoveryBusy" @click.stop="browser.recoverNativeTabs()"
       :title="browser.tabRecoveryMessage || '查询原生回执并核对页签，不强制释放执行权'">页签恢复</button>
+    <button v-if="browser.tabRecoveryRequired && !restartTarget"
+      class="native-recovery" :disabled="browser.tabRecoveryBusy" @click.stop="prepareDomainRestart"
+      title="核对卡住的原生操作；必要时由监管器重启整个应用">故障域重启</button>
+    <template v-if="browser.tabRecoveryRequired && restartTarget">
+      <button class="native-recovery" :disabled="browser.tabRecoveryBusy" @click.stop="confirmDomainRestart"
+        title="重启整个应用，未保存的会话和编辑状态可能丢失；不会重放原操作">确认重启（未保存状态可能丢失）</button>
+      <button class="native-recovery" @click.stop="restartTarget = null">取消</button>
+    </template>
     <span v-if="browser.tabRecoveryMessage && (browser.tabRecoveryRequired || browser.tabNativeState === 'unknown')"
       class="native-recovery-status" role="status" :title="browser.tabRecoveryMessage">{{browser.tabRecoveryMessage}}</span>
     <div class="titlebar-drag" aria-hidden="true"></div>

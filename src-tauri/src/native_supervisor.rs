@@ -34,6 +34,22 @@ const MAX_PENDING_GAP: Duration = Duration::from_secs(6);
 const CLEANUP: Duration = Duration::from_secs(15);
 const STARTUP_WARNING: Duration = Duration::from_secs(120);
 
+// The native IPC may request recovery only while an authenticated supervisor
+// probe is live. Losing this transport is never evidence of a native hang.
+static DOMAIN_RECOVERY_READY: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn domain_recovery_ready() -> bool {
+    DOMAIN_RECOVERY_READY.load(Ordering::Acquire)
+}
+
+struct ProbeConnection;
+
+impl Drop for ProbeConnection {
+    fn drop(&mut self) {
+        DOMAIN_RECOVERY_READY.store(false, Ordering::Release);
+    }
+}
+
 pub(crate) struct OwnedHost {
     child: Child,
     #[cfg(target_os = "linux")]
@@ -276,6 +292,9 @@ impl ProbeHealth {
                 }
             }
             b'B' => ProbeDecision::Wait,
+            // M is a separate, explicit user request from the live native
+            // owner, not an inference from a slow or lost UI callback.
+            b'M' => ProbeDecision::Recover,
             _ => ProbeDecision::NoRecovery,
         }
     }
@@ -812,6 +831,8 @@ pub(crate) fn start_child_probe(app: tauri::AppHandle, endpoint: ChildEndpoint) 
             let mut pending: Option<mpsc::Receiver<()>> = None;
             let mut discard_ack = false;
             let mut last_pending_reply = false;
+            let mut last_manual_intent = None;
+            let _connection = ProbeConnection;
             let exiting = || {
                 app.try_state::<crate::ExitLifecycleState>()
                     .is_some_and(|state| state.started.load(Ordering::Acquire))
@@ -822,7 +843,8 @@ pub(crate) fn start_child_probe(app: tauri::AppHandle, endpoint: ChildEndpoint) 
                     return;
                 }
                 if command[0] == b'C' {
-                    if !last_pending_reply {
+                    let manual_intent = last_manual_intent.take();
+                    if !last_pending_reply && manual_intent.is_none() {
                         return;
                     }
                     last_pending_reply = false;
@@ -835,6 +857,24 @@ pub(crate) fn start_child_probe(app: tauri::AppHandle, endpoint: ChildEndpoint) 
                         }
                         continue;
                     };
+                    if let Some(intent) = manual_intent {
+                        // The exact target and intent must still be current
+                        // after taking the same exit latch as normal shutdown.
+                        if let Some(domain_claim) = crate::bridge::claim_domain_recovery(&intent) {
+                            if stream.write_all(b"G").is_ok() {
+                                let mut end = [0u8; 1];
+                                let _ = stream.read_exact(&mut end);
+                            }
+                            drop(domain_claim);
+                            drop(claim);
+                            return;
+                        }
+                        drop(claim);
+                        if stream.write_all(b"D").is_err() {
+                            return;
+                        }
+                        continue;
+                    }
                     // Recheck the outstanding native callback AFTER claiming
                     // exit admission. No new recovery may use an old B.
                     match pending.as_ref().map(|receive| receive.try_recv()) {
@@ -864,10 +904,19 @@ pub(crate) fn start_child_probe(app: tauri::AppHandle, endpoint: ChildEndpoint) 
                 if command[0] != b'P' {
                     return;
                 }
+                DOMAIN_RECOVERY_READY.store(true, Ordering::Release);
                 last_pending_reply = false;
+                last_manual_intent = None;
                 if exiting() {
                     discard_ack |= pending.is_some();
                     if stream.write_all(b"S").is_err() {
+                        return;
+                    }
+                    continue;
+                }
+                if let Some(intent) = crate::bridge::pending_domain_recovery() {
+                    last_manual_intent = Some(intent);
+                    if stream.write_all(b"M").is_err() {
                         return;
                     }
                     continue;
@@ -1065,6 +1114,17 @@ mod tests {
         }
         assert_eq!(
             health.observe(b'?', now + Duration::from_secs(123)),
+            ProbeDecision::NoRecovery
+        );
+    }
+
+    #[test]
+    fn explicit_native_recovery_request_is_distinct_from_probe_silence() {
+        let mut health = ProbeHealth::default();
+        assert_eq!(health.observe(b'B', Instant::now()), ProbeDecision::Wait);
+        assert_eq!(health.observe(b'M', Instant::now()), ProbeDecision::Recover);
+        assert_eq!(
+            health.observe(b'?', Instant::now()),
             ProbeDecision::NoRecovery
         );
     }

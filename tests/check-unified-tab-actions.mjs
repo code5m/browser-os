@@ -232,6 +232,22 @@ function callerView(store) {
   assert.equal(browser.tabRecoveryRequired, true);
   await assert.rejects(browser.tabNew("https://new.test"), /TAB_NATIVE_OPERATION_STALLED/);
   assert.ok(!calls.some(([kind]) => kind === "new" || kind === "close"));
+  let requested = [];
+  native.requestTabDomainRecovery = async (...args) => { requested.push(args); };
+  assert.equal(await browser.inspectNativeDomainRecovery(), null);
+  assert.deepEqual(requested, []);
+  native.inspectTabMutation = async () => ({epoch:"reload-epoch",next_sequence:"7",
+    internal_active:false,active_known:false,active_tab_id:null,
+    domain_recovery_available:true,receipt:{ticket:"old-ticket",phase:"unknown"}});
+  const target = await browser.inspectNativeDomainRecovery();
+  assert.equal(target.ticket, "old-ticket");
+  assert.deepEqual(requested, [], "inspection must not request a restart");
+  native.inspectTabMutation = async () => ({epoch:"reload-epoch",next_sequence:"8",
+    domain_recovery_available:true,receipt:{ticket:"different-ticket",phase:"unknown"}});
+  await browser.requestNativeDomainRecovery(target);
+  assert.deepEqual(requested, [["reload-epoch","7","old-ticket"]],
+    "confirmation must carry the inspected target, not a silently substituted one");
+  assert.equal(browser.tabRecoveryRequired, true, "a request is not a domain exit receipt");
 }
 {
   const { browser, native } = fixture();

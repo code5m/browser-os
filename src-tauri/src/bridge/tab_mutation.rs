@@ -6,6 +6,7 @@ use super::tab_runtime::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::{LazyLock, Mutex};
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, Webview};
 use tauri_plugin_browser_tabs::{TabInstance, TabManagerState};
 
@@ -162,6 +163,7 @@ impl Slot {
             return false;
         }
         self.entered = true;
+        self.since = Instant::now();
         true
     }
     fn cancel(&mut self) {
@@ -176,12 +178,34 @@ impl Slot {
         }
     }
 }
+// A stuck mutation with a responsive shell is not a GTK heartbeat failure.
+// Only an explicit, short-lived request bound to the current native Owner
+// may authorize the existing supervisor to retire the whole process domain.
+const DOMAIN_STALL: Duration = Duration::from_secs(60);
+const RECOVERY_INTENT_TTL: Duration = Duration::from_secs(15);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RecoveryTarget {
+    epoch: String,
+    sequence: u64,
+    ticket: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DomainRecoveryIntent {
+    target: RecoveryTarget,
+    issued: Instant,
+}
+
 struct Owner {
     slot: Option<Slot>,
     last_ack: Option<String>,
     epoch: String,
     next_sequence: u64,
     internal_active: bool,
+    internal_started: Option<Instant>,
+    recovery_intent: Option<DomainRecoveryIntent>,
+    recovery_claimed: bool,
 }
 impl Default for Owner {
     fn default() -> Self {
@@ -191,6 +215,9 @@ impl Default for Owner {
             epoch: uuid::Uuid::new_v4().to_string(),
             next_sequence: 1,
             internal_active: false,
+            internal_started: None,
+            recovery_intent: None,
+            recovery_claimed: false,
         }
     }
 }
@@ -205,7 +232,7 @@ impl Owner {
 
     fn admit_background(&mut self) -> Result<(), String> {
         self.expire_prepared();
-        if self.slot.is_some() || self.internal_active {
+        if self.slot.is_some() || self.internal_active || self.recovery_claimed {
             return Err("TAB_MUTATION_OWNER_BUSY".into());
         }
         // A background operation changes the same native tab state as a
@@ -213,7 +240,71 @@ impl Owner {
         // calls must invalidate an older reconciliation snapshot.
         self.advance_sequence()?;
         self.internal_active = true;
+        self.internal_started = Some(Instant::now());
         Ok(())
+    }
+
+    fn recovery_target(&self, now: Instant) -> Option<RecoveryTarget> {
+        if self.recovery_claimed {
+            return None;
+        }
+        let ticket = match &self.slot {
+            Some(slot)
+                if slot.receipt.phase == Phase::Unknown
+                    || (slot.entered
+                        && matches!(slot.receipt.phase, Phase::Running | Phase::CancelRequested)
+                        && now.saturating_duration_since(slot.since) >= DOMAIN_STALL) =>
+            {
+                Some(slot.receipt.ticket.clone())
+            }
+            None
+                if self.internal_active
+                    && self.internal_started.is_some_and(|started| {
+                        now.saturating_duration_since(started) >= DOMAIN_STALL
+                    }) =>
+            {
+                None
+            }
+            _ => return None,
+        };
+        Some(RecoveryTarget {
+            epoch: self.epoch.clone(),
+            sequence: self.next_sequence,
+            ticket,
+        })
+    }
+
+    fn valid_intent(&self, intent: &DomainRecoveryIntent, now: Instant) -> bool {
+        now.saturating_duration_since(intent.issued) < RECOVERY_INTENT_TTL
+            && self.recovery_target(now).as_ref() == Some(&intent.target)
+    }
+
+    fn request_recovery(&mut self, target: RecoveryTarget, now: Instant) -> Result<(), String> {
+        if self.recovery_target(now).as_ref() != Some(&target) {
+            return Err("TAB_DOMAIN_RECOVERY_NOT_ELIGIBLE".into());
+        }
+        // Do not refresh an existing authorization on a duplicated IPC.
+        if self
+            .recovery_intent
+            .as_ref()
+            .is_some_and(|intent| self.valid_intent(intent, now))
+        {
+            return Ok(());
+        }
+        self.recovery_intent = Some(DomainRecoveryIntent {
+            target,
+            issued: now,
+        });
+        Ok(())
+    }
+
+    fn claim_recovery(&mut self, intent: &DomainRecoveryIntent, now: Instant) -> bool {
+        if self.recovery_intent.as_ref() != Some(intent) || !self.valid_intent(intent, now) {
+            return false;
+        }
+        self.recovery_intent = None;
+        self.recovery_claimed = true;
+        true
     }
 
     fn matches_view(&self, view: &OwnerView) -> bool {
@@ -256,6 +347,7 @@ impl Drop for InternalMutation {
     fn drop(&mut self) {
         if let Ok(mut state) = owner() {
             state.internal_active = false;
+            state.internal_started = None;
         }
     }
 }
@@ -273,6 +365,7 @@ pub(crate) struct OwnerView {
     internal_active: bool,
     active_known: bool,
     active_tab_id: Option<String>,
+    domain_recovery_available: bool,
 }
 fn snapshot(app: &AppHandle) -> Result<OwnerView, String> {
     let mut view = {
@@ -286,6 +379,8 @@ fn snapshot(app: &AppHandle) -> Result<OwnerView, String> {
             internal_active: state.internal_active,
             active_known: false,
             active_tab_id: None,
+            domain_recovery_available: supervisor_ready()
+                && state.recovery_target(Instant::now()).is_some(),
         }
     };
     // Do not hold the Owner mutex while observing app metadata.
@@ -296,9 +391,13 @@ fn snapshot(app: &AppHandle) -> Result<OwnerView, String> {
     // Validate the split snapshot after releasing the app metadata lock.
     // A native admission or phase transition during collection cannot be
     // represented as a consistent active-tab observation.
-    if view.internal_active || !owner()?.matches_view(&view) {
+    let state = owner()?;
+    if view.internal_active || !state.matches_view(&view) {
         view.active_known = false;
         view.active_tab_id = None;
+    }
+    if !state.matches_view(&view) || state.recovery_target(Instant::now()).is_none() {
+        view.domain_recovery_available = false;
     }
     Ok(view)
 }
@@ -321,6 +420,48 @@ fn owner() -> Result<std::sync::MutexGuard<'static, Owner>, String> {
         .lock()
         .map_err(|_| "TAB_MUTATION_OWNER_UNKNOWN".into())
 }
+fn supervisor_ready() -> bool {
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    {
+        crate::native_supervisor::domain_recovery_ready()
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        false
+    }
+}
+
+pub(crate) fn pending_domain_recovery() -> Option<DomainRecoveryIntent> {
+    let mut state = OWNER.try_lock().ok()?;
+    let intent = state.recovery_intent.clone()?;
+    if state.valid_intent(&intent, Instant::now()) {
+        Some(intent)
+    } else {
+        state.recovery_intent = None;
+        None
+    }
+}
+
+/// While the supervisor holds this claim, no replacement tab operation can
+/// enter. A terminal old worker may still settle. On transport loss the
+/// guard releases admission, but never fabricates a completion receipt.
+pub(crate) struct DomainRecoveryClaim;
+
+impl Drop for DomainRecoveryClaim {
+    fn drop(&mut self) {
+        if let Ok(mut state) = owner() {
+            state.recovery_claimed = false;
+        }
+    }
+}
+
+pub(crate) fn claim_domain_recovery(intent: &DomainRecoveryIntent) -> Option<DomainRecoveryClaim> {
+    let mut state = OWNER.try_lock().ok()?;
+    state
+        .claim_recovery(intent, Instant::now())
+        .then_some(DomainRecoveryClaim)
+}
+
 fn matching<'a>(state: &'a mut Owner, ticket: &str) -> Result<&'a mut Slot, String> {
     state
         .slot
@@ -404,6 +545,12 @@ pub(crate) enum Request {
         epoch: String,
         sequence: String,
     },
+    RecoverDomain {
+        epoch: String,
+        sequence: String,
+        ticket: Option<String>,
+        confirmed: bool,
+    },
 }
 #[tauri::command]
 pub(crate) fn tab_mutation(
@@ -430,6 +577,9 @@ pub(crate) fn tab_mutation(
             let reserve = {
                 let mut state = owner()?;
                 state.expire_prepared();
+                if state.recovery_claimed {
+                    return Err("TAB_MUTATION_OWNER_BUSY".into());
+                }
                 if epoch != state.epoch {
                     return Err("TAB_MUTATION_STALE_EPOCH".into());
                 }
@@ -456,6 +606,7 @@ pub(crate) fn tab_mutation(
                     let mut state = owner()?;
                     if state.slot.is_some()
                         || !state.internal_active
+                        || state.recovery_claimed
                         || epoch != state.epoch
                         || sequence != state.next_sequence.to_string()
                     {
@@ -485,6 +636,9 @@ pub(crate) fn tab_mutation(
             let work = {
                 let mut state = owner()?;
                 state.expire_prepared();
+                if state.recovery_claimed {
+                    return Err("TAB_MUTATION_OWNER_BUSY".into());
+                }
                 let slot = matching(&mut state, &ticket)?;
                 if slot.receipt.phase != Phase::Prepared {
                     None
@@ -568,9 +722,33 @@ pub(crate) fn tab_mutation(
             }
         }
         Request::Inspect => {}
+        Request::RecoverDomain {
+            epoch,
+            sequence,
+            ticket,
+            confirmed,
+        } => {
+            if !confirmed {
+                return Err("TAB_DOMAIN_RECOVERY_CONFIRMATION_REQUIRED".into());
+            }
+            if !supervisor_ready() {
+                return Err("TAB_DOMAIN_SUPERVISOR_UNAVAILABLE".into());
+            }
+            let sequence = sequence
+                .parse::<u64>()
+                .map_err(|_| "TAB_MUTATION_STALE_SEQUENCE")?;
+            owner()?.request_recovery(
+                RecoveryTarget {
+                    epoch,
+                    sequence,
+                    ticket,
+                },
+                Instant::now(),
+            )?;
+        }
         Request::Fence { epoch, sequence } => {
             let mut state = owner()?;
-            if state.slot.is_some() || state.internal_active {
+            if state.slot.is_some() || state.internal_active || state.recovery_claimed {
                 return Err("TAB_MUTATION_OWNER_BUSY".into());
             }
             if epoch != state.epoch {
@@ -598,7 +776,7 @@ pub(super) async fn legacy<T: Send + 'static>(
     let ticket = uuid::Uuid::new_v4().to_string();
     {
         let mut state = owner()?;
-        if state.slot.is_some() || state.internal_active {
+        if state.slot.is_some() || state.internal_active || state.recovery_claimed {
             return Err("TAB_MUTATION_OWNER_BUSY".into());
         }
         state.advance_sequence()?;
@@ -726,6 +904,7 @@ mod tests {
             internal_active: false,
             active_known: true,
             active_tab_id: None,
+            domain_recovery_available: false,
         };
         assert!(state.matches_view(&view));
         state.admit_background().unwrap();
@@ -733,6 +912,67 @@ mod tests {
         assert!(state.admit_background().is_err());
         state.internal_active = false;
         assert!(!state.matches_view(&view));
+    }
+
+    #[test]
+    fn explicit_domain_recovery_requires_the_same_stalled_owner() {
+        let now = Instant::now();
+        let mut state = Owner::default();
+        state.admit_background().unwrap();
+        assert!(state.recovery_target(now).is_none());
+        let later = now + DOMAIN_STALL + Duration::from_secs(1);
+        let target = state.recovery_target(later).unwrap();
+        state.request_recovery(target.clone(), later).unwrap();
+        let intent = state.recovery_intent.clone().unwrap();
+        state
+            .request_recovery(target, later + Duration::from_secs(1))
+            .unwrap();
+        assert_eq!(state.recovery_intent.as_ref(), Some(&intent));
+        assert!(!state.claim_recovery(&intent, later + RECOVERY_INTENT_TTL));
+        assert!(state.claim_recovery(&intent, later));
+        assert!(state.recovery_target(later).is_none());
+        state.internal_active = false;
+        state.internal_started = None;
+        assert!(state.admit_background().is_err());
+        state.recovery_claimed = false;
+        state.admit_background().unwrap();
+        assert!(!state.claim_recovery(&intent, later));
+    }
+
+    #[test]
+    fn prepared_and_terminal_receipts_cannot_authorize_domain_recovery() {
+        let now = Instant::now();
+        let mut state = Owner::default();
+        state.slot = Some(Slot {
+            receipt: Receipt {
+                ticket: "old".into(),
+                client_id: "fixture".into(),
+                command: "tab_open",
+                phase: Phase::Prepared,
+                value: None,
+                error: None,
+            },
+            action: None,
+            binding: None,
+            since: now,
+            entered: false,
+        });
+        let later = now + DOMAIN_STALL + Duration::from_secs(1);
+        assert!(state.recovery_target(later).is_none());
+        state.slot.as_mut().unwrap().receipt.phase = Phase::Running;
+        assert!(state.recovery_target(later).is_none());
+        assert!(state.slot.as_mut().unwrap().enter());
+        let entered = state.slot.as_ref().unwrap().since;
+        assert!(state.recovery_target(entered).is_none());
+        let stalled = entered + DOMAIN_STALL;
+        let target = state.recovery_target(stalled).unwrap();
+        state.request_recovery(target, stalled).unwrap();
+        let intent = state.recovery_intent.clone().unwrap();
+        state.slot.as_mut().unwrap().receipt.phase = Phase::Succeeded;
+        assert!(!state.claim_recovery(&intent, stalled));
+        state.slot.as_mut().unwrap().receipt.phase = Phase::Unknown;
+        state.slot.as_mut().unwrap().receipt.ticket = "new".into();
+        assert!(!state.claim_recovery(&intent, stalled));
     }
 
     #[test]

@@ -73,6 +73,37 @@ export const useBrowserStore = defineStore("browser", () => {
   const tabRecoveryRequired = ref(false);
   const tabRecoveryMessage = ref("");
   const tabRecoveryBusy = ref(false);
+  type DomainRecoveryTarget = { epoch: string; sequence: string; ticket: string | null };
+
+  // Capture the exact current target before showing confirmation. Never
+  // refresh the target silently between the warning and the user's decision.
+  async function inspectNativeDomainRecovery(): Promise<DomainRecoveryTarget | null> {
+    if (!tabRecoveryRequired.value || tabRecoveryBusy.value) return null;
+    try {
+      const view = await bridge.inspectTabMutation();
+      if (!view.domain_recovery_available) {
+        tabRecoveryMessage.value = "尚未达到故障域重启条件，或当前未启用原生监管。请先核对页签。";
+        return null;
+      }
+      return { epoch: view.epoch, sequence: view.next_sequence, ticket: view.receipt?.ticket ?? null };
+    } catch {
+      tabRecoveryMessage.value = "无法核对原生故障域，未请求重启。";
+      return null;
+    }
+  }
+
+  async function requestNativeDomainRecovery(target: DomainRecoveryTarget) {
+    if (!tabRecoveryRequired.value || tabRecoveryBusy.value) return;
+    tabRecoveryBusy.value = true;
+    try {
+      await bridge.requestTabDomainRecovery(target.epoch, target.sequence, target.ticket);
+      tabRecoveryMessage.value = "已请求监管器核对并重启故障域；旧进程退出前不会启动替代进程。";
+    } catch {
+      tabRecoveryMessage.value = "重启请求未确认或原生状态已变化；请重新核对，禁止自动重试。";
+    } finally {
+      tabRecoveryBusy.value = false;
+    }
+  }
 
   // Owner sequences are u64 serialized as decimal strings. Do not round
   // through a JS Number (which loses identity beyond 2^53).
@@ -707,6 +738,8 @@ export const useBrowserStore = defineStore("browser", () => {
     tabRecoveryMessage,
     recoverNativeTabs,
     initializeNativeTabs,
+    inspectNativeDomainRecovery,
+    requestNativeDomainRecovery,
     aiFiltered,
     tabNew,
     consumeActiveBlankTab,

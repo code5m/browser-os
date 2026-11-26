@@ -46,6 +46,7 @@ type TabReceipt = {
 type TabOwnerView = {
   epoch: string; next_sequence: string; receipt: TabReceipt | null; last_ack: string | null;
   internal_active: boolean; active_known: boolean; active_tab_id: string | null;
+  domain_recovery_available: boolean;
 };
 const terminalTabReceipt = (r: TabReceipt) => ["succeeded", "failed", "cancelled"].includes(r.phase);
 const receiptDelay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -1102,6 +1103,8 @@ export const bridge = {
   fenceTabMutation: (epoch: string, sequence: string) => tabReceiptCall({ phase: "fence", epoch, sequence }, true),
   cancelTabMutation: (ticket: string) => tabReceiptCall({ phase: "cancel", ticket }, true),
   acknowledgeTabMutation: (ticket: string) => tabReceiptCall({ phase: "ack", ticket }, true),
+  requestTabDomainRecovery: (epoch: string, sequence: string, ticket: string | null) =>
+    tabReceiptCall({ phase: "recover_domain", epoch, sequence, ticket, confirmed: true }, true),
   // Read-only recovery lane with independent bounded transport.
   reconcileTabList: () => boundedReceiptControl<TabInfo[]>("reconcile-list", "tab-list", () => invoke<TabInfo[]>("tab_list"), true, true),
 
