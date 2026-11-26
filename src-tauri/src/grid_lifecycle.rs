@@ -272,6 +272,12 @@ impl GridLifecycle {
         self.retiring.lock().unwrap().contains_key(&index)
     }
 
+    /// An absent live-map entry is not proof the old native window exited.
+    pub(super) fn retiring_routes(&self) -> Result<Vec<u32>,String> {
+        let retiring=self.retiring.try_lock().map_err(|_|"GRID_RETIREMENT_OBSERVATION_BUSY")?;
+        Ok(retiring.keys().copied().collect())
+    }
+
     pub(super) fn try_is_retiring(&self, index: u32) -> Result<bool, String> {
         let retiring = self.retiring.try_lock().map_err(|_| "TAB_RENDERER_OBSERVATION_BUSY")?;
         Ok(retiring.contains_key(&index))

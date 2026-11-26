@@ -607,3 +607,10 @@ Agent-owned Browser receipt slots explicitly reject the ordinary Start control, 
 - Reject unknown, parallel, duplicate and oversized tool proposals before copying the completion into SDK state. Cap serialized definitions at 64 KiB, each accepted tool result at 64 KiB, total retained tool results at 256 KiB and serialized diagnostic SDK snapshots at 1 MiB. Validation counts serialized bytes without allocating a second unbounded buffer.
 - If an entered SDK tool-result transition fails, seal the driver and settle its still-current task as failed rather than attempting to advance partially mutated SDK state. A rejection before SDK entry does not consume the pending call.
 - These fences bind Rig's own execution and receipt handoff, not a new provider credential or proof of remote cancellation. The driver remains feature-gated, and Coding production routing remains native. Source only; no compilation, tests, workflow changes or master merge.
+
+### Account for native surface ownership outside the logical tab list
+
+- On both native managers, isolated-mode hide-all owns one dispatch spanning ordinary and Grid surfaces, enumerates actual live process registrations, marks recovery state hidden before dispatch and reports pending retirement as unconfirmed (no wait for cleanup while holding the aggregate visibility gate). Embedded compatibility hide-all also accounts for unexpected existing plugin windows, without switching their routing.
+- Ordinary tab selection includes native peers and pending retirement routes not present in the logical list; failure to hide them blocks active-tab publication. The backend remains opt-in.
+- UI distinguishes unsettled native hide from a settled failure; it keeps layout admission closed, reports prolonged waiting without releasing native ownership and provides a manual retry after settlement in both Browser and Grid. Browser capability resume no longer reports success after a failed visibility synchronization.
+- This is native dispatch and UI ordering, not compositor paint proof or atomic visibility across every OS callback. No compilation/tests/workflow edits/master merge.

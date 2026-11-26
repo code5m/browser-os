@@ -2138,6 +2138,15 @@ impl GridProcessManager {
     // View switches hide the captured Grid topology, including saved
     // restart/hibernation intent. Never rediscover live hosts after IPC waits.
     pub(crate) fn hide_grid_renderers(&self) -> Result<(), String> {
+        self.hide_native_surfaces(false)
+    }
+
+    pub(crate) fn hide_all_renderer_surfaces(&self) -> Result<(),String> {
+        self.hide_native_surfaces(true)
+    }
+
+    fn hide_native_surfaces(&self, include_tabs:bool) -> Result<(),String> {
+        let _operation=self.lifecycle.enter()?;
         let _dispatch = self.visibility_dispatch.lock().unwrap_or_else(|p| p.into_inner());
         let targets = {
             // Windows reclaim holds lifecycle_lock before trying visibility;
@@ -2153,7 +2162,7 @@ impl GridProcessManager {
                 saved.blur_hidden = false;
             }
             let mut children = self.children.lock().unwrap();
-            children.iter_mut().filter(|(index, _)| !crate::grid_ipc::is_tab_renderer(**index))
+            children.iter_mut().filter(|(index, _)| include_tabs || !crate::grid_ipc::is_tab_renderer(**index))
                 .map(|(&index, child)| {
                     // Also fence a not-yet-ready replay; lack of a native
                     // acknowledgement is still reported as partial failure.
@@ -2168,6 +2177,16 @@ impl GridProcessManager {
             let result = target.ok_or_else(|| "GRID_WINDOW_TARGET_UNAVAILABLE".to_string())
                 .and_then(|binding| self.hide_window_bound(binding));
             if let Err(error) = result { failures.push(format!("{index}:{error}")); }
+        }
+        // A retirement may still own a visible window. Do not wait for
+        // cleanup while holding the dispatch lock or call it a hide success.
+        match self.lifecycle.retiring_routes() {
+            Ok(routes)=>for route in routes {
+                if include_tabs || !crate::grid_ipc::is_tab_renderer(route) {
+                    failures.push(format!("{route}:GRID_HIDE_CLEANUP_PENDING"));
+                }
+            },
+            Err(error)=>failures.push(error),
         }
         if failures.is_empty() { Ok(()) }
         else { Err(format!("GRID_HIDE_PARTIAL:{}", failures.join("; "))) }
@@ -2191,7 +2210,19 @@ impl GridProcessManager {
         if current.owner != target.owner || current.generation != target.generation {
             return Err("TAB_RENDERER_ACTIVATION_STALE".into());
         }
-        let peers: Vec<_> = others.iter().map(|&other| (other, self.capture_window_route(other))).collect();
+        // Include unpublished or failed logical registrations. Selection
+        // must account for actual native peers, not only the UI tab list.
+        let mut peer_ids=others.to_vec();
+        {
+            let children=self.children.try_lock().map_err(|_|"GRID_WINDOW_OBSERVATION_BUSY")?;
+            peer_ids.extend(children.keys().copied().filter(|other|
+                *other!=index && crate::grid_ipc::is_tab_renderer(*other)));
+        }
+        peer_ids.extend(self.lifecycle.retiring_routes()?.into_iter().filter(|other|
+            *other!=index && crate::grid_ipc::is_tab_renderer(*other)));
+        peer_ids.sort_unstable();
+        peer_ids.dedup();
+        let peers: Vec<_> = peer_ids.iter().map(|&other| (other, self.capture_window_route(other))).collect();
         let mut failures = Vec::new();
         for (other, target) in peers {
             if let Err(error) = target.and_then(|binding| self.hide_tab_renderer_locked(other, binding)) {
@@ -2204,7 +2235,7 @@ impl GridProcessManager {
         // Peers may already be hidden. A later rejection is a partial
         // activation, not a no-effect failure that may be silently retired.
         let post_hide_error = |error: &str| {
-            if others.is_empty() {
+            if peer_ids.is_empty() {
                 error.to_owned()
             } else {
                 format!("TAB_RENDERER_ACTIVATION_PARTIAL:{error}")

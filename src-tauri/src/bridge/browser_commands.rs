@@ -263,16 +263,15 @@ pub async fn hide_all_webviews(webview: tauri::Webview, app: AppHandle) -> Resul
 
 pub(crate) fn hide_all_webviews_sync(webview: tauri::Webview, app: AppHandle) -> Result<(), String> {
     crate::shared::native_legacy_policy::require_main(&webview, "hide_all_webviews")?;
-    if super::isolated_tabs::mode_enabled() {
-        return super::isolated_tabs::hide_all(&app);
-    }
-
     use tauri_plugin_browser_tabs::TabManagerState;
     let manager=app.state::<TabManagerState>();
     let state=app.state::<AppState>();
     let mut failures=Vec::new();
     if cfg!(any(target_os="linux",target_os="windows")) {
-        if let Err(error)=state.grid_manager.hide_grid_renderers(){failures.push(error);}
+        let result=if super::isolated_tabs::mode_enabled(){
+            super::isolated_tabs::hide_all(&app)
+        }else{state.grid_manager.hide_grid_renderers()};
+        if let Err(error)=result{failures.push(error);}
     }
     // Include all existing ordinary plugin tabs, even if creation has
     // published native state but not yet published logical metadata.

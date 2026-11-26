@@ -363,23 +363,7 @@ pub(super) fn hide(app: &AppHandle, id: &str) -> Result<(), String> {
 
 pub(super) fn hide_all(app: &AppHandle) -> Result<(), String> {
     check_running(app)?;
-    let state = app.state::<AppState>();
-    let mut ids: Vec<_> = state.tabs.lock().unwrap().keys().cloned().collect();
-    ids.sort();
-    // Capture all logical peers before the first native wait.
-    let targets: Vec<_> = ids.into_iter().map(|id| {
-        let target = capture_layout(app, &id);
-        (id, target)
-    }).collect();
-    let mut errors = Vec::new();
-    for (id, target) in targets {
-        if let Err(error) = target.and_then(|admitted| hide_admitted(app, &id, admitted)) {
-            errors.push(format!("{id}:{error}"));
-        }
-    }
-    if let Err(error) = state.grid_manager.hide_grid_renderers() {
-        errors.push(error);
-    }
-    if errors.is_empty() { Ok(()) }
-    else { Err(format!("TAB_RENDERER_HIDE_PARTIAL:{}", errors.join("; "))) }
+    // Native manager holds one visibility dispatch across both domains,
+    // including unpublished, restarting and retiring renderer ownership.
+    app.state::<AppState>().grid_manager.hide_all_renderer_surfaces()
 }

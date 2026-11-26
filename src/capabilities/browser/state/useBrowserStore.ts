@@ -7,7 +7,7 @@ import { useLayoutStore } from "../../../stores/useLayoutStore";
 import { classifyNativeTabLoadFailure, recentNativeTabLoadFailure, type NativeTabLoadFailureRecord } from "../model/nativeTabLoadFailure.mjs";
 import { recordRecentUrl } from "../../../composables/recentsNav";
 import { registerBrowserLifecycleBinding } from "../lifecycle";
-import { nativeSurfaceBlocked, nativeSurfaceIssue, settleNativeLayouts } from "../../../utils/nativeSurfaceSync";
+import { nativeSurfaceBlocked, nativeSurfaceSettling, nativeSurfaceIssue, settleNativeLayouts } from "../../../utils/nativeSurfaceSync";
 import type { RecentlyClosedEntry, TabRecoveryEvent } from "../../../types";
 
 export interface AISite {
@@ -1074,8 +1074,12 @@ export const useBrowserStore = defineStore("browser", () => {
   function syncViewVisibility(): Promise<boolean> {
     ++visibilityRevision;
     nativeSurfaceBlocked.value = true;
-    nativeSurfaceIssue.value = "";
     if (visibilityWork) return visibilityWork;
+    nativeSurfaceIssue.value = "";
+    nativeSurfaceSettling.value = true;
+    const notice=window.setTimeout(()=>{
+      if(nativeSurfaceSettling.value) nativeSurfaceIssue.value="原生窗口显隐仍在结算，禁止重新定位；尚未收到实际回执。";
+    },15000);
     visibilityWork = Promise.resolve().then(async () => {
       for (;;) {
         const revision = visibilityRevision;
@@ -1088,6 +1092,9 @@ export const useBrowserStore = defineStore("browser", () => {
           await bridge.hideAllWebviews();
           if (revision !== visibilityRevision) continue;
           visibilityWork = null;
+          nativeSurfaceSettling.value = false;
+          nativeSurfaceIssue.value = "";
+          window.clearTimeout(notice);
           nativeSurfaceBlocked.value = false;
           syncFreeze();
           nextTick(relocate);
@@ -1095,6 +1102,8 @@ export const useBrowserStore = defineStore("browser", () => {
         } catch {
           if (revision !== visibilityRevision) continue;
           visibilityWork = null;
+          nativeSurfaceSettling.value = false;
+          window.clearTimeout(notice);
           nativeSurfaceIssue.value = "原生窗口显隐未确认；请重新同步显示或切换视图，旧操作不会自动重放。";
           layout.showToast(nativeSurfaceIssue.value);
           return false;
@@ -1121,7 +1130,7 @@ export const useBrowserStore = defineStore("browser", () => {
   watch(() => layout.mainView, () => { void syncViewVisibility(); }, {flush:"sync"});
 
   registerBrowserLifecycleBinding({
-    resume: async () => { await nextTick(); await syncViewVisibility(); },
+    resume: async () => { await nextTick(); await requireVisibilitySettlement(); },
     suspend: async () => {
       if (layout.mainView === "browser") layout.setView("home");
       await requireVisibilitySettlement();

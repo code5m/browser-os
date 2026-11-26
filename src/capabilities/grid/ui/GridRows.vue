@@ -4,12 +4,15 @@ import type { ResourceStats } from "../../../types";
 import { bridge } from "../../../bridge";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
 import { useGridStore } from "../public";
+import { useBrowserStore } from "../../browser/public";
+import { nativeSurfaceBlocked,nativeSurfaceSettling,nativeSurfaceIssue } from "../../../utils/nativeSurfaceSync";
 import GridArchiveBar from "./GridArchiveBar.vue";
 import { useGridHost } from "../composables/useGridHost";
 import { AI_PROVIDERS } from '../model/aiPresets.mjs';
 
 const layout = useLayoutStore();
 const grid = useGridStore();
+const browser=useBrowserStore();
 const hostElement = ref<HTMLElement | null>(null);
 const { layoutIssue } = useGridHost(hostElement);
 // Grid child WebViews have native geometry; unlike the normal tab scheduler,
@@ -115,6 +118,10 @@ onBeforeUnmount(() => {
 });
 </script>
 <template>
+  <div v-if="layout.mainView==='grid' && nativeSurfaceBlocked && nativeSurfaceIssue" class="expand-row" role="status">
+    <span class="er-warn">{{nativeSurfaceIssue}}</span>
+    <button :disabled="nativeSurfaceSettling" @click="browser.syncViewVisibility()">重新同步原生窗口</button>
+  </div>
   <div v-if="grid.gridOpen && layout.mainView === 'grid' && grid.gridMode === 'ai'" class="expand-row ai-send-row">
     <span class="er-label">🤖 群发</span>
     <input v-model="grid.gridAiInput" class="ai-send-input" placeholder="输入问题，同时发送给所有宫格中的 AI..." @keyup.enter="grid.gridSendAi" />

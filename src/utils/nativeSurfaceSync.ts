@@ -4,6 +4,7 @@
 import { ref } from "vue";
 
 export const nativeSurfaceBlocked = ref(false);
+export const nativeSurfaceSettling = ref(false);
 export const nativeSurfaceIssue = ref("");
 const issued = new Set<Promise<unknown>>();
 
