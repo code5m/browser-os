@@ -316,6 +316,10 @@ struct OperationReceipt {
     owner_epoch: Option<uuid::Uuid>,
     #[serde(default)]
     workspace_identity: Option<String>,
+    // New native return checkpoint binds the exact bounded result to the
+    // original approved Run before the enclosing Task is settled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    return_digest: Option<String>,
 }
 fn frontend_owner_epoch() -> uuid::Uuid {
     static EPOCH: OnceLock<uuid::Uuid> = OnceLock::new();
@@ -1726,6 +1730,85 @@ fn load_without_recovery(root: &Path, storage: &Path, id: Option<&str>) -> Resul
         })
     }
 }
+/// Digest describes the native return, not a provider-side effect receipt.
+fn native_return_digest(operation: &Operation, task: &browseros_agent_foundation::task::TaskRecord) -> Result<String, String> {
+    let receipt = operation.execution.as_ref().ok_or("AGENT_OPERATION_RECEIPT_MISSING")?;
+    let claim = receipt.approval.as_ref().ok_or("AGENT_APPROVAL_REQUIRED")?;
+    let encoded = serde_json::to_vec(&json!({
+        "domain":"browseros.coding.native-return.v1","operation":operation.id,"kind":operation.kind,
+        "input_digest":hash(&serde_json::to_vec(&operation.input).map_err(|_| "AGENT_OPERATION_INVALID")?),
+        "status":operation.status,"result":operation.result,"review_revision":operation.review_revision,
+        "run":receipt.run_id,"native_run":receipt.native_run_id,"workspace_identity":receipt.workspace_identity,
+        "task_id":task.id,"task_revision":task.revision,"session_id":task.session_id,
+        "approval":claim
+    })).map_err(|_| "AGENT_OPERATION_INVALID")?;
+    Ok(hash(&encoded))
+}
+
+fn verify_native_return(operation: &Operation, task: Option<&browseros_agent_foundation::task::TaskRecord>,
+    runs: &[RunReceipt], workspace_identity: &str, session_id: &str) -> bool {
+    use browseros_agent_foundation::{task::TaskStatus, tool::ToolEffect};
+    let (Some(receipt), Some(task)) = (&operation.execution, task) else { return false; };
+    let Some(claim) = receipt.approval.as_ref() else { return false; };
+    let expected = match operation.kind.as_str() {
+        "command" => ("coding.command", ToolEffect::ExecuteProcess),
+        "mcp" => ("coding.mcp", ToolEffect::ExternalSideEffect),
+        _ => return false,
+    };
+    let identity = if operation.kind == "command" {
+        receipt.native_run_id.as_deref() == Some(format!("run-{}", operation.id).as_str())
+    } else { receipt.native_run_id.is_none() };
+    let bound = receipt.phase == "return_checkpoint" && receipt.run_id == operation.id
+        && receipt.workspace_identity.as_deref() == Some(workspace_identity)
+        && receipt.owner_epoch.is_none() && identity
+        && task.status == TaskStatus::Running && task.pending.is_none() && task.goal == "coding"
+        && task.session_id.to_string() == session_id
+        && claim.accepted && claim.task_id == task.id && claim.session_id == task.session_id
+        && claim.workspace_id == task.workspace_id && claim.task_revision.checked_add(1) == Some(task.revision)
+        && claim.tool_name == expected.0 && claim.effect == expected.1
+        && claim.resource.resource_id == format!("workspace:{}", task.workspace_id)
+        && runs.iter().filter(|run| run.id == receipt.run_id).count() == 1
+        && runs.iter().any(|run| run.id == receipt.run_id && run.task_id == task.id && run.status == "running")
+        && operation.reconciliation.is_none()
+        && operation.result.as_ref().is_some_and(|text| text.len() <= 20_000 && !secret(text))
+        && match operation.status.as_str() {
+            "result_ready" => operation.review_revision.is_none(),
+            "unknown" => operation.review_revision.is_some(),
+            _ => false,
+        };
+    bound && native_return_digest(operation, task).ok().as_deref() == receipt.return_digest.as_deref()
+        && receipt.return_digest.is_some()
+}
+
+fn checkpoint_native_return(session: &mut Session, index: usize, response: Result<Value, String>) -> Result<(), String> {
+    let task = session.foundation_task.as_ref().ok_or("AGENT_TASK_RECOVERY_REQUIRED")?;
+    let operation = session.operations.get_mut(index).ok_or("AGENT_OPERATION_NOT_PENDING")?;
+    if operation.status != "executing" || !operation.execution.as_ref().is_some_and(|r| r.phase == "dispatching") {
+        return Err("AGENT_OPERATION_NOT_PENDING".into());
+    }
+    match response {
+        Ok(value) if value["status"] == "succeeded" && value.get("result").is_some_and(|r| !r.is_null()) => {
+            let text = value["result"].as_str().map(str::to_owned).unwrap_or_else(|| value["result"].to_string());
+            operation.result = Some(if text.len() > 20_000 || secret(&text) { "AGENT_OPERATION_OUTPUT_WITHHELD".into() } else { text });
+            operation.status = "result_ready".into();
+            operation.review_revision = None;
+        }
+        outcome => {
+            let detail = match outcome { Ok(value) => value.to_string(), Err(error) => error };
+            operation.result = Some(if detail.len() > 20_000 || secret(&detail) {
+                "AGENT_EXTERNAL_OUTCOME_UNKNOWN".into()
+            } else { detail });
+            operation.status = "unknown".into();
+            operation.review_revision = Some(uuid::Uuid::new_v4());
+        }
+    }
+    let digest = native_return_digest(operation, task)?;
+    let receipt = operation.execution.as_mut().ok_or("AGENT_OPERATION_RECEIPT_MISSING")?;
+    receipt.phase = "return_checkpoint".into();
+    receipt.return_digest = Some(digest);
+    Ok(())
+}
+
 fn load(root: &Path, storage: &Path, id: Option<&str>) -> Result<Session, String> {
     // Recovery may compensate project files. Serialize only this short commit
     // phase across sessions; provider turns hold their own session mutex.
@@ -1741,10 +1824,29 @@ fn load(root: &Path, storage: &Path, id: Option<&str>) -> Result<Session, String
         // An interrupted model turn is never silently resumed or replayed.
         let mut interrupted_external = false;
         let mut not_dispatched = Vec::new();
+        let mut native_returns = Vec::new();
         let workspace_identity = super::execution_owner::workspace_identity(root)?;
         // This function runs only under the same OS session lock used by
         // execute_operation. Surviving execution records are never replayed.
         for operation in &mut session.operations {
+            if operation.execution.as_ref().is_some_and(|receipt| receipt.phase == "return_checkpoint") {
+                // Only an authenticated return checkpoint of the exact
+                // original approved operation can finish the local Run.
+                if verify_native_return(operation, session.foundation_task.as_ref(),
+                    &session.runs, &workspace_identity, &session.session_id) {
+                    if let Some(receipt) = &mut operation.execution { receipt.phase = "returned".into(); }
+                    let status = if operation.status == "unknown" { "operation_unknown" } else { "operation_review" };
+                    native_returns.push((operation.id.clone(), status));
+                    continue;
+                }
+                // Invalid proof cannot authorize the result or auto-replay.
+                operation.status = "unknown".into();
+                operation.review_revision = Some(uuid::Uuid::new_v4());
+                if let Some(receipt) = &mut operation.execution {
+                    receipt.phase = "interrupted".into();
+                }
+                interrupted_external = true;
+            }
             // New receipts publish prepared BEFORE claiming the lease and
             // dispatching BEFORE invoking the adapter. An old "dispatching"
             // receipt can never be inferred to mean no external effect.
@@ -1798,6 +1900,10 @@ fn load(root: &Path, storage: &Path, id: Option<&str>) -> Result<Session, String
             }
         }
         for run in &mut session.runs {
+            if let Some((_, status)) = native_returns.iter().find(|(id, _)| id == &run.id) {
+                run.status = (*status).into();
+                continue;
+            }
             if not_dispatched.iter().any(|id| id == &run.id) {
                 run.status = "cancelled".into();
                 continue;
@@ -1810,7 +1916,7 @@ fn load(root: &Path, storage: &Path, id: Option<&str>) -> Result<Session, String
                 interrupted_native = true;
             }
         }
-        if interrupted_native || interrupted_external || !not_dispatched.is_empty() {
+        if interrupted_native || interrupted_external || !not_dispatched.is_empty() || !native_returns.is_empty() {
             for id in &not_dispatched {
                 session.messages.push(json!({"role":"user","content":format!(
                     "Native recovery receipt: operation {id} was cancelled before dispatch. Do not replay its old approval or treat it as successful.")}));
@@ -1818,7 +1924,7 @@ fn load(root: &Path, storage: &Path, id: Option<&str>) -> Result<Session, String
             if session.status != "recovery_conflict" {
                 session.status = if interrupted_external || session.operations.iter().any(|op| op.status == "unknown") {
                     "operation_unknown"
-                } else if !not_dispatched.is_empty() { session_after_review(&session) }
+                } else if !not_dispatched.is_empty() || !native_returns.is_empty() { session_after_review(&session) }
                 else { "interrupted" }.into();
             }
             save(storage, &session)?;
@@ -2203,7 +2309,7 @@ pub(crate) fn execute_with_bound_adapter(
             session.operations[index].execution = Some(OperationReceipt {
                 native_run_id: (kind == "command").then(|| format!("run-{operation_run}")),
                 run_id: operation_run, phase: "prepared".into(), approval: Some(approval.clone()),
-                owner_epoch: None, workspace_identity: Some(effect_identity),
+                owner_epoch: None, workspace_identity: Some(effect_identity), return_digest: None,
             });
             session.operations[index].status = "executing".into();
             session.status = "operation_executing".into();
@@ -2233,29 +2339,14 @@ pub(crate) fn execute_with_bound_adapter(
             session.operations[index].execution.as_mut().ok_or("AGENT_OPERATION_RECEIPT_MISSING")?.phase = "dispatching".into();
             save(storage, &session)?;
             let response = adapter(&kind, &input, &request, &signal);
+            // Publish the bounded native return while the original Task is
+            // still running and its lease is retained. A crash after this
+            // authenticated write must not lose the returned result merely
+            // because Task/Run terminal publication has not happened yet.
+            checkpoint_native_return(&mut session, index, response)?;
+            save(storage, &session)?;
             drop(execution_lease);
-            let operation = &mut session.operations[index];
-            operation.execution.as_mut().ok_or("AGENT_OPERATION_RECEIPT_MISSING")?.phase = "returned".into();
-            match response {
-                Ok(value) if value["status"] == "succeeded" => {
-                    let text = value["result"].as_str().map(str::to_owned).unwrap_or_else(|| value["result"].to_string());
-                    operation.result = Some(if text.len() > 20_000 || secret(&text) { "AGENT_OPERATION_OUTPUT_WITHHELD".into() } else { text });
-                    operation.status = "result_ready".into();
-                }
-                outcome => {
-                    // Store diagnostic codes or a bounded native receipt, but
-                    // never send an uncertain external result to the model.
-                    let detail = match outcome {
-                        Ok(value) => value.to_string(),
-                        Err(error) => error,
-                    };
-                    operation.result = Some(if detail.len() > 20_000 || secret(&detail) {
-                        "AGENT_EXTERNAL_OUTCOME_UNKNOWN".into()
-                    } else { detail });
-                    operation.status = "unknown".into();
-                    operation.review_revision = Some(uuid::Uuid::new_v4());
-                }
-            }
+            session.operations[index].execution.as_mut().ok_or("AGENT_OPERATION_RECEIPT_MISSING")?.phase = "returned".into();
             session.status = session_after_review(&session).into();
             session.foundation_task = Some(execution.settle_coding(&session.status)?);
             if let Some(run) = session.runs.last_mut() { run.status = session.status.clone(); }
@@ -2297,7 +2388,7 @@ pub(crate) fn execute_with_bound_adapter(
             session.operations[index].execution = Some(OperationReceipt {
                 run_id: run.clone(), native_run_id: None, phase: "frontend_claimed".into(),
                 approval: Some(approval), owner_epoch: Some(frontend_owner_epoch()),
-                workspace_identity: Some(super::execution_owner::workspace_identity(&root)?),
+                workspace_identity: Some(super::execution_owner::workspace_identity(&root)?), return_digest: None,
             });
             session.operations[index].status = "executing".into();
             session.status = "operation_executing".into();
@@ -2952,6 +3043,47 @@ mod tests {
         assert_eq!(recovered["runs"].as_array().unwrap().last().unwrap()["status"],"cancelled");
         assert_eq!(recovered["foundation_task"]["status"],"paused");
         assert!(execute_with_adapter(&f.0,&storage,request,|_,_|unreachable!(),|_,_,_,_|panic!("old approval must not replay")).is_err());
+    }
+
+    #[test]
+    fn native_return_checkpoint_recovers_original_result_without_replay() {
+        let f = Fixture::new();
+        let storage = f.0.join("state");
+        let initial = execute(&f.0,&storage,json!({"action":"chat","message":"propose"}), |_,_| {
+            Ok(json!({"role":"assistant","tool_calls":[{"id":"t1","function":{"name":"request_operation","arguments":json!({"kind":"mcp","input":{"server_id":"fixture","tool":"echo","arguments":{}}}).to_string()}}]}))
+        }).unwrap();
+        let id = initial["session_id"].as_str().unwrap();
+        let op = initial["operations"][0]["id"].as_str().unwrap();
+        let request = json!({"action":"execute_operation","session_id":id,"operation_id":op,"approved":true});
+        let returned = json!({"status":"succeeded","result":"original native reply"});
+        let mut interrupted = None;
+        execute_with_adapter(&f.0,&storage,request.clone(),|_,_|unreachable!(),|_,_,_,_| {
+            let mut saved = load_without_recovery(&f.0, &storage, Some(id)).unwrap();
+            checkpoint_native_return(&mut saved, 0, Ok(returned.clone())).unwrap();
+            assert!(verify_native_return(&saved.operations[0], saved.foundation_task.as_ref(), &saved.runs,
+                saved.workspace_identity.as_deref().unwrap(), id));
+            interrupted = Some(saved);
+            Ok(returned.clone())
+        }).unwrap();
+        let mut checkpoint = interrupted.unwrap();
+        save(&storage, &checkpoint).unwrap();
+        let recovered = run(&f,json!({"action":"session","session_id":id})).unwrap();
+        assert_eq!(recovered["operations"][0]["status"],"result_ready");
+        assert_eq!(recovered["operations"][0]["execution"]["phase"],"returned");
+        assert_eq!(recovered["operations"][0]["result"],"original native reply");
+        assert_eq!(recovered["runs"].as_array().unwrap().last().unwrap()["status"],"operation_review");
+        assert_eq!(recovered["status"],"operation_review");
+        assert_eq!(recovered["foundation_task"]["status"],"paused");
+        assert!(execute_with_adapter(&f.0,&storage,request,|_,_|unreachable!(),|_,_,_,_|panic!("must not replay")).is_err());
+        let reviewed = run(&f,json!({"action":"resolve_operation","session_id":id,"operation_id":op,"status":"accepted"})).unwrap();
+        assert_eq!(reviewed["operations"][0]["status"],"succeeded");
+        // An inconsistent checkpoint is not a usable return.
+        checkpoint.operations[0].result = Some("changed".into());
+        save(&storage, &checkpoint).unwrap();
+        let inconsistent = run(&f,json!({"action":"session","session_id":id})).unwrap();
+        assert_eq!(inconsistent["operations"][0]["status"],"unknown");
+        assert_eq!(inconsistent["operations"][0]["execution"]["phase"],"interrupted");
+        assert!(inconsistent["operations"][0]["review_revision"].is_string());
     }
 
     #[test]
