@@ -2,8 +2,8 @@
 //! No GTK/WebView lifetime or layout changes. This is NOT per-tab renderer
 //! isolation. A recovery restarts the whole owned app and can lose volatile
 //! state. Release GUI launch selects supervision on Windows and on Linux
-//! with an explicitly provisioned delegated memory subtree. Explicit modes
-//! remain available, including --direct-start for diagnostic rollback.
+//! with an existing delegation or an eligible fresh systemd user scope.
+//! Explicit modes remain available, including --direct-start for rollback.
 //! No discovery/adoption of an existing PID, no automatic URL replay.
 use std::{
     ffi::OsString,
@@ -19,6 +19,7 @@ use tauri::Manager;
 const FLAG: &str = "--supervised-recovery";
 const MEMORY_FLAG: &str = "--supervised-recovery-memory";
 const DIRECT_FLAG: &str = "--direct-start";
+const USER_SCOPE_FLAG: &str = "--owned-user-scope";
 const ADDRESS: &str = "BROWSEROS_SUPERVISOR_ADDRESS";
 const TOKEN: &str = "BROWSEROS_SUPERVISOR_TOKEN";
 const POLL: Duration = Duration::from_millis(250);
@@ -358,7 +359,75 @@ fn launch(args: Vec<OsString>, nested_memory: bool) -> Result<i32, String> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum LaunchMode { Direct, Child, Supervised { nested_memory: bool } }
+enum LaunchMode { Direct, Child, UserScope, Supervised { nested_memory: bool } }
+
+fn ordinary_gui_args(args: &[OsString]) -> bool {
+    args.iter().all(|arg| arg.to_str().is_some_and(|arg|
+        url::Url::parse(arg).is_ok_and(|url| matches!(url.scheme(), "http" | "https") && url.host_str().is_some())))
+}
+
+#[cfg(target_os = "linux")]
+fn scope_argv(args: &[OsString]) -> Result<Vec<OsString>, &'static str> {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+    if !ordinary_gui_args(args) { return Err("SUPERVISOR_SCOPE_ARGUMENT_INVALID"); }
+    // Scope-mode expansion defaults differ across systemd versions.
+    // Transfer exact URL bytes using the existing base64 dependency.
+    // The encoding is not secret protection; no payload enters unit name,
+    // description, environment variable or BrowserOS diagnostics.
+    args.iter().map(|arg| arg.to_str().map(|text| OsString::from(URL_SAFE_NO_PAD.encode(text.as_bytes())))
+        .ok_or("SUPERVISOR_SCOPE_ARGUMENT_INVALID")).collect()
+}
+
+#[cfg(target_os = "linux")]
+fn decode_scope_argv(args: &[OsString]) -> Result<Vec<OsString>, &'static str> {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+    let urls = args.iter().map(|arg| {
+        let encoded = arg.to_str().ok_or("SUPERVISOR_SCOPE_ARGUMENT_INVALID")?;
+        let bytes = URL_SAFE_NO_PAD.decode(encoded).map_err(|_| "SUPERVISOR_SCOPE_ARGUMENT_INVALID")?;
+        if URL_SAFE_NO_PAD.encode(&bytes) != encoded { return Err("SUPERVISOR_SCOPE_ARGUMENT_INVALID"); }
+        String::from_utf8(bytes).map(OsString::from).map_err(|_| "SUPERVISOR_SCOPE_ARGUMENT_INVALID")
+    }).collect::<Result<Vec<_>, _>>()?;
+    if !ordinary_gui_args(&urls) || urls.iter().any(|arg| arg.to_str().is_some_and(|v| v.contains('\0'))) {
+        return Err("SUPERVISOR_SCOPE_ARGUMENT_INVALID");
+    }
+    Ok(urls)
+}
+
+#[cfg(target_os = "linux")]
+fn enter_user_scope(runner: &std::path::Path, args: &[OsString]) -> Result<i32, &'static str> {
+    use std::os::unix::process::CommandExt;
+    let exe = std::env::current_exe().map_err(|_| "SUPERVISOR_EXECUTABLE_UNAVAILABLE")?;
+    // Installed binary has a fixed normal path. Reject potential command
+    // argument expansion of custom executable paths on newer systemd.
+    if !exe.to_str().is_some_and(|path| !path.contains('$')) {
+        return Err("SUPERVISOR_SCOPE_EXECUTABLE_INVALID");
+    }
+    let id = uuid::Uuid::new_v4();
+    let mut command = Command::new(runner);
+    command.args(["--user", "--scope", "--quiet", "--no-ask-password",
+            "--property=Delegate=yes", "--description=BrowserOS native recovery"])
+        .arg(format!("--unit={}", crate::shared::process_scope::user_scope_name(id)))
+        .arg("--").arg(exe).arg(USER_SCOPE_FLAG).arg(id.to_string())
+        .args(scope_argv(args)?);
+    // Replace this launcher rather than leave an unsupervised duplicate.
+    // systemd-run scope mode joins the transient unit before exec of our
+    // private bootstrap. Failure never enters another GUI launch path.
+    let _error = command.exec();
+    Err("SUPERVISOR_USER_SCOPE_EXEC_FAILED")
+}
+
+#[cfg(target_os = "linux")]
+fn reenter_user_scope(args: &[OsString]) -> Result<i32, String> {
+    let value = args.first().and_then(|arg| arg.to_str()).ok_or("SUPERVISOR_SCOPE_ARGUMENT_INVALID")?;
+    let id = uuid::Uuid::parse_str(value).map_err(|_| "SUPERVISOR_SCOPE_ARGUMENT_INVALID")?;
+    if id.get_version_num() != 4 || id.to_string() != value {
+        return Err("SUPERVISOR_SCOPE_ARGUMENT_INVALID".into());
+    }
+    let forwarded = decode_scope_argv(&args[1..])?;
+    crate::shared::process_scope::bootstrap_user_scope(id)
+        .map_err(|_| "SUPERVISOR_USER_SCOPE_DELEGATION_FAILED")?;
+    launch(forwarded, true)
+}
 
 /// Keep role/flag classification pure so the release startup migration can
 /// be tested without spawning a real GUI, modifying delegation or a Job.
@@ -368,6 +437,7 @@ fn choose_launch(
     let mut explicit = None;
     let mut forwarded = Vec::new();
     for arg in args {
+        if arg == USER_SCOPE_FLAG { return Err("SUPERVISOR_SCOPE_ARGUMENT_INVALID"); }
         let mode = if arg == FLAG { Some(LaunchMode::Supervised { nested_memory: false }) }
             else if arg == MEMORY_FLAG { Some(LaunchMode::Supervised { nested_memory: true }) }
             else if arg == DIRECT_FLAG { Some(LaunchMode::Direct) }
@@ -393,18 +463,16 @@ fn choose_launch(
     // Desktop/start-menu launch and the existing HTTP(S) open-URL flow.
     // Preserve diagnostic/special entry behavior rather than accidentally
     // spawning a supervisor around an unrelated command-line invocation.
-    let ordinary = forwarded.iter().all(|arg| arg.to_str().is_some_and(|arg|
-        url::Url::parse(arg).is_ok_and(|url| matches!(url.scheme(), "http" | "https") && url.host_str().is_some())));
-    let mode = if !release || !ordinary {
+    let mode = if !release || !ordinary_gui_args(&forwarded) {
         LaunchMode::Direct
     } else if !linux {
         LaunchMode::Supervised { nested_memory: false }
     } else if delegated {
         LaunchMode::Supervised { nested_memory: true }
     } else {
-        // A typical desktop session is not a writable delegated subtree.
-        // Do not change system permissions or claim containment it lacks.
-        LaunchMode::Direct
+        // Ask the current user's service manager for a fresh scope only
+        // on eligible release GUI launches. Never adopt the desktop cgroup.
+        LaunchMode::UserScope
     };
     Ok((mode, forwarded))
 }
@@ -428,7 +496,21 @@ pub(crate) fn launch_if_requested() -> Option<i32> {
     }
     let linux = cfg!(target_os = "linux");
     let delegated = linux && std::env::var_os("BROWSEROS_DELEGATED_CGROUP_ROOT").is_some();
-    let (mode, args) = match choose_launch(std::env::args_os().skip(1).collect(),
+    let args: Vec<OsString> = std::env::args_os().skip(1).collect();
+    if args.first().is_some_and(|arg| arg == USER_SCOPE_FLAG) {
+        if inherited || delegated || !linux {
+            eprintln!("[native-supervisor] SUPERVISOR_NESTED_LAUNCH_DENIED");
+            return Some(1);
+        }
+        #[cfg(target_os = "linux")]
+        return Some(match reenter_user_scope(&args[1..]) {
+            Ok(code) => code,
+            Err(code) => { eprintln!("[native-supervisor] {code}; no replacement launched"); 1 }
+        });
+        #[cfg(not(target_os = "linux"))]
+        return Some(1);
+    }
+    let (mode, args) = match choose_launch(args,
         inherited, !cfg!(debug_assertions), linux, delegated) {
         Ok(selected) => selected,
         Err(error) => { eprintln!("[native-supervisor] {error}"); return Some(1); }
@@ -440,6 +522,23 @@ pub(crate) fn launch_if_requested() -> Option<i32> {
                 eprintln!("[native-supervisor] direct launch; automatic native domain recovery not armed");
             }
             None
+        }
+        LaunchMode::UserScope => {
+            #[cfg(target_os = "linux")]
+            {
+                let Some(runner) = crate::shared::process_scope::user_scope_runner() else {
+                    // Preflight did not dispatch anything. Non-systemd or
+                    // unsupported Linux retains explicit direct behavior.
+                    eprintln!("[native-supervisor] user scope unavailable; direct launch without recovery");
+                    return None;
+                };
+                Some(match enter_user_scope(&runner, &args) {
+                    Ok(code) => code,
+                    Err(code) => { eprintln!("[native-supervisor] {code}; no replacement launched"); 1 }
+                })
+            }
+            #[cfg(not(target_os = "linux"))]
+            Some(1)
         }
         LaunchMode::Supervised { nested_memory } => Some(match launch(args, nested_memory) {
             Ok(code) => code,
@@ -561,7 +660,8 @@ mod tests {
             LaunchMode::Supervised { nested_memory: false });
         assert_eq!(select(&[], false, true, true, true).unwrap().0,
             LaunchMode::Supervised { nested_memory: true });
-        assert_eq!(select(&[], false, true, true, false).unwrap().0, LaunchMode::Direct);
+        assert_eq!(select(&[], false, true, true, false).unwrap().0, LaunchMode::UserScope);
+        assert!(select(&[USER_SCOPE_FLAG], false, true, true, false).is_err());
         assert_eq!(select(&[], true, true, false, false).unwrap().0, LaunchMode::Child);
         assert_eq!(select(&[], true, true, true, true).unwrap().0, LaunchMode::Child);
         assert_eq!(select(&[], false, false, false, false).unwrap().0, LaunchMode::Direct);
@@ -575,6 +675,20 @@ mod tests {
         assert!(select(&[MEMORY_FLAG], false, true, false, false).is_err());
         assert_eq!(select(&[FLAG], false, false, true, false).unwrap().0,
             LaunchMode::Supervised { nested_memory: false });
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn user_scope_forwarding_preserves_exact_urls_without_systemd_expansion() {
+        let args = vec![OsString::from("https://example.com/?q=$HOME&value=%24"),
+            OsString::from("https://example.com/你好")];
+        let encoded = scope_argv(&args).unwrap();
+        assert!(encoded.iter().all(|value| value.to_str().unwrap().bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')));
+        assert_eq!(decode_scope_argv(&encoded).unwrap(), args);
+        assert!(scope_argv(&[OsString::from("--grid-child")]).is_err());
+        assert!(decode_scope_argv(&[OsString::from("%%%")]).is_err());
+        assert!(decode_scope_argv(&[OsString::from("LS1kaXJlY3Qtc3RhcnQ")]).is_err());
     }
 
     #[test]

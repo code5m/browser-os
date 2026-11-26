@@ -1,9 +1,9 @@
 //! Linux delegated cgroup-v2 containment for existing process owners.
-//! No persistent daemon, sudo, mount, chmod or implicit delegation. Only the explicit
-//! supervised-memory mode enables an already delegated memory controller,
-//! and only inside a fresh, empty domain owned by this process.
-//! The operator must supply an existing delegated subtree containing this
-//! host. This contains ordinary setsid/double-fork descendants; it is not a
+//! No persistent daemon, sudo, mount or chmod. An ordinary supported release
+//! desktop launch may request its own transient user scope from systemd.
+//! Only the newly delegated scope and fresh owned domains may enable memory.
+//! Alternatively an operator can supply an existing delegated subtree.
+//! This contains ordinary setsid/double-fork descendants; it is not a
 //! hostile-same-UID sandbox. A separately privileged actor can move tasks.
 //! See ADR D04/D08 and the deployment boundary in the task record.
 use std::{
@@ -258,6 +258,106 @@ fn membership_path() -> io::Result<PathBuf> {
     fs::canonicalize(Path::new(MOUNT).join(membership.trim_start_matches('/')))
 }
 
+/// The private user-scope bootstrap derives its authority from actual
+/// kernel membership, never from a caller-supplied cgroup pathname.
+pub(crate) fn user_scope_name(id: uuid::Uuid) -> String {
+    format!("browseros-supervisor-{id}.scope")
+}
+fn sole_pid(value: &str, pid: u32) -> bool {
+    let mut fields = value.split_whitespace();
+    fields.next().and_then(|field| field.parse::<u32>().ok()) == Some(pid)
+        && fields.next().is_none()
+}
+
+/// Preflight only. Presence of the standard user-manager socket and
+/// cgroup2 controller is NOT proof that systemd will grant delegation.
+pub(crate) fn user_scope_runner() -> Option<PathBuf> {
+    use std::os::unix::fs::FileTypeExt;
+    let uid = unsafe { libc::geteuid() };
+    if uid == 0 { return None; }
+    let runner = fs::canonicalize("/usr/bin/systemd-run").ok()?;
+    let meta = fs::metadata(&runner).ok()?;
+    if !meta.is_file() || meta.uid() != 0 || meta.mode() & 0o022 != 0 || meta.mode() & 0o111 == 0 {
+        return None;
+    }
+    let runtime = PathBuf::from(format!("/run/user/{uid}"));
+    if !["systemd/private", "bus"].iter().any(|name|
+        fs::symlink_metadata(runtime.join(name)).ok().is_some_and(|meta|
+            meta.uid() == uid && meta.file_type().is_socket())) {
+        return None;
+    }
+    let mount = OpenOptions::new().read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(MOUNT).ok()?;
+    cgroup_fs(&mount).ok()?;
+    let controllers = CStr::from_bytes_with_nul(b"cgroup.controllers\0").expect("static cgroup filename");
+    if !has_controller(&read_control(&mount, controllers).ok()?, "memory") { return None; }
+    Some(runner)
+}
+
+/// Called only in the early exec'd BrowserOS supervisor, before threads,
+/// plugins or any GUI initialization. The fresh scope is supplied by the
+/// user manager. Move only this exact process into a new leaf before
+/// enabling a domain controller (cgroup-v2 no-internal-process rule).
+pub(crate) fn bootstrap_user_scope(id: uuid::Uuid) -> io::Result<()> {
+    if id.get_version_num() != 4 || std::env::var_os(ROOT_ENV).is_some() {
+        return Err(denied());
+    }
+    let root = membership_path()?;
+    let mount = fs::canonicalize(MOUNT)?;
+    let name = user_scope_name(id);
+    let uid = unsafe { libc::geteuid() };
+    if uid == 0 || root == mount || !root.starts_with(&mount)
+        || root.file_name() != Some(std::ffi::OsStr::new(&name)) {
+        return Err(denied());
+    }
+    let group = OpenOptions::new().read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(&root)?;
+    cgroup_fs(&group)?;
+    let meta = group.metadata()?;
+    if meta.uid() != uid { return Err(denied()); }
+    let procs = CStr::from_bytes_with_nul(b"cgroup.procs\0").expect("static cgroup filename");
+    let controllers = CStr::from_bytes_with_nul(b"cgroup.controllers\0").expect("static cgroup filename");
+    let subtree = CStr::from_bytes_with_nul(b"cgroup.subtree_control\0").expect("static cgroup filename");
+    if !sole_pid(&read_control(&group, procs)?, std::process::id())
+        || !has_controller(&read_control(&group, controllers)?, "memory")
+        || !read_control(&group, subtree)?.trim().is_empty() {
+        return Err(denied());
+    }
+    // Reject an existing subtree rather than adopting another owner.
+    for entry in fs::read_dir(&root)? {
+        if entry?.file_type()?.is_dir() { return Err(denied()); }
+    }
+    let leaf_name = CString::new("browseros-supervisor-owner").expect("static owner leaf");
+    if unsafe { libc::mkdirat(group.as_raw_fd(), leaf_name.as_ptr(), 0o700) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let leaf = open_at(&group, &leaf_name, libc::O_RDONLY | libc::O_DIRECTORY)?;
+    cgroup_fs(&leaf)?;
+    if group_populated(&leaf)? { return Err(denied()); }
+    // No PID supplied by argv or discovered from another process.
+    open_at(&leaf, procs, libc::O_WRONLY)?.write_all(b"0")?;
+    let leaf_path = root.join("browseros-supervisor-owner");
+    let actual = fs::metadata(&root)?;
+    if membership_path()? != leaf_path
+        || (actual.dev(), actual.ino()) != (meta.dev(), meta.ino())
+        || !read_control(&group, procs)?.trim().is_empty()
+        || !sole_pid(&read_control(&leaf, procs)?, std::process::id()) {
+        return Err(denied());
+    }
+    open_at(&group, subtree, libc::O_WRONLY)?.write_all(b"+memory")?;
+    if !has_controller(&read_control(&group, subtree)?, "memory") {
+        return Err(denied());
+    }
+    let memory = CStr::from_bytes_with_nul(b"memory.max\0").expect("static cgroup filename");
+    open_at(&leaf, memory, libc::O_RDONLY)?;
+    // ProcessScope::prepare still validates each new child, recursive kill,
+    // nested memory controls and the independent orphan guardian.
+    std::env::set_var(ROOT_ENV, root);
+    Ok(())
+}
+
 /// A fresh, descriptor-bound cgroup. No existing group is ever adopted
 /// for termination. Its name is random and only this owner may populate it.
 pub(crate) struct ProcessScope {
@@ -473,6 +573,26 @@ impl Drop for ProcessScope {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn user_scope_admission_requires_only_the_current_pid() {
+        assert!(sole_pid("42\n", 42));
+        for invalid in ["", "43\n", "42\n43\n", "42 42", "42 junk"] {
+            assert!(!sole_pid(invalid, 42));
+        }
+        let id = uuid::Uuid::parse_str("ec111c8b-8019-4c21-b0c2-aee29735a323").unwrap();
+        assert_eq!(user_scope_name(id), "browseros-supervisor-ec111c8b-8019-4c21-b0c2-aee29735a323.scope");
+    }
+
+    #[test]
+    #[ignore = "run this exact compiled test binary alone inside a fresh delegated systemd user scope named for BROWSEROS_TEST_USER_SCOPE_ID"]
+    fn fresh_user_scope_bootstrap_exposes_nested_memory_domain() {
+        let id = uuid::Uuid::parse_str(&std::env::var("BROWSEROS_TEST_USER_SCOPE_ID").unwrap()).unwrap();
+        bootstrap_user_scope(id).unwrap();
+        let mut owned = ProcessScope::prepare().unwrap().unwrap();
+        owned.prepare_nested_memory_host().unwrap();
+        assert!(!owned.populated().unwrap());
+    }
+
     #[test]
     fn controller_readback_requires_an_exact_token() {
         assert!(has_controller("cpu memory pids\n", "memory"));
