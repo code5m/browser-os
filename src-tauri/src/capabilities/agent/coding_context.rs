@@ -418,19 +418,19 @@ impl Session {
                     let mut bytes = vec![];
                     match reader
                         .by_ref()
-                        .take(LIMIT + 1)
+                        .take(LIMIT + 2)
                         .read_until(b'\n', &mut bytes)
                     {
                         Ok(0) => break,
-                        Ok(_) if bytes.len() as u64 <= LIMIT => {
-                            let value = serde_json::from_slice(&bytes)
-                                .map_err(|_| "MCP_INVALID_FRAME".into());
-                            if tx.try_send(value).is_err() {
+                        Ok(_) => {
+                            let value = mcp_protocol::decode_line(&bytes, LIMIT as usize);
+                            let fatal = value.is_err();
+                            if tx.try_send(value).is_err() || fatal {
                                 break;
                             }
                         }
-                        _ => {
-                            let _ = tx.try_send(Err("MCP_FRAME_LIMIT".into()));
+                        Err(_) => {
+                            let _ = tx.try_send(Err("MCP_FRAME_READ".into()));
                             break;
                         }
                     }
@@ -455,20 +455,25 @@ impl Session {
         })
     }
     fn send(&mut self, value: Value) -> Result<(), String> {
-        if self.cancellation.load(Ordering::Acquire) {
+        self.send_until(value, self.deadline, true)
+    }
+    fn send_until(
+        &mut self, value: Value, deadline: Instant, observe_cancellation: bool,
+    ) -> Result<(), String> {
+        if observe_cancellation && self.cancellation.load(Ordering::Acquire) {
             return Err("MCP_CANCEL_REQUESTED".into());
         }
-        if Instant::now() >= self.deadline {
+        if Instant::now() >= deadline {
             return Err("MCP_WRITE_TIMEOUT".into());
         }
         let mut bytes = mcp_protocol::encode_bounded(&value, LIMIT as usize)?;
         bytes.push(b'\n');
         let mut offset = 0;
         while offset < bytes.len() {
-            if self.cancellation.load(Ordering::Acquire) {
+            if observe_cancellation && self.cancellation.load(Ordering::Acquire) {
                 return Err("MCP_CANCEL_REQUESTED".into());
             }
-            let remaining = self.deadline.saturating_duration_since(Instant::now());
+            let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 return Err("MCP_WRITE_TIMEOUT".into());
             }
@@ -493,14 +498,22 @@ impl Session {
         }
         Ok(())
     }
+    fn notify_cancelled(&mut self, id: u64, method: &str) {
+        if let Some(notification) = mcp_protocol::cancellation_notification(id, method) {
+            // Separate short cleanup budget; no retries or provider outcome claim.
+            let _ = self.send_until(notification, Instant::now() + Duration::from_millis(200), false);
+        }
+    }
     fn rpc(&mut self, id: u64, method: &str, params: Value) -> Result<Value, String> {
         self.send(json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}))?;
         loop {
             if self.cancellation.load(Ordering::Acquire) {
+                self.notify_cancelled(id, method);
                 return Err("MCP_CANCEL_REQUESTED".into());
             }
             let remaining = self.deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
+                self.notify_cancelled(id, method);
                 return Err("MCP_TIMEOUT_OR_CLOSED".into());
             }
             let value = match self
@@ -626,6 +639,11 @@ pub(super) fn execute_cancelable_with_effect_admission(
                 return Err("MCP_CANCEL_REQUESTED".into());
             }
             before_spawn(&request, binding.as_ref())?;
+            // Admission may have taken time. Do not spawn after a newly observed
+            // cancellation; a published intent remains conservatively unresolved.
+            if cancellation.load(Ordering::Acquire) {
+                return Err("MCP_CANCEL_REQUESTED".into());
+            }
             let mut session = Session::start_with_credentials(
                 &root,
                 &prepared.config,

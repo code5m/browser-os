@@ -1615,7 +1615,10 @@ impl ProductionExecution {
             let owner = DurableRun::lookup(storage, id)?;
             let record = owner.read_record()?.ok_or("AGENT_RUN_NOT_FOUND")?;
             Self::check_manual_scope(&record, workspace, &identity)?;
-            let mut record = owner.recover_record(record)?;
+            let recovered = owner.recover_record(record)?;
+            // A newly arrived signed receipt takes precedence over a stale
+            // manual observation. Its revision change invalidates the form.
+            let mut record = Self::reconcile_provider_status(storage, &owner, recovered)?;
             if record.task.revision != revision
                 || record.phase != "operation_unknown"
                 || record.task.status != TaskStatus::Paused

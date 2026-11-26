@@ -82,7 +82,11 @@ pub(crate) fn prepare(
         return Err("MCP_SHELL_COMMAND_REJECTED".into());
     }
     config["command"] = json!(executable);
-    let args = config["args"].as_array().cloned().unwrap_or_default();
+    let args = match config.get("args") {
+        None | Some(Value::Null) => &[][..],
+        Some(Value::Array(args)) => args.as_slice(),
+        _ => return Err("MCP_ARGS_INVALID".into()),
+    };
     if args.len() > 64
         || args.iter().any(|arg| {
             arg.as_str().is_none_or(|arg| {
@@ -92,6 +96,11 @@ pub(crate) fn prepare(
     {
         return Err("MCP_ARGS_INVALID".into());
     }
+    let args = args.to_vec();
+    let mut environment_keys = BTreeSet::new();
+    let normalize_env = |name: &str| {
+        if cfg!(windows) { name.to_ascii_uppercase() } else { name.to_owned() }
+    };
     let mut grants = BTreeSet::new();
     let mut credentials = Vec::new();
     if let Some(refs) = config.get_mut("env_refs") {
@@ -105,6 +114,9 @@ pub(crate) fn prepare(
                 || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
             {
                 return Err("MCP_ENV_INVALID".into());
+            }
+            if !environment_keys.insert(normalize_env(name)) {
+                return Err("MCP_ENV_DUPLICATE".into());
             }
             let mut info = crate::framework::ai::mcp_credential_info(
                 storage,
@@ -122,7 +134,20 @@ pub(crate) fn prepare(
     }
     let env_names = match config.get("env") {
         None => Vec::new(),
-        Some(Value::Object(env)) if env.len() <= 64 => env.keys().cloned().collect::<Vec<_>>(),
+        Some(Value::Object(env)) if env.len() <= 64 => {
+            for (name, value) in env {
+                if name.is_empty() || name.len() > 100
+                    || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+                    || value.as_str().is_none_or(|value| value.len() > 16384 || value.contains('\0'))
+                {
+                    return Err("MCP_ENV_INVALID".into());
+                }
+                if !environment_keys.insert(normalize_env(name)) {
+                    return Err("MCP_ENV_DUPLICATE".into());
+                }
+            }
+            env.keys().cloned().collect::<Vec<_>>()
+        },
         _ => return Err("MCP_ENV_INVALID".into()),
     };
     let arguments = if action == "mcp_call" {

@@ -102,6 +102,29 @@ pub(super) fn owned_tool_request(
     Ok((method, params))
 }
 
+/// Cancellation is a best-effort notification for a fully transmitted tool
+/// request, never an initialization cancellation or a terminal effect receipt.
+pub(super) fn cancellation_notification(id: u64, method: &str) -> Option<Value> {
+    (id == 2 && matches!(method, "tools/list" | "tools/call")).then(|| {
+        json!({"jsonrpc":"2.0","method":"notifications/cancelled",
+            "params":{"requestId":id,"reason":"BrowserOS stopped waiting"}})
+    })
+}
+
+/// Both native adapters require complete newline-delimited frames. The JSON
+/// budget excludes the delimiter, exactly as for outgoing frames.
+pub(super) fn decode_line(bytes: &[u8], limit: usize) -> Result<Value, String> {
+    let line = bytes.strip_suffix(b"\n").ok_or(if bytes.len() > limit {
+        "MCP_FRAME_LIMIT"
+    } else {
+        "MCP_FRAME_INCOMPLETE"
+    })?;
+    if line.len() > limit {
+        return Err("MCP_FRAME_LIMIT".into());
+    }
+    serde_json::from_slice(line).map_err(|_| "MCP_INVALID_FRAME".into())
+}
+
 pub(super) enum RpcFrame {
     Reply(Value),
     ServerRequest(Value),

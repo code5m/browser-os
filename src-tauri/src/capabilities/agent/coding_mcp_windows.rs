@@ -159,9 +159,11 @@ fn resolved_config(root: &Path, storage: &Path, request: &Value) -> Result<Value
 
 struct Session {
     process: SandboxProcess,
-    writer: mpsc::SyncSender<Vec<u8>>,
+    writer: Option<mpsc::SyncSender<Vec<u8>>>,
     write_result: mpsc::Receiver<Result<(), String>>,
-    reader: mpsc::Receiver<Result<Value, String>>,
+    reader: Option<mpsc::Receiver<Result<Value, String>>>,
+    writer_thread: Option<thread::JoinHandle<()>>,
+    reader_thread: Option<thread::JoinHandle<()>>,
     reader_fault: Arc<Mutex<Option<String>>>,
     deadline: Instant,
     secrets: Vec<String>,
@@ -169,10 +171,33 @@ struct Session {
 }
 impl Drop for Session {
     fn drop(&mut self) {
+        drop(self.writer.take());
+        drop(self.reader.take());
         let _ = self.process.terminate();
     }
 }
 impl Session {
+    fn terminate_confirmed(&mut self) -> Result<(), String> {
+        // Close our channel endpoints first. An idle writer must be able to
+        // leave recv(), and a full output queue must not strand the reader.
+        drop(self.writer.take());
+        drop(self.reader.take());
+        self.process.terminate().map_err(|_| "MCP_TERMINATION_UNKNOWN")?;
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !self.process.cleanup_complete()
+            || self.writer_thread.as_ref().is_some_and(|worker| !worker.is_finished())
+            || self.reader_thread.as_ref().is_some_and(|worker| !worker.is_finished())
+        {
+            if Instant::now() >= deadline {
+                return Err("MCP_TERMINATION_UNKNOWN".into());
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        for worker in [self.writer_thread.take(), self.reader_thread.take()].into_iter().flatten() {
+            worker.join().map_err(|_| "MCP_TERMINATION_UNKNOWN")?;
+        }
+        Ok(())
+    }
     #[cfg(test)]
     fn start(root: &Path, config: &Value, seconds: u64) -> Result<Self, String> {
         Self::start_with_credentials(root, config, seconds, std::collections::BTreeMap::new())
@@ -329,7 +354,7 @@ impl Session {
         let (writer, write_rx) = mpsc::sync_channel::<Vec<u8>>(4);
         let (write_tx, write_result) = mpsc::channel();
         let write_owner = process.hold_io_owner()?;
-        thread::Builder::new()
+        let writer_thread = thread::Builder::new()
             .name("mcp-stdin".into())
             .spawn(move || {
                 let _owner = write_owner;
@@ -350,7 +375,7 @@ impl Session {
         let reader_fault = Arc::new(Mutex::new(None));
         let on_read_failure = Arc::clone(&reader_fault);
         let read_owner = process.hold_io_owner()?;
-        thread::Builder::new()
+        let reader_thread = thread::Builder::new()
             .name("mcp-stdout".into())
             .spawn(move || {
                 let _owner = read_owner;
@@ -359,15 +384,15 @@ impl Session {
                     let mut bytes = Vec::new();
                     let (value, fatal) = match reader
                         .by_ref()
-                        .take(LIMIT + 1)
+                        .take(LIMIT + 2)
                         .read_until(b'\n', &mut bytes)
                     {
                         Ok(0) => break,
-                        Ok(_) if bytes.len() as u64 <= LIMIT => (
-                            serde_json::from_slice(&bytes).map_err(|_| "MCP_INVALID_FRAME".into()),
-                            false,
-                        ),
-                        Ok(_) => (Err("MCP_FRAME_LIMIT".into()), true),
+                        Ok(_) => {
+                            let value = mcp_protocol::decode_line(&bytes, LIMIT as usize);
+                            let fatal = value.is_err();
+                            (value, fatal)
+                        },
                         Err(_) => (Err("MCP_FRAME_READ".into()), true),
                     };
                     if send_bounded(&reader_tx, value, Duration::from_secs(2)).is_err() {
@@ -383,9 +408,11 @@ impl Session {
             .map_err(|_| "MCP_STDOUT_THREAD_START")?;
         Ok(Self {
             process,
-            writer,
+            writer: Some(writer),
             write_result,
-            reader,
+            reader: Some(reader),
+            writer_thread: Some(writer_thread),
+            reader_thread: Some(reader_thread),
             reader_fault,
             deadline: Instant::now() + Duration::from_secs(seconds.clamp(1, 60)),
             secrets,
@@ -393,15 +420,20 @@ impl Session {
         })
     }
     fn send(&mut self, value: Value) -> Result<(), String> {
-        if self.cancellation.load(Ordering::Acquire) {
+        self.send_until(value, self.deadline, true)
+    }
+    fn send_until(
+        &mut self, value: Value, deadline: Instant, observe_cancellation: bool,
+    ) -> Result<(), String> {
+        if observe_cancellation && self.cancellation.load(Ordering::Acquire) {
             return Err("MCP_CANCEL_REQUESTED".into());
         }
-        if Instant::now() >= self.deadline {
+        if Instant::now() >= deadline {
             return Err("MCP_WRITE_TIMEOUT".into());
         }
         let mut bytes = mcp_protocol::encode_bounded(&value, LIMIT as usize)?;
         bytes.push(b'\n');
-        let remaining = self.deadline.saturating_duration_since(Instant::now());
+        let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
             return Err("MCP_WRITE_TIMEOUT".into());
         }
@@ -409,17 +441,17 @@ impl Session {
         // Observe the same end-to-end deadline when the writer is busy.
         let mut queued = bytes;
         loop {
-            if self.cancellation.load(Ordering::Acquire) {
+            if observe_cancellation && self.cancellation.load(Ordering::Acquire) {
                 return Err("MCP_CANCEL_REQUESTED".into());
             }
-            match self.writer.try_send(queued) {
+            match self.writer.as_ref().ok_or("MCP_WRITE_FAILED")?.try_send(queued) {
                 Ok(()) => break,
                 Err(mpsc::TrySendError::Disconnected(_)) => {
                     return Err("MCP_WRITE_FAILED".into());
                 }
                 Err(mpsc::TrySendError::Full(message)) => {
                     queued = message;
-                    let remaining = self.deadline.saturating_duration_since(Instant::now());
+                    let remaining = deadline.saturating_duration_since(Instant::now());
                     if remaining.is_zero() {
                         return Err("MCP_WRITE_TIMEOUT".into());
                     }
@@ -428,10 +460,10 @@ impl Session {
             }
         }
         loop {
-            if self.cancellation.load(Ordering::Acquire) {
+            if observe_cancellation && self.cancellation.load(Ordering::Acquire) {
                 return Err("MCP_CANCEL_REQUESTED".into());
             }
-            let remaining = self.deadline.saturating_duration_since(Instant::now());
+            let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 return Err("MCP_WRITE_TIMEOUT".into());
             }
@@ -443,6 +475,12 @@ impl Session {
                 Err(mpsc::RecvTimeoutError::Timeout) => continue,
                 Err(mpsc::RecvTimeoutError::Disconnected) => return Err("MCP_WRITE_FAILED".into()),
             }
+        }
+    }
+    fn notify_cancelled(&mut self, id: u64, method: &str) {
+        if let Some(notification) = mcp_protocol::cancellation_notification(id, method) {
+            // Separate short cleanup budget; no retries or provider outcome claim.
+            let _ = self.send_until(notification, Instant::now() + Duration::from_millis(200), false);
         }
     }
     fn recv_frame(&self) -> Result<Value, String> {
@@ -465,6 +503,7 @@ impl Session {
             }
             match self
                 .reader
+                .as_ref().ok_or("MCP_CLOSED")?
                 .recv_timeout(remaining.min(Duration::from_millis(100)))
             {
                 Ok(value) => {
@@ -487,7 +526,17 @@ impl Session {
     fn rpc(&mut self, id: u64, method: &str, params: Value) -> Result<Value, String> {
         self.send(json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}))?;
         loop {
-            let value = self.recv_frame()?;
+            let value = match self.recv_frame() {
+                Ok(value) => value,
+                Err(error) => {
+                    if error == "MCP_CANCEL_REQUESTED"
+                        || (error == "MCP_TIMEOUT_OR_CLOSED" && Instant::now() >= self.deadline)
+                    {
+                        self.notify_cancelled(id, method);
+                    }
+                    return Err(error);
+                }
+            };
             match mcp_protocol::classify_frame(value, id)? {
                 RpcFrame::Reply(result) => return Ok(result),
                 RpcFrame::ServerRequest(reply) => self.send(reply)?,
@@ -558,6 +607,11 @@ pub(super) fn execute_cancelable_with_effect_admission(
         return Err("MCP_CANCEL_REQUESTED".into());
     }
     before_spawn(&request, binding.as_ref())?;
+    // Admission may have taken time. Do not spawn after a newly observed
+    // cancellation; a published intent remains conservatively unresolved.
+    if cancellation.load(Ordering::Acquire) {
+        return Err("MCP_CANCEL_REQUESTED".into());
+    }
     let mut session = Session::start_with_credentials(
         &root,
         &prepared.config,
@@ -585,20 +639,8 @@ pub(super) fn execute_cancelable_with_effect_admission(
         scrub(&mut result, &session.secrets);
         Ok(json!({"result":result,"untrusted":true,"sandbox":"appcontainer-no-network"}))
     })();
-    // TerminateJobObject is a request, not a completion receipt. Confirm
-    // the root process, stderr reader and empty owned Job before reporting
-    // success. On uncertainty SandboxProcess::drop retains cleanup ownership.
-    session
-        .process
-        .terminate()
-        .map_err(|_| "MCP_TERMINATION_UNKNOWN")?;
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while !session.process.cleanup_complete() {
-        if Instant::now() >= deadline {
-            return Err("MCP_TERMINATION_UNKNOWN".into());
-        }
-        thread::sleep(Duration::from_millis(20));
-    }
+    // On uncertainty SandboxProcess::drop retains native cleanup ownership.
+    session.terminate_confirmed()?;
     outcome
 }
 
