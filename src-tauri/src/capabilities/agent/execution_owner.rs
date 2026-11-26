@@ -238,20 +238,20 @@ impl DurableRun {
         let Some(bytes) = self.checkpoint.read()? else { return Ok(None); };
         let record: NativeRunReceipt = serde_json::from_slice(&bytes).map_err(|_| "AGENT_RUN_RECEIPT_INVALID")?;
         if record.id != self.id { return Err("AGENT_RUN_RECEIPT_INVALID".into()); }
+        // A new terminal manual transport receipt must retain its exact
+        // original approval binding even when its result body was withheld.
+        if record.manual_admission.is_some() && record.phase == "completed"
+            && !Self::manual_transport_proven(&record) {
+            return Err("AGENT_RUN_RECEIPT_INVALID".into());
+        }
         if let Some(effect) = &record.effect {
             if let Some(value) = &effect.response_payload {
                 let bytes = serde_json::to_vec(value).map_err(|_| "AGENT_RUN_RECEIPT_INVALID")?;
                 let digest = format!("{:x}", Sha256::digest(&bytes));
-                if !Self::manual_admission_bound(&record)
-                    || effect.disposition != "transport_returned"
+                if !Self::manual_transport_proven(&record)
                     || effect.response_digest.as_deref() != Some(digest.as_str())
                     || !record.approval.as_ref().is_some_and(|claim|
-                        claim.accepted && claim.task_id == record.task.id
-                            && claim.workspace_id == record.task.workspace_id
-                            && claim.session_id == record.task.session_id
-                            && claim.resource.resource_revision == effect.request_digest
-                            && claim.effect == ToolEffect::ExternalSideEffect
-                            && manual_response_eligible(&claim.tool_name, value, &bytes))
+                        manual_response_eligible(&claim.tool_name, value, &bytes))
                 {
                     return Err("AGENT_RUN_RECEIPT_INVALID".into());
                 }
@@ -266,22 +266,34 @@ impl DurableRun {
             && record.text.is_none() && record.successor.is_none()
             && record.manual_admission.as_ref().is_some_and(|a| !a.workspace_identity.is_empty())
     }
-    fn manual_transport_proven(record: &NativeRunReceipt) -> bool {
-        Self::manual_admission_bound(record) && record.phase == "transport_returned"
+    fn manual_effect_binding(record: &NativeRunReceipt, revision_delta: u64) -> bool {
+        record.task.goal == "manual_mcp" && record.task.session_id == record.id
+            && record.task.pending.is_none() && record.text.is_none() && record.successor.is_none()
             && record.approval.as_ref().zip(record.effect.as_ref()).is_some_and(|(claim, effect)| {
                 claim.accepted && claim.task_id == record.task.id
                     && claim.workspace_id == record.task.workspace_id
                     && claim.session_id == record.task.session_id
-                    && claim.task_revision.checked_add(1) == Some(record.task.revision)
+                    && claim.task_revision.checked_add(revision_delta) == Some(record.task.revision)
                     && claim.effect == ToolEffect::ExternalSideEffect
                     && matches!(claim.tool_name.as_str(), "coding.manual_mcp_call" | "coding.manual_mcp_tools")
                     && claim.resource.resource_revision == effect.request_digest
                     && claim.resource.resource_id == format!("workspace:{}", record.task.workspace_id)
+                    && effect.request_digest.len() == 64 && effect.request_digest.bytes().all(|b| b.is_ascii_hexdigit())
                     && manual_approval_matches_request(claim, record.id, &effect.request_digest)
-                    && effect.workspace_identity.as_deref() == record.manual_admission.as_ref().map(|a| a.workspace_identity.as_str())
-                    && effect.disposition == "transport_returned"
-                    && effect.response_digest.as_ref().is_some_and(|digest| digest.len() == 64 && digest.bytes().all(|b| b.is_ascii_hexdigit()))
+                    && effect.workspace_identity.as_ref().is_some_and(|identity| !identity.is_empty()
+                        && record.manual_admission.as_ref().map_or(true, |admission| admission.workspace_identity == *identity))
             })
+    }
+    fn manual_transport_proven(record: &NativeRunReceipt) -> bool {
+        let delta = match (record.phase.as_str(), record.task.status) {
+            ("transport_returned", TaskStatus::Running) => 1,
+            ("completed", TaskStatus::Completed) => 2,
+            _ => return false,
+        };
+        Self::manual_admission_bound(record) && Self::manual_effect_binding(record, delta)
+            && record.effect_reviews.is_empty() && record.effect_resolution.is_none()
+            && record.effect.as_ref().is_some_and(|effect| effect.disposition == "transport_returned"
+                && effect.response_digest.as_ref().is_some_and(|digest| digest.len() == 64 && digest.bytes().all(|b| b.is_ascii_hexdigit())))
     }
     fn recover_record(&self, mut record: NativeRunReceipt) -> Result<NativeRunReceipt, String> {
         // A successful bounded local model/read-only return is committed
@@ -843,6 +855,16 @@ impl ProductionExecution {
         {
             let run = self.durable_run.as_mut().ok_or("AGENT_RUN_RECEIPT_REQUIRED")?;
             let approved_tool = run.approval.as_ref().ok_or("AGENT_APPROVAL_REQUIRED")?.tool_name.as_str();
+            let method = match approved_tool {
+                "coding.manual_mcp_call" => "mcp_call",
+                "coding.manual_mcp_tools" => "mcp_tools",
+                _ => return Err("AGENT_APPROVAL_STALE".into()),
+            };
+            // Do not accept the facade's success flag as independent
+            // authority. Recheck the method bound by the original approval.
+            if reported_success != result.as_ref().is_ok_and(|value| mcp_transport_reported_success(method, value)) {
+                return Err("AGENT_RUN_RECEIPT_INVALID".into());
+            }
             let effect = run.effect.as_mut().ok_or("AGENT_RUN_RECEIPT_REQUIRED")?;
             if effect.disposition != "dispatching" { return Err("AGENT_RUN_ALREADY_RECORDED".into()); }
             let encoded = result.as_ref().ok().and_then(|value| serde_json::to_vec(value).ok());
@@ -885,10 +907,9 @@ impl ProductionExecution {
     fn can_resolve_manual(record: &NativeRunReceipt) -> bool {
         record.phase == "operation_unknown" && record.task.status == TaskStatus::Paused
             && record.task.pending.is_none() && record.effect_resolution.is_none()
-            && record.effect.as_ref().and_then(|effect| effect.workspace_identity.as_ref()).is_some()
-            && record.approval.as_ref().is_some_and(|claim| claim.accepted
-                && claim.task_id == record.task.id && claim.workspace_id == record.task.workspace_id
-                && claim.session_id == record.task.session_id && claim.effect == ToolEffect::ExternalSideEffect)
+            && record.effect.as_ref().is_some_and(|effect| effect.disposition == "unknown")
+            && record.effect_reviews.len() <= 16
+            && DurableRun::manual_effect_binding(record, 2 + record.effect_reviews.len() as u64)
     }
 
     #[cfg(any(target_os = "linux", target_os = "windows"))]
@@ -1491,6 +1512,13 @@ mod tests {
             "observed_applied", "Stale observation").is_err());
         assert!(ProductionExecution::begin_workspace_run(&storage, "manual_mcp", &root, run).is_err());
         let current = reconciled["revision"].as_str().unwrap().parse().unwrap();
+        {
+            let owner = DurableRun::lookup(&storage, run).unwrap();
+            let mut record = owner.read_record().unwrap().unwrap();
+            assert!(ProductionExecution::can_resolve_manual(&record));
+            record.approval.as_mut().unwrap().resource.resource_revision = "wrong".into();
+            assert!(!ProductionExecution::can_resolve_manual(&record));
+        }
         assert!(ProductionExecution::archive_manual_mcp(&storage, &root, run, current).is_err());
         assert!(ProductionExecution::resolve_manual_mcp(&storage, &root, run, current,
             "observed_not_applied", "Termination unconfirmed", false).is_err());
@@ -1533,6 +1561,9 @@ mod tests {
                     assert!(execution.checkpoint_manual_mcp(&root, digest, &request).is_err());
                     drop(lease);
                     if stage == 3 {
+                        assert!(execution.record_manual_mcp_return(&Ok(serde_json::json!({
+                            "result":{"tools":[]},"untrusted":true
+                        })), true).is_err());
                         execution.record_manual_mcp_return(&Ok(serde_json::json!({
                             "result":{"content":[{"type":"text","text":"fixture return"}]},"untrusted":true
                         })), true).unwrap();
@@ -1549,6 +1580,19 @@ mod tests {
                 assert!(receipt["resolution"].is_null());
                 assert_eq!(receipt["has_response"], true);
                 assert_eq!(receipt["response_payload"]["result"]["content"][0]["text"], "fixture return");
+                {
+                    let owner = DurableRun::lookup(&storage, run).unwrap();
+                    let original = owner.read_record().unwrap().unwrap();
+                    let mut inconsistent: NativeRunReceipt = serde_json::from_value(serde_json::to_value(&original).unwrap()).unwrap();
+                    inconsistent.approval.as_mut().unwrap().arguments_sha256 = "0".repeat(64);
+                    owner.write_record(&inconsistent).unwrap();
+                    assert!(owner.read_record().is_err());
+                    // Withheld response content must not bypass approval validation.
+                    inconsistent.effect.as_mut().unwrap().response_payload = None;
+                    owner.write_record(&inconsistent).unwrap();
+                    assert!(owner.read_record().is_err());
+                    owner.write_record(&original).unwrap();
+                }
                 let revision = receipt["revision"].as_str().unwrap().parse().unwrap();
                 let archived = ProductionExecution::archive_manual_mcp(&storage, &root, run, revision).unwrap();
                 assert_eq!(archived["archived"], true);
