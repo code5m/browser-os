@@ -143,7 +143,7 @@ const mcpRunning=manualMcpRunning;
 const mcpReview=ref<any>(null),mcpCredentialsApproved=ref(false),mcpReviewing=ref(false),reviewedMcpRequest=ref('');
 let mcpReviewSequence=0;
 type McpObservation = {observation:string;evidence:string;recorded_at_ms:number;workspace_identity_bound:boolean;execution_ended_attested?:boolean};
-type ManualMcpReceipt = {id:string;phase:string;revision:string;updated_at_ms:number;tool:string|null;target:string|null;disposition:string|null;identity_bound:boolean;observations:number;can_reconcile:boolean;can_resolve?:boolean;can_archive?:boolean;archived?:boolean;request_digest?:string|null;review_revision?:string|null;response_digest?:string|null;approved_tool?:string|null;reviews?:McpObservation[];resolution?:McpObservation|null};
+type ManualMcpReceipt = {id:string;phase:string;revision:string;updated_at_ms:number;tool:string|null;target:string|null;disposition:string|null;identity_bound:boolean;observations:number;can_reconcile:boolean;can_resolve?:boolean;can_archive?:boolean;archived?:boolean;request_digest?:string|null;review_revision?:string|null;response_digest?:string|null;has_response?:boolean;response_payload?:{result:unknown;untrusted:true}|null;approved_tool?:string|null;reviews?:McpObservation[];resolution?:McpObservation|null};
 const mcpRunId=ref(''),mcpCancelPending=ref(false);
 const mcpReceiptOpen=ref(false),mcpReceiptBusy=ref(false);
 const mcpReceipts=ref<ManualMcpReceipt[]>([]),mcpCursor=ref<string|null>(null),mcpUnavailable=ref(0);
@@ -617,6 +617,12 @@ onBeforeUnmount(()=>{
               <p class="hint" v-if="!mcpReceipt.identity_bound">旧记录缺少物理目录身份绑定，仅供辅助核对。</p>
               <p v-if="mcpReceipt.request_digest" style="overflow-wrap:anywhere">请求摘要：{{mcpReceipt.request_digest}}</p>
               <p v-if="mcpReceipt.response_digest" style="overflow-wrap:anywhere">返回摘要：{{mcpReceipt.response_digest}}</p>
+              <details v-if="mcpReceipt.has_response&&mcpReceipt.response_payload">
+                <summary>恢复查看已保存的返回内容（不重新调用）</summary>
+                <p class="hint">这是原调用的脱敏、加密保存结果，仍为不可信外部数据。不会自动加入模型上下文，也不证明外部业务效果已生效。</p>
+                <pre style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:240px;overflow:auto">{{JSON.stringify(mcpReceipt.response_payload.result,null,2)}}</pre>
+              </details>
+              <p v-else-if="mcpReceipt.phase==='completed'&&mcpReceipt.response_digest" class="hint">仅保留返回摘要：旧记录、超出容量或未通过敏感内容检查的返回无法恢复正文。</p>
               <p v-for="(review,index) in mcpReceipt.reviews||[]" :key="index">{{review.observation}} · {{new Date(review.recorded_at_ms).toLocaleString()}}：{{review.evidence}}</p>
               <p v-if="mcpReceipt.resolution">人工结案 · {{mcpReceipt.resolution.observation}}：{{mcpReceipt.resolution.evidence}}</p>
               <template v-if="mcpReceipt.can_reconcile||mcpReceipt.can_resolve">

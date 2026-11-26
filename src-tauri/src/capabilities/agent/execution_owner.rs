@@ -12,6 +12,7 @@ use browseros_agent_foundation::{
     tool::ToolEffect,
 };
 use sha2::{Digest, Sha256};
+use serde_json::Value;
 use std::{
     path::Path,
     sync::{Arc, OnceLock},
@@ -70,6 +71,39 @@ struct ManualAdmission {
     workspace_identity: String,
 }
 
+// Transport completion is not proof of an external effect. Require the
+// protocol result for the actual method and refuse malformed error flags.
+pub(super) fn mcp_transport_reported_success(action: &str, response: &Value) -> bool {
+    let Some(result) = response.get("result").and_then(Value::as_object) else { return false; };
+    if !matches!(result.get("isError"), None | Some(Value::Bool(false))) {
+        return false;
+    }
+    let expected = match action {
+        "mcp_tools" => "tools",
+        "mcp_call" => "content",
+        _ => return false,
+    };
+    result.get(expected).is_some_and(Value::is_array)
+}
+
+// Leave headroom for approval, identity and digest metadata under the
+// existing 64 KiB immutable Run archive limit. Only the adapter's scrubbed
+// protocol return is eligible, never raw server credentials or unknown
+// results. A withheld result keeps its digest, not an empty success payload.
+const MANUAL_RESPONSE_LIMIT: usize = 32 * 1024;
+fn manual_response_eligible(approved_tool: &str, value: &Value, encoded: &[u8]) -> bool {
+    let action = match approved_tool {
+        "coding.manual_mcp_tools" => "mcp_tools",
+        "coding.manual_mcp_call" => "mcp_call",
+        _ => return false,
+    };
+    encoded.len() <= MANUAL_RESPONSE_LIMIT
+        && value["untrusted"] == true
+        && mcp_transport_reported_success(action, value)
+        && std::str::from_utf8(encoded).is_ok_and(|text|
+            !crate::security_policy::contains_credential_leak(text))
+}
+
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct EffectEvidence {
     request_digest: String,
@@ -77,6 +111,10 @@ struct EffectEvidence {
     tool: Option<String>,
     disposition: String,
     response_digest: Option<String>,
+    // Legacy receipts may have a digest without retrievable content.
+    // Content is kept inside the same authenticated private Run record.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    response_payload: Option<Value>,
     #[serde(default)]
     workspace_identity: Option<String>,
     #[serde(default)]
@@ -191,6 +229,25 @@ impl DurableRun {
         let Some(bytes) = self.checkpoint.read()? else { return Ok(None); };
         let record: NativeRunReceipt = serde_json::from_slice(&bytes).map_err(|_| "AGENT_RUN_RECEIPT_INVALID")?;
         if record.id != self.id { return Err("AGENT_RUN_RECEIPT_INVALID".into()); }
+        if let Some(effect) = &record.effect {
+            if let Some(value) = &effect.response_payload {
+                let bytes = serde_json::to_vec(value).map_err(|_| "AGENT_RUN_RECEIPT_INVALID")?;
+                let digest = format!("{:x}", Sha256::digest(&bytes));
+                if !Self::manual_admission_bound(&record)
+                    || effect.disposition != "transport_returned"
+                    || effect.response_digest.as_deref() != Some(digest.as_str())
+                    || !record.approval.as_ref().is_some_and(|claim|
+                        claim.accepted && claim.task_id == record.task.id
+                            && claim.workspace_id == record.task.workspace_id
+                            && claim.session_id == record.task.session_id
+                            && claim.resource.resource_revision == effect.request_digest
+                            && claim.effect == ToolEffect::ExternalSideEffect
+                            && manual_response_eligible(&claim.tool_name, value, &bytes))
+                {
+                    return Err("AGENT_RUN_RECEIPT_INVALID".into());
+                }
+            }
+        }
         Ok(Some(record))
     }
     // These checks describe the original encrypted native receipt, not
@@ -243,7 +300,12 @@ impl DurableRun {
                 let effect_possible = record.effect.is_some() || record.approval.as_ref().is_some_and(|claim|
                     claim.accepted && matches!(claim.effect, ToolEffect::ExecuteProcess | ToolEffect::ExternalSideEffect));
                 record.phase = if effect_possible { "operation_unknown" } else { "interrupted" }.into();
-                if let Some(effect) = &mut record.effect { effect.disposition = "unknown".into(); }
+                if let Some(effect) = &mut record.effect {
+                    effect.disposition = "unknown".into();
+                    // Never expose even a retained transport payload when
+                    // the enclosing execution proof cannot be reconciled.
+                    effect.response_payload = None;
+                }
             }
             record.updated_at_ms = unix_ms();
             self.write_record(&record)?;
@@ -701,7 +763,7 @@ impl ProductionExecution {
             });
             run.effect = Some(EffectEvidence { request_digest: digest.clone(), target,
                 tool: safe_label("tool"), disposition: "dispatching".into(), response_digest: None,
-                workspace_identity: Some(identity),
+                response_payload: None, workspace_identity: Some(identity),
                 review_revision: safe_label("review_revision") });
         }
         let _ = (root, digest, request);
@@ -711,14 +773,20 @@ impl ProductionExecution {
     pub(crate) fn record_manual_mcp_return(&mut self, result: &Result<serde_json::Value, String>, reported_success: bool) -> Result<(), String> {
         #[cfg(any(target_os = "linux", target_os = "windows"))]
         {
-            let effect = self.durable_run.as_mut().and_then(|run| run.effect.as_mut())
-                .ok_or("AGENT_RUN_RECEIPT_REQUIRED")?;
+            let run = self.durable_run.as_mut().ok_or("AGENT_RUN_RECEIPT_REQUIRED")?;
+            let approved_tool = run.approval.as_ref().ok_or("AGENT_APPROVAL_REQUIRED")?.tool_name.as_str();
+            let effect = run.effect.as_mut().ok_or("AGENT_RUN_RECEIPT_REQUIRED")?;
             if effect.disposition != "dispatching" { return Err("AGENT_RUN_ALREADY_RECORDED".into()); }
-            let response_digest = result.as_ref().ok().and_then(|value| serde_json::to_vec(value).ok())
-                .map(|bytes| format!("{:x}", Sha256::digest(&bytes)));
+            let encoded = result.as_ref().ok().and_then(|value| serde_json::to_vec(value).ok());
+            let response_digest = encoded.as_ref().map(|bytes| format!("{:x}", Sha256::digest(bytes)));
             if reported_success && response_digest.is_none() { return Err("AGENT_RUN_RECEIPT_INVALID".into()); }
             effect.disposition = if reported_success { "transport_returned" } else { "unknown" }.into();
             effect.response_digest = response_digest;
+            effect.response_payload = if reported_success {
+                result.as_ref().ok().zip(encoded.as_ref()).filter(|(value, bytes)|
+                    manual_response_eligible(approved_tool, value, bytes))
+                    .map(|(value, _)| value.clone())
+            } else { None };
         }
         let _ = (result, reported_success);
         self.checkpoint(if reported_success { "transport_returned" } else { "operation_unknown" })
@@ -758,6 +826,10 @@ impl ProductionExecution {
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     fn manual_summary(record: &NativeRunReceipt, detail: bool) -> serde_json::Value {
         let effect = record.effect.as_ref();
+        let response = if record.phase == "completed" && record.task.status == TaskStatus::Completed {
+            effect.filter(|value| value.disposition == "transport_returned")
+                .and_then(|value| value.response_payload.as_ref())
+        } else { None };
         let mut result = serde_json::json!({
             "id":record.id,"task_id":record.task.id,"phase":record.phase,
             "revision":record.task.revision.to_string(),"updated_at_ms":record.updated_at_ms,
@@ -766,6 +838,7 @@ impl ProductionExecution {
             "disposition":effect.map(|value| value.disposition.as_str()),
             "identity_bound":record.manual_admission.is_some() || effect.and_then(|value| value.workspace_identity.as_ref()).is_some(),
             "observations":record.effect_reviews.len(),
+            "has_response":response.is_some(),
             "can_reconcile":record.phase == "operation_unknown" && record.task.status == TaskStatus::Paused
                 && record.effect_reviews.len() < 16,
             "can_resolve":Self::can_resolve_manual(record),
@@ -775,6 +848,7 @@ impl ProductionExecution {
             result["request_digest"] = serde_json::json!(effect.map(|value| &value.request_digest));
             result["review_revision"] = serde_json::json!(effect.and_then(|value| value.review_revision.as_ref()));
             result["response_digest"] = serde_json::json!(effect.and_then(|value| value.response_digest.as_ref()));
+            result["response_payload"] = serde_json::json!(response);
             result["reviews"] = serde_json::json!(&record.effect_reviews);
             result["resolution"] = serde_json::json!(&record.effect_resolution);
             result["approved_tool"] = serde_json::json!(record.approval.as_ref().map(|claim| &claim.tool_name));
@@ -1362,7 +1436,9 @@ mod tests {
                     assert!(execution.checkpoint_manual_mcp(&root, digest, &request).is_err());
                     drop(lease);
                     if stage == 3 {
-                        execution.record_manual_mcp_return(&Ok(serde_json::json!({"result":{"content":[]}})), true).unwrap();
+                        execution.record_manual_mcp_return(&Ok(serde_json::json!({
+                            "result":{"content":[{"type":"text","text":"fixture return"}]},"untrusted":true
+                        })), true).unwrap();
                     }
                 }
             }
@@ -1374,6 +1450,21 @@ mod tests {
             if stage == 3 {
                 assert_eq!(receipt["disposition"], "transport_returned");
                 assert!(receipt["resolution"].is_null());
+                assert_eq!(receipt["has_response"], true);
+                assert_eq!(receipt["response_payload"]["result"]["content"][0]["text"], "fixture return");
+                let revision = receipt["revision"].as_str().unwrap().parse().unwrap();
+                let archived = ProductionExecution::archive_manual_mcp(&storage, &root, run, revision).unwrap();
+                assert_eq!(archived["archived"], true);
+                assert_eq!(archived["response_payload"], receipt["response_payload"]);
+                let restored = ProductionExecution::read_manual_mcp(&storage, &root, run).unwrap();
+                assert_eq!(restored["response_payload"], receipt["response_payload"]);
+                let catalog = ProductionExecution::manual_mcp_catalog(&storage, &root, None).unwrap();
+                let row = catalog["runs"].as_array().unwrap().iter().find(|row| row["id"] == serde_json::json!(run)).unwrap();
+                assert_eq!(row["has_response"], true);
+                assert!(row.get("response_payload").is_none());
+            } else {
+                assert_eq!(receipt["has_response"], false);
+                assert!(receipt["response_payload"].is_null());
             }
             assert!(ProductionExecution::begin_workspace_run(&storage, "manual_mcp", &root, run).is_err());
         }
@@ -1385,6 +1476,25 @@ mod tests {
         drop(execution);
         assert_eq!(ProductionExecution::read_manual_mcp(&storage, &root, old).unwrap()["phase"], "interrupted");
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn retained_manual_response_requires_bounded_scrubbed_method_result() {
+        let eligible = |tool: &str, value: Value| {
+            manual_response_eligible(tool, &value, &serde_json::to_vec(&value).unwrap())
+        };
+        let normal = serde_json::json!({"result":{"content":[{"type":"text","text":"fixture return"}]},"untrusted":true});
+        assert!(eligible("coding.manual_mcp_call", normal.clone()));
+        assert!(!eligible("coding.manual_mcp_tools", normal));
+        assert!(eligible("coding.manual_mcp_tools", serde_json::json!({"result":{"tools":[]},"untrusted":true})));
+        for invalid in [
+            serde_json::json!({"result":{"content":[]}}),
+            serde_json::json!({"result":{"content":[],"isError":true},"untrusted":true}),
+            serde_json::json!({"result":{"content":[{"type":"text","text":"password=fixture"}]},"untrusted":true}),
+            serde_json::json!({"result":{"content":[{"type":"text","text":"x".repeat(MANUAL_RESPONSE_LIMIT)}]},"untrusted":true}),
+        ] {
+            assert!(!eligible("coding.manual_mcp_call", invalid));
+        }
     }
 
     #[cfg(any(target_os = "linux", target_os = "windows"))]

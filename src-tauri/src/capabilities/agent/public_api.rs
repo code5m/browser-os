@@ -7,20 +7,7 @@ use tauri::{AppHandle, Webview};
 pub(crate) use super::execution_owner::{ChannelAdmission, ChannelInput, ChannelStart, ProductionExecution};
 pub(crate) use super::coding::CodingProviderBinding;
 pub(crate) use super::local_provider::{LocalChatRequest, local_chat, check as validate_local_chat};
-// Transport completion is not proof of an external effect. Require the
-// protocol result for the actual method and refuse malformed error flags.
-fn mcp_transport_reported_success(action: &str, response: &Value) -> bool {
-    let Some(result) = response.get("result").and_then(Value::as_object) else { return false; };
-    if !matches!(result.get("isError"), None | Some(Value::Bool(false))) {
-        return false;
-    }
-    let expected = match action {
-        "mcp_tools" => "tools",
-        "mcp_call" => "content",
-        _ => return false,
-    };
-    result.get(expected).is_some_and(Value::is_array)
-}
+use super::execution_owner::mcp_transport_reported_success;
 
 pub(crate) fn register_coding_run(id: &str) -> Result<super::coding::RunRequestGuard, String> {
     super::coding::register_run_request(id)
