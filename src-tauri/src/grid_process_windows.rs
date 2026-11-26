@@ -978,18 +978,30 @@ impl GridProcessManager {
         let _dispatch = self.visibility_dispatch.lock().unwrap_or_else(|p| p.into_inner());
         let app = self.app().ok_or("TAB_RENDERER_HOST_UNAVAILABLE")?;
         let state = app.state::<crate::bridge::AppState>();
-        {
-            let children = self.children.lock().unwrap();
-            if !children.get(&index).is_some_and(|child| child.document_ready && child.comms.is_connected()) {
-                return Err("TAB_RENDERER_DOCUMENT_UNAVAILABLE".into());
+        let target = self.renderer_binding(index)?;
+        let mut failures = Vec::new();
+        for other in others {
+            if let Err(error) = self.hide_tab_renderer_locked(*other) {
+                failures.push(format!("{other}:{error}"));
             }
         }
-        for other in others {
-            self.hide_tab_renderer_locked(*other)
-                .map_err(|error| format!("TAB_RENDERER_ACTIVATION_PARTIAL:{error}"))?;
+        if !failures.is_empty() {
+            return Err(format!("TAB_RENDERER_ACTIVATION_PARTIAL:{}", failures.join("; ")));
         }
         if state.shutdown_requested.load(Ordering::Acquire) {
             return Err("TAB_APPLICATION_SHUTTING_DOWN".into());
+        }
+        // Hiding peers may wait on native IPC. Revalidate the original
+        // process/transport under the native owner gates before publication.
+        let children = self.children.lock().unwrap();
+        let child = children.get(&index).ok_or("TAB_RENDERER_ACTIVATION_STALE")?;
+        let _owner = child.comms.owner_gate.lock().unwrap();
+        if !child.document_ready
+            || child.comms.expected_pid.load(Ordering::SeqCst) != target.owner.0
+            || child.comms.spawn_epoch.load(Ordering::SeqCst) != target.owner.1
+            || !child.comms.is_current(target.generation)
+        {
+            return Err("TAB_RENDERER_ACTIVATION_STALE".into());
         }
         *state.active_tab.lock().unwrap() = Some(crate::grid_ipc::renderer_label(index));
         Ok(())

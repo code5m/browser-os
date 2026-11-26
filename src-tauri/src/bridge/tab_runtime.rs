@@ -1093,34 +1093,48 @@ pub(crate) fn eval_in_tab_sync(
     eval_in_tab_blocking(app, id, js, binding)
 }
 
-fn capture_eval_binding(app: &AppHandle, id: &str)
-    -> Result<Option<crate::grid_ipc::RendererBinding>, String>
-{
-    let Some(index) = super::isolated_tabs::route(id) else { return Ok(None); };
+enum EvalBinding {
+    Grid,
+    Isolated(crate::grid_ipc::RendererBinding),
+    Embedded(tauri_plugin_browser_tabs::TabInstance),
+}
+
+fn capture_eval_binding(app: &AppHandle, id: &str) -> Result<EvalBinding, String> {
+    if grid_index_of(id).is_some() {
+        return Ok(EvalBinding::Grid);
+    }
     let state = app.state::<AppState>();
     if state.hibernated_tabs.lock().unwrap().contains(id) {
         return Err("TAB_RENDERER_HIBERNATED_ACTIVATE_FIRST".into());
     }
-    state.grid_manager.renderer_binding(index).map(Some)
+    if let Some(index) = super::isolated_tabs::route(id) {
+        return state.grid_manager.renderer_binding(index).map(EvalBinding::Isolated);
+    }
+    app.state::<tauri_plugin_browser_tabs::TabManagerState>()
+        .instance(&id.to_owned())
+        .map(EvalBinding::Embedded)
+        .map_err(|_| "TAB_MUTATION_INSTANCE_UNAVAILABLE".into())
 }
 
 fn eval_in_tab_blocking(app: AppHandle, id: String, js: String,
-    binding: Option<crate::grid_ipc::RendererBinding>) -> Result<String, String> {
-    if let Some(index) = grid_index_of(&id) {
-        app.state::<AppState>()
-            .grid_manager
-            .request(index, GridCmd::Eval { id, js }, 10000)?;
-        return Ok("ok".to_string());
-    }
-    if super::isolated_tabs::route(&id).is_some() {
-        // Capture the exact original owner before the worker admission.
-        // A delayed worker cannot select the replacement renderer.
-        let binding = binding.ok_or("TAB_RENDERER_DOCUMENT_STALE")?;
-        let _owner = super::tab_mutation::reserve_internal()?;
-        let _transition = reserve_tab_transition(&id)?;
-        super::isolated_tabs::eval_bound(&app, &id, &js, binding)?;
-    } else {
-        plugin_eval(&app, &id, &js)?;
+    binding: EvalBinding) -> Result<String, String> {
+    match binding {
+        EvalBinding::Grid => {
+            let index = grid_index_of(&id).ok_or("TAB_RENDERER_ROUTE_INVALID")?;
+            app.state::<AppState>().grid_manager
+                .request(index, GridCmd::Eval { id, js }, 10000)?;
+        }
+        EvalBinding::Isolated(binding) => {
+            let _owner = super::tab_mutation::reserve_internal()?;
+            let _transition = reserve_tab_transition(&id)?;
+            super::isolated_tabs::eval_bound(&app, &id, &js, binding)?;
+        }
+        EvalBinding::Embedded(instance) => {
+            // Verify the original Weak instance, not a replacement label.
+            app.state::<tauri_plugin_browser_tabs::TabManagerState>()
+                .eval_instance(&id, &instance, &js)
+                .map_err(|error| format!("webview {id} JS dispatch failed: {error}"))?;
+        }
     }
     Ok("ok".to_string())
 }

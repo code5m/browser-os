@@ -564,6 +564,15 @@ struct CaptureRecoveryTarget {
     epoch: String,
     sequence: u64,
     ticket: String,
+    renderer_only: bool,
+}
+
+fn capture_recovery_scope_matches(requested: Option<&str>, renderer_only: bool) -> bool {
+    match requested {
+        Some("renderer") => renderer_only,
+        Some("application") | None => !renderer_only,
+        _ => false,
+    }
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct CaptureDomainRecoveryIntent {
@@ -608,6 +617,7 @@ impl CaptureOwner {
             epoch: self.epoch.clone(),
             sequence: self.next_sequence,
             ticket: slot.receipt.ticket.clone(),
+            renderer_only: slot.renderer_binding.is_some(),
         })
     }
 
@@ -741,6 +751,7 @@ struct CaptureView {
     receipt: Option<CaptureReceipt>,
     last_completed: Option<CaptureReceipt>,
     domain_recovery_available: bool,
+    recovery_scope: Option<&'static str>,
     publishing: bool,
     interactive_stage: Option<InteractiveStage>,
 }
@@ -761,14 +772,17 @@ pub(crate) fn capture_diagnostic() -> serde_json::Value {
 }
 fn capture_view() -> Result<CaptureView, String> {
     let owner = CAPTURE_OWNER.lock().map_err(|_| "CAPTURE_OWNER_UNKNOWN")?;
+    let recovery = owner.recovery_target(std::time::Instant::now())
+        .filter(|target| target.renderer_only || capture_supervisor_ready());
     Ok(CaptureView {
         epoch: owner.epoch.clone(),
         next_sequence: owner.next_sequence.to_string(),
         receipt: owner.slot.as_ref().map(|slot| slot.receipt.clone()),
         last_completed: owner.last_completed.clone(),
-        domain_recovery_available: owner.recovery_target(std::time::Instant::now()).is_some()
-            && (owner.slot.as_ref().is_some_and(|slot| slot.renderer_binding.is_some())
-                || capture_supervisor_ready()),
+        domain_recovery_available: recovery.is_some(),
+        recovery_scope: recovery.as_ref().map(|target| {
+            if target.renderer_only { "renderer" } else { "application" }
+        }),
         publishing: owner.slot.as_ref().is_some_and(|slot| slot.publishing),
         interactive_stage: owner.slot.as_ref()
             .filter(|slot| slot.receipt.phase == CapturePhase::Running && !slot.native_returned)
@@ -1523,6 +1537,8 @@ pub enum CaptureRequest {
         sequence: String,
         ticket: String,
         confirmed: bool,
+        #[serde(default)]
+        scope: Option<String>,
     },
 }
 
@@ -1646,13 +1662,28 @@ pub async fn capture_full_page(
                 }
                 owner.request_interactive_capture(&epoch, &sequence, &ticket)?;
             }
-            CaptureRequest::RecoverDomain { epoch, sequence, ticket, confirmed } => {
+            CaptureRequest::RecoverDomain { epoch, sequence, ticket, confirmed, scope } => {
                 if !confirmed {
                     return Err("CAPTURE_DOMAIN_RECOVERY_CONFIRMATION_REQUIRED".into());
                 }
                 let sequence = sequence.parse::<u64>().map_err(|_| "CAPTURE_STALE_SEQUENCE")?;
-                let target = CaptureRecoveryTarget { epoch, sequence, ticket };
-                if !recover_renderer_capture(&app, &target)? {
+                let target = {
+                    let owner = CAPTURE_OWNER.lock().map_err(|_| "CAPTURE_OWNER_UNKNOWN")?;
+                    let target = owner.recovery_target(std::time::Instant::now())
+                        .filter(|target| target.epoch == epoch && target.sequence == sequence
+                            && target.ticket == ticket)
+                        .ok_or("CAPTURE_DOMAIN_RECOVERY_NOT_ELIGIBLE")?;
+                    if !capture_recovery_scope_matches(scope.as_deref(), target.renderer_only) {
+                        return Err("CAPTURE_DOMAIN_RECOVERY_SCOPE_CHANGED".into());
+                    }
+                    target
+                };
+                if target.renderer_only {
+                    // Never escalate a renderer-only confirmation to application restart.
+                    if !recover_renderer_capture(&app, &target)? {
+                        return Err("CAPTURE_DOMAIN_RECOVERY_SCOPE_CHANGED".into());
+                    }
+                } else {
                     if !capture_supervisor_ready() {
                         return Err("CAPTURE_DOMAIN_SUPERVISOR_UNAVAILABLE".into());
                     }
@@ -1853,6 +1884,17 @@ mod capture_storage_tests {
         owner.slot.as_mut().unwrap().cancel_intent = true;
         assert!(owner.interactive_capture_requested("old").is_err());
         assert!(owner.request_interactive_capture("fixture", "7", "old").is_err());
+    }
+
+    #[test]
+    fn capture_recovery_confirmation_never_crosses_scope() {
+        assert!(capture_recovery_scope_matches(Some("renderer"), true));
+        assert!(!capture_recovery_scope_matches(Some("renderer"), false));
+        assert!(!capture_recovery_scope_matches(Some("application"), true));
+        assert!(!capture_recovery_scope_matches(None, true));
+        assert!(capture_recovery_scope_matches(None, false));
+        assert!(capture_recovery_scope_matches(Some("application"), false));
+        assert!(!capture_recovery_scope_matches(Some("other"), false));
     }
 
     #[test]

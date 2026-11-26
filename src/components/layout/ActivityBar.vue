@@ -84,7 +84,7 @@ async function captureLoggedInDocument() {
     layout.showToast('已请求截取独立窗口当前文档。请勿继续操作该窗口；等待截图和进程退出回执。');
   }catch{layout.showToast('截图请求尚未确认，请查询原任务；不会自动重放。');}
 }
-const captureRestartTarget=ref<{epoch:string;sequence:string;ticket:string}|null>(null);
+const captureRestartTarget=ref<{epoch:string;sequence:string;ticket:string;scope:"renderer"|"application";tabId:string}|null>(null);
 async function prepareCaptureDomainRestart() {
   captureRestartTarget.value=null;
   try {
@@ -92,8 +92,12 @@ async function prepareCaptureDomainRestart() {
     if(!view.domain_recovery_available||!view.receipt){
       layout.showToast('原生截图尚未达到故障域重启条件，或监管器不可用；请先核对或取消任务。');return;
     }
-    captureRestartTarget.value={epoch:view.epoch,sequence:view.next_sequence,ticket:view.receipt.ticket};
-    layout.showToast('已核对卡死任务。再次打开菜单确认重启整个应用；未保存状态可能丢失。');
+    const scope=view.recovery_scope;
+    if(scope!=="renderer"&&scope!=="application"){
+      layout.showToast('截图恢复范围未确认，请重新核对。');return;
+    }
+    captureRestartTarget.value={epoch:view.epoch,sequence:view.next_sequence,ticket:view.receipt.ticket,scope,tabId:view.receipt.tab_id};
+    layout.showToast(scope==="renderer"?'已核对卡死截图。再次打开菜单确认仅回收原独立页签；该页未保存状态可能丢失。':'已核对卡死任务。再次打开菜单确认重启整个应用；未保存状态可能丢失。');
   }catch{layout.showToast('无法核对原生截图故障域，未请求重启。');}
 }
 async function confirmCaptureDomainRestart() {
@@ -101,9 +105,9 @@ async function confirmCaptureDomainRestart() {
   captureRestartTarget.value=null;
   if(!target)return;
   try {
-    await bridge.requestCaptureDomainRecovery(target.epoch,target.sequence,target.ticket);
-    layout.showToast('已请求监管器核对原故障域并重启；不会重放截图。');
-  }catch{layout.showToast('重启请求未确认或原任务已变化，请重新核对；不会自动重试。');}
+    await bridge.requestCaptureDomainRecovery(target.epoch,target.sequence,target.ticket,target.scope);
+    layout.showToast(target.scope==="renderer"?'已请求仅回收原独立页签；请查询截图任务确认原进程退出，不会重放截图。':'已请求监管器核对原故障域并重启；不会重放截图。');
+  }catch{layout.showToast('恢复请求未确认或原任务/范围已变化，请重新核对；不会自动重试。');}
 }
 async function cancelCaptureTask() {
   try{
@@ -187,7 +191,7 @@ async function toggleMoreActions(event:MouseEvent) {
     {text:'请求取消截图任务',action:()=>void cancelCaptureTask()},
     {text:'核对卡死截图并准备故障域重启',action:()=>void prepareCaptureDomainRestart()},
     ...(captureRestartTarget.value?[
-      {text:'确认重启整个应用（未保存状态可能丢失）',action:()=>void confirmCaptureDomainRestart()},
+      {text:captureRestartTarget.value.scope==="renderer"?'确认仅回收 '+captureRestartTarget.value.tabId+'（该页未保存状态可能丢失）':'确认重启整个应用（未保存状态可能丢失）',action:()=>void confirmCaptureDomainRestart()},
       {text:'取消故障域重启',action:()=>{captureRestartTarget.value=null;}}
     ]:[]),
     {text:'设置',action:()=>onItem('settings')},

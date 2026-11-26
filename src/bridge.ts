@@ -221,7 +221,7 @@ type CaptureReceipt = {
   phase: "running"|"cancel_requested"|"succeeded"|"failed"|"cancelled"|"unknown";
   path: string|null; error: string|null;
 };
-type CaptureView = {epoch:string;next_sequence:string;receipt:CaptureReceipt|null;last_completed:CaptureReceipt|null;domain_recovery_available:boolean;publishing:boolean;interactive_stage:"opening"|"awaiting_user"|"capture_requested"|null};
+type CaptureView = {epoch:string;next_sequence:string;receipt:CaptureReceipt|null;last_completed:CaptureReceipt|null;domain_recovery_available:boolean;recovery_scope?:"renderer"|"application"|null;publishing:boolean;interactive_stage:"opening"|"awaiting_user"|"capture_requested"|null};
 const captureControl = (request: Record<string, unknown>, recovery = false) => {
   const phase = String(request.phase);
   return boundedReceiptControl<CaptureView>("capture-" + phase, JSON.stringify(request),
@@ -1140,8 +1140,8 @@ export const bridge = {
   fenceCapture: (epoch: string, sequence: string) => captureControl({phase:"fence",epoch,sequence},true),
   cancelCapture: (ticket: string) => captureControl({phase:"cancel",ticket},true),
   acknowledgeCapture: (ticket: string) => captureControl({phase:"ack",ticket},true),
-  requestCaptureDomainRecovery: (epoch:string,sequence:string,ticket:string) =>
-    captureControl({phase:"recover_domain",epoch,sequence,ticket,confirmed:true},true),
+  requestCaptureDomainRecovery: (epoch:string,sequence:string,ticket:string,scope:"renderer"|"application") =>
+    captureControl({phase:"recover_domain",epoch,sequence,ticket,scope,confirmed:true},true),
 
   // 页签休眠开关（默认关；开启后非激活超 10 分钟的页签销毁 webview 仅留 URL，激活时重建）
   setTabHibernation: (enabled: boolean) =>

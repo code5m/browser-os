@@ -198,15 +198,24 @@ pub(super) fn hide(app: &AppHandle, id: &str) -> Result<(), String> {
 pub(super) fn hide_all(app: &AppHandle) -> Result<(), String> {
     check_running(app)?;
     let state = app.state::<AppState>();
-    let ids: Vec<_> = state.tabs.lock().unwrap().keys().cloned().collect();
+    let mut ids: Vec<_> = state.tabs.lock().unwrap().keys().cloned().collect();
+    ids.sort();
+    let mut errors = Vec::new();
     for id in ids {
-        hide(app, &id)?;
+        if let Err(error) = hide(app, &id) {
+            errors.push(format!("{id}:{error}"));
+        }
     }
-    for index in state.grid_manager.indices() {
+    let mut indices: Vec<_> = state.grid_manager.indices().into_iter().collect();
+    indices.sort_unstable();
+    for index in indices {
         state.grid_manager.record_hidden(index);
-        state.grid_manager.request(index, GridCmd::HideWindow {
+        if let Err(error) = state.grid_manager.request(index, GridCmd::HideWindow {
             id: crate::grid_ipc::renderer_label(index),
-        }, 3000)?;
+        }, 3000) {
+            errors.push(format!("grid-{index}:{error}"));
+        }
     }
-    Ok(())
+    if errors.is_empty() { Ok(()) }
+    else { Err(format!("TAB_RENDERER_HIDE_PARTIAL:{}", errors.join("; "))) }
 }
