@@ -35,6 +35,28 @@ pub struct AuthorizedCall {
     pub idempotency_key: String,
 }
 
+/// A host adapter may only report a final status from the same authenticated
+/// provider/account that owns the original idempotency key. "Not found",
+/// timeout, an unverified tool response and eventual-consistency gaps are
+/// Pending, NOT proof of non-application.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProviderEffectOutcome {
+    Pending,
+    AppliedFinal,
+    NotAppliedFinal,
+}
+
+pub struct ProviderEffectStatus {
+    pub idempotency_key: String,
+    pub authority: [u8; 32],
+    pub outcome: ProviderEffectOutcome,
+    /// Digest of provider evidence; never persist raw response/credentials.
+    pub evidence_hash: [u8; 32],
+}
+
+pub type EffectStatusFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<ProviderEffectStatus>> + Send + 'a>>;
+
 pub trait AgentTool: Send + Sync {
     fn name(&self) -> &str;
     fn effect(&self) -> ToolEffect;
@@ -50,6 +72,19 @@ pub trait AgentTool: Send + Sync {
     /// Effectful tools opt into end-to-end provider-side idempotency explicitly.
     fn supports_idempotency(&self) -> bool {
         false
+    }
+
+    /// Stable non-secret fingerprint of a single, authenticated provider
+    /// endpoint/account/tenant and its idempotency namespace. Tools whose
+    /// account varies per call must not opt in through this interface.
+    fn reconciliation_authority(&self) -> Option<[u8; 32]> {
+        None
+    }
+
+    /// Trusted native adapter, query-only; never repeat the original action.
+    /// No generic MCP tool response is treated as provider authority.
+    fn query_effect_status<'a>(&'a self, _idempotency_key: String) -> EffectStatusFuture<'a> {
+        Box::pin(async { Err(FoundationError::PermissionDenied) })
     }
 
     /// Host-backed tools require passing the signed proof into the SAME call,
@@ -137,6 +172,57 @@ impl ToolRegistry {
         tasks.propose_tool_at_revision(task_id, name, args, effect, revision)
     }
 
+    /// Host-only reconciliation, separate from the model execution loop.
+    /// Legacy/unbound effects and non-final provider responses stay unknown.
+    #[cfg(feature = "durable-sqlite")]
+    pub async fn reconcile_unknown_effect(
+        &self,
+        tasks: &TaskRegistry,
+        call_id: uuid::Uuid,
+        timeout: Duration,
+    ) -> Result<ProviderEffectOutcome> {
+        if timeout.is_zero() || timeout > Duration::from_secs(120) {
+            return Err(FoundationError::InvalidInput("reconciliation timeout"));
+        }
+        let store = tasks.durable_store().ok_or(FoundationError::PermissionDenied)?;
+        let (name, key, authority) = store
+            .provider_query(call_id)?
+            .ok_or(FoundationError::PermissionDenied)?;
+        let tool = self.tools.read().unwrap_or_else(|e| e.into_inner())
+            .get(&name).cloned().ok_or(FoundationError::PermissionDenied)?;
+        let fingerprint = tool.reconciliation_authority().ok_or(FoundationError::PermissionDenied)?;
+        if fingerprint == [0; 32]
+            || hex::encode(fingerprint) != authority
+            || tool.effect() != ToolEffect::ExternalSideEffect
+            || !tool.supports_idempotency()
+        {
+            return Err(FoundationError::PermissionDenied);
+        }
+        let status = tokio::time::timeout(timeout, tool.query_effect_status(key.clone()))
+            .await
+            .map_err(|_| FoundationError::Timeout)??;
+        if status.idempotency_key != key || status.authority != fingerprint
+            || tool.reconciliation_authority() != Some(fingerprint)
+        {
+            return Err(FoundationError::PermissionDenied);
+        }
+        if status.outcome == ProviderEffectOutcome::Pending {
+            return Ok(status.outcome);
+        }
+        if status.evidence_hash == [0; 32] {
+            return Err(FoundationError::InvalidInput("missing final provider evidence"));
+        }
+        store.reconcile_provider_effect(
+            call_id,
+            &name,
+            &key,
+            &authority,
+            status.outcome == ProviderEffectOutcome::AppliedFinal,
+            status.evidence_hash,
+        )?;
+        Ok(status.outcome)
+    }
+
     /// Calls are only possible with a permit produced by trusted UI approval.
     /// Tool implementations must independently validate root/scope/arguments and
     /// provide an idempotency key for irreversible external side effects.
@@ -207,19 +293,32 @@ impl ToolRegistry {
         // A process crash or a timeout leaves it unknown; never auto-retry.
         #[cfg(feature = "durable-sqlite")]
         if let Some(store) = effect_store {
-            store.begin_effect_at_revision(
-                permit.task_id,
-                permit.operation.call_id,
-                &idempotency_key,
-                permit.operation.effect,
-                &permit.operation.tool_name,
-                permit.revision,
-            )?;
+            if let Some(authority) = tool
+                .reconciliation_authority()
+                .filter(|digest| *digest != [0; 32] && permit.operation.effect == ToolEffect::ExternalSideEffect)
+            {
+                store.begin_provider_effect_at_revision(
+                    permit.task_id,
+                    permit.operation.call_id,
+                    &idempotency_key,
+                    &permit.operation.tool_name,
+                    permit.revision,
+                    &hex::encode(authority),
+                )?;
+            } else {
+                store.begin_effect_at_revision(
+                    permit.task_id,
+                    permit.operation.call_id,
+                    &idempotency_key,
+                    permit.operation.effect,
+                    &permit.operation.tool_name,
+                    permit.revision,
+                )?;
+            }
         }
         // Receipt creation is not permission to dispatch a stale generation.
         // A cancelled call remains conservatively unknown for reconciliation.
-        if !_lease.is_active() || *cancellation.borrow_and_update()
-        {
+        if !_lease.is_active() || *cancellation.borrow_and_update() {
             return Err(FoundationError::Cancelled);
         }
         let future = if effectful || tool.requires_authorized_call() {

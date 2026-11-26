@@ -100,6 +100,10 @@ impl SqliteTaskStore {
                 effect TEXT NOT NULL, tool TEXT NOT NULL, state TEXT NOT NULL, evidence TEXT,
                 started_ms INTEGER NOT NULL
              );
+             CREATE TABLE IF NOT EXISTS foundation_effect_authorities (
+                call_id TEXT PRIMARY KEY REFERENCES foundation_effects(call_id),
+                authority TEXT NOT NULL
+             );
              CREATE TABLE IF NOT EXISTS foundation_leases (
                 task_id TEXT PRIMARY KEY, token TEXT NOT NULL, expires_ms INTEGER NOT NULL
              );"
@@ -373,7 +377,7 @@ impl SqliteTaskStore {
         effect: ToolEffect,
         tool_name: &str,
     ) -> Result<()> {
-        self.begin_effect_checked(task_id, call_id, key, effect, tool_name, None)
+        self.begin_effect_checked(task_id, call_id, key, effect, tool_name, None, None)
     }
 
     pub(crate) fn begin_effect_at_revision(
@@ -385,7 +389,30 @@ impl SqliteTaskStore {
         tool_name: &str,
         revision: u64,
     ) -> Result<()> {
-        self.begin_effect_checked(task_id, call_id, key, effect, tool_name, Some(revision))
+        self.begin_effect_checked(task_id, call_id, key, effect, tool_name, Some(revision), None)
+    }
+
+    pub(crate) fn begin_provider_effect_at_revision(
+        &self,
+        task_id: Uuid,
+        call_id: Uuid,
+        key: &str,
+        tool_name: &str,
+        revision: u64,
+        authority: &str,
+    ) -> Result<()> {
+        if authority.len() != 64 || !authority.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(FoundationError::InvalidInput("provider authority digest"));
+        }
+        self.begin_effect_checked(
+            task_id,
+            call_id,
+            key,
+            ToolEffect::ExternalSideEffect,
+            tool_name,
+            Some(revision),
+            Some(authority),
+        )
     }
 
     fn ensure_no_unknown_effect(connection: &Connection, task_id: Uuid) -> Result<()> {
@@ -428,6 +455,7 @@ impl SqliteTaskStore {
         effect: ToolEffect,
         tool_name: &str,
         revision: Option<u64>,
+        authority: Option<&str>,
     ) -> Result<()> {
         if key.is_empty() || key.len() > 256 || effect == ToolEffect::ReadOnly {
             return Err(FoundationError::InvalidInput("effect intent"));
@@ -445,6 +473,13 @@ impl SqliteTaskStore {
              VALUES(?1,?2,?3,?4,?5,'unknown',?6)",
             params![call_id.to_string(),task_id.to_string(),key,encode(&effect)?,tool_name,epoch_ms()?]
         ).map_err(storage)?;
+        if let Some(authority) = authority {
+            tx.execute(
+                "INSERT INTO foundation_effect_authorities(call_id,authority) VALUES(?1,?2)",
+                params![call_id.to_string(), authority],
+            )
+            .map_err(storage)?;
+        }
         tx.commit().map_err(storage)?;
         Ok(())
     }
@@ -479,13 +514,59 @@ impl SqliteTaskStore {
         };
         let connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
         let changed = connection.execute(
-            "UPDATE foundation_effects SET state=?1,evidence=?2 WHERE call_id=?3 AND state='unknown'",
+            "UPDATE foundation_effects SET state=?1,evidence=?2 WHERE call_id=?3 AND state='unknown'
+             AND NOT EXISTS(SELECT 1 FROM foundation_leases WHERE task_id=foundation_effects.task_id)",
             params![state,external_evidence,call_id.to_string()]
         ).map_err(storage)?;
         if changed != 1 {
             return Err(FoundationError::Storage(
                 "effect not in unknown state".into(),
             ));
+        }
+        Ok(())
+    }
+
+    /// Return only an originally bound, unresolved external operation whose
+    /// execution lease has retired. An expired lease is not retirement.
+    pub(crate) fn provider_query(
+        &self,
+        call_id: Uuid,
+    ) -> Result<Option<(String, String, String)>> {
+        let connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
+        connection.query_row(
+            "SELECT e.tool,e.effect_key,a.authority FROM foundation_effects e
+             JOIN foundation_effect_authorities a ON a.call_id=e.call_id
+             WHERE e.call_id=?1 AND e.state='unknown' AND e.effect=?2
+             AND NOT EXISTS(SELECT 1 FROM foundation_leases l WHERE l.task_id=e.task_id)",
+            params![call_id.to_string(), encode(&ToolEffect::ExternalSideEffect)?],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).optional().map_err(storage)
+    }
+
+    /// One compare-and-set across the original provider binding, exact
+    /// idempotency key, unknown state, and absence of a live execution owner.
+    pub(crate) fn reconcile_provider_effect(
+        &self,
+        call_id: Uuid,
+        tool: &str,
+        key: &str,
+        authority: &str,
+        applied: bool,
+        evidence_hash: [u8; 32],
+    ) -> Result<()> {
+        let state = if applied { "reconciled_succeeded" } else { "reconciled_not_applied" };
+        let evidence = format!("provider-sha256:{}", hex::encode(evidence_hash));
+        let connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
+        let changed = connection.execute(
+            "UPDATE foundation_effects SET state=?1,evidence=?2
+             WHERE call_id=?3 AND tool=?4 AND effect_key=?5 AND state='unknown' AND effect=?6
+             AND EXISTS(SELECT 1 FROM foundation_effect_authorities a
+                        WHERE a.call_id=foundation_effects.call_id AND a.authority=?7)
+             AND NOT EXISTS(SELECT 1 FROM foundation_leases l WHERE l.task_id=foundation_effects.task_id)",
+            params![state,evidence,call_id.to_string(),tool,key,encode(&ToolEffect::ExternalSideEffect)?,authority],
+        ).map_err(storage)?;
+        if changed != 1 {
+            return Err(FoundationError::InvalidTransition);
         }
         Ok(())
     }
