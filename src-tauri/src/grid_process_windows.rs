@@ -18,7 +18,7 @@ use std::collections::{HashMap, VecDeque};
 use std::io::BufReader;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 
 use tauri::{AppHandle, Emitter, Manager};
@@ -35,6 +35,8 @@ pub struct ChildComms {
     pending: Mutex<HashMap<u64, mpsc::Sender<Result<Option<String>, String>>>>,
     seq: AtomicU64,
     generation: AtomicU64,
+    // Published only after the exact spawned Child has entered the owner map.
+    expected_pid: AtomicU32,
     connected: AtomicBool,
     closing: AtomicBool,
     cancellation: Mutex<Option<UnixStream>>,
@@ -48,6 +50,7 @@ impl ChildComms {
             pending: Mutex::new(HashMap::new()),
             seq: AtomicU64::new(1),
             generation: AtomicU64::new(0),
+            expected_pid: AtomicU32::new(0),
             connected: AtomicBool::new(false),
             closing: AtomicBool::new(false),
             cancellation: Mutex::new(None),
@@ -57,20 +60,44 @@ impl ChildComms {
 
     /// 每次 UDS 重连分配新的代际，防止旧 reader 迟到的 EOF 清掉新 writer。
     /// 保持 writer -> pending 的锁序；新连接建立时立即唤醒旧连接请求。
-    fn attach(&self, stream: UnixStream) -> Result<u64, String> {
+    /// Invalidate any old connection before a replacement process can be
+    /// launched. Do not recycle request identities across process generations.
+    fn prepare_spawn(&self) -> Result<(), String> {
+        let mut writer = self.writer.lock().unwrap();
+        self.expected_pid.store(0, Ordering::SeqCst);
+        self.connected.store(false, Ordering::SeqCst);
+        if let Some(control) = self.cancellation.lock().unwrap().take() {
+            let _ = control.cancel_io();
+        }
+        *writer = None;
+        self.fail_pending("GRID_REQUEST_OUTCOME_UNKNOWN: previous renderer retired");
+        self.generation
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_add(1))
+            .map_err(|_| "GRID_CONNECTION_GENERATION_EXHAUSTED".to_string())?;
+        Ok(())
+    }
+
+    fn accepts_peer(&self, pid: u32) -> bool {
+        pid != 0 && self.expected_pid.load(Ordering::SeqCst) == pid
+            && !self.closing.load(Ordering::SeqCst)
+    }
+
+    fn attach(&self, stream: UnixStream, peer_pid: u32) -> Result<u64, String> {
         let control = stream.try_clone().map_err(|error| error.to_string())?;
         let mut writer = self.writer.lock().unwrap();
-        if self.closing.load(Ordering::SeqCst) {
+        if !self.accepts_peer(peer_pid) {
             let _ = control.cancel_io();
-            return Err("GRID_SHUTDOWN_IN_PROGRESS".into());
+            return Err("GRID_PEER_NOT_OWNED".into());
         }
         if let Some(previous) = self.cancellation.lock().unwrap().replace(control) {
             let _ = previous.cancel_io();
         }
-        let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let generation = self.generation
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_add(1))
+            .map_err(|_| "GRID_CONNECTION_GENERATION_EXHAUSTED".to_string())? + 1;
         *writer = Some(stream);
         self.connected.store(true, Ordering::SeqCst);
-        self.fail_pending("子进程连接已更换");
+        self.fail_pending("GRID_REQUEST_OUTCOME_UNKNOWN: renderer connection replaced");
         Ok(generation)
     }
 
@@ -111,21 +138,22 @@ impl ChildComms {
         if self.generation.load(Ordering::SeqCst) != generation {
             return;
         }
-        if let Some(control) = self.cancellation.lock().unwrap().as_ref() {
+        if let Some(control) = self.cancellation.lock().unwrap().take() {
             let _ = control.cancel_io();
         }
         *writer = None;
         self.connected.store(false, Ordering::SeqCst);
-        self.fail_pending("子进程连接断开");
+        self.fail_pending("GRID_REQUEST_OUTCOME_UNKNOWN: renderer connection closed");
     }
 
     fn is_current(&self, generation: u64) -> bool {
-        self.connected.load(Ordering::SeqCst)
+        !self.closing.load(Ordering::SeqCst)
+            && self.connected.load(Ordering::SeqCst)
             && self.generation.load(Ordering::SeqCst) == generation
     }
 
     fn is_connected(&self) -> bool {
-        self.connected.load(Ordering::SeqCst)
+        !self.closing.load(Ordering::SeqCst) && self.connected.load(Ordering::SeqCst)
     }
 }
 
@@ -293,34 +321,17 @@ impl GridProcessManager {
                         let _ = stream.cancel_io();
                         break;
                     }
-                    // Reject any same-user process other than the child we
-                    // actually spawned; named-pipe ACL alone is not identity.
-                    let peer = stream.peer_pid().ok();
-                    // The child may connect immediately after spawn(), before
-                    // spawn_with_state has inserted it in the tracked map.
-                    // Give this narrow startup race 500ms; still reject all
-                    // unknown or wrong peer PIDs before registering a writer.
-                    let accepted = peer.is_some_and(|pid| {
-                        let start = std::time::Instant::now();
-                        loop {
-                            let expected = app.as_ref().and_then(|app| {
-                                app.state::<crate::bridge::AppState>()
-                                    .grid_manager
-                                    .pid_of(index)
-                            });
-                            if accept_lifecycle.is_stopping() {
-                                break false;
-                            }
-                            if expected == Some(pid) {
-                                break true;
-                            }
-                            if start.elapsed() >= std::time::Duration::from_millis(500) {
-                                break false;
-                            }
-                            std::thread::sleep(std::time::Duration::from_millis(10));
-                        }
-                    });
-                    if !accepted {
+                    let Ok(peer_pid) = stream.peer_pid() else {
+                        continue;
+                    };
+                    let start = std::time::Instant::now();
+                    while comms_accept.expected_pid.load(Ordering::SeqCst) == 0
+                        && !accept_lifecycle.is_stopping()
+                        && start.elapsed() < std::time::Duration::from_millis(500)
+                    {
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                    if !comms_accept.accepts_peer(peer_pid) {
                         eprintln!("[grid-manager] grid-child-{index} pipe peer refused");
                         continue;
                     }
@@ -332,9 +343,9 @@ impl GridProcessManager {
                             continue;
                         }
                     };
-                    let generation = match comms_accept.attach(stream) {
+                    let generation = match comms_accept.attach(stream, peer_pid) {
                         Ok(generation) => generation,
-                        Err(_) => break,
+                        Err(_) => continue,
                     };
                     // 每连接一个 reader 线程：Response 按 seq 路由，Event 转发 app.emit。
                     let comms_reader = comms_accept.clone();
@@ -472,7 +483,8 @@ impl GridProcessManager {
             return Err(format!("GRID_CHILD_ALREADY_RUNNING:{index}"));
         }
         let profile_epoch = crate::browser_profile_owner::grid_epoch()?;
-        self.ensure_listener(index)?;
+        let comms = self.ensure_listener(index)?;
+        comms.prepare_spawn()?;
         let exe = std::env::current_exe().map_err(|e| format!("获取当前可执行文件失败: {e}"))?;
         let mut command = Command::new(exe);
         command
@@ -525,6 +537,7 @@ impl GridProcessManager {
                 return Err(error);
             }
             children.insert(index, owner);
+            comms.expected_pid.store(pid, Ordering::SeqCst);
         }
         // The in-flight permit covers the check/insert race. The cleanup
         // service drains any publication that raced the application's latch.
@@ -628,30 +641,16 @@ impl GridProcessManager {
         Ok(comms)
     }
 
-    /// 同步请求：等连接 → 写 Request → 等 Response（带超时）。
-    /// 失败（连接断/超时）时等重连后重试一次（覆盖崩溃重启窗口期）。
+    /// Wait for initial admission, then dispatch at most once. A missing
+    /// response cannot establish that a native or external effect did not run.
     pub fn request(&self, index: u32, cmd: GridCmd, timeout_ms: u64) -> Result<(), String> {
         let _operation = self.lifecycle.enter()?;
-        match self.request_once(index, &cmd, timeout_ms) {
-            Ok(()) => Ok(()),
-            // 超时不代表命令未执行；同一连接重放可能重复创建/导航，且把等待翻倍。
-            Err(first) if first.contains("超时") => Err(first),
-            Err(first) => {
-                eprintln!(
-                    "[grid-manager] grid-{} 请求失败({})，等重连重试",
-                    index, first
-                );
-                let comms = self.wait_connected(index, 8000)?;
-                self.request_once_with(index, comms, &cmd, timeout_ms)
-                    .map(|_| ())
-            }
+        if !cmd.targets(index) {
+            return Err("GRID_REQUEST_TARGET_REJECTED".into());
         }
-    }
-
-    fn request_once(&self, index: u32, cmd: &GridCmd, timeout_ms: u64) -> Result<(), String> {
         let comms = self.wait_connected(index, 15000)?;
-        self.request_once_with(index, comms, cmd, timeout_ms)
-            .map(|_| ())
+        let generation = comms.generation.load(Ordering::SeqCst);
+        self.request_once_with(index, comms, generation, &cmd, timeout_ms).map(|_| ())
     }
 
     /// Fail-closed native probe of the actual Grid page. Stored last_url is
@@ -660,9 +659,11 @@ impl GridProcessManager {
         let Ok(comms) = self.wait_connected(index, 500) else {
             return false;
         };
+        let generation = comms.generation.load(Ordering::SeqCst);
         match self.request_once_with(
             index,
             comms,
+            generation,
             &GridCmd::HibernationProbe {
                 id: format!("grid-{index}"),
             },
@@ -678,9 +679,11 @@ impl GridProcessManager {
             return Err("GRID_NOT_OPEN".into());
         }
         let comms = self.wait_connected(index, 500)?;
+        let generation = comms.generation.load(Ordering::SeqCst);
         self.request_once_with(
             index,
             comms,
+            generation,
             &GridCmd::ReadReplies {
                 id: format!("grid-{index}"),
             },
@@ -693,44 +696,44 @@ impl GridProcessManager {
         &self,
         index: u32,
         comms: Arc<ChildComms>,
+        generation: u64,
         cmd: &GridCmd,
         timeout_ms: u64,
     ) -> Result<Option<String>, String> {
         let _operation = self.lifecycle.enter()?;
-        let seq = comms.seq.fetch_add(1, Ordering::SeqCst);
+        let seq;
+        let peer_pid;
         let (tx, rx) = mpsc::channel();
         let write_res = {
             let mut guard = comms.writer.lock().unwrap();
             self.lifecycle.check()?;
-            match guard.as_mut() {
-                Some(w) => {
-                    // 与 attach 的 writer -> pending 锁序一致：请求只登记到当前连接。
-                    comms.pending.lock().unwrap().insert(seq, tx);
-                    crate::grid_ipc::write_wire(
-                        w,
-                        &Wire::Request {
-                            seq,
-                            cmd: cmd.clone(),
-                        },
-                    )
-                }
-                None => Err(std::io::Error::new(
-                    std::io::ErrorKind::NotConnected,
-                    "未连接",
-                )),
+            if !comms.is_current(generation) {
+                return Err("GRID_CONNECTION_GENERATION_CHANGED".into());
             }
+            // Allocate in writer order, not caller/thread order. The worker
+            // rejects replays and the counter must never wrap.
+            seq = crate::grid_ipc::next_request_sequence(&comms.seq)?;
+            peer_pid = comms.expected_pid.load(Ordering::SeqCst);
+            let result = match guard.as_mut() {
+                Some(w) => {
+                    comms.pending.lock().unwrap().insert(seq, tx);
+                    crate::grid_ipc::write_wire(w, &Wire::Request { seq, cmd: cmd.clone() })
+                }
+                None => Err(std::io::Error::new(std::io::ErrorKind::NotConnected, "GRID_NOT_CONNECTED")),
+            };
+            if result.is_err() {
+                comms.connected.store(false, Ordering::SeqCst);
+                if let Some(control) = comms.cancellation.lock().unwrap().as_ref() {
+                    let _ = control.cancel_io();
+                }
+            }
+            result
         };
         if let Err(e) = write_res {
             comms.pending.lock().unwrap().remove(&seq);
-            if e.kind() == std::io::ErrorKind::TimedOut {
-                // An overlapped write may have delivered only a prefix of the
-                // JSON frame. Never reuse that byte stream: kill the Job-owned
-                // child tree so the reader clone closes and the generation is
-                // discarded before any subsequent request can be sent.
-                self.terminate_child_job(index);
-                return Err("写 NamedPipe 超时，Grid 子进程已终止".into());
-            }
-            return Err(format!("写 NamedPipe 失败: {e}"));
+            comms.detach_if_current(generation);
+            self.terminate_child_job(index, &comms, generation, peer_pid);
+            return Err(format!("GRID_REQUEST_OUTCOME_UNKNOWN: NamedPipe write failed: {e}"));
         }
         let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
         loop {
@@ -741,14 +744,14 @@ impl GridProcessManager {
             let remaining = deadline.saturating_duration_since(std::time::Instant::now());
             if remaining.is_zero() {
                 comms.pending.lock().unwrap().remove(&seq);
-                return Err("等待子进程响应超时".into());
+                return Err("GRID_REQUEST_OUTCOME_UNKNOWN: 等待子进程响应超时".into());
             }
             match rx.recv_timeout(remaining.min(std::time::Duration::from_millis(50))) {
                 Ok(result) => return result,
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
                     comms.pending.lock().unwrap().remove(&seq);
-                    return Err("子进程响应通道已关闭".into());
+                    return Err("GRID_REQUEST_OUTCOME_UNKNOWN: 子进程响应通道已关闭".into());
                 }
             }
         }
@@ -759,29 +762,43 @@ impl GridProcessManager {
         let Ok(_operation) = self.lifecycle.enter() else {
             return;
         };
+        if !cmd.targets(index) {
+            return;
+        }
         let comms = match self.listeners.lock().unwrap().get(&index).cloned() {
             Some(c) => c,
             None => return,
         };
+        let generation = comms.generation.load(Ordering::SeqCst);
         let mut guard = comms.writer.lock().unwrap();
-        if self.lifecycle.is_stopping() {
+        if self.lifecycle.is_stopping() || !comms.is_current(generation) {
             return;
         }
-        let timed_out = if let Some(w) = guard.as_mut() {
-            let seq = comms.seq.fetch_add(1, Ordering::SeqCst);
+        let peer_pid = comms.expected_pid.load(Ordering::SeqCst);
+        let Ok(seq) = crate::grid_ipc::next_request_sequence(&comms.seq) else {
+            return;
+        };
+        let failed = if let Some(w) = guard.as_mut() {
             match crate::grid_ipc::write_wire(w, &Wire::Request { seq, cmd }) {
                 Ok(()) => false,
                 Err(error) => {
-                    eprintln!("[grid-manager] grid-{} send 失败: {error}", index);
-                    error.kind() == std::io::ErrorKind::TimedOut
+                    eprintln!("[grid-manager] grid-{index} send failed: {error}");
+                    true
                 }
             }
         } else {
             false
         };
+        if failed {
+            comms.connected.store(false, Ordering::SeqCst);
+            if let Some(control) = comms.cancellation.lock().unwrap().as_ref() {
+                let _ = control.cancel_io();
+            }
+        }
         drop(guard);
-        if timed_out {
-            self.terminate_child_job(index);
+        if failed {
+            comms.detach_if_current(generation);
+            self.terminate_child_job(index, &comms, generation, peer_pid);
         }
     }
 
@@ -1427,8 +1444,17 @@ impl GridProcessManager {
         }
     }
 
-    fn terminate_child_job(&self, index: u32) {
-        if let Some(child) = self.children.lock().unwrap().get(&index) {
+    fn terminate_child_job(&self, index: u32, comms: &ChildComms, generation: u64, peer_pid: u32) {
+        let children = self.children.lock().unwrap();
+        // A late failure of an old pipe must never terminate a replacement
+        // Job at the same index, including before its first connection.
+        if comms.generation.load(Ordering::SeqCst) != generation
+            || comms.expected_pid.load(Ordering::SeqCst) != peer_pid
+            || peer_pid == 0
+        {
+            return;
+        }
+        if let Some(child) = children.get(&index).filter(|child| child.child.id() == peer_pid) {
             // Do not remove the map entry here: the monitor owns crash/restart
             // bookkeeping. Closing the Job immediately prevents partial IPC
             // frames from being reused while the monitor observes exit.

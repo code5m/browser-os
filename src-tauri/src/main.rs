@@ -535,16 +535,17 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
                 }
             }
         };
+        let expected_parent = std::env::var("GRID_PARENT_PID")
+            .ok()
+            .and_then(|value| value.parse::<u32>().ok())
+            .filter(|pid| *pid != 0);
+        #[cfg(target_os = "linux")]
+        let actual_server = grid_ipc::linux_peer_pid(&stream).ok();
         #[cfg(windows)]
-        {
-            let expected_parent = std::env::var("GRID_PARENT_PID")
-                .ok()
-                .and_then(|value| value.parse::<u32>().ok());
-            let actual_server = stream.server_pid().ok();
-            if expected_parent.is_none() || actual_server != expected_parent {
-                eprintln!("[grid-child-{index}] refused unauthenticated named-pipe server");
-                std::process::exit(1);
-            }
+        let actual_server = stream.server_pid().ok();
+        if expected_parent.is_none() || actual_server != expected_parent {
+            eprintln!("[grid-child-{index}] refused unauthenticated renderer parent");
+            std::process::exit(1);
         }
         eprintln!("[grid-child-{}] UDS 已连接 {}", index, sock_path);
         let writer = match stream.try_clone() {
@@ -636,9 +637,16 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
         // 命令循环：Request → 本地执行 → Response。主进程断开（EOF/错误）→ 退出，
         // 避免主进程退出后残留置顶孤儿窗口。
         let mut reader = std::io::BufReader::new(stream);
+        let mut request_fence = grid_ipc::GridRequestFence::default();
         loop {
             match grid_ipc::read_wire(&mut reader) {
                 Ok(Some(grid_ipc::Wire::Request { seq, cmd })) => {
+                    if let Err(code) = request_fence.admit(index, seq, &cmd) {
+                        eprintln!("[grid-child-{index}] {code}");
+                        // Do not acknowledge a duplicate sequence or execute a
+                        // foreign renderer command. The parent observes disconnect.
+                        break;
+                    }
                     if let grid_ipc::GridCmd::ReadReplies { ref id } = cmd {
                         let reply_writer = writer.clone();
                         let result = app
@@ -754,8 +762,8 @@ fn dispatch_grid_cmd(
                     eprintln!("[grid-child] CreateTab {} 完成", id);
                     Ok(())
                 }
-                // 幂等：重试/重放导致的重复创建视为成功
-                Err(tauri_plugin_browser_tabs::BrowserTabError::TabAlreadyExists(_)) => Ok(()),
+                // A different command identity must not turn an existing
+                // renderer/document into a successful fresh creation.
                 Err(e) => Err(format!("CreateTab {id} 失败: {e}")),
             }
         }

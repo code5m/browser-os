@@ -63,6 +63,89 @@ pub enum GridCmd {
     Ping,
 }
 
+impl GridCmd {
+    /// Each child owns exactly one renderer identity. A transport connection
+    /// is not permission to address another WebView or create arbitrary tabs.
+    pub(crate) fn targets(&self, index: u32) -> bool {
+        let id = match self {
+            Self::CreateTab { id, .. }
+            | Self::UpdateRect { id, .. }
+            | Self::HideWindow { id }
+            | Self::Eval { id, .. }
+            | Self::ReadReplies { id }
+            | Self::HibernationProbe { id }
+            | Self::Navigate { id, .. }
+            | Self::SetZoom { id, .. }
+            | Self::CloseTab { id } => id,
+            Self::Ping => return true,
+        };
+        id == &format!("grid-{index}")
+    }
+}
+
+/// The sole request reader fences the exact worker route and strictly
+/// increasing sequence before any native dispatch, including async probes.
+/// A duplicate/invalid frame is a protocol fault, not a second operation.
+#[derive(Default)]
+pub(crate) struct GridRequestFence {
+    last: u64,
+}
+
+impl GridRequestFence {
+    pub(crate) fn admit(&mut self, index: u32, seq: u64, cmd: &GridCmd) -> Result<(), &'static str> {
+        if seq == 0 || seq <= self.last {
+            return Err("GRID_REQUEST_SEQUENCE_REJECTED");
+        }
+        if !cmd.targets(index) {
+            return Err("GRID_REQUEST_TARGET_REJECTED");
+        }
+        self.last = seq;
+        Ok(())
+    }
+}
+
+pub(crate) fn next_request_sequence(
+    counter: &std::sync::atomic::AtomicU64,
+) -> Result<u64, String> {
+    use std::sync::atomic::Ordering;
+    counter
+        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
+            if n == 0 { None } else { n.checked_add(1) }
+        })
+        .map_err(|_| "GRID_REQUEST_SEQUENCE_EXHAUSTED".into())
+}
+
+/// Linux UDS credentials are supplied by the kernel, not by a JSON frame
+/// or the socket filename. Require the same effective UID and a live PID.
+#[cfg(target_os = "linux")]
+pub(crate) fn linux_peer_pid(stream: &std::os::unix::net::UnixStream) -> std::io::Result<u32> {
+    use std::os::fd::AsRawFd;
+    let mut cred: libc::ucred = unsafe { std::mem::zeroed() };
+    let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    let result = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            (&mut cred as *mut libc::ucred).cast(),
+            &mut len,
+        )
+    };
+    if result != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    if len as usize != std::mem::size_of::<libc::ucred>()
+        || cred.pid <= 0
+        || cred.uid != unsafe { libc::geteuid() }
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "GRID_PEER_CREDENTIALS_REJECTED",
+        ));
+    }
+    Ok(cred.pid as u32)
+}
+
 /// 线协议帧。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -159,6 +242,37 @@ pub fn read_wire<R: std::io::BufRead>(r: &mut R) -> std::io::Result<Option<Wire>
 #[cfg(test)]
 mod framing_tests {
     use super::*;
+    #[test]
+    fn worker_route_and_sequence_are_fenced_before_native_dispatch() {
+        let mut fence = GridRequestFence::default();
+        let valid = GridCmd::Navigate { id: "grid-2".into(), url: "about:blank".into() };
+        let foreign = GridCmd::CreateTab { id: "tab-1".into(), url: "about:blank".into() };
+        assert_eq!(fence.admit(2, 0, &valid), Err("GRID_REQUEST_SEQUENCE_REJECTED"));
+        assert!(fence.admit(2, 1, &valid).is_ok());
+        assert_eq!(fence.admit(2, 1, &valid), Err("GRID_REQUEST_SEQUENCE_REJECTED"));
+        assert_eq!(fence.admit(2, 2, &foreign), Err("GRID_REQUEST_TARGET_REJECTED"));
+        assert!(fence.admit(2, 3, &GridCmd::Ping).is_ok());
+        assert_eq!(fence.admit(2, 2, &valid), Err("GRID_REQUEST_SEQUENCE_REJECTED"));
+        assert!(!GridCmd::HideWindow { id: "grid-3".into() }.targets(2));
+    }
+
+    #[test]
+    fn sequence_exhaustion_never_wraps_or_reuses_a_request_identity() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        let counter = AtomicU64::new(u64::MAX - 1);
+        assert_eq!(next_request_sequence(&counter).unwrap(), u64::MAX - 1);
+        assert!(next_request_sequence(&counter).is_err());
+        assert_eq!(counter.load(Ordering::SeqCst), u64::MAX);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_peer_credentials_come_from_kernel() {
+        let (first, second) = std::os::unix::net::UnixStream::pair().unwrap();
+        assert_eq!(linux_peer_pid(&first).unwrap(), std::process::id());
+        assert_eq!(linux_peer_pid(&second).unwrap(), std::process::id());
+    }
+
     #[test]
     fn two_requests_survive_shared_bufreader_without_losing_prefetched_frames() {
         let mut buffer = Vec::new();
