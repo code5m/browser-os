@@ -240,6 +240,11 @@ impl GridLifecycle {
         self.retiring.lock().unwrap().contains_key(&index)
     }
 
+    pub(super) fn try_is_retiring(&self, index: u32) -> Result<bool, String> {
+        let retiring = self.retiring.try_lock().map_err(|_| "TAB_RENDERER_OBSERVATION_BUSY")?;
+        Ok(retiring.contains_key(&index))
+    }
+
     fn remember_error(&self, error: String) {
         // Diagnostics must not grow with repeated native polling failures.
         *self.last_error.lock().unwrap() = Some(error.chars().take(512).collect());

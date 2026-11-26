@@ -328,3 +328,11 @@ Source-only scope; no compilation, tests, install/runtime validation, workflow d
 - Retain a bounded in-memory per-cell observation for the latest batch: not attempted, invalid address, dispatch acknowledgement or unknown. Do not store the prompt or claim delivery, failure/non-application, or permission to replay. Clear on a new topology build. UI exposes each cell's outcome and prevents editing the target list during busy/unknown ownership.
 - Resource-detail polling is single-flight and scoped to the visible panel epoch. A delayed result after hide/unmount is discarded; a failed sample is not represented as fresh.
 - Source-only candidate; no build, test execution, workflow change or master merge.
+
+## 2026-11-26 — Nonblocking renderer inspection and process-scoped liveness
+
+- Both platform managers use nonblocking metadata lock admission for ordinary renderer identity/document capture and inspection, including retirement state. Contention returns busy/unavailable, never clean absence or an executable target. This intentionally prefers a safe retry by the user to a synchronous main-window wait.
+- Download snapshot Ping is now process/connection-scoped rather than navigation-revision-scoped, using the existing authenticated request writer and matching native host both before and after the call. Malformed/missing optional counts cannot prevent healthy activation or certify zero. Activation selects with the current same-owner binding; document-mutating IPC remains strictly document-bound.
+- Browser Owner rejects unknown fields on typed request/action envelopes, timestamps both prepared and legacy identity capture reservations for existing stalled-domain recovery, and revalidates logical membership and Owner snapshot before exposing renderer recovery identity.
+- The frontend classifies definite pre-admission unavailable/busy results without replaying prepare; unknown execution outcomes still require reconciliation. No Agent write grant or additional Tauri command is added.
+- No build, tests, workflow edits, master merge or installed acceptance.

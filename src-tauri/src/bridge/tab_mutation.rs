@@ -11,7 +11,7 @@ use tauri::{AppHandle, Emitter, Manager, Webview};
 use tauri_plugin_browser_tabs::{CaptureDocument, TabInstance, TabManagerState};
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum Action {
     New { url: String },
     Close { id: String },
@@ -228,7 +228,7 @@ impl Binding {
             if matches!(action, Action::ReopenRenderer { .. }) {
                 let (observed, status, _) = state.grid_manager.tab_renderer_inspection(index)?;
                 if owner.is_some() || observed.is_some() || status != "absent"
-                    || state.hibernated_tabs.lock().unwrap().contains(id) {
+                    || state.hibernated_tabs.try_lock().map_err(|_| "TAB_MUTATION_INSTANCE_UNAVAILABLE")?.contains(id) {
                     return Err("TAB_RENDERER_REOPEN_STALE".into());
                 }
                 return Ok(Self::Isolated(None));
@@ -723,7 +723,7 @@ impl Drop for WorkerGuard {
 }
 
 #[derive(Deserialize)]
-#[serde(tag = "phase", rename_all = "snake_case")]
+#[serde(tag = "phase", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum Request {
     Prepare {
         client_id: String,
@@ -804,6 +804,7 @@ pub(crate) fn tab_mutation(
                         return Err("TAB_MUTATION_STALE_SEQUENCE".into());
                     }
                     state.internal_active = true;
+                    state.internal_started = Some(Instant::now());
                     Some(InternalMutation)
                 }
             };
@@ -944,13 +945,20 @@ pub(crate) fn tab_mutation(
             crate::shared::native_legacy_policy::bound_text("tab_close", "id", &id)?;
             let index = super::isolated_tabs::route(&id).ok_or("TAB_RENDERER_ROUTE_INVALID")?;
             let state = app.state::<crate::AppState>();
-            if !state.tabs.lock().unwrap().contains_key(&id) {
+            if !state.tabs.try_lock().map_err(|_| "TAB_RENDERER_OBSERVATION_BUSY")?.contains_key(&id) {
                 return Err("TAB_NOT_FOUND".into());
             }
             let mut view = snapshot(&app)?;
             let (observed_owner, status, download) = state.grid_manager.tab_renderer_inspection(index)?;
-            view.renderer_state = Some(if status == "absent"
-                && state.hibernated_tabs.lock().unwrap().contains(&id) {
+            let hibernated = state.hibernated_tabs.try_lock()
+                .map_err(|_| "TAB_RENDERER_OBSERVATION_BUSY")?.contains(&id);
+            // A logical close or a competing Owner admission can cross the
+            // split observation. Return busy rather than an actionable target.
+            if !state.tabs.try_lock().map_err(|_| "TAB_RENDERER_OBSERVATION_BUSY")?.contains_key(&id)
+                || !owner()?.matches_view(&view) {
+                return Err("TAB_RENDERER_OBSERVATION_BUSY".into());
+            }
+            view.renderer_state = Some(if status == "absent" && hibernated {
                 "hibernated"
             } else { status });
             if let Some((pid, epoch)) = observed_owner {
@@ -1058,6 +1066,7 @@ pub(super) async fn legacy_action<T: serde::de::DeserializeOwned + Send + 'stati
             return Err("TAB_MUTATION_OWNER_BUSY".into());
         }
         state.internal_active = true;
+        state.internal_started = Some(Instant::now());
         Some(InternalMutation)
     };
     let binding = Binding::capture(&app, &action)?;

@@ -988,8 +988,17 @@ impl GridProcessManager {
         if !crate::grid_ipc::is_tab_renderer(index) {
             return Err("TAB_RENDERER_ROUTE_INVALID".into());
         }
-        let children = self.children.lock().unwrap();
-        children.get(&index).map(|child| child.comms.owner_snapshot()).transpose()
+        let children = self.children.try_lock().map_err(|_| "TAB_MUTATION_INSTANCE_UNAVAILABLE")?;
+        children.get(&index).map(|child| {
+            let comms = &child.comms;
+            let _owner = comms.owner_gate.try_lock().map_err(|_| "TAB_MUTATION_INSTANCE_UNAVAILABLE")?;
+            let pid = child.child.id();
+            let epoch = comms.spawn_epoch.load(Ordering::SeqCst);
+            if pid == 0 || epoch == 0 || !comms.accepts_peer(pid) {
+                return Err("TAB_MUTATION_INSTANCE_UNAVAILABLE".to_owned());
+            }
+            Ok((pid, epoch))
+        }).transpose()
     }
 
     /// Read-only UI observation, not authorization to retire or restore.
@@ -1000,11 +1009,11 @@ impl GridProcessManager {
         if !crate::grid_ipc::is_tab_renderer(index) {
             return Err("TAB_RENDERER_ROUTE_INVALID".into());
         }
-        let children = self.children.lock().unwrap();
-        if self.lifecycle.is_retiring(index) { return Ok((None, "cleanup_pending", None)); }
+        let children = self.children.try_lock().map_err(|_| "TAB_RENDERER_OBSERVATION_BUSY")?;
+        if self.lifecycle.try_is_retiring(index)? { return Ok((None, "cleanup_pending", None)); }
         let Some(child) = children.get(&index) else { return Ok((None, "absent", None)); };
         let comms = &child.comms;
-        let _owner = comms.owner_gate.lock().unwrap();
+        let _owner = comms.owner_gate.try_lock().map_err(|_| "TAB_RENDERER_OBSERVATION_BUSY")?;
         let pid = child.child.id();
         let epoch = comms.spawn_epoch.load(Ordering::SeqCst);
         if pid == 0 || epoch == 0 || comms.expected_pid.load(Ordering::SeqCst) != pid {
@@ -1012,8 +1021,8 @@ impl GridProcessManager {
         }
         let ready = child.document_ready && comms.is_connected()
             && !comms.blank_reclaiming.load(Ordering::SeqCst)
-            && comms.native_document.lock().unwrap().is_some_and(|stamp| stamp.usable());
-        let observed = *comms.download_observation.lock().unwrap();
+            && comms.native_document.try_lock().map_err(|_| "TAB_RENDERER_OBSERVATION_BUSY")?.is_some_and(|stamp| stamp.usable());
+        let observed = *comms.download_observation.try_lock().map_err(|_| "TAB_RENDERER_OBSERVATION_BUSY")?;
         let download = observed.map(|(generation, counts)| serde_json::json!({
             "pid": pid, "spawn_epoch": epoch.to_string(),
             "renderer_generation": generation.to_string(),
@@ -1065,18 +1074,32 @@ impl GridProcessManager {
         -> Result<(), String>
     {
         if !crate::grid_ipc::is_tab_renderer(binding.index) { return Err("TAB_RENDERER_ROUTE_INVALID".into()); }
-        let Some(data) = self.renderer_request_data(binding, GridCmd::Ping, timeout_ms)? else { return Ok(()); };
-        if data.len() > 256 { return Err("TAB_DOWNLOAD_SNAPSHOT_INVALID".into()); }
-        let value: serde_json::Value = serde_json::from_str(&data).map_err(|_| "TAB_DOWNLOAD_SNAPSHOT_INVALID")?;
-        let observation = crate::grid_ipc::DownloadObservation::from_counts(&value)
-            .filter(|_| value.as_object().is_some_and(|fields| fields.len() == 3))
-            .ok_or("TAB_DOWNLOAD_SNAPSHOT_INVALID")?;
+        // Ping is process scoped. A navigation inside this exact host does
+        // not invalidate a download count or a liveness acknowledgement.
+        let _operation = self.lifecycle.enter()?;
+        let comms = {
+            let children = self.children.lock().unwrap();
+            let child = children.get(&binding.index).ok_or("TAB_RENDERER_DOCUMENT_STALE")?;
+            let _owner = child.comms.owner_gate.lock().unwrap();
+            if !Self::window_binding_matches(child, binding) {
+                return Err("TAB_RENDERER_DOCUMENT_STALE".into());
+            }
+            Arc::clone(&child.comms)
+        };
+        let data = self.request_once_with(binding.index, comms, binding.generation, &GridCmd::Ping, timeout_ms)?;
+        // An older peer or malformed optional advisory data is not a health
+        // failure. Retain the prior counts; never replace unknown with zero.
+        let observation = data.as_deref().filter(|data| data.len() <= 256)
+            .and_then(|data| serde_json::from_str::<serde_json::Value>(data).ok())
+            .filter(|value| value.as_object().is_some_and(|fields| fields.len() == 3))
+            .and_then(|value| crate::grid_ipc::DownloadObservation::from_counts(&value));
         let children = self.children.lock().unwrap();
         let child = children.get(&binding.index).ok_or("TAB_RENDERER_DOCUMENT_STALE")?;
         let _owner = child.comms.owner_gate.lock().unwrap();
         if !Self::window_binding_matches(child, binding) {
             return Err("TAB_RENDERER_DOCUMENT_STALE".into());
         }
+        let Some(observation) = observation else { return Ok(()); };
         let mut last = child.comms.download_observation.lock().unwrap();
         if last.as_ref().is_none_or(|(_, previous)| observation == *previous || observation.advances(*previous)) {
             *last = Some((binding.generation, observation));
@@ -1099,12 +1122,19 @@ impl GridProcessManager {
         if !crate::grid_ipc::is_tab_renderer(index) {
             return Err("TAB_RENDERER_ROUTE_INVALID".into());
         }
-        let children = self.children.lock().unwrap();
+        let children = self.children.try_lock().map_err(|_| "TAB_MUTATION_INSTANCE_UNAVAILABLE")?;
         let child = children.get(&index).ok_or("TAB_RENDERER_DOCUMENT_UNAVAILABLE")?;
-        let owner = child.comms.owner_snapshot()?;
+        let _owner = child.comms.owner_gate.try_lock().map_err(|_| "TAB_MUTATION_INSTANCE_UNAVAILABLE")?;
+        let pid = child.child.id();
+        let epoch = child.comms.spawn_epoch.load(Ordering::SeqCst);
+        if pid == 0 || epoch == 0 || !child.comms.accepts_peer(pid) {
+            return Err("TAB_MUTATION_INSTANCE_UNAVAILABLE".into());
+        }
+        let owner = (pid, epoch);
         let generation = child.comms.generation.load(Ordering::SeqCst);
         if !child.document_ready || !child.comms.is_current(generation)
-            || !child.comms.native_document.lock().unwrap().is_some_and(|stamp| stamp.usable()) {
+            || !child.comms.native_document.try_lock().map_err(|_| "TAB_MUTATION_INSTANCE_UNAVAILABLE")?
+                .is_some_and(|stamp| stamp.usable()) {
             return Err("TAB_RENDERER_DOCUMENT_UNAVAILABLE".into());
         }
         Ok(crate::grid_ipc::RendererBinding {

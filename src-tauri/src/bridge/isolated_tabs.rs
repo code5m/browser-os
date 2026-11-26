@@ -174,7 +174,7 @@ pub(super) fn activate_admitted(app: &AppHandle, id: &str, admitted: Option<Opti
             return Err("TAB_RENDERER_ACTIVATION_STALE".into());
         }
         state.hibernated_tabs.lock().unwrap().remove(id);
-        binding
+        current
     };
     // The normal frontend position command supplies the new active rectangle.
     let selected = select_bound(app, id, binding);
