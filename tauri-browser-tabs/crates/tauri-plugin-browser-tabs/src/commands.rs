@@ -1628,8 +1628,8 @@ impl TabManager {
                         };
                         // Layout metrics may arrive after a close/replacement.
                         // Never dispatch the second native operation in that case.
-                        if !capture_app.state::<TabManagerState>()
-                            .is_current_capture_document(&capture_id, &capture_document)
+                        if !capture_app.try_state::<TabManagerState>()
+                            .is_some_and(|manager| manager.is_current_capture_document(&capture_id, &capture_document))
                         {
                             complete_capture(&metrics_reply, Err("CAPTURE_INSTANCE_STALE".into()));
                             return Ok(());

@@ -171,8 +171,7 @@ fn worker_root() -> Result<PathBuf, String> {
     safe_paths::ensure_private_directory(&root).map_err(|_| "CAPTURE_TEMP_PRIVATE_FAILED")?;
     Ok(root)
 }
-fn run_render(app: tauri::AppHandle, root: PathBuf, url: String) -> Result<(), String> {
-    let manager = Arc::new(TabManager::new_isolated_capture(app, HOST, root.clone()));
+fn run_render(manager: Arc<TabManager>, root: PathBuf, url: String) -> Result<(), String> {
     manager.prepare_storage().map_err(|_| "CAPTURE_PROFILE_PREPARE_FAILED")?;
     let id = PAGE.to_string();
     manager.create_tab(CreateTabOptions {
@@ -231,11 +230,17 @@ fn run_child() -> Result<(), String> {
                 .title("BrowserOS independent capture (fresh profile)")
                 .inner_size(1280.0, 720.0)
                 .build()?;
-            let handle = app.handle().clone();
+            // Register the exact private manager before dispatch. Windows' CDP
+            // metrics callback checks this managed state before taking the image.
+            // Managing native state does not install the tab IPC plugin.
+            let manager = Arc::new(TabManager::new_isolated_capture(app.handle().clone(), HOST, root.clone()));
+            if !app.manage(manager.clone()) {
+                return Err(std::io::Error::other("CAPTURE_MANAGER_ALREADY_REGISTERED").into());
+            }
             let root = root.clone();
             let url = url.clone();
             thread::Builder::new().name("browseros-isolated-render".into()).spawn(move || {
-                match run_render(handle, root, url) {
+                match run_render(manager, root, url) {
                     Ok(()) => std::process::exit(0),
                     Err(_) => std::process::exit(2),
                 }

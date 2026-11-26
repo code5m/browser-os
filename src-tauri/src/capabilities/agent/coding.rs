@@ -2206,6 +2206,10 @@ pub(crate) fn execute_with_bound_adapter(
             if reconcile && submitted.trim().is_empty() { return Err("AGENT_RECONCILIATION_EVIDENCE_REQUIRED".into()); }
             let operation = session.operations.iter_mut().find(|op| op.id == id).ok_or("AGENT_OPERATION_NOT_PENDING")?;
             let external = external_operation(&operation.kind);
+            // Also fence accepting native returns and frontend read receipts;
+            // a legacy path-only session can contain newly bound operations.
+            let bound = operation.execution.as_ref().and_then(|receipt| receipt.workspace_identity.as_deref());
+            verify_workspace_binding(&root, bound)?;
             let (next, result) = if reconcile {
                 // Same user-attestation protocol as manual MCP, fenced by
                 // this exact encrypted operation revision and native root.
@@ -2214,8 +2218,6 @@ pub(crate) fn execute_with_bound_adapter(
                 if request["review_revision"].as_str() != Some(revision.as_str()) {
                     return Err("AGENT_EFFECT_REVIEW_STALE".into());
                 }
-                let bound = operation.execution.as_ref().and_then(|receipt| receipt.workspace_identity.as_deref());
-                verify_workspace_binding(&root, bound)?;
                 let observation = if status == "not_applied" { "observed_not_applied" } else { "observed_applied" };
                 operation.reconciliation = Some(super::execution_owner::EffectReview::checked(
                     observation, submitted, bound.is_some(), true, revision, 20_000)?);

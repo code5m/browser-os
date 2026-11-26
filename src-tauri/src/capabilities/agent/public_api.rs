@@ -7,6 +7,21 @@ use tauri::{AppHandle, Webview};
 pub(crate) use super::execution_owner::{ChannelAdmission, ChannelInput, ChannelStart, ProductionExecution};
 pub(crate) use super::coding::CodingProviderBinding;
 pub(crate) use super::local_provider::{LocalChatRequest, local_chat, check as validate_local_chat};
+// Transport completion is not proof of an external effect. Require the
+// protocol result for the actual method and refuse malformed error flags.
+fn mcp_transport_reported_success(action: &str, response: &Value) -> bool {
+    let Some(result) = response.get("result").and_then(Value::as_object) else { return false; };
+    if !matches!(result.get("isError"), None | Some(Value::Bool(false))) {
+        return false;
+    }
+    let expected = match action {
+        "mcp_tools" => "tools",
+        "mcp_call" => "content",
+        _ => return false,
+    };
+    result.get(expected).is_some_and(Value::is_array)
+}
+
 pub(crate) fn register_coding_run(id: &str) -> Result<super::coding::RunRequestGuard, String> {
     super::coding::register_run_request(id)
 }
@@ -175,10 +190,10 @@ pub(crate) fn dispatch_coding_request(
         execution.checkpoint_approval(claim.clone())?;
         let lease = execution.acquire_approved_native(permit, &claim, &arguments)?;
         execution.checkpoint_manual_mcp(&canonical, revision, &request)?;
+        let result_action = action.to_owned();
         let result = super::coding_context::execute(&canonical, storage, request);
         drop(lease);
-        let reported_success = result.as_ref().is_ok_and(|value| value.get("result").is_some_and(|result| !result.is_null())
-            && value["result"]["isError"] != true);
+        let reported_success = result.as_ref().is_ok_and(|value| mcp_transport_reported_success(&result_action, value));
         execution.record_manual_mcp_return(&result, reported_success)?;
         if reported_success {
             execution.finish(true)?;
@@ -214,7 +229,7 @@ pub(crate) fn dispatch_coding_request(
                     "approved_environment_names":approved["approved_environment_names"]
                 }), cancel.clone())?;
                 Ok(serde_json::json!({
-                    "status":if response["result"]["isError"] == true { "unknown" } else { "succeeded" },
+                    "status":if mcp_transport_reported_success("mcp_call", &response) { "succeeded" } else { "unknown" },
                     "result":response["result"]
                 }))
             }
@@ -365,4 +380,23 @@ pub(crate) fn prepare_native_recovery(
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod mcp_transport_tests {
+    use super::mcp_transport_reported_success;
+    use serde_json::json;
+
+    #[test]
+    fn method_result_and_error_flag_are_required_for_transport_success() {
+        assert!(mcp_transport_reported_success("mcp_call", &json!({"result":{"content":[]}})));
+        assert!(mcp_transport_reported_success("mcp_tools", &json!({"result":{"tools":[],"isError":false}})));
+        for value in [json!({}), json!({"result":null}), json!({"result":{}}),
+            json!({"result":{"content":[],"isError":true}}),
+            json!({"result":{"content":[],"isError":"false"}}),
+            json!({"result":{"tools":[]}}), json!({"result":{"content":"invalid"}})] {
+            assert!(!mcp_transport_reported_success("mcp_call", &value));
+        }
+        assert!(!mcp_transport_reported_success("mcp_tools", &json!({"result":{"content":[]}})));
+    }
 }
