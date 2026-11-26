@@ -1054,20 +1054,26 @@ impl GridProcessManager {
     /// caller enters a blocking lane. Grid host readiness is not a paint or
     /// document-creation receipt (the ordinary-tab flag has different semantics).
     pub(crate) fn grid_eval_binding(&self, index: u32) -> Result<crate::grid_ipc::RendererBinding, String> {
+        self.grid_live_binding(index)?.ok_or_else(|| "GRID_EVAL_HOST_UNAVAILABLE".into())
+    }
+
+    pub(crate) fn grid_live_binding(&self, index: u32)
+        -> Result<Option<crate::grid_ipc::RendererBinding>, String>
+    {
         if (index as usize) >= crate::bridge::MAX_GRID {
             return Err("GRID_INDEX_INVALID".into());
         }
         self.lifecycle.check()?;
         let children = self.children.lock().unwrap();
-        let child = children.get(&index).ok_or("GRID_EVAL_HOST_UNAVAILABLE")?;
+        let Some(child) = children.get(&index) else { return Ok(None); };
         let owner = child.comms.owner_snapshot()?;
         let generation = child.comms.generation.load(Ordering::SeqCst);
         if !child.comms.is_current(generation) || child.comms.blank_reclaiming.load(Ordering::SeqCst) {
             return Err("GRID_EVAL_HOST_UNAVAILABLE".into());
         }
-        Ok(crate::grid_ipc::RendererBinding {
+        Ok(Some(crate::grid_ipc::RendererBinding {
             index, owner, generation, navigation_revision: child.navigation_revision,
-        })
+        }))
     }
 
     /// Only this exact original Grid host/connection may accept the queued

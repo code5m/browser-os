@@ -371,12 +371,7 @@ fn capture_grid_live_binding(app: &AppHandle, index: usize)
 {
     if index >= MAX_GRID { return Err("GRID_INDEX_INVALID".into()); }
     let state = app.state::<AppState>();
-    let mgr = &state.grid_manager;
-    if mgr.pid_of(index as u32).is_some() {
-        mgr.grid_eval_binding(index as u32).map(Some)
-    } else {
-        Ok(None)
-    }
+    state.grid_manager.grid_live_binding(index as u32)
 }
 
 pub fn grid_open_blocking(app: AppHandle, index: usize, url: String) -> Result<(), String> {
@@ -447,6 +442,9 @@ fn ensure_grid_child(app: &AppHandle, index: usize) -> Result<(), String> {
         }
         manager.record_url(index as u32, &url);
         schedule_grid_zoom(app, &label);
+    } else {
+        // Cold admission may not adopt a concurrent new live owner.
+        return Err("GRID_OPEN_TARGET_CHANGED".into());
     }
     Ok(())
 }

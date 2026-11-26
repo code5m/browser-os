@@ -532,25 +532,50 @@ export const useBrowserStore = defineStore("browser", () => {
       return true;
     });
   }
-  // Phase 04：记录被关闭的页签（在真正拆除前读取 url/title）
+  // Only an address that Browser can reopen independently belongs in
+  // this memory-only history. Transient documents have no recoverable
+  // URL; never reinterpret their address as a search query.
+  function reopenableAddress(value: string): boolean {
+    if (!value || value.trim() !== value) return false;
+    try {
+      const parsed = new URL(value);
+      return parsed.protocol === "http:" || parsed.protocol === "https:"
+        || parsed.protocol === "file:" || value === "about:blank";
+    } catch { return false; }
+  }
+  // Commit only after the native close acknowledgement.
   function recordClose(id: string) {
     const t = tabs.find((x) => x.id === id);
-    if (!t) return;
+    if (!t || !reopenableAddress(t.url)) return;
     recentlyClosed.value.unshift({ url: t.url, title: t.title || t.url });
     if (recentlyClosed.value.length > RECENTLY_CLOSED_CAP) {
       recentlyClosed.value = recentlyClosed.value.slice(0, RECENTLY_CLOSED_CAP);
     }
   }
   // Phase 04：恢复最近关闭的页签（Ctrl+Shift+T）；栈空则提示
+  let restoringRecent = false;
   async function restoreRecent() {
+    if (restoringRecent) return;
     const item = recentlyClosed.value[0];
     if (!item) {
       layout.showToast("没有可恢复的页签");
       return;
     }
-    if (await tabNew(item.url)) {
-      const index = recentlyClosed.value.indexOf(item);
-      if (index >= 0) recentlyClosed.value.splice(index, 1);
+    if (!reopenableAddress(item.url)) {
+      layout.showToast("该页签地址无法安全恢复");
+      return;
+    }
+    restoringRecent = true;
+    try {
+      if (await tabNew(item.url)) {
+        // A newly closed tab may now be at the top of the stack.
+        const index = recentlyClosed.value.indexOf(item);
+        if (index >= 0) recentlyClosed.value.splice(index, 1);
+      }
+    } catch {
+      layout.showToast("最近页签恢复未确认；请先核对原生页签，不要直接重复恢复");
+    } finally {
+      restoringRecent = false;
     }
   }
   async function tabReload(id: string) {
@@ -593,6 +618,10 @@ export const useBrowserStore = defineStore("browser", () => {
     await mutateTabs(async () => {
       if (!isBrowserResourceAllowed() || activeTabId.value !== id ||
           !tabs.some(tab => tab === target)) return;
+      if (rendererUnavailable(id)) {
+        layout.showToast("当前页签宿主不可用，请先重新激活；不会重放历史操作");
+        return;
+      }
       await operation(id);
       if (tabs.some(tab => tab === target)) nativeTabFailures.delete(id);
     });
