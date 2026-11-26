@@ -428,3 +428,8 @@ Measure the actual viewport before a native Visible snapshot; apply the 1M-pixel
 ## 2026-11-26 — MCP credential property value redaction
 
 Shared Linux/Windows MCP scrub previously renamed sensitive JSON property names but could retain opaque credential values under those renamed keys. Drop the entire value (including nested arrays/objects) for sensitive names and common normalized credential properties; retain collision-safe placeholders and ordinary keys. Source fixtures cover opaque values, nested credential fields and noncredential token_count. Heuristic screening is not a universal guarantee against arbitrary secrets; no new provider trust or effect reconciliation authority. NOT_RUN; no refs/builds/tests/CI/Actions/gate changes.
+
+
+## 2026-11-26 — Historical native approval argument binding
+
+Reuse the Foundation's exact approval argument digest at recovery, rather than trusting a return digest that merely contains the historical claims. Coding prepared and return checkpoints reconstruct the approved operation ID, input digest and review revision, revalidate tool/effect and workspace resource; manual MCP dispatch and local return recovery reconstruct the approved Run ID and request digest. This does not recreate permits, require old approvals to remain unexpired for historical inspection, or establish remote effects. Inconsistent evidence stays unknown. Added source fixtures for changed Coding proposal with recomputed return digest and mismatched manual Run/request. NOT_RUN; no builds/tests/CI/Actions/refs/gate changes.

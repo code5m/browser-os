@@ -21,6 +21,15 @@ use uuid::Uuid;
 mod channel;
 pub(crate) use channel::{ChannelAdmission, ChannelInput, ChannelStart};
 
+/// Revalidate the original manual approval binding without recreating a
+/// live approval or calling an external service.
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn manual_approval_matches_request(claim: &ApprovalClaims, run: Uuid, digest: &str) -> bool {
+    let args = serde_json::json!({"run_id":run,"review_digest":digest});
+    browseros_agent_foundation::approval::approval_argument_digest(&claim.tool_name, &args, &claim.effect)
+        .ok().as_deref() == Some(claim.arguments_sha256.as_str())
+}
+
 /// Stable task identity for a project with an existing Coding session.
 /// The canonical workspace path is never written to the TaskRegistry: only
 /// its domain-separated 128-bit digest is retained.
@@ -267,6 +276,8 @@ impl DurableRun {
                     && claim.effect == ToolEffect::ExternalSideEffect
                     && matches!(claim.tool_name.as_str(), "coding.manual_mcp_call" | "coding.manual_mcp_tools")
                     && claim.resource.resource_revision == effect.request_digest
+                    && claim.resource.resource_id == format!("workspace:{}", record.task.workspace_id)
+                    && manual_approval_matches_request(claim, record.id, &effect.request_digest)
                     && effect.workspace_identity.as_deref() == record.manual_admission.as_ref().map(|a| a.workspace_identity.as_str())
                     && effect.disposition == "transport_returned"
                     && effect.response_digest.as_ref().is_some_and(|digest| digest.len() == 64 && digest.bytes().all(|b| b.is_ascii_hexdigit()))
@@ -748,7 +759,9 @@ impl ProductionExecution {
                     && claim.session_id == task.session_id
                     && claim.task_revision.checked_add(1) == Some(task.revision)
                     && claim.effect == ToolEffect::ExternalSideEffect
-                    && claim.tool_name == tool && claim.resource.resource_revision == digest) {
+                    && claim.tool_name == tool && claim.resource.resource_revision == digest
+                    && claim.resource.resource_id == format!("workspace:{}", task.workspace_id)
+                    && manual_approval_matches_request(claim, run.id, &digest)) {
                 return Err("AGENT_APPROVAL_STALE".into());
             }
             let safe_label = |field: &str| request[field].as_str().filter(|value|
@@ -1380,6 +1393,9 @@ mod tests {
             ToolEffect::ExternalSideEffect, digest.clone()).unwrap();
         execution.checkpoint_approval(claim.clone()).unwrap();
         let lease = execution.acquire_approved_native(permit, &claim, &arguments).unwrap();
+        assert!(manual_approval_matches_request(&claim, run, &digest));
+        assert!(!manual_approval_matches_request(&claim, Uuid::new_v4(), &digest));
+        assert!(!manual_approval_matches_request(&claim, run, "different"));
         execution.checkpoint_manual_mcp(&root, digest, &request).unwrap();
         drop(lease);
         execution.record_manual_mcp_return(&Err("MCP_TERMINATION_UNKNOWN".into()), false).unwrap();

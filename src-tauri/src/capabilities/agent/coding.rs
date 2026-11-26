@@ -1745,6 +1745,21 @@ fn native_return_digest(operation: &Operation, task: &browseros_agent_foundation
     Ok(hash(&encoded))
 }
 
+fn native_approval_matches_input(operation: &Operation, claim: &browseros_agent_foundation::approval::ApprovalClaims) -> bool {
+    use browseros_agent_foundation::{approval::approval_argument_digest, tool::ToolEffect};
+    let (tool, effect) = match operation.kind.as_str() {
+        "command" => ("coding.command", ToolEffect::ExecuteProcess),
+        "mcp" => ("coding.mcp", ToolEffect::ExternalSideEffect),
+        _ => return false,
+    };
+    let Ok(encoded) = serde_json::to_vec(&operation.input) else { return false; };
+    let arguments = json!({"operation_id":operation.id,"input_digest":hash(&encoded),
+        "review_digest":claim.resource.resource_revision});
+    claim.tool_name == tool && claim.effect == effect
+        && approval_argument_digest(tool, &arguments, &effect).ok().as_deref()
+            == Some(claim.arguments_sha256.as_str())
+}
+
 fn verify_native_return(operation: &Operation, task: Option<&browseros_agent_foundation::task::TaskRecord>,
     runs: &[RunReceipt], workspace_identity: &str, session_id: &str) -> bool {
     use browseros_agent_foundation::{task::TaskStatus, tool::ToolEffect};
@@ -1766,6 +1781,7 @@ fn verify_native_return(operation: &Operation, task: Option<&browseros_agent_fou
         && claim.accepted && claim.task_id == task.id && claim.session_id == task.session_id
         && claim.workspace_id == task.workspace_id && claim.task_revision.checked_add(1) == Some(task.revision)
         && claim.tool_name == expected.0 && claim.effect == expected.1
+        && native_approval_matches_input(operation, claim)
         && claim.resource.resource_id == format!("workspace:{}", task.workspace_id)
         && runs.iter().filter(|run| run.id == receipt.run_id).count() == 1
         && runs.iter().any(|run| run.id == receipt.run_id && run.task_id == task.id && run.status == "running")
@@ -1858,8 +1874,8 @@ fn load(root: &Path, storage: &Path, id: Option<&str>) -> Result<Session, String
                             claim.accepted && claim.task_id == task.id && claim.session_id == task.session_id
                                 && claim.workspace_id == task.workspace_id
                                 && claim.task_revision.checked_add(1) == Some(task.revision)
-                                && (operation.kind == "command" && claim.effect == browseros_agent_foundation::tool::ToolEffect::ExecuteProcess
-                                    || operation.kind == "mcp" && claim.effect == browseros_agent_foundation::tool::ToolEffect::ExternalSideEffect)
+                                && claim.resource.resource_id == format!("workspace:{}", task.workspace_id)
+                                && native_approval_matches_input(operation, claim)
                                 && session.runs.iter().any(|run| run.id == receipt.run_id && run.task_id == task.id && run.status == "running")
                         })
                 })
@@ -3077,6 +3093,14 @@ mod tests {
         assert!(execute_with_adapter(&f.0,&storage,request,|_,_|unreachable!(),|_,_,_,_|panic!("must not replay")).is_err());
         let reviewed = run(&f,json!({"action":"resolve_operation","session_id":id,"operation_id":op,"status":"accepted"})).unwrap();
         assert_eq!(reviewed["operations"][0]["status"],"succeeded");
+        // Even a newly computed return digest cannot authorize an input
+        // different from the original approval.
+        let mut wrong_input = checkpoint.clone();
+        wrong_input.operations[0].input["tool"] = json!("different");
+        let digest = native_return_digest(&wrong_input.operations[0], wrong_input.foundation_task.as_ref().unwrap()).unwrap();
+        wrong_input.operations[0].execution.as_mut().unwrap().return_digest = Some(digest);
+        assert!(!verify_native_return(&wrong_input.operations[0], wrong_input.foundation_task.as_ref(),
+            &wrong_input.runs, wrong_input.workspace_identity.as_deref().unwrap(), id));
         // An inconsistent checkpoint is not a usable return.
         checkpoint.operations[0].result = Some("changed".into());
         save(&storage, &checkpoint).unwrap();

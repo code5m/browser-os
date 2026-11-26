@@ -115,7 +115,13 @@ fn now_ms() -> Result<u64> {
 }
 
 fn argument_digest(op: &PendingOperation) -> Result<String> {
-    let serialized = serde_json::to_vec(&(&op.tool_name, &op.arguments, &op.effect))
+    approval_argument_digest(&op.tool_name, &op.arguments, &op.effect)
+}
+
+/// Reconstruct the exact digest used at approval admission. This compares
+/// historical evidence only; it cannot issue or reconstruct a permit.
+pub fn approval_argument_digest(tool: &str, arguments: &serde_json::Value, effect: &ToolEffect) -> Result<String> {
+    let serialized = serde_json::to_vec(&(tool, arguments, effect))
         .map_err(|e| FoundationError::Serialization(e.to_string()))?;
     Ok(hex::encode(Sha256::digest(serialized)))
 }
