@@ -37,6 +37,7 @@ pub struct ChildComms {
     generation: AtomicU64,
     // Mirrored under owner_gate from authenticated navigation observations.
     navigation_revision: AtomicU64,
+    native_document: Mutex<Option<crate::grid_ipc::NativeDocumentStamp>>,
     // Published only after the exact spawned Child has entered the owner map.
     expected_pid: AtomicU32,
     owner_gate: Mutex<()>,
@@ -61,6 +62,7 @@ impl ChildComms {
             seq: AtomicU64::new(1),
             generation: AtomicU64::new(0),
             navigation_revision: AtomicU64::new(0),
+            native_document: Mutex::new(None),
             expected_pid: AtomicU32::new(0),
             owner_gate: Mutex::new(()),
             spawn_epoch: AtomicU64::new(0),
@@ -91,6 +93,7 @@ impl ChildComms {
         let epoch = self.spawn_epoch.load(Ordering::SeqCst).checked_add(1)
             .ok_or("GRID_SPAWN_EPOCH_EXHAUSTED")?;
         self.navigation_revision.store(0, Ordering::SeqCst);
+        *self.native_document.lock().unwrap() = None;
         self.blank_reclaiming.store(false, Ordering::SeqCst);
         self.blank_reclaim_blocked.store(false, Ordering::SeqCst);
         *self.download_observation.lock().unwrap() = None;
@@ -553,7 +556,7 @@ impl GridProcessManager {
                                         match name.as_str() {
                                             "grid-child-focus" => {}
                                             "grid-child-blur" => state.grid_manager.request_hide_for_blur_async(),
-                                                "renderer-resource" | "tab-document-changed" => {}
+                                                "renderer-resource" | "tab-document-changed" | "native-document-revision" => {}
                                                 "renderer-download" => {
                                                     if payload["renderer_drop"] != true && comms_reader.is_current(generation) {
                                                         let _ = app.emit_to("main", "isolated-renderer-download", payload);
@@ -988,45 +991,48 @@ impl GridProcessManager {
 
     /// Read-only UI observation, not authorization to retire or restore.
     /// Removal from the live map precedes kernel-domain retirement.
-    pub(crate) fn tab_renderer_observation(&self, index: u32)
-        -> Result<(Option<(u32, u64)>, &'static str), String>
+    pub(crate) fn tab_renderer_inspection(&self, index: u32)
+        -> Result<(Option<(u32, u64)>, &'static str, Option<serde_json::Value>), String>
     {
         if !crate::grid_ipc::is_tab_renderer(index) {
             return Err("TAB_RENDERER_ROUTE_INVALID".into());
         }
         let children = self.children.lock().unwrap();
-        if self.lifecycle.is_retiring(index) {
-            return Ok((None, "cleanup_pending"));
+        if self.lifecycle.is_retiring(index) { return Ok((None, "cleanup_pending", None)); }
+        let Some(child) = children.get(&index) else { return Ok((None, "absent", None)); };
+        let comms = &child.comms;
+        let _owner = comms.owner_gate.lock().unwrap();
+        let pid = child.child.id();
+        let epoch = comms.spawn_epoch.load(Ordering::SeqCst);
+        if pid == 0 || epoch == 0 || comms.expected_pid.load(Ordering::SeqCst) != pid {
+            return Err("TAB_RENDERER_OBSERVATION_STALE".into());
         }
-        let Some(child) = children.get(&index) else {
-            return Ok((None, "absent"));
-        };
-        let owner = child.comms.owner_snapshot()?;
-        let ready = child.document_ready && child.comms.is_connected()
-            && !child.comms.blank_reclaiming.load(Ordering::SeqCst);
-        Ok((Some(owner), if ready { "ready" } else { "not_ready" }))
+        let ready = child.document_ready && comms.is_connected()
+            && !comms.blank_reclaiming.load(Ordering::SeqCst)
+            && comms.native_document.lock().unwrap().is_some_and(|stamp| stamp.usable());
+        let observed = *comms.download_observation.lock().unwrap();
+        let download = observed.map(|(generation, counts)| serde_json::json!({
+            "pid": pid, "spawn_epoch": epoch.to_string(),
+            "renderer_generation": generation.to_string(),
+            "connection_current": comms.is_current(generation),
+            "requested": counts.requested, "succeeded": counts.succeeded,
+            "failed": counts.failed, "observed_unfinished": counts.observed_unfinished(),
+        }));
+        Ok((Some((pid, epoch)), if ready { "ready" } else { "not_ready" }, download))
+    }
+
+    pub(crate) fn tab_renderer_observation(&self, index: u32)
+        -> Result<(Option<(u32, u64)>, &'static str), String>
+    {
+        self.tab_renderer_inspection(index).map(|(owner, state, _)| (owner, state))
     }
 
     pub(crate) fn tab_renderer_download_observation(&self, index: u32, expected: (u32, u64))
         -> Result<Option<serde_json::Value>, String>
     {
-        if !crate::grid_ipc::is_tab_renderer(index) { return Err("TAB_RENDERER_ROUTE_INVALID".into()); }
-        let children = self.children.lock().unwrap();
-        let child = children.get(&index).ok_or("TAB_RENDERER_OBSERVATION_STALE")?;
-        let _owner = child.comms.owner_gate.lock().unwrap();
-        if child.child.id() != expected.0
-            || child.comms.expected_pid.load(Ordering::SeqCst) != expected.0
-            || child.comms.spawn_epoch.load(Ordering::SeqCst) != expected.1 {
-            return Err("TAB_RENDERER_OBSERVATION_STALE".into());
-        }
-        let observed = *child.comms.download_observation.lock().unwrap();
-        Ok(observed.map(|(generation, counts)| serde_json::json!({
-            "pid": expected.0, "spawn_epoch": expected.1.to_string(),
-            "renderer_generation": generation.to_string(),
-            "connection_current": child.comms.is_current(generation),
-            "requested": counts.requested, "succeeded": counts.succeeded,
-            "failed": counts.failed, "observed_unfinished": counts.observed_unfinished(),
-        })))
+        let (owner, _, download) = self.tab_renderer_inspection(index)?;
+        if owner != Some(expected) { return Err("TAB_RENDERER_OBSERVATION_STALE".into()); }
+        Ok(download)
     }
 
     pub(crate) fn renderer_binding(&self, index: u32) -> Result<crate::grid_ipc::RendererBinding, String> {
@@ -1037,7 +1043,8 @@ impl GridProcessManager {
         let child = children.get(&index).ok_or("TAB_RENDERER_DOCUMENT_UNAVAILABLE")?;
         let owner = child.comms.owner_snapshot()?;
         let generation = child.comms.generation.load(Ordering::SeqCst);
-        if !child.document_ready || !child.comms.is_current(generation) {
+        if !child.document_ready || !child.comms.is_current(generation)
+            || !child.comms.native_document.lock().unwrap().is_some_and(|stamp| stamp.usable()) {
             return Err("TAB_RENDERER_DOCUMENT_UNAVAILABLE".into());
         }
         Ok(crate::grid_ipc::RendererBinding {
@@ -1832,7 +1839,17 @@ impl GridProcessManager {
             // Allocate in writer order, not caller/thread order. The worker
             // rejects replays and the counter must never wrap.
             seq = crate::grid_ipc::next_request_sequence(&comms.seq)?;
-            let frame = crate::grid_ipc::encode_wire(&Wire::Request { seq, cmd: cmd.clone() })
+            let native_document = if cmd.document_id().is_some() {
+                let observed = crate::grid_ipc::lock_renderer_writer(&comms.native_document, deadline, || {
+                    self.lifecycle.check()?;
+                    if !comms.is_current(generation) { return Err("GRID_CONNECTION_GENERATION_CHANGED".into()); }
+                    Ok(())
+                })?;
+                let stamp = (*observed).filter(|stamp| stamp.usable())
+                    .ok_or("GRID_NATIVE_DOCUMENT_UNAVAILABLE")?;
+                Some(stamp)
+            } else { None };
+            let frame = crate::grid_ipc::encode_wire(&Wire::Request { seq, cmd: cmd.clone(), native_document })
                 .map_err(|_| "GRID_REQUEST_FRAME_REJECTED")?;
             peer_pid = comms.expected_pid.load(Ordering::SeqCst);
             let result = match guard.as_mut() {
@@ -1845,6 +1862,10 @@ impl GridProcessManager {
                         })?;
                         if !comms.is_current(generation) {
                             return Err("GRID_CONNECTION_GENERATION_CHANGED".into());
+                        }
+                        if native_document.is_some_and(|stamp|
+                            *comms.native_document.lock().unwrap() != Some(stamp)) {
+                            return Err("GRID_NATIVE_DOCUMENT_STALE".into());
                         }
                         if document_revision.is_some_and(|revision| {
                             revision != comms.navigation_revision.load(Ordering::SeqCst)
@@ -2150,7 +2171,8 @@ impl GridProcessManager {
             let command = GridCmd::HideWindow { id: crate::grid_ipc::renderer_label(index) };
             if self.request_once_with(index, Arc::clone(&comms), binding.generation, &command, 1500).is_err() { continue; }
             let command = GridCmd::HibernationProbe { id: crate::grid_ipc::renderer_label(index) };
-            if !matches!(self.request_once_with(index, Arc::clone(&comms), binding.generation, &command, 1500), Ok(Some(encoded)) if grid_hibernation_probe_safe(&encoded)) {
+            if !matches!(self.request_once_fenced(index, Arc::clone(&comms), binding.generation,
+                Some(binding.navigation_revision), &command, 1500), Ok(Some(encoded)) if grid_hibernation_probe_safe(&encoded)) {
                 continue;
             }
             // Windows already holds lifecycle_lock for this sweep.
@@ -2364,6 +2386,20 @@ impl GridProcessManager {
         match name {
             "grid-child-focus" => child.focused = true,
             "grid-child-blur" => child.focused = false,
+            "native-document-revision" => {
+                let Some(stamp) = crate::grid_ipc::NativeDocumentStamp::from_report(payload) else { return false; };
+                let mut current = comms.native_document.lock().unwrap();
+                // Native callbacks may be delivered out of order. A stale
+                // instance/revision can never replace a newer observation.
+                if current.is_some_and(|previous| stamp <= previous) { return true; }
+                let Some(revision) = child.navigation_revision.checked_add(1) else { return false; };
+                *current = Some(stamp);
+                child.navigation_revision = revision;
+                comms.navigation_revision.store(revision, Ordering::SeqCst);
+                if comms.blank_reclaiming.load(Ordering::SeqCst) {
+                    comms.blank_reclaim_blocked.store(true, Ordering::SeqCst);
+                }
+            }
             "tab-document-changed" => {
                 let Some(revision) = child.navigation_revision.checked_add(1) else { return false; };
                 child.navigation_revision = revision;

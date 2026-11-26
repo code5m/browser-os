@@ -902,13 +902,13 @@ pub(crate) fn tab_mutation(
                 return Err("TAB_NOT_FOUND".into());
             }
             let mut view = snapshot(&app)?;
-            let (observed_owner, status) = state.grid_manager.tab_renderer_observation(index)?;
+            let (observed_owner, status, download) = state.grid_manager.tab_renderer_inspection(index)?;
             view.renderer_state = Some(if status == "absent"
                 && state.hibernated_tabs.lock().unwrap().contains(&id) {
                 "hibernated"
             } else { status });
             if let Some((pid, epoch)) = observed_owner {
-                view.renderer_download = state.grid_manager.tab_renderer_download_observation(index, (pid, epoch))?;
+                view.renderer_download = download;
                 view.renderer_recovery_target = Some(RendererRecoveryTarget {
                     id, pid, spawn_epoch: epoch.to_string(),
                 });
@@ -1049,18 +1049,26 @@ pub(super) async fn legacy_action<T: serde::de::DeserializeOwned + Send + 'stati
         };
         if !entered {
             guard.completed = true;
+            notify(&app, &ticket);
             return Err("TAB_MUTATION_CANCELLED_BEFORE_EXECUTION".into());
         }
         let result = if binding.current(&app, &action) {
-            action.execute(webview, app, &binding)
+            action.execute(webview, app.clone(), &binding)
                 .and_then(|value| serde_json::from_value::<T>(value)
                     .map_err(|_| "GRID_REQUEST_OUTCOME_UNKNOWN: legacy receipt decoding rejected".into()))
         } else {
             Err("TAB_MUTATION_INSTANCE_STALE".into())
         };
-        if result.as_ref().is_err_and(|error| completion_unknown(error)) {
-            unknown(&ticket);
-        } else if let Ok(mut state) = owner() {
+        if let Err(error) = &result {
+            if completion_unknown(error) || error.contains("TAB_CREATED_ACTIVATION_PARTIAL")
+                || error.contains("TAB_RENDERER_ACTIVATION_PARTIAL") {
+                finish(&ticket, Err(error.clone()));
+                notify(&app, &ticket);
+                guard.completed = true;
+                return result;
+            }
+        }
+        if let Ok(mut state) = owner() {
             if matching(&mut state, &ticket).is_ok() { state.slot = None; }
         }
         guard.completed = true;

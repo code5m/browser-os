@@ -75,7 +75,29 @@ pub(crate) fn renderer_label(index: u32) -> String {
     }
 }
 
-const RENDERER_PROTOCOL: &str = "browseros-renderer-v3";
+const RENDERER_PROTOCOL: &str = "browseros-renderer-v4";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct NativeDocumentStamp {
+    pub instance: u64,
+    pub revision: u64,
+}
+
+impl NativeDocumentStamp {
+    pub(crate) fn from_report(payload: &serde_json::Value) -> Option<Self> {
+        let instance = payload["instance"].as_str()?.parse::<u64>().ok()?;
+        let revision = payload["revision"].as_str()?.parse::<u64>().ok()?;
+        (instance > 0 && revision > 0
+            && payload["instance"].as_str()? == instance.to_string()
+            && payload["revision"].as_str()? == revision.to_string())
+            .then_some(Self { instance, revision })
+    }
+
+    pub(crate) fn usable(self) -> bool {
+        self.instance > 0 && self.instance != u64::MAX
+            && self.revision > 0 && self.revision != u64::MAX
+    }
+}
 
 /// Parent-owned native identity, never supplied by a remote page or frontend.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -225,6 +247,9 @@ pub(crate) fn valid_renderer_event(index: u32, name: &str, payload: &serde_json:
         "grid-child-focus" | "grid-child-blur" => {
             payload["index"].as_u64() == Some(u64::from(index))
         }
+        "native-document-revision" => payload.as_object().is_some_and(|fields| fields.len() == 3)
+            && payload["id"].as_str() == Some(label.as_str())
+            && NativeDocumentStamp::from_report(payload).is_some(),
         "tab-document-changed" => payload.as_object().is_some_and(|fields| fields.len() == 1)
             && payload["id"].as_str() == Some(label.as_str()),
         "tab-navigated" | "new-tab-request" => {
@@ -317,6 +342,18 @@ impl std::fmt::Debug for GridCmd {
 }
 
 impl GridCmd {
+    /// Commands that can observe or affect page state require the exact
+    /// native document in addition to the process/transport identity.
+    pub(crate) fn document_id(&self) -> Option<&str> {
+        match self {
+            Self::Eval { id, .. } | Self::Navigate { id, .. }
+            | Self::ReadReplies { id } | Self::HibernationProbe { id }
+            | Self::FillCredential { id, .. } | Self::CaptureStart { id, .. }
+            | Self::CaptureRead { id, .. } => Some(id.as_str()),
+            _ => None,
+        }
+    }
+
     /// Only a newly created blank document with no subsequent page-affecting
     /// native command can be considered for automatic ordinary-tab reclaim.
     pub(crate) fn preserves_pristine_blank(&self) -> bool {
@@ -428,6 +465,8 @@ pub enum Wire {
     Request {
         seq: u64,
         cmd: GridCmd,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        native_document: Option<NativeDocumentStamp>,
     },
     Response {
         seq: u64,
@@ -698,6 +737,7 @@ mod framing_tests {
             &Wire::Request {
                 seq: 1,
                 cmd: GridCmd::Ping,
+                native_document: None,
             },
         )
         .unwrap();
@@ -706,6 +746,7 @@ mod framing_tests {
             &Wire::Request {
                 seq: 2,
                 cmd: GridCmd::Ping,
+                native_document: None,
             },
         )
         .unwrap();

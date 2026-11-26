@@ -35,15 +35,8 @@ impl HostMcpPolicy {
                 "mcp tool arguments must be object",
             ));
         };
-        if serde_json::to_vec(&map)
-            .map_err(|e| FoundationError::Serialization(e.to_string()))?
-            .len()
-            > 16_384
-        {
-            return Err(FoundationError::InvalidInput(
-                "mcp tool arguments too large",
-            ));
-        }
+        bounded_json(&map, 16_384,
+            FoundationError::InvalidInput("mcp tool arguments too large"))?;
         Ok(CallToolRequestParams::new(name.to_owned()).with_arguments(map))
     }
 }
@@ -67,10 +60,11 @@ fn validate_mcp_binding(binding: &ApprovalBinding, args: &Value) -> Result<()> {
         || binding.session_id.is_nil() {
         return Err(FoundationError::PermissionDenied);
     }
-    if !args.is_object() || serde_json::to_vec(args)
-        .map_err(|e| FoundationError::Serialization(e.to_string()))?.len() > 16_384 {
+    if !args.is_object() {
         return Err(FoundationError::InvalidInput("mcp tool arguments invalid or too large"));
     }
+    bounded_json(args, 16_384,
+        FoundationError::InvalidInput("mcp tool arguments invalid or too large"))?;
     Ok(())
 }
 
@@ -107,30 +101,57 @@ impl AgentTool for RmcpReadOnlyTool {
     }
 }
 
+/// Bound local serialization before allocating an oversized duplicate of
+/// SDK-decoded remote data. Transport-level limits remain provider/SDK-owned.
+fn bounded_json<T: serde::Serialize>(value: &T, limit: usize, too_large: FoundationError) -> Result<Vec<u8>> {
+    use std::io::{Error, ErrorKind, Write};
+    struct Capped { bytes: Vec<u8>, limit: usize, overflow: bool }
+    impl Write for Capped {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if bytes.len() > self.limit.saturating_sub(self.bytes.len()) {
+                self.overflow = true;
+                return Err(Error::new(ErrorKind::InvalidData, "MCP_JSON_LIMIT"));
+            }
+            self.bytes.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+    }
+    let mut sink = Capped { bytes: Vec::new(), limit, overflow: false };
+    match serde_json::to_writer(&mut sink, value) {
+        Ok(()) => Ok(sink.bytes),
+        Err(_) if sink.overflow => Err(too_large),
+        Err(error) => Err(FoundationError::Serialization(error.to_string())),
+    }
+}
+
 /// Structured results are untrusted: never treat strings as permissions or
 /// execute model-provided instructions. Bound size before returning to model.
 pub fn strict_result(result: CallToolResult) -> Result<Value> {
     if result.is_error.unwrap_or(false) {
         return Err(FoundationError::Tool("MCP_TOOL_RETURNED_ERROR".into()));
     }
-    let payload =
-        serde_json::to_value(&result).map_err(|e| FoundationError::Serialization(e.to_string()))?;
-    let bytes =
-        serde_json::to_vec(&payload).map_err(|e| FoundationError::Serialization(e.to_string()))?;
-    if bytes.len() > 64 * 1024 {
-        return Err(FoundationError::Tool("MCP_TOOL_RESULT_TOO_LARGE".into()));
-    }
-    Ok(payload)
+    let bytes = bounded_json(&result, 64 * 1024,
+        FoundationError::Tool("MCP_TOOL_RESULT_TOO_LARGE".into()))?;
+    serde_json::from_slice(&bytes).map_err(|e| FoundationError::Serialization(e.to_string()))
 }
 
 /// Validates untrusted discovery against a trusted allowlist; no execution.
 pub fn names_for_host(discovered: &[Tool], allowlist: &HashSet<String>) -> Vec<String> {
-    discovered
-        .iter()
-        .filter(|item| allowlist.contains(item.name.as_ref())
-            && discovered.iter().filter(|other| other.name == item.name).count() == 1)
-        .map(|item| item.name.to_string())
-        .collect()
+    // Count only allowlisted names in one pass; a remote server cannot
+    // induce quadratic duplicate scanning or allocate a set of all names.
+    let mut seen = HashSet::new();
+    let mut ambiguous = HashSet::new();
+    for item in discovered {
+        let name: &str = item.name.as_ref();
+        if allowlist.contains(name) && !seen.insert(name) {
+            ambiguous.insert(name);
+        }
+    }
+    discovered.iter().filter(|item| {
+        let name: &str = item.name.as_ref();
+        allowlist.contains(name) && !ambiguous.contains(name)
+    }).map(|item| item.name.to_string()).collect()
 }
 
 #[cfg(test)]

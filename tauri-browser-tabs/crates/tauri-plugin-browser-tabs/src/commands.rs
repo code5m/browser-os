@@ -303,8 +303,21 @@ fn offscreen_rect(rect: LogicalRect) -> LogicalRect {
     LogicalRect::new(-30000.0, rect.y, rect.width, rect.height)
 }
 
+type NativeDocumentSink = Arc<dyn Fn(&str, u64, u64) + Send + Sync>;
+static NEXT_NATIVE_DOCUMENT_INSTANCE: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(1);
+
+fn publish_native_document(sink: Option<&NativeDocumentSink>, id: &str,
+    instance: u64, revision: &std::sync::atomic::AtomicU64,
+) {
+    if let Some(sink) = sink {
+        sink(id, instance, revision.load(std::sync::atomic::Ordering::Acquire));
+    }
+}
+
 struct ManagedTab {
     webview: Webview<Wry>,
+    native_instance: u64,
     document_revision: Arc<std::sync::atomic::AtomicU64>,
     // Never reclaim a previously download-affecting host as pristine blank.
     download_seen: Arc<std::sync::atomic::AtomicBool>,
@@ -873,6 +886,7 @@ fn invalidate_capture_document(revision: &std::sync::atomic::AtomicU64) {
 #[derive(Clone)]
 pub struct CaptureDocument {
     instance: TabInstance,
+    native_instance: u64,
     revision: u64,
 }
 
@@ -880,10 +894,17 @@ impl CaptureDocument {
     fn from_tab(tab: &Arc<ManagedTab>) -> Self {
         Self {
             instance: TabInstance(Arc::downgrade(tab)),
+            native_instance: tab.native_instance,
             revision: tab
                 .document_revision
                 .load(std::sync::atomic::Ordering::Acquire),
         }
+    }
+
+    /// Native-only IPC identity. It is scoped to this renderer process and
+    /// never grants permission without the original native document check.
+    pub fn native_identity(&self) -> (u64, u64) {
+        (self.native_instance, self.revision)
     }
 
     fn observed_generation_is_current(&self) -> bool {
@@ -917,6 +938,7 @@ pub struct TabManager {
     shell_shortcut_sink: RwLock<Option<Arc<dyn Fn(&str, &str) + Send + Sync>>>,
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     download_sink: RwLock<Option<Arc<dyn Fn(&str, &str) + Send + Sync>>>,
+    document_sink: RwLock<Option<NativeDocumentSink>>,
     // Native host-only alternate profile. Never selected by an IPC caller.
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     isolated_profile: Option<PathBuf>,
@@ -938,6 +960,7 @@ impl TabManager {
             shell_shortcut_sink: RwLock::new(None),
             #[cfg(any(target_os = "linux", target_os = "windows"))]
             download_sink: RwLock::new(None),
+            document_sink: RwLock::new(None),
             #[cfg(any(target_os = "linux", target_os = "windows"))]
             isolated_profile: None,
             isolated_ready: None,
@@ -962,6 +985,20 @@ impl TabManager {
         &self, sink: impl Fn(&str, &str) + Send + Sync + 'static,
     ) {
         *self.download_sink.write() = Some(Arc::new(sink));
+    }
+
+    /// Native host setup only. Do not use a remotely emit-able WebView event
+    /// as the authority for this exact document identity.
+    pub fn set_native_document_sink(
+        &self, sink: impl Fn(&str, u64, u64) + Send + Sync + 'static,
+    ) {
+        *self.document_sink.write() = Some(Arc::new(sink));
+    }
+
+    fn invalidate_tab_document(&self, id: &str, tab: &ManagedTab) {
+        invalidate_capture_document(&tab.document_revision);
+        let sink = self.document_sink.read().clone();
+        publish_native_document(sink.as_ref(), id, tab.native_instance, &tab.document_revision);
     }
 
     /// Missing native identity is not proof of a pristine download history.
@@ -1123,6 +1160,11 @@ impl TabManager {
         // On Windows, use Tauri's page-load lifecycle rather than emitting
         // NavigationFinished before the document actually finishes loading.
         // Linux continues to use native WebKit main-frame URI observations.
+        let native_instance = NEXT_NATIVE_DOCUMENT_INSTANCE
+            .fetch_update(std::sync::atomic::Ordering::AcqRel,
+                std::sync::atomic::Ordering::Acquire, |value| value.checked_add(1))
+            .map_err(|_| BrowserTabError::Platform("TAB_NATIVE_INSTANCE_EXHAUSTED".into()))?;
+        let document_sink = self.document_sink.read().clone();
         let document_revision = Arc::new(std::sync::atomic::AtomicU64::new(1));
         let download_seen = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let isolated = self.isolated_ready.clone();
@@ -1183,8 +1225,10 @@ impl TabManager {
                 let nav_id = options.id.clone();
                 let nav_app = self.app.clone();
                 let revision = document_revision.clone();
+                let native_sink = document_sink.clone();
                 builder = builder.on_page_load(move |_webview, payload| {
                     invalidate_capture_document(&revision);
+                    publish_native_document(native_sink.as_ref(), &nav_id, native_instance, &revision);
                     let url = payload.url().to_string();
                     let event = match payload.event() {
                         PageLoadEvent::Started => BrowserTabEvent::NavigationStarted {
@@ -1270,6 +1314,8 @@ impl TabManager {
             let load_revision = document_revision.clone();
             let load_app = self.app.clone();
             let load_id = options.id.clone();
+            let load_sink = document_sink.clone();
+            let uri_sink = document_sink.clone();
             let _ = webview.with_webview(move |native| {
                 use webkit2gtk::WebViewExt;
                 let gtk_wv = native.inner();
@@ -1277,6 +1323,7 @@ impl TabManager {
                 // behavior. Same-URL reloads also invalidate the capture.
                 gtk_wv.connect_load_changed(move |_, _| {
                     invalidate_capture_document(&load_revision);
+                    publish_native_document(load_sink.as_ref(), &load_id, native_instance, &load_revision);
                     // Internal invalidation only: do not change the existing
                     // navigationFinished/URI-notify address-bar contract.
                     let _ = load_app.emit("browser-tabs://event", serde_json::json!({
@@ -1286,6 +1333,7 @@ impl TabManager {
                 let last_uri = std::cell::RefCell::new(String::new());
                 gtk_wv.connect_uri_notify(move |wv| {
                     invalidate_capture_document(&uri_revision);
+                    publish_native_document(uri_sink.as_ref(), &uri_id, native_instance, &uri_revision);
                     let Some(uri) = wv.uri() else { return };
                     let value = uri.as_str();
                     let mut previous = last_uri.borrow_mut();
@@ -1550,6 +1598,7 @@ impl TabManager {
 
         let entry = Arc::new(ManagedTab {
             webview,
+            native_instance,
             document_revision,
             download_seen,
             #[cfg(target_os = "linux")]
@@ -1560,7 +1609,11 @@ impl TabManager {
             #[cfg(not(target_os = "linux"))]
             last_rect: RwLock::new(native_rect),
         });
-        self.tabs.write().insert(options.id, entry);
+        self.tabs.write().insert(options.id.clone(), Arc::clone(&entry));
+        // Publish the actual generation after insertion and before the
+        // successful CreateTab receipt, even if no load event has fired.
+        publish_native_document(document_sink.as_ref(), &options.id,
+            native_instance, &entry.document_revision);
         Ok(())
     }
 
@@ -1722,7 +1775,7 @@ impl TabManager {
     /// 用于宫格小窗按比例缩小网页内容，实现"自适应"展示。
     pub fn set_zoom(&self, id: &TabId, scale_factor: f64) -> Result<()> {
         let (_operation, tab) = self.get_tab(id, TabAccessKind::Operation)?;
-        invalidate_capture_document(&tab.document_revision);
+        self.invalidate_tab_document(id, &tab);
         tab.webview.set_zoom(scale_factor)?;
         Ok(())
     }
@@ -1763,7 +1816,7 @@ impl TabManager {
         }
         // Keep ownership on failure. Admission excludes other synchronous
         // dispatches and duplicate lifecycle changes for this identity.
-        invalidate_capture_document(&tab.document_revision);
+        self.invalidate_tab_document(id, &tab);
         tab.webview.close()?;
         self.tabs.write().remove(id);
         platform::forget_native_layout(id);
@@ -1776,7 +1829,7 @@ impl TabManager {
         let url: tauri::Url = url
             .parse()
             .map_err(|_| BrowserTabError::InvalidUrl(url.to_string()))?;
-        invalidate_capture_document(&tab.document_revision);
+        self.invalidate_tab_document(id, &tab);
         tab.webview.navigate(url)?;
         Ok(())
     }
@@ -1791,7 +1844,7 @@ impl TabManager {
             || !document.observed_generation_is_current() {
             return Err(BrowserTabError::Platform("TAB_DOCUMENT_STALE".into()));
         }
-        invalidate_capture_document(&tab.document_revision);
+        self.invalidate_tab_document(id, &tab);
         tab.webview.navigate(url)?;
         Ok(())
     }
@@ -1804,7 +1857,7 @@ impl TabManager {
             || !document.observed_generation_is_current() {
             return Err(BrowserTabError::Platform("TAB_DOCUMENT_STALE".into()));
         }
-        invalidate_capture_document(&tab.document_revision);
+        self.invalidate_tab_document(id, &tab);
         tab.webview.eval(js)?;
         Ok(())
     }

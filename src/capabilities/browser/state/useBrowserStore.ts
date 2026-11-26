@@ -23,7 +23,7 @@ export const useBrowserStore = defineStore("browser", () => {
   const activeTabId = ref("");
   const nativeTabFailures = new Map<string, NativeTabLoadFailureRecord>();
   const isolatedRendererMode = ref(false);
-  const rendererStates = reactive(new Map<string, RendererState>());
+  const rendererStates = reactive(new Map<string, RendererState | "unknown">());
   const rendererDownloads = reactive(new Map<string, RendererDownloadObservation>());
   const rendererObservations = new Map<string, symbol>();
   function clearRendererState(id: string) {
@@ -40,6 +40,7 @@ export const useBrowserStore = defineStore("browser", () => {
       case "cleanup_pending": return "原进程域回收中";
       case "absent": return "待重新激活";
       case "not_ready": return "原生宿主未就绪";
+      case "unknown": return "原生状态待核对";
       case "hibernated": return "已休眠";
       default: return "";
     }
@@ -60,6 +61,7 @@ export const useBrowserStore = defineStore("browser", () => {
       const view = await bridge.inspectRendererRecovery(id);
       if (rendererObservations.get(id) !== observation || !tabs.some(item => item === tab)) return null;
       if (!view.renderer_state) {
+        rendererStates.set(id, "unknown");
         rendererDownloads.delete(id);
         return null;
       }
@@ -75,7 +77,10 @@ export const useBrowserStore = defineStore("browser", () => {
     } catch {
       // A failed current query cannot certify old download counts. Do not
       // let a superseded query clear a later successful observation.
-      if (rendererObservations.get(id) === observation) rendererDownloads.delete(id);
+      if (rendererObservations.get(id) === observation && tabs.some(item => item === tab)) {
+        rendererStates.set(id, "unknown");
+        rendererDownloads.delete(id);
+      }
       return null;
     }
   }
@@ -334,7 +339,7 @@ export const useBrowserStore = defineStore("browser", () => {
             const value = await operation();
             if (!owner.unknown) resolve(value);
           } catch (error) {
-            if (/TAB_MUTATION_OWNER_BUSY|TAB_MUTATION_STALE_|TAB_CONTROL_|TAB_MUTATION_NATIVE_EPOCH_CHANGED|TAB_MUTATION_ACK_UNKNOWN|TAB_MUTATION_OUTCOME_UNKNOWN|TAB_MUTATION_TERMINAL_FAILURE|TAB_CREATED_ACTIVATION_PARTIAL|TAB_RENDERER_ACTIVATION_PARTIAL|TAB_RENDERER_CLEANUP_PENDING|BROWSER_CLEANUP_FAILED/.test(String(error))) {
+            if (/TAB_MUTATION_OWNER_BUSY|TAB_MUTATION_OWNER_UNKNOWN|TAB_MUTATION_WORKER_UNKNOWN|TAB_MUTATION_CANCELLED_BEFORE_EXECUTION|GRID_REQUEST_OUTCOME_UNKNOWN|TAB_MUTATION_STALE_|TAB_CONTROL_|TAB_MUTATION_NATIVE_EPOCH_CHANGED|TAB_MUTATION_ACK_UNKNOWN|TAB_MUTATION_OUTCOME_UNKNOWN|TAB_MUTATION_TERMINAL_FAILURE|TAB_CREATED_ACTIVATION_PARTIAL|TAB_RENDERER_ACTIVATION_PARTIAL|TAB_RENDERER_CLEANUP_PENDING|BROWSER_CLEANUP_FAILED/.test(String(error))) {
               tabRecoveryRequired.value = true;
               tabRecoveryMessage.value = "原生执行记录需核对；请使用页签恢复。";
               for (const queued of waitingMutations.splice(0)) rejectWaiting(queued);

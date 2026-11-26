@@ -459,6 +459,15 @@ fn run_grid_child(index: u32) {
                 startup::report_failure(&error);
                 std::process::exit(1);
             }
+            app.state::<tauri_plugin_browser_tabs::TabManagerState>()
+                .set_native_document_sink(move |id, instance, revision| {
+                    let report = serde_json::json!({
+                        "id": id, "instance": instance.to_string(), "revision": revision.to_string(),
+                    });
+                    if grid_ipc::valid_renderer_event(index, "native-document-revision", &report) {
+                        grid_child_send_event("native-document-revision", report);
+                    }
+                });
             #[cfg(any(target_os = "linux", target_os = "windows"))]
             if grid_ipc::is_tab_renderer(index) {
                 app.state::<tauri_plugin_browser_tabs::TabManagerState>()
@@ -735,9 +744,10 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
                             }
                         }
                     }
-                    Some("navigationStarted" | "documentRevision") => {
-                        grid_child_send_event("tab-document-changed", serde_json::json!({ "id": label }));
-                    }
+                    // Native document_sink already publishes the authoritative
+                    // invalidation. Do not duplicate it through the UI event
+                    // lane, which can otherwise amplify navigation bursts.
+                    Some("navigationStarted" | "documentRevision") => {}
                     Some("navigationFinished") => {
                         let url = payload.get("url").and_then(|u| u.as_str()).unwrap_or("");
                         let report = serde_json::json!({ "id": label, "url": url });
@@ -830,14 +840,31 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
         let mut renderer_capture = crate::renderer_services::CaptureBuffer::default();
         loop {
             match grid_ipc::read_wire(&mut reader) {
-                Ok(Some(grid_ipc::Wire::Request { seq, cmd })) => {
+                Ok(Some(grid_ipc::Wire::Request { seq, cmd, native_document })) => {
                     if let Err(code) = request_fence.admit(index, seq, &cmd) {
                         eprintln!("[grid-child-{index}] {code}");
                         // Do not acknowledge a duplicate sequence or execute a
                         // foreign renderer command. The parent observes disconnect.
                         break;
                     }
-                    if let Some(result) = crate::renderer_services::dispatch(&app, &mut renderer_capture, &cmd) {
+                    let document = if let Some(id) = cmd.document_id() {
+                        let manager = app.state::<tauri_plugin_browser_tabs::TabManagerState>();
+                        let admitted = native_document.filter(|stamp| stamp.usable())
+                            .and_then(|stamp| manager.capture_document(&id.to_owned()).ok()
+                                .filter(|document| document.native_identity() == (stamp.instance, stamp.revision)));
+                        let Some(document) = admitted else {
+                            enqueue_child_critical(grid_ipc::Wire::err(seq, "GRID_NATIVE_DOCUMENT_STALE"));
+                            continue;
+                        };
+                        Some(document)
+                    } else {
+                        if native_document.is_some() {
+                            enqueue_child_critical(grid_ipc::Wire::err(seq, "GRID_NATIVE_DOCUMENT_UNEXPECTED"));
+                            continue;
+                        }
+                        None
+                    };
+                    if let Some(result) = crate::renderer_services::dispatch(&app, &mut renderer_capture, &cmd, document.as_ref()) {
                         let response = match result {
                             Ok(data) => grid_ipc::Wire::Response { seq, ok: true, err: None, data },
                             Err(error) => grid_ipc::Wire::err(seq, error),
@@ -847,12 +874,12 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
                     }
                     if let grid_ipc::GridCmd::ReadReplies { ref id } = cmd {
                         let manager = app.state::<tauri_plugin_browser_tabs::TabManagerState>();
-                        let Ok(document) = manager.capture_document(id) else {
+                        let Some(document) = document.as_ref() else {
                             enqueue_child_critical(grid_ipc::Wire::err(seq, "GRID_DOCUMENT_STALE"));
                             continue;
                         };
                         let result = manager.eval_result_document(
-                                id, &document,
+                                id, document,
                                 include_str!("../injected/extract-replies.js").to_string(),
                                 move |value| {
                                     let response = match value {
@@ -878,14 +905,14 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
                             enqueue_child_critical(grid_ipc::Wire::err(seq, "GRID_HIBERNATION_DOWNLOAD_HISTORY"));
                             continue;
                         }
-                        let Ok(document) = manager.capture_document(id) else {
+                        let Some(document) = document.as_ref() else {
                             enqueue_child_critical(grid_ipc::Wire::err(seq, "GRID_DOCUMENT_STALE"));
                             continue;
                         };
                         let probe_manager = std::sync::Arc::clone(manager.inner());
                         let probe_id = id.clone();
                         let result = manager.eval_result_document(
-                                id, &document,
+                                id, document,
                                 if grid_ipc::is_tab_renderer(index) {
                                     include_str!("../injected/tab-hibernation-probe.js").to_string()
                                 } else {
@@ -911,7 +938,7 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
                         }
                         continue;
                     }
-                    let resp = match dispatch_grid_cmd(&app, &host_label, cmd) {
+                    let resp = match dispatch_grid_cmd(&app, &host_label, cmd, document.as_ref()) {
                         Ok(()) => grid_ipc::Wire::ok(seq),
                         Err(e) => grid_ipc::Wire::err(seq, e),
                     };
@@ -938,6 +965,7 @@ fn dispatch_grid_cmd(
     app: &tauri::AppHandle,
     host_label: &str,
     cmd: grid_ipc::GridCmd,
+    document: Option<&tauri_plugin_browser_tabs::CaptureDocument>,
 ) -> Result<(), String> {
     use grid_ipc::GridCmd;
     use tauri_plugin_browser_tabs::{CreateTabOptions, LogicalRect, TabManagerState};
@@ -1012,13 +1040,13 @@ fn dispatch_grid_cmd(
         GridCmd::Eval { id, js } => {
             let manager = app.state::<TabManagerState>();
             manager
-                .eval(&id, &js)
+                .eval_document(&id, document.ok_or("GRID_NATIVE_DOCUMENT_STALE")?, &js)
                 .map_err(|e| format!("eval {id} 失败: {e}"))
         }
         GridCmd::Navigate { id, url } => {
             let manager = app.state::<TabManagerState>();
             manager
-                .navigate(&id, &url)
+                .navigate_document(&id, document.ok_or("GRID_NATIVE_DOCUMENT_STALE")?, &url)
                 .map_err(|e| format!("navigate {id} 失败: {e}"))
         }
         GridCmd::SetZoom { id, zoom } => {
