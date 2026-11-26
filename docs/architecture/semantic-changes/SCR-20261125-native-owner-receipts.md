@@ -540,3 +540,9 @@ Agent-owned Browser receipt slots explicitly reject the ordinary Start control, 
 - Use the reviewed document binding as the actual close receipt binding rather than storing a second detached precheck alongside a process-only close. Embedded close uses the plugin's native lifecycle reservation and document revision check; isolated close rechecks the admitted owner, connection and parent-observed document revision under the live-map/lifecycle admission before retiring the child. Unknown outcomes remain unknown and are not replayed.
 - Explicit reviewed close retains existing user-close semantics; the pristine-download-history veto remains specific to automatic hibernation. This fences parent-observed document changes, not a kernel-atomic guarantee against website navigation that has not yet been observed. No new action permissions or arbitrary script execution.
 - Source only; no build/test execution, workflow edits or master merge.
+
+### Native download requests follow the transfer owner, not the webpage
+
+- Add a process/connection-scoped native binding for ordinary-tab transfer observation and control. Both platforms use the original authenticated process and connection generation before sending and after receiving; a replacement host or connection is never admitted. The child still checks the exact native transfer ID and operation against its current object.
+- Navigation of the same host no longer invalidates a transfer read/control solely because the webpage's document revision changed or the document is temporarily not ready. Blank-reclaim gates, bounded IPC, shutdown and owner retirement remain enforced. Cumulative count sampling follows the same host binding; suspension still independently checks its reviewed document. No automatic control replay or new native access.
+- Source only; no build/test execution.

@@ -1091,6 +1091,55 @@ impl GridProcessManager {
 
     /// Optional counters carried by the original authenticated Ping. Late or
     /// coalesced replies cannot replace a newer cumulative observation.
+    // Download objects belong to the native host, not the current webpage.
+    // Navigation may invalidate a document without replacing that host.
+    fn download_binding_matches(child: &GridChildHandle, binding: crate::grid_ipc::RendererBinding) -> bool {
+        child.child.id() == binding.owner.0
+            && child.comms.expected_pid.load(Ordering::SeqCst) == binding.owner.0
+            && child.comms.spawn_epoch.load(Ordering::SeqCst) == binding.owner.1
+            && child.comms.is_current(binding.generation)
+            && !child.comms.blank_reclaiming.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn download_binding(&self, index: u32) -> Result<crate::grid_ipc::RendererBinding, String> {
+        if !crate::grid_ipc::is_tab_renderer(index) { return Err("TAB_RENDERER_ROUTE_INVALID".into()); }
+        let children = self.children.try_lock().map_err(|_| "TAB_DOWNLOAD_SAMPLE_BUSY")?;
+        let child = children.get(&index).ok_or("DOWNLOAD_OWNER_STALE")?;
+        let _owner = child.comms.owner_gate.try_lock().map_err(|_| "TAB_DOWNLOAD_SAMPLE_BUSY")?;
+        let binding = crate::grid_ipc::RendererBinding {
+            index, owner: (child.child.id(), child.comms.spawn_epoch.load(Ordering::SeqCst)),
+            generation: child.comms.generation.load(Ordering::SeqCst),
+            navigation_revision: child.navigation_revision,
+        };
+        if binding.owner.0 == 0 || binding.owner.1 == 0 || !Self::download_binding_matches(child, binding) {
+            return Err("DOWNLOAD_OWNER_STALE".into());
+        }
+        Ok(binding)
+    }
+
+    pub(crate) fn download_tasks_bound(&self, binding: crate::grid_ipc::RendererBinding, cmd: GridCmd,
+        timeout_ms: u64) -> Result<Option<String>, String> {
+        if !matches!(&cmd, GridCmd::DownloadTasks { .. }) || !cmd.targets(binding.index) {
+            return Err("DOWNLOAD_CONTROL_INVALID".into());
+        }
+        let _operation = self.lifecycle.enter()?;
+        let comms = {
+            let children = self.children.lock().unwrap();
+            let child = children.get(&binding.index).ok_or("DOWNLOAD_OWNER_STALE")?;
+            let _owner = child.comms.owner_gate.lock().unwrap();
+            if !Self::download_binding_matches(child, binding) { return Err("DOWNLOAD_OWNER_STALE".into()); }
+            Arc::clone(&child.comms)
+        };
+        // Keep exact process + transport generation fencing, but never
+        // demand a current document stamp for a per-transfer operation.
+        let data = self.request_once_with(binding.index, comms, binding.generation, &cmd, timeout_ms)?;
+        let current = self.download_binding(binding.index)?;
+        if current.owner != binding.owner || current.generation != binding.generation {
+            return Err("DOWNLOAD_NATIVE_OUTCOME_UNKNOWN".into());
+        }
+        Ok(data)
+    }
+
     pub(crate) fn refresh_tab_downloads(&self, binding: crate::grid_ipc::RendererBinding, timeout_ms: u64)
         -> Result<(), String>
     {
@@ -1109,7 +1158,7 @@ impl GridProcessManager {
             let children = self.children.lock().unwrap();
             let child = children.get(&binding.index).ok_or("TAB_RENDERER_DOCUMENT_STALE")?;
             let _owner = child.comms.owner_gate.lock().unwrap();
-            if !Self::window_binding_matches(child, binding) {
+            if !Self::download_binding_matches(child, binding) {
                 return Err("TAB_RENDERER_DOCUMENT_STALE".into());
             }
             Arc::clone(&child.comms)
@@ -1124,7 +1173,7 @@ impl GridProcessManager {
         let children = self.children.lock().unwrap();
         let child = children.get(&binding.index).ok_or("TAB_RENDERER_DOCUMENT_STALE")?;
         let _owner = child.comms.owner_gate.lock().unwrap();
-        if !Self::window_binding_matches(child, binding) {
+        if !Self::download_binding_matches(child, binding) {
             return Err("TAB_RENDERER_DOCUMENT_STALE".into());
         }
         let Some(observation) = observation else { return Ok(false); };

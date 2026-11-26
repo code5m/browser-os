@@ -1074,7 +1074,7 @@ pub(crate) async fn tab_mutation(
                 let pid=pid.filter(|v|*v>0).ok_or("DOWNLOAD_OWNER_STALE")?;
                 let epoch=spawn_epoch.as_deref().and_then(|v|v.parse::<u64>().ok())
                     .filter(|v|*v>0).ok_or("DOWNLOAD_OWNER_STALE")?;
-                let binding=app.state::<crate::AppState>().grid_manager.renderer_binding(index)?;
+                let binding=app.state::<crate::AppState>().grid_manager.download_binding(index)?;
                 if binding.owner!=(pid,epoch){return Err("DOWNLOAD_OWNER_STALE".into());}
                 Some(binding)
             }else{
@@ -1089,12 +1089,10 @@ pub(crate) async fn tab_mutation(
                 }
                 let dispatched=control.is_some();
                 let tasks=if let Some(binding)=binding{
-                    let data=state.grid_manager.renderer_request_data(binding,
+                    let data=state.grid_manager.download_tasks_bound(binding,
                         crate::grid_ipc::GridCmd::DownloadTasks{id:id.clone(),control},4000)?
                         .ok_or("DOWNLOAD_NATIVE_OUTCOME_UNKNOWN")?;
-                    if data.len()>128*1024 || state.grid_manager.renderer_binding(binding.index)?!=binding {
-                        return Err("DOWNLOAD_OWNER_STALE".into());
-                    }
+                    if data.len()>128*1024 { return Err("DOWNLOAD_RESULT_INVALID".into()); }
                     serde_json::from_str::<Value>(&data).map_err(|_|"DOWNLOAD_RESULT_INVALID")?
                 }else{
                     app.state::<TabManagerState>().native_download_tasks(&id,control)?
@@ -1117,7 +1115,7 @@ pub(crate) async fn tab_mutation(
             let epoch = spawn_epoch.parse::<u64>().ok().filter(|v| *v > 0 && v.to_string() == spawn_epoch)
                 .ok_or("TAB_DOWNLOAD_SAMPLE_STALE")?;
             if pid == 0 { return Err("TAB_DOWNLOAD_SAMPLE_STALE".into()); }
-            let binding = app.state::<crate::AppState>().grid_manager.renderer_binding(index)?;
+            let binding = app.state::<crate::AppState>().grid_manager.download_binding(index)?;
             if binding.owner != (pid, epoch) { return Err("TAB_DOWNLOAD_SAMPLE_STALE".into()); }
             DOWNLOAD_SAMPLE_LANE.run(move || {
                 let state = app.state::<crate::AppState>();
