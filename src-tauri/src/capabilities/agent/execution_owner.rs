@@ -63,6 +63,13 @@ struct TextSuccessor {
     input: Option<serde_json::Value>,
     resume: bool,
 }
+/// New manual MCP records bind the native workspace BEFORE any approval
+/// or adapter dispatch. Absence is legacy history, not new proof.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct ManualAdmission {
+    workspace_identity: String,
+}
+
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct EffectEvidence {
     request_digest: String,
@@ -133,6 +140,8 @@ struct NativeRunReceipt {
     effect_reviews: Vec<EffectReview>,
     #[serde(default)]
     effect_resolution: Option<EffectReview>,
+    #[serde(default)]
+    manual_admission: Option<ManualAdmission>,
 }
 fn unix_ms() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
@@ -145,6 +154,7 @@ struct DurableRun {
     approval: Option<ApprovalClaims>,
     text: Option<TextRunPayload>,
     effect: Option<EffectEvidence>,
+    manual_admission: Option<ManualAdmission>,
     created_at_ms: u64,
     previous_run: Option<Uuid>,
     _predecessor: Option<Box<DurableRun>>,
@@ -153,7 +163,7 @@ struct DurableRun {
 impl DurableRun {
     fn new(storage: &Path, id: Uuid) -> Result<Self, String> {
         Ok(Self { id, checkpoint: super::coding_checkpoint::RunCheckpoint::acquire(storage, id)?,
-            approval: None, text: None, effect: None, created_at_ms: unix_ms(),
+            approval: None, text: None, effect: None, manual_admission: None, created_at_ms: unix_ms(),
             previous_run: None, _predecessor: None })
     }
     fn persist(&self, phase: &str, task: TaskRecord) -> Result<(), String> {
@@ -163,6 +173,7 @@ impl DurableRun {
             created_at_ms: self.created_at_ms, updated_at_ms: unix_ms(),
             previous_run: self.previous_run, successor: None, payload_forgotten: false,
             effect_reviews: Vec::new(), effect_resolution: None,
+            manual_admission: self.manual_admission.clone(),
         };
         self.write_record(&receipt)
     }
@@ -182,18 +193,58 @@ impl DurableRun {
         if record.id != self.id { return Err("AGENT_RUN_RECEIPT_INVALID".into()); }
         Ok(Some(record))
     }
+    // These checks describe the original encrypted native receipt, not
+    // an untrusted caller-supplied assertion or proof of remote application.
+    fn manual_admission_bound(record: &NativeRunReceipt) -> bool {
+        record.task.goal == "manual_mcp" && record.task.session_id == record.id
+            && record.text.is_none() && record.successor.is_none()
+            && record.manual_admission.as_ref().is_some_and(|a| !a.workspace_identity.is_empty())
+    }
+    fn manual_transport_proven(record: &NativeRunReceipt) -> bool {
+        Self::manual_admission_bound(record) && record.phase == "transport_returned"
+            && record.approval.as_ref().zip(record.effect.as_ref()).is_some_and(|(claim, effect)| {
+                claim.accepted && claim.task_id == record.task.id
+                    && claim.workspace_id == record.task.workspace_id
+                    && claim.session_id == record.task.session_id
+                    && claim.task_revision.checked_add(1) == Some(record.task.revision)
+                    && claim.effect == ToolEffect::ExternalSideEffect
+                    && matches!(claim.tool_name.as_str(), "coding.manual_mcp_call" | "coding.manual_mcp_tools")
+                    && claim.resource.resource_revision == effect.request_digest
+                    && effect.workspace_identity.as_deref() == record.manual_admission.as_ref().map(|a| a.workspace_identity.as_str())
+                    && effect.disposition == "transport_returned"
+                    && effect.response_digest.as_ref().is_some_and(|digest| digest.len() == 64 && digest.bytes().all(|b| b.is_ascii_hexdigit()))
+            })
+    }
     fn recover_record(&self, mut record: NativeRunReceipt) -> Result<NativeRunReceipt, String> {
         // The OS lock excludes the old cooperating owner, not an already
         // dispatched remote side effect. Approval is evidence, never a
         // reusable execution permit.
         if matches!(record.task.status, TaskStatus::Running | TaskStatus::AwaitingApproval) {
+            // The adapter is reachable only after publishing dispatch intent.
+            // An authenticated NEW admission with no intent is a positive
+            // no-dispatch receipt. A persisted successful protocol return
+            // also survives a crash before the final Task transition.
+            let not_dispatched = Self::manual_admission_bound(&record)
+                && record.effect.is_none()
+                && matches!(record.phase.as_str(), "running" | "approved");
+            let returned = Self::manual_transport_proven(&record);
             record.task.revision = record.task.revision.checked_add(1).ok_or("AGENT_TASK_REVISION_EXHAUSTED")?;
-            record.task.status = TaskStatus::Paused;
             record.task.pending = None;
-            let effect_possible = record.approval.as_ref().is_some_and(|claim|
-                claim.accepted && matches!(claim.effect, ToolEffect::ExecuteProcess | ToolEffect::ExternalSideEffect));
-            record.phase = if effect_possible { "operation_unknown" } else { "interrupted" }.into();
-            if let Some(effect) = &mut record.effect { effect.disposition = "unknown".into(); }
+            if not_dispatched {
+                record.task.status = TaskStatus::Cancelled;
+                record.phase = "not_dispatched".into();
+            } else if returned {
+                record.task.status = TaskStatus::Completed;
+                record.phase = "completed".into();
+                // Keep disposition transport_returned. It does not assert
+                // that the remote business effect applied or has quiesced.
+            } else {
+                record.task.status = TaskStatus::Paused;
+                let effect_possible = record.effect.is_some() || record.approval.as_ref().is_some_and(|claim|
+                    claim.accepted && matches!(claim.effect, ToolEffect::ExecuteProcess | ToolEffect::ExternalSideEffect));
+                record.phase = if effect_possible { "operation_unknown" } else { "interrupted" }.into();
+                if let Some(effect) = &mut record.effect { effect.disposition = "unknown".into(); }
+            }
             record.updated_at_ms = unix_ms();
             self.write_record(&record)?;
         }
@@ -618,9 +669,25 @@ impl ProductionExecution {
     pub(crate) fn checkpoint_manual_mcp(&mut self, root: &Path, digest: String, request: &serde_json::Value) -> Result<(), String> {
         #[cfg(any(target_os = "linux", target_os = "windows"))]
         {
+            let identity = workspace_identity(root)?;
+            let actual_digest = format!("{:x}", Sha256::digest(serde_json::to_vec(request)
+                .map_err(|_| "AGENT_OPERATION_INVALID")?));
+            let tool = match request["action"].as_str() {
+                Some("mcp_call") => "coding.manual_mcp_call",
+                Some("mcp_tools") => "coding.manual_mcp_tools",
+                _ => return Err("AGENT_OPERATION_INVALID".into()),
+            };
+            let task = self.record()?;
             let run = self.durable_run.as_mut().ok_or("AGENT_RUN_RECEIPT_REQUIRED")?;
-            if !run.approval.as_ref().is_some_and(|claim| claim.accepted) {
-                return Err("AGENT_APPROVAL_REQUIRED".into());
+            if run.effect.is_some() || run.manual_admission.as_ref().map(|a| a.workspace_identity.as_str()) != Some(identity.as_str())
+                || actual_digest != digest
+                || !run.approval.as_ref().is_some_and(|claim| claim.accepted
+                    && claim.task_id == task.id && claim.workspace_id == task.workspace_id
+                    && claim.session_id == task.session_id
+                    && claim.task_revision.checked_add(1) == Some(task.revision)
+                    && claim.effect == ToolEffect::ExternalSideEffect
+                    && claim.tool_name == tool && claim.resource.resource_revision == digest) {
+                return Err("AGENT_APPROVAL_STALE".into());
             }
             let safe_label = |field: &str| request[field].as_str().filter(|value|
                 !value.is_empty() && value.len() <= 256 && !crate::security_policy::contains_credential_leak(value))
@@ -632,7 +699,6 @@ impl ProductionExecution {
                     .filter(|name| name.len() <= 256 && !crate::security_policy::contains_credential_leak(name))
                     .map(str::to_owned)
             });
-            let identity = workspace_identity(root)?;
             run.effect = Some(EffectEvidence { request_digest: digest.clone(), target,
                 tool: safe_label("tool"), disposition: "dispatching".into(), response_digest: None,
                 workspace_identity: Some(identity),
@@ -647,9 +713,12 @@ impl ProductionExecution {
         {
             let effect = self.durable_run.as_mut().and_then(|run| run.effect.as_mut())
                 .ok_or("AGENT_RUN_RECEIPT_REQUIRED")?;
-            effect.disposition = if reported_success { "transport_returned" } else { "unknown" }.into();
-            effect.response_digest = result.as_ref().ok().and_then(|value| serde_json::to_vec(value).ok())
+            if effect.disposition != "dispatching" { return Err("AGENT_RUN_ALREADY_RECORDED".into()); }
+            let response_digest = result.as_ref().ok().and_then(|value| serde_json::to_vec(value).ok())
                 .map(|bytes| format!("{:x}", Sha256::digest(&bytes)));
+            if reported_success && response_digest.is_none() { return Err("AGENT_RUN_RECEIPT_INVALID".into()); }
+            effect.disposition = if reported_success { "transport_returned" } else { "unknown" }.into();
+            effect.response_digest = response_digest;
         }
         let _ = (result, reported_success);
         self.checkpoint(if reported_success { "transport_returned" } else { "operation_unknown" })
@@ -668,6 +737,7 @@ impl ProductionExecution {
     fn check_manual_scope(record: &NativeRunReceipt, workspace: Uuid, identity: &str) -> Result<(), String> {
         if record.task.goal != "manual_mcp" || record.task.workspace_id != workspace
             || record.task.session_id != record.id || record.text.is_some() || record.successor.is_some()
+            || record.manual_admission.as_ref().is_some_and(|a| a.workspace_identity != identity)
             || record.effect.as_ref().and_then(|effect| effect.workspace_identity.as_deref())
                 .is_some_and(|bound| bound != identity) {
             return Err("AGENT_RUN_SCOPE_MISMATCH".into());
@@ -694,7 +764,7 @@ impl ProductionExecution {
             "tool":effect.and_then(|value| value.tool.as_deref()),
             "target":effect.and_then(|value| value.target.as_deref()),
             "disposition":effect.map(|value| value.disposition.as_str()),
-            "identity_bound":effect.and_then(|value| value.workspace_identity.as_ref()).is_some(),
+            "identity_bound":record.manual_admission.is_some() || effect.and_then(|value| value.workspace_identity.as_ref()).is_some(),
             "observations":record.effect_reviews.len(),
             "can_reconcile":record.phase == "operation_unknown" && record.task.status == TaskStatus::Paused
                 && record.effect_reviews.len() < 16,
@@ -857,7 +927,21 @@ impl ProductionExecution {
         let (workspace, session) = coding_scope(&canonical, Some(&run.to_string()))?.ok_or("AGENT_SESSION_REQUIRED")?;
         let context = ContextRef::checked(ContextKind::Project, format!("workspace:{workspace}"), ContextGrant::ApprovedScope)
             .map_err(|_| "AGENT_TASK_SCOPE_MISMATCH")?;
-        Self::begin_durable(storage, kind, run, workspace, session, vec![context])
+        if kind != "manual_mcp" {
+            return Self::begin_durable(storage, kind, run, workspace, session, vec![context]);
+        }
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        {
+            let mut durable = DurableRun::new(storage, run)?;
+            durable.reject_existing()?;
+            durable.manual_admission = Some(ManualAdmission { workspace_identity: workspace_identity(&canonical)? });
+            let mut execution = Self::begin_scoped(kind, workspace, session, vec![context])?;
+            durable.persist("running", execution.record()?)?;
+            execution.durable_run = Some(durable);
+            Ok(execution)
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        { let _ = (storage, run, workspace, session, context); Err("AGENT_PRIVATE_STORAGE_UNAVAILABLE".into()) }
     }
 
     pub(crate) fn finish_unknown(mut self) -> Result<(), String> {
@@ -1195,12 +1279,14 @@ mod tests {
         let storage = root.join("store");
         let run = Uuid::new_v4();
         let mut execution = ProductionExecution::begin_workspace_run(&storage, "manual_mcp", &root, run).unwrap();
-        let arguments = serde_json::json!({"run_id":run});
+        let request = serde_json::json!({"action":"mcp_call","tool":"fixture"});
+        let digest = format!("{:x}", Sha256::digest(serde_json::to_vec(&request).unwrap()));
+        let arguments = serde_json::json!({"run_id":run,"review_digest":digest});
         let (claim, permit) = execution.approve_native("coding.manual_mcp_call", arguments.clone(),
-            ToolEffect::ExternalSideEffect, "fixture-revision".into()).unwrap();
+            ToolEffect::ExternalSideEffect, digest.clone()).unwrap();
         execution.checkpoint_approval(claim.clone()).unwrap();
         let lease = execution.acquire_approved_native(permit, &claim, &arguments).unwrap();
-        execution.checkpoint_manual_mcp(&root, "fixture-digest".into(), &serde_json::json!({"tool":"fixture"})).unwrap();
+        execution.checkpoint_manual_mcp(&root, digest, &request).unwrap();
         drop(lease);
         execution.record_manual_mcp_return(&Err("MCP_TERMINATION_UNKNOWN".into()), false).unwrap();
         execution.finish_unknown().unwrap();
@@ -1230,6 +1316,54 @@ mod tests {
         assert_eq!(archived["reviews"], settled["reviews"]);
         assert_eq!(archived["resolution"], settled["resolution"]);
         assert!(ProductionExecution::begin_workspace_run(&storage, "manual_mcp", &root, run).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[test]
+    fn manual_mcp_crash_boundaries_recover_only_authenticated_local_evidence() {
+        let root = std::env::temp_dir().join(format!("browseros-mcp-crash-{}", Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let storage = root.join("state");
+        for stage in 0..4 {
+            let run = Uuid::new_v4();
+            let mut execution = ProductionExecution::begin_workspace_run(&storage, "manual_mcp", &root, run).unwrap();
+            let request = serde_json::json!({"action":"mcp_call","run_id":run,"tool":"fixture"});
+            let digest = format!("{:x}", Sha256::digest(serde_json::to_vec(&request).unwrap()));
+            if stage > 0 {
+                let args = serde_json::json!({"run_id":run,"review_digest":digest});
+                let (claim, permit) = execution.approve_native("coding.manual_mcp_call", args.clone(),
+                    ToolEffect::ExternalSideEffect, digest.clone()).unwrap();
+                execution.checkpoint_approval(claim.clone()).unwrap();
+                if stage > 1 {
+                    let lease = execution.acquire_approved_native(permit, &claim, &args).unwrap();
+                    assert!(execution.checkpoint_manual_mcp(&root, "wrong".into(), &request).is_err());
+                    execution.checkpoint_manual_mcp(&root, digest.clone(), &request).unwrap();
+                    assert!(execution.checkpoint_manual_mcp(&root, digest, &request).is_err());
+                    drop(lease);
+                    if stage == 3 {
+                        execution.record_manual_mcp_return(&Ok(serde_json::json!({"result":{"content":[]}})), true).unwrap();
+                    }
+                }
+            }
+            drop(execution);
+            let receipt = ProductionExecution::read_manual_mcp(&storage, &root, run).unwrap();
+            assert_eq!(receipt["phase"], match stage { 0 | 1 => "not_dispatched", 2 => "operation_unknown", _ => "completed" });
+            assert_eq!(receipt["identity_bound"], true);
+            assert_eq!(receipt["can_archive"], stage != 2);
+            if stage == 3 {
+                assert_eq!(receipt["disposition"], "transport_returned");
+                assert!(receipt["resolution"].is_null());
+            }
+            assert!(ProductionExecution::begin_workspace_run(&storage, "manual_mcp", &root, run).is_err());
+        }
+        // An older record without this admission marker is not silently
+        // promoted to a no-dispatch/transport-return proof.
+        let old = Uuid::new_v4();
+        let (workspace, session) = coding_scope(&root, Some(&old.to_string())).unwrap().unwrap();
+        let execution = ProductionExecution::begin_durable(&storage, "manual_mcp", old, workspace, session, vec![]).unwrap();
+        drop(execution);
+        assert_eq!(ProductionExecution::read_manual_mcp(&storage, &root, old).unwrap()["phase"], "interrupted");
         std::fs::remove_dir_all(root).unwrap();
     }
 

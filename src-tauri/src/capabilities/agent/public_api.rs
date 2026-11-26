@@ -189,6 +189,9 @@ pub(crate) fn dispatch_coding_request(
             arguments.clone(), browseros_agent_foundation::tool::ToolEffect::ExternalSideEffect, revision.clone())?;
         execution.checkpoint_approval(claim.clone())?;
         let lease = execution.acquire_approved_native(permit, &claim, &arguments)?;
+        // The authenticated dispatch fence is the last durable write before
+        // calling the adapter. A crash before this fence is distinguishable
+        // from a crash after it; neither permits replay of the old Run.
         execution.checkpoint_manual_mcp(&canonical, revision, &request)?;
         let result_action = action.to_owned();
         let result = super::coding_context::execute(&canonical, storage, request);

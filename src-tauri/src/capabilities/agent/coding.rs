@@ -1740,9 +1740,35 @@ fn load(root: &Path, storage: &Path, id: Option<&str>) -> Result<Session, String
         // A caller reaches load only after obtaining the session owner.
         // An interrupted model turn is never silently resumed or replayed.
         let mut interrupted_external = false;
+        let mut not_dispatched = Vec::new();
+        let workspace_identity = super::execution_owner::workspace_identity(root)?;
         // This function runs only under the same OS session lock used by
         // execute_operation. Surviving execution records are never replayed.
         for operation in &mut session.operations {
+            // New receipts publish prepared BEFORE claiming the lease and
+            // dispatching BEFORE invoking the adapter. An old "dispatching"
+            // receipt can never be inferred to mean no external effect.
+            if operation.status == "executing" && external_operation(&operation.kind)
+                && operation.execution.as_ref().is_some_and(|receipt| {
+                    receipt.phase == "prepared" && receipt.run_id == operation.id
+                        && receipt.workspace_identity.as_deref() == Some(workspace_identity.as_str())
+                        && receipt.approval.as_ref().zip(session.foundation_task.as_ref()).is_some_and(|(claim, task)| {
+                            claim.accepted && claim.task_id == task.id && claim.session_id == task.session_id
+                                && claim.workspace_id == task.workspace_id
+                                && claim.task_revision.checked_add(1) == Some(task.revision)
+                                && (operation.kind == "command" && claim.effect == browseros_agent_foundation::tool::ToolEffect::ExecuteProcess
+                                    || operation.kind == "mcp" && claim.effect == browseros_agent_foundation::tool::ToolEffect::ExternalSideEffect)
+                                && session.runs.iter().any(|run| run.id == receipt.run_id && run.task_id == task.id && run.status == "running")
+                        })
+                })
+            {
+                operation.status = "cancelled".into();
+                operation.result = Some("AGENT_OPERATION_NOT_DISPATCHED".into());
+                operation.review_revision = None;
+                if let Some(receipt) = &mut operation.execution { receipt.phase = "not_dispatched".into(); }
+                not_dispatched.push(operation.id.clone());
+                continue;
+            }
             if operation.status == "executing" && (external_operation(&operation.kind)
                 || !operation.execution.as_ref().is_some_and(|receipt|
                     receipt.phase == "frontend_claimed" && receipt.owner_epoch == Some(frontend_owner_epoch())
@@ -1772,6 +1798,10 @@ fn load(root: &Path, storage: &Path, id: Option<&str>) -> Result<Session, String
             }
         }
         for run in &mut session.runs {
+            if not_dispatched.iter().any(|id| id == &run.id) {
+                run.status = "cancelled".into();
+                continue;
+            }
             if run.status == "running" || (run.status == "awaiting_result"
                 && session.operations.iter().any(|operation| operation.status == "unknown"
                     && operation.execution.as_ref().is_some_and(|receipt| receipt.run_id == run.id)))
@@ -1780,11 +1810,16 @@ fn load(root: &Path, storage: &Path, id: Option<&str>) -> Result<Session, String
                 interrupted_native = true;
             }
         }
-        if interrupted_native || interrupted_external {
+        if interrupted_native || interrupted_external || !not_dispatched.is_empty() {
+            for id in &not_dispatched {
+                session.messages.push(json!({"role":"user","content":format!(
+                    "Native recovery receipt: operation {id} was cancelled before dispatch. Do not replay its old approval or treat it as successful.")}));
+            }
             if session.status != "recovery_conflict" {
                 session.status = if interrupted_external || session.operations.iter().any(|op| op.status == "unknown") {
                     "operation_unknown"
-                } else { "interrupted" }.into();
+                } else if !not_dispatched.is_empty() { session_after_review(&session) }
+                else { "interrupted" }.into();
             }
             save(storage, &session)?;
         }
@@ -2167,7 +2202,7 @@ pub(crate) fn execute_with_bound_adapter(
             session.runs.push(RunReceipt { id: operation_run.clone(), task_id: execution.id(), status: "running".into(), previous_run: None });
             session.operations[index].execution = Some(OperationReceipt {
                 native_run_id: (kind == "command").then(|| format!("run-{operation_run}")),
-                run_id: operation_run, phase: "dispatching".into(), approval: Some(approval.clone()),
+                run_id: operation_run, phase: "prepared".into(), approval: Some(approval.clone()),
                 owner_epoch: None, workspace_identity: Some(effect_identity),
             });
             session.operations[index].status = "executing".into();
@@ -2179,9 +2214,25 @@ pub(crate) fn execute_with_bound_adapter(
                 (root.clone(), session.session_id.clone()), signal.clone());
             let _running_guard = RunningGuard { root: root.clone(), session_id: session.session_id.clone() };
             let execution_lease = execution.acquire_approved_native(permit, &approval, &approved_arguments)?;
-            let response = if signal.load(Ordering::SeqCst) {
-                Err("AGENT_OPERATION_CANCELLED_BEFORE_DISPATCH".into())
-            } else { adapter(&kind, &input, &request, &signal) };
+            if signal.load(Ordering::SeqCst) {
+                drop(execution_lease);
+                let operation = &mut session.operations[index];
+                operation.execution.as_mut().ok_or("AGENT_OPERATION_RECEIPT_MISSING")?.phase = "not_dispatched".into();
+                operation.status = "cancelled".into();
+                operation.result = Some("AGENT_OPERATION_CANCELLED_BEFORE_DISPATCH".into());
+                session.messages.push(json!({"role":"user","content":format!(
+                    "Native receipt: operation {id} was cancelled before dispatch. Its original approval cannot be replayed.")}));
+                session.status = session_after_review(&session).into();
+                session.foundation_task = Some(execution.settle_coding(&session.status)?);
+                if let Some(run) = session.runs.last_mut() { run.status = "cancelled".into(); }
+                return save(storage, &session);
+            }
+            // Persist the actual dispatch fence under the execution lease.
+            // After this write, even cancellation before adapter entry is
+            // conservatively unknown if the process dies before a receipt.
+            session.operations[index].execution.as_mut().ok_or("AGENT_OPERATION_RECEIPT_MISSING")?.phase = "dispatching".into();
+            save(storage, &session)?;
+            let response = adapter(&kind, &input, &request, &signal);
             drop(execution_lease);
             let operation = &mut session.operations[index];
             operation.execution.as_mut().ok_or("AGENT_OPERATION_RECEIPT_MISSING")?.phase = "returned".into();
@@ -2875,6 +2926,34 @@ mod tests {
         assert_eq!(reviewed["operations"][0]["result"],"fixture native output");
         assert!(!reviewed["messages"].to_string().contains("forged frontend output"));
     }
+    #[test]
+    fn prepared_native_receipt_recovers_without_replay_or_unknown_effect() {
+        let f = Fixture::new();
+        let storage = f.0.join("state");
+        let initial = execute(&f.0,&storage,json!({"action":"chat","message":"propose"}), |_,_| {
+            Ok(json!({"role":"assistant","tool_calls":[{"id":"t1","function":{"name":"request_operation","arguments":json!({"kind":"mcp","input":{"server_id":"fixture","tool":"echo","arguments":{}}}).to_string()}}]}))
+        }).unwrap();
+        let id = initial["session_id"].as_str().unwrap();
+        let op = initial["operations"][0]["id"].as_str().unwrap();
+        let request = json!({"action":"execute_operation","session_id":id,"operation_id":op,"approved":true});
+        let mut interrupted = None;
+        execute_with_adapter(&f.0,&storage,request.clone(),|_,_|unreachable!(),|_,_,_,_| {
+            let mut saved = load_without_recovery(&f.0, &storage, Some(id)).unwrap();
+            let receipt = saved.operations[0].execution.as_mut().unwrap();
+            assert_eq!(receipt.phase, "dispatching");
+            receipt.phase = "prepared".into(); // snapshot of the pre-dispatch fence
+            interrupted = Some(saved);
+            Err("fixture; no actual external call".into())
+        }).unwrap();
+        save(&storage, &interrupted.unwrap()).unwrap();
+        let recovered = run(&f,json!({"action":"session","session_id":id})).unwrap();
+        assert_eq!(recovered["operations"][0]["status"],"cancelled");
+        assert_eq!(recovered["operations"][0]["execution"]["phase"],"not_dispatched");
+        assert_eq!(recovered["runs"].as_array().unwrap().last().unwrap()["status"],"cancelled");
+        assert_eq!(recovered["foundation_task"]["status"],"paused");
+        assert!(execute_with_adapter(&f.0,&storage,request,|_,_|unreachable!(),|_,_,_,_|panic!("old approval must not replay")).is_err());
+    }
+
     #[test]
     fn uncertain_native_outcome_requires_termination_and_effect_evidence() {
         let f = Fixture::new();
