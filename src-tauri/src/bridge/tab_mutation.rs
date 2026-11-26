@@ -147,10 +147,11 @@ impl Action {
             state.hibernated_scroll.lock().unwrap().remove(&id);
             return Ok(Value::Null);
         }
-        if let Binding::Isolated(expected) = binding {
+        if let Binding::IsolatedActivation(expected) = binding {
             if let Self::Activate { ref id } = self {
                 return tab_activate_admitted(webview, app.clone(), id.clone(), Some(*expected)).map(|_| Value::Null);
             }
+            return Err("TAB_RENDERER_ACTIVATION_STALE".into());
         }
         if let Binding::IsolatedDocument(document) = binding {
             return match self {
@@ -258,6 +259,7 @@ enum Binding {
     Live(TabInstance),
     LiveDocument(CaptureDocument),
     Isolated(Option<(u32, u64)>),
+    IsolatedActivation(super::isolated_tabs::ActivationAdmission),
     IsolatedAbsent(u64),
     IsolatedDocument(crate::grid_ipc::RendererBinding),
     Hibernated,
@@ -277,6 +279,9 @@ impl Binding {
             return Err("TAB_NOT_FOUND".into());
         }
         if let Some(index) = super::isolated_tabs::route(id) {
+            if matches!(action,Action::Activate{..}) {
+                return super::isolated_tabs::capture_activation(app,id).map(Self::IsolatedActivation);
+            }
             let owner = state.grid_manager.tab_renderer_owner(index)?;
             if let Action::RetireRenderer { pid, spawn_epoch, .. } = action {
                 let expected = spawn_epoch.parse::<u64>().map_err(|_| "TAB_RENDERER_RECOVERY_INVALID_TARGET")?;
@@ -367,6 +372,8 @@ impl Binding {
                     exists && state.grid_manager.tab_renderer_owner(index).is_ok_and(|owner| owner == *expected)
                 })
             }
+            (Self::IsolatedActivation(expected), Some(id)) =>
+                super::isolated_tabs::activation_current(app,id,*expected),
             (Self::IsolatedAbsent(epoch), Some(id)) => {
                 super::isolated_tabs::route(id).is_some_and(|index| {
                     let state = app.state::<crate::AppState>();

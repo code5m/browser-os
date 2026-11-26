@@ -1277,7 +1277,7 @@ pub(super) fn tab_activate_admitted(
     webview: tauri::Webview,
     app: AppHandle,
     id: String,
-    admitted: Option<Option<(u32, u64)>>,
+    admitted: Option<super::isolated_tabs::ActivationAdmission>,
 ) -> Result<(), String> {
     crate::shared::native_legacy_policy::require_main(&webview, "tab_activate")?;
     crate::shared::native_legacy_policy::bound_text("tab_activate", "id", &id)?;

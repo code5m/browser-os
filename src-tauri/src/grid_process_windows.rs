@@ -1910,7 +1910,7 @@ impl GridProcessManager {
         let _dispatch = self.visibility_dispatch.lock().unwrap_or_else(|p| p.into_inner());
         let app = self.app().ok_or("TAB_RENDERER_HOST_UNAVAILABLE")?;
         let state = app.state::<crate::bridge::AppState>();
-        let current = self.renderer_binding(index)?;
+        let current = self.capture_window_route(index)?.ok_or("TAB_RENDERER_WINDOW_UNAVAILABLE")?;
         if current.owner != target.owner || current.generation != target.generation {
             return Err("TAB_RENDERER_ACTIVATION_STALE".into());
         }
@@ -1941,10 +1941,8 @@ impl GridProcessManager {
         let children = self.children.lock().unwrap();
         let child = children.get(&index).ok_or_else(|| post_hide_error("TAB_RENDERER_ACTIVATION_STALE"))?;
         let _owner = child.comms.owner_gate.lock().unwrap();
-        if !child.document_ready
+        if !Self::window_binding_matches(child,target)
             || child.comms.expected_pid.load(Ordering::SeqCst) != target.owner.0
-            || child.comms.spawn_epoch.load(Ordering::SeqCst) != target.owner.1
-            || !child.comms.is_current(target.generation)
         {
             return Err(post_hide_error("TAB_RENDERER_ACTIVATION_STALE"));
         }
@@ -2380,9 +2378,20 @@ impl GridProcessManager {
     pub(crate) fn capture_window_route(&self, index: u32)
         -> Result<Option<crate::grid_ipc::RendererBinding>, String>
     {
-        let children = self.children.lock().unwrap();
-        children.get(&index).map(|child| Self::window_binding(index, child)
-            .ok_or_else(|| "GRID_WINDOW_TARGET_UNAVAILABLE".to_string())).transpose()
+        let children=self.children.try_lock().map_err(|_|"GRID_WINDOW_OBSERVATION_BUSY")?;
+        let Some(child)=children.get(&index) else {return Ok(None);};
+        let _owner=child.comms.owner_gate.try_lock().map_err(|_|"GRID_WINDOW_OBSERVATION_BUSY")?;
+        let binding=crate::grid_ipc::RendererBinding{
+            index,owner:(child.child.id(),child.comms.spawn_epoch.load(Ordering::SeqCst)),
+            generation:child.comms.generation.load(Ordering::SeqCst),
+            navigation_revision:child.navigation_revision,
+        };
+        if binding.owner.0==0 || binding.owner.1==0
+            || child.comms.expected_pid.load(Ordering::SeqCst)!=binding.owner.0
+            || !Self::window_binding_matches(child,binding) {
+            return Err("GRID_WINDOW_TARGET_UNAVAILABLE".into());
+        }
+        Ok(Some(binding))
     }
 
     // Explicit hide and position share the same identity-bound receipt path.

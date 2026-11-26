@@ -4,10 +4,16 @@
 use super::*;
 use crate::grid_ipc::{tab_renderer_index, GridCmd};
 
+// One backend for the entire process lifetime. Routing an existing logical
+// tab must not depend on a later environment read.
+static ISOLATED_MODE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
 pub(crate) fn mode_enabled() -> bool {
-    cfg!(any(target_os = "linux", target_os = "windows"))
-        && std::env::var("BROWSEROS_EXPERIMENTAL_ISOLATED_TABS").as_deref() == Ok("1")
-        && std::env::var_os("GRID_CHILD_INDEX").is_none()
+    *ISOLATED_MODE.get_or_init(|| {
+        cfg!(any(target_os = "linux", target_os = "windows"))
+            && std::env::var("BROWSEROS_EXPERIMENTAL_ISOLATED_TABS").as_deref() == Ok("1")
+            && std::env::var_os("GRID_CHILD_INDEX").is_none()
+    })
 }
 
 pub(crate) fn route(id: &str) -> Option<u32> {
@@ -77,7 +83,8 @@ pub(super) fn create(app: &AppHandle, url: &str) -> Result<TabInfo, String> {
     };
     // The tab is already published. Report the partial outcome explicitly
     // so the UI reconciles its logical list instead of creating a duplicate.
-    let selection = state.grid_manager.renderer_binding(index)
+    let selection = state.grid_manager.capture_window_route(index)
+        .and_then(|target| target.ok_or_else(|| "TAB_RENDERER_WINDOW_UNAVAILABLE".to_owned()))
         .and_then(|target| select_bound(app, &id, target));
     if let Err(error) = selection {
         return Err(format!("TAB_CREATED_ACTIVATION_PARTIAL:{id}:{error}"));
@@ -159,89 +166,109 @@ pub(super) fn park_admitted(app: &AppHandle, id: &str, address: &str,
     Ok(())
 }
 
-/// An explicit activation may restore a crashed tab from its last URL after
-/// original native retirement. It never silently reloads a healthy document.
-pub(super) fn activate_admitted(app: &AppHandle, id: &str, admitted: Option<Option<(u32, u64)>>) -> Result<(), String> {
+/// Window activation is not document execution. Bind live process/connection
+/// or the precise native absence and logical sleeping state before admission.
+#[derive(Clone, Copy)]
+pub(super) enum ActivationAdmission {
+    Live(crate::grid_ipc::RendererBinding),
+    Absent { epoch:u64, hibernated:bool },
+}
+
+pub(super) fn capture_activation(app:&AppHandle,id:&str) -> Result<ActivationAdmission,String> {
+    let index=exists(app,id)?;
+    let state=app.state::<AppState>();
+    if let Some(binding)=state.grid_manager.capture_window_route(index)? {
+        return Ok(ActivationAdmission::Live(binding));
+    }
+    let epoch=state.grid_manager.tab_renderer_absence_epoch(index)?;
+    let hibernated=state.hibernated_tabs.try_lock()
+        .map_err(|_|"TAB_RENDERER_OBSERVATION_BUSY")?.contains(id);
+    Ok(ActivationAdmission::Absent{epoch,hibernated})
+}
+pub(super) fn activation_current(app:&AppHandle,id:&str,expected:ActivationAdmission) -> bool {
+    match (expected,capture_activation(app,id)) {
+        (ActivationAdmission::Live(old),Ok(ActivationAdmission::Live(current))) =>
+            old.index==current.index && old.owner==current.owner && old.generation==current.generation,
+        (ActivationAdmission::Absent{epoch,hibernated},Ok(ActivationAdmission::Absent{epoch:now,hibernated:sleeping})) =>
+            epoch==now && hibernated==sleeping,
+        _=>false,
+    }
+}
+
+/// Explicit activation may recreate a missing host at a supported address.
+/// No fresh absence or replacement connection can inherit old admission.
+pub(super) fn activate_admitted(app: &AppHandle, id: &str, admitted: Option<ActivationAdmission>) -> Result<(), String> {
     let index = exists(app, id)?;
     let state = app.state::<AppState>();
-    let owner = state.grid_manager.tab_renderer_owner(index)?;
-    if admitted.is_some_and(|expected| expected != owner) {
+    let admission=match admitted {
+        Some(binding)=>binding,
+        None=>capture_activation(app,id)?,
+    };
+    if !activation_current(app,id,admission) {
         return Err("TAB_RENDERER_ACTIVATION_STALE".into());
     }
-    let mut viewport_restored = true;
-    let binding = if owner.is_none() {
-        let url = state.tabs.lock().unwrap().get(id).map(|tab| tab.url.clone())
-            .ok_or("TAB_NOT_FOUND")?;
-        // A crash is not authorization to re-execute a transient document
-        // or reopen an embedded-credential URL. Keep the logical tab.
-        if !crate::grid_ipc::restorable_address(&url) {
-            return Err("TAB_RESTORE_URL_UNSUPPORTED".into());
+    match admission {
+        ActivationAdmission::Live(binding)=>{
+            // Selecting an already-created native window is independent of
+            // page navigation and optional cumulative download telemetry.
+            select_bound(app,id,binding)?;
+            state.hibernated_tabs.lock().unwrap().remove(id);
+            Ok(())
         }
-        state.grid_manager.start_tab_renderer(index, &url)?;
-        // A recreated host is no longer a hibernated native page, even if
-        // binding or selection fails. Retain a partial activation receipt.
-        state.hibernated_tabs.lock().unwrap().remove(id);
-        let initial = state.grid_manager.renderer_binding(index)
-            .map_err(|error| format!("TAB_RENDERER_ACTIVATION_PARTIAL:{id}:{error}"))?;
-        // Consume a snapshot only on recreation, before selection. Never
-        // defer it to an unrelated later activation or override existing scroll.
-        let snapshot = state.hibernated_scroll.lock().unwrap().remove(id);
-        if let Some((address,(x,y))) = snapshot {
-            if address == url && crate::grid_ipc::valid_viewport(x,y) {
-                viewport_restored = false;
-                for _ in 0..4 {
-                    if state.shutdown_requested.load(Ordering::Acquire) { break; }
-                    let Ok(current) = state.grid_manager.renderer_binding(index) else { break; };
-                    if current.owner != initial.owner || current.generation != initial.generation { break; }
-                    if !state.tabs.lock().unwrap().get(id).is_some_and(|tab| tab.url == address) { break; }
-                    let reply = state.grid_manager.renderer_request_data(current, GridCmd::ViewportRestore {
-                        id: id.to_owned(), address: address.clone(), x, y,
-                    }, 1000);
-                    match reply {
-                        Ok(Some(value)) if value == "applied" || value == "skip_nonzero" => {
-                            viewport_restored = true;
-                            break;
+        ActivationAdmission::Absent{epoch,..}=>{
+            let url=state.tabs.lock().unwrap().get(id).map(|tab|tab.url.clone())
+                .ok_or("TAB_NOT_FOUND")?;
+            if !crate::grid_ipc::restorable_address(&url) {
+                return Err("TAB_RESTORE_URL_UNSUPPORTED".into());
+            }
+            state.grid_manager.start_tab_renderer_at_absence(index,&url,epoch)?;
+            state.hibernated_tabs.lock().unwrap().remove(id);
+            // Once a replacement exists, consume the old checkpoint before
+            // any fallible binding observation. Never carry it to a later host.
+            let snapshot=state.hibernated_scroll.lock().unwrap().remove(id);
+            let window=|| state.grid_manager.capture_window_route(index)?
+                .ok_or_else(||"TAB_RENDERER_WINDOW_UNAVAILABLE".to_owned());
+            let partial=|error:String|format!("TAB_RENDERER_ACTIVATION_PARTIAL:{id}:{error}");
+            let initial=window().map_err(partial)?;
+            let mut restored=snapshot.is_none();
+            if let Some((address,(x,y)))=snapshot {
+                if address==url && crate::grid_ipc::valid_viewport(x,y) {
+                    // A document may still be loading. Retry admission only
+                    // while no viewport operation has entered the native host.
+                    for _ in 0..4 {
+                        if state.shutdown_requested.load(Ordering::Acquire) {break;}
+                        let Ok(current)=window() else {break;};
+                        if current.owner!=initial.owner || current.generation!=initial.generation {break;}
+                        if !state.tabs.lock().unwrap().get(id).is_some_and(|tab|tab.url==address) {break;}
+                        let document=match state.grid_manager.renderer_binding(index) {
+                            Ok(document) if document.owner==initial.owner && document.generation==initial.generation=>document,
+                            Err(error) if error=="TAB_RENDERER_DOCUMENT_UNAVAILABLE"=>{
+                                std::thread::sleep(std::time::Duration::from_millis(250));continue;
+                            }
+                            _=>break,
+                        };
+                        match state.grid_manager.renderer_request_data(document,GridCmd::ViewportRestore{
+                            id:id.to_owned(),address:address.clone(),x,y,
+                        },1000) {
+                            Ok(Some(value)) if value=="applied" || value=="skip_nonzero"=>{restored=true;break;}
+                            Ok(Some(value)) if value=="deferred"=>{
+                                std::thread::sleep(std::time::Duration::from_millis(250));
+                            }
+                            _=>break, // Never replay ambiguous or partially applied scroll.
                         }
-                        Ok(Some(value)) if value == "deferred" => {
-                            std::thread::sleep(std::time::Duration::from_millis(250));
-                        }
-                        // No resend after an unknown outcome or failed identity.
-                        _ => break,
                     }
                 }
             }
+            let current=window().map_err(partial)?;
+            if current.owner!=initial.owner || current.generation!=initial.generation {
+                return Err(partial("TAB_VIEWPORT_STALE".into()));
+            }
+            select_bound(app,id,current).map_err(partial)?;
+            if !restored {
+                return Err(partial("TAB_VIEWPORT_RESTORE_UNCONFIRMED".into()));
+            }
+            Ok(())
         }
-        let current = state.grid_manager.renderer_binding(index)
-            .map_err(|error| format!("TAB_RENDERER_ACTIVATION_PARTIAL:{id}:{error}"))?;
-        if current.owner != initial.owner || current.generation != initial.generation {
-            return Err(format!("TAB_RENDERER_ACTIVATION_PARTIAL:{id}:TAB_VIEWPORT_STALE"));
-        }
-        current
-    } else {
-        let binding = state.grid_manager.renderer_binding(index)?;
-        if Some(binding.owner) != owner {
-            return Err("TAB_RENDERER_ACTIVATION_STALE".into());
-        }
-        state.grid_manager.refresh_tab_downloads(binding, 3000)?;
-        // Activation and Ping are process-scoped; normal navigation must
-        // not invalidate selection of the same authenticated native host.
-        let current = state.grid_manager.renderer_binding(index)?;
-        if current.owner != binding.owner || current.generation != binding.generation {
-            return Err("TAB_RENDERER_ACTIVATION_STALE".into());
-        }
-        state.hibernated_tabs.lock().unwrap().remove(id);
-        current
-    };
-    // The normal frontend position command supplies the new active rectangle.
-    let selected = select_bound(app, id, binding);
-    if owner.is_none() {
-        selected.map_err(|error| format!("TAB_RENDERER_ACTIVATION_PARTIAL:{id}:{error}"))?;
-        if !viewport_restored {
-            return Err(format!("TAB_RENDERER_ACTIVATION_PARTIAL:{id}:TAB_VIEWPORT_RESTORE_UNCONFIRMED"));
-        }
-        Ok(())
-    } else {
-        selected
     }
 }
 

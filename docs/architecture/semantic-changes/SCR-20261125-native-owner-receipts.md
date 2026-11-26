@@ -571,3 +571,10 @@ Agent-owned Browser receipt slots explicitly reject the ordinary Start control, 
 - Keep the shared model admission budget and provider tool-call identities for the lifetime of the driver. Count every raw text segment before SDK admission, reject repeated/malformed call IDs and unsupported reasoning/image content. Bound the assembled final output separately, without double-counting previously admitted text. Keep the existing 45-second active transport window per drive call; human review time is not a provider timeout.
 - Foundation streaming request validation now enters the existing task settlement boundary so an invalid already-admitted request does not strand a Running task. This does not make the experimental Rig adapter the default production runtime or grant write tools.
 - Source only; no compilation, test execution, workflow changes or master merge.
+
+### Freeze renderer backend routing and bind window activation independently of document readiness
+
+- Select the opt-in backend once per process. No environment reread can redirect an existing tab to another backend; default remains embedded pending installed-build acceptance.
+- Distinguish window activation from document effect admission. A live native window is admitted by exact process and connection, not navigation revision or optional download Ping. The same window can be selected while a document is loading; writes still require the original native document binding. Both managers recheck window identity, creation and reclaim state before active-tab publication.
+- A missing-host activation binds the original absence epoch and sleeping state at preparation and validates it at spawn under native lifecycle admission. Consume any previous viewport checkpoint immediately after recreation, before fallible binding reads. Retry a viewport only before dispatch when the document is unavailable or after a typed no-write deferred result; never replay an ambiguous scroll.
+- Window-route capture uses nonblocking live-map/owner admission and distinguishes contention from true absence. No new render/backend fallback, default enablement, compilation, tests, workflow edits or master merge.
