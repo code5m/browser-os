@@ -244,6 +244,10 @@ impl DurableRun {
             && !Self::manual_transport_proven(&record) {
             return Err("AGENT_RUN_RECEIPT_INVALID".into());
         }
+        if matches!(record.phase.as_str(), "reconciled_applied" | "reconciled_not_applied")
+            && !Self::manual_resolution_proven(&record) {
+            return Err("AGENT_RUN_RECEIPT_INVALID".into());
+        }
         if let Some(effect) = &record.effect {
             if let Some(value) = &effect.response_payload {
                 let bytes = serde_json::to_vec(value).map_err(|_| "AGENT_RUN_RECEIPT_INVALID")?;
@@ -283,6 +287,24 @@ impl DurableRun {
                     && effect.workspace_identity.as_ref().is_some_and(|identity| !identity.is_empty()
                         && record.manual_admission.as_ref().map_or(true, |admission| admission.workspace_identity == *identity))
             })
+    }
+    fn manual_resolution_proven(record: &NativeRunReceipt) -> bool {
+        let (status, observation, disposition) = match record.phase.as_str() {
+            "reconciled_applied" => (TaskStatus::Completed, "observed_applied", "user_attested_applied"),
+            "reconciled_not_applied" => (TaskStatus::Failed, "observed_not_applied", "user_attested_not_applied"),
+            _ => return false,
+        };
+        record.task.status == status && record.effect_reviews.len() <= 16
+            && Self::manual_effect_binding(record, 3 + record.effect_reviews.len() as u64)
+            && record.effect.as_ref().is_some_and(|effect| effect.disposition == disposition
+                && effect.response_payload.is_none())
+            && record.effect_resolution.as_ref().is_some_and(|resolution|
+                resolution.observation == observation && resolution.execution_ended_attested
+                    && resolution.workspace_identity_bound
+                    && !resolution.evidence.trim().is_empty() && resolution.evidence.len() <= 2048
+                    && !crate::security_policy::contains_credential_leak(&resolution.evidence)
+                    && resolution.reviewed_revision.as_deref().and_then(|v| v.parse::<u64>().ok())
+                        .and_then(|v| v.checked_add(1)) == Some(record.task.revision))
     }
     fn manual_transport_proven(record: &NativeRunReceipt) -> bool {
         let delta = match (record.phase.as_str(), record.task.status) {
@@ -1529,6 +1551,16 @@ mod tests {
         assert_eq!(settled["phase"], "reconciled_not_applied");
         assert_eq!(settled["resolution"]["execution_ended_attested"], true);
         assert_eq!(settled["can_resolve"], false);
+        {
+            let owner = DurableRun::lookup(&storage, run).unwrap();
+            let mut record = owner.read_record().unwrap().unwrap();
+            assert!(DurableRun::manual_resolution_proven(&record));
+            record.effect_resolution.as_mut().unwrap().execution_ended_attested = false;
+            assert!(!DurableRun::manual_resolution_proven(&record));
+            record.effect_resolution.as_mut().unwrap().execution_ended_attested = true;
+            record.approval.as_mut().unwrap().resource.resource_revision = "wrong".into();
+            assert!(!DurableRun::manual_resolution_proven(&record));
+        }
         let terminal_revision = settled["revision"].as_str().unwrap().parse().unwrap();
         let archived = ProductionExecution::archive_manual_mcp(&storage, &root, run, terminal_revision).unwrap();
         assert_eq!(archived["archived"], true);
