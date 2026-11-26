@@ -747,6 +747,29 @@ fn poll_leader_exit(child: &mut Child, pgid: Option<i32>) -> std::io::Result<Opt
     { let _ = pgid; child.try_wait() }
 }
 
+/// The cleanup deadline is diagnostic, not an ownership-release boundary.
+/// Keep the original process/domain handle until authoritative confirmation.
+fn confirm_owned_cleanup<T>(reason: &str, mut confirm: impl FnMut() -> Option<T>) -> T {
+    let mut warned = false;
+    loop {
+        if let Some(value) = confirm() { return value; }
+        if !warned {
+            eprintln!("[script-supervisor] {reason}; retaining original execution owner");
+            warned = true;
+        }
+        thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
+    }
+}
+
+#[cfg(windows)]
+fn confirm_job_empty(job: &crate::windows_process::JobObject) {
+    confirm_owned_cleanup("job exit unconfirmed", || {
+        if job.is_empty().ok() == Some(true) { return Some(()); }
+        let _ = job.terminate();
+        None
+    });
+}
+
 /// supervisor：轮询 wait + 超时/取消 + 收尾状态。
 /// **`Child` 的所有权在此线程**，进程表不持 `Child`。
 fn supervise(
@@ -763,172 +786,90 @@ fn supervise(
     records_file: Option<PathBuf>,
 ) {
     let started = Instant::now();
-    let mut readers = Some(readers);
 
-    // Scope cleanup is checked before joining pipes. An escaped process
-    // group member still inherits its delegated cgroup.
-    #[cfg(target_os = "linux")]
-    let finish_scope = || -> bool {
-        match &scope {
-            Some(scope) => scope.terminate_and_confirm(Instant::now() + Duration::from_secs(5)).is_ok(),
-            None => true,
-        }
-    };
-    let finish = |status: RunStatus, exit_code: Option<i32>, error: Option<String>| {
-        // Terminate is a request, not a completion receipt. Retain admission
-        // while the owned native group/Job cannot be observed empty.
-        #[cfg(target_os = "linux")]
-        if scope.is_some() && !finish_scope() { return; }
-        #[cfg(target_os = "linux")]
-        let group_only = scope.is_none();
-        #[cfg(all(unix, not(target_os = "linux")))]
-        let group_only = true;
-        #[cfg(unix)]
-        while group_only && pgid.is_some_and(process_group_alive) {
-            thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
-        }
-        #[cfg(windows)]
-        while !job.is_empty().unwrap_or(false) {
-            thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
-        }
-        let mut st = state.lock().unwrap_or_else(|p| p.into_inner());
-        // 终态不可互转（a 卡 §2）：已有终态则不再改写。
-        if st.status.is_terminal() {
-            return;
-        }
-        st.status = status;
-        st.exit_code = exit_code;
-        st.error = error;
-        st.finished_at = Some(Utc::now());
-        let (tail, truncated) = output.lock().unwrap_or_else(|p| p.into_inner()).tail();
-        st.output_tail = tail;
-        st.truncated = truncated;
-        let snapshot = st.clone();
-        // Publish terminal state atomically with persistence: snapshot() takes this same
-        // mutex, so observers cannot see Succeeded/Failed before the run record is durable.
-        // This removes the real D4 race where a terminal snapshot could precede atomic_write.
-        if let Some(path) = &records_file {
-            persist_run_record(path, &snapshot);
-        }
-        drop(st);
-        if let Some(app) = &app {
-            let _ = app.emit("script-finished", ScriptFinishedEvent { snapshot });
-        }
-    };
-
-    loop {
+    // Determine the leader's terminal status exactly once. Failed wait
+    // observations are not a reason to drop Child or the kernel owner.
+    let (status, exit_code, error) = loop {
         match poll_leader_exit(&mut child, pgid) {
             Ok(Some(exit)) => {
                 let code = exit.code();
-                // 退出码 0 视为成功（a 卡 §7：`Succeeded` 语义）。
-                let status = if code == Some(0) {
-                    RunStatus::Succeeded
-                } else {
-                    RunStatus::Failed
-                };
-                // A background child can inherit the output pipe after the leader exits.
-                // Close the process group before joining readers so the supervisor cannot
-                // remain Running forever waiting for EOF from an orphaned descendant.
-                #[cfg(windows)]
-                let _ = job.terminate();
-                // Linux has already signalled the owned group BEFORE
-                // reaping. Never send another numeric PGID signal here.
-                #[cfg(not(target_os = "linux"))]
-                terminate_group(pgid, HARD_GRACE_SECS);
-                #[cfg(target_os = "linux")]
-                if !finish_scope() {
-                    eprintln!("[script-supervisor] delegated scope termination unconfirmed");
-                    return;
-                }
-                join_output_readers(readers.take().unwrap_or_default());
-                finish(status, code, None);
-                return;
+                break (if code == Some(0) { RunStatus::Succeeded } else { RunStatus::Failed }, code, None);
             }
             Ok(None) => {
-                if cancel.load(Ordering::SeqCst) {
+                let outcome = if cancel.load(Ordering::SeqCst) {
+                    Some((RunStatus::Cancelled, CANCEL_GRACE_SECS))
+                } else if started.elapsed().as_secs() >= timeout_secs as u64 {
+                    Some((RunStatus::Timeout, HARD_GRACE_SECS))
+                } else { None };
+                if let Some((status, grace)) = outcome {
                     #[cfg(windows)]
-                    let _ = job.terminate();
-                    terminate_group(pgid, CANCEL_GRACE_SECS);
+                    { let _ = job.terminate(); }
+                    // On Linux the original leader is still unreaped here,
+                    // so this numeric process group has not been recycled.
+                    terminate_group(pgid, grace);
                     #[cfg(target_os = "linux")]
                     if let Some(scope) = &scope { let _ = scope.request_kill(); }
-                    let code = match child.wait() {
-                        Ok(exit) => exit.code(),
-                        Err(_) => {
-                            // No confirmed reap: retain Running admission
-                            // and never invent a terminal cancellation.
-                            eprintln!("[script-supervisor] child reap unconfirmed");
-                            return;
-                        }
-                    };
-                    #[cfg(target_os = "linux")]
-                if !finish_scope() {
-                    eprintln!("[script-supervisor] delegated scope termination unconfirmed");
-                    return;
-                }
-                join_output_readers(readers.take().unwrap_or_default());
-                    finish(RunStatus::Cancelled, code, None);
-                    return;
-                }
-                if started.elapsed().as_secs() >= timeout_secs as u64 {
-                    #[cfg(windows)]
-                    let _ = job.terminate();
-                    terminate_group(pgid, HARD_GRACE_SECS);
-                    #[cfg(target_os = "linux")]
-                    if let Some(scope) = &scope { let _ = scope.request_kill(); }
-                    let code = match child.wait() {
-                        Ok(exit) => exit.code(),
-                        Err(_) => {
-                            // No confirmed reap: retain Running admission
-                            // and never invent a terminal cancellation.
-                            eprintln!("[script-supervisor] child reap unconfirmed");
-                            return;
-                        }
-                    };
-                    #[cfg(target_os = "linux")]
-                if !finish_scope() {
-                    eprintln!("[script-supervisor] delegated scope termination unconfirmed");
-                    return;
-                }
-                join_output_readers(readers.take().unwrap_or_default());
-                    finish(RunStatus::Timeout, code, None);
-                    return;
+                    let exit = confirm_owned_cleanup("child reap unconfirmed", || child.wait().ok());
+                    break (status, exit.code(), None);
                 }
                 thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
             }
-            Err(e) => {
-                // A lost wait receipt on Linux means identity can no
-                // longer be established (e.g. ECHILD). Never signal a
-                // potentially reused group or publish a false terminal.
+            Err(_) => {
+                // No numeric group signal after a lost wait observation:
+                // the leader may have already been reaped. Only identity-
+                // bound handles may request termination in this branch.
                 #[cfg(target_os = "linux")]
-                {
-                    eprintln!("[script-supervisor] leader ownership unconfirmed: {:?}", e.kind());
-                    return;
-                }
-                #[cfg(not(target_os = "linux"))]
-                {
-                    // Windows retains an independent, identity-bound Job.
-                    #[cfg(windows)]
-                    let _ = job.terminate();
-                    terminate_group(pgid, HARD_GRACE_SECS);
-                    if child.wait().is_err() {
-                        eprintln!("[script-supervisor] child reap unconfirmed");
-                        return;
-                    }
-                    #[cfg(target_os = "linux")]
-                if !finish_scope() {
-                    eprintln!("[script-supervisor] delegated scope termination unconfirmed");
-                    return;
-                }
-                join_output_readers(readers.take().unwrap_or_default());
-                    finish(
-                        RunStatus::Failed,
-                        None,
-                        Some(format!("等待子进程失败: {e}")),
-                    );
-                    return;
-                }
+                if let Some(scope) = &scope { let _ = scope.request_kill(); }
+                #[cfg(windows)]
+                { let _ = job.terminate(); let _ = child.kill(); }
+                let exit = confirm_owned_cleanup("leader wait receipt unconfirmed", || child.wait().ok());
+                break (RunStatus::Failed, exit.code(), Some("SCRIPT_WAIT_OBSERVATION_FAILED".into()));
             }
         }
+    };
+
+    // Close the identity-bound native domain BEFORE joining output pipes.
+    // A descendant may hold a pipe open after the original leader exits.
+    // No attempt is abandoned just because a bounded cleanup round timed out.
+    #[cfg(target_os = "linux")]
+    if let Some(scope) = &scope {
+        confirm_owned_cleanup("delegated scope exit unconfirmed", || {
+            scope.terminate_and_confirm(Instant::now() + Duration::from_secs(5)).ok()
+        });
+    }
+    #[cfg(target_os = "linux")]
+    let group_only = scope.is_none();
+    #[cfg(all(unix, not(target_os = "linux")))]
+    let group_only = true;
+    #[cfg(unix)]
+    if group_only {
+        // Read-only probe only after reaping. No destructive signal to
+        // a possibly recycled PGID. This legacy path cannot contain
+        // descendants that leave the process group.
+        confirm_owned_cleanup("legacy group exit unconfirmed", || {
+            (!pgid.is_some_and(process_group_alive)).then_some(())
+        });
+    }
+    #[cfg(windows)]
+    confirm_job_empty(&job);
+    join_output_readers(readers);
+
+    let mut st = state.lock().unwrap_or_else(|p| p.into_inner());
+    if st.status.is_terminal() { return; }
+    st.status = status;
+    st.exit_code = exit_code;
+    st.error = error;
+    st.finished_at = Some(Utc::now());
+    let (tail, truncated) = output.lock().unwrap_or_else(|p| p.into_inner()).tail();
+    st.output_tail = tail;
+    st.truncated = truncated;
+    let snapshot = st.clone();
+    // UI history is best effort; it is not authoritative external-effect
+    // evidence. The original Coding owner still publishes its own receipt.
+    if let Some(path) = &records_file { persist_run_record(path, &snapshot); }
+    drop(st);
+    if let Some(app) = &app {
+        let _ = app.emit("script-finished", ScriptFinishedEvent { snapshot });
     }
 }
 
@@ -1091,6 +1032,14 @@ fn start_argv_run_owned(
             return Err(RunError::SpawnFailed(format!("BROWSEROS_CGROUP_UNAVAILABLE: {error}")));
         }
     };
+    #[cfg(windows)]
+    let job = match crate::windows_process::JobObject::create_for_spawn() {
+        Ok(job) => job,
+        Err(error) => {
+            table.lock_runs().remove(&run_id);
+            return Err(RunError::SpawnFailed(error));
+        }
+    };
     // All local validation and the exclusive run reservation precede
     // the trusted durable admission. Never spawn after an admission error.
     // No table mutex is held across the callback's private storage write.
@@ -1118,17 +1067,19 @@ fn start_argv_run_owned(
     if let Some(scope) = &mut scope { scope.mark_spawned(); }
 
     #[cfg(windows)]
-    let job = match crate::windows_process::JobObject::attach_suspended_pid(child.id()) {
-        Ok(job) => job,
-        Err(error) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            table.lock_runs().remove(&run_id);
-            return Err(RunError::SpawnFailed(format!(
-                "WINDOWS_SCRIPT_JOB_FAILED: {error}"
-            )));
-        }
-    };
+    if let Err(error) = job.assign_suspended_pid(child.id()) {
+        // Partial assignment may leave a suspended Child outside the Job.
+        // Retain BOTH owners and the reservation until kernel confirmation.
+        confirm_owned_cleanup("failed job assignment child exit unconfirmed", || {
+            match child.try_wait() {
+                Ok(Some(status)) => Some(status),
+                _ => { let _ = child.kill(); let _ = job.terminate(); None }
+            }
+        });
+        confirm_job_empty(&job);
+        table.lock_runs().remove(&run_id);
+        return Err(RunError::SpawnFailed(format!("WINDOWS_SCRIPT_JOB_FAILED: {error}")));
+    }
     let pgid = child.id() as i32;
 
     // --- 4) 输出 reader 线程（必须在 supervisor 之前，否则管道无人读） ---
@@ -1512,6 +1463,17 @@ mod script_runner_tests {
 
         let err = build_command_argv(&snippet, &values, &roots).unwrap_err();
         assert_eq!(err.code(), "SCRIPT_PATH_REJECTED");
+    }
+
+    #[test]
+    fn cleanup_retries_until_authoritative_receipt() {
+        let mut attempts = 0;
+        let receipt = confirm_owned_cleanup("fixture pending", || {
+            attempts += 1;
+            (attempts == 3).then_some(42)
+        });
+        assert_eq!(receipt, 42);
+        assert_eq!(attempts, 3);
     }
 
     #[test]
