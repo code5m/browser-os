@@ -284,6 +284,21 @@ impl DurableRun {
             })
     }
     fn recover_record(&self, mut record: NativeRunReceipt) -> Result<NativeRunReceipt, String> {
+        // A successful bounded local model/read-only return is committed
+        // before publishing the terminal Task. No provider replay is needed.
+        if record.phase == "local_returned" {
+            if !Self::local_return_proven(&record) {
+                return Err("AGENT_RUN_RECEIPT_INVALID".into());
+            }
+            if record.task.status == TaskStatus::Running {
+                record.task.revision = record.task.revision.checked_add(1).ok_or("AGENT_TASK_REVISION_EXHAUSTED")?;
+                record.task.status = TaskStatus::Completed;
+            }
+            record.phase = "completed".into();
+            record.updated_at_ms = unix_ms();
+            self.write_record(&record)?;
+            return Ok(record);
+        }
         // The OS lock excludes the old cooperating owner, not an already
         // dispatched remote side effect. Approval is evidence, never a
         // reusable execution permit.
@@ -323,6 +338,40 @@ impl DurableRun {
         }
         Ok(record)
     }
+    fn local_return_proven(record: &NativeRunReceipt) -> bool {
+        if !matches!(record.task.status, TaskStatus::Running | TaskStatus::Completed)
+            || record.task.pending.is_some() || record.effect.is_some()
+            || record.manual_admission.is_some() || record.successor.is_some()
+            || record.payload_forgotten {
+            return false;
+        }
+        let Some(payload) = &record.text else { return false; };
+        if record.task.goal == "agent_channel" {
+            let Ok(Some(input)) = channel::checked_input(record) else { return false; };
+            if let ChannelInput::Read { command, args, resource } = input {
+                let Some(claim) = &record.approval else { return false; };
+                let delta = if record.task.status == TaskStatus::Completed { 2 } else { 1 };
+                if !claim.accepted || claim.task_id != record.task.id
+                    || claim.workspace_id != record.task.workspace_id || claim.session_id != record.task.session_id
+                    || claim.task_revision.checked_add(delta) != Some(record.task.revision)
+                    || claim.tool_name != command || claim.effect != ToolEffect::ReadOnly
+                    || claim.resource.resource_id != resource
+                    || claim.resource.resource_revision != "local-main-ui-v1"
+                    || browseros_agent_foundation::approval::approval_argument_digest(&command, &args, &ToolEffect::ReadOnly)
+                        .ok().as_deref() != Some(claim.arguments_sha256.as_str()) {
+                    return false;
+                }
+            }
+        } else if ProductionExecution::text_kind(record).is_err() || !payload.input.is_object() {
+            return false;
+        }
+        // A deliberately withheld result is still a completed local call.
+        // It cannot be replayed under the original Run or used as context.
+        let limit = if record.task.goal == "agent_channel" { 64 * 1024 } else { 512 * 1024 };
+        payload.result.as_ref().map_or(true, |value| serde_json::to_string(value).ok().is_some_and(|encoded|
+            encoded.len() <= limit && !crate::security_policy::contains_credential_leak(&encoded)))
+    }
+
     fn recover_existing(&self) -> Result<Option<NativeRunReceipt>, String> {
         self.read_record()?.map(|record| self.recover_record(record)).transpose()
     }
@@ -484,27 +533,33 @@ impl ProductionExecution {
         let lease = execution.acquire_lease()?;
         execution.checkpoint("running")?;
         let response = provider();
-        drop(lease);
         if cancelled() {
+            drop(lease);
             execution.cancel()?;
             return Err("AI_PROVIDER_CANCELLED".into());
         }
         if let Ok(value) = &response {
-            let encoded = serde_json::to_string(value).map_err(|_| "AGENT_RUN_RECEIPT_INVALID")?;
-            // The provider adapter has already redacted its known
-            // credential. Do not retain additional suspected secrets
-            // or oversized output in a recovery record.
-            if encoded.len() <= 512 * 1024 && !crate::security_policy::contains_credential_leak(&encoded) {
-                if let Some(payload) = execution.durable_run.as_mut().and_then(|run| run.text.as_mut()) {
-                    payload.result = Some(value.clone());
-                }
-            }
+            execution.checkpoint_local_return(value, 512 * 1024)?;
         }
+        drop(lease);
         // Complete the authenticated publication before handing the
         // successful answer back to the UI. A lost IPC response can
         // recover this result without a second provider invocation.
         execution.finish(response.is_ok())?;
         response
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    fn checkpoint_local_return(&mut self, value: &Value, limit: usize) -> Result<(), String> {
+        let encoded = serde_json::to_string(value).map_err(|_| "AGENT_RUN_RECEIPT_INVALID")?;
+        let payload = self.durable_run.as_mut().and_then(|run| run.text.as_mut())
+            .ok_or("AGENT_RUN_RECEIPT_REQUIRED")?;
+        // The provider has already scrubbed known credentials. Keep only
+        // bounded results passing the existing additional secret screening.
+        payload.result = if encoded.len() <= limit && !crate::security_policy::contains_credential_leak(&encoded) {
+            Some(value.clone())
+        } else { None };
+        self.checkpoint("local_returned")
     }
 
     #[cfg(any(target_os = "linux", target_os = "windows"))]
@@ -1300,6 +1355,32 @@ mod tests {
             serde_json::json!({"model":"other"}), || false, || panic!("mismatched input must not dispatch")).is_err());
         let raw = std::fs::read(storage.join("agent-run-receipts").join(format!("{id}.run"))).unwrap();
         assert!(!raw.windows(b"hello".len()).any(|bytes| bytes == b"hello"));
+        std::fs::remove_dir_all(storage).unwrap();
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[test]
+    fn text_return_checkpoint_recovers_before_task_completion() {
+        let storage = std::env::temp_dir().join(format!("browseros-text-return-{}", Uuid::new_v4()));
+        for withheld in [false, true] {
+            let id = Uuid::new_v4();
+            let input = serde_json::json!({"model":"fixture"});
+            let mut durable = DurableRun::new(&storage, id).unwrap();
+            durable.text = Some(TextRunPayload { input: input.clone(), result: None });
+            let mut execution = ProductionExecution::begin_scoped("chat", Uuid::nil(), id, vec![]).unwrap();
+            durable.persist("running", execution.record().unwrap()).unwrap();
+            execution.durable_run = Some(durable);
+            let value = serde_json::json!({"content":"answer"});
+            execution.checkpoint_local_return(&value, if withheld { 1 } else { 512 * 1024 }).unwrap();
+            drop(execution);
+            let recovered = ProductionExecution::run_checkpointed_text(&storage, "chat", id, input,
+                || false, || panic!("committed local return must not replay"));
+            if withheld { assert_eq!(recovered.unwrap_err(), "AGENT_RUN_RESULT_UNAVAILABLE"); }
+            else { assert_eq!(recovered.unwrap(), value); }
+            let read = ProductionExecution::read_text_run(&storage, id).unwrap();
+            assert_eq!(read["phase"], "completed");
+            assert_eq!(read["can_resume"], false);
+        }
         std::fs::remove_dir_all(storage).unwrap();
     }
 

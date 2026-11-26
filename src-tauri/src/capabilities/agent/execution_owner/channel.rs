@@ -21,7 +21,7 @@ pub(crate) enum ChannelAdmission {
 }
 
 #[cfg(any(target_os = "linux", target_os = "windows"))]
-fn checked_input(record: &NativeRunReceipt) -> Result<Option<ChannelInput>, String> {
+pub(super) fn checked_input(record: &NativeRunReceipt) -> Result<Option<ChannelInput>, String> {
     if record.task.goal != "agent_channel" || record.effect.is_some()
         || record.approval.as_ref().is_some_and(|claim| claim.effect != ToolEffect::ReadOnly)
     { return Err("AGENT_RUN_SCOPE_MISMATCH".into()); }
@@ -182,12 +182,8 @@ impl ProductionExecution {
     pub(crate) fn finish_channel(mut self, result: &Result<Value, String>) -> Result<(), String> {
         #[cfg(any(target_os = "linux", target_os = "windows"))]
         {
-            let payload = self.durable_run.as_mut().and_then(|run| run.text.as_mut()).ok_or("AGENT_RUN_RECEIPT_REQUIRED")?;
             if let Ok(value) = result {
-                let encoded = serde_json::to_string(value).map_err(|_| "AGENT_RUN_RECEIPT_INVALID")?;
-                if encoded.len() <= 64 * 1024 && !crate::security_policy::contains_credential_leak(&encoded) {
-                    payload.result = Some(value.clone());
-                }
+                self.checkpoint_local_return(value, 64 * 1024)?;
             }
         }
         self.finish(result.is_ok())
@@ -244,6 +240,26 @@ impl ProductionExecution {
 #[cfg(all(test, any(target_os = "linux", target_os = "windows")))]
 mod tests {
     use super::*;
+    #[test]
+    fn channel_return_checkpoint_recovers_before_terminal_publication() {
+        let storage = std::env::temp_dir().join(format!("browseros-channel-return-{}", Uuid::new_v4()));
+        let run = Uuid::new_v4();
+        let config = ExperimentConfig { enabled: true, ..ExperimentConfig::default() };
+        let ChannelAdmission::Execute(mut execution, _) = ProductionExecution::begin_channel(&storage, run,
+            ChannelStart::Fixture { fixture_id: "tab_summary".into(), config: config.clone() }).unwrap()
+            else { panic!("new fixture") };
+        let result = json!({"fixture_id":"tab_summary","output":"fixture"});
+        execution.checkpoint_local_return(&result, 64 * 1024).unwrap();
+        drop(execution);
+        let ChannelAdmission::Recovered(saved) = ProductionExecution::begin_channel(&storage, run,
+            ChannelStart::Fixture { fixture_id: "tab_summary".into(), config }).unwrap()
+            else { panic!("must not replay") };
+        assert_eq!(saved, result);
+        assert_eq!(ProductionExecution::read_channel(&storage, run).unwrap()["phase"], "completed");
+        assert!(ProductionExecution::resume_channel(&storage, run, Uuid::new_v4()).is_err());
+        std::fs::remove_dir_all(storage).unwrap();
+    }
+
     #[test]
     fn resume_fixture_pins_route_and_task_without_replaying_a_committed_result() {
         let storage = std::env::temp_dir().join(format!("browseros-channel-resume-{}", Uuid::new_v4()));

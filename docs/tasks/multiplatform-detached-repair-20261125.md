@@ -433,3 +433,8 @@ Shared Linux/Windows MCP scrub previously renamed sensitive JSON property names 
 ## 2026-11-26 — Historical native approval argument binding
 
 Reuse the Foundation's exact approval argument digest at recovery, rather than trusting a return digest that merely contains the historical claims. Coding prepared and return checkpoints reconstruct the approved operation ID, input digest and review revision, revalidate tool/effect and workspace resource; manual MCP dispatch and local return recovery reconstruct the approved Run ID and request digest. This does not recreate permits, require old approvals to remain unexpired for historical inspection, or establish remote effects. Inconsistent evidence stays unknown. Added source fixtures for changed Coding proposal with recomputed return digest and mismatched manual Run/request. NOT_RUN; no builds/tests/CI/Actions/refs/gate changes.
+
+
+## 2026-11-26 — Shared successful local return checkpoint for text and Channel
+
+Chat/legacy/local text and read-only Channel now publish local_returned under the original encrypted Run owner before terminal Task publication. Recovery validates the local goal, Task state, absence of side effects/successor, typed Channel input and exact historical read approval where applicable. It completes the original local result without dispatch; a withheld result is completed but unavailable, not resumable. Text cancellation before this fence retains prior cancellation semantics; the committed return is not retracted by late cancellation. No new external effect authority or retry, no additional model/provider runtime. Source fixtures cover crash after local return for text and fixture Channel and withheld-result non-replay. NOT_RUN; no builds/tests/CI/Actions/refs/gate changes.
