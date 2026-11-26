@@ -124,54 +124,13 @@ pub fn normalize_url(input: &str) -> String {
 /// 注意：不能用 manager.set_visible(false)（即 webview.hide()）——对正在渲染的
 /// WebKitGTK 子 webview 调 hide 会阻塞主线程事件循环导致死锁（实测新建第二个
 /// 页签时卡在 hide(tab-1)）。改为把子 webview 移到屏幕外（等价隐藏，不卡死）。
-pub fn hide_bounds(app: &AppHandle, id: &str) {
-    #[cfg(not(target_os = "linux"))]
-    use tauri_plugin_browser_tabs::LogicalRect;
+pub fn hide_bounds(app: &AppHandle, id: &str) -> Result<(), String> {
     use tauri_plugin_browser_tabs::TabManagerState;
-    let manager = app.state::<TabManagerState>();
-    // 隐藏 = 只移到屏幕外，【保持原尺寸不变】。
-    // 关键教训：对正在渲染的 WebKitGTK 子 webview，把尺寸缩到 1x1 会触发 WebKit
-    // 视口重布局，与主线程死锁（实测卡死）。只移动位置（视口尺寸不变）则安全。
-    // 坐标用 -30000（X11 int16 安全范围 -32768~32767 内）。
-    let cur = app
-        .state::<crate::AppState>()
-        .child_layouts
-        .lock()
-        .unwrap()
-        .get(id)
-        .copied();
-    // Prefer the plugin's last submitted real viewport, including the
-    // initial offscreen geometry when the bridge has no layout record.
-    #[cfg(target_os = "linux")]
-    {
-        match manager.hide_offscreen(&id.to_string(), |rect| {
-            remember_layout(app, id, rect.x, rect.y, rect.width, rect.height);
-        }) {
-            Ok(()) => return,
-            Err(e) => {
-                eprintln!("[hide_bounds] id={} park failed: {e}", id);
-                // Preserve a known hide intent for the next bounded sweep
-                // if a same-tab dispatch was temporarily busy.
-                if let Some((_x, y, w, h)) = cur {
-                    remember_layout(app, id, -30000.0, y, w, h);
-                }
-            }
-        }
-    }
-    #[cfg(not(target_os = "linux"))]
-    if let Some((_x, y, w, h)) = cur {
-        // 诊断：移出失败（TabNotFound 等）时留日志，排查"切视图后残留"问题
-        if let Err(e) = manager.update_rect(&id.to_string(), LogicalRect::new(-30000.0, y, w, h)) {
-            eprintln!("[hide_bounds] id={} 移出失败: {e}", id);
-        }
-        // 记住【隐藏态】坐标（-30000），不是原坐标：
-        // 布局守护线程每 400ms 按 child_layouts 重放纠偏，GTK 布局循环会把子 webview
-        // 漂回"自然位置"（实测 (0,400,1200,400) 下半屏）。若这里记原坐标，守护线程会
-        // 把已隐藏的 webview 拉回可视区造成残留。恢复显示由前端随后重新定位完成。
-        remember_layout(app, id, -30000.0, y, w, h);
-    } else {
-        eprintln!("[hide_bounds] id={} 无布局记录，跳过（可能从未定位过）", id);
-    }
+    // No guessed size or optimistic target on failure. The plugin owns the
+    // current viewport and publishes under its native layout reservation.
+    app.state::<TabManagerState>().hide_offscreen(&id.to_string(), |rect| {
+        remember_layout(app, id, rect.x, rect.y, rect.width, rect.height);
+    }).map_err(|error| format!("TAB_HIDE_UNCONFIRMED:{id}:{error}"))
 }
 /// 创建一个浏览器页签（独立子窗口，方案 B），返回其信息并设为激活页签。
 pub fn create_tab(app: AppHandle, url: &str) -> Result<TabInfo, String> {
@@ -196,16 +155,16 @@ pub(crate) fn create_tab_receipted(app: AppHandle, url: &str) -> Result<TabInfo,
             // The tab metadata may already exist. This is a terminal partial
             // failure requiring authoritative tab-list reconciliation, not a
             // claim that no tab was created.
-            WaitError::Revoked => "TAB_CREATE_LAYOUT_REVOKED",
-            WaitError::Lost => "TAB_CREATE_CALLBACK_LOST",
-        })?;
+            WaitError::Revoked => format!("TAB_CREATED_ACTIVATION_PARTIAL:{}:TAB_CREATE_LAYOUT_REVOKED",info.id),
+            WaitError::Lost => "TAB_CREATE_CALLBACK_LOST".to_owned(),
+        })?.map_err(|error|format!("TAB_CREATED_ACTIVATION_PARTIAL:{}:{error}",info.id))?;
     Ok(info)
 }
 
 fn create_tab_with_completion(
     app: AppHandle,
     url: &str,
-    completion: Option<std::sync::Arc<crate::shared::dispatch_receipt::DispatchReceipt<()>>>,
+    completion: Option<std::sync::Arc<crate::shared::dispatch_receipt::DispatchReceipt<Result<(), String>>>>,
 ) -> Result<TabInfo, String> {
     if app
         .state::<crate::AppState>()
@@ -306,27 +265,26 @@ fn create_tab_with_completion(
             },
             None => None,
         };
-        // A superseded hide intent is a finished host callback, not a new effect.
-        let hide = || {
+        let hide = || -> Result<(),String> {
             let st = app_hide.state::<crate::AppState>();
-            if st.shutdown_requested.load(Ordering::Acquire)
-                || st.active_tab.lock().unwrap().as_deref() != Some(active_id.as_str())
-            {
-                return;
-            }
+            let current=|| !st.shutdown_requested.load(Ordering::Acquire)
+                && st.active_tab.lock().unwrap().as_deref()==Some(active_id.as_str());
+            if !current(){return Err("TAB_ACTIVATION_SUPERSEDED".into());}
             let ids: Vec<String> = st.tabs.lock().unwrap().keys().cloned().collect();
             for k in ids {
-                if st.active_tab.lock().unwrap().as_deref() != Some(active_id.as_str()) {
-                    return;
-                }
-                if k != active_id {
-                    hide_bounds(&app_hide, &k);
+                if !current(){return Err("TAB_ACTIVATION_SUPERSEDED".into());}
+                if k != active_id && !st.hibernated_tabs.lock().unwrap().contains(&k) {
+                    hide_bounds(&app_hide, &k)?;
                 }
             }
+            if !current(){return Err("TAB_ACTIVATION_SUPERSEDED".into());}
+            Ok(())
         };
-        hide();
-        if let Some(entered) = entered {
-            entered.complete(());
+        let result=hide();
+        if let Some(entered)=entered {
+            entered.complete(result);
+        } else if let Err(error)=result {
+            eprintln!("[create_tab] hide unconfirmed: {error}");
         }
     });
     if dispatch.is_err() {

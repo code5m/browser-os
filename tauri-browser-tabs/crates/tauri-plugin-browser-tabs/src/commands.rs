@@ -1746,12 +1746,26 @@ impl TabManager {
         Ok(())
     }
 
-    /// A missing bridge layout must not cause a guessed 800x600 resize of a
-    /// live Linux viewport. Return the real parked rectangle to the caller.
-    #[cfg(target_os = "linux")]
+    /// Hide using the actual native viewport, and publish its submitted
+    /// rectangle under the same layout reservation on every platform.
     pub fn hide_offscreen(&self, id: &TabId, publish: impl FnOnce(LogicalRect)) -> Result<()> {
         let (_operation, tab) = self.get_tab(id, TabAccessKind::Layout)?;
-        let rect = Self::park_tab(&tab)?;
+        #[cfg(target_os = "linux")]
+        let rect = {
+            let rect = Self::park_tab(&tab)?;
+            // A cached offscreen rectangle alone is not a fresh dispatch.
+            platform::linux::ensure_size_allocated(&tab.webview, rect)?;
+            rect
+        };
+        #[cfg(not(target_os = "linux"))]
+        let rect = {
+            let current = *tab.last_rect.read();
+            let rect = LogicalRect::new(-30000.0, current.y, current.width, current.height);
+            if rect.is_empty() { return Err(BrowserTabError::InvalidRect(rect)); }
+            platform::apply_rect(&tab.webview, rect)?;
+            *tab.last_rect.write() = rect;
+            rect
+        };
         publish(rect);
         Ok(())
     }

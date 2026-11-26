@@ -57,11 +57,9 @@ pub async fn open_browser(webview: tauri::Webview, app: AppHandle, url: String) 
     crate::shared::native_legacy_policy::require_main(&webview, "open_browser")?;
     crate::shared::native_legacy_policy::bound_text("open_browser", "url", &url)?;
 
-    if super::isolated_tabs::mode_enabled() {
-        return super::isolated_tabs::on_worker(move || tab_new_native(app, url).map(|_| ())).await;
-    }
-    let _tab = create_tab(app.clone(), &url)?;
-    Ok(())
+    // Compatibility alias uses the same Browser Owner and receipt path.
+    super::tab_mutation::legacy_action::<TabInfo>(webview,app,
+        super::tab_mutation::Action::New{url}).await.map(|_|())
 }
 
 /// 关闭内嵌浏览器（默认关闭当前激活页签）。
@@ -78,10 +76,8 @@ pub async fn close_browser(webview: tauri::Webview, app: AppHandle) -> Result<()
         active.clone()
     };
     if let Some(id) = active_id {
-        if super::isolated_tabs::route(&id).is_some() {
-            return super::isolated_tabs::on_worker(move || tab_close_native(app, id)).await;
-        }
-        close_tab(&app, &id)?;
+        return super::tab_mutation::legacy_action::<()>(webview,app,
+            super::tab_mutation::Action::Close{id}).await;
     }
     Ok(())
 }
@@ -243,8 +239,6 @@ pub async fn hide_webview(webview: tauri::Webview, app: AppHandle, id: String) -
         return super::isolated_tabs::on_worker(move || super::isolated_tabs::hide_admitted(&app, &id, admitted)).await;
     }
 
-    #[cfg(not(target_os = "linux"))]
-    use tauri_plugin_browser_tabs::{LogicalRect, TabManagerState};
     // 宫格已迁子进程：隐藏 = 子进程整个窗口 hide（等价旧方案的移出屏幕）
     if let Some(index) = grid_index_of(&id) {
         let stamp = app.state::<AppState>().grid_manager.grid_route_stamps(&[index])?
@@ -253,25 +247,9 @@ pub async fn hide_webview(webview: tauri::Webview, app: AppHandle, id: String) -
             app.state::<AppState>().grid_manager.hide_grid_route(stamp)
         }).await;
     }
-    #[cfg(target_os = "linux")]
-    hide_bounds(&app, &id);
-    #[cfg(not(target_os = "linux"))]
-    {
-        let state = app.state::<AppState>();
-        let has_layout = state.child_layouts.lock().unwrap().contains_key(&id);
-        if has_layout {
-            hide_bounds(&app, &id);
-        } else {
-            let manager = app.state::<TabManagerState>();
-            if manager
-                .update_rect(&id, LogicalRect::new(-30000.0, -30000.0, 800.0, 600.0))
-                .is_ok()
-            {
-                remember_layout(&app, &id, -30000.0, -30000.0, 800.0, 600.0);
-            }
-        }
-    }
-    Ok(())
+    let state=app.state::<AppState>();
+    if state.hibernated_tabs.lock().unwrap().contains(&id) {return Ok(());}
+    hide_bounds(&app,&id)
 }
 
 #[tauri::command]
@@ -289,53 +267,22 @@ pub(crate) fn hide_all_webviews_sync(webview: tauri::Webview, app: AppHandle) ->
         return super::isolated_tabs::hide_all(&app);
     }
 
-    #[cfg(not(target_os = "linux"))]
-    use tauri_plugin_browser_tabs::LogicalRect;
     use tauri_plugin_browser_tabs::TabManagerState;
-    let manager = app.state::<TabManagerState>();
-    let state = app.state::<AppState>();
-    // Also include sleeping and pending-restart Grid routes when embedded
-    // Browser tabs are in use. A partial native hide must not look successful.
-    let grid_result = if cfg!(any(target_os = "linux", target_os = "windows")) {
-        state.grid_manager.hide_grid_renderers()
-    } else { Ok(()) };
-    // 页签 id（宫格已不在主进程插件表里，无需穷举 grid-N；
-    // 已休眠页签 webview 已销毁，跳过避免 TabNotFound 噪音）
-    let ids: Vec<String> = {
-        let hibernated = state.hibernated_tabs.lock().unwrap();
-        state
-            .tabs
-            .lock()
-            .unwrap()
-            .keys()
-            .filter(|id| !hibernated.contains(*id))
-            .cloned()
-            .collect()
-    };
-    // 只处理插件管理表里真实存在的 webview
-    let existing: std::collections::HashSet<String> = manager.get_tab_ids().into_iter().collect();
-    for id in ids {
-        if !existing.contains(&id) {
-            continue;
-        }
-        #[cfg(target_os = "linux")]
-        hide_bounds(&app, &id);
-        #[cfg(not(target_os = "linux"))]
-        {
-            let has_layout = state.child_layouts.lock().unwrap().contains_key(&id);
-            if has_layout {
-                hide_bounds(&app, &id);
-            } else {
-                match manager.update_rect(&id, LogicalRect::new(-30000.0, -30000.0, 800.0, 600.0)) {
-                    Ok(_) => remember_layout(&app, &id, -30000.0, -30000.0, 800.0, 600.0),
-                    Err(e) => eprintln!("[hide_all_webviews] id={} 兜底移出失败: {e}", id),
-                }
-            }
-        }
+    let manager=app.state::<TabManagerState>();
+    let state=app.state::<AppState>();
+    let mut failures=Vec::new();
+    if cfg!(any(target_os="linux",target_os="windows")) {
+        if let Err(error)=state.grid_manager.hide_grid_renderers(){failures.push(error);}
     }
-    grid_result?;
-    eprintln!("[hide_all_webviews] 已处理全部子 webview");
-    Ok(())
+    // Include all existing ordinary plugin tabs, even if creation has
+    // published native state but not yet published logical metadata.
+    let mut ids:Vec<_>=manager.get_tab_ids().into_iter().filter(|id|super::is_tab_label(id)).collect();
+    ids.sort();
+    for id in ids {
+        if let Err(error)=hide_bounds(&app,&id){failures.push(error);}
+    }
+    if failures.is_empty(){Ok(())}
+    else {Err(format!("TAB_HIDE_ALL_PARTIAL:{}",failures.join("; ")))} 
 }
 
 /// 布局守护线程：每 400ms 按 child_layouts 重放所有子 webview 的目标矩形。

@@ -1447,8 +1447,8 @@ pub(super) fn tab_activate_admitted(
                 if st.active_tab.lock().unwrap().as_deref() != Some(active_id.as_str()) {
                     return Err("TAB_ACTIVATION_SUPERSEDED".into());
                 }
-                if k != active_id {
-                    hide_bounds(&app_act, &k);
+                if k != active_id && !st.hibernated_tabs.lock().unwrap().contains(&k) {
+                    hide_bounds(&app_act, &k)?;
                 }
             }
             if st.active_tab.lock().unwrap().as_deref() != Some(active_id.as_str()) {
@@ -1489,9 +1489,9 @@ pub(super) fn tab_activate_admitted(
     receipt
         .wait(std::time::Duration::from_secs(20))
         .map_err(|error| match error {
-            WaitError::Revoked => "TAB_ACTIVATION_LAYOUT_REVOKED",
+            WaitError::Revoked => "TAB_RENDERER_ACTIVATION_PARTIAL:TAB_ACTIVATION_LAYOUT_REVOKED",
             WaitError::Lost => "TAB_ACTIVATION_CALLBACK_LOST",
-        })??;
+        })?.map_err(|error|format!("TAB_RENDERER_ACTIVATION_PARTIAL:{id}:{error}"))?;
     Ok(())
 }
 
