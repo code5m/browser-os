@@ -324,6 +324,10 @@ struct OperationReceipt {
     authority: Option<super::mcp_authority::Binding>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     provider_proof: Option<super::mcp_authority::SignedStatus>,
+    // Keep independently verified later outcomes separate from the original
+    // terminal receipt. Never replace the original approval or result.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    provider_evidence: Vec<super::mcp_authority::SignedStatus>,
 }
 fn frontend_owner_epoch() -> uuid::Uuid {
     static EPOCH: OnceLock<uuid::Uuid> = OnceLock::new();
@@ -340,14 +344,33 @@ fn verify_workspace_binding(root: &Path, expected: Option<&str>) -> Result<(), S
     }
     Ok(())
 }
+fn provider_terminal_outcome(operation: &Operation) -> Option<bool> {
+    let receipt=operation.execution.as_ref()?;
+    if let Some(proof)=&receipt.provider_proof { return Some(proof.outcome.applied()); }
+    if operation.reconciliation.is_some() {
+        return match operation.status.as_str() {
+            "reconciled_succeeded"=>Some(true),
+            "reconciled_not_applied"=>Some(false),
+            _=>None,
+        };
+    }
+    None
+}
+fn provider_conflict(operation: &Operation) -> bool {
+    provider_terminal_outcome(operation).is_some_and(|applied|
+        operation.execution.as_ref().is_some_and(|receipt|
+            receipt.provider_evidence.iter().any(|proof| proof.outcome.applied()!=applied)))
+}
 fn unresolved_operation(operation: &Operation) -> bool {
-    matches!(
+    provider_conflict(operation) || matches!(
         operation.status.as_str(),
         "pending" | "executing" | "unknown" | "result_ready"
     )
 }
 fn session_after_review(session: &Session) -> &'static str {
-    if session.operations.iter().any(|op| op.status == "unknown") {
+    if session.operations.iter().any(provider_conflict) {
+        "provider_conflict"
+    } else if session.operations.iter().any(|op| op.status == "unknown") {
         "operation_unknown"
     } else if session.operations.iter().any(|op| op.status == "executing") {
         "operation_executing"
@@ -2179,7 +2202,8 @@ fn reconcile_provider_operations(
             continue;
         };
         let Some(binding) = receipt.authority.as_ref() else {
-            if receipt.provider_proof.is_some() || receipt.phase == "provider_reconciled" {
+            if receipt.provider_proof.is_some() || receipt.phase == "provider_reconciled"
+                || !receipt.provider_evidence.is_empty() {
                 return Err("AGENT_OPERATION_RECEIPT_INVALID".into());
             }
             continue;
@@ -2215,7 +2239,29 @@ fn reconcile_provider_operations(
             {
                 return Err("AGENT_OPERATION_RECEIPT_INVALID".into());
             }
+        }
+        // Historical evidence must retain the original authority and exact
+        // operation scope, even after the primary record has been settled.
+        if receipt.provider_evidence.len()>3 || receipt.provider_evidence.iter().enumerate().any(|(i,proof)|
+            !proof.verify(binding) || receipt.provider_evidence[..i].iter().any(|old| old.outcome==proof.outcome)) {
+            return Err("MCP_EFFECT_HISTORY_INVALID".into());
+        }
+        if provider_terminal_outcome(operation).is_some() {
+            let latest=super::mcp_authority::lookup(storage,binding).ok().flatten();
+            if let Some(latest)=latest {
+                let exists=receipt.provider_proof.as_ref().is_some_and(|primary| primary.outcome==latest.outcome)
+                    || receipt.provider_evidence.iter().any(|proof| proof.outcome==latest.outcome);
+                if !exists {
+                    let receipt=session.operations[index].execution.as_mut().ok_or("AGENT_OPERATION_RECEIPT_MISSING")?;
+                    if receipt.provider_evidence.len()>=3 { return Err("MCP_EFFECT_HISTORY_INVALID".into()); }
+                    receipt.provider_evidence.push(latest);
+                    changed=true;
+                }
+            }
             continue;
+        }
+        if !receipt.provider_evidence.is_empty() || operation.reconciliation.is_some() {
+            return Err("MCP_EFFECT_HISTORY_INVALID".into());
         }
         if !can_reconcile_operation(
             operation,
@@ -2265,7 +2311,12 @@ fn reconcile_provider_operations(
             operation.id,next,receipt.provider_proof.as_ref().ok_or("AGENT_OPERATION_RECEIPT_MISSING")?.outcome.phase())}));
         changed = true;
     }
-    if changed && session.status != "recovery_conflict" {
+    if session.operations.iter().any(provider_conflict) {
+        if session.status!="provider_conflict" {
+            session.status="provider_conflict".into();
+            changed=true;
+        }
+    } else if changed && session.status != "recovery_conflict" {
         session.status = session_after_review(session).into();
     }
     Ok(changed)
@@ -2962,6 +3013,11 @@ pub(crate) fn execute_with_effect_adapter(
     if supplied_id.is_none() {
         session.session_id = session_id;
     }
+    // A signed contradiction is not another model prompt or an opportunity
+    // to repeat a remote effect. Preserve the authenticated session for review.
+    if session.operations.iter().any(provider_conflict) && action!="session" {
+        return Err("MCP_EFFECT_STATUS_CONFLICT".into());
+    }
     if ["chat", "resume_turn", "propose", "discard", "apply"].contains(&action)
         && session
             .operations
@@ -3064,6 +3120,7 @@ pub(crate) fn execute_with_effect_adapter(
                 return_digest: None,
                 authority: None,
                 provider_proof: None,
+                provider_evidence: Vec::new(),
             });
             session.operations[index].status = "executing".into();
             session.status = "operation_executing".into();
@@ -3231,6 +3288,7 @@ pub(crate) fn execute_with_effect_adapter(
                 return_digest: None,
                 authority: None,
                 provider_proof: None,
+                provider_evidence: Vec::new(),
             });
             session.operations[index].status = "executing".into();
             session.status = "operation_executing".into();
