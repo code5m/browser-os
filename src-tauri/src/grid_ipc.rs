@@ -75,7 +75,7 @@ pub(crate) fn renderer_label(index: u32) -> String {
     }
 }
 
-const RENDERER_PROTOCOL: &str = "browseros-renderer-v5";
+const RENDERER_PROTOCOL: &str = "browseros-renderer-v6";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct NativeDocumentStamp {
@@ -325,6 +325,8 @@ pub enum GridCmd {
         id: String,
     },
     DownloadTasks { id: String, control: Option<(String,String)> },
+    ViewportSnapshot { id: String },
+    ViewportRestore { id: String, address: String, x: f64, y: f64 },
     FillCredential { id: String, origin: String, username: String, password: String },
     CaptureStart { id: String, ticket: String },
     CaptureRead { id: String, ticket: String, offset: usize },
@@ -364,6 +366,7 @@ impl GridCmd {
         match self {
             Self::Eval { id, .. } | Self::Navigate { id, .. }
             | Self::ReadReplies { id } | Self::HibernationProbe { id }
+            | Self::ViewportSnapshot { id } | Self::ViewportRestore { id, .. }
             | Self::FillCredential { id, .. } | Self::CaptureStart { id, .. }
             | Self::CaptureRead { id, .. } => Some(id.as_str()),
             _ => None,
@@ -385,7 +388,7 @@ impl GridCmd {
     /// Each child owns exactly one renderer identity. A transport connection
     /// is not permission to address another WebView or create arbitrary tabs.
     pub(crate) fn targets(&self, index: u32) -> bool {
-        if matches!(self, Self::DownloadTasks { .. } | Self::FillCredential { .. } | Self::CaptureStart { .. }
+        if matches!(self, Self::DownloadTasks { .. } | Self::ViewportSnapshot { .. } | Self::ViewportRestore { .. } | Self::FillCredential { .. } | Self::CaptureStart { .. }
             | Self::CaptureRead { .. } | Self::CaptureRelease { .. })
             && !is_tab_renderer(index)
         {
@@ -398,6 +401,8 @@ impl GridCmd {
             | Self::Eval { id, .. }
             | Self::ReadReplies { id }
             | Self::DownloadTasks { id, .. }
+            | Self::ViewportSnapshot { id }
+            | Self::ViewportRestore { id, .. }
             | Self::FillCredential { id, .. }
             | Self::CaptureStart { id, .. }
             | Self::CaptureRead { id, .. }
@@ -792,4 +797,20 @@ mod framing_tests {
             std::io::ErrorKind::UnexpectedEof
         );
     }
+}
+
+/// Viewport data is advisory, bounded, and contains no DOM or form values.
+pub(crate) fn checked_viewport(encoded: &str, address: &str) -> Result<(f64, f64), String> {
+    if encoded.len() > 32 * 1024 { return Err("TAB_VIEWPORT_INVALID".into()); }
+    let value: serde_json::Value = serde_json::from_str(encoded).map_err(|_| "TAB_VIEWPORT_INVALID")?;
+    if value["address"].as_str() != Some(address) || value["protected"].as_bool() != Some(false) {
+        return Err("TAB_VIEWPORT_PROTECTED_OR_STALE".into());
+    }
+    let x = value["scrollX"].as_f64().ok_or("TAB_VIEWPORT_INVALID")?;
+    let y = value["scrollY"].as_f64().ok_or("TAB_VIEWPORT_INVALID")?;
+    if !valid_viewport(x,y) { return Err("TAB_VIEWPORT_INVALID".into()); }
+    Ok((x,y))
+}
+pub(crate) fn valid_viewport(x: f64, y: f64) -> bool {
+    x.is_finite() && y.is_finite() && x.abs() <= 100_000_000.0 && y.abs() <= 100_000_000.0
 }

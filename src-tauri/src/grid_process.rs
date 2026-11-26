@@ -1683,7 +1683,7 @@ impl GridProcessManager {
     /// User-confirmed suspension of an inactive tab. This discards the
     /// document; it does not serialize its DOM, history or form state.
     pub(crate) fn park_tab_renderer(&self, binding: crate::grid_ipc::RendererBinding, address: &str)
-        -> Result<(), String>
+        -> Result<(f64, f64), String>
     {
         if !crate::grid_ipc::is_tab_renderer(binding.index)
             || !crate::grid_ipc::restorable_address(address) {
@@ -1712,6 +1712,16 @@ impl GridProcessManager {
         if !self.sample_tab_downloads(binding, 1000)? {
             return Err("TAB_RENDERER_PARK_DOWNLOAD_UNKNOWN".into());
         }
+        let stamp = {
+            let children = self.children.lock().unwrap();
+            let child = children.get(&binding.index).ok_or("TAB_RENDERER_PARK_STALE")?;
+            if !eligible(child) { return Err("TAB_RENDERER_PARK_STALE".into()); }
+            let stamp = *child.comms.native_document.try_lock().map_err(|_| "TAB_RENDERER_PARK_BUSY")?;
+            stamp.filter(|stamp| stamp.usable()).ok_or("TAB_RENDERER_PARK_STALE")?
+        };
+        let encoded = self.renderer_request_data(binding, GridCmd::ViewportSnapshot { id: id.clone() }, 2000)?
+            .ok_or("TAB_VIEWPORT_INVALID")?;
+        let viewport = crate::grid_ipc::checked_viewport(&encoded,address)?;
         self.lifecycle.ensure_cleanup(Arc::clone(&self.children), Arc::clone(&self.listeners))?;
         let _gate = self.lifecycle_lock.try_lock().map_err(|_| "TAB_RENDERER_PARK_BUSY")?;
         self.lifecycle.check()?;
@@ -1726,8 +1736,7 @@ impl GridProcessManager {
             {
                 let _owner = child.comms.owner_gate.try_lock().map_err(|_| "TAB_RENDERER_PARK_BUSY")?;
                 if !eligible(child)
-                    || !child.comms.native_document.try_lock().map_err(|_| "TAB_RENDERER_PARK_BUSY")?
-                        .is_some_and(|stamp| stamp.usable()) {
+                    || *child.comms.native_document.try_lock().map_err(|_| "TAB_RENDERER_PARK_BUSY")? != Some(stamp) {
                     return Err("TAB_RENDERER_PARK_STALE".into());
                 }
                 if !child.comms.pending.try_lock().map_err(|_| "TAB_RENDERER_PARK_BUSY")?.is_empty() {
@@ -1744,7 +1753,8 @@ impl GridProcessManager {
         }
         self.lifecycle.wait_route_retired_until(
             binding.index, std::time::Instant::now() + std::time::Duration::from_secs(5),
-        ).map_err(|error| format!("GRID_REQUEST_OUTCOME_UNKNOWN: park retirement:{error}"))
+        ).map_err(|error| format!("GRID_REQUEST_OUTCOME_UNKNOWN: park retirement:{error}"))?;
+        Ok(viewport)
     }
 
     /// Background reclaim is intentionally limited to pristine blank ordinary

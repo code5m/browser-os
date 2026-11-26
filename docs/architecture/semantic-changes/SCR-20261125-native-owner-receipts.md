@@ -516,3 +516,9 @@ Agent-owned Browser receipt slots explicitly reject the ordinary Start control, 
 
 - Add a distinct, independently signed `cancelled_final` outcome, with a Cancelled Task and `provider_cancelled` terminal Run for manual MCP. Legacy applied/non-applied signatures and evidence scopes remain compatible. Retain up to three late outcome proofs; only applied vs non-applied is an effect conflict. Coding retains its existing non-applied operation status and records the actual signed cancellation phase in its result and transcript.
 - Document the provider/relay publication contract. This is an opt-in protocol; local cancellation, termination, or a missing receipt never establishes remote cancellation. Actual provider-side durable cancellation and signature delivery must be implemented by each provider; do not claim third-party support without evidence. No compile/test/CI verification performed.
+
+
+### Explicit ordinary renderer viewport checkpoint
+
+- Share the fixed viewport protection probe between embedded and isolated WebViews. Isolated explicit park now requires a bounded valid scroll snapshot at the exact current address, and verifies the native document stamp again at retirement. Refuse detected edited forms, rich editors, active media, embedded/complex state, beforeunload, and unfinished downloads. This is conservative detection, not a proof of absence of every possible application state.
+- Retain only address and finite bounded scroll coordinates in the existing in-memory hibernation state. On recreation use typed authenticated viewport restore; preserve a nonzero existing scroll, require the actual same URL and complete document, bound attempts, never replay after ambiguous failure, and report partial activation if restoration cannot be confirmed. No form, password, cookie, DOM, POST or script-heap serialization, and no claim of crash-persistent viewport or universal SPA restoration. Source-only; no build/test/CI executed.

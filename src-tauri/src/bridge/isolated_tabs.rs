@@ -148,12 +148,12 @@ pub(super) fn park_admitted(app: &AppHandle, id: &str, address: &str,
         || state.active_tab.lock().unwrap().as_deref() == Some(id) {
         return Err("TAB_RENDERER_PARK_STALE".into());
     }
-    state.grid_manager.park_tab_renderer(binding, address)?;
+    let viewport = state.grid_manager.park_tab_renderer(binding, address)?;
     state.child_layouts.lock().unwrap().remove(id);
     state.layout_revisions.lock().unwrap().remove(id);
     state.last_position_at.lock().unwrap().remove(id);
     state.tab_idle_since.lock().unwrap().remove(id);
-    state.hibernated_scroll.lock().unwrap().remove(id);
+    state.hibernated_scroll.lock().unwrap().insert(id.to_owned(), (address.to_owned(), viewport));
     state.tab_recovery.lock().unwrap().remove(id);
     state.hibernated_tabs.lock().unwrap().insert(id.to_owned());
     Ok(())
@@ -168,6 +168,7 @@ pub(super) fn activate_admitted(app: &AppHandle, id: &str, admitted: Option<Opti
     if admitted.is_some_and(|expected| expected != owner) {
         return Err("TAB_RENDERER_ACTIVATION_STALE".into());
     }
+    let mut viewport_restored = true;
     let binding = if owner.is_none() {
         let url = state.tabs.lock().unwrap().get(id).map(|tab| tab.url.clone())
             .ok_or("TAB_NOT_FOUND")?;
@@ -180,8 +181,42 @@ pub(super) fn activate_admitted(app: &AppHandle, id: &str, admitted: Option<Opti
         // A recreated host is no longer a hibernated native page, even if
         // binding or selection fails. Retain a partial activation receipt.
         state.hibernated_tabs.lock().unwrap().remove(id);
-        state.grid_manager.renderer_binding(index)
-            .map_err(|error| format!("TAB_RENDERER_ACTIVATION_PARTIAL:{id}:{error}"))?
+        let initial = state.grid_manager.renderer_binding(index)
+            .map_err(|error| format!("TAB_RENDERER_ACTIVATION_PARTIAL:{id}:{error}"))?;
+        // Consume a snapshot only on recreation, before selection. Never
+        // defer it to an unrelated later activation or override existing scroll.
+        let snapshot = state.hibernated_scroll.lock().unwrap().remove(id);
+        if let Some((address,(x,y))) = snapshot {
+            if address == url && crate::grid_ipc::valid_viewport(x,y) {
+                viewport_restored = false;
+                for _ in 0..4 {
+                    if state.shutdown_requested.load(Ordering::Acquire) { break; }
+                    let Ok(current) = state.grid_manager.renderer_binding(index) else { break; };
+                    if current.owner != initial.owner || current.generation != initial.generation { break; }
+                    if !state.tabs.lock().unwrap().get(id).is_some_and(|tab| tab.url == address) { break; }
+                    let reply = state.grid_manager.renderer_request_data(current, GridCmd::ViewportRestore {
+                        id: id.to_owned(), address: address.clone(), x, y,
+                    }, 1000);
+                    match reply {
+                        Ok(Some(value)) if value == "applied" || value == "skip_nonzero" => {
+                            viewport_restored = true;
+                            break;
+                        }
+                        Ok(Some(value)) if value == "deferred" => {
+                            std::thread::sleep(std::time::Duration::from_millis(250));
+                        }
+                        // No resend after an unknown outcome or failed identity.
+                        _ => break,
+                    }
+                }
+            }
+        }
+        let current = state.grid_manager.renderer_binding(index)
+            .map_err(|error| format!("TAB_RENDERER_ACTIVATION_PARTIAL:{id}:{error}"))?;
+        if current.owner != initial.owner || current.generation != initial.generation {
+            return Err(format!("TAB_RENDERER_ACTIVATION_PARTIAL:{id}:TAB_VIEWPORT_STALE"));
+        }
+        current
     } else {
         let binding = state.grid_manager.renderer_binding(index)?;
         if Some(binding.owner) != owner {
@@ -200,7 +235,11 @@ pub(super) fn activate_admitted(app: &AppHandle, id: &str, admitted: Option<Opti
     // The normal frontend position command supplies the new active rectangle.
     let selected = select_bound(app, id, binding);
     if owner.is_none() {
-        selected.map_err(|error| format!("TAB_RENDERER_ACTIVATION_PARTIAL:{id}:{error}"))
+        selected.map_err(|error| format!("TAB_RENDERER_ACTIVATION_PARTIAL:{id}:{error}"))?;
+        if !viewport_restored {
+            return Err(format!("TAB_RENDERER_ACTIVATION_PARTIAL:{id}:TAB_VIEWPORT_RESTORE_UNCONFIRMED"));
+        }
+        Ok(())
     } else {
         selected
     }

@@ -385,7 +385,7 @@ async function newTab() {
     <button role="menuitem" @click="closeContext()">关闭</button>
     <button role="menuitem" @click="closeContext(true)">关闭其他</button>
     <button v-if="context.kind === 'web' && browser.isolatedRendererMode" role="menuitem" @click="prepareRendererRetire">核对并恢复独立页签</button>
-    <button v-if="context.kind === 'web' && browser.isolatedRendererMode" role="menuitem" :disabled="parking" @click="prepareRendererPark">休眠后台页签（保留网址）</button>
+    <button v-if="context.kind === 'web' && browser.isolatedRendererMode" role="menuitem" :disabled="parking" @click="prepareRendererPark">休眠后台页签（网址及滚动位置）</button>
     <button v-if="context.kind === 'web' && browser.isolatedRendererMode" role="menuitem" @click="prepareRendererReopen">更换故障页签恢复地址</button>
     <template v-if="contextPath">
       <span class="tab-actions-sep" aria-hidden="true"></span>
@@ -396,7 +396,7 @@ async function newTab() {
     <button role="menuitem" @click="context = null">取消</button>
   </div>
   <div v-if="parkTarget" class="tab-actions" role="group" aria-label="独立页签休眠确认">
-    <span>休眠 {{parkTarget.target.id}}：仅保留当前网址；表单、历史、滚动及未保存内容不保证恢复。观察到未完成下载时拒绝。</span>
+    <span>休眠 {{parkTarget.target.id}}：保留当前网址及有限滚动位置；检测到编辑、媒体、复杂嵌入或未完成下载时拒绝。表单、历史、脚本及未保存内容不保证恢复。</span>
     <span class="park-address">{{parkTarget.address}}</span>
     <button :disabled="parking || browser.tabRecoveryBusy || browser.tabRecoveryRequired" @click="confirmRendererPark">确认休眠</button>
     <button :disabled="parking" @click="parkTarget = null">取消</button>

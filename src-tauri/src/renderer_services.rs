@@ -102,12 +102,35 @@ fn fill(app: &AppHandle, id: &String, origin: &str, username: &str, password: &s
     Ok(Some(code))
 }
 
+fn viewport_script(app: &AppHandle, id: &String, document: &CaptureDocument, js: String) -> Result<Option<String>, String> {
+    let manager = app.state::<TabManagerState>();
+    if !manager.is_current_capture_document(id, document) { return Err("TAB_VIEWPORT_STALE".into()); }
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    manager.eval_result_document(id, document, js, move |value| { let _ = tx.send(value); })
+        .map_err(|_| "TAB_VIEWPORT_DISPATCH_UNKNOWN")?;
+    let value = rx.recv().map_err(|_| "TAB_VIEWPORT_OUTCOME_UNKNOWN")??;
+    if value.len() > 32 * 1024 || !manager.is_current_capture_document(id, document) {
+        return Err("TAB_VIEWPORT_STALE".into());
+    }
+    Ok(Some(value))
+}
+
 pub(crate) fn dispatch(app: &AppHandle, buffer: &mut CaptureBuffer, cmd: &GridCmd,
     document: Option<&CaptureDocument>,
 ) -> Option<Result<Option<String>, String>>
 {
     let require_document = || document.ok_or_else(|| "GRID_NATIVE_DOCUMENT_STALE".to_string());
     Some(match cmd {
+        GridCmd::ViewportSnapshot { id } => require_document().and_then(|document|
+            viewport_script(app,id,document,include_str!("../injected/tab-viewport-checkpoint.js").to_string())),
+        GridCmd::ViewportRestore { id,address,x,y } => require_document().and_then(|document| {
+            if !crate::grid_ipc::restorable_address(address) || !crate::grid_ipc::valid_viewport(*x,*y) {
+                return Err("TAB_VIEWPORT_INVALID".into());
+            }
+            let address = serde_json::to_string(address).map_err(|_| "TAB_VIEWPORT_INVALID")?;
+            let js = format!("(() => {{ if(location.href!=={} || document.readyState!=='complete') return 'deferred'; if(window.scrollX!==0||window.scrollY!==0) return 'skip_nonzero'; const x={:.3}, y={:.3}; window.scrollTo({{left:x,top:y,behavior:'instant'}}); return Math.abs(window.scrollX-x)<=1&&Math.abs(window.scrollY-y)<=1?'applied':'deferred'; }})()",address,x,y);
+            viewport_script(app,id,document,js)
+        }),
         GridCmd::DownloadTasks { id, control } => app.state::<TabManagerState>()
             .native_download_tasks(id,control.clone()).and_then(|value|{
                 let text=serde_json::to_string(&value).map_err(|_|"DOWNLOAD_RESULT_INVALID")?;

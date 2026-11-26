@@ -1080,7 +1080,8 @@ fn dispatch_grid_cmd(
         GridCmd::Ping => Ok(()),
         GridCmd::FillCredential { .. } | GridCmd::CaptureStart { .. }
         | GridCmd::CaptureRead { .. } | GridCmd::CaptureRelease { .. }
-        | GridCmd::ReadReplies { .. } | GridCmd::DownloadTasks { .. } | GridCmd::HibernationProbe { .. } => {
+        | GridCmd::ReadReplies { .. } | GridCmd::DownloadTasks { .. } | GridCmd::HibernationProbe { .. }
+        | GridCmd::ViewportSnapshot { .. } | GridCmd::ViewportRestore { .. } => {
             Err("GRID_ASYNC_ONLY".into())
         }
     }
