@@ -226,7 +226,7 @@ async function executeOwned(id:string,grant:Record<string,unknown>){
     const response=await call({action:'execute_operation',session_id:sessionId.value,operation_id:id,run_id:id,approved:true,...grant});
     updateSession(response);
     const receipt=response.operations?.find((item:any)=>item.id===id)?.execution;
-    notice.value=receipt?.phase==='not_dispatched'?'已确认派发前取消，旧审批不会重放；可继续任务。':response.status==='operation_unknown'?'外部效果未知，必须核对终止与效果记录。':'原生执行回执已保存，请审核后继续。';
+    notice.value=receipt?.phase==='not_dispatched'?'已确认未派发（取消或本地校验拒绝），旧审批不会重放；可继续任务。':response.status==='operation_unknown'?'外部效果未知，必须核对终止与效果记录。':'原生执行回执已保存，请审核后继续。';
   }catch(error){
     if(!(error instanceof ProjectScopeChanged)){
       sessionRecoveryRequired.value=true;

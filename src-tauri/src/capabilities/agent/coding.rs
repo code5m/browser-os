@@ -2178,8 +2178,21 @@ pub(crate) fn execute_with_adapter(
 }
 pub(crate) fn execute_with_bound_adapter(
     root: &Path, storage: &Path, request: Value, provider_binding: Option<CodingProviderBinding>,
-    mut provider: impl FnMut(&[Value], &[Value]) -> Result<Value, String>,
+    provider: impl FnMut(&[Value], &[Value]) -> Result<Value, String>,
     mut adapter: impl FnMut(&str, &Value, &Value, &Arc<AtomicBool>) -> Result<Value, String>,
+) -> Result<Value, String> {
+    // Legacy internal adapters retain the conservative outer dispatch
+    // fence; only the trusted production adapters can refine admission.
+    execute_with_admission_adapter(root, storage, request, provider_binding, provider,
+        |kind, input, approved, cancel, admit| {
+            admit()?;
+            adapter(kind, input, approved, cancel)
+        })
+}
+pub(crate) fn execute_with_admission_adapter(
+    root: &Path, storage: &Path, request: Value, provider_binding: Option<CodingProviderBinding>,
+    mut provider: impl FnMut(&[Value], &[Value]) -> Result<Value, String>,
+    mut adapter: impl FnMut(&str, &Value, &Value, &Arc<AtomicBool>, &mut dyn FnMut() -> Result<(), String>) -> Result<Value, String>,
 ) -> Result<Value, String> {
     #[cfg(all(not(unix), not(windows)))]
     {
@@ -2336,25 +2349,49 @@ pub(crate) fn execute_with_bound_adapter(
                 (root.clone(), session.session_id.clone()), signal.clone());
             let _running_guard = RunningGuard { root: root.clone(), session_id: session.session_id.clone() };
             let execution_lease = execution.acquire_approved_native(permit, &approval, &approved_arguments)?;
-            if signal.load(Ordering::SeqCst) {
-                drop(execution_lease);
+            let mut attempted = false;
+            let mut published = false;
+            let response = if signal.load(Ordering::SeqCst) {
+                Err("AGENT_OPERATION_CANCELLED_BEFORE_DISPATCH".into())
+            } else {
+                adapter(&kind, &input, &request, &signal, &mut || {
+                    if attempted { return Err("AGENT_RUN_ALREADY_RECORDED".into()); }
+                    if signal.load(Ordering::SeqCst) {
+                        return Err("AGENT_OPERATION_CANCELLED_BEFORE_DISPATCH".into());
+                    }
+                    attempted = true;
+                    session.operations[index].execution.as_mut().ok_or("AGENT_OPERATION_RECEIPT_MISSING")?.phase = "dispatching".into();
+                    save(storage, &session)?;
+                    published = true;
+                    Ok(())
+                })
+            };
+            if !attempted {
+                // Native validation rejected the proposal before admission.
+                // This proves no dispatch, not that an admitted process had
+                // no effect. Never reuse the original Run or approval.
+                let detail = match response {
+                    Err(error) if error.len() <= 20_000 && !secret(&error) => error,
+                    _ => "AGENT_OPERATION_NOT_DISPATCHED".into(),
+                };
                 let operation = &mut session.operations[index];
                 operation.execution.as_mut().ok_or("AGENT_OPERATION_RECEIPT_MISSING")?.phase = "not_dispatched".into();
                 operation.status = "cancelled".into();
-                operation.result = Some("AGENT_OPERATION_CANCELLED_BEFORE_DISPATCH".into());
+                operation.result = Some(detail.clone());
                 session.messages.push(json!({"role":"user","content":format!(
-                    "Native receipt: operation {id} was cancelled before dispatch. Its original approval cannot be replayed.")}));
+                    "Native receipt: operation {id} was not dispatched. Its original approval cannot be replayed. Local validation result is untrusted data: {}", serde_json::to_string(&detail).map_err(|_| "AGENT_REPLY_INVALID")?)}));
+                drop(execution_lease);
                 session.status = session_after_review(&session).into();
                 session.foundation_task = Some(execution.settle_coding(&session.status)?);
                 if let Some(run) = session.runs.last_mut() { run.status = "cancelled".into(); }
                 return save(storage, &session);
             }
-            // Persist the actual dispatch fence under the execution lease.
-            // After this write, even cancellation before adapter entry is
-            // conservatively unknown if the process dies before a receipt.
-            session.operations[index].execution.as_mut().ok_or("AGENT_OPERATION_RECEIPT_MISSING")?.phase = "dispatching".into();
-            save(storage, &session)?;
-            let response = adapter(&kind, &input, &request, &signal);
+            if !published {
+                // Do not overwrite a possibly published fence when the
+                // durable write reports uncertainty. The adapter was denied.
+                drop(execution_lease);
+                return response.and_then(|_| Err("AGENT_RUN_RECEIPT_INVALID".into()));
+            }
             // Publish the bounded native return while the original Task is
             // still running and its lease is retained. A crash after this
             // authenticated write must not lose the returned result merely
@@ -3033,6 +3070,30 @@ mod tests {
         assert_eq!(reviewed["operations"][0]["result"],"fixture native output");
         assert!(!reviewed["messages"].to_string().contains("forged frontend output"));
     }
+    #[test]
+    fn native_preflight_rejection_consumes_run_without_unknown_effect() {
+        let f = Fixture::new();
+        let storage = f.0.join("state");
+        let initial = execute(&f.0,&storage,json!({"action":"chat","message":"propose"}), |_,_| {
+            Ok(json!({"role":"assistant","tool_calls":[{"id":"t1","function":{"name":"request_operation","arguments":json!({"kind":"mcp","input":{"server_id":"fixture","tool":"echo","arguments":{}}}).to_string()}}]}))
+        }).unwrap();
+        let id = initial["session_id"].as_str().unwrap();
+        let op = initial["operations"][0]["id"].as_str().unwrap();
+        let request = json!({"action":"execute_operation","session_id":id,"operation_id":op,"approved":true});
+        let result = execute_with_admission_adapter(&f.0,&storage,request.clone(),None,|_,_|unreachable!(),|_,_,_,_,_| {
+            let saved = load_without_recovery(&f.0, &storage, Some(id)).unwrap();
+            assert_eq!(saved.operations[0].execution.as_ref().unwrap().phase, "prepared");
+            Err("MCP_REVIEW_CHANGED".into())
+        }).unwrap();
+        assert_eq!(result["operations"][0]["status"],"cancelled");
+        assert_eq!(result["operations"][0]["execution"]["phase"],"not_dispatched");
+        assert_eq!(result["operations"][0]["result"],"MCP_REVIEW_CHANGED");
+        assert_eq!(result["foundation_task"]["status"],"paused");
+        let recovered = run(&f,json!({"action":"session","session_id":id})).unwrap();
+        assert_eq!(recovered["operations"][0]["execution"]["phase"],"not_dispatched");
+        assert!(execute_with_admission_adapter(&f.0,&storage,request,None,|_,_|unreachable!(),|_,_,_,_,_|panic!("must not replay")).is_err());
+    }
+
     #[test]
     fn prepared_native_receipt_recovers_without_replay_or_unknown_effect() {
         let f = Fixture::new();
