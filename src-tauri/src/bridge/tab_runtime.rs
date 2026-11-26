@@ -304,15 +304,16 @@ pub struct ProcStat {
 pub struct ResourceStats {
     pub mem_total_mb: u64,
     pub mem_available_mb: u64,
-    /// 应用全部进程合计（主进程 + 全部宫格子进程树）
+    /// Observed application process tree RSS, including all live renderers.
     pub app_total_mb: f64,
-    /// 主进程树（不含宫格子进程树）
+    /// Remaining parent tree, including unattributed/retiring descendants.
     pub main: ProcStat,
     /// 每宫格子进程树（index 即 grid-N 的 N）
     pub grids: Vec<ProcStat>,
     /// Live ordinary-tab renderer subtrees, excluded from main.rss_mb.
     pub isolated_tabs: Vec<ProcStat>,
     pub isolated_tab_start_budget: usize,
+    pub isolated_tab_mode_enabled: bool,
     pub memory_sample_known: bool,
     /// 页签休眠开关状态
     pub hibernation_enabled: bool,
@@ -621,6 +622,7 @@ fn resource_stats_for_owners(app: &AppHandle, owners: &[crate::grid_ipc::Rendere
         grids,
         isolated_tabs,
         isolated_tab_start_budget,
+        isolated_tab_mode_enabled: super::isolated_tabs::mode_enabled(),
         memory_sample_known: total.is_some() && available.is_some(),
         hibernation_enabled: state.hibernation_enabled.load(Ordering::Relaxed),
         hibernated_count,

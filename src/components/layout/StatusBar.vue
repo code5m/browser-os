@@ -5,7 +5,7 @@ import { useLayoutStore } from "../../stores/useLayoutStore";
 import { bridge } from "../../bridge";
 import { contributionRegistry } from "../../capability/contribution/registry";
 import { CONTRIBUTION_SLOTS } from "../../capability/contribution/types";
-import type { ResourceStats } from "../../types";
+import type { ProcStat, ResourceStats } from "../../types";
 
 const browser = useBrowserStore();
 const layout = useLayoutStore();
@@ -99,8 +99,11 @@ watch(() => layout.mainView, () => {
 function fmtMb(mb: number): string {
   return mb >= 1024 ? (mb / 1024).toFixed(1) + "G" : Math.round(mb) + "M";
 }
+function rssLabel(process: ProcStat): string {
+  return process.rss_known === false ? "未采样" : fmtMb(process.rss_mb);
+}
 const memLow = computed(() => {
-  if (!stats.value || !stats.value.mem_total_mb) return false;
+  if (!stats.value || stats.value.memory_sample_known === false || !stats.value.mem_total_mb) return false;
   return stats.value.mem_available_mb / stats.value.mem_total_mb < 0.1;
 });
 </script>
@@ -116,17 +119,24 @@ const memLow = computed(() => {
       <button type="button" class="rd-close" aria-label="收起资源详情" @click="toggleResourceDetails">收起 ✕</button>
     </div>
     <div class="rd-grid">
-      <div><span class="rd-label">系统可用内存</span><strong>{{ fmtMb(stats.mem_available_mb) }} / {{ fmtMb(stats.mem_total_mb) }}</strong></div>
-      <div><span class="rd-label">BrowserOS 合计</span><strong>{{ fmtMb(stats.app_total_mb) }}</strong></div>
-      <div><span class="rd-label">主进程树</span><strong>{{ fmtMb(stats.main.rss_mb) }}</strong></div>
+      <div><span class="rd-label">系统可用内存</span><strong>{{ stats.memory_sample_known === false ? "未采样" : fmtMb(stats.mem_available_mb) + " / " + fmtMb(stats.mem_total_mb) }}</strong></div>
+      <div><span class="rd-label">BrowserOS 合计</span><strong>{{ stats.main.rss_known === false ? "未采样" : fmtMb(stats.app_total_mb) }}</strong></div>
+      <div><span class="rd-label">主进程及未归类子进程</span><strong>{{ rssLabel(stats.main) }}</strong></div>
+      <div v-if="stats.isolated_tab_mode_enabled"><span class="rd-label">独立普通页签</span><strong>{{ stats.isolated_tabs?.length ?? 0 }} 个进程域</strong></div>
       <div><span class="rd-label">网页休眠</span><strong>{{ stats.hibernation_enabled ? "已开启（" + stats.hibernated_count + " 个）" : "未开启" }}</strong></div>
       <div><span class="rd-label">宫格休眠</span><strong>{{ stats.hibernation_enabled ? stats.hibernated_grid_count + " 个" : "未开启" }}</strong></div>
     </div>
     <p v-if="memLow" class="rd-alert" role="alert">可用内存偏低。建议收起宫格、减少同时运行的网页或关闭其他占用内存的应用。</p>
-    <div v-for="g in stats.grids" :key="g.pid" class="rd-process">{{ g.name }} · PID {{ g.pid }} · {{ fmtMb(g.rss_mb) }}</div>
+    <div v-for="g in stats.grids" :key="'grid-' + g.pid" class="rd-process">{{ g.name }} · PID {{ g.pid }} · {{ rssLabel(g) }}</div>
+    <div v-for="t in (stats.isolated_tabs ?? [])" :key="'tab-' + t.pid" class="rd-process">{{ t.name }}（独立） · PID {{ t.pid }} · {{ rssLabel(t) }}</div>
+    <p v-if="stats.isolated_tab_mode_enabled" class="rd-note">
+      独立页签预计还可启动 {{ stats.isolated_tab_start_budget ?? 0 }} 个进程域；实际仍受原生启动检查、路由数量上限和待回收进程限制。
+      休眠仅回收经确认的原始空白页，不恢复任意网页内存状态。
+    </p>
     <p class="rd-note">
       统计接口的宫格预算估计为 {{ stats.grid_budget }} 格，仅供参考，<strong>不代表实际获准启动</strong>。
       宫格启动另有安全保护（系统预留 1800MB、每格估算 450MB）；实际可启动格数以启动时检查为准。
+      RSS / 工作集为采样估计，共享内存可能重复计入，并非内核硬限额。
     </p>
   </section>
 
@@ -150,8 +160,8 @@ const memLow = computed(() => {
       title="展开或收起资源详情"
       @click="toggleResourceDetails"
     >
-      <span>应用 {{ fmtMb(stats.app_total_mb) }}</span>
-      <span class="res-secondary">系统剩余 {{ fmtMb(stats.mem_available_mb) }}</span>
+      <span>应用 {{ stats.main.rss_known === false ? "未采样" : fmtMb(stats.app_total_mb) }}</span>
+      <span class="res-secondary">系统剩余 {{ stats.memory_sample_known === false ? "未采样" : fmtMb(stats.mem_available_mb) }}</span>
       <span aria-hidden="true">{{ detailOpen ? "⌄" : "⌃" }}</span>
     </button>
   </footer>

@@ -377,6 +377,8 @@ export interface ProcStat {
   pid: number;
   name: string;
   rss_mb: number;
+  // Older native builds do not send the attribution flag.
+  rss_known?: boolean;
 }
 
 // 应用资源统计（主进程树 + 每宫格子进程树）
@@ -386,6 +388,10 @@ export interface ResourceStats {
   app_total_mb: number;
   main: ProcStat;
   grids: ProcStat[];
+  isolated_tabs?: ProcStat[];
+  isolated_tab_start_budget?: number;
+  isolated_tab_mode_enabled?: boolean;
+  memory_sample_known?: boolean;
   // 页签休眠开关状态
   hibernation_enabled: boolean;
   // 当前已休眠页签数

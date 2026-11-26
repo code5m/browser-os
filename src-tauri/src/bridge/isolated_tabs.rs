@@ -156,9 +156,17 @@ pub(super) fn navigate(app: &AppHandle, id: &str, url: &str) -> Result<(), Strin
 
 pub(super) fn eval(app: &AppHandle, id: &str, js: &str) -> Result<(), String> {
     let index = exists(app, id)?;
-    app.state::<AppState>().grid_manager.request(index, GridCmd::Eval {
+    let state = app.state::<AppState>();
+    if state.hibernated_tabs.lock().unwrap().contains(id) {
+        return Err("TAB_RENDERER_HIBERNATED_ACTIVATE_FIRST".into());
+    }
+    // Preserve the existing trusted-main Eval permission and dispatch-only
+    // receipt, but bind the native route before any IPC wait. An Agent/UI
+    // caller cannot follow a replacement renderer or wake a sleeping page.
+    let binding = state.grid_manager.renderer_binding(index)?;
+    state.grid_manager.renderer_request_data(binding, GridCmd::Eval {
         id: id.to_owned(), js: js.to_owned(),
-    }, 10000)
+    }, 10000).map(|_| ())
 }
 
 pub(super) fn position(app: &AppHandle, id: &str, css: (f64, f64, f64, f64)) -> Result<(), String> {

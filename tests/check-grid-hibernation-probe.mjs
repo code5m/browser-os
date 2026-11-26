@@ -44,4 +44,28 @@ for (const scenario of [
   assert.equal(probe(scenario).safe,false,JSON.stringify(scenario));
 }
 assert.deepEqual(probe({brokenDom:true}),{safe:false,url:''});
-console.log('GRID_HIBERNATION_PROBE_SELF_TEST=PASS (VM fixtures only; GUI_PENDING)');
+// Ordinary tab reclaim has a stricter history/focus requirement than Grid.
+const ordinaryCode = readFileSync(new URL('../src-tauri/injected/tab-hibernation-probe.js', import.meta.url), 'utf8');
+function ordinaryProbe({url='about:blank', historyLength=1, focused=false, ready='complete',
+                         text='', interactive=false, optOut=false}={}) {
+  return JSON.parse(runInNewContext(ordinaryCode, {
+    document:{
+      readyState:ready,
+      body:{children:{length:0},textContent:text},
+      hasFocus:()=>focused,
+      querySelector:()=>interactive ? {} : null,
+    },
+    location:{href:url},
+    history:{length:historyLength},
+    window:{onbeforeunload:null,__browserosPreventHibernate:optOut},
+    JSON,
+  }, {timeout:1000}));
+}
+assert.deepEqual(ordinaryProbe(),{safe:true,url:'about:blank'});
+for (const scenario of [
+  {url:'https://example.test'}, {historyLength:2}, {focused:true},
+  {ready:'loading'}, {text:'unsent'}, {interactive:true}, {optOut:true},
+]) {
+  assert.equal(ordinaryProbe(scenario).safe,false,JSON.stringify(scenario));
+}
+console.log('GRID_HIBERNATION_PROBE_SELF_TEST=PASS (Grid and ordinary-tab VM fixtures only; GUI_PENDING)');
