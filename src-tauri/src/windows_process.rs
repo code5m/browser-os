@@ -11,8 +11,9 @@ use windows_sys::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JobObjectBasicAccountingInformation,
     JobObjectExtendedLimitInformation, QueryInformationJobObject, SetInformationJobObject,
     TerminateJobObject, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
-    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_JOB_MEMORY,
-    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_BREAKAWAY_OK,
+    JOB_OBJECT_LIMIT_JOB_MEMORY, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK,
 };
 use windows_sys::Win32::System::Threading::{
     GetProcessIdOfThread, OpenProcess, OpenThread, ResumeThread, PROCESS_SET_QUOTA,
@@ -42,6 +43,8 @@ pub(crate) fn verify_current_render_budget(bytes: usize) -> Result<(), String> {
         ) == 0
             || actual.BasicLimitInformation.LimitFlags & JOB_OBJECT_LIMIT_JOB_MEMORY == 0
             || actual.BasicLimitInformation.LimitFlags & JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE == 0
+            || actual.BasicLimitInformation.LimitFlags
+                & (JOB_OBJECT_LIMIT_BREAKAWAY_OK | JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK) != 0
             || actual.JobMemoryLimit != bytes
         {
             return Err("CAPTURE_WORKER_MEMORY_OWNER_UNCONFIRMED".into());

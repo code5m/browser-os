@@ -29,7 +29,6 @@ assert.match(ui,/aria-label="整页截图"/);
 assert.match(ui,/bridge\.captureFullPage\(id\)/);
 assert.match(manifest,/browser\.capture\.full-page/);
 assert.doesNotMatch(native,/document\.cookie|access_token|eval_in_tab/);
-console.log("FULL_PAGE_CAPTURE_CONTRACT=PASS");
 
 // Renderer startup must verify both the budget and the parent admission.
 const isolated=read("../src-tauri/src/isolated_capture.rs");
@@ -44,3 +43,6 @@ assert.match(supervisor,/pending_capture_domain_recovery/);
 assert.match(supervisor,/claim_capture_domain_recovery/);
 assert.match(bridge,/requestCaptureDomainRecovery/);
 assert.match(ui,/target\.epoch,target\.sequence,target\.ticket/);
+assert.match(native,/slot\.cancel_intent = true/);
+assert.match(native,/isolated_capture::checked_png\(bytes\)/);
+console.log("FULL_PAGE_CAPTURE_CONTRACT=PASS");

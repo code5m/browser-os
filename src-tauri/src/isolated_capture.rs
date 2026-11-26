@@ -75,7 +75,7 @@ fn checked_png_header(bytes: &[u8]) -> Result<(), String> {
 // row/pass at a time instead of allocating a second full raster in the host.
 // The existing encoded-byte and dimension limits still apply. PNG decoder
 // limits are best-effort intermediate allocation limits, not renderer limits.
-fn checked_png(bytes: &[u8]) -> Result<(), String> {
+pub(crate) fn checked_png(bytes: &[u8]) -> Result<(), String> {
     checked_png_header(bytes)?;
     if !bytes.ends_with(b"\0\0\0\0IEND\xaeB\x60\x82") {
         return Err("CAPTURE_INVALID_PNG".into());

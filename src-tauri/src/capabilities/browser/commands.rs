@@ -500,6 +500,9 @@ struct CaptureSlot {
     // A live native callback return is not a shared renderer exit receipt.
     native_returned: bool,
     publishing: bool,
+    // Cancellation is committed under the owner mutex, even when the
+    // receipt must remain Unknown until the original renderer retires.
+    cancel_intent: bool,
 }
 
 const CAPTURE_DOMAIN_STALL: std::time::Duration = std::time::Duration::from_secs(60);
@@ -595,7 +598,8 @@ impl CaptureOwner {
     fn reserve_publication(&mut self, ticket: &str) -> Result<(), String> {
         let slot = self.slot.as_mut().filter(|slot| slot.receipt.ticket == ticket)
             .ok_or("CAPTURE_STALE_TICKET")?;
-        if self.recovery_claimed || slot.receipt.phase == CapturePhase::CancelRequested
+        if self.recovery_claimed || slot.cancel_intent
+            || slot.receipt.phase == CapturePhase::CancelRequested
             || slot.cancellation.is_cancelled()
         {
             return Err("CAPTURE_CANCELLED_BEFORE_PUBLICATION".into());
@@ -635,7 +639,7 @@ pub(crate) fn capture_diagnostic() -> serde_json::Value {
             Some(slot) => {
                 serde_json::json!({ "ticket": slot.receipt.ticket, "phase": slot.receipt.phase,
                 "age_ms": slot.since.elapsed().as_millis().min(u64::MAX as u128) as u64,
-                "cancel_requested": slot.cancellation.is_cancelled(),
+                "cancel_requested": slot.cancel_intent || slot.cancellation.is_cancelled(),
                 "native_returned": slot.native_returned, "publishing": slot.publishing })
             }
             None => serde_json::json!({"phase":"idle"}),
@@ -732,6 +736,9 @@ fn capture_finish(
             return None;
         }
         slot.receipt.phase = phase;
+        if phase.terminal() {
+            slot.publishing = false;
+        }
         match result {
             Ok(path) => {
                 slot.receipt.path = Some(path);
@@ -776,6 +783,7 @@ fn capture_cancel(app: &AppHandle, ticket: &str) -> Result<(), String> {
         if slot.receipt.phase.terminal() {
             return Ok(());
         }
+        slot.cancel_intent = true;
         if !slot.native_returned
             && !slot.publishing
             && slot.receipt.mode == CaptureMode::CurrentDocument
@@ -1123,6 +1131,7 @@ fn begin_capture(
             since: std::time::Instant::now(),
             native_returned: false,
             publishing: false,
+            cancel_intent: false,
         });
     }
     // Spawn independent work before returning the receipt. No callback needs
@@ -1402,6 +1411,10 @@ fn save_capture(base: &std::path::Path, bytes: &[u8]) -> Result<String, String> 
     {
         return Err("CAPTURE_DIMENSION_LIMIT".into());
     }
+    // Full PNG verification also covers the live-document path, not just
+    // the isolated worker. Reject truncated output before any publication.
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    crate::isolated_capture::checked_png(bytes)?;
     use crate::capabilities::workspace::safe_paths;
     let roots = vec![base.to_path_buf()];
     let directory = base.join("screenshots");
@@ -1451,6 +1464,7 @@ mod capture_storage_tests {
                 since: std::time::Instant::now(),
                 native_returned: false,
                 publishing: false,
+                cancel_intent: false,
             }),
             last_completed: None,
             recovery_intent: None,
@@ -1485,7 +1499,11 @@ mod capture_storage_tests {
         owner.mark_returned("old").unwrap();
         assert_eq!(owner.reserve_publication("old").unwrap_err(), "CAPTURE_CANCELLED_BEFORE_PUBLICATION");
         owner.recovery_claimed = false;
-        owner.slot.as_mut().unwrap().receipt.phase = CapturePhase::CancelRequested;
+        // The independent renderer's Unknown receipt must remain visible.
+        // The mutex-protected cancel intent still fences publication, even
+        // before the out-of-lock native cancellation notification is sent.
+        owner.slot.as_mut().unwrap().cancel_intent = true;
+        assert_eq!(owner.slot.as_ref().unwrap().receipt.phase, CapturePhase::Unknown);
         assert_eq!(owner.reserve_publication("old").unwrap_err(), "CAPTURE_CANCELLED_BEFORE_PUBLICATION");
         assert!(owner.reserve_publication("replacement").is_err());
     }
@@ -1541,6 +1559,17 @@ mod capture_storage_tests {
         assert_eq!(
             save_capture(&base, &image_header(10_000, 10_000)),
             Err("CAPTURE_DIMENSION_LIMIT".into())
+        );
+        assert!(!base.exists());
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[test]
+    fn truncated_png_never_creates_capture_storage() {
+        let base = std::env::temp_dir().join(format!("browseros-capture-{}", uuid::Uuid::new_v4()));
+        assert_eq!(
+            save_capture(&base, &image_header(2, 2)),
+            Err("CAPTURE_INVALID_PNG".into())
         );
         assert!(!base.exists());
     }
