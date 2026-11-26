@@ -173,8 +173,10 @@ impl AgentEngine<'_> {
             prompt: prompt.into(),
             context: task.context,
         };
-        request.validate()?;
         let run = async {
+            // An invalid admitted model request is settled by the same task
+            // owner rather than leaving a Running task without a driver.
+            request.validate()?;
             let mut stream = gate.receive(self.provider.stream(request)).await?;
             let mut text = String::new();
             let mut usage = None;

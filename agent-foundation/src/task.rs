@@ -148,6 +148,12 @@ impl Drop for ExecutionLease<'_> {
 }
 
 impl TaskRegistry {
+    /// Non-serializable identity for a suspended in-memory SDK driver.
+    #[cfg(feature = "experimental-rig-run")]
+    pub(crate) fn execution_identity(&self) -> Arc<()> {
+        Arc::clone(&self.identity)
+    }
+
     pub fn new(journal: Arc<EventJournal>) -> Self {
         Self {
             identity: Arc::new(()),

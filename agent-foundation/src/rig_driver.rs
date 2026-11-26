@@ -11,12 +11,12 @@ use rig_agent::run::{AgentRunStep, ModelTurn, ModelTurnOutcome};
 use rig_core::{
     completion::{CompletionRequest, CompletionResponse, ToolDefinition},
     driver::DynModel,
-    message::{ToolCall, ToolResult, ToolResultContent, UserContent},
+    message::{AssistantContent, ToolCall, ToolResult, ToolResultContent, UserContent},
     operation::Completion,
 };
 #[cfg(test)]
 use serde_json::Value;
-use std::{collections::BTreeSet, future::Future, pin::Pin, time::Duration};
+use std::{collections::BTreeSet, future::Future, pin::Pin, sync::Arc, time::Duration};
 use uuid::Uuid;
 
 pub type RigCall<'a> = Pin<Box<dyn Future<Output = Result<CompletionResponse>> + Send + 'a>>;
@@ -50,9 +50,20 @@ pub enum RigDriverStep {
     },
 }
 
+struct DriverOwner {
+    registry: Arc<()>,
+    task: Uuid,
+    revision: u64,
+    model: String,
+}
 pub struct RigMultiTurnDriver {
     pilot: RigRunPilot,
     pending: Option<(Uuid, Uuid, u64, ToolCall)>,
+    owner: Option<DriverOwner>,
+    budget: crate::engine::ModelAdmissionBudget,
+    call_ids: BTreeSet<String>,
+    in_flight: bool,
+    finished: bool,
 }
 
 impl RigMultiTurnDriver {
@@ -60,6 +71,11 @@ impl RigMultiTurnDriver {
         Ok(Self {
             pilot: RigRunPilot::new(prompt, max_turns)?,
             pending: None,
+            owner: None,
+            budget: crate::engine::ModelAdmissionBudget::new(crate::engine::TurnLimits::complete_message())?,
+            call_ids: BTreeSet::new(),
+            in_flight: false,
+            finished: false,
         })
     }
 
@@ -72,7 +88,7 @@ impl RigMultiTurnDriver {
         registry: &ToolRegistry,
         definitions: &[ToolDefinition],
     ) -> Result<RigDriverStep> {
-        if self.pending.is_some() {
+        if self.pending.is_some() || self.finished || self.in_flight {
             return Err(FoundationError::InvalidTransition);
         }
         if model_id.is_empty() || model_id.len() > 160 || definitions.len() > 32 {
@@ -91,15 +107,26 @@ impl RigMultiTurnDriver {
             return Err(FoundationError::InvalidTransition);
         }
         let revision = start.revision;
+        let identity = tasks.execution_identity();
+        if self.owner.as_ref().is_some_and(|owner|
+            !Arc::ptr_eq(&owner.registry,&identity) || owner.task!=task_id
+                || owner.revision!=revision || owner.model!=model_id) {
+            return Err(FoundationError::ApprovalMismatch);
+        }
         // Keep the same owner across SDK state advancement, provider
         // transport, proposal admission and terminal settlement.
         let limits = crate::engine::TurnLimits {
             deadline: Duration::from_secs(45),
             ..crate::engine::TurnLimits::complete_message()
         };
-        let mut budget = crate::engine::ModelAdmissionBudget::new(limits)?;
         let mut gate =
             crate::engine::ModelTurnGate::acquire(tasks, task_id, revision, limits.deadline)?;
+        if self.owner.is_none() {
+            self.owner=Some(DriverOwner{registry:identity,task:task_id,revision,model:model_id.to_owned()});
+        }
+        // If the awaiting future is dropped, this flag remains set. The
+        // partially advanced SDK state is not a resumable host receipt.
+        self.in_flight=true;
         let run = async {
             loop {
                 gate.active()?;
@@ -122,10 +149,31 @@ impl RigMultiTurnDriver {
                             .state()
                             .advertise_tools(turn, definitions.to_vec());
                         let response = gate.receive(model.complete(request)).await?;
-                        budget.admit_events(response.choice.len())?;
                         if response.choice.len() > 64 {
                             return Err(FoundationError::Provider("RIG_CONTENT_LIMIT".into()));
                         }
+                        // Budget belongs to the complete SDK run, not a
+                        // single invocation between user approval pauses.
+                        self.budget.admit_events(response.choice.len())?;
+                        for content in response.choice.iter() {
+                            match content {
+                                AssistantContent::Text(text) => self.budget.admit_text(text.text.len())
+                                    .map_err(|_| FoundationError::Provider("RIG_OUTPUT_LIMIT".into()))?,
+                                AssistantContent::ToolCall(call) => {
+                                    let id=call.id.to_string();
+                                    if id.is_empty() || id.len()>256 || id.chars().any(|c| c.is_control() || c.is_whitespace())
+                                        || !self.call_ids.insert(id) {
+                                        return Err(FoundationError::InvalidInput("rig tool call id"));
+                                    }
+                                    if !call.function.arguments.is_object() {
+                                        return Err(FoundationError::InvalidInput("rig tool arguments"));
+                                    }
+                                }
+                                AssistantContent::Reasoning(_) | AssistantContent::Image(_) =>
+                                    return Err(FoundationError::Provider("RIG_UNSUPPORTED_CONTENT".into())),
+                            }
+                        }
+                        gate.active()?;
                         let turn =
                             ModelTurn::from_response_parts(&response, names.clone(), names.clone());
                         let outcome =
@@ -176,7 +224,9 @@ impl RigMultiTurnDriver {
                         // Validation must precede committing a successful terminal
                         // state; the previous order permanently marked an oversized
                         // error as Completed. Fail closed and retain a Failed event.
-                        if budget.admit_text(response.output.len()).is_err() {
+                        // Raw admitted text is already counted cumulatively.
+                        // Independently bound the SDK's assembled final text.
+                        if response.output.len()>limits.max_text_bytes {
                             tasks
                                 .finish_at_revision(task_id, false, revision)
                                 .map_err(stale_transition)?;
@@ -195,8 +245,14 @@ impl RigMultiTurnDriver {
             }
         };
         let result = run.await;
-        if result.is_err() && tasks.active_at_revision(task_id, revision) {
-            let _ = tasks.finish_at_revision(task_id, false, revision);
+        self.in_flight=false;
+        if result.is_err() {
+            self.finished=true;
+            if tasks.active_at_revision(task_id, revision) {
+                let _ = tasks.finish_at_revision(task_id, false, revision);
+            }
+        } else if matches!(&result, Ok(RigDriverStep::Completed { .. })) {
+            self.finished=true;
         }
         result
     }
@@ -212,7 +268,10 @@ impl RigMultiTurnDriver {
             return Err(FoundationError::ApprovalMismatch);
         };
         let (task_id, call_id, approved_revision) = (*task_id, *call_id, *approved_revision);
-        if !receipt.matches_approval(tasks, task_id, call_id, approved_revision) {
+        if self.finished || self.in_flight || !self.owner.as_ref().is_some_and(|owner|
+            Arc::ptr_eq(&owner.registry,&tasks.execution_identity()) && owner.task==task_id
+                && owner.revision.checked_add(2)==Some(approved_revision))
+            || !receipt.matches_approval(tasks, task_id, call_id, approved_revision) {
             return Err(FoundationError::ApprovalMismatch);
         }
         if serde_json::to_vec(receipt.value())
@@ -235,6 +294,9 @@ impl RigMultiTurnDriver {
                 })])
                 .map_err(|_| FoundationError::Provider("RIG_TOOL_RESULTS".into()))
         })?;
+        // Only a consumed, matching tool receipt may advance the driver's
+        // expected task revision. A pause/resume or restored task cannot.
+        self.owner.as_mut().ok_or(FoundationError::ApprovalMismatch)?.revision=approved_revision;
         self.pending = None;
         Ok(())
     }
@@ -242,7 +304,7 @@ impl RigMultiTurnDriver {
     pub fn snapshot(&self) -> Result<String> {
         // Never checkpoint a run with a pending host approval: run state and
         // approval must commit atomically in the hosting durable store.
-        if self.pending.is_some() {
+        if self.pending.is_some() || self.in_flight {
             return Err(FoundationError::InvalidTransition);
         }
         self.pilot.snapshot()
@@ -361,6 +423,8 @@ mod tests {
             ToolFunction::new(ToolName::new("demo.inspect").unwrap(), json!({})),
         );
         let mut driver = RigMultiTurnDriver::new("Review", 2).unwrap();
+        driver.owner=Some(DriverOwner{registry:tasks.execution_identity(),task:task.id,
+            revision:revision.checked_sub(2).unwrap(),model:"model-mock".into()});
         driver.pending = Some((task.id, call_id, revision, call));
         tasks.pause(task.id).unwrap();
         tasks.start(task.id).unwrap();
