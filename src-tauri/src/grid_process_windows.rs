@@ -80,8 +80,16 @@ impl ChildComms {
     /// Invalidate any old connection before a replacement process can be
     /// launched. Do not recycle request identities across process generations.
     fn prepare_spawn(&self) -> Result<(), String> {
-        let mut writer = self.writer.lock().unwrap();
-        let _owner = self.owner_gate.lock().unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let check = || if self.closing.load(Ordering::SeqCst) {
+            Err("GRID_CONNECTION_CLOSING".to_string())
+        } else { Ok(()) };
+        let mut writer = crate::grid_ipc::lock_renderer_writer(&self.writer, deadline, check)?;
+        let _owner = crate::grid_ipc::lock_renderer_writer(&self.owner_gate, deadline, check)?;
+        let generation = self.generation.load(Ordering::SeqCst).checked_add(1)
+            .ok_or("GRID_CONNECTION_GENERATION_EXHAUSTED")?;
+        let epoch = self.spawn_epoch.load(Ordering::SeqCst).checked_add(1)
+            .ok_or("GRID_SPAWN_EPOCH_EXHAUSTED")?;
         self.navigation_revision.store(0, Ordering::SeqCst);
         self.blank_reclaiming.store(false, Ordering::SeqCst);
         self.blank_reclaim_blocked.store(false, Ordering::SeqCst);
@@ -94,12 +102,8 @@ impl ChildComms {
         }
         *writer = None;
         self.fail_pending("GRID_REQUEST_OUTCOME_UNKNOWN: previous renderer retired");
-        self.generation
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_add(1))
-            .map_err(|_| "GRID_CONNECTION_GENERATION_EXHAUSTED".to_string())?;
-        self.spawn_epoch
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_add(1))
-            .map_err(|_| "GRID_SPAWN_EPOCH_EXHAUSTED".to_string())?;
+        self.generation.store(generation, Ordering::SeqCst);
+        self.spawn_epoch.store(epoch, Ordering::SeqCst);
         Ok(())
     }
 
@@ -202,18 +206,21 @@ impl ChildComms {
 
     fn attach(&self, stream: UnixStream, peer_pid: u32) -> Result<u64, String> {
         let control = stream.try_clone().map_err(|error| error.to_string())?;
-        let mut writer = self.writer.lock().unwrap();
-        let _owner = self.owner_gate.lock().unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let check = || if self.accepts_peer(peer_pid) { Ok(()) }
+            else { Err("GRID_PEER_NOT_OWNED".to_string()) };
+        let mut writer = crate::grid_ipc::lock_renderer_writer(&self.writer, deadline, check)?;
+        let _owner = crate::grid_ipc::lock_renderer_writer(&self.owner_gate, deadline, check)?;
         if !self.accepts_peer(peer_pid) {
             let _ = control.cancel_io();
             return Err("GRID_PEER_NOT_OWNED".into());
         }
+        let generation = self.generation.load(Ordering::SeqCst).checked_add(1)
+            .ok_or("GRID_CONNECTION_GENERATION_EXHAUSTED")?;
         if let Some(previous) = self.cancellation.lock().unwrap().replace(control) {
             let _ = previous.cancel_io();
         }
-        let generation = self.generation
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_add(1))
-            .map_err(|_| "GRID_CONNECTION_GENERATION_EXHAUSTED".to_string())? + 1;
+        self.generation.store(generation, Ordering::SeqCst);
         *writer = Some(stream);
         self.ready_generation.store(0, Ordering::SeqCst);
         self.connected.store(true, Ordering::SeqCst);
@@ -1781,11 +1788,17 @@ impl GridProcessManager {
             // Allocate in writer order, not caller/thread order. The worker
             // rejects replays and the counter must never wrap.
             seq = crate::grid_ipc::next_request_sequence(&comms.seq)?;
+            let frame = crate::grid_ipc::encode_wire(&Wire::Request { seq, cmd: cmd.clone() })
+                .map_err(|_| "GRID_REQUEST_FRAME_REJECTED")?;
             peer_pid = comms.expected_pid.load(Ordering::SeqCst);
             let result = match guard.as_mut() {
                 Some(w) => {
                     {
-                        let _owner = comms.owner_gate.lock().unwrap();
+                        let _owner = crate::grid_ipc::lock_renderer_writer(&comms.owner_gate, deadline, || {
+                            self.lifecycle.check()?;
+                            if !comms.is_current(generation) { return Err("GRID_CONNECTION_GENERATION_CHANGED".into()); }
+                            Ok(())
+                        })?;
                         if !comms.is_current(generation) {
                             return Err("GRID_CONNECTION_GENERATION_CHANGED".into());
                         }
@@ -1797,7 +1810,14 @@ impl GridProcessManager {
                         if std::time::Instant::now() >= deadline {
                             return Err("GRID_WRITER_ADMISSION_TIMEOUT".into());
                         }
-                        let mut pending = comms.pending.lock().unwrap();
+                        let mut pending = crate::grid_ipc::lock_renderer_writer(&comms.pending, deadline, || {
+                            self.lifecycle.check()?;
+                            if !comms.is_current(generation) { return Err("GRID_CONNECTION_GENERATION_CHANGED".into()); }
+                            Ok(())
+                        })?;
+                        if std::time::Instant::now() >= deadline {
+                            return Err("GRID_WRITER_ADMISSION_TIMEOUT".into());
+                        }
                         if pending.len() >= crate::grid_ipc::MAX_PENDING_RENDERER_REQUESTS {
                             return Err("GRID_REQUEST_CAPACITY_EXHAUSTED".into());
                         }
@@ -1806,9 +1826,11 @@ impl GridProcessManager {
                         }
                         pending.insert(seq, tx);
                     }
-                    crate::grid_ipc::write_wire(w, &Wire::Request { seq, cmd: cmd.clone() })
+                    crate::grid_ipc::write_frame_until(&frame, deadline, |bytes, remaining| {
+                        w.write_with_timeout(bytes, remaining)
+                    })
                 }
-                None => Err(std::io::Error::new(std::io::ErrorKind::NotConnected, "GRID_NOT_CONNECTED")),
+                None => return Err("GRID_NOT_CONNECTED".into()),
             };
             if result.is_err() {
                 comms.connected.store(false, Ordering::SeqCst);

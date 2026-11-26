@@ -151,6 +151,7 @@ pub(super) fn tab_open_admitted(
         return navigate_tab_webview(&app, &id, &target);
     }
     if binding.is_some() { return Err("TAB_MUTATION_INSTANCE_STALE".into()); }
+    app.state::<AppState>().hibernated_scroll.lock().unwrap().remove(&id);
     if let Err(e) = navigate_tab_webview(&app, &id, &target) {
         recover_tab_webview(&app, &id, "navigate", &e)?;
         navigate_tab_webview(&app, &id, &target)
@@ -732,6 +733,9 @@ fn tab_hibernation_snapshot(app: &AppHandle, id: &str,
 ) -> Result<(f64, f64), String> {
     use tauri_plugin_browser_tabs::TabManagerState;
     let manager = app.state::<TabManagerState>();
+    if !manager.download_history_clear(&id.to_string()) {
+        return Err("TAB_HIBERNATION_DOWNLOAD_HISTORY".into());
+    }
     let script = r#"(() => {
       const media = [...document.querySelectorAll('audio,video')].some(el => !el.paused && !el.ended);
       const controls = [...document.querySelectorAll('input,textarea,select')];
@@ -779,6 +783,9 @@ fn tab_hibernation_snapshot(app: &AppHandle, id: &str,
     if snapshot.get("address").and_then(serde_json::Value::as_str) != Some(expected_url)
         || !manager.is_current_capture_document(&id.to_string(), document) {
         return Err("TAB_HIBERNATION_DOCUMENT_STALE".into());
+    }
+    if !manager.download_history_clear(&id.to_string()) {
+        return Err("TAB_HIBERNATION_DOWNLOAD_HISTORY".into());
     }
     accepted_hibernation_scroll(&snapshot)
         .ok_or_else(|| "TAB_HIBERNATION_PROTECTED_OR_INVALID".to_string())
@@ -1039,6 +1046,7 @@ pub(crate) fn tab_go_back_impl(
 ) -> Result<(), String> {
     crate::shared::native_legacy_policy::require_main(&webview, "tab_go_back")?;
     crate::shared::native_legacy_policy::bound_text("tab_go_back", "id", &id)?;
+    app.state::<AppState>().hibernated_scroll.lock().unwrap().remove(&id);
 
     plugin_eval(&app, &id, "if (history.length > 1) { history.back(); }")
 }
@@ -1063,6 +1071,7 @@ pub(crate) fn tab_go_forward_impl(
 ) -> Result<(), String> {
     crate::shared::native_legacy_policy::require_main(&webview, "tab_go_forward")?;
     crate::shared::native_legacy_policy::bound_text("tab_go_forward", "id", &id)?;
+    app.state::<AppState>().hibernated_scroll.lock().unwrap().remove(&id);
 
     plugin_eval(&app, &id, "history.forward();")
 }
@@ -1083,6 +1092,7 @@ pub(crate) fn tab_reload_impl(
 ) -> Result<(), String> {
     crate::shared::native_legacy_policy::require_main(&webview, "tab_reload")?;
     crate::shared::native_legacy_policy::bound_text("tab_reload", "id", &id)?;
+    app.state::<AppState>().hibernated_scroll.lock().unwrap().remove(&id);
 
     plugin_eval(&app, &id, "location.reload();")
 }

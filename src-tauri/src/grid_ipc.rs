@@ -486,19 +486,58 @@ pub(crate) fn lock_renderer_writer<'a, T>(
     }
 }
 
-/// 写一帧（JSON + '\n'）。
-pub fn write_wire<W: std::io::Write>(w: &mut W, msg: &Wire) -> std::io::Result<()> {
-    let mut line = serde_json::to_vec(msg)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-    if line.len() >= MAX_GRID_WIRE_BYTES {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "GRID_WIRE_LIMIT",
-        ));
+// Encode through a capped sink so a large local payload cannot allocate an
+// unbounded encoded frame before the wire limit is checked.
+pub(crate) fn encode_wire(msg: &Wire) -> std::io::Result<Vec<u8>> {
+    use std::io::{Error, ErrorKind, Write};
+    struct Frame(Vec<u8>);
+    impl Write for Frame {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if bytes.len() > (MAX_GRID_WIRE_BYTES - 1).saturating_sub(self.0.len()) {
+                return Err(Error::new(ErrorKind::InvalidData, "GRID_WIRE_LIMIT"));
+            }
+            self.0.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
     }
-    line.push(b'\n');
+    let mut frame = Frame(Vec::new());
+    serde_json::to_writer(&mut frame, msg)
+        .map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
+    frame.0.push(b'\n');
+    Ok(frame.0)
+}
+
+/// Generic complete-frame write. Native request callers use a deadline-aware
+/// transport below rather than restarting a timeout on every partial write.
+pub fn write_wire<W: std::io::Write>(w: &mut W, msg: &Wire) -> std::io::Result<()> {
+    let line = encode_wire(msg)?;
     w.write_all(&line)?;
     w.flush()
+}
+
+/// Apply one frame budget across all partial native writes. Each platform
+/// still owns cancellation/drain of the individual native operation.
+pub(crate) fn write_frame_until(
+    mut bytes: &[u8],
+    deadline: std::time::Instant,
+    mut write: impl FnMut(&[u8], std::time::Duration) -> std::io::Result<usize>,
+) -> std::io::Result<()> {
+    use std::io::{Error, ErrorKind};
+    while !bytes.is_empty() {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(Error::new(ErrorKind::TimedOut, "GRID_FRAME_WRITE_DEADLINE"));
+        }
+        match write(bytes, remaining.min(std::time::Duration::from_secs(2))) {
+            Ok(0) => return Err(Error::new(ErrorKind::WriteZero, "GRID_FRAME_WRITE_ZERO")),
+            Ok(n) if n <= bytes.len() => bytes = &bytes[n..],
+            Ok(_) => return Err(Error::new(ErrorKind::InvalidData, "GRID_FRAME_WRITE_COUNT")),
+            Err(error) if error.kind() == ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
 }
 
 /// Read at most one bounded JSON line without allocating for untrusted

@@ -92,6 +92,15 @@ impl ExecutionLease<'_> {
             .active_at_revision(self.task_id, self.revision)
     }
 
+    /// A durable successful side effect must be confirmed by the same lease,
+    /// not by a task-id-only UPDATE after a stale in-memory generation check.
+    #[cfg(feature = "durable-sqlite")]
+    pub(crate) fn confirm_effect(&self, call_id: Uuid, key: &str, tool_name: &str) -> Result<()> {
+        let store = self.registry.durable.as_ref().ok_or(FoundationError::PermissionDenied)?;
+        let token = self.db_lease.ok_or(FoundationError::PermissionDenied)?;
+        store.confirm_effect_at_revision(self.task_id, self.revision, token, call_id, key, tool_name)
+    }
+
     /// Commit terminal state only for the exact generation this lease owns.
     /// A stale caller must not finish a replacement Task generation.
     pub fn finish(&self, success: bool) -> Result<()> {

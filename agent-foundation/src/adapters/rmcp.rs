@@ -59,6 +59,21 @@ pub struct RmcpReadOnlyTool {
     pub verifier: Arc<VerifyResource>,
 }
 
+fn validate_mcp_binding(binding: &ApprovalBinding, args: &Value) -> Result<()> {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| FoundationError::PermissionDenied)?.as_millis();
+    if now >= u128::from(binding.expires_at_unix_ms)
+        || binding.principal_id.is_nil() || binding.workspace_id.is_nil()
+        || binding.session_id.is_nil() {
+        return Err(FoundationError::PermissionDenied);
+    }
+    if !args.is_object() || serde_json::to_vec(args)
+        .map_err(|e| FoundationError::Serialization(e.to_string()))?.len() > 16_384 {
+        return Err(FoundationError::InvalidInput("mcp tool arguments invalid or too large"));
+    }
+    Ok(())
+}
+
 impl AgentTool for RmcpReadOnlyTool {
     fn name(&self) -> &str {
         &self.tool_name
@@ -67,7 +82,9 @@ impl AgentTool for RmcpReadOnlyTool {
         ToolEffect::ReadOnly
     }
     fn validate_binding(&self, binding: &ApprovalBinding, args: &Value) -> Result<()> {
-        (self.verifier)(binding, args)
+        validate_mcp_binding(binding, args)?;
+        (self.verifier)(binding, args)?;
+        validate_mcp_binding(binding, args)
     }
     fn requires_authorized_call(&self) -> bool { true }
     fn call<'a>(&'a self, _arguments: Value) -> ToolFuture<'a> {
@@ -75,21 +92,10 @@ impl AgentTool for RmcpReadOnlyTool {
     }
     fn call_authorized<'a>(&'a self, call: AuthorizedCall) -> ToolFuture<'a> {
         Box::pin(async move {
-            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
-                .map_err(|_| FoundationError::PermissionDenied)?.as_millis();
-            if now >= u128::from(call.binding.expires_at_unix_ms)
-                || call.binding.principal_id.is_nil() || call.binding.workspace_id.is_nil()
-                || call.binding.session_id.is_nil() {
-                return Err(FoundationError::PermissionDenied);
-            }
-            (self.verifier)(&call.binding, &call.arguments)?;
+            self.validate_binding(&call.binding, &call.arguments)?;
             let Value::Object(map) = call.arguments else {
                 return Err(FoundationError::InvalidInput("mcp arguments"));
             };
-            if serde_json::to_vec(&map)
-                .map_err(|e| FoundationError::Serialization(e.to_string()))?.len() > 16_384 {
-                return Err(FoundationError::InvalidInput("mcp tool arguments too large"));
-            }
             let request = CallToolRequestParams::new(self.tool_name.clone()).with_arguments(map);
             let response = self
                 .client

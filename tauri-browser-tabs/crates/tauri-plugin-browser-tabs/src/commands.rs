@@ -1157,7 +1157,8 @@ impl TabManager {
                 .on_download(|_, _| false);
         } else {
             #[cfg(any(target_os = "linux", target_os = "windows"))]
-            if let Some(sink) = self.download_sink.read().clone() {
+            {
+                let sink = self.download_sink.read().clone();
                 let download_id = options.id.clone();
                 let seen = Arc::clone(&download_seen);
                 builder = builder.on_download(move |_, event| {
@@ -1171,7 +1172,9 @@ impl TabManager {
                     // The native safety flag does not depend on best-effort
                     // report delivery. Never expose URL, destination or path.
                     seen.store(true, std::sync::atomic::Ordering::Release);
-                    sink(&download_id, phase);
+                    if let Some(sink) = sink.as_ref() {
+                        sink(&download_id, phase);
+                    }
                     true
                 });
             }
@@ -1738,6 +1741,12 @@ impl TabManager {
         if document.is_some_and(|expected| !std::sync::Weak::ptr_eq(&expected.instance.0, &Arc::downgrade(&tab))
             || !expected.observed_generation_is_current()) {
             return Err(BrowserTabError::Platform("TAB_DOCUMENT_STALE".into()));
+        }
+        // Document-bound close is the automatic hibernation path. Native
+        // download history is a conservative veto; explicit close is still
+        // the user's existing direct-close operation.
+        if document.is_some() && tab.download_seen.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(BrowserTabError::Platform("TAB_HIBERNATION_DOWNLOAD_HISTORY".into()));
         }
         // Keep ownership on failure. Admission excludes other synchronous
         // dispatches and duplicate lifecycle changes for this identity.

@@ -397,7 +397,7 @@ impl ToolRegistry {
             tool.call_authorized(AuthorizedCall {
                 arguments: permit.operation.arguments,
                 binding: binding.cloned().ok_or(FoundationError::PermissionDenied)?,
-                idempotency_key,
+                idempotency_key: idempotency_key.clone(),
             })
         } else {
             tool.call(permit.operation.arguments)
@@ -414,10 +414,9 @@ impl ToolRegistry {
             return Err(FoundationError::Cancelled);
         }
         #[cfg(feature = "durable-sqlite")]
-        if let Some(store) = effect_store {
-            if result.is_ok() {
-                store.confirm_effect(permit.operation.call_id)?;
-            }
+        if effect_store.is_some() && result.is_ok() {
+            _lease.confirm_effect(permit.operation.call_id, &idempotency_key,
+                &permit.operation.tool_name)?;
         }
         if effectful && result.is_err() {
             tasks.record_event_at_revision(

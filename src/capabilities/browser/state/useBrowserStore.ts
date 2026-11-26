@@ -514,7 +514,13 @@ export const useBrowserStore = defineStore("browser", () => {
     return mutateTabs(async () => {
       const target = tabs.find((t) => t.id === id);
       if (!target || (onlyBlank && target.url !== "about:blank")) return false;
+      const download = rendererDownloads.get(id);
+      const downloadUncertain = isolatedRendererMode.value && download?.connection_current
+        && (download.observed_unfinished === null || download.observed_unfinished > 0);
       await closeNativeTab(id);
+      if (downloadUncertain) {
+        layout.showToast("页签已关闭；此前观察到未完成或结果不明的下载，最终状态待核对。");
+      }
       recordClose(id);
       nativeTabFailures.delete(id);
       clearRendererState(id);

@@ -506,6 +506,25 @@ impl SqliteTaskStore {
         Ok(())
     }
 
+    pub(crate) fn confirm_effect_at_revision(
+        &self, task_id: Uuid, revision: u64, lease: Uuid, call_id: Uuid,
+        key: &str, tool_name: &str,
+    ) -> Result<()> {
+        let mut connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
+        let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(storage)?;
+        Self::require_running_revision(&tx, task_id, revision)?;
+        let changed = tx.execute(
+            "UPDATE foundation_effects SET state='confirmed'
+             WHERE call_id=?1 AND task_id=?2 AND effect_key=?3 AND tool=?4 AND state='unknown'
+             AND EXISTS(SELECT 1 FROM foundation_leases l WHERE l.task_id=?2 AND l.token=?5)",
+            params![call_id.to_string(), task_id.to_string(), key, tool_name, lease.to_string()],
+        ).map_err(storage)?;
+        if changed != 1 { return Err(FoundationError::InvalidTransition); }
+        tx.commit().map_err(storage)?;
+        Ok(())
+    }
+
     pub fn reconcile_effect(
         &self,
         call_id: Uuid,
