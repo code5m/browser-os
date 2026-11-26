@@ -159,6 +159,19 @@ pub(super) fn execute_cancelable_with_admission(
     cancellation: Arc<AtomicBool>,
     before_spawn: impl FnOnce(&Value) -> Result<(), String>,
 ) -> Result<Value, String> {
+    execute_cancelable_with_effect_admission(
+        root, storage, request, cancellation, None, |request, _| before_spawn(request),
+    )
+}
+
+pub(super) fn execute_cancelable_with_effect_admission(
+    root: &Path,
+    storage: &Path,
+    request: Value,
+    cancellation: Arc<AtomicBool>,
+    run: Option<uuid::Uuid>,
+    before_spawn: impl FnOnce(&Value, Option<&super::mcp_authority::Binding>) -> Result<(), String>,
+) -> Result<Value, String> {
     if !no_reparse_path(root) {
         return Err("CONTEXT_ROOT_INVALID".into());
     }
@@ -248,11 +261,12 @@ pub(super) fn execute_cancelable_with_admission(
         }
         "mcp_list" => Ok(super::coding_mcp_windows::discover(&root, storage)),
         "mcp_review" | "mcp_tools" | "mcp_call" => {
-            super::coding_mcp_windows::execute_cancelable_with_admission(
+            super::coding_mcp_windows::execute_cancelable_with_effect_admission(
                 &root,
                 storage,
                 request,
                 cancellation,
+                run,
                 before_spawn,
             )
         }

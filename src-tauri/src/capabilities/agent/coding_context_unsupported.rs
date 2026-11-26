@@ -34,7 +34,20 @@ pub(super) fn execute_cancelable_with_admission(
     storage: &Path,
     request: Value,
     cancellation: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    _before_spawn: impl FnOnce(&Value) -> Result<(), String>,
+    before_spawn: impl FnOnce(&Value) -> Result<(), String>,
+) -> Result<Value, String> {
+    execute_cancelable_with_effect_admission(
+        root, storage, request, cancellation, None, |request, _| before_spawn(request),
+    )
+}
+
+pub(super) fn execute_cancelable_with_effect_admission(
+    root: &Path,
+    storage: &Path,
+    request: Value,
+    cancellation: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    _run: Option<uuid::Uuid>,
+    _before_spawn: impl FnOnce(&Value, Option<&super::mcp_authority::Binding>) -> Result<(), String>,
 ) -> Result<Value, String> {
     execute_cancelable(root, storage, request, cancellation)
 }

@@ -528,6 +528,19 @@ pub(super) fn execute_cancelable_with_admission(
     cancellation: Arc<AtomicBool>,
     before_spawn: impl FnOnce(&Value) -> Result<(), String>,
 ) -> Result<Value, String> {
+    execute_cancelable_with_effect_admission(
+        root, storage, request, cancellation, None, |request, _| before_spawn(request),
+    )
+}
+
+pub(super) fn execute_cancelable_with_effect_admission(
+    root: &Path,
+    storage: &Path,
+    request: Value,
+    cancellation: Arc<AtomicBool>,
+    run: Option<uuid::Uuid>,
+    before_spawn: impl FnOnce(&Value, Option<&super::mcp_authority::Binding>) -> Result<(), String>,
+) -> Result<Value, String> {
     let root = root.canonicalize().map_err(|_| "CONTEXT_ROOT_INVALID")?;
     match request["action"].as_str().unwrap_or("") {
         "skills_list" => Ok(
@@ -586,7 +599,9 @@ pub(super) fn execute_cancelable_with_admission(
             let config = resolved_config(&root, storage, &request)?;
             let prepared = super::mcp_review::prepare(&root, storage, &request, config)?;
             super::mcp_review::authorize(&prepared, &request)?;
-            let (method, params) = mcp_protocol::tool_request(action, &request)?;
+            let binding = super::mcp_authority::Binding::from_review(storage, &prepared, run)?;
+            let (method, params) =
+                mcp_protocol::owned_tool_request(action, &request, binding.as_ref())?;
             let credentials = crate::framework::ai::mcp_credential_snapshot(
                 storage,
                 prepared.config["env_refs"].as_object(),
@@ -594,7 +609,7 @@ pub(super) fn execute_cancelable_with_admission(
             if cancellation.load(Ordering::Acquire) {
                 return Err("MCP_CANCEL_REQUESTED".into());
             }
-            before_spawn(&request)?;
+            before_spawn(&request, binding.as_ref())?;
             let mut session = Session::start_with_credentials(
                 &root,
                 &prepared.config,

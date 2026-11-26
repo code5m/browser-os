@@ -46,6 +46,23 @@ pub(super) fn tool_request(action: &str, request: &Value) -> Result<(&'static st
     }
 }
 
+/// The correlation metadata is created only from native reviewed admission.
+/// Do not add it to model arguments or permit a caller to choose a key.
+pub(super) fn owned_tool_request(
+    action: &str,
+    request: &Value,
+    binding: Option<&super::mcp_authority::Binding>,
+) -> Result<(&'static str, Value), String> {
+    let (method, mut params) = tool_request(action, request)?;
+    if let Some(binding) = binding {
+        if action != "mcp_call" || !binding.valid() {
+            return Err("MCP_EFFECT_AUTHORITY_INVALID".into());
+        }
+        params["_meta"] = json!({"browseros/effect/v1":binding.metadata()});
+    }
+    Ok((method, params))
+}
+
 pub(super) enum RpcFrame {
     Reply(Value),
     ServerRequest(Value),

@@ -139,7 +139,8 @@ pub(crate) fn prepare(
         .as_u64()
         .unwrap_or(20)
         .clamp(1, 60);
-    let descriptor = json!({
+    let authority = super::mcp_authority::Authority::from_config(storage, &config)?;
+    let mut descriptor = json!({
         "action": action, "command": config["command"], "args": args, "workspace": root,
         "cwd": if cfg!(windows) { json!("AppContainer 私有运行目录") } else { json!(root) },
         "isolation": if cfg!(windows) { "appcontainer_no_network" } else { "user_process" },
@@ -148,6 +149,10 @@ pub(crate) fn prepare(
         "arguments": if action == "mcp_call" { arguments } else { Value::Null },
         "timeout_seconds": timeout
     });
+    if let Some(authority) = authority.filter(|_| action == "mcp_call") {
+        descriptor["effect_authority"] = json!(authority);
+        descriptor["effect_status_inbox"] = json!(storage.join("mcp-effect-status"));
+    }
     let revision = fingerprint(&json!({"config":config,"call":descriptor}))?;
     let mut review = descriptor;
     review["revision"] = json!(revision);

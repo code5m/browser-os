@@ -39,6 +39,7 @@ pub mod local_provider;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 mod mcp_protocol;
 pub(crate) mod mcp_review;
+mod mcp_authority;
 #[cfg(target_os = "windows")]
 pub mod windows_sandbox;
 

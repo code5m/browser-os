@@ -18,6 +18,13 @@ const hasEnvironment=computed(()=>!!(props.review?.credential_refs?.length||prop
   <label v-if="hasEnvironment"><input type="checkbox" :checked="approved" :disabled="disabled"
     @change="emit('update:approved',($event.target as HTMLInputElement).checked)">我允许本次进程取得以上凭据和配置环境变量</label>
   <p v-else>此配置不请求模型凭据或自定义环境变量。</p>
+  <section v-if="review.effect_authority" aria-label="提供方权威终态协议">
+    <strong>签名终态对账（已配置）</strong>
+    <p>账户：{{review.effect_authority.account}}；命名空间：{{review.effect_authority.namespace}}</p>
+    <p>Ed25519 公钥：{{review.effect_authority.public_key}}</p>
+    <p>批准后，本次调用将携带唯一幂等键及审批摘要。只有该公钥签名的最终状态可以自动结案。普通 MCP 返回不代表已生效；不会自动重放原调用。</p>
+    <p>状态回执目录：{{review.effect_status_inbox}}。需要独立的提供方状态发布程序。</p>
+  </section>
   <p>配置、参数或凭据版本变化后，本次批准将失效。</p>
 </section></template>
 <style scoped>
