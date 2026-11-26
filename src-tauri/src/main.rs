@@ -201,10 +201,10 @@ fn native_tab_position(
     width: f64,
     height: f64,
 ) -> Result<(), String> {
-    bridge::tab_position(native_main_webview(&app)?, app, id, x, y, width, height)
+    bridge::tab_position_sync(native_main_webview(&app)?, app, id, x, y, width, height)
 }
 fn native_hide_all_webviews(app: tauri::AppHandle) -> Result<(), String> {
-    bridge::hide_all_webviews(native_main_webview(&app)?, app)
+    bridge::hide_all_webviews_sync(native_main_webview(&app)?, app)
 }
 
 /// The GTK thread must never run the terminal/grid/WebView cleanup chain.

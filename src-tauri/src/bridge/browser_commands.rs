@@ -275,7 +275,15 @@ pub async fn hide_webview(webview: tauri::Webview, app: AppHandle, id: String) -
 pub async fn hide_all_webviews(webview: tauri::Webview, app: AppHandle) -> Result<(), String> {
     crate::shared::native_legacy_policy::require_main(&webview, "hide_all_webviews")?;
     if super::isolated_tabs::mode_enabled() {
-        return super::isolated_tabs::on_worker(move || super::isolated_tabs::hide_all(&app)).await;
+        return super::isolated_tabs::on_worker(move || hide_all_webviews_sync(webview, app)).await;
+    }
+    hide_all_webviews_sync(webview, app)
+}
+
+pub(crate) fn hide_all_webviews_sync(webview: tauri::Webview, app: AppHandle) -> Result<(), String> {
+    crate::shared::native_legacy_policy::require_main(&webview, "hide_all_webviews")?;
+    if super::isolated_tabs::mode_enabled() {
+        return super::isolated_tabs::hide_all(&app);
     }
 
     #[cfg(not(target_os = "linux"))]

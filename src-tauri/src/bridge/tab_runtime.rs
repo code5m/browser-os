@@ -135,8 +135,9 @@ pub(crate) fn tab_open_impl(
     let target = normalize_url(&url);
     let _ = Url::parse(&target).map_err(|e| format!("无效网址: {e}"))?;
     if super::isolated_tabs::route(&id).is_some() {
-        navigate_tab_webview(&app, &id, &target)?;
-    } else if let Err(e) = navigate_tab_webview(&app, &id, &target) {
+        return navigate_tab_webview(&app, &id, &target);
+    }
+    if let Err(e) = navigate_tab_webview(&app, &id, &target) {
         recover_tab_webview(&app, &id, "navigate", &e)?;
         navigate_tab_webview(&app, &id, &target)
             .map_err(|retry| format!("{e}; 恢复后重试导航失败: {retry}"))?;
@@ -165,6 +166,25 @@ pub async fn tab_position(
     width: f64,
     height: f64,
 ) -> Result<(), String> {
+    // Validate before consuming an isolated-renderer worker permit.
+    crate::shared::native_legacy_policy::require_main(&webview, "tab_position")?;
+    if super::isolated_tabs::route(&id).is_some() {
+        return super::isolated_tabs::on_worker(move || {
+            tab_position_sync(webview, app, id, x, y, width, height)
+        }).await;
+    }
+    tab_position_sync(webview, app, id, x, y, width, height)
+}
+
+pub(crate) fn tab_position_sync(
+    webview: tauri::Webview,
+    app: AppHandle,
+    id: String,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+) -> Result<(), String> {
     crate::shared::native_legacy_policy::require_main(&webview, "tab_position")?;
     crate::shared::native_legacy_policy::bound_text("tab_position", "id", &id)?;
     crate::shared::native_legacy_policy::bound_dimension("tab_position", "x", x)?;
@@ -173,9 +193,7 @@ pub async fn tab_position(
     crate::shared::native_legacy_policy::bound_dimension("tab_position", "height", height)?;
 
     if super::isolated_tabs::route(&id).is_some() {
-        return super::isolated_tabs::on_worker(move || {
-            super::isolated_tabs::position(&app, &id, (x, y, width, height))
-        }).await;
+        return super::isolated_tabs::position(&app, &id, (x, y, width, height));
     }
     if let Err(e) = apply_bounds(&app, &id, x, y, width, height) {
         let _owner = super::tab_mutation::reserve_internal()?;

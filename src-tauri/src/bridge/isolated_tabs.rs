@@ -62,22 +62,18 @@ pub(super) fn create(app: &AppHandle, url: &str) -> Result<TabInfo, String> {
     }
     let info = TabInfo {
         id: id.clone(),
-        url: state.grid_manager.last_url(index).unwrap_or_else(|| url.clone()),
+        url: url.clone(),
         title: parsed.host_str().unwrap_or(url.as_str()).to_owned(),
     };
-    let published = {
-        let mut tabs = state.tabs.lock().unwrap();
-        if state.shutdown_requested.load(Ordering::Acquire) {
-            false
-        } else {
-            tabs.insert(id.clone(), info.clone());
-            true
+    let info = match state.grid_manager.publish_tab_renderer_info(index, info) {
+        Ok(info) => info,
+        Err(error) => {
+            return match state.grid_manager.close_tab_renderer(index, true) {
+                Ok(()) => Err(error),
+                Err(cleanup) => Err(format!("{error}; {cleanup}")),
+            };
         }
     };
-    if !published {
-        state.grid_manager.close_tab_renderer(index, true)?;
-        return Err("TAB_APPLICATION_SHUTTING_DOWN".into());
-    }
     // A failure here is a partial activation, not a claim creation never ran.
     select(app, &id)?;
     Ok(info)
@@ -90,13 +86,11 @@ fn select(app: &AppHandle, id: &str) -> Result<(), String> {
     if !ids.iter().any(|other| other == id) {
         return Err("TAB_NOT_FOUND".into());
     }
-    // Fence late positions of the previous active tab before issuing hides.
-    *state.active_tab.lock().unwrap() = Some(id.to_owned());
-    for other in ids.iter().filter(|other| other.as_str() != id) {
-        let index = route(other).ok_or("TAB_RENDERER_MIXED_BACKEND_UNSUPPORTED")?;
-        state.grid_manager.hide_tab_renderer(index)
-            .map_err(|error| format!("TAB_RENDERER_ACTIVATION_PARTIAL:{error}"))?;
-    }
+    let index = route(id).ok_or("TAB_RENDERER_ROUTE_INVALID")?;
+    let others = ids.iter().filter(|other| other.as_str() != id)
+        .map(|other| route(other).ok_or("TAB_RENDERER_MIXED_BACKEND_UNSUPPORTED"))
+        .collect::<Result<Vec<_>, _>>()?;
+    state.grid_manager.select_tab_renderer(index, &others)?;
     let mut idle = state.tab_idle_since.lock().unwrap();
     idle.remove(id);
     let now = std::time::Instant::now();
@@ -126,10 +120,7 @@ pub(super) fn activate(app: &AppHandle, id: &str) -> Result<(), String> {
 
 pub(super) fn navigate(app: &AppHandle, id: &str, url: &str) -> Result<(), String> {
     let index = exists(app, id)?;
-    let manager = &app.state::<AppState>().grid_manager;
-    manager.request(index, GridCmd::Navigate { id: id.to_owned(), url: url.to_owned() }, 10000)?;
-    manager.record_url(index, url);
-    Ok(())
+    app.state::<AppState>().grid_manager.navigate_tab_renderer(index, url)
 }
 
 pub(super) fn eval(app: &AppHandle, id: &str, js: &str) -> Result<(), String> {

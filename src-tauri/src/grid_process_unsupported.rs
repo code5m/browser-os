@@ -23,6 +23,16 @@ impl GridProcessManager {
     pub(crate) fn tab_renderer_owner(&self, _index: u32) -> Result<Option<(u32, u64)>, String> {
         Err(unsupported())
     }
+    pub(crate) fn select_tab_renderer(&self, _index: u32, _others: &[u32]) -> Result<(), String> {
+        Err(unsupported())
+    }
+    pub(crate) fn publish_tab_renderer_info(&self, _index: u32, _info: crate::domain::TabInfo)
+        -> Result<crate::domain::TabInfo, String> {
+        Err(unsupported())
+    }
+    pub(crate) fn navigate_tab_renderer(&self, _index: u32, _url: &str) -> Result<(), String> {
+        Err(unsupported())
+    }
     pub(crate) fn start_tab_renderer(&self, _index: u32, _url: &str) -> Result<(), String> {
         Err(unsupported())
     }

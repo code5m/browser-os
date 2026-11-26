@@ -150,8 +150,8 @@ impl Binding {
             (Self::Isolated(expected), Some(id)) => {
                 super::isolated_tabs::route(id).is_some_and(|index| {
                     let state = app.state::<crate::AppState>();
-                    state.tabs.lock().unwrap().contains_key(id)
-                        && state.grid_manager.tab_renderer_owner(index).is_ok_and(|owner| owner == *expected)
+                    let exists = state.tabs.lock().unwrap().contains_key(id);
+                    exists && state.grid_manager.tab_renderer_owner(index).is_ok_and(|owner| owner == *expected)
                 })
             }
             (Self::Hibernated, Some(id)) => app

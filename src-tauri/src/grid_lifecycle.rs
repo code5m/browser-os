@@ -391,6 +391,18 @@ impl GridLifecycle {
         Ok(())
     }
 
+    pub(super) fn wait_grid_retired_until(&self, deadline: Instant) -> Result<(), String> {
+        loop {
+            if !self.retiring.lock().unwrap().keys().any(|id| !crate::grid_ipc::is_tab_renderer(*id)) {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err(self.pending_error("GRID_PROCESS_CLEANUP_PENDING"));
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
     pub(super) fn wait_retired_until(&self, deadline: Instant) -> Result<(), String> {
         while self.retiring_total.load(Ordering::SeqCst) != 0 {
             let remaining = deadline.saturating_duration_since(Instant::now());

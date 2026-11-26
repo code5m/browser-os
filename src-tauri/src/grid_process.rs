@@ -465,6 +465,8 @@ pub struct GridChildHandle {
     pub child: Child,
     comms: Arc<ChildComms>,
     focused: bool,
+    document_ready: bool,
+    navigation_revision: u64,
     /// 最近一次导航 url（崩溃重启重放用）
     pub last_url: Option<String>,
     /// 最近一次定位（CSS 坐标，相对主窗内容区；崩溃重启/主窗移动重放用）
@@ -724,6 +726,12 @@ impl GridProcessManager {
                                             match name.as_str() {
                                                 "grid-child-focus" => {}
                                                 "grid-child-blur" => state.grid_manager.request_hide_for_blur_async(),
+                                                "grid-load-failed" if crate::grid_ipc::is_tab_renderer(index) => {
+                                                    let id = crate::grid_ipc::renderer_label(index);
+                                                    let url = payload["url"].as_str().unwrap_or_default();
+                                                    let error = payload["error"].as_str().unwrap_or("renderer load failed");
+                                                    crate::bridge::report_tab_load_failed(app, &id, url, error);
+                                                }
                                                 _ if comms_reader.is_current(generation) => { let _ = app.emit(&name, payload); }
                                                 _ => break,
                                             }
@@ -825,6 +833,8 @@ impl GridProcessManager {
             child,
             comms: Arc::clone(&comms),
             focused: false,
+            document_ready: false,
+            navigation_revision: 0,
             last_url: saved.last_url,
             last_rect: saved.last_rect,
             hidden: saved.hidden,
@@ -894,23 +904,32 @@ impl GridProcessManager {
         if !crate::grid_ipc::is_tab_renderer(index) {
             return Err("TAB_RENDERER_ROUTE_INVALID".into());
         }
-        if !self.get_or_spawn(index)? {
-            return Err("TAB_RENDERER_ALREADY_RUNNING".into());
-        }
-        // Keep the actual window hidden until the active tab receives its
-        // first acknowledged rectangle. No embedded fallback exists.
-        self.record_hidden(index);
-        let command = GridCmd::CreateTab {
-            id: crate::grid_ipc::renderer_label(index),
-            url: url.to_owned(),
-        };
-        match self.request(index, command, 20000) {
-            Ok(()) => {
-                self.record_url(index, url);
-                Ok(())
+        let result = {
+            let _dispatch = self.visibility_dispatch.lock().unwrap_or_else(|p| p.into_inner());
+            if !self.get_or_spawn(index)? {
+                return Err("TAB_RENDERER_ALREADY_RUNNING".into());
             }
+            self.record_hidden(index);
+            self.record_url(index, url);
+            let command = GridCmd::CreateTab {
+                id: crate::grid_ipc::renderer_label(index),
+                url: url.to_owned(),
+            };
+            self.request(index, command, 20000).and_then(|_| {
+                let mut children = self.children.lock().unwrap();
+                let child = children.get_mut(&index).ok_or("TAB_RENDERER_EXITED_BEFORE_CREATE_RECEIPT")?;
+                if !child.comms.is_connected() {
+                    return Err("TAB_RENDERER_EXITED_BEFORE_CREATE_RECEIPT".into());
+                }
+                child.document_ready = true;
+                Ok(())
+            })
+        };
+        match result {
+            Ok(()) => Ok(()),
             Err(error) => {
-                match self.close_tab_renderer(index, true) {
+                // Retain the generation counter across a failed recovery.
+                match self.close_tab_renderer(index, false) {
                     Ok(()) => Err(error),
                     Err(cleanup) => Err(format!("{error}; {cleanup}")),
                 }
@@ -925,6 +944,7 @@ impl GridProcessManager {
             return Err("TAB_RENDERER_ROUTE_INVALID".into());
         }
         let _operation = self.lifecycle.enter()?;
+        let _dispatch = self.visibility_dispatch.lock().unwrap_or_else(|p| p.into_inner());
         self.lifecycle.ensure_cleanup(Arc::clone(&self.children), Arc::clone(&self.listeners))?;
         let _gate = self.lifecycle_lock.lock().unwrap();
         self.lifecycle.check()?;
@@ -976,12 +996,109 @@ impl GridProcessManager {
             return Err("TAB_RENDERER_ROUTE_INVALID".into());
         }
         let _dispatch = self.visibility_dispatch.lock().unwrap_or_else(|p| p.into_inner());
+        self.hide_tab_renderer_locked(index)
+    }
+
+    fn hide_tab_renderer_locked(&self, index: u32) -> Result<(), String> {
         self.record_hidden(index);
-        // A confirmed absent native process has no window to hide.
-        if self.pid_of(index).is_none() && !self.lifecycle.is_retiring(index) {
-            return Ok(());
+        if self.pid_of(index).is_none() {
+            return self.lifecycle.wait_route_retired_until(
+                index, std::time::Instant::now() + std::time::Duration::from_secs(3),
+            );
         }
         self.request(index, GridCmd::HideWindow { id: crate::grid_ipc::renderer_label(index) }, 3000)
+    }
+
+    pub(crate) fn select_tab_renderer(&self, index: u32, others: &[u32]) -> Result<(), String> {
+        if !crate::grid_ipc::is_tab_renderer(index)
+            || others.iter().any(|id| *id == index || !crate::grid_ipc::is_tab_renderer(*id))
+        {
+            return Err("TAB_RENDERER_ROUTE_INVALID".into());
+        }
+        let _dispatch = self.visibility_dispatch.lock().unwrap_or_else(|p| p.into_inner());
+        let app = self.app().ok_or("TAB_RENDERER_HOST_UNAVAILABLE")?;
+        let state = app.state::<crate::bridge::AppState>();
+        {
+            let children = self.children.lock().unwrap();
+            if !children.get(&index).is_some_and(|child| child.document_ready && child.comms.is_connected()) {
+                return Err("TAB_RENDERER_DOCUMENT_UNAVAILABLE".into());
+            }
+        }
+        for other in others {
+            self.hide_tab_renderer_locked(*other)
+                .map_err(|error| format!("TAB_RENDERER_ACTIVATION_PARTIAL:{error}"))?;
+        }
+        if state.shutdown_requested.load(Ordering::Acquire) {
+            return Err("TAB_APPLICATION_SHUTTING_DOWN".into());
+        }
+        *state.active_tab.lock().unwrap() = Some(crate::grid_ipc::renderer_label(index));
+        Ok(())
+    }
+
+    pub(crate) fn publish_tab_renderer_info(
+        &self, index: u32, mut info: crate::domain::TabInfo,
+    ) -> Result<crate::domain::TabInfo, String> {
+        if !crate::grid_ipc::is_tab_renderer(index) || info.id != crate::grid_ipc::renderer_label(index) {
+            return Err("TAB_RENDERER_ROUTE_INVALID".into());
+        }
+        let app = self.app().ok_or("TAB_RENDERER_HOST_UNAVAILABLE")?;
+        let state = app.state::<crate::bridge::AppState>();
+        let children = self.children.lock().unwrap();
+        let child = children.get(&index).ok_or("TAB_RENDERER_DOCUMENT_UNAVAILABLE")?;
+        let _owner = child.comms.owner_gate.lock().unwrap();
+        if !child.document_ready || !child.comms.is_connected() {
+            return Err("TAB_RENDERER_DOCUMENT_UNAVAILABLE".into());
+        }
+        if let Some(url) = &child.last_url {
+            info.url = url.clone();
+        }
+        let mut tabs = state.tabs.lock().unwrap();
+        if state.shutdown_requested.load(Ordering::Acquire) {
+            return Err("TAB_APPLICATION_SHUTTING_DOWN".into());
+        }
+        if tabs.contains_key(&info.id) {
+            return Err("TAB_RENDERER_ALREADY_PUBLISHED".into());
+        }
+        tabs.insert(info.id.clone(), info.clone());
+        Ok(info)
+    }
+
+    pub(crate) fn navigate_tab_renderer(&self, index: u32, url: &str) -> Result<(), String> {
+        if !crate::grid_ipc::is_tab_renderer(index) {
+            return Err("TAB_RENDERER_ROUTE_INVALID".into());
+        }
+        let (comms, generation) = self.wait_connected(index, 15000)?;
+        let revision = {
+            let children = self.children.lock().unwrap();
+            let child = children.get(&index).ok_or("TAB_RENDERER_DOCUMENT_UNAVAILABLE")?;
+            if !child.document_ready || !Arc::ptr_eq(&child.comms, &comms) || !comms.is_current(generation) {
+                return Err("TAB_RENDERER_DOCUMENT_UNAVAILABLE".into());
+            }
+            child.navigation_revision
+        };
+        let command = GridCmd::Navigate { id: crate::grid_ipc::renderer_label(index), url: url.to_owned() };
+        self.request_once_with(comms.clone(), generation, &command, 10000)?;
+        let app = self.app().ok_or("GRID_REQUEST_OUTCOME_UNKNOWN: renderer host unavailable")?;
+        let state = app.state::<crate::bridge::AppState>();
+        let mut children = self.children.lock().unwrap();
+        let child = children.get_mut(&index).ok_or("GRID_REQUEST_OUTCOME_UNKNOWN: renderer retired after navigation")?;
+        let _owner = comms.owner_gate.lock().unwrap();
+        if !Arc::ptr_eq(&child.comms, &comms) || !comms.is_current(generation) {
+            return Err("GRID_REQUEST_OUTCOME_UNKNOWN: renderer retired after navigation".into());
+        }
+        if child.navigation_revision == revision {
+            child.last_url = Some(url.to_owned());
+        }
+        let mut tabs = state.tabs.lock().unwrap();
+        if state.shutdown_requested.load(Ordering::Acquire) {
+            return Err("TAB_APPLICATION_SHUTTING_DOWN".into());
+        }
+        if let Some(tab) = tabs.get_mut(&crate::grid_ipc::renderer_label(index)) {
+            if let Some(current_url) = &child.last_url {
+                tab.url = current_url.clone();
+            }
+        }
+        Ok(())
     }
 
     pub fn is_hibernated(&self, index: u32) -> bool {
@@ -1058,6 +1175,14 @@ impl GridProcessManager {
             return Err("GRID_REQUEST_TARGET_REJECTED".into());
         }
         let (comms, generation) = self.wait_connected(index, 15000)?;
+        if crate::grid_ipc::is_tab_renderer(index) {
+            let children = self.children.lock().unwrap();
+            let child = children.get(&index).ok_or("TAB_RENDERER_DOCUMENT_UNAVAILABLE")?;
+            let creating = matches!(&cmd, GridCmd::CreateTab { .. });
+            if !Arc::ptr_eq(&child.comms, &comms) || creating == child.document_ready {
+                return Err("TAB_RENDERER_DOCUMENT_UNAVAILABLE".into());
+            }
+        }
         self.request_once_with(comms, generation, &cmd, timeout_ms).map(|_| ())
     }
 
@@ -1187,6 +1312,11 @@ impl GridProcessManager {
 
     /// 发后即忘（高频定位/显隐），错误只记日志。
     pub fn send(&self, index: u32, cmd: GridCmd) {
+        if crate::grid_ipc::is_tab_renderer(index)
+            && !self.children.lock().unwrap().get(&index).is_some_and(|child| child.document_ready)
+        {
+            return;
+        }
         let Ok(_operation) = self.lifecycle.enter() else {
             return;
         };
@@ -1531,7 +1661,22 @@ impl GridProcessManager {
         match name {
             "grid-child-focus" => child.focused = true,
             "grid-child-blur" => child.focused = false,
-            "tab-navigated" => child.last_url = payload["url"].as_str().map(str::to_owned),
+            "tab-navigated" => {
+                let Some(revision) = child.navigation_revision.checked_add(1) else { return false; };
+                child.navigation_revision = revision;
+                child.last_url = payload["url"].as_str().map(str::to_owned);
+                if crate::grid_ipc::is_tab_renderer(index) {
+                    if let (Some(app), Some(url)) = (self.app(), child.last_url.as_ref()) {
+                        let state = app.state::<crate::bridge::AppState>();
+                        let mut tabs = state.tabs.lock().unwrap();
+                        if !state.shutdown_requested.load(Ordering::Acquire) {
+                            if let Some(tab) = tabs.get_mut(&crate::grid_ipc::renderer_label(index)) {
+                                tab.url = url.clone();
+                            }
+                        }
+                    }
+                }
+            },
             "grid-load-failed" => {
                 payload["renderer_generation"] = serde_json::json!(generation.to_string());
             }
@@ -1944,7 +2089,7 @@ impl GridProcessManager {
             }
         }
         self.lifecycle
-            .wait_retired_until(std::time::Instant::now() + std::time::Duration::from_millis(750))
+            .wait_grid_retired_until(std::time::Instant::now() + std::time::Duration::from_millis(750))
     }
 
     /// Irreversible application admission, distinct from closing a Grid view.
@@ -2037,6 +2182,8 @@ mod grid_process_termination_tests {
             child,
             comms: Arc::new(ChildComms::new()),
             focused: false,
+            document_ready: false,
+            navigation_revision: 0,
             last_url: None,
             last_rect: None,
             hidden: false,
