@@ -283,100 +283,90 @@ pub fn close_grid_blocking(app: AppHandle) -> Result<(), String> {
     close_grid_admitted(app, targets)
 }
 
-/// 在指定宫格(index)中打开网址（经 UDS Navigate 到子进程）。
-/// 导航后延迟应用存储的缩放（给页面加载留时间），确保新页面加载完成后自动缩放到位。
+/// Capture both a live document binding and the absent-slot revision
+/// before the worker starts. An earlier cold open cannot undo a later close.
+struct GridCellAdmission {
+    stamp: crate::grid_ipc::GridRouteStamp,
+    binding: Option<crate::grid_ipc::RendererBinding>,
+    sleeping: bool,
+}
+
+fn capture_grid_cell(app: &AppHandle, index: usize) -> Result<GridCellAdmission, String> {
+    require_grid_platform()?;
+    if index >= MAX_GRID { return Err("GRID_INDEX_INVALID".into()); }
+    let state = app.state::<AppState>();
+    let mgr = &state.grid_manager;
+    let stamp = mgr.grid_route_stamps(&[index as u32])?
+        .into_iter().next().ok_or("GRID_INDEX_INVALID")?;
+    let binding = mgr.grid_live_binding(index as u32)?;
+    match binding {
+        Some(binding) if stamp.pid == Some(binding.owner.0)
+            && stamp.epoch == Some(binding.owner.1) => {}
+        None if stamp.pid.is_none() => {}
+        _ => return Err("GRID_OPEN_TARGET_CHANGED".into()),
+    }
+    let sleeping = binding.is_none() && mgr.is_hibernated(index as u32);
+    // A concurrent close/spawn between the two observations invalidates
+    // this admission; native preparation will also verify the stamp.
+    if mgr.grid_route_stamps(&[index as u32])?.first() != Some(&stamp) {
+        return Err("GRID_OPEN_TARGET_CHANGED".into());
+    }
+    Ok(GridCellAdmission { stamp, binding, sleeping })
+}
+
 #[tauri::command]
 pub async fn grid_open(app: AppHandle, index: usize, url: String) -> Result<(), String> {
-    require_grid_platform()?;
-    let binding = capture_grid_live_binding(&app, index)?;
-    tauri::async_runtime::spawn_blocking(move || grid_open_admitted(app, index, url, binding))
+    let admitted = capture_grid_cell(&app, index)?;
+    tauri::async_runtime::spawn_blocking(move || grid_open_admitted(app, url, admitted))
         .await
         .map_err(|_| "GRID_WORKER_FAILED".to_string())?
 }
 
-/// Snapshot live owner before entering a worker. A disconnected live
-/// renderer is an error, not permission to resolve a different host.
-fn capture_grid_live_binding(app: &AppHandle, index: usize)
-    -> Result<Option<crate::grid_ipc::RendererBinding>, String>
-{
-    if index >= MAX_GRID { return Err("GRID_INDEX_INVALID".into()); }
-    let state = app.state::<AppState>();
-    state.grid_manager.grid_live_binding(index as u32)
-}
-
 pub fn grid_open_blocking(app: AppHandle, index: usize, url: String) -> Result<(), String> {
-    require_grid_platform()?;
-    let binding = capture_grid_live_binding(&app, index)?;
-    grid_open_admitted(app, index, url, binding)
+    let admitted = capture_grid_cell(&app, index)?;
+    grid_open_admitted(app, url, admitted)
 }
 
-fn grid_open_admitted(app: AppHandle, index: usize, url: String,
-    binding: Option<crate::grid_ipc::RendererBinding>,
-) -> Result<(), String> {
-    let label = format!("grid-{index}");
+fn grid_open_admitted(app: AppHandle, url: String, admitted: GridCellAdmission)
+    -> Result<(), String>
+{
     let target = initial_grid_url(&url);
     if target != "about:blank" {
         let _ = Url::parse(&target).map_err(|e| format!("无效网址: {e}"))?;
     }
     let state = app.state::<AppState>();
     let mgr = &state.grid_manager;
-    let binding = match binding {
-        Some(binding) => binding,
-        None => {
-            // Explicit open retains the existing cold-start path. Do not
-            // navigate a host that became live while the request was queued.
-            if mgr.pid_of(index as u32).is_some() {
-                return Err("GRID_OPEN_TARGET_CHANGED".into());
-            }
-            ensure_grid_child(&app, index)?;
-            mgr.grid_eval_binding(index as u32)?
-        }
-    };
-    mgr.grid_navigate_bound(binding, &target)?;
-    // 页面加载完成后重新应用缩放（CSS zoom 会被新页面重置，需重新注入）
-    schedule_grid_zoom(&app, &label);
+    if let Some(binding) = admitted.binding {
+        mgr.grid_navigate_bound(binding, &target)?;
+    } else {
+        // Create at the actual target rather than replaying an intermediate
+        // URL, then navigating whichever process is currently in the slot.
+        create_grid_cell(&app, admitted.stamp, Some(&target))?;
+    }
+    schedule_grid_zoom(&app, &crate::grid_ipc::renderer_label(admitted.stamp.index));
     Ok(())
 }
 
-/// Ensure a Grid child process and its WebView exist. This is also the
-/// resume path for memory-hibernated cells; the process manager restores the
-/// last URL/rect metadata, and this command recreates the WebView exactly once.
-fn ensure_grid_child(app: &AppHandle, index: usize) -> Result<(), String> {
-    if index >= MAX_GRID {
-        return Err("GRID_INDEX_INVALID".into());
-    }
+/// Cold open and hibernation resume use the same bound creation and
+/// original-owner compensation as the explicit rebuild transaction.
+fn create_grid_cell(app: &AppHandle, stamp: crate::grid_ipc::GridRouteStamp, target: Option<&str>)
+    -> Result<crate::grid_ipc::RendererBinding, String>
+{
+    if stamp.pid.is_some() { return Err("GRID_OPEN_TARGET_CHANGED".into()); }
     let state = app.state::<AppState>();
-    let manager = &state.grid_manager;
-    let was_hibernated = manager.is_hibernated(index as u32);
-    if manager.get_or_spawn(index as u32)? {
-        let label = format!("grid-{index}");
-        let url = manager
-            .last_url(index as u32)
-            .unwrap_or_else(|| "about:blank".to_string());
-        if let Err(error) = manager.request(
-            index as u32,
-            GridCmd::CreateTab {
-                id: label.clone(),
-                url: url.clone(),
-            },
-            20000,
-        ) {
-            // Do not leave a spawned-but-empty child that makes subsequent
-            // get_or_spawn calls believe the hibernated cell is already ready.
-            if was_hibernated {
-                manager.hibernate_child(index as u32);
-            } else {
-                manager.kill_child(index as u32);
-            }
-            return Err(error);
-        }
-        manager.record_url(index as u32, &url);
-        schedule_grid_zoom(app, &label);
-    } else {
-        // Cold admission may not adopt a concurrent new live owner.
-        return Err("GRID_OPEN_TARGET_CHANGED".into());
+    let mgr = &state.grid_manager;
+    let prepared = mgr.prepare_grid_slot(stamp)?;
+    if !prepared.created { return Err("GRID_OPEN_TARGET_CHANGED".into()); }
+    let url = target.or(prepared.previous_url.as_deref()).unwrap_or("about:blank");
+    let creation = mgr.grid_binding_for_stamp(prepared.stamp)
+        .and_then(|binding| mgr.grid_create_bound(binding, url));
+    if let Err(error) = creation {
+        return match mgr.rollback_grid_creation(&prepared) {
+            Ok(()) => Err(error),
+            Err(rollback) => Err(format!("GRID_BUILD_PARTIAL:{error};rollback unconfirmed:{rollback}")),
+        };
     }
-    Ok(())
+    mgr.grid_binding_for_stamp(prepared.stamp)
 }
 
 /// 真正给宫格 webview 应用缩放（WebKitGTK 原生 zoom_level，经 UDS 到子进程）。
@@ -456,11 +446,9 @@ pub async fn grid_position(
     width: f64,
     height: f64,
 ) -> Result<(), String> {
-    require_grid_platform()?;
-    let binding = capture_grid_live_binding(&app, index)?;
-    let sleeping = binding.is_none() && app.state::<AppState>().grid_manager.is_hibernated(index as u32);
+    let admitted = capture_grid_cell(&app, index)?;
     tauri::async_runtime::spawn_blocking(move || {
-        grid_position_admitted(app, index, (x, y, width, height), binding, sleeping)
+        grid_position_admitted(app, (x, y, width, height), admitted)
     })
     .await
     .map_err(|_| "GRID_POSITION_WORKER_FAILED".to_string())?
@@ -474,15 +462,14 @@ pub fn grid_position_blocking(
     width: f64,
     height: f64,
 ) -> Result<(), String> {
-    require_grid_platform()?;
-    let binding = capture_grid_live_binding(&app, index)?;
-    let sleeping = binding.is_none() && app.state::<AppState>().grid_manager.is_hibernated(index as u32);
-    grid_position_admitted(app, index, (x, y, width, height), binding, sleeping)
+    let admitted = capture_grid_cell(&app, index)?;
+    grid_position_admitted(app, (x, y, width, height), admitted)
 }
 
-fn grid_position_admitted(app: AppHandle, index: usize, css: (f64, f64, f64, f64),
-    binding: Option<crate::grid_ipc::RendererBinding>, sleeping: bool,
+fn grid_position_admitted(app: AppHandle, css: (f64, f64, f64, f64),
+    admitted: GridCellAdmission,
 ) -> Result<(), String> {
+    let index = admitted.stamp.index as usize;
     let (x, y, width, height) = css;
     if index >= MAX_GRID || ![x, y, width, height].iter().all(|value| value.is_finite())
         || width < 0.0 || height < 0.0
@@ -491,19 +478,21 @@ fn grid_position_admitted(app: AppHandle, index: usize, css: (f64, f64, f64, f64
     }
     let state = app.state::<AppState>();
     let mgr = &state.grid_manager;
-    let binding = match binding {
+    if admitted.binding.is_none() && x <= -20000.0 { return Ok(()); }
+    let rect = mgr.abs_rect(css)
+        .ok_or_else(|| "主窗不可用，无法换算屏幕坐标".to_string())?;
+    rect.validate()?;
+    let binding = match admitted.binding {
         Some(binding) => binding,
-        None if x <= -20000.0 => return Ok(()), // no live window to hide
-        None if sleeping && mgr.is_hibernated(index as u32) && mgr.pid_of(index as u32).is_none() => {
-            // Only a previously observed sleeping cell may resume through
-            // layout. An absent/closed cell requires explicit Grid creation.
-            ensure_grid_child(&app, index)?;
-            mgr.grid_eval_binding(index as u32)?
+        None if admitted.sleeping && mgr.is_hibernated(index as u32) => {
+            // The captured absent-slot revision rejects a close/reopen
+            // during the queue delay, even when no PID was present.
+            let binding = create_grid_cell(&app, admitted.stamp, None)?;
+            schedule_grid_zoom(&app, &crate::grid_ipc::renderer_label(admitted.stamp.index));
+            binding
         }
         None => return Err("GRID_POSITION_TARGET_UNAVAILABLE".into()),
     };
-    let rect = mgr.abs_rect(css)
-        .ok_or_else(|| "主窗不可用，无法换算屏幕坐标".to_string())?;
     mgr.grid_position_bound(binding, css, rect)
 }
 

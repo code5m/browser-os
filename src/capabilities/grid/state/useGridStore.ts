@@ -151,9 +151,16 @@ export const useGridStore = defineStore("grid", () => {
   // A single in-flight lock prevents the second request from closing/restarting
   // the first set of WebKit child processes halfway through startup.
   let gridBuilding = false;
+  let gridBuildSettlement: Promise<void> | null = null;
+  let gridCloseTask: Promise<void> | null = null;
+  let gridCleanupUnconfirmed = false;
   let rebuildRequested = false;
   let gridEpoch = 0;
   async function buildGrid() {
+    if (gridCloseTask || gridCleanupUnconfirmed) {
+      layout.showToast("宫格关闭状态尚未核实，请先重新核对关闭结果");
+      return;
+    }
     if (gridBuilding) {
       rebuildRequested = true;
       bridge.debugLog("buildGrid deferred: native creation already in flight");
@@ -175,6 +182,8 @@ export const useGridStore = defineStore("grid", () => {
       return;
     }
     gridBuilding = true;
+    let finishBuild!: () => void;
+    gridBuildSettlement = new Promise<void>(resolve => { finishBuild = resolve; });
     const epoch = ++gridEpoch;
     gridStarting.value = true;
     gridStartupError.value = "";
@@ -190,13 +199,11 @@ export const useGridStore = defineStore("grid", () => {
       gridUrls[i] = u;
       urls.push(u);
     }
-    // createGrid 内部会先 close_grid 再重建，幂等，可安全重复调用。
-    // 返回实际创建格数：内存预算守卫在可用内存不足时自动降级（保底 2 格）
+    // Native rebuild retains confirmed cells and reports partial effects.
+    // The explicit close owner waits for this promise; this stale build
+    // must not submit a second close against a newly observed topology.
     const created = await bridge.createGrid(n, urls);
-    if (epoch !== gridEpoch) {
-      await bridge.closeGrid().catch(() => {});
-      return;
-    }
+    if (epoch !== gridEpoch) return;
     if (!Number.isInteger(created) || created < 2) throw new Error("GRID_NATIVE_CREATE_INCOMPLETE");
     // 降级提示存起来，最后用一条 toast 展示（showToast 单条覆盖，先发的会被吞掉）
     const degraded = created < n;
@@ -228,17 +235,25 @@ export const useGridStore = defineStore("grid", () => {
       layout.showToast(`已打开 ${created} 宫格对比`);
     }
     } catch (error) {
+      if (epoch !== gridEpoch) return;
       gridOpen.value = false;
+      // A failed build may already have navigated or created some cells.
+      // Never automatically replay the queued rebuild after such a result.
+      rebuildRequested = false;
       const reason = String(error);
       gridStartupError.value = reason.includes("GRID_MEMORY_GUARD")
         ? "内存不足以安全启动宫格。请先尝试 2 格，或关闭其他应用后重试。"
-        : "原生宫格启动失败。可重试；如持续失败，请查看诊断日志。";
+        : /GRID_BUILD_PARTIAL|GRID_REQUEST_OUTCOME_UNKNOWN|GRID_WORKER_FAILED/.test(reason)
+          ? "宫格重建结果部分完成或未知；请先核对现有宫格，不会自动重建。"
+          : "原生宫格启动失败。请核对后手动重试。";
       bridge.debugLog(`buildGrid failed: ${reason}`);
       layout.showToast(gridStartupError.value);
     } finally {
       gridStarting.value = false;
       gridBuilding = false;
-      if (rebuildRequested && epoch === gridEpoch && layout.mainView === "grid" && isGridResourceAllowed()) {
+      gridBuildSettlement = null;
+      finishBuild();
+      if (!gridCloseTask && rebuildRequested && epoch === gridEpoch && layout.mainView === "grid" && isGridResourceAllowed()) {
         rebuildRequested = false;
         void buildGrid();
       } else {
@@ -298,40 +313,53 @@ export const useGridStore = defineStore("grid", () => {
     }
     gridAiInput.value = "";
   }
-  async function closeGridAll() {
+  // Capability deactivation must receive the actual native close outcome.
+  // Ordinary UI calls may display the error, but cannot mark it successful.
+  async function closeGridOwned(): Promise<void> {
+    if (gridCloseTask) return gridCloseTask;
     gridEpoch += 1;
     rebuildRequested = false;
-    // 先翻标志位：立刻阻断 scheduleGrid/schedulePosition 走宫格分支，
-    // 不等后端 IPC 往返（否则视图已切走、gridOpen 仍为 true 导致重试风暴）
+    // Stop positioning/freezing without asserting that processes are gone.
     gridOpen.value = false;
-    await bridge.closeGrid().catch(() => {});
-    layout.gridToolbarOpen = false;
-    gridRects.splice(0, gridRects.length);
-    // B9-4 修复：宫格关闭后必须把视图切回浏览器视图，否则
-    // (1) isBrowserVisible = !gridOpen && mainView==="browser" 为 false → BrowserHost
-    //     内部把浏览器 webview 设为 visibility:hidden；
-    // (2) schedulePosition 在 mainView!=="browser" 时直接 return（useBrowserHost.ts）→
-    //     活动页签 webview 停在宫格离屏坐标，浏览器区整片空白，须手动切视图才恢复。
-    // 切回 browser 会触发 mainView 的 watch → syncViewVisibility → relocate →
-    // schedulePosition 把活动页签 webview 重定位回浏览器区（原生 webview 布局不空白）。
-    // 仅当当前确处于宫格视图时复位，不打扰其它视图（如正在看 files/term）。
-    // 重激活活动页签（后端聚焦），确保关闭宫格后它就是可见页签；无活动页签则跳过。
-    if (browser.activeTabId) {
-      await browser.tabSwitch(browser.activeTabId).catch(() => {});
-    }
-    if (layout.mainView === "grid") {
-      layout.setView("browser");
-    }
-    // 宫格关闭后激活页签重新可见 → 解冻
-    syncGridFreeze();
-    // 兜底重定位活动页签 webview：此刻 gridOpen 已 false、mainView 若为 browser，
-    // relocate 会真正下发 tabPosition；mainView 的 watch 下个 tick 也会再做一次。
-    browser.relocate();
-    layout.showToast("已关闭宫格");
+    const settling = gridBuildSettlement;
+    const task = (async () => {
+      // The user's explicit close covers the earlier in-flight build.
+      // Wait for its settlement, then take one native close snapshot.
+      await settling;
+      try {
+        await bridge.closeGrid();
+      } catch (error) {
+        gridCleanupUnconfirmed = true;
+        gridStartupError.value = /GRID_CLOSE_CLEANUP_PENDING/.test(String(error))
+          ? "宫格进程域仍在回收中，请重新核对关闭状态"
+          : "原生宫格关闭未确认，请重新核对；不会自动重试";
+        layout.showToast(gridStartupError.value);
+        throw error;
+      }
+      gridCleanupUnconfirmed = false;
+      gridStartupError.value = "";
+      layout.gridToolbarOpen = false;
+      gridRects.splice(0, gridRects.length);
+      if (browser.activeTabId) {
+        await browser.tabSwitch(browser.activeTabId).catch(() => {});
+      }
+      if (layout.mainView === "grid") layout.setView("browser");
+      syncGridFreeze();
+      browser.relocate();
+      layout.showToast("已关闭宫格");
+    })();
+    gridCloseTask = task;
+    try { await task; }
+    finally { if (gridCloseTask === task) gridCloseTask = null; }
+  }
+  async function closeGridAll() {
+    // Error text is already displayed by the resource owner. Do not create
+    // an unhandled rejection from a user click; lifecycle uses the owner.
+    await closeGridOwned().catch(() => {});
   }
   // 关闭单个宫格：销毁对应子 webview，其余保留，并按剩余数量重排
   async function closeGridOne(i: number) {
-    if (!gridOpen.value || i < 0 || i >= gridCount.value) return;
+    if (gridBuilding || gridCloseTask || !gridOpen.value || i < 0 || i >= gridCount.value) return;
     if (gridCount.value <= 2) {
       await closeGridAll();
       return;
@@ -342,7 +370,7 @@ export const useGridStore = defineStore("grid", () => {
     gridUrls.push("");
     gridCount.value -= 1;
     await rebuildGrid();
-    layout.showToast(`已移除第 ${i + 1} 格并重排`);
+    if (gridOpen.value && !gridStartupError.value) layout.showToast(`已移除第 ${i + 1} 格并重排`);
   }
 
   // ===== Grid canonical Intent API =====
@@ -411,7 +439,7 @@ export const useGridStore = defineStore("grid", () => {
     (open) => {
       if (!isGridResourceAllowed()) return;
       if (open && !gridOpen.value) void openGrid();
-      else if (!open && gridOpen.value) void closeGrid();
+      else if (!open && (gridOpen.value || gridCleanupUnconfirmed)) void closeGrid();
     }
   );
 
@@ -465,7 +493,7 @@ export const useGridStore = defineStore("grid", () => {
   registerGridLifecycleBinding({
     resume: resumeGridResources,
     suspend: suspendGridResources,
-    deactivate: closeGridAll,
+    deactivate: closeGridOwned,
   });
 
   return {
