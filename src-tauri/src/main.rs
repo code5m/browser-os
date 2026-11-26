@@ -1603,8 +1603,9 @@ fn main() {
         return;
     }
 
-    // Explicit, opt-in whole-application recovery mode. The supervisor
-    // never enters GTK/Tauri or the single-instance handler itself.
+    // Whole-application recovery launcher: release Windows and explicitly
+    // delegated Linux GUI startup select the native owner. A supervised
+    // child and special entrypoints never create a second supervisor.
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     if let Some(code) = native_supervisor::launch_if_requested() {
         std::process::exit(code);

@@ -1,8 +1,9 @@
-//! Opt-in external supervisor of the existing application fault domain.
+//! External supervisor of the existing application fault domain.
 //! No GTK/WebView lifetime or layout changes. This is NOT per-tab renderer
 //! isolation. A recovery restarts the whole owned app and can lose volatile
-//! state. Only explicit --supervised-recovery or Linux-only
-//! --supervised-recovery-memory launches opt into this.
+//! state. Release GUI launch selects supervision on Windows and on Linux
+//! with an explicitly provisioned delegated memory subtree. Explicit modes
+//! remain available, including --direct-start for diagnostic rollback.
 //! No discovery/adoption of an existing PID, no automatic URL replay.
 use std::{
     ffi::OsString,
@@ -17,6 +18,7 @@ use tauri::Manager;
 
 const FLAG: &str = "--supervised-recovery";
 const MEMORY_FLAG: &str = "--supervised-recovery-memory";
+const DIRECT_FLAG: &str = "--direct-start";
 const ADDRESS: &str = "BROWSEROS_SUPERVISOR_ADDRESS";
 const TOKEN: &str = "BROWSEROS_SUPERVISOR_TOKEN";
 const POLL: Duration = Duration::from_millis(250);
@@ -355,47 +357,107 @@ fn launch(args: Vec<OsString>, nested_memory: bool) -> Result<i32, String> {
     Err("SUPERVISOR_RESTART_LIMIT".into())
 }
 
-pub(crate) fn launch_if_requested() -> Option<i32> {
-    let mut requested = false;
-    let mut nested_memory = false;
-    let mut conflicting = false;
-    let args = std::env::args_os().skip(1).filter(|arg| {
-        if arg == FLAG || arg == MEMORY_FLAG {
-            conflicting |= requested;
-            requested = true;
-            nested_memory |= arg == MEMORY_FLAG;
-            false
-        } else { true }
-    }).collect::<Vec<_>>();
-    if !requested { return None; }
-    if conflicting {
-        eprintln!("[native-supervisor] select exactly one supervisor launch mode");
-        return Some(1);
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LaunchMode { Direct, Child, Supervised { nested_memory: bool } }
+
+/// Keep role/flag classification pure so the release startup migration can
+/// be tested without spawning a real GUI, modifying delegation or a Job.
+fn choose_launch(
+    args: Vec<OsString>, inherited: bool, release: bool, linux: bool, delegated: bool,
+) -> Result<(LaunchMode, Vec<OsString>), &'static str> {
+    let mut explicit = None;
+    let mut forwarded = Vec::new();
+    for arg in args {
+        let mode = if arg == FLAG { Some(LaunchMode::Supervised { nested_memory: false }) }
+            else if arg == MEMORY_FLAG { Some(LaunchMode::Supervised { nested_memory: true }) }
+            else if arg == DIRECT_FLAG { Some(LaunchMode::Direct) }
+            else { None };
+        if let Some(mode) = mode {
+            if explicit.replace(mode).is_some() { return Err("SUPERVISOR_LAUNCH_MODE_CONFLICT"); }
+        } else {
+            forwarded.push(arg);
+        }
     }
-    // Never forward an inherited supervisor endpoint to a different owner.
-    if std::env::var_os(TOKEN).is_some() || std::env::var_os(ADDRESS).is_some() {
-        eprintln!("[native-supervisor] nested supervisor denied");
-        return Some(1);
+    // The child must never wrap itself in a second supervisor, including
+    // after the first recovery when its original GUI argv is intentionally empty.
+    if inherited {
+        if explicit.is_some() { return Err("SUPERVISOR_NESTED_LAUNCH_DENIED"); }
+        return Ok((LaunchMode::Child, forwarded));
     }
-    Some(match launch(args, nested_memory) {
-        Ok(code) => code,
-        Err(code) => { eprintln!("[native-supervisor] {code}; no replacement launched"); 1 }
-    })
+    if let Some(mode) = explicit {
+        if mode == (LaunchMode::Supervised { nested_memory: true }) && !linux {
+            return Err("SUPERVISOR_MEMORY_TOPOLOGY_LINUX_ONLY");
+        }
+        return Ok((mode, forwarded));
+    }
+    // Desktop/start-menu launch and the existing HTTP(S) open-URL flow.
+    // Preserve diagnostic/special entry behavior rather than accidentally
+    // spawning a supervisor around an unrelated command-line invocation.
+    let ordinary = forwarded.iter().all(|arg| arg.to_str().is_some_and(|arg|
+        url::Url::parse(arg).is_ok_and(|url| matches!(url.scheme(), "http" | "https") && url.host_str().is_some())));
+    let mode = if !release || !ordinary {
+        LaunchMode::Direct
+    } else if !linux {
+        LaunchMode::Supervised { nested_memory: false }
+    } else if delegated {
+        LaunchMode::Supervised { nested_memory: true }
+    } else {
+        // A typical desktop session is not a writable delegated subtree.
+        // Do not change system permissions or claim containment it lacks.
+        LaunchMode::Direct
+    };
+    Ok((mode, forwarded))
 }
 
 pub(crate) struct ChildEndpoint { address: SocketAddr, token: String }
-pub(crate) fn take_child_endpoint() -> Option<ChildEndpoint> {
-    // Consume before any descendants are created. No endpoint secret or
-    // request/page data is emitted in logs or stored on disk.
-    let address = std::env::var(ADDRESS).ok();
-    let token = std::env::var(TOKEN).ok();
-    std::env::remove_var(ADDRESS);
-    std::env::remove_var(TOKEN);
-    let address: SocketAddr = address?.parse().ok()?;
-    let token = token?;
+fn decode_child_endpoint(address: Option<OsString>, token: Option<OsString>) -> Option<ChildEndpoint> {
+    let address: SocketAddr = address?.into_string().ok()?.parse().ok()?;
+    let token = token?.into_string().ok()?;
     if !address.ip().is_loopback() || address.port() == 0 || token.len() != 36
         || uuid::Uuid::parse_str(&token).ok()?.get_version_num() != 4 { return None; }
     Some(ChildEndpoint { address, token })
+}
+
+pub(crate) fn launch_if_requested() -> Option<i32> {
+    let address = std::env::var_os(ADDRESS);
+    let token = std::env::var_os(TOKEN);
+    let inherited = address.is_some() || token.is_some();
+    if inherited && decode_child_endpoint(address, token).is_none() {
+        eprintln!("[native-supervisor] SUPERVISOR_CHILD_ENDPOINT_INVALID");
+        return Some(1);
+    }
+    let linux = cfg!(target_os = "linux");
+    let delegated = linux && std::env::var_os("BROWSEROS_DELEGATED_CGROUP_ROOT").is_some();
+    let (mode, args) = match choose_launch(std::env::args_os().skip(1).collect(),
+        inherited, !cfg!(debug_assertions), linux, delegated) {
+        Ok(selected) => selected,
+        Err(error) => { eprintln!("[native-supervisor] {error}"); return Some(1); }
+    };
+    match mode {
+        LaunchMode::Child => None,
+        LaunchMode::Direct => {
+            if !cfg!(debug_assertions) {
+                eprintln!("[native-supervisor] direct launch; automatic native domain recovery not armed");
+            }
+            None
+        }
+        LaunchMode::Supervised { nested_memory } => Some(match launch(args, nested_memory) {
+            Ok(code) => code,
+            // Once strict supervision was selected, never launch an
+            // uncontained replacement on assignment/delegation failure.
+            Err(code) => { eprintln!("[native-supervisor] {code}; no replacement launched"); 1 }
+        }),
+    }
+}
+
+pub(crate) fn take_child_endpoint() -> Option<ChildEndpoint> {
+    // Consume before any descendants are created. No endpoint secret or
+    // request/page data is emitted in logs or stored on disk.
+    let address = std::env::var_os(ADDRESS);
+    let token = std::env::var_os(TOKEN);
+    std::env::remove_var(ADDRESS);
+    std::env::remove_var(TOKEN);
+    decode_child_endpoint(address, token)
 }
 pub(crate) fn start_child_probe(app: tauri::AppHandle, endpoint: ChildEndpoint) {
     // A single bounded dispatch worker keeps the heartbeat transport
@@ -490,6 +552,40 @@ pub(crate) fn start_child_probe(app: tauri::AppHandle, endpoint: ChildEndpoint) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn release_launch_selects_platform_owner_without_wrapping_children() {
+        let select = |args: &[&str], inherited, release, linux, delegated| {
+            choose_launch(args.iter().map(|arg| OsString::from(*arg)).collect(), inherited, release, linux, delegated)
+        };
+        assert_eq!(select(&[], false, true, false, false).unwrap().0,
+            LaunchMode::Supervised { nested_memory: false });
+        assert_eq!(select(&[], false, true, true, true).unwrap().0,
+            LaunchMode::Supervised { nested_memory: true });
+        assert_eq!(select(&[], false, true, true, false).unwrap().0, LaunchMode::Direct);
+        assert_eq!(select(&[], true, true, false, false).unwrap().0, LaunchMode::Child);
+        assert_eq!(select(&[], true, true, true, true).unwrap().0, LaunchMode::Child);
+        assert_eq!(select(&[], false, false, false, false).unwrap().0, LaunchMode::Direct);
+        let (mode, forwarded) = select(&["https://example.com/path?q=1"], false, true, false, false).unwrap();
+        assert_eq!(mode, LaunchMode::Supervised { nested_memory: false });
+        assert_eq!(forwarded, vec![OsString::from("https://example.com/path?q=1")]);
+        assert_eq!(select(&["--diagnostic-fixture"], false, true, false, false).unwrap().0, LaunchMode::Direct);
+        assert_eq!(select(&[DIRECT_FLAG], false, true, false, false).unwrap().0, LaunchMode::Direct);
+        assert!(select(&[FLAG, DIRECT_FLAG], false, true, false, false).is_err());
+        assert!(select(&[FLAG], true, true, false, false).is_err());
+        assert!(select(&[MEMORY_FLAG], false, true, false, false).is_err());
+        assert_eq!(select(&[FLAG], false, false, true, false).unwrap().0,
+            LaunchMode::Supervised { nested_memory: false });
+    }
+
+    #[test]
+    fn incomplete_or_nonlocal_child_endpoint_is_not_a_valid_role() {
+        let token = OsString::from(uuid::Uuid::new_v4().to_string());
+        assert!(decode_child_endpoint(Some("127.0.0.1:3421".into()), Some(token.clone())).is_some());
+        assert!(decode_child_endpoint(Some("192.0.2.1:3421".into()), Some(token.clone())).is_none());
+        assert!(decode_child_endpoint(None, Some(token)).is_none());
+        assert!(decode_child_endpoint(Some("127.0.0.1:3421".into()), Some("bad".into())).is_none());
+    }
+
     #[test]
     fn recovery_claim_and_graceful_shutdown_have_one_admission_owner() {
         let state = crate::ExitLifecycleState::default();
