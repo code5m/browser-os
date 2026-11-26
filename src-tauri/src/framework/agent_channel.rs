@@ -225,6 +225,28 @@ fn resource_for(command: &str, args: &Value) -> Result<String, String> {
     }
 }
 
+// Both the initial host validation and worker admission enforce the same
+// approval binding. A valid proposal is not an evergreen read capability.
+fn validate_read_binding(spec: &PublicApiSpec, binding: &ApprovalBinding, args: &Value)
+    -> Result<(), String>
+{
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| "AGENT_APPROVAL_CLOCK_INVALID")?.as_millis();
+    if !current_public_api_catalog().contains(spec)
+        || spec.effect != ToolEffect::ReadOnly
+        || !spec.requires_host_authorization
+        || binding.principal_id.is_nil()
+        || binding.workspace_id.is_nil()
+        || binding.session_id.is_nil()
+        || binding.resource.resource_revision != "local-main-ui-v1"
+        || now >= u128::from(binding.expires_at_unix_ms)
+        || binding.resource.resource_id != resource_for(&spec.command, args)?
+    {
+        return Err("AGENT_READ_APPROVAL_STALE_OR_DENIED".into());
+    }
+    Ok(())
+}
+
 struct NativeOwnerHost {
     app: AppHandle,
     webview: Webview,
@@ -236,29 +258,10 @@ impl PublicApiHost for NativeOwnerHost {
         binding: &'a ApprovalBinding,
         args: &'a Value,
     ) -> foundation::Result<()> {
-        if self.webview.label() != "main"
-            || spec.effect != ToolEffect::ReadOnly
-            || !spec.requires_host_authorization
-            || binding.principal_id.is_nil()
-            || binding.workspace_id.is_nil()
-            || binding.session_id.is_nil()
-            || binding.resource.resource_revision != "local-main-ui-v1"
-        {
-            return Err(foundation::FoundationError::PermissionDenied);
-        }
-        let resource = resource_for(&spec.command, args)
+        validate_read_binding(spec, binding, args)
             .map_err(|_| foundation::FoundationError::PermissionDenied)?;
-        if binding.resource.resource_id != resource {
-            return Err(foundation::FoundationError::PermissionDenied);
-        }
-        // Always rerun source policy. Real capability APIs do so a second time.
-        crate::shared::invocation::check_invocation_source(
-            &self.webview,
-            &spec.command,
-            None,
-            &self.app,
-        )
-        .map_err(|_| foundation::FoundationError::PermissionDenied)?;
+        check_main(&self.app, &self.webview, &spec.command)
+            .map_err(|_| foundation::FoundationError::PermissionDenied)?;
         Ok(())
     }
 
@@ -272,23 +275,17 @@ impl PublicApiHost for NativeOwnerHost {
             self.validate(spec, &proof, &args)?;
             let app = self.app.clone();
             let webview = self.webview.clone();
-            let command = spec.command.clone();
+            let approved_spec = spec.clone();
             let result = READ_LANE
                 .run(move || -> Result<Value, String> {
-                    // A queued read may outlive the experiment being
-                    // disabled. Recheck before entering any native owner.
+                    // Do not substitute a newer proof or tool after queueing.
+                    // Recheck the exact approved catalog entry, resource,
+                    // argument shape, deadline, source and enablement.
                     enabled_config(&app)?;
-                    match command.as_str() {
-                        "tab_list" => {
-                            // Recheck the actual invoking main WebView and
-                            // read-only shape after the worker queue, not
-                            // merely at proposal/approval time.
-                            resource_for(&command, &args)?;
-                            crate::shared::invocation::check_invocation_source(
-                                &webview, &command, None, &app,
-                            )?;
-                            Ok(crate::capabilities::browser::public_api::agent_tab_summary(app))
-                        },
+                    validate_read_binding(&approved_spec, &proof, &args)?;
+                    check_main(&app, &webview, &approved_spec.command)?;
+                    match approved_spec.command.as_str() {
+                        "tab_list" => Ok(crate::capabilities::browser::public_api::agent_tab_summary(app)),
                         "db_list_connections" => {
                             crate::capabilities::database::public_api::agent_connection_summary(
                                 app, webview,
