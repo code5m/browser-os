@@ -2673,8 +2673,19 @@ impl<P: FnMut(&[Value], &[Value]) -> Result<Value, String>>
         }
         Ok(())
     }
-    fn invalid_batch(&mut self, _: browseros_agent_foundation::FoundationError) -> String {
-        "AGENT_REPLY_INVALID".into()
+    fn invalid_batch(&mut self, error: browseros_agent_foundation::FoundationError) -> String {
+        use browseros_agent_foundation::FoundationError;
+        match error {
+            FoundationError::Timeout => {
+                self.session.status = "provider_error".into();
+                provider_failure("AI_PROVIDER_TIMEOUT")
+            }
+            FoundationError::Provider(code) if matches!(code.as_str(), "MODEL_TEXT_LIMIT" | "MODEL_EVENT_LIMIT") => {
+                self.session.status = "response_denied".into();
+                "AGENT_RESPONSE_DENIED".into()
+            }
+            _ => "AGENT_REPLY_INVALID".into(),
+        }
     }
     fn accept_batch(
         &mut self,

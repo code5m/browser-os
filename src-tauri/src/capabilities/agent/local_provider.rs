@@ -137,6 +137,8 @@ pub(crate) fn local_chat(
         &inactive,
         |error| match error {
             FoundationError::Cancelled => "AI_PROVIDER_CANCELLED".into(),
+            FoundationError::Timeout => "AI_PROVIDER_TIMEOUT".into(),
+            FoundationError::Provider(code) if matches!(code.as_str(), "MODEL_TEXT_LIMIT" | "MODEL_EVENT_LIMIT") => "AI_RESPONSE_LIMIT".into(),
             FoundationError::Provider(code) if code == "MODEL_TEXT_EMPTY" => {
                 "AGENT_PROVIDER_EMPTY_RESPONSE".into()
             }

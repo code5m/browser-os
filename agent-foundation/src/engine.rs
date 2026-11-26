@@ -28,7 +28,13 @@ impl Default for TurnLimits {
     }
 }
 impl TurnLimits {
-    fn validate(self) -> Result<()> {
+    /// Native complete-message transport retains its own shorter per-request
+    /// deadline. This is the shared overall admission window for all rounds,
+    /// not permission to interrupt or replay an entered native effect.
+    pub(crate) fn complete_message() -> Self {
+        Self { deadline: Duration::from_secs(120), max_model_events: 256, max_text_bytes: 256 * 1024 }
+    }
+    pub(crate) fn validate(self) -> Result<()> {
         if self.deadline.is_zero()
             || self.deadline > Duration::from_secs(120)
             || !(1..=4096).contains(&self.max_model_events)
@@ -36,6 +42,34 @@ impl TurnLimits {
         {
             return Err(FoundationError::InvalidInput("agent turn limits"));
         }
+        Ok(())
+    }
+}
+
+/// The common model admission budget is consumed before host callbacks.
+/// Transport adapters retain their own protocol limits and native owners.
+pub(crate) struct ModelAdmissionBudget {
+    limits: TurnLimits,
+    events: usize,
+    text_bytes: usize,
+}
+impl ModelAdmissionBudget {
+    pub(crate) fn new(limits: TurnLimits) -> Result<Self> {
+        limits.validate()?;
+        Ok(Self { limits, events: 0, text_bytes: 0 })
+    }
+    pub(crate) fn admit_events(&mut self, count: usize) -> Result<()> {
+        if count > self.limits.max_model_events.saturating_sub(self.events) {
+            return Err(FoundationError::Provider("MODEL_EVENT_LIMIT".into()));
+        }
+        self.events += count;
+        Ok(())
+    }
+    pub(crate) fn admit_text(&mut self, bytes: usize) -> Result<()> {
+        if bytes > self.limits.max_text_bytes.saturating_sub(self.text_bytes) {
+            return Err(FoundationError::Provider("MODEL_TEXT_LIMIT".into()));
+        }
+        self.text_bytes += bytes;
         Ok(())
     }
 }
@@ -83,6 +117,9 @@ impl<'a> ModelTurnGate<'a> {
     pub(crate) fn active(&self) -> Result<()> {
         if *self.cancellation.borrow() || !self._lease.is_active() {
             return Err(FoundationError::Cancelled);
+        }
+        if tokio::time::Instant::now() >= self.deadline {
+            return Err(FoundationError::Timeout);
         }
         Ok(())
     }
@@ -141,19 +178,14 @@ impl AgentEngine<'_> {
             let mut stream = gate.receive(self.provider.stream(request)).await?;
             let mut text = String::new();
             let mut usage = None;
-            let mut count = 0usize;
+            let mut budget = ModelAdmissionBudget::new(self.limits)?;
 
             loop {
                 let event = gate.receive(async { Ok(stream.recv().await) }).await?;
-                count += 1;
-                if count > self.limits.max_model_events {
-                    return Err(FoundationError::Provider("MODEL_EVENT_LIMIT".to_owned()));
-                }
+                budget.admit_events(1)?;
                 match event {
                     Some(ModelEvent::TextDelta { text: delta }) => {
-                        if delta.len() > self.limits.max_text_bytes.saturating_sub(text.len()) {
-                            return Err(FoundationError::Provider("MODEL_TEXT_LIMIT".to_owned()));
-                        }
+                        budget.admit_text(delta.len())?;
                         self.tasks.record_event_at_revision(
                             task_id,
                             revision,
@@ -288,12 +320,18 @@ fn drive_function_batches_checked<H: FunctionBatchHost>(
     if !(1..=8).contains(&rounds) || max_calls > 8 {
         return Err(host.invalid_batch(FoundationError::InvalidInput("function turn limits")));
     }
+    let limits = TurnLimits::complete_message();
+    let mut budget = ModelAdmissionBudget::new(limits).map_err(|error| host.invalid_batch(error))?;
+    let deadline = std::time::Instant::now() + limits.deadline;
     // IDs must remain unique throughout this bounded model/tool loop,
     // not only within a single assistant response.
     let mut admitted_ids = std::collections::HashSet::new();
     for round in 0..rounds {
         if !active() || host.cancelled() {
             return host.on_cancelled();
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(host.invalid_batch(FoundationError::Timeout));
         }
         let reply = match host.request() {
             Ok(value) => value,
@@ -307,11 +345,26 @@ fn drive_function_batches_checked<H: FunctionBatchHost>(
         if !active() || host.cancelled() {
             return host.on_cancelled();
         }
+        if std::time::Instant::now() >= deadline {
+            return Err(host.invalid_batch(FoundationError::Timeout));
+        }
+        budget.admit_events(1).map_err(|error| host.invalid_batch(error))?;
+        // Count actual assistant text across every round, not just the last
+        // response. Tool arguments retain their independent parser bounds.
+        if let Some(content) = reply.get("content").filter(|value| !value.is_null()) {
+            let text = content.as_str().ok_or_else(|| host.invalid_batch(
+                FoundationError::InvalidInput("assistant text content")))?;
+            budget.admit_text(text.len()).map_err(|error| host.invalid_batch(error))?;
+        }
         host.validate_reply(&reply)?;
         let calls = crate::model::parse_function_batch(&reply, max_calls)
             .map_err(|error| host.invalid_batch(error))?;
         if !active() || host.cancelled() {
             return host.on_cancelled();
+        }
+        budget.admit_events(calls.len()).map_err(|error| host.invalid_batch(error))?;
+        if std::time::Instant::now() >= deadline {
+            return Err(host.invalid_batch(FoundationError::Timeout));
         }
         if calls
             .iter()
@@ -326,6 +379,11 @@ fn drive_function_batches_checked<H: FunctionBatchHost>(
         // host callback has returned on a superseded task generation.
         if !active() || host.cancelled() {
             return host.on_cancelled();
+        }
+        if std::time::Instant::now() >= deadline {
+            // Host settlement may already have entered. Do not rerun the
+            // callback; leave recovery/receipts to its actual owner.
+            return Err(host.invalid_batch(FoundationError::Timeout));
         }
         match flow {
             BatchFlow::Stop => return Ok(()),

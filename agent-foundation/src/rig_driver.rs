@@ -93,8 +93,13 @@ impl RigMultiTurnDriver {
         let revision = start.revision;
         // Keep the same owner across SDK state advancement, provider
         // transport, proposal admission and terminal settlement.
+        let limits = crate::engine::TurnLimits {
+            deadline: Duration::from_secs(45),
+            ..crate::engine::TurnLimits::complete_message()
+        };
+        let mut budget = crate::engine::ModelAdmissionBudget::new(limits)?;
         let mut gate =
-            crate::engine::ModelTurnGate::acquire(tasks, task_id, revision, Duration::from_secs(45))?;
+            crate::engine::ModelTurnGate::acquire(tasks, task_id, revision, limits.deadline)?;
         let run = async {
             loop {
                 gate.active()?;
@@ -117,6 +122,7 @@ impl RigMultiTurnDriver {
                             .state()
                             .advertise_tools(turn, definitions.to_vec());
                         let response = gate.receive(model.complete(request)).await?;
+                        budget.admit_events(response.choice.len())?;
                         if response.choice.len() > 64 {
                             return Err(FoundationError::Provider("RIG_CONTENT_LIMIT".into()));
                         }
@@ -170,7 +176,7 @@ impl RigMultiTurnDriver {
                         // Validation must precede committing a successful terminal
                         // state; the previous order permanently marked an oversized
                         // error as Completed. Fail closed and retain a Failed event.
-                        if response.output.len() > 256 * 1024 {
+                        if budget.admit_text(response.output.len()).is_err() {
                             tasks
                                 .finish_at_revision(task_id, false, revision)
                                 .map_err(stale_transition)?;
