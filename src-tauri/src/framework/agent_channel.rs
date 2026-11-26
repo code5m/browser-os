@@ -9,7 +9,7 @@ use foundation::{
     benchmark::{
         run_benchmark_suite, run_routed_fixture_owned, BenchmarkReport, RoutedFixtureResult,
     },
-    experiment::ExperimentConfig,
+    experiment::{ExperimentConfig, ExperimentRouter},
     public_api::{current_public_api_catalog, PublicApiHost, PublicApiRegistry, PublicApiSpec},
     tool::{ToolEffect, ToolFuture, ToolRegistry},
 };

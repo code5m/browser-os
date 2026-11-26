@@ -23,7 +23,20 @@ for(const name of names){
  const open=source.indexOf('(',position);let depth=0,end=-1;
  for(let i=open;i<source.length;i++){if(source[i]==='(')depth++;if(source[i]===')'&&--depth===0){end=i;break;}}
  assert.ok(end>open,`${name} signature`);
- const params=source.slice(open+1,end),body=source.slice(end,source.indexOf('\n}',end)+2);
+ const params=source.slice(open+1,end);let body=source.slice(end,source.indexOf('\n}',end)+2);
+ // The receipt wrappers retain the same command identity and call the exact
+ // guarded implementation. Verify both edges; do not treat a helper's name
+ // alone as evidence of origin/argument validation.
+ const receiptWrapped=new Set(['tab_activate','tab_close','tab_go_back','tab_go_forward','tab_new','tab_open','tab_reload']);
+ if(receiptWrapped.has(name)){
+  const dispatch=new RegExp('super::tab_mutation::legacy\\(\\s*webview,\\s*"'+name+'",\\s*move\\s*\\|webview\\|\\s*(?:\\{\\s*)?'+name+'_impl\\(webview,\\s*app(?:,\\s*[a-z_]+)*\\)\\s*(?:\\}\\s*)?\\)\\s*\\.await');
+  assert.match(body,dispatch,name+': receipt wrapper must dispatch exactly the guarded implementation');
+  const owner=rust.find(([file])=>file.endsWith('/bridge/tab_mutation.rs'));
+  assert.ok(owner&&/native_legacy_policy::require_main\\(&webview,\\s*command\\)\\?;/.test(owner[1]),name+': receipt admission must validate main caller');
+  const helper=new RegExp('pub\\(crate\\)\\s+fn\\s+'+name+'_impl\\s*\\(').exec(source);
+  assert.ok(helper,name+': exact native implementation missing');
+  body=source.slice(helper.index,source.indexOf('\n}',helper.index)+2);
+ }
  const remote=name==='report_title'||name==='report_resources';
  const originGuard=remote?'remote-origin-policy':'main-webview-guard';
  assert.ok(body.includes(remote?'check_invocation_source(':`native_legacy_policy::require_main(&webview, "${name}")`),`${name}: missing ${originGuard}`);

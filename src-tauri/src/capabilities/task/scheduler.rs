@@ -787,7 +787,8 @@ fn fire(
                 | RunError::ScriptPathRejected(_)
                 | RunError::CwdRejected(_)
                 | RunError::TimeoutTooLarge { .. }
-                | RunError::UnknownRun(_) => {
+                | RunError::UnknownRun(_)
+                | RunError::AdmissionRejected(_) => {
                     record_reject(app, &task.id, code);
                     FireOutcome::Reject(code)
                 }
