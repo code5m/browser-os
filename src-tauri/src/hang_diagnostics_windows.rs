@@ -5,7 +5,10 @@ use std::{
     fs::{File, OpenOptions},
     io::{self, Write},
     path::{Path, PathBuf},
-    sync::{atomic::{AtomicBool, AtomicU64, Ordering}, mpsc, Arc},
+    sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        mpsc, Arc,
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -34,14 +37,22 @@ struct IncidentLog {
 }
 impl IncidentLog {
     fn new(path: &Path) -> io::Result<Self> {
-        Ok(Self { initial:create_log(path)?, recent_path:path.with_extension("recent.jsonl"), recent:None })
+        Ok(Self {
+            initial: create_log(path)?,
+            recent_path: path.with_extension("recent.jsonl"),
+            recent: None,
+        })
     }
     fn append(&mut self, event: &Value) -> io::Result<()> {
         let mut bytes = serde_json::to_vec(event).map_err(io::Error::other)?;
-        if bytes.len() >= MAX_EVENT_BYTES { return Err(io::Error::other("diagnostic event too large")); }
+        if bytes.len() >= MAX_EVENT_BYTES {
+            return Err(io::Error::other("diagnostic event too large"));
+        }
         bytes.push(b'\n');
         let length = bytes.len() as u64;
-        if self.recent.is_none() && self.initial.metadata()?.len().saturating_add(length) <= MAX_LOG_BYTES {
+        if self.recent.is_none()
+            && self.initial.metadata()?.len().saturating_add(length) <= MAX_LOG_BYTES
+        {
             return self.initial.write_all(&bytes);
         }
         if self.recent.is_none() {
@@ -68,22 +79,42 @@ fn snapshot(event: &str, age_ms: u64) -> Value {
 
 pub fn start(app: AppHandle) {
     let directory = crate::workspace::data_dir(&app).join("diagnostics");
-    let path = directory.join(format!("hang-{}-{}-{}.jsonl", std::env::consts::OS,
-        std::process::id(), uuid::Uuid::new_v4()));
+    let path = directory.join(format!(
+        "hang-{}-{}-{}.jsonl",
+        std::env::consts::OS,
+        std::process::id(),
+        uuid::Uuid::new_v4()
+    ));
     // Directory preparation and all disk I/O happen off the sampler.
     let (events, receive_events) = mpsc::sync_channel::<Value>(16);
     let lost = Arc::new(AtomicU64::new(0));
     let writer_lost = Arc::clone(&lost);
-    if thread::Builder::new().name("browseros-ui-diagnostic-writer".into()).spawn(move || {
-        if crate::capabilities::workspace::safe_paths::ensure_private_directory(&directory).is_err() { return; }
-        let Ok(mut log) = IncidentLog::new(&path) else { return; };
-        for mut event in receive_events {
-            event["diagnostic_dropped_events"] = json!(writer_lost.load(Ordering::Relaxed));
-            if log.append(&event).is_err() { writer_lost.fetch_add(1, Ordering::Relaxed); }
-        }
-    }).is_err() { return; }
+    if thread::Builder::new()
+        .name("browseros-ui-diagnostic-writer".into())
+        .spawn(move || {
+            if crate::capabilities::workspace::safe_paths::ensure_private_directory(&directory)
+                .is_err()
+            {
+                return;
+            }
+            let Ok(mut log) = IncidentLog::new(&path) else {
+                return;
+            };
+            for mut event in receive_events {
+                event["diagnostic_dropped_events"] = json!(writer_lost.load(Ordering::Relaxed));
+                if log.append(&event).is_err() {
+                    writer_lost.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+        })
+        .is_err()
+    {
+        return;
+    }
     let record = move |event: Value| {
-        if events.try_send(event).is_err() { lost.fetch_add(1, Ordering::Relaxed); }
+        if events.try_send(event).is_err() {
+            lost.fetch_add(1, Ordering::Relaxed);
+        }
     };
 
     let started = Instant::now();
@@ -95,52 +126,68 @@ pub fn start(app: AppHandle) {
     let timestamp = Arc::clone(&last_ack);
     let pending_callback = Arc::clone(&pending);
     let failed = Arc::clone(&dispatch_failed);
-    if thread::Builder::new().name("browseros-ui-probe-submit".into()).spawn(move || {
-        while requests.recv().is_ok() {
-            let ack = Arc::clone(&timestamp);
-            let back = Arc::clone(&pending_callback);
-            if dispatcher.run_on_main_thread(move || {
-                ack.store(started.elapsed().as_millis().min((u64::MAX-1) as u128) as u64 + 1, Ordering::Release);
-                back.store(false, Ordering::Release);
-            }).is_err() {
-                failed.store(true, Ordering::Release);
-                pending_callback.store(false, Ordering::Release);
-                break;
+    if thread::Builder::new()
+        .name("browseros-ui-probe-submit".into())
+        .spawn(move || {
+            while requests.recv().is_ok() {
+                let ack = Arc::clone(&timestamp);
+                let back = Arc::clone(&pending_callback);
+                if dispatcher
+                    .run_on_main_thread(move || {
+                        ack.store(
+                            started.elapsed().as_millis().min((u64::MAX - 1) as u128) as u64 + 1,
+                            Ordering::Release,
+                        );
+                        back.store(false, Ordering::Release);
+                    })
+                    .is_err()
+                {
+                    failed.store(true, Ordering::Release);
+                    pending_callback.store(false, Ordering::Release);
+                    break;
+                }
             }
-        }
-    }).is_err() { return; }
+        })
+        .is_err()
+    {
+        return;
+    }
 
-    let _ = thread::Builder::new().name("browseros-ui-watchdog".into()).spawn(move || {
-        record(snapshot("watchdog_started",0));
-        let mut suspect = false;
-        let mut last_report = 0u64;
-        loop {
-            thread::sleep(Duration::from_secs(2));
-            if app.try_state::<crate::ExitLifecycleState>()
-                .is_some_and(|state| state.started.load(Ordering::Acquire)) {
-                record(snapshot("watchdog_stopped",0));
-                return;
+    let _ = thread::Builder::new()
+        .name("browseros-ui-watchdog".into())
+        .spawn(move || {
+            record(snapshot("watchdog_started", 0));
+            let mut suspect = false;
+            let mut last_report = 0u64;
+            loop {
+                thread::sleep(Duration::from_secs(2));
+                if app
+                    .try_state::<crate::ExitLifecycleState>()
+                    .is_some_and(|state| state.started.load(Ordering::Acquire))
+                {
+                    record(snapshot("watchdog_stopped", 0));
+                    return;
+                }
+                let now = started.elapsed().as_millis().min((u64::MAX - 1) as u128) as u64 + 1;
+                let age = now.saturating_sub(last_ack.load(Ordering::Acquire));
+                if dispatch_failed.load(Ordering::Acquire) {
+                    record(snapshot("ui_probe_dispatch_failed", age));
+                    return;
+                }
+                if !pending.swap(true, Ordering::AcqRel) && submit.try_send(()).is_err() {
+                    record(snapshot("ui_probe_dispatch_failed", age));
+                    return;
+                }
+                if age >= 8000 && (!suspect || now.saturating_sub(last_report) >= 15000) {
+                    record(snapshot("ui_unresponsive_suspected", age));
+                    suspect = true;
+                    last_report = now;
+                } else if age < 8000 && suspect {
+                    record(snapshot("ui_responsive_again", age));
+                    suspect = false;
+                }
             }
-            let now = started.elapsed().as_millis().min((u64::MAX-1) as u128) as u64 + 1;
-            let age = now.saturating_sub(last_ack.load(Ordering::Acquire));
-            if dispatch_failed.load(Ordering::Acquire) {
-                record(snapshot("ui_probe_dispatch_failed",age));
-                return;
-            }
-            if !pending.swap(true, Ordering::AcqRel) && submit.try_send(()).is_err() {
-                record(snapshot("ui_probe_dispatch_failed",age));
-                return;
-            }
-            if age >= 8000 && (!suspect || now.saturating_sub(last_report) >= 15000) {
-                record(snapshot("ui_unresponsive_suspected",age));
-                suspect = true;
-                last_report = now;
-            } else if age < 8000 && suspect {
-                record(snapshot("ui_responsive_again",age));
-                suspect = false;
-            }
-        }
-    });
+        });
 }
 
 #[cfg(test)]
@@ -148,18 +195,22 @@ mod tests {
     use super::*;
     #[test]
     fn incident_log_retains_initial_and_bounded_recent_segment() {
-        let dir = std::env::temp_dir().join(format!("browseros-diag-{}",uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("browseros-diag-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir(&dir).unwrap();
         let path = dir.join("incident.jsonl");
         let mut log = IncidentLog::new(&path).unwrap();
         let sample = json!({"event":"fixture","payload":"x".repeat(30_000)});
-        for _ in 0..100 { log.append(&sample).unwrap(); }
+        for _ in 0..100 {
+            log.append(&sample).unwrap();
+        }
         log.append(&json!({"event":"ui_responsive_again"})).unwrap();
         let recent = path.with_extension("recent.jsonl");
         drop(log);
         assert!(std::fs::metadata(&path).unwrap().len() <= MAX_LOG_BYTES);
         assert!(std::fs::metadata(&recent).unwrap().len() <= MAX_LOG_BYTES);
-        assert!(std::fs::read_to_string(&recent).unwrap().contains("ui_responsive_again"));
+        assert!(std::fs::read_to_string(&recent)
+            .unwrap()
+            .contains("ui_responsive_again"));
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

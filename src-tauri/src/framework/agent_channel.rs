@@ -1,11 +1,13 @@
 //! BrowserOS main-window Agent Channel experiment host.
 //! Reuses existing capability public commands and their invocation/policy checks.
 //! No remote WebView, model message or MCP peer can reach this control plane.
+use crate::capabilities::agent::public_api::{
+    ChannelAdmission, ChannelInput, ChannelStart, ProductionExecution,
+};
+use crate::shared::blocking::BlockingLane;
 use browseros_agent_foundation as foundation;
 use foundation::{
-    approval::{
-        ApprovalBinding, HostApprovalDecision, HostApprovalIssuer, ResourceBinding,
-    },
+    approval::{ApprovalBinding, HostApprovalDecision, HostApprovalIssuer, ResourceBinding},
     benchmark::{
         run_benchmark_suite, run_routed_fixture_owned, BenchmarkReport, RoutedFixtureResult,
     },
@@ -14,8 +16,6 @@ use foundation::{
     tool::{ToolEffect, ToolFuture, ToolRegistry},
 };
 use serde_json::Value;
-use crate::capabilities::agent::public_api::{ChannelAdmission, ChannelInput, ChannelStart, ProductionExecution};
-use crate::shared::blocking::BlockingLane;
 use std::{
     fs::{self, OpenOptions},
     io::Write,
@@ -29,7 +29,11 @@ static CONFIG_LOCK: Mutex<()> = Mutex::new(());
 const CONFIG_FILE: &str = "agent-runtime-experiment.json";
 const MAX_CONFIG_BYTES: u64 = 16_384;
 const MAX_RESULT_BYTES: usize = 64 * 1024;
-static READ_LANE: BlockingLane = BlockingLane::new(1, "AGENT_CHANNEL_READ_BUSY", "AGENT_CHANNEL_READ_WORKER_FAILED");
+static READ_LANE: BlockingLane = BlockingLane::new(
+    1,
+    "AGENT_CHANNEL_READ_BUSY",
+    "AGENT_CHANNEL_READ_WORKER_FAILED",
+);
 
 fn check_main(app: &AppHandle, webview: &Webview, scope: &str) -> Result<(), String> {
     if webview.label() != "main" {
@@ -182,10 +186,15 @@ pub async fn agent_runtime_run_fixture(
     check_main(&app, &webview, "agent_runtime_run_fixture")?;
     let config = enabled_config(&app)?;
     let storage = crate::workspace::data_dir(&app);
-    let admission = tauri::async_runtime::spawn_blocking(move ||
-        ProductionExecution::begin_channel(&storage, uuid::Uuid::new_v4(),
-            ChannelStart::Fixture { fixture_id, config }))
-        .await.map_err(|_| "AGENT_RUN_WORKER_FAILED")??;
+    let admission = tauri::async_runtime::spawn_blocking(move || {
+        ProductionExecution::begin_channel(
+            &storage,
+            uuid::Uuid::new_v4(),
+            ChannelStart::Fixture { fixture_id, config },
+        )
+    })
+    .await
+    .map_err(|_| "AGENT_RUN_WORKER_FAILED")??;
     serde_json::from_value(run_admitted(app, webview, admission).await?)
         .map_err(|_| "AGENT_RUN_RECEIPT_INVALID".into())
 }
@@ -259,38 +268,43 @@ impl PublicApiHost for NativeOwnerHost {
             let app = self.app.clone();
             let webview = self.webview.clone();
             let command = spec.command.clone();
-            let result = READ_LANE.run(move || -> Result<Value, String> {
-                match command.as_str() {
-                    "tab_list" => Ok(crate::capabilities::browser::public_api::agent_tab_summary(
-                        app,
-                    )),
-                    "db_list_connections" => {
-                        crate::capabilities::database::public_api::agent_connection_summary(
-                            app, webview,
-                        )
+            let result = READ_LANE
+                .run(move || -> Result<Value, String> {
+                    match command.as_str() {
+                        "tab_list" => Ok(
+                            crate::capabilities::browser::public_api::agent_tab_summary(app),
+                        ),
+                        "db_list_connections" => {
+                            crate::capabilities::database::public_api::agent_connection_summary(
+                                app, webview,
+                            )
+                        }
+                        "git_status" => {
+                            let repo_id = as_text(&args, "repo_id", 100)?.to_owned();
+                            crate::capabilities::git::public_api::agent_status(
+                                app, webview, repo_id,
+                            )
+                        }
+                        "git_diff" => {
+                            let repo_id = as_text(&args, "repo_id", 100)?.to_owned();
+                            let path = args.get("path").and_then(Value::as_str).map(str::to_owned);
+                            crate::capabilities::git::public_api::agent_diff(
+                                app, webview, repo_id, path,
+                            )
+                        }
+                        "coding_lsp_status" => {
+                            let root = as_text(&args, "root", 4096)?.to_owned();
+                            crate::capabilities::agent::public_api::coding_lsp_summary(
+                                app, webview, &root,
+                            )
+                        }
+                        _ => Err("AGENT_EXPERIMENT_TOOL_DENIED".into()),
                     }
-                    "git_status" => {
-                        let repo_id = as_text(&args, "repo_id", 100)?.to_owned();
-                        crate::capabilities::git::public_api::agent_status(app, webview, repo_id)
-                    }
-                    "git_diff" => {
-                        let repo_id = as_text(&args, "repo_id", 100)?.to_owned();
-                        let path = args.get("path").and_then(Value::as_str).map(str::to_owned);
-                        crate::capabilities::git::public_api::agent_diff(
-                            app, webview, repo_id, path,
-                        )
-                    }
-                    "coding_lsp_status" => {
-                        let root = as_text(&args, "root", 4096)?.to_owned();
-                        crate::capabilities::agent::public_api::coding_lsp_summary(
-                            app, webview, &root,
-                        )
-                    }
-                    _ => Err("AGENT_EXPERIMENT_TOOL_DENIED".into()),
-                }
-            })
-            .await
-            .map_err(|_| foundation::FoundationError::Tool("OWNER_READ_FAILED_OR_BUSY".into()))?;
+                })
+                .await
+                .map_err(|_| {
+                    foundation::FoundationError::Tool("OWNER_READ_FAILED_OR_BUSY".into())
+                })?;
             if serde_json::to_vec(&result)
                 .map_err(|e| foundation::FoundationError::Serialization(e.to_string()))?
                 .len()
@@ -314,32 +328,52 @@ pub async fn agent_runtime_read_tool(
     confirmed: bool,
 ) -> Result<Value, String> {
     check_main(&app, &webview, "agent_runtime_read_tool")?;
-    if !confirmed { return Err("AGENT_EXPERIMENT_APPROVAL_REQUIRED".into()); }
+    if !confirmed {
+        return Err("AGENT_EXPERIMENT_APPROVAL_REQUIRED".into());
+    }
     enabled_config(&app)?;
     let start = checked_read(command, args)?;
     let storage = crate::workspace::data_dir(&app);
-    let admission = tauri::async_runtime::spawn_blocking(move ||
-        ProductionExecution::begin_channel(&storage, uuid::Uuid::new_v4(), start))
-        .await.map_err(|_| "AGENT_RUN_WORKER_FAILED")??;
+    let admission = tauri::async_runtime::spawn_blocking(move || {
+        ProductionExecution::begin_channel(&storage, uuid::Uuid::new_v4(), start)
+    })
+    .await
+    .map_err(|_| "AGENT_RUN_WORKER_FAILED")??;
     run_admitted(app, webview, admission).await
 }
 fn enabled_config(app: &AppHandle) -> Result<ExperimentConfig, String> {
     let _guard = CONFIG_LOCK.lock().map_err(|_| "AGENT_EXPERIMENT_LOCK")?;
     let cfg = load(&config_path(app)?)?;
-    if !cfg.enabled { return Err("AGENT_EXPERIMENT_DISABLED".into()); }
+    if !cfg.enabled {
+        return Err("AGENT_EXPERIMENT_DISABLED".into());
+    }
     Ok(cfg)
 }
 fn checked_read(command: String, args: Value) -> Result<ChannelStart, String> {
-    if !args.is_object() || serde_json::to_vec(&args).map_err(|_| "AGENT_EXPERIMENT_ARGUMENT_INVALID")?.len() > 4096 {
+    if !args.is_object()
+        || serde_json::to_vec(&args)
+            .map_err(|_| "AGENT_EXPERIMENT_ARGUMENT_INVALID")?
+            .len()
+            > 4096
+    {
         return Err("AGENT_EXPERIMENT_ARGUMENT_INVALID".into());
     }
-    current_public_api_catalog().into_iter()
+    current_public_api_catalog()
+        .into_iter()
         .find(|entry| entry.command == command && entry.effect == ToolEffect::ReadOnly)
         .ok_or("AGENT_EXPERIMENT_TOOL_DENIED")?;
     let resource = resource_for(&command, &args)?;
-    Ok(ChannelStart::Read { command, args, resource })
+    Ok(ChannelStart::Read {
+        command,
+        args,
+        resource,
+    })
 }
-async fn run_admitted(app: AppHandle, webview: Webview, admission: ChannelAdmission) -> Result<Value, String> {
+async fn run_admitted(
+    app: AppHandle,
+    webview: Webview,
+    admission: ChannelAdmission,
+) -> Result<Value, String> {
     let (execution, input) = match admission {
         ChannelAdmission::Recovered(value) => return Ok(value),
         ChannelAdmission::Execute(execution, input) => (execution, input),
@@ -347,110 +381,207 @@ async fn run_admitted(app: AppHandle, webview: Webview, admission: ChannelAdmiss
     // The durable receipt belongs to this task, not the IPC waiter.
     tauri::async_runtime::spawn(async move {
         match input {
-            ChannelInput::Fixture { fixture_id, assignment } => {
-                if assignment.task_id != execution.id() { return Err("AGENT_RUN_SCOPE_MISMATCH".into()); }
-                let result = run_routed_fixture_owned(assignment.kind, execution.id(), &fixture_id,
-                    assignment.max_turns, execution.tasks()).await
-                    .map_err(|_| "AGENT_EXPERIMENT_FIXTURE_FAILED".to_string())
-                    .and_then(|value| serde_json::to_value(value).map_err(|_| "AGENT_RUN_RECEIPT_INVALID".into()));
+            ChannelInput::Fixture {
+                fixture_id,
+                assignment,
+            } => {
+                if assignment.task_id != execution.id() {
+                    return Err("AGENT_RUN_SCOPE_MISMATCH".into());
+                }
+                let result = run_routed_fixture_owned(
+                    assignment.kind,
+                    execution.id(),
+                    &fixture_id,
+                    assignment.max_turns,
+                    execution.tasks(),
+                )
+                .await
+                .map_err(|_| "AGENT_EXPERIMENT_FIXTURE_FAILED".to_string())
+                .and_then(|value| {
+                    serde_json::to_value(value).map_err(|_| "AGENT_RUN_RECEIPT_INVALID".into())
+                });
                 publish_channel(execution, result).await
             }
-            ChannelInput::Read { command, args, resource } =>
-                execute_read(app, webview, execution, command, args, resource).await,
+            ChannelInput::Read {
+                command,
+                args,
+                resource,
+            } => execute_read(app, webview, execution, command, args, resource).await,
         }
-    }).await.map_err(|_| "AGENT_RUN_WORKER_FAILED".to_string())?
+    })
+    .await
+    .map_err(|_| "AGENT_RUN_WORKER_FAILED".to_string())?
 }
-async fn publish_channel(execution: ProductionExecution, result: Result<Value, String>) -> Result<Value, String> {
+async fn publish_channel(
+    execution: ProductionExecution,
+    result: Result<Value, String>,
+) -> Result<Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
         execution.finish_channel(&result)?;
         result
-    }).await.map_err(|_| "AGENT_RUN_WORKER_FAILED".to_string())?
+    })
+    .await
+    .map_err(|_| "AGENT_RUN_WORKER_FAILED".to_string())?
 }
-async fn execute_read(app: AppHandle, webview: Webview, mut execution: ProductionExecution,
-    command: String, args: Value, resource: String) -> Result<Value, String> {
+async fn execute_read(
+    app: AppHandle,
+    webview: Webview,
+    mut execution: ProductionExecution,
+    command: String,
+    args: Value,
+    resource: String,
+) -> Result<Value, String> {
     if resource_for(&command, &args)? != resource {
         return publish_channel(execution, Err("AGENT_RUN_SCOPE_MISMATCH".into())).await;
     }
-    let spec = current_public_api_catalog().into_iter()
+    let spec = current_public_api_catalog()
+        .into_iter()
         .find(|entry| entry.command == command && entry.effect == ToolEffect::ReadOnly)
         .ok_or("AGENT_EXPERIMENT_TOOL_DENIED")?;
     let registry = PublicApiRegistry::default();
     let host = Arc::new(NativeOwnerHost { app, webview });
-    registry.register(spec.owner, host).map_err(|_| "AGENT_EXPERIMENT_OWNER_DENIED")?;
-    let tool = registry.read_tool(spec).map_err(|_| "AGENT_EXPERIMENT_OWNER_DENIED")?;
+    registry
+        .register(spec.owner, host)
+        .map_err(|_| "AGENT_EXPERIMENT_OWNER_DENIED")?;
+    let tool = registry
+        .read_tool(spec)
+        .map_err(|_| "AGENT_EXPERIMENT_OWNER_DENIED")?;
     let tools = ToolRegistry::default();
-    tools.register(Arc::new(tool)).map_err(|_| "AGENT_EXPERIMENT_REGISTRY_FAILED")?;
+    tools
+        .register(Arc::new(tool))
+        .map_err(|_| "AGENT_EXPERIMENT_REGISTRY_FAILED")?;
     let tasks = execution.tasks();
     let task_id = execution.id();
-    let call = tools.propose(tasks, task_id, &command, args).map_err(|_| "AGENT_EXPERIMENT_TOOL_DENIED")?;
+    let call = tools
+        .propose(tasks, task_id, &command, args)
+        .map_err(|_| "AGENT_EXPERIMENT_TOOL_DENIED")?;
     let mut secret = [0_u8; 32];
     use ring::rand::{SecureRandom, SystemRandom};
-    SystemRandom::new().fill(&mut secret).map_err(|_| "AGENT_EXPERIMENT_APPROVAL_FAILED")?;
-    let (ticket, permit) = HostApprovalIssuer::new(secret).map_err(|_| "AGENT_EXPERIMENT_APPROVAL_FAILED")?
-        .resolve_local_decision(tasks, task_id, call,
-            HostApprovalDecision { principal_id: uuid::Uuid::new_v4(),
-                resource: ResourceBinding { resource_id: resource, resource_revision: "local-main-ui-v1".into() },
-                accepted: true, ttl: Duration::from_secs(20) })
+    SystemRandom::new()
+        .fill(&mut secret)
+        .map_err(|_| "AGENT_EXPERIMENT_APPROVAL_FAILED")?;
+    let (ticket, permit) = HostApprovalIssuer::new(secret)
+        .map_err(|_| "AGENT_EXPERIMENT_APPROVAL_FAILED")?
+        .resolve_local_decision(
+            tasks,
+            task_id,
+            call,
+            HostApprovalDecision {
+                principal_id: uuid::Uuid::new_v4(),
+                resource: ResourceBinding {
+                    resource_id: resource,
+                    resource_revision: "local-main-ui-v1".into(),
+                },
+                accepted: true,
+                ttl: Duration::from_secs(20),
+            },
+        )
         .map_err(|_| "AGENT_EXPERIMENT_APPROVAL_FAILED")?;
     let permit = permit.ok_or("AGENT_EXPERIMENT_APPROVAL_DENIED")?;
     let execution = tauri::async_runtime::spawn_blocking(move || {
         execution.checkpoint_approval(ticket.claims)?;
         Ok::<_, String>(execution)
-    }).await.map_err(|_| "AGENT_RUN_WORKER_FAILED")??;
-    let result = tools.execute(permit, tasks, Duration::from_secs(15)).await
+    })
+    .await
+    .map_err(|_| "AGENT_RUN_WORKER_FAILED")??;
+    let result = tools
+        .execute(permit, tasks, Duration::from_secs(15))
+        .await
         .map_err(|_| "AGENT_EXPERIMENT_TOOL_FAILED".to_string());
     publish_channel(execution, result).await
 }
 
 /// Existing main-only AI request fields, no new Tauri command.
-pub(crate) async fn dispatch_recovery(app: AppHandle, webview: Webview, request: super::ai::AiRequest) -> Result<Value, String> {
+pub(crate) async fn dispatch_recovery(
+    app: AppHandle,
+    webview: Webview,
+    request: super::ai::AiRequest,
+) -> Result<Value, String> {
     check_main(&app, &webview, "ai_service")?;
     let parse = |value: &str| -> Result<uuid::Uuid, String> {
         let id = uuid::Uuid::parse_str(value).map_err(|_| "AGENT_RUN_ID_INVALID")?;
-        if id.get_version_num() != 4 || id.to_string() != value { return Err("AGENT_RUN_ID_INVALID".into()); }
+        if id.get_version_num() != 4 || id.to_string() != value {
+            return Err("AGENT_RUN_ID_INVALID".into());
+        }
         Ok(id)
     };
     let storage = crate::workspace::data_dir(&app);
     match request.action.as_str() {
         "channel_history" => {
-            let cursor = if request.id.is_empty() { None } else { Some(parse(&request.id)?) };
-            return tauri::async_runtime::spawn_blocking(move || ProductionExecution::channel_catalog(&storage, cursor))
-                .await.map_err(|_| "AGENT_RUN_WORKER_FAILED")?;
+            let cursor = if request.id.is_empty() {
+                None
+            } else {
+                Some(parse(&request.id)?)
+            };
+            return tauri::async_runtime::spawn_blocking(move || {
+                ProductionExecution::channel_catalog(&storage, cursor)
+            })
+            .await
+            .map_err(|_| "AGENT_RUN_WORKER_FAILED")?;
         }
         "channel_restore" => {
             let id = parse(&request.id)?;
-            return tauri::async_runtime::spawn_blocking(move || ProductionExecution::read_channel(&storage, id))
-                .await.map_err(|_| "AGENT_RUN_WORKER_FAILED")?;
+            return tauri::async_runtime::spawn_blocking(move || {
+                ProductionExecution::read_channel(&storage, id)
+            })
+            .await
+            .map_err(|_| "AGENT_RUN_WORKER_FAILED")?;
         }
         "channel_forget" => {
-            if !request.confirmed { return Err("AGENT_RUN_FORGET_APPROVAL_REQUIRED".into()); }
+            if !request.confirmed {
+                return Err("AGENT_RUN_FORGET_APPROVAL_REQUIRED".into());
+            }
             let id = parse(&request.id)?;
             return tauri::async_runtime::spawn_blocking(move || {
                 let archived = ProductionExecution::forget_channel(&storage, id)?;
                 Ok(serde_json::json!({"forgotten":true,"archived":archived}))
-            }).await.map_err(|_| "AGENT_RUN_WORKER_FAILED")?;
+            })
+            .await
+            .map_err(|_| "AGENT_RUN_WORKER_FAILED")?;
         }
         _ => {}
     }
-    if !request.confirmed { return Err("AGENT_EXPERIMENT_APPROVAL_REQUIRED".into()); }
+    if !request.confirmed {
+        return Err("AGENT_EXPERIMENT_APPROVAL_REQUIRED".into());
+    }
     let config = enabled_config(&app)?;
     let run = parse(&request.request_id)?;
     let admission = match request.action.as_str() {
-        "channel_fixture" => tauri::async_runtime::spawn_blocking(move ||
-            ProductionExecution::begin_channel(&storage, run,
-                ChannelStart::Fixture { fixture_id: request.id, config })).await,
+        "channel_fixture" => {
+            tauri::async_runtime::spawn_blocking(move || {
+                ProductionExecution::begin_channel(
+                    &storage,
+                    run,
+                    ChannelStart::Fixture {
+                        fixture_id: request.id,
+                        config,
+                    },
+                )
+            })
+            .await
+        }
         "channel_read" => {
-            if request.message.len() > 4096 { return Err("AGENT_EXPERIMENT_ARGUMENT_INVALID".into()); }
-            let args = serde_json::from_str(&request.message).map_err(|_| "AGENT_EXPERIMENT_ARGUMENT_INVALID")?;
+            if request.message.len() > 4096 {
+                return Err("AGENT_EXPERIMENT_ARGUMENT_INVALID".into());
+            }
+            let args = serde_json::from_str(&request.message)
+                .map_err(|_| "AGENT_EXPERIMENT_ARGUMENT_INVALID")?;
             let start = checked_read(request.id, args)?;
-            tauri::async_runtime::spawn_blocking(move || ProductionExecution::begin_channel(&storage, run, start)).await
+            tauri::async_runtime::spawn_blocking(move || {
+                ProductionExecution::begin_channel(&storage, run, start)
+            })
+            .await
         }
         "channel_resume" => {
             let previous = parse(&request.id)?;
-            tauri::async_runtime::spawn_blocking(move || ProductionExecution::resume_channel(&storage, previous, run)).await
+            tauri::async_runtime::spawn_blocking(move || {
+                ProductionExecution::resume_channel(&storage, previous, run)
+            })
+            .await
         }
         _ => return Err("AGENT_EXPERIMENT_ACTION_DENIED".into()),
-    }.map_err(|_| "AGENT_RUN_WORKER_FAILED")??;
+    }
+    .map_err(|_| "AGENT_RUN_WORKER_FAILED")??;
     run_admitted(app, webview, admission).await
 }
 

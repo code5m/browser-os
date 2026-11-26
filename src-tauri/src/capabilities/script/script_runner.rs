@@ -231,16 +231,22 @@ pub(crate) struct StartedRun {
     cancel: Arc<AtomicBool>,
 }
 impl StartedRun {
-    pub(crate) fn run_id(&self) -> &str { &self.run_id }
+    pub(crate) fn run_id(&self) -> &str {
+        &self.run_id
+    }
     pub(crate) fn snapshot(&self) -> RunSnapshot {
         self.state.lock().unwrap_or_else(|p| p.into_inner()).clone()
     }
     pub(crate) fn wait_for_supervisor(&self, requested: &AtomicBool) -> RunSnapshot {
         loop {
-            if requested.load(Ordering::Acquire) { self.cancel.store(true, Ordering::Release); }
+            if requested.load(Ordering::Acquire) {
+                self.cancel.store(true, Ordering::Release);
+            }
             {
                 let snapshot = self.state.lock().unwrap_or_else(|p| p.into_inner());
-                if snapshot.status.is_terminal() { return snapshot.clone(); }
+                if snapshot.status.is_terminal() {
+                    return snapshot.clone();
+                }
             }
             // Do not copy the output ring on every poll.
             thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
@@ -307,11 +313,21 @@ impl ScriptProcessTable {
 
     /// Pin the existing supervisor's state, even if the table later evicts a
     /// finished entry. Only the supervisor publishes a terminal state.
-    pub(crate) fn wait_for_supervisor(&self, run_id: &str, requested: &AtomicBool) -> Result<RunSnapshot, RunError> {
+    pub(crate) fn wait_for_supervisor(
+        &self,
+        run_id: &str,
+        requested: &AtomicBool,
+    ) -> Result<RunSnapshot, RunError> {
         let started = {
             let runs = self.lock_runs();
-            let entry = runs.get(run_id).ok_or_else(|| RunError::UnknownRun(run_id.to_owned()))?;
-            StartedRun { run_id: run_id.to_owned(), state: Arc::clone(&entry.state), cancel: Arc::clone(&entry.cancel) }
+            let entry = runs
+                .get(run_id)
+                .ok_or_else(|| RunError::UnknownRun(run_id.to_owned()))?;
+            StartedRun {
+                run_id: run_id.to_owned(),
+                state: Arc::clone(&entry.state),
+                cancel: Arc::clone(&entry.cancel),
+            }
         };
         Ok(started.wait_for_supervisor(requested))
     }
@@ -506,7 +522,9 @@ fn spawn_in_new_group(cmd: &mut Command) -> std::io::Result<Child> {
     use std::os::unix::process::CommandExt;
     unsafe {
         cmd.pre_exec(|| {
-            if libc::setsid() < 0 { return Err(std::io::Error::last_os_error()); }
+            if libc::setsid() < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
             Ok(())
         });
     }
@@ -721,30 +739,46 @@ fn leader_exited_unreaped(child: &Child) -> std::io::Result<bool> {
     loop {
         let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
         let result = unsafe {
-            libc::waitid(libc::P_PID, child.id() as libc::id_t, &mut info,
-                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT)
+            libc::waitid(
+                libc::P_PID,
+                child.id() as libc::id_t,
+                &mut info,
+                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+            )
         };
         if result == 0 {
             return Ok(unsafe { info.si_pid() } != 0);
         }
         let error = std::io::Error::last_os_error();
-        if error.kind() != std::io::ErrorKind::Interrupted { return Err(error); }
+        if error.kind() != std::io::ErrorKind::Interrupted {
+            return Err(error);
+        }
     }
 }
 
-fn poll_leader_exit(child: &mut Child, pgid: Option<i32>) -> std::io::Result<Option<std::process::ExitStatus>> {
+fn poll_leader_exit(
+    child: &mut Child,
+    pgid: Option<i32>,
+) -> std::io::Result<Option<std::process::ExitStatus>> {
     #[cfg(target_os = "linux")]
     {
-        if !leader_exited_unreaped(child)? { return Ok(None); }
+        if !leader_exited_unreaped(child)? {
+            return Ok(None);
+        }
         // The leader has finished; leftover descendants must not retain
         // its pipes or execute beyond its lifetime. Hard cleanup here
         // avoids a five-second grace wait on the intentionally unreaped
         // zombie leader. Running cancellation/timeout retain TERM grace.
-        if let Some(pgid) = pgid { kill_group(pgid, libc::SIGKILL); }
+        if let Some(pgid) = pgid {
+            kill_group(pgid, libc::SIGKILL);
+        }
         child.wait().map(Some)
     }
     #[cfg(not(target_os = "linux"))]
-    { let _ = pgid; child.try_wait() }
+    {
+        let _ = pgid;
+        child.try_wait()
+    }
 }
 
 /// The cleanup deadline is diagnostic, not an ownership-release boundary.
@@ -752,7 +786,9 @@ fn poll_leader_exit(child: &mut Child, pgid: Option<i32>) -> std::io::Result<Opt
 fn confirm_owned_cleanup<T>(reason: &str, mut confirm: impl FnMut() -> Option<T>) -> T {
     let mut warned = false;
     loop {
-        if let Some(value) = confirm() { return value; }
+        if let Some(value) = confirm() {
+            return value;
+        }
         if !warned {
             eprintln!("[script-supervisor] {reason}; retaining original execution owner");
             warned = true;
@@ -764,7 +800,9 @@ fn confirm_owned_cleanup<T>(reason: &str, mut confirm: impl FnMut() -> Option<T>
 #[cfg(windows)]
 fn confirm_job_empty(job: &crate::windows_process::JobObject) {
     confirm_owned_cleanup("job exit unconfirmed", || {
-        if job.is_empty().ok() == Some(true) { return Some(()); }
+        if job.is_empty().ok() == Some(true) {
+            return Some(());
+        }
         let _ = job.terminate();
         None
     });
@@ -793,23 +831,38 @@ fn supervise(
         match poll_leader_exit(&mut child, pgid) {
             Ok(Some(exit)) => {
                 let code = exit.code();
-                break (if code == Some(0) { RunStatus::Succeeded } else { RunStatus::Failed }, code, None);
+                break (
+                    if code == Some(0) {
+                        RunStatus::Succeeded
+                    } else {
+                        RunStatus::Failed
+                    },
+                    code,
+                    None,
+                );
             }
             Ok(None) => {
                 let outcome = if cancel.load(Ordering::SeqCst) {
                     Some((RunStatus::Cancelled, CANCEL_GRACE_SECS))
                 } else if started.elapsed().as_secs() >= timeout_secs as u64 {
                     Some((RunStatus::Timeout, HARD_GRACE_SECS))
-                } else { None };
+                } else {
+                    None
+                };
                 if let Some((status, grace)) = outcome {
                     #[cfg(windows)]
-                    { let _ = job.terminate(); }
+                    {
+                        let _ = job.terminate();
+                    }
                     // On Linux the original leader is still unreaped here,
                     // so this numeric process group has not been recycled.
                     terminate_group(pgid, grace);
                     #[cfg(target_os = "linux")]
-                    if let Some(scope) = &scope { let _ = scope.request_kill(); }
-                    let exit = confirm_owned_cleanup("child reap unconfirmed", || child.wait().ok());
+                    if let Some(scope) = &scope {
+                        let _ = scope.request_kill();
+                    }
+                    let exit =
+                        confirm_owned_cleanup("child reap unconfirmed", || child.wait().ok());
                     break (status, exit.code(), None);
                 }
                 thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
@@ -819,11 +872,21 @@ fn supervise(
                 // the leader may have already been reaped. Only identity-
                 // bound handles may request termination in this branch.
                 #[cfg(target_os = "linux")]
-                if let Some(scope) = &scope { let _ = scope.request_kill(); }
+                if let Some(scope) = &scope {
+                    let _ = scope.request_kill();
+                }
                 #[cfg(windows)]
-                { let _ = job.terminate(); let _ = child.kill(); }
-                let exit = confirm_owned_cleanup("leader wait receipt unconfirmed", || child.wait().ok());
-                break (RunStatus::Failed, exit.code(), Some("SCRIPT_WAIT_OBSERVATION_FAILED".into()));
+                {
+                    let _ = job.terminate();
+                    let _ = child.kill();
+                }
+                let exit =
+                    confirm_owned_cleanup("leader wait receipt unconfirmed", || child.wait().ok());
+                break (
+                    RunStatus::Failed,
+                    exit.code(),
+                    Some("SCRIPT_WAIT_OBSERVATION_FAILED".into()),
+                );
             }
         }
     };
@@ -834,7 +897,9 @@ fn supervise(
     #[cfg(target_os = "linux")]
     if let Some(scope) = &scope {
         confirm_owned_cleanup("delegated scope exit unconfirmed", || {
-            scope.terminate_and_confirm(Instant::now() + Duration::from_secs(5)).ok()
+            scope
+                .terminate_and_confirm(Instant::now() + Duration::from_secs(5))
+                .ok()
         });
     }
     #[cfg(target_os = "linux")]
@@ -855,7 +920,9 @@ fn supervise(
     join_output_readers(readers);
 
     let mut st = state.lock().unwrap_or_else(|p| p.into_inner());
-    if st.status.is_terminal() { return; }
+    if st.status.is_terminal() {
+        return;
+    }
     st.status = status;
     st.exit_code = exit_code;
     st.error = error;
@@ -866,7 +933,9 @@ fn supervise(
     let snapshot = st.clone();
     // UI history is best effort; it is not authoritative external-effect
     // evidence. The original Coding owner still publishes its own receipt.
-    if let Some(path) = &records_file { persist_run_record(path, &snapshot); }
+    if let Some(path) = &records_file {
+        persist_run_record(path, &snapshot);
+    }
     drop(st);
     if let Some(app) = &app {
         let _ = app.emit("script-finished", ScriptFinishedEvent { snapshot });
@@ -885,8 +954,19 @@ fn start_argv_run(
     app: Option<AppHandle>,
     records_file: Option<PathBuf>,
 ) -> Result<String, RunError> {
-    start_argv_run_owned(table, script_id, timeout_secs, argv, cwd, home_dir, app, records_file, None, || Ok(()))
-        .map(|started| started.run_id)
+    start_argv_run_owned(
+        table,
+        script_id,
+        timeout_secs,
+        argv,
+        cwd,
+        home_dir,
+        app,
+        records_file,
+        None,
+        || Ok(()),
+    )
+    .map(|started| started.run_id)
 }
 
 fn start_argv_run_owned(
@@ -922,9 +1002,10 @@ fn start_argv_run_owned(
 
     {
         let mut runs = table.lock_runs();
-        if runs.contains_key(&run_id) || runs
-            .values()
-            .any(|e| e.script_id == script_id && !is_terminal_entry(e))
+        if runs.contains_key(&run_id)
+            || runs
+                .values()
+                .any(|e| e.script_id == script_id && !is_terminal_entry(e))
         {
             return Err(RunError::AlreadyRunning {
                 script_id: script_id.to_string(),
@@ -1023,13 +1104,17 @@ fn start_argv_run_owned(
     // --- 3) spawn（新进程组） ---
     #[cfg(target_os = "linux")]
     let mut scope = match crate::shared::process_scope::ProcessScope::prepare().and_then(|scope| {
-        if let Some(scope) = &scope { scope.attach(&mut cmd)?; }
+        if let Some(scope) = &scope {
+            scope.attach(&mut cmd)?;
+        }
         Ok(scope)
     }) {
         Ok(scope) => scope,
         Err(error) => {
             table.lock_runs().remove(&run_id);
-            return Err(RunError::SpawnFailed(format!("BROWSEROS_CGROUP_UNAVAILABLE: {error}")));
+            return Err(RunError::SpawnFailed(format!(
+                "BROWSEROS_CGROUP_UNAVAILABLE: {error}"
+            )));
         }
     };
     #[cfg(windows)]
@@ -1045,7 +1130,9 @@ fn start_argv_run_owned(
     // No table mutex is held across the callback's private storage write.
     if cancel.load(Ordering::Acquire) {
         table.lock_runs().remove(&run_id);
-        return Err(RunError::AdmissionRejected("AGENT_OPERATION_CANCELLED_BEFORE_DISPATCH".into()));
+        return Err(RunError::AdmissionRejected(
+            "AGENT_OPERATION_CANCELLED_BEFORE_DISPATCH".into(),
+        ));
     }
     if let Err(error) = before_spawn() {
         table.lock_runs().remove(&run_id);
@@ -1064,21 +1151,30 @@ fn start_argv_run_owned(
     };
 
     #[cfg(target_os = "linux")]
-    if let Some(scope) = &mut scope { scope.mark_spawned(); }
+    if let Some(scope) = &mut scope {
+        scope.mark_spawned();
+    }
 
     #[cfg(windows)]
     if let Err(error) = job.assign_suspended_pid(child.id()) {
         // Partial assignment may leave a suspended Child outside the Job.
         // Retain BOTH owners and the reservation until kernel confirmation.
-        confirm_owned_cleanup("failed job assignment child exit unconfirmed", || {
-            match child.try_wait() {
+        confirm_owned_cleanup(
+            "failed job assignment child exit unconfirmed",
+            || match child.try_wait() {
                 Ok(Some(status)) => Some(status),
-                _ => { let _ = child.kill(); let _ = job.terminate(); None }
-            }
-        });
+                _ => {
+                    let _ = child.kill();
+                    let _ = job.terminate();
+                    None
+                }
+            },
+        );
         confirm_job_empty(&job);
         table.lock_runs().remove(&run_id);
-        return Err(RunError::SpawnFailed(format!("WINDOWS_SCRIPT_JOB_FAILED: {error}")));
+        return Err(RunError::SpawnFailed(format!(
+            "WINDOWS_SCRIPT_JOB_FAILED: {error}"
+        )));
     }
     let pgid = child.id() as i32;
 
@@ -1108,7 +1204,11 @@ fn start_argv_run_owned(
         entry.pgid = Some(pgid);
         entry.output = Arc::clone(&output);
     }
-    let started = StartedRun { run_id, state: Arc::clone(&state), cancel: Arc::clone(&cancel) };
+    let started = StartedRun {
+        run_id,
+        state: Arc::clone(&state),
+        cancel: Arc::clone(&cancel),
+    };
     let st = Arc::clone(&state);
     thread::spawn(move || {
         supervise(
@@ -1184,7 +1284,16 @@ pub fn start_command(
     app: Option<AppHandle>,
     records_file: Option<PathBuf>,
 ) -> Result<String, RunError> {
-    start_command_owned(table, snippet, values, roots, home_dir, app, records_file, None)
+    start_command_owned(
+        table,
+        snippet,
+        values,
+        roots,
+        home_dir,
+        app,
+        records_file,
+        None,
+    )
 }
 
 pub(crate) fn start_command_owned(
@@ -1197,8 +1306,18 @@ pub(crate) fn start_command_owned(
     records_file: Option<PathBuf>,
     owned_id: Option<uuid::Uuid>,
 ) -> Result<String, RunError> {
-    start_command_owned_with_admission(table, snippet, values, roots, home_dir, app, records_file, owned_id, || Ok(()))
-        .map(|started| started.run_id)
+    start_command_owned_with_admission(
+        table,
+        snippet,
+        values,
+        roots,
+        home_dir,
+        app,
+        records_file,
+        owned_id,
+        || Ok(()),
+    )
+    .map(|started| started.run_id)
 }
 
 /// Same reviewed argv/runner path; the optional host-owned fence executes
@@ -1216,8 +1335,16 @@ pub(crate) fn start_command_owned_with_admission(
 ) -> Result<StartedRun, RunError> {
     let argv = build_command_argv(snippet, values, roots)?;
     start_argv_run_owned(
-        table, &snippet.id, snippet.timeout_secs, argv,
-        home_dir.to_path_buf(), home_dir, app, records_file, owned_id, before_spawn,
+        table,
+        &snippet.id,
+        snippet.timeout_secs,
+        argv,
+        home_dir.to_path_buf(),
+        home_dir,
+        app,
+        records_file,
+        owned_id,
+        before_spawn,
     )
 }
 
@@ -1231,13 +1358,24 @@ pub fn kill_all_running(table: &ScriptProcessTable) -> usize {
     // never publish Cancelled while a child/output reader may still run.
     let targets: Vec<(Arc<AtomicBool>, Arc<Mutex<RunSnapshot>>)> = {
         let runs = table.lock_runs();
-        runs.values().filter(|entry| !is_terminal_entry(entry))
-            .map(|entry| (Arc::clone(&entry.cancel), Arc::clone(&entry.state))).collect()
+        runs.values()
+            .filter(|entry| !is_terminal_entry(entry))
+            .map(|entry| (Arc::clone(&entry.cancel), Arc::clone(&entry.state)))
+            .collect()
     };
-    for (cancel, _) in &targets { cancel.store(true, Ordering::SeqCst); }
+    for (cancel, _) in &targets {
+        cancel.store(true, Ordering::SeqCst);
+    }
     for (_, state) in &targets {
         loop {
-            if state.lock().unwrap_or_else(|p| p.into_inner()).status.is_terminal() { break; }
+            if state
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .status
+                .is_terminal()
+            {
+                break;
+            }
             thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
         }
     }
@@ -1483,19 +1621,40 @@ mod script_runner_tests {
         let snippet = snippet_with(vec!["printf", "must-not-start"], vec![]);
         let id = uuid::Uuid::new_v4();
         let run = format!("run-{id}");
-        let error = start_command_owned_with_admission(&table, &snippet, &HashMap::new(),
-            &[dir.clone()], &dir, None, None, Some(id), || {
+        let error = start_command_owned_with_admission(
+            &table,
+            &snippet,
+            &HashMap::new(),
+            &[dir.clone()],
+            &dir,
+            None,
+            None,
+            Some(id),
+            || {
                 assert!(table.snapshot(&run).is_some());
                 Err(RunError::AdmissionRejected("fixture denied".into()))
-            }).unwrap_err();
+            },
+        )
+        .unwrap_err();
         assert_eq!(error.code(), "SCRIPT_ADMISSION_REJECTED");
         assert!(table.snapshot(&run).is_none());
         assert_eq!(table.running_count(), 0);
-        let malformed = snippet_with(vec!["grep", "-r{PATTERN}"],
-            vec![param("PATTERN", ParamType::String, true)]);
-        assert!(start_command_owned_with_admission(&table, &malformed, &HashMap::new(),
-            &[dir.clone()], &dir, None, None, Some(uuid::Uuid::new_v4()),
-            || panic!("invalid argv must not reach admission")).is_err());
+        let malformed = snippet_with(
+            vec!["grep", "-r{PATTERN}"],
+            vec![param("PATTERN", ParamType::String, true)],
+        );
+        assert!(start_command_owned_with_admission(
+            &table,
+            &malformed,
+            &HashMap::new(),
+            &[dir.clone()],
+            &dir,
+            None,
+            None,
+            Some(uuid::Uuid::new_v4()),
+            || panic!("invalid argv must not reach admission")
+        )
+        .is_err());
         fs::remove_dir_all(dir).unwrap();
     }
 
@@ -2059,12 +2218,20 @@ mod script_runner_tests {
         let pinned = {
             let runs = table.lock_runs();
             let entry = runs.get("t000").unwrap();
-            entry.state.lock().unwrap().finished_at = Some(Utc::now() - chrono::Duration::seconds(60));
-            StartedRun { run_id:"t000".into(), state:Arc::clone(&entry.state), cancel:Arc::clone(&entry.cancel) }
+            entry.state.lock().unwrap().finished_at =
+                Some(Utc::now() - chrono::Duration::seconds(60));
+            StartedRun {
+                run_id: "t000".into(),
+                state: Arc::clone(&entry.state),
+                cancel: Arc::clone(&entry.cancel),
+            }
         };
         table.evict_if_needed();
         assert!(table.snapshot("t000").is_none());
-        assert_eq!(pinned.wait_for_supervisor(&AtomicBool::new(false)).run_id, "t000");
+        assert_eq!(
+            pinned.wait_for_supervisor(&AtomicBool::new(false)).run_id,
+            "t000"
+        );
         assert_eq!(pinned.snapshot().status, RunStatus::Succeeded);
 
         let runs = table.lock_runs();

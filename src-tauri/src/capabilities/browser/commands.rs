@@ -179,18 +179,21 @@ pub(crate) fn create_tab_receipted(app: AppHandle, url: &str) -> Result<TabInfo,
     use crate::shared::dispatch_receipt::{DispatchReceipt, WaitError};
     let completion = std::sync::Arc::new(DispatchReceipt::new()?);
     let info = create_tab_with_completion(app, url, Some(completion.clone()))?;
-    completion.wait(std::time::Duration::from_secs(20)).map_err(|error| match error {
-        // The tab metadata may already exist. This is a terminal partial
-        // failure requiring authoritative tab-list reconciliation, not a
-        // claim that no tab was created.
-        WaitError::Revoked => "TAB_CREATE_LAYOUT_REVOKED",
-        WaitError::Lost => "TAB_CREATE_CALLBACK_LOST",
-    })?;
+    completion
+        .wait(std::time::Duration::from_secs(20))
+        .map_err(|error| match error {
+            // The tab metadata may already exist. This is a terminal partial
+            // failure requiring authoritative tab-list reconciliation, not a
+            // claim that no tab was created.
+            WaitError::Revoked => "TAB_CREATE_LAYOUT_REVOKED",
+            WaitError::Lost => "TAB_CREATE_CALLBACK_LOST",
+        })?;
     Ok(info)
 }
 
 fn create_tab_with_completion(
-    app: AppHandle, url: &str,
+    app: AppHandle,
+    url: &str,
     completion: Option<std::sync::Arc<crate::shared::dispatch_receipt::DispatchReceipt<()>>>,
 ) -> Result<TabInfo, String> {
     if app
@@ -294,29 +297,33 @@ fn create_tab_with_completion(
         };
         // A superseded hide intent is a finished host callback, not a new effect.
         let hide = || {
-        let st = app_hide.state::<crate::AppState>();
-        if st.shutdown_requested.load(Ordering::Acquire)
-            || st.active_tab.lock().unwrap().as_deref() != Some(active_id.as_str())
-        {
-            return;
-        }
-        let ids: Vec<String> = st.tabs.lock().unwrap().keys().cloned().collect();
-        for k in ids {
-            if st.active_tab.lock().unwrap().as_deref() != Some(active_id.as_str()) {
+            let st = app_hide.state::<crate::AppState>();
+            if st.shutdown_requested.load(Ordering::Acquire)
+                || st.active_tab.lock().unwrap().as_deref() != Some(active_id.as_str())
+            {
                 return;
             }
-            if k != active_id {
-                hide_bounds(&app_hide, &k);
+            let ids: Vec<String> = st.tabs.lock().unwrap().keys().cloned().collect();
+            for k in ids {
+                if st.active_tab.lock().unwrap().as_deref() != Some(active_id.as_str()) {
+                    return;
+                }
+                if k != active_id {
+                    hide_bounds(&app_hide, &k);
+                }
             }
-        }
         };
         hide();
-        if let Some(entered) = entered { entered.complete(()); }
+        if let Some(entered) = entered {
+            entered.complete(());
+        }
     });
     if dispatch.is_err() {
         // A rejected dispatch may still be queued. Revoke only before entry;
         // if already entered, the worker must wait for its real receipt.
-        if let Some(receipt) = dispatch_receipt { receipt.revoke_pending(); }
+        if let Some(receipt) = dispatch_receipt {
+            receipt.revoke_pending();
+        }
     }
     eprintln!("[create_tab] run_on_main_thread 已排队 label={}", id);
 
@@ -457,9 +464,18 @@ use tauri_plugin_browser_tabs::{CaptureCancellation, CaptureDocument, TabManager
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
-enum CapturePhase { Running, CancelRequested, Succeeded, Failed, Cancelled, Unknown }
+enum CapturePhase {
+    Running,
+    CancelRequested,
+    Succeeded,
+    Failed,
+    Cancelled,
+    Unknown,
+}
 impl CapturePhase {
-    fn terminal(self) -> bool { matches!(self, Self::Succeeded | Self::Failed | Self::Cancelled) }
+    fn terminal(self) -> bool {
+        matches!(self, Self::Succeeded | Self::Failed | Self::Cancelled)
+    }
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -477,7 +493,11 @@ struct CaptureReceipt {
     path: Option<String>,
     error: Option<String>,
 }
-struct CaptureSlot { receipt: CaptureReceipt, cancellation: CaptureCancellation, since: std::time::Instant }
+struct CaptureSlot {
+    receipt: CaptureReceipt,
+    cancellation: CaptureCancellation,
+    since: std::time::Instant,
+}
 struct CaptureOwner {
     epoch: String,
     next_sequence: u64,
@@ -485,9 +505,14 @@ struct CaptureOwner {
     last_completed: Option<CaptureReceipt>,
 }
 static CAPTURE_OWNER: std::sync::LazyLock<std::sync::Mutex<CaptureOwner>> =
-    std::sync::LazyLock::new(|| std::sync::Mutex::new(CaptureOwner {
-        epoch: uuid::Uuid::new_v4().to_string(), next_sequence: 1, slot: None, last_completed: None,
-    }));
+    std::sync::LazyLock::new(|| {
+        std::sync::Mutex::new(CaptureOwner {
+            epoch: uuid::Uuid::new_v4().to_string(),
+            next_sequence: 1,
+            slot: None,
+            last_completed: None,
+        })
+    });
 #[derive(serde::Serialize)]
 struct CaptureView {
     epoch: String,
@@ -499,9 +524,11 @@ struct CaptureView {
 pub(crate) fn capture_diagnostic() -> serde_json::Value {
     match CAPTURE_OWNER.try_lock() {
         Ok(owner) => match &owner.slot {
-            Some(slot) => serde_json::json!({ "ticket": slot.receipt.ticket, "phase": slot.receipt.phase,
+            Some(slot) => {
+                serde_json::json!({ "ticket": slot.receipt.ticket, "phase": slot.receipt.phase,
                 "age_ms": slot.since.elapsed().as_millis().min(u64::MAX as u128) as u64,
-                "cancel_requested": slot.cancellation.is_cancelled() }),
+                "cancel_requested": slot.cancellation.is_cancelled() })
+            }
             None => serde_json::json!({"phase":"idle"}),
         },
         Err(_) => serde_json::json!({"phase":"owner_unavailable"}),
@@ -510,7 +537,8 @@ pub(crate) fn capture_diagnostic() -> serde_json::Value {
 fn capture_view() -> Result<CaptureView, String> {
     let owner = CAPTURE_OWNER.lock().map_err(|_| "CAPTURE_OWNER_UNKNOWN")?;
     Ok(CaptureView {
-        epoch: owner.epoch.clone(), next_sequence: owner.next_sequence.to_string(),
+        epoch: owner.epoch.clone(),
+        next_sequence: owner.next_sequence.to_string(),
         receipt: owner.slot.as_ref().map(|slot| slot.receipt.clone()),
         last_completed: owner.last_completed.clone(),
     })
@@ -518,34 +546,68 @@ fn capture_view() -> Result<CaptureView, String> {
 fn capture_notify(app: &AppHandle, receipt: CaptureReceipt) {
     let _ = app.emit_to("main", "browser-capture-receipt", receipt);
 }
-fn capture_finish(app: &AppHandle, ticket: &str, phase: CapturePhase, result: Result<String, String>) {
+fn capture_finish(
+    app: &AppHandle,
+    ticket: &str,
+    phase: CapturePhase,
+    result: Result<String, String>,
+) {
     let receipt = CAPTURE_OWNER.lock().ok().and_then(|mut owner| {
-        let slot = owner.slot.as_mut().filter(|slot| slot.receipt.ticket == ticket)?;
-        if slot.receipt.phase.terminal() { return None; }
+        let slot = owner
+            .slot
+            .as_mut()
+            .filter(|slot| slot.receipt.ticket == ticket)?;
+        if slot.receipt.phase.terminal() {
+            return None;
+        }
         slot.receipt.phase = phase;
         match result {
-            Ok(path) => { slot.receipt.path = Some(path); slot.receipt.error = None; }
-            Err(error) => { slot.receipt.error = Some(error); slot.receipt.path = None; }
+            Ok(path) => {
+                slot.receipt.path = Some(path);
+                slot.receipt.error = None;
+            }
+            Err(error) => {
+                slot.receipt.error = Some(error);
+                slot.receipt.path = None;
+            }
         }
         Some(slot.receipt.clone())
     });
-    if let Some(receipt) = receipt { capture_notify(app, receipt); }
+    if let Some(receipt) = receipt {
+        capture_notify(app, receipt);
+    }
 }
-struct CaptureWorkerGuard { app: AppHandle, ticket: String, completed: bool }
+struct CaptureWorkerGuard {
+    app: AppHandle,
+    ticket: String,
+    completed: bool,
+}
 impl Drop for CaptureWorkerGuard {
     fn drop(&mut self) {
         if !self.completed {
-            capture_finish(&self.app, &self.ticket, CapturePhase::Unknown, Err("CAPTURE_WORKER_OUTCOME_UNKNOWN".into()));
+            capture_finish(
+                &self.app,
+                &self.ticket,
+                CapturePhase::Unknown,
+                Err("CAPTURE_WORKER_OUTCOME_UNKNOWN".into()),
+            );
         }
     }
 }
 fn capture_cancel(app: &AppHandle, ticket: &str) -> Result<(), String> {
     let (cancellation, receipt) = {
         let mut owner = CAPTURE_OWNER.lock().map_err(|_| "CAPTURE_OWNER_UNKNOWN")?;
-        let slot = owner.slot.as_mut().filter(|slot| slot.receipt.ticket == ticket)
+        let slot = owner
+            .slot
+            .as_mut()
+            .filter(|slot| slot.receipt.ticket == ticket)
             .ok_or("CAPTURE_STALE_TICKET")?;
-        if slot.receipt.phase.terminal() { return Ok(()); }
-        if slot.receipt.mode == CaptureMode::CurrentDocument && slot.cancellation.revoke_pending_native() {
+        if slot.receipt.phase.terminal() {
+            return Ok(());
+        }
+        if slot.receipt.mode == CaptureMode::CurrentDocument
+            && slot.cancellation.revoke_pending_native()
+        {
             // This is proof that neither isolated-world layout measurement
             // nor the renderer screenshot can ever be started by this
             // callback. Terminal cancellation is now safe, even if the
@@ -564,23 +626,57 @@ fn capture_cancel(app: &AppHandle, ticket: &str) -> Result<(), String> {
 }
 fn capture_ack(ticket: &str) -> Result<(), String> {
     let mut owner = CAPTURE_OWNER.lock().map_err(|_| "CAPTURE_OWNER_UNKNOWN")?;
-    if owner.last_completed.as_ref().is_some_and(|receipt| receipt.ticket == ticket) { return Ok(()); }
-    let slot = owner.slot.as_ref().filter(|slot| slot.receipt.ticket == ticket).ok_or("CAPTURE_STALE_TICKET")?;
-    if !slot.receipt.phase.terminal() { return Err("CAPTURE_NOT_TERMINAL".into()); }
+    if owner
+        .last_completed
+        .as_ref()
+        .is_some_and(|receipt| receipt.ticket == ticket)
+    {
+        return Ok(());
+    }
+    let slot = owner
+        .slot
+        .as_ref()
+        .filter(|slot| slot.receipt.ticket == ticket)
+        .ok_or("CAPTURE_STALE_TICKET")?;
+    if !slot.receipt.phase.terminal() {
+        return Err("CAPTURE_NOT_TERMINAL".into());
+    }
     // An acknowledgement also fences any delayed start which observed the
     // sequence while the old terminal slot was still present.
-    owner.next_sequence = owner.next_sequence.checked_add(1).ok_or("CAPTURE_SEQUENCE_EXHAUSTED")?;
+    owner.next_sequence = owner
+        .next_sequence
+        .checked_add(1)
+        .ok_or("CAPTURE_SEQUENCE_EXHAUSTED")?;
     owner.last_completed = owner.slot.take().map(|slot| slot.receipt);
     Ok(())
 }
 static LIVE_CAPTURE_DISPATCH: crate::shared::blocking::BlockingLane =
-    crate::shared::blocking::BlockingLane::new(1, "CAPTURE_NATIVE_DISPATCH_BUSY", "CAPTURE_NATIVE_DISPATCH_FAILED");
+    crate::shared::blocking::BlockingLane::new(
+        1,
+        "CAPTURE_NATIVE_DISPATCH_BUSY",
+        "CAPTURE_NATIVE_DISPATCH_FAILED",
+    );
 
-async fn run_capture(app: AppHandle, id: String, ticket: String, document: CaptureDocument, cancellation: CaptureCancellation) {
-    let mut guard = CaptureWorkerGuard { app: app.clone(), ticket: ticket.clone(), completed: false };
+async fn run_capture(
+    app: AppHandle,
+    id: String,
+    ticket: String,
+    document: CaptureDocument,
+    cancellation: CaptureCancellation,
+) {
+    let mut guard = CaptureWorkerGuard {
+        app: app.clone(),
+        ticket: ticket.clone(),
+        completed: false,
+    };
     let manager = app.state::<TabManagerState>().inner().clone();
     if cancellation.is_cancelled() {
-        capture_finish(&app, &ticket, CapturePhase::Cancelled, Err("CAPTURE_CANCELLED_BEFORE_DISPATCH".into()));
+        capture_finish(
+            &app,
+            &ticket,
+            CapturePhase::Cancelled,
+            Err("CAPTURE_CANCELLED_BEFORE_DISPATCH".into()),
+        );
         guard.completed = true;
         return;
     }
@@ -599,14 +695,23 @@ async fn run_capture(app: AppHandle, id: String, ticket: String, document: Captu
     let native_id = id.clone();
     let native_cancel = cancellation.clone();
     let _ = tauri::async_runtime::spawn(async move {
-        let _ = permit.run(move || {
-            if native_cancel.is_cancelled() { return Ok(()); }
-            let _dispatch = manager.capture_bound_document(&native_id, native_document, native_cancel, move |result| {
-                let _ = send.send(result);
-            });
-            // Dropping a dispatch error cannot revoke an entered callback.
-            Ok(())
-        }).await;
+        let _ = permit
+            .run(move || {
+                if native_cancel.is_cancelled() {
+                    return Ok(());
+                }
+                let _dispatch = manager.capture_bound_document(
+                    &native_id,
+                    native_document,
+                    native_cancel,
+                    move |result| {
+                        let _ = send.send(result);
+                    },
+                );
+                // Dropping a dispatch error cannot revoke an entered callback.
+                Ok(())
+            })
+            .await;
     });
     // A lost completion after native entry remains UNKNOWN.
     let native = match tokio::time::timeout(std::time::Duration::from_secs(30), &mut recv).await {
@@ -626,11 +731,18 @@ async fn run_capture(app: AppHandle, id: String, ticket: String, document: Captu
         // A dropped dispatch callback before entry is revocable. If it
         // entered the renderer, a lost completion still proves nothing.
         let _ = capture_cancel(&app, &ticket);
-        if cancellation.native_dispatch_revoked() { guard.completed = true; }
+        if cancellation.native_dispatch_revoked() {
+            guard.completed = true;
+        }
         return;
     };
     if cancellation.is_cancelled() {
-        capture_finish(&app, &ticket, CapturePhase::Cancelled, Err("CAPTURE_CANCELLED_AT_COMPLETION".into()));
+        capture_finish(
+            &app,
+            &ticket,
+            CapturePhase::Cancelled,
+            Err("CAPTURE_CANCELLED_AT_COMPLETION".into()),
+        );
         guard.completed = true;
         return;
     }
@@ -642,8 +754,16 @@ async fn run_capture(app: AppHandle, id: String, ticket: String, document: Captu
             return;
         }
     };
-    if !app.state::<TabManagerState>().is_current_capture_document(&id, &document) {
-        capture_finish(&app, &ticket, CapturePhase::Failed, Err("CAPTURE_DOCUMENT_STALE".into()));
+    if !app
+        .state::<TabManagerState>()
+        .is_current_capture_document(&id, &document)
+    {
+        capture_finish(
+            &app,
+            &ticket,
+            CapturePhase::Failed,
+            Err("CAPTURE_DOCUMENT_STALE".into()),
+        );
         guard.completed = true;
         return;
     }
@@ -659,24 +779,45 @@ async fn run_capture(app: AppHandle, id: String, ticket: String, document: Captu
     guard.completed = true;
 }
 #[cfg(any(target_os = "linux", target_os = "windows"))]
-async fn run_independent_capture(app: AppHandle, ticket: String, address: String, cancellation: CaptureCancellation) {
-    let mut guard = CaptureWorkerGuard { app: app.clone(), ticket: ticket.clone(), completed: false };
+async fn run_independent_capture(
+    app: AppHandle,
+    ticket: String,
+    address: String,
+    cancellation: CaptureCancellation,
+) {
+    let mut guard = CaptureWorkerGuard {
+        app: app.clone(),
+        ticket: ticket.clone(),
+        completed: false,
+    };
     let worker_app = app.clone();
     let worker_ticket = ticket.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
-        let bytes = crate::isolated_capture::render_job(&address, || cancellation.is_cancelled(), || {
-            capture_finish(&worker_app, &worker_ticket, CapturePhase::Unknown,
-                Err("CAPTURE_ISOLATED_EXIT_PENDING".into()));
-        })?;
-        if cancellation.is_cancelled() { return Err("CAPTURE_ISOLATED_CANCELLED".into()); }
+        let bytes = crate::isolated_capture::render_job(
+            &address,
+            || cancellation.is_cancelled(),
+            || {
+                capture_finish(
+                    &worker_app,
+                    &worker_ticket,
+                    CapturePhase::Unknown,
+                    Err("CAPTURE_ISOLATED_EXIT_PENDING".into()),
+                );
+            },
+        )?;
+        if cancellation.is_cancelled() {
+            return Err("CAPTURE_ISOLATED_CANCELLED".into());
+        }
         // Publication is the last irreversible step. A late cancellation
         // cannot change an actually committed PNG into a cancelled receipt.
         save_capture(&crate::workspace::data_dir(&worker_app), &bytes)
-    }).await;
+    })
+    .await;
     match result {
         Ok(Ok(path)) => capture_finish(&app, &ticket, CapturePhase::Succeeded, Ok(path)),
-        Ok(Err(error)) if error == "CAPTURE_ISOLATED_CANCELLED" =>
-            capture_finish(&app, &ticket, CapturePhase::Cancelled, Err(error)),
+        Ok(Err(error)) if error == "CAPTURE_ISOLATED_CANCELLED" => {
+            capture_finish(&app, &ticket, CapturePhase::Cancelled, Err(error))
+        }
         Ok(Err(error)) => capture_finish(&app, &ticket, CapturePhase::Failed, Err(error)),
         Err(_) => return,
     }
@@ -689,20 +830,38 @@ enum CaptureWork {
     Independent(String),
 }
 
-fn begin_capture(app: AppHandle, id: String, ticket: String, epoch: &str, sequence: &str,
-    mode: CaptureMode, expected_url: Option<String>) -> Result<(), String> {
+fn begin_capture(
+    app: AppHandle,
+    id: String,
+    ticket: String,
+    epoch: &str,
+    sequence: &str,
+    mode: CaptureMode,
+    expected_url: Option<String>,
+) -> Result<(), String> {
     crate::shared::invocation::check_tab_id(&id)?;
-    if ticket.len() != 36 || uuid::Uuid::parse_str(&ticket).map_or(true, |id| id.get_version_num() != 4) {
+    if ticket.len() != 36
+        || uuid::Uuid::parse_str(&ticket).map_or(true, |id| id.get_version_num() != 4)
+    {
         return Err("CAPTURE_INVALID_TICKET".into());
     }
-    if app.state::<AppState>().shutdown_requested.load(Ordering::Acquire) {
+    if app
+        .state::<AppState>()
+        .shutdown_requested
+        .load(Ordering::Acquire)
+    {
         return Err("CAPTURE_APPLICATION_SHUTTING_DOWN".into());
     }
     let work = match mode {
         CaptureMode::CurrentDocument => {
-            if expected_url.is_some() { return Err("CAPTURE_MODE_INVALID".into()); }
-            CaptureWork::Current(app.state::<TabManagerState>().capture_document(&id)
-                .map_err(|_| "CAPTURE_TAB_UNAVAILABLE")?)
+            if expected_url.is_some() {
+                return Err("CAPTURE_MODE_INVALID".into());
+            }
+            CaptureWork::Current(
+                app.state::<TabManagerState>()
+                    .capture_document(&id)
+                    .map_err(|_| "CAPTURE_TAB_UNAVAILABLE")?,
+            )
         }
         CaptureMode::IndependentAddress => {
             #[cfg(any(target_os = "linux", target_os = "windows"))]
@@ -711,13 +870,20 @@ fn begin_capture(app: AppHandle, id: String, ticket: String, epoch: &str, sequen
                 // Bind the address explicitly selected by the main UI to the
                 // existing Browser Owner. Never open an unrelated caller URL.
                 let state = app.state::<AppState>();
-                let tabs = state.tabs.try_lock().map_err(|_| "CAPTURE_TAB_UNAVAILABLE")?;
+                let tabs = state
+                    .tabs
+                    .try_lock()
+                    .map_err(|_| "CAPTURE_TAB_UNAVAILABLE")?;
                 let current = tabs.get(&id).ok_or("CAPTURE_TAB_UNAVAILABLE")?;
-                if current.url != expected_url { return Err("CAPTURE_ADDRESS_CHANGED".into()); }
+                if current.url != expected_url {
+                    return Err("CAPTURE_ADDRESS_CHANGED".into());
+                }
                 CaptureWork::Independent(crate::isolated_capture::checked_url(&expected_url)?)
             }
             #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-            { return Err("CAPTURE_INDEPENDENT_UNSUPPORTED".into()); }
+            {
+                return Err("CAPTURE_INDEPENDENT_UNSUPPORTED".into());
+            }
         }
     };
     let cancellation = CaptureCancellation::new();
@@ -725,34 +891,64 @@ fn begin_capture(app: AppHandle, id: String, ticket: String, epoch: &str, sequen
         let mut owner = CAPTURE_OWNER.lock().map_err(|_| "CAPTURE_OWNER_UNKNOWN")?;
         // The exit preflight claims its latch before taking this same lock.
         // Thus it sees any admitted worker, and no new worker can slip past it.
-        if app.state::<crate::ExitLifecycleState>().started.load(Ordering::Acquire)
-            || app.state::<AppState>().shutdown_requested.load(Ordering::Acquire) {
+        if app
+            .state::<crate::ExitLifecycleState>()
+            .started
+            .load(Ordering::Acquire)
+            || app
+                .state::<AppState>()
+                .shutdown_requested
+                .load(Ordering::Acquire)
+        {
             return Err("CAPTURE_APPLICATION_SHUTTING_DOWN".into());
         }
-        if epoch != owner.epoch { return Err("CAPTURE_STALE_EPOCH".into()); }
+        if epoch != owner.epoch {
+            return Err("CAPTURE_STALE_EPOCH".into());
+        }
         if let Some(slot) = &owner.slot {
-            if slot.receipt.ticket == ticket && slot.receipt.tab_id == id && slot.receipt.mode == mode {
+            if slot.receipt.ticket == ticket
+                && slot.receipt.tab_id == id
+                && slot.receipt.mode == mode
+            {
                 return Ok(());
             }
             return Err("CAPTURE_BUSY".into());
         }
-        if sequence != owner.next_sequence.to_string() { return Err("CAPTURE_STALE_SEQUENCE".into()); }
-        owner.next_sequence = owner.next_sequence.checked_add(1).ok_or("CAPTURE_SEQUENCE_EXHAUSTED")?;
+        if sequence != owner.next_sequence.to_string() {
+            return Err("CAPTURE_STALE_SEQUENCE".into());
+        }
+        owner.next_sequence = owner
+            .next_sequence
+            .checked_add(1)
+            .ok_or("CAPTURE_SEQUENCE_EXHAUSTED")?;
         owner.slot = Some(CaptureSlot {
-            receipt: CaptureReceipt { ticket: ticket.clone(), tab_id: id.clone(), mode, phase: CapturePhase::Running,
-                path: None, error: None },
-            cancellation: cancellation.clone(), since: std::time::Instant::now(),
+            receipt: CaptureReceipt {
+                ticket: ticket.clone(),
+                tab_id: id.clone(),
+                mode,
+                phase: CapturePhase::Running,
+                path: None,
+                error: None,
+            },
+            cancellation: cancellation.clone(),
+            since: std::time::Instant::now(),
         });
     }
     // Spawn independent work before returning the receipt. No callback needs
     // the original invoke future or its frontend to continue.
     match work {
         CaptureWork::Current(document) => {
-            let _ = tauri::async_runtime::spawn(run_capture(app, id, ticket, document, cancellation));
+            let _ =
+                tauri::async_runtime::spawn(run_capture(app, id, ticket, document, cancellation));
         }
         #[cfg(any(target_os = "linux", target_os = "windows"))]
         CaptureWork::Independent(address) => {
-            let _ = tauri::async_runtime::spawn(run_independent_capture(app, ticket, address, cancellation));
+            let _ = tauri::async_runtime::spawn(run_independent_capture(
+                app,
+                ticket,
+                address,
+                cancellation,
+            ));
         }
     }
     Ok(())
@@ -764,20 +960,33 @@ fn begin_capture(app: AppHandle, id: String, ticket: String, epoch: &str, sequen
 pub(crate) fn prepare_capture_exit(app: &AppHandle) -> Result<(), String> {
     let ticket = {
         let owner = CAPTURE_OWNER.lock().map_err(|_| "CAPTURE_OWNER_UNKNOWN")?;
-        owner.slot.as_ref().filter(|slot| slot.receipt.mode == CaptureMode::IndependentAddress
-            && !slot.receipt.phase.terminal()).map(|slot| slot.receipt.ticket.clone())
+        owner
+            .slot
+            .as_ref()
+            .filter(|slot| {
+                slot.receipt.mode == CaptureMode::IndependentAddress
+                    && !slot.receipt.phase.terminal()
+            })
+            .map(|slot| slot.receipt.ticket.clone())
     };
-    let Some(ticket) = ticket else { return Ok(()); };
+    let Some(ticket) = ticket else {
+        return Ok(());
+    };
     if let Err(error) = capture_cancel(app, &ticket) {
         // The terminal receipt may already have been acknowledged.
-        if error != "CAPTURE_STALE_TICKET" { return Err(error); }
+        if error != "CAPTURE_STALE_TICKET" {
+            return Err(error);
+        }
     }
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
     loop {
         {
             let owner = CAPTURE_OWNER.lock().map_err(|_| "CAPTURE_OWNER_UNKNOWN")?;
-            if !owner.slot.as_ref().is_some_and(|slot| slot.receipt.ticket == ticket
-                && !slot.receipt.phase.terminal()) {
+            if !owner
+                .slot
+                .as_ref()
+                .is_some_and(|slot| slot.receipt.ticket == ticket && !slot.receipt.phase.terminal())
+            {
                 return Ok(());
             }
         }
@@ -792,13 +1001,34 @@ pub(crate) fn prepare_capture_exit(app: &AppHandle) -> Result<(), String> {
 #[serde(tag = "phase", rename_all = "snake_case")]
 pub enum CaptureRequest {
     Inspect,
-    Fence { epoch: String, sequence: String },
-    CancelPending { id: String, ticket: String, epoch: String, sequence: String,
-        #[serde(default)] mode: CaptureMode },
-    Start { id: String, ticket: String, epoch: String, sequence: String,
-        #[serde(default)] mode: CaptureMode, #[serde(default)] expected_url: Option<String> },
-    Cancel { ticket: String },
-    Ack { ticket: String },
+    Fence {
+        epoch: String,
+        sequence: String,
+    },
+    CancelPending {
+        id: String,
+        ticket: String,
+        epoch: String,
+        sequence: String,
+        #[serde(default)]
+        mode: CaptureMode,
+    },
+    Start {
+        id: String,
+        ticket: String,
+        epoch: String,
+        sequence: String,
+        #[serde(default)]
+        mode: CaptureMode,
+        #[serde(default)]
+        expected_url: Option<String>,
+    },
+    Cancel {
+        ticket: String,
+    },
+    Ack {
+        ticket: String,
+    },
 }
 
 /// Main-only, native current-document capture. Old callers keep the string
@@ -811,44 +1041,100 @@ pub async fn capture_full_page(
     id: Option<String>,
     request: Option<CaptureRequest>,
 ) -> Result<serde_json::Value, String> {
-    if webview.label() != "main" { return Err("CAPTURE_MAIN_ONLY".into()); }
+    if webview.label() != "main" {
+        return Err("CAPTURE_MAIN_ONLY".into());
+    }
     crate::shared::invocation::check_invocation_source(&webview, "capture_full_page", None, &app)?;
     if let Some(request) = request {
         match request {
             CaptureRequest::Inspect => {}
             CaptureRequest::Fence { epoch, sequence } => {
                 let mut owner = CAPTURE_OWNER.lock().map_err(|_| "CAPTURE_OWNER_UNKNOWN")?;
-                if owner.slot.is_some() { return Err("CAPTURE_BUSY".into()); }
-                if epoch != owner.epoch { return Err("CAPTURE_STALE_EPOCH".into()); }
-                if sequence != owner.next_sequence.to_string() { return Err("CAPTURE_STALE_SEQUENCE".into()); }
-                owner.next_sequence = owner.next_sequence.checked_add(1).ok_or("CAPTURE_SEQUENCE_EXHAUSTED")?;
+                if owner.slot.is_some() {
+                    return Err("CAPTURE_BUSY".into());
+                }
+                if epoch != owner.epoch {
+                    return Err("CAPTURE_STALE_EPOCH".into());
+                }
+                if sequence != owner.next_sequence.to_string() {
+                    return Err("CAPTURE_STALE_SEQUENCE".into());
+                }
+                owner.next_sequence = owner
+                    .next_sequence
+                    .checked_add(1)
+                    .ok_or("CAPTURE_SEQUENCE_EXHAUSTED")?;
             }
-            CaptureRequest::CancelPending { id, ticket, epoch, sequence, mode } => {
+            CaptureRequest::CancelPending {
+                id,
+                ticket,
+                epoch,
+                sequence,
+                mode,
+            } => {
                 crate::shared::invocation::check_tab_id(&id)?;
-                if ticket.len() != 36 || uuid::Uuid::parse_str(&ticket).map_or(true, |id| id.get_version_num() != 4) {
+                if ticket.len() != 36
+                    || uuid::Uuid::parse_str(&ticket).map_or(true, |id| id.get_version_num() != 4)
+                {
                     return Err("CAPTURE_INVALID_TICKET".into());
                 }
                 let cancelled_before_start = {
                     let mut owner = CAPTURE_OWNER.lock().map_err(|_| "CAPTURE_OWNER_UNKNOWN")?;
-                    if epoch != owner.epoch { return Err("CAPTURE_STALE_EPOCH".into()); }
-                    if owner.last_completed.as_ref().is_some_and(|r| r.ticket == ticket) { true }
-                    else if let Some(slot) = &owner.slot {
-                        if slot.receipt.ticket != ticket || slot.receipt.tab_id != id || slot.receipt.mode != mode {
+                    if epoch != owner.epoch {
+                        return Err("CAPTURE_STALE_EPOCH".into());
+                    }
+                    if owner
+                        .last_completed
+                        .as_ref()
+                        .is_some_and(|r| r.ticket == ticket)
+                    {
+                        true
+                    } else if let Some(slot) = &owner.slot {
+                        if slot.receipt.ticket != ticket
+                            || slot.receipt.tab_id != id
+                            || slot.receipt.mode != mode
+                        {
                             return Err("CAPTURE_BUSY".into());
                         }
                         false
                     } else {
-                        if sequence != owner.next_sequence.to_string() { return Err("CAPTURE_STALE_SEQUENCE".into()); }
-                        owner.next_sequence = owner.next_sequence.checked_add(1).ok_or("CAPTURE_SEQUENCE_EXHAUSTED")?;
-                        owner.last_completed = Some(CaptureReceipt { ticket: ticket.clone(), tab_id: id, mode,
-                            phase: CapturePhase::Cancelled, path: None, error: Some("CAPTURE_CANCELLED_BEFORE_DISPATCH".into()) });
+                        if sequence != owner.next_sequence.to_string() {
+                            return Err("CAPTURE_STALE_SEQUENCE".into());
+                        }
+                        owner.next_sequence = owner
+                            .next_sequence
+                            .checked_add(1)
+                            .ok_or("CAPTURE_SEQUENCE_EXHAUSTED")?;
+                        owner.last_completed = Some(CaptureReceipt {
+                            ticket: ticket.clone(),
+                            tab_id: id,
+                            mode,
+                            phase: CapturePhase::Cancelled,
+                            path: None,
+                            error: Some("CAPTURE_CANCELLED_BEFORE_DISPATCH".into()),
+                        });
                         true
                     }
                 };
-                if !cancelled_before_start { capture_cancel(&app, &ticket)?; }
+                if !cancelled_before_start {
+                    capture_cancel(&app, &ticket)?;
+                }
             }
-            CaptureRequest::Start { id, ticket, epoch, sequence, mode, expected_url } =>
-                begin_capture(app.clone(), id, ticket, &epoch, &sequence, mode, expected_url)?,
+            CaptureRequest::Start {
+                id,
+                ticket,
+                epoch,
+                sequence,
+                mode,
+                expected_url,
+            } => begin_capture(
+                app.clone(),
+                id,
+                ticket,
+                &epoch,
+                &sequence,
+                mode,
+                expected_url,
+            )?,
             CaptureRequest::Cancel { ticket } => capture_cancel(&app, &ticket)?,
             CaptureRequest::Ack { ticket } => capture_ack(&ticket)?,
         }
@@ -857,17 +1143,32 @@ pub async fn capture_full_page(
     let id = id.ok_or("CAPTURE_TAB_UNAVAILABLE")?;
     let view = capture_view()?;
     let ticket = uuid::Uuid::new_v4().to_string();
-    begin_capture(app.clone(), id, ticket.clone(), &view.epoch, &view.next_sequence,
-        CaptureMode::CurrentDocument, None)?;
+    begin_capture(
+        app.clone(),
+        id,
+        ticket.clone(),
+        &view.epoch,
+        &view.next_sequence,
+        CaptureMode::CurrentDocument,
+        None,
+    )?;
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
     loop {
         let current = capture_view()?;
-        let receipt = current.receipt.filter(|receipt| receipt.ticket == ticket)
-            .or_else(|| current.last_completed.filter(|receipt| receipt.ticket == ticket))
+        let receipt = current
+            .receipt
+            .filter(|receipt| receipt.ticket == ticket)
+            .or_else(|| {
+                current
+                    .last_completed
+                    .filter(|receipt| receipt.ticket == ticket)
+            })
             .ok_or("CAPTURE_OUTCOME_UNKNOWN")?;
         if receipt.phase.terminal() {
             capture_ack(&ticket)?;
-            return receipt.path.map(serde_json::Value::String)
+            return receipt
+                .path
+                .map(serde_json::Value::String)
                 .ok_or_else(|| receipt.error.unwrap_or_else(|| "CAPTURE_FAILED".into()));
         }
         if std::time::Instant::now() >= deadline {
@@ -930,13 +1231,28 @@ mod capture_storage_tests {
         let old: CaptureRequest = serde_json::from_value(serde_json::json!({
             "phase":"start","id":"tab-1","ticket":uuid::Uuid::new_v4().to_string(),
             "epoch":"old","sequence":"1"
-        })).unwrap();
-        assert!(matches!(old, CaptureRequest::Start {mode: CaptureMode::CurrentDocument, expected_url: None, ..}));
+        }))
+        .unwrap();
+        assert!(matches!(
+            old,
+            CaptureRequest::Start {
+                mode: CaptureMode::CurrentDocument,
+                expected_url: None,
+                ..
+            }
+        ));
         let independent: CaptureRequest = serde_json::from_value(serde_json::json!({
             "phase":"start","id":"tab-1","ticket":uuid::Uuid::new_v4().to_string(),
             "epoch":"old","sequence":"1","mode":"independent_address","expected_url":"https://example.com/"
         })).unwrap();
-        assert!(matches!(independent, CaptureRequest::Start {mode: CaptureMode::IndependentAddress, expected_url: Some(_), ..}));
+        assert!(matches!(
+            independent,
+            CaptureRequest::Start {
+                mode: CaptureMode::IndependentAddress,
+                expected_url: Some(_),
+                ..
+            }
+        ));
     }
 
     #[test]

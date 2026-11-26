@@ -891,26 +891,43 @@ fn build_chat_messages(
 
 // Chat and Legacy are deliberately text-only hosts of the same bounded
 // complete-message engine. They must not silently accept model tool calls.
-fn text_model_turn(profile: &ProviderProfile, messages: &[Value],
-    cancelled: &(dyn Fn() -> bool + Sync)) -> Result<String, String> {
+fn text_model_turn(
+    profile: &ProviderProfile,
+    messages: &[Value],
+    cancelled: &(dyn Fn() -> bool + Sync),
+) -> Result<String, String> {
     use browseros_agent_foundation::{engine::drive_text_turn, FoundationError};
-    drive_text_turn(|| provider_turn_cancelable(profile, messages, &[], cancelled), cancelled,
+    drive_text_turn(
+        || provider_turn_cancelable(profile, messages, &[], cancelled),
+        cancelled,
         |error| match error {
             FoundationError::Cancelled => "AI_PROVIDER_CANCELLED".into(),
-            FoundationError::Provider(code) if code == "MODEL_TEXT_EMPTY" => "AI_RESPONSE_EMPTY".into(),
+            FoundationError::Provider(code) if code == "MODEL_TEXT_EMPTY" => {
+                "AI_RESPONSE_EMPTY".into()
+            }
             _ => "AI_RESPONSE_INVALID".into(),
-        })
+        },
+    )
 }
 
 // The credential snapshot is deliberately not serializable. Bind a retry
 // to the exact normalized non-credential provider configuration and prompt.
-fn text_checkpoint_input(profile: &ProviderProfile, messages: &[Value], agent: Option<&str>) -> Result<Value, String> {
+fn text_checkpoint_input(
+    profile: &ProviderProfile,
+    messages: &[Value],
+    agent: Option<&str>,
+) -> Result<Value, String> {
     validate(profile)?;
-    if profile.kind != "chat" { return Err("AI_MODEL_NOT_CHAT".into()); }
+    if profile.kind != "chat" {
+        return Err("AI_MODEL_NOT_CHAT".into());
+    }
     let input = json!({"profile_id":profile.id,"base_url":profile.base_url,
         "model":profile.model,"messages":messages,"agent_id":agent});
-    if profile.credential.is_empty() || serde_json::to_string(&input)
-        .map_err(|_| "AGENT_RUN_RECEIPT_INVALID")?.contains(&profile.credential) {
+    if profile.credential.is_empty()
+        || serde_json::to_string(&input)
+            .map_err(|_| "AGENT_RUN_RECEIPT_INVALID")?
+            .contains(&profile.credential)
+    {
         return Err("AI_CONTEXT_CREDENTIAL_DENIED".into());
     }
     Ok(input)
@@ -919,51 +936,93 @@ fn text_checkpoint_input(profile: &ProviderProfile, messages: &[Value], agent: O
 // Restore only the normalized text-only input. Recheck the current
 // provider selection and acquire its credential in the native adapter.
 fn prepare_restored_text_provider<'a>(
-    config: &AiConfig, kind: &str, input: &Value,
+    config: &AiConfig,
+    kind: &str,
+    input: &Value,
     cancelled: &'a (dyn Fn() -> bool + Sync),
 ) -> Result<Box<dyn FnOnce() -> Result<Value, String> + 'a>, String> {
     if kind == "local_chat" {
-        use crate::capabilities::agent::public_api::{LocalChatRequest, local_chat, validate_local_chat};
-        if input["provider"] != "ollama_local" { return Err("AGENT_RUN_SCOPE_MISMATCH".into()); }
+        use crate::capabilities::agent::public_api::{
+            local_chat, validate_local_chat, LocalChatRequest,
+        };
+        if input["provider"] != "ollama_local" {
+            return Err("AGENT_RUN_SCOPE_MISMATCH".into());
+        }
         let request = LocalChatRequest {
-            model: input["model"].as_str().ok_or("AGENT_RUN_CONTEXT_INVALID")?.into(),
-            message: input["message"].as_str().ok_or("AGENT_RUN_CONTEXT_INVALID")?.into(),
-            system: input["system"].as_str().ok_or("AGENT_RUN_CONTEXT_INVALID")?.into(),
+            model: input["model"]
+                .as_str()
+                .ok_or("AGENT_RUN_CONTEXT_INVALID")?
+                .into(),
+            message: input["message"]
+                .as_str()
+                .ok_or("AGENT_RUN_CONTEXT_INVALID")?
+                .into(),
+            system: input["system"]
+                .as_str()
+                .ok_or("AGENT_RUN_CONTEXT_INVALID")?
+                .into(),
         };
         validate_local_chat(&request)?;
         return Ok(Box::new(move || {
-            if cancelled() { return Err("AI_PROVIDER_CANCELLED".into()); }
+            if cancelled() {
+                return Err("AI_PROVIDER_CANCELLED".into());
+            }
             serde_json::to_value(local_chat(request)?)
                 .map_err(|_| "AGENT_RUN_RECEIPT_INVALID".into())
         }));
     }
-    if !matches!(kind, "chat" | "legacy_agent") { return Err("AGENT_RUN_SCOPE_MISMATCH".into()); }
-    let profile_id = input["profile_id"].as_str().ok_or("AGENT_RUN_CONTEXT_INVALID")?;
-    let profile = config.profiles.iter().find(|profile| profile.id == profile_id)
+    if !matches!(kind, "chat" | "legacy_agent") {
+        return Err("AGENT_RUN_SCOPE_MISMATCH".into());
+    }
+    let profile_id = input["profile_id"]
+        .as_str()
+        .ok_or("AGENT_RUN_CONTEXT_INVALID")?;
+    let profile = config
+        .profiles
+        .iter()
+        .find(|profile| profile.id == profile_id)
         .ok_or("AI_NOT_CONFIGURED")?;
     if input["base_url"].as_str() != Some(profile.base_url.as_str())
         || input["model"].as_str() != Some(profile.model.as_str())
-    { return Err("AGENT_RUN_PROVIDER_CHANGED".into()); }
+    {
+        return Err("AGENT_RUN_PROVIDER_CHANGED".into());
+    }
     let profile = execution_profile(profile)?;
-    let messages = input["messages"].as_array().ok_or("AGENT_RUN_CONTEXT_INVALID")?.clone();
+    let messages = input["messages"]
+        .as_array()
+        .ok_or("AGENT_RUN_CONTEXT_INVALID")?
+        .clone();
     let agent = input["agent_id"].as_str().map(str::to_owned);
     if (kind == "chat" && agent.is_some()) || (kind == "legacy_agent" && agent.is_none()) {
         return Err("AGENT_RUN_SCOPE_MISMATCH".into());
     }
-    if messages.len() < 2 || messages.len() > 14 || messages[0]["role"] != "system"
+    if messages.len() < 2
+        || messages.len() > 14
+        || messages[0]["role"] != "system"
         || messages.last().and_then(|turn| turn["role"].as_str()) != Some("user")
         || messages.iter().enumerate().any(|(i, turn)| {
-            let Some(content) = turn["content"].as_str() else { return true; };
-            if i == 0 { content.len() > 32_768 }
-            else { !matches!(turn["role"].as_str(), Some("user" | "assistant"))
-                || content.len() > 24_000 || crate::security_policy::contains_credential_leak(content) }
-        }) || text_checkpoint_input(&profile, &messages, agent.as_deref())? != *input
-    { return Err("AGENT_RUN_CONTEXT_INVALID".into()); }
+            let Some(content) = turn["content"].as_str() else {
+                return true;
+            };
+            if i == 0 {
+                content.len() > 32_768
+            } else {
+                !matches!(turn["role"].as_str(), Some("user" | "assistant"))
+                    || content.len() > 24_000
+                    || crate::security_policy::contains_credential_leak(content)
+            }
+        })
+        || text_checkpoint_input(&profile, &messages, agent.as_deref())? != *input
+    {
+        return Err("AGENT_RUN_CONTEXT_INVALID".into());
+    }
     Ok(Box::new(move || {
         let content = text_model_turn(&profile, &messages, cancelled)?;
         Ok(if let Some(agent) = agent {
             json!({"content":content,"model":profile.model,"agent_id":agent,"tools_executed":false})
-        } else { json!({"content":content,"model":profile.model}) })
+        } else {
+            json!({"content":content,"model":profile.model})
+        })
     }))
 }
 
@@ -1448,15 +1507,23 @@ fn coding_execution_profile(path: &Path, id: &str) -> Result<ProviderProfile, St
     Ok(profile)
 }
 
-fn coding_provider_binding(profile: &ProviderProfile)
-    -> Result<crate::capabilities::agent::public_api::CodingProviderBinding, String> {
+fn coding_provider_binding(
+    profile: &ProviderProfile,
+) -> Result<crate::capabilities::agent::public_api::CodingProviderBinding, String> {
     use sha2::{Digest, Sha256};
-    let bytes = serde_json::to_vec(&(&profile.id, &profile.base_url, &profile.model, &profile.kind))
-        .map_err(|_| "AGENT_CONTINUATION_INVALID")?;
-    Ok(crate::capabilities::agent::public_api::CodingProviderBinding {
-        profile_id: profile.id.clone(),
-        fingerprint: format!("{:x}", Sha256::digest(bytes)),
-    })
+    let bytes = serde_json::to_vec(&(
+        &profile.id,
+        &profile.base_url,
+        &profile.model,
+        &profile.kind,
+    ))
+    .map_err(|_| "AGENT_CONTINUATION_INVALID")?;
+    Ok(
+        crate::capabilities::agent::public_api::CodingProviderBinding {
+            profile_id: profile.id.clone(),
+            fingerprint: format!("{:x}", Sha256::digest(bytes)),
+        },
+    )
 }
 /// Old Agent definitions are treated as *model prompts*, never as grants to tools.
 fn validate_legacy_agent_definition(agent: &crate::domain::AgentDef) -> Result<(), String> {
@@ -1625,18 +1692,32 @@ pub fn execute(path: &Path, request: AiRequest) -> Result<Value, String> {
     // Existing main-only service and request fields; authenticated records,
     // never arbitrary paths, persisted credentials or workspace grants.
     match request.action.as_str() {
-        "run_history" => return ProductionExecution::text_run_catalog(storage,
-            if request.id.is_empty() { None } else {
-                Some(uuid::Uuid::parse_str(&request.id).map_err(|_| "AGENT_RUN_ID_INVALID")?)
-            }),
-        "run_restore" => return ProductionExecution::read_text_run(storage, parse_chat_request_id(&request.id)?),
+        "run_history" => {
+            return ProductionExecution::text_run_catalog(
+                storage,
+                if request.id.is_empty() {
+                    None
+                } else {
+                    Some(uuid::Uuid::parse_str(&request.id).map_err(|_| "AGENT_RUN_ID_INVALID")?)
+                },
+            )
+        }
+        "run_restore" => {
+            return ProductionExecution::read_text_run(storage, parse_chat_request_id(&request.id)?)
+        }
         "run_forget" => {
-            if !request.confirmed { return Err("AGENT_RUN_FORGET_APPROVAL_REQUIRED".into()); }
-            let archived = ProductionExecution::forget_text_payload(storage, parse_chat_request_id(&request.id)?)?;
+            if !request.confirmed {
+                return Err("AGENT_RUN_FORGET_APPROVAL_REQUIRED".into());
+            }
+            let archived = ProductionExecution::forget_text_payload(
+                storage,
+                parse_chat_request_id(&request.id)?,
+            )?;
             return Ok(json!({"forgotten":true,"archived":archived}));
         }
-        "run_continue" if !request.confirmed || request.request_id.is_empty() =>
-            return Err("AGENT_RUN_RESUME_APPROVAL_REQUIRED".into()),
+        "run_continue" if !request.confirmed || request.request_id.is_empty() => {
+            return Err("AGENT_RUN_RESUME_APPROVAL_REQUIRED".into())
+        }
         _ => {}
     }
     let cancel_guard = if matches!(
@@ -1794,8 +1875,14 @@ pub fn execute(path: &Path, request: AiRequest) -> Result<Value, String> {
             let run = signal.id.ok_or("AI_CHAT_REQUEST_ID_INVALID")?;
             drop(lock);
             let cancelled = || signal.cancelled.load(Ordering::SeqCst);
-            ProductionExecution::advance_text(storage, previous, run, &request.message, &cancelled,
-                |kind, input| prepare_restored_text_provider(&config, kind, input, &cancelled))
+            ProductionExecution::advance_text(
+                storage,
+                previous,
+                run,
+                &request.message,
+                &cancelled,
+                |kind, input| prepare_restored_text_provider(&config, kind, input, &cancelled),
+            )
         }
         "legacy_chat" | "legacy_run" => {
             let agent = if request.action == "legacy_run" {
@@ -1836,10 +1923,16 @@ pub fn execute(path: &Path, request: AiRequest) -> Result<Value, String> {
             let cancelled = || signal.cancelled.load(Ordering::SeqCst);
             let input = text_checkpoint_input(&profile, &messages, Some(&agent.id))?;
             crate::capabilities::agent::public_api::ProductionExecution::run_checkpointed_text(
-                path.parent().ok_or("AGENT_STORAGE_UNAVAILABLE")?, "legacy_agent",
-                run, input, cancelled,
-                || text_model_turn(&profile, &messages, &cancelled)
-                    .map(|content| json!({"content":content,"model":profile.model,"agent_id":agent.id,"tools_executed":false})))
+                path.parent().ok_or("AGENT_STORAGE_UNAVAILABLE")?,
+                "legacy_agent",
+                run,
+                input,
+                cancelled,
+                || {
+                    text_model_turn(&profile, &messages, &cancelled)
+                    .map(|content| json!({"content":content,"model":profile.model,"agent_id":agent.id,"tools_executed":false}))
+                },
+            )
         }
         "chat" => {
             let id = if request.id.is_empty() {
@@ -1865,10 +1958,16 @@ pub fn execute(path: &Path, request: AiRequest) -> Result<Value, String> {
             let input = text_checkpoint_input(&profile, &messages, None)?;
             let cancelled = || signal.cancelled.load(Ordering::SeqCst);
             crate::capabilities::agent::public_api::ProductionExecution::run_checkpointed_text(
-                path.parent().ok_or("AGENT_STORAGE_UNAVAILABLE")?, "chat",
-                run, input, cancelled,
-                || text_model_turn(&profile, &messages, &cancelled)
-                    .map(|content| json!({"content":content,"model":profile.model})))
+                path.parent().ok_or("AGENT_STORAGE_UNAVAILABLE")?,
+                "chat",
+                run,
+                input,
+                cancelled,
+                || {
+                    text_model_turn(&profile, &messages, &cancelled)
+                        .map(|content| json!({"content":content,"model":profile.model}))
+                },
+            )
         }
         _ => Err("AI_ACTION_INVALID".into()),
     }
@@ -1885,8 +1984,15 @@ pub async fn ai_service(
         return Err("AI_SOURCE_DENIED".into());
     }
     crate::shared::invocation::check_invocation_source(&webview, "ai_service", None, &app)?;
-    if matches!(request.action.as_str(), "channel_history" | "channel_restore" | "channel_forget"
-        | "channel_fixture" | "channel_read" | "channel_resume") {
+    if matches!(
+        request.action.as_str(),
+        "channel_history"
+            | "channel_restore"
+            | "channel_forget"
+            | "channel_fixture"
+            | "channel_read"
+            | "channel_resume"
+    ) {
         return super::agent_channel::dispatch_recovery(app, webview, request).await;
     }
     let path = app
@@ -1920,13 +2026,18 @@ pub async fn coding_service(
     // Register before entering the blocking queue, while the run ID is already
     // known to the main UI. Coding and manual MCP share the same bounded
     // cancellation owner. Legacy manual requests without an ID stay compatible.
-    let run_guard = if matches!(request["action"].as_str(), Some("chat" | "resume_turn" | "execute_operation")) {
+    let run_guard = if matches!(
+        request["action"].as_str(),
+        Some("chat" | "resume_turn" | "execute_operation")
+    ) {
         Some(crate::capabilities::agent::public_api::register_coding_run(
             request["run_id"].as_str().ok_or("AGENT_RUN_ID_REQUIRED")?,
         )?)
     } else if matches!(request["action"].as_str(), Some("mcp_tools" | "mcp_call")) {
-        request["run_id"].as_str()
-            .map(crate::capabilities::agent::public_api::register_coding_run).transpose()?
+        request["run_id"]
+            .as_str()
+            .map(crate::capabilities::agent::public_api::register_coding_run)
+            .transpose()?
     } else {
         None
     };
@@ -1968,9 +2079,17 @@ pub async fn coding_service(
         // list and review calls must not invent a successful execution.
         let cancel_session = request["session_id"].as_str().unwrap_or("").to_owned();
         let model_profile = if matches!(request["action"].as_str(), Some("chat" | "resume_turn")) {
-            Some(coding_execution_profile(&storage.join("ai-profiles.json"), &id)?)
-        } else { None };
-        let binding = model_profile.as_ref().map(coding_provider_binding).transpose()?;
+            Some(coding_execution_profile(
+                &storage.join("ai-profiles.json"),
+                &id,
+            )?)
+        } else {
+            None
+        };
+        let binding = model_profile
+            .as_ref()
+            .map(coding_provider_binding)
+            .transpose()?;
         let response = crate::capabilities::agent::public_api::dispatch_coding_request(
             &app,
             &webview,
@@ -2936,7 +3055,10 @@ mod tests {
                 Ok(json!({"status":"succeeded","result":result["result"]}))
             },
         ).expect("execute under native operation ownership");
-        assert!(approved["operations"][0]["result"].as_str().unwrap().contains("violet"));
+        assert!(approved["operations"][0]["result"]
+            .as_str()
+            .unwrap()
+            .contains("violet"));
         crate::capabilities::agent::coding::execute(&root,&storage,
             json!({"action":"resolve_operation","session_id":id,"operation_id":operation["id"],"status":"accepted"}),
             |_,_|unreachable!()).expect("accept the stored native result");

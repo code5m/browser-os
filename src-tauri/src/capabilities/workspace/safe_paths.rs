@@ -694,7 +694,8 @@ mod linux {
             sync_directory(parent).map_err(|_| "FILE_DURABILITY_UNCERTAIN")?;
             Ok(())
         })();
-        if result.is_err() && !published && entry_still_matches(parent, &temp_name, &stage).is_ok() {
+        if result.is_err() && !published && entry_still_matches(parent, &temp_name, &stage).is_ok()
+        {
             // A replaced stage name is not our object. Leave it untouched.
             // As with the existing unlinkat boundary, this identity recheck
             // narrows but cannot eliminate arbitrary namespace races.
@@ -756,29 +757,45 @@ mod linux {
     }
 
     pub(super) fn write_versioned_approved(
-        path: &Path, roots: &[PathBuf], ancestor: &Path, ancestor_identity: &str,
-        expected: Option<&FileSnapshot>, content: &[u8], limit: usize,
+        path: &Path,
+        roots: &[PathBuf],
+        ancestor: &Path,
+        ancestor_identity: &str,
+        expected: Option<&FileSnapshot>,
+        content: &[u8],
+        limit: usize,
         prepare: impl FnOnce(&str, &str) -> Result<(), String>,
     ) -> Result<(), String> {
-        let relative = path.strip_prefix(ancestor).map_err(|_| "FILE_APPROVED_ANCESTOR_CHANGED")?;
-        if relative.components().any(|part| !matches!(part, Component::Normal(_))) {
+        let relative = path
+            .strip_prefix(ancestor)
+            .map_err(|_| "FILE_APPROVED_ANCESTOR_CHANGED")?;
+        if relative
+            .components()
+            .any(|part| !matches!(part, Component::Normal(_)))
+        {
             return Err("FILE_APPROVED_ANCESTOR_CHANGED".into());
         }
         let filename = relative.file_name().ok_or("FILE_NAME_INVALID")?;
-        let mut parent = open_allowed_dir(ancestor, roots).map_err(|_| "FILE_PARENT_NOT_AUTHORIZED")?;
-        if object_identity(&parent.metadata().map_err(|_| "FILE_IDENTITY_UNAVAILABLE")?) != ancestor_identity {
+        let mut parent =
+            open_allowed_dir(ancestor, roots).map_err(|_| "FILE_PARENT_NOT_AUTHORIZED")?;
+        if object_identity(&parent.metadata().map_err(|_| "FILE_IDENTITY_UNAVAILABLE")?)
+            != ancestor_identity
+        {
             return Err("FILE_APPROVED_ANCESTOR_CHANGED".into());
         }
         // The approved native directory stays pinned. Resolve each remaining
         // segment relative to the current handle, never reopen an absolute path.
         for part in relative.parent().ok_or("FILE_PARENT_INVALID")?.components() {
-            let Component::Normal(segment) = part else { return Err("FILE_PARENT_INVALID".into()); };
+            let Component::Normal(segment) = part else {
+                return Err("FILE_PARENT_INVALID".into());
+            };
             parent = match open_child_dir(&parent, segment) {
                 Ok(next) => next,
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {
                     let native = name(segment).map_err(|_| "FILE_PARENT_INVALID")?;
                     if unsafe { libc::mkdirat(parent.as_raw_fd(), native.as_ptr(), 0o700) } != 0
-                        && io::Error::last_os_error().kind() != io::ErrorKind::AlreadyExists {
+                        && io::Error::last_os_error().kind() != io::ErrorKind::AlreadyExists
+                    {
                         return Err("FILE_PARENT_CREATE_FAILED".into());
                     }
                     sync_directory(&parent).map_err(|_| "FILE_DURABILITY_UNCERTAIN")?;
@@ -787,9 +804,17 @@ mod linux {
                 Err(_) => return Err("FILE_PARENT_NOT_AUTHORIZED".into()),
             };
         }
-        let parent_identity = object_identity(&parent.metadata().map_err(|_| "FILE_IDENTITY_UNAVAILABLE")?);
-        write_versioned_at(&parent, filename, expected.map(|s| s.bytes.as_slice()),
-            expected.map(|s| s.identity.as_str()), content, limit, |staged| prepare(staged, &parent_identity))
+        let parent_identity =
+            object_identity(&parent.metadata().map_err(|_| "FILE_IDENTITY_UNAVAILABLE")?);
+        write_versioned_at(
+            &parent,
+            filename,
+            expected.map(|s| s.bytes.as_slice()),
+            expected.map(|s| s.identity.as_str()),
+            content,
+            limit,
+            |staged| prepare(staged, &parent_identity),
+        )
     }
 
     pub(super) fn write_versioned(
@@ -829,19 +854,30 @@ mod linux {
     }
 
     pub(super) fn remove_if_unchanged_approved(
-        path: &Path, roots: &[PathBuf], parent_identity: &str,
-        expected: &FileSnapshot, limit: usize,
+        path: &Path,
+        roots: &[PathBuf],
+        parent_identity: &str,
+        expected: &FileSnapshot,
+        limit: usize,
     ) -> Result<(), String> {
         let parent_path = path.parent().ok_or("FILE_PARENT_INVALID")?;
         let filename = path.file_name().ok_or("FILE_NAME_INVALID")?;
-        let parent = open_allowed_dir(parent_path, roots).map_err(|_| "FILE_PARENT_NOT_AUTHORIZED")?;
-        if object_identity(&parent.metadata().map_err(|_| "FILE_IDENTITY_UNAVAILABLE")?) != parent_identity {
+        let parent =
+            open_allowed_dir(parent_path, roots).map_err(|_| "FILE_PARENT_NOT_AUTHORIZED")?;
+        if object_identity(&parent.metadata().map_err(|_| "FILE_IDENTITY_UNAVAILABLE")?)
+            != parent_identity
+        {
             return Err("FILE_APPROVED_ANCESTOR_CHANGED".into());
         }
         remove_at(&parent, filename, expected, limit)
     }
 
-    fn remove_at(parent: &File, filename: &std::ffi::OsStr, expected: &FileSnapshot, limit: usize) -> Result<(), String> {
+    fn remove_at(
+        parent: &File,
+        filename: &std::ffi::OsStr,
+        expected: &FileSnapshot,
+        limit: usize,
+    ) -> Result<(), String> {
         let _lock = cas_lock(parent, filename)?;
         let (metadata, bytes) = snapshot_at(parent, filename, limit)?.ok_or("FILE_CONFLICT")?;
         if object_identity(&metadata) != expected.identity || bytes != expected.bytes {
@@ -1305,17 +1341,55 @@ pub fn read_versioned(
 /// Bind the commit to the native ancestor approved by the user, not a later
 /// path lookup. Shared external files still do not provide arbitrary-writer CAS.
 pub fn write_versioned_approved(
-    path: &Path, roots: &[PathBuf], ancestor: &Path, ancestor_identity: &str,
-    expected: Option<&FileSnapshot>, content: &[u8], limit: usize,
+    path: &Path,
+    roots: &[PathBuf],
+    ancestor: &Path,
+    ancestor_identity: &str,
+    expected: Option<&FileSnapshot>,
+    content: &[u8],
+    limit: usize,
     prepare: impl FnOnce(&str, &str) -> Result<(), String>,
 ) -> Result<(), String> {
     #[cfg(target_os = "linux")]
-    { linux::write_versioned_approved(path, roots, ancestor, ancestor_identity, expected, content, limit, prepare) }
+    {
+        linux::write_versioned_approved(
+            path,
+            roots,
+            ancestor,
+            ancestor_identity,
+            expected,
+            content,
+            limit,
+            prepare,
+        )
+    }
     #[cfg(target_os = "windows")]
-    { windows::write_versioned_approved(path, roots, ancestor, ancestor_identity, expected, content, limit, prepare) }
+    {
+        windows::write_versioned_approved(
+            path,
+            roots,
+            ancestor,
+            ancestor_identity,
+            expected,
+            content,
+            limit,
+            prepare,
+        )
+    }
     #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-    { let _ = (path, roots, ancestor, ancestor_identity, expected, content, limit, prepare);
-      Err("FILE_DESCRIPTOR_CAS_UNSUPPORTED".into()) }
+    {
+        let _ = (
+            path,
+            roots,
+            ancestor,
+            ancestor_identity,
+            expected,
+            content,
+            limit,
+            prepare,
+        );
+        Err("FILE_DESCRIPTOR_CAS_UNSUPPORTED".into())
+    }
 }
 
 pub fn write_versioned(
@@ -1342,15 +1416,25 @@ pub fn write_versioned(
 }
 
 pub fn remove_if_unchanged_approved(
-    path: &Path, roots: &[PathBuf], parent_identity: &str,
-    expected: &FileSnapshot, limit: usize,
+    path: &Path,
+    roots: &[PathBuf],
+    parent_identity: &str,
+    expected: &FileSnapshot,
+    limit: usize,
 ) -> Result<(), String> {
     #[cfg(target_os = "linux")]
-    { linux::remove_if_unchanged_approved(path, roots, parent_identity, expected, limit) }
+    {
+        linux::remove_if_unchanged_approved(path, roots, parent_identity, expected, limit)
+    }
     #[cfg(target_os = "windows")]
-    { windows::remove_if_unchanged_approved(path, roots, parent_identity, expected, limit) }
+    {
+        windows::remove_if_unchanged_approved(path, roots, parent_identity, expected, limit)
+    }
     #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-    { let _ = (path, roots, parent_identity, expected, limit); Err("FILE_DESCRIPTOR_CAS_UNSUPPORTED".into()) }
+    {
+        let _ = (path, roots, parent_identity, expected, limit);
+        Err("FILE_DESCRIPTOR_CAS_UNSUPPORTED".into())
+    }
 }
 
 pub fn remove_if_unchanged(
@@ -1380,16 +1464,28 @@ mod cross_platform_file_manager_tests {
 
     #[test]
     fn approved_directory_replacement_is_not_authorized() {
-        let root = std::env::temp_dir().join(format!("browseros-approval-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("browseros-approval-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(root.join("approved")).unwrap();
         let root = root.canonicalize().unwrap();
         let approved = root.join("approved");
         let identity = directory_identity(&approved).unwrap();
         std::fs::rename(&approved, root.join("previous")).unwrap();
         std::fs::create_dir(&approved).unwrap();
-        assert_eq!(write_versioned_approved(&approved.join("new/file.txt"), &[root.clone()],
-            &approved, &identity, None, b"reviewed", 1024, |_, _| Ok(())).unwrap_err(),
-            "FILE_APPROVED_ANCESTOR_CHANGED");
+        assert_eq!(
+            write_versioned_approved(
+                &approved.join("new/file.txt"),
+                &[root.clone()],
+                &approved,
+                &identity,
+                None,
+                b"reviewed",
+                1024,
+                |_, _| Ok(())
+            )
+            .unwrap_err(),
+            "FILE_APPROVED_ANCESTOR_CHANGED"
+        );
         assert!(!approved.join("new").exists());
         assert!(!root.join("previous/new").exists());
         std::fs::remove_dir_all(root).unwrap();
@@ -1565,20 +1661,40 @@ mod versioned_write_tests {
         let root = fixture();
         let target = root.join("target.txt");
         fs::write(&target, b"before").unwrap();
-        let before = read_versioned(&target, &[root.clone()], 1024).unwrap().unwrap();
+        let before = read_versioned(&target, &[root.clone()], 1024)
+            .unwrap()
+            .unwrap();
         let mut replaced = None;
-        let result = write_versioned(&target, &[root.clone()], Some(&before), b"ours", 1024, |_| {
-            let stage = fs::read_dir(&root).unwrap().map(|entry| entry.unwrap().path())
-                .find(|path| path.file_name().unwrap().to_string_lossy().starts_with(".browseros-cas-")
-                    && path.extension().is_some_and(|ext| ext == "tmp")).unwrap();
-            fs::rename(&stage, root.join("held-stage")).unwrap();
-            fs::write(&stage, b"external stage replacement").unwrap();
-            replaced = Some(stage);
-            Ok(())
-        });
+        let result = write_versioned(
+            &target,
+            &[root.clone()],
+            Some(&before),
+            b"ours",
+            1024,
+            |_| {
+                let stage = fs::read_dir(&root)
+                    .unwrap()
+                    .map(|entry| entry.unwrap().path())
+                    .find(|path| {
+                        path.file_name()
+                            .unwrap()
+                            .to_string_lossy()
+                            .starts_with(".browseros-cas-")
+                            && path.extension().is_some_and(|ext| ext == "tmp")
+                    })
+                    .unwrap();
+                fs::rename(&stage, root.join("held-stage")).unwrap();
+                fs::write(&stage, b"external stage replacement").unwrap();
+                replaced = Some(stage);
+                Ok(())
+            },
+        );
         assert_eq!(result.unwrap_err(), "FILE_STAGE_CHANGED");
         assert_eq!(fs::read(&target).unwrap(), b"before");
-        assert_eq!(fs::read(replaced.unwrap()).unwrap(), b"external stage replacement");
+        assert_eq!(
+            fs::read(replaced.unwrap()).unwrap(),
+            b"external stage replacement"
+        );
         assert_eq!(fs::read(root.join("held-stage")).unwrap(), b"ours");
         fs::remove_dir_all(root).unwrap();
     }

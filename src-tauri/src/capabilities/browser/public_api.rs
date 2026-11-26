@@ -10,7 +10,9 @@ pub(crate) fn agent_tab_summary(app: AppHandle) -> Value {
 }
 
 /// Metadata-only watchdog observation through the Browser capability.
-pub(crate) fn capture_diagnostic() -> Value { super::commands::capture_diagnostic() }
+pub(crate) fn capture_diagnostic() -> Value {
+    super::commands::capture_diagnostic()
+}
 
 /// Reversible application exit preflight through the existing Browser Owner.
 pub(crate) fn prepare_capture_exit(app: &AppHandle) -> Result<(), String> {

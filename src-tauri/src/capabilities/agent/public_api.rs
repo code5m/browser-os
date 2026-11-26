@@ -4,10 +4,14 @@
 use serde_json::Value;
 use tauri::{AppHandle, Webview};
 
-pub(crate) use super::execution_owner::{ChannelAdmission, ChannelInput, ChannelStart, ProductionExecution};
 pub(crate) use super::coding::CodingProviderBinding;
-pub(crate) use super::local_provider::{LocalChatRequest, local_chat, check as validate_local_chat};
 use super::execution_owner::mcp_transport_reported_success;
+pub(crate) use super::execution_owner::{
+    ChannelAdmission, ChannelInput, ChannelStart, ProductionExecution,
+};
+pub(crate) use super::local_provider::{
+    check as validate_local_chat, local_chat, LocalChatRequest,
+};
 
 pub(crate) fn register_coding_run(id: &str) -> Result<super::coding::RunRequestGuard, String> {
     super::coding::register_run_request(id)
@@ -44,7 +48,9 @@ pub(crate) fn prepare_coding_session(
 ) -> Result<Option<String>, String> {
     let action = request["action"].as_str().unwrap_or("");
     if action == "resume_turn" {
-        let id = request["session_id"].as_str().filter(|id| !id.is_empty())
+        let id = request["session_id"]
+            .as_str()
+            .filter(|id| !id.is_empty())
             .ok_or("AGENT_SESSION_REQUIRED")?;
         uuid::Uuid::parse_str(id).map_err(|_| "AGENT_SESSION_INVALID")?;
         return Ok(None);
@@ -122,40 +128,88 @@ pub(crate) fn dispatch_coding_request(
     }
     let parse_run_id = |value: &str| -> Result<uuid::Uuid, String> {
         let id = uuid::Uuid::parse_str(value).map_err(|_| "AGENT_RUN_ID_INVALID")?;
-        if id.get_version_num() != 4 || id.to_string() != value { return Err("AGENT_RUN_ID_INVALID".into()); }
+        if id.get_version_num() != 4 || id.to_string() != value {
+            return Err("AGENT_RUN_ID_INVALID".into());
+        }
         Ok(id)
     };
     match action {
-        "manual_mcp_history" => return ProductionExecution::manual_mcp_catalog(storage, root,
-            request["cursor"].as_str().filter(|value| !value.is_empty())
-                .map(|value| uuid::Uuid::parse_str(value).map_err(|_| "AGENT_RUN_ID_INVALID")).transpose()?),
-        "manual_mcp_receipt" => return ProductionExecution::read_manual_mcp(storage, root,
-            parse_run_id(request["run_id"].as_str().ok_or("AGENT_RUN_ID_REQUIRED")?)?),
+        "manual_mcp_history" => {
+            return ProductionExecution::manual_mcp_catalog(
+                storage,
+                root,
+                request["cursor"]
+                    .as_str()
+                    .filter(|value| !value.is_empty())
+                    .map(|value| uuid::Uuid::parse_str(value).map_err(|_| "AGENT_RUN_ID_INVALID"))
+                    .transpose()?,
+            )
+        }
+        "manual_mcp_receipt" => {
+            return ProductionExecution::read_manual_mcp(
+                storage,
+                root,
+                parse_run_id(request["run_id"].as_str().ok_or("AGENT_RUN_ID_REQUIRED")?)?,
+            )
+        }
         "manual_mcp_reconcile" => {
-            if request["approved"] != true { return Err("AGENT_EXPLICIT_APPROVAL_REQUIRED".into()); }
+            if request["approved"] != true {
+                return Err("AGENT_EXPLICIT_APPROVAL_REQUIRED".into());
+            }
             let id = parse_run_id(request["run_id"].as_str().ok_or("AGENT_RUN_ID_REQUIRED")?)?;
-            let revision = request["revision"].as_str().ok_or("AGENT_EFFECT_REVIEW_STALE")?.parse()
+            let revision = request["revision"]
+                .as_str()
+                .ok_or("AGENT_EFFECT_REVIEW_STALE")?
+                .parse()
                 .map_err(|_| "AGENT_EFFECT_REVIEW_STALE")?;
-            let observation = request["observation"].as_str().ok_or("AGENT_EFFECT_EVIDENCE_INVALID")?;
-            let evidence = request["evidence"].as_str().ok_or("AGENT_EFFECT_EVIDENCE_INVALID")?;
+            let observation = request["observation"]
+                .as_str()
+                .ok_or("AGENT_EFFECT_EVIDENCE_INVALID")?;
+            let evidence = request["evidence"]
+                .as_str()
+                .ok_or("AGENT_EFFECT_EVIDENCE_INVALID")?;
             return if request["resolve"] == true {
-                ProductionExecution::resolve_manual_mcp(storage, root, id, revision, observation,
-                    evidence, request["execution_ended"] == true)
+                ProductionExecution::resolve_manual_mcp(
+                    storage,
+                    root,
+                    id,
+                    revision,
+                    observation,
+                    evidence,
+                    request["execution_ended"] == true,
+                )
             } else {
-                ProductionExecution::reconcile_manual_mcp(storage, root, id, revision, observation, evidence)
+                ProductionExecution::reconcile_manual_mcp(
+                    storage,
+                    root,
+                    id,
+                    revision,
+                    observation,
+                    evidence,
+                )
             };
         }
         "manual_mcp_archive" => {
-            if request["approved"] != true { return Err("AGENT_EXPLICIT_APPROVAL_REQUIRED".into()); }
-            return ProductionExecution::archive_manual_mcp(storage, root,
+            if request["approved"] != true {
+                return Err("AGENT_EXPLICIT_APPROVAL_REQUIRED".into());
+            }
+            return ProductionExecution::archive_manual_mcp(
+                storage,
+                root,
                 parse_run_id(request["run_id"].as_str().ok_or("AGENT_RUN_ID_REQUIRED")?)?,
-                request["revision"].as_str().ok_or("AGENT_EFFECT_REVIEW_STALE")?.parse()
-                    .map_err(|_| "AGENT_EFFECT_REVIEW_STALE")?);
+                request["revision"]
+                    .as_str()
+                    .ok_or("AGENT_EFFECT_REVIEW_STALE")?
+                    .parse()
+                    .map_err(|_| "AGENT_EFFECT_REVIEW_STALE")?,
+            );
         }
         _ => {}
     }
     if ["mcp_tools", "mcp_call"].contains(&action) {
-        if request["approved"] != true { return Err("MCP_EXPLICIT_APPROVAL_REQUIRED".into()); }
+        if request["approved"] != true {
+            return Err("MCP_EXPLICIT_APPROVAL_REQUIRED".into());
+        }
         use sha2::{Digest, Sha256};
         // New UI supplies the immutable request ID before dispatch. Keep
         // old callers compatible, returning their native-generated ID.
@@ -168,18 +222,29 @@ pub(crate) fn dispatch_coding_request(
         let canonical = root.canonicalize().map_err(|_| "AGENT_ROOT_INVALID")?;
         #[cfg(any(target_os = "linux", target_os = "windows"))]
         let _workspace_owner = super::coding_checkpoint::workspace_owner(storage, &canonical)?;
-        let mut execution = ProductionExecution::begin_workspace_run(storage, "manual_mcp", &canonical, run)?;
-        let cancelled_receipt = || serde_json::json!({"run_id":run,"receipt_phase":"not_dispatched"});
+        let mut execution =
+            ProductionExecution::begin_workspace_run(storage, "manual_mcp", &canonical, run)?;
+        let cancelled_receipt =
+            || serde_json::json!({"run_id":run,"receipt_phase":"not_dispatched"});
         if cancellation.load(std::sync::atomic::Ordering::Acquire) {
             execution.cancel_manual_before_dispatch()?;
             return Ok(cancelled_receipt());
         }
-        let revision = format!("{:x}", Sha256::digest(
-            serde_json::to_vec(&request).map_err(|_| "AGENT_OPERATION_INVALID")?));
+        let revision = format!(
+            "{:x}",
+            Sha256::digest(serde_json::to_vec(&request).map_err(|_| "AGENT_OPERATION_INVALID")?)
+        );
         let arguments = serde_json::json!({"run_id":run,"review_digest":revision});
         let (claim, permit) = execution.approve_native(
-            if action == "mcp_tools" { "coding.manual_mcp_tools" } else { "coding.manual_mcp_call" },
-            arguments.clone(), browseros_agent_foundation::tool::ToolEffect::ExternalSideEffect, revision.clone())?;
+            if action == "mcp_tools" {
+                "coding.manual_mcp_tools"
+            } else {
+                "coding.manual_mcp_call"
+            },
+            arguments.clone(),
+            browseros_agent_foundation::tool::ToolEffect::ExternalSideEffect,
+            revision.clone(),
+        )?;
         execution.checkpoint_approval(claim.clone())?;
         let lease = execution.acquire_approved_native(permit, &claim, &arguments)?;
         if cancellation.load(std::sync::atomic::Ordering::Acquire) {
@@ -193,12 +258,18 @@ pub(crate) fn dispatch_coding_request(
         let result_action = action.to_owned();
         let mut attempted = false;
         let mut published = false;
-        let result = super::coding_context::execute_cancelable_with_admission(&canonical, storage, request, cancellation.clone(), |request| {
-            attempted = true;
-            execution.checkpoint_manual_mcp(&canonical, revision, request)?;
-            published = true;
-            Ok(())
-        });
+        let result = super::coding_context::execute_cancelable_with_admission(
+            &canonical,
+            storage,
+            request,
+            cancellation.clone(),
+            |request| {
+                attempted = true;
+                execution.checkpoint_manual_mcp(&canonical, revision, request)?;
+                published = true;
+                Ok(())
+            },
+        );
         if !attempted {
             drop(lease);
             execution.cancel_manual_before_dispatch()?;
@@ -206,7 +277,9 @@ pub(crate) fn dispatch_coding_request(
             // query can still recover the terminal no-dispatch evidence.
             return if cancellation.load(std::sync::atomic::Ordering::Acquire) {
                 Ok(cancelled_receipt())
-            } else { result.and_then(|_| Err("AGENT_OPERATION_NOT_DISPATCHED".into())) };
+            } else {
+                result.and_then(|_| Err("AGENT_OPERATION_NOT_DISPATCHED".into()))
+            };
         }
         if !published {
             // A failed durable write may have published bytes. Do not
@@ -214,7 +287,9 @@ pub(crate) fn dispatch_coding_request(
             drop(lease);
             return result.and_then(|_| Err("AGENT_RUN_RECEIPT_INVALID".into()));
         }
-        let reported_success = result.as_ref().is_ok_and(|value| mcp_transport_reported_success(&result_action, value));
+        let reported_success = result
+            .as_ref()
+            .is_ok_and(|value| mcp_transport_reported_success(&result_action, value));
         execution.record_manual_mcp_return(&result, reported_success)?;
         drop(lease);
         if reported_success {
@@ -224,7 +299,11 @@ pub(crate) fn dispatch_coding_request(
         }
         return result.map(|mut value| {
             value["run_id"] = serde_json::json!(run);
-            value["receipt_phase"] = serde_json::json!(if reported_success { "completed" } else { "operation_unknown" });
+            value["receipt_phase"] = serde_json::json!(if reported_success {
+                "completed"
+            } else {
+                "operation_unknown"
+            });
             value
         });
     }
@@ -239,25 +318,40 @@ pub(crate) fn dispatch_coding_request(
     {
         return super::coding_context::execute(root, storage, request);
     }
-    super::coding::execute_with_admission_adapter(root, storage, request, binding, provider, |kind, input, approved, cancel, admit| {
-        match kind {
-            "command" => crate::bridge::run_command_for_coding(app, webview, input, approved, cancel, || admit()),
+    super::coding::execute_with_admission_adapter(
+        root,
+        storage,
+        request,
+        binding,
+        provider,
+        |kind, input, approved, cancel, admit| match kind {
+            "command" => {
+                crate::bridge::run_command_for_coding(app, webview, input, approved, cancel, || {
+                    admit()
+                })
+            }
             "mcp" => {
-                let response = super::coding_context::execute_cancelable_with_admission(root, storage, serde_json::json!({
-                    "action":"mcp_call", "approved":true,
-                    "server_id":input["server_id"], "tool":input["tool"], "arguments":input["arguments"],
-                    "review_revision":approved["review_revision"],
-                    "approved_credential_refs":approved["approved_credential_refs"],
-                    "approved_environment_names":approved["approved_environment_names"]
-                }), cancel.clone(), |_| admit())?;
+                let response = super::coding_context::execute_cancelable_with_admission(
+                    root,
+                    storage,
+                    serde_json::json!({
+                        "action":"mcp_call", "approved":true,
+                        "server_id":input["server_id"], "tool":input["tool"], "arguments":input["arguments"],
+                        "review_revision":approved["review_revision"],
+                        "approved_credential_refs":approved["approved_credential_refs"],
+                        "approved_environment_names":approved["approved_environment_names"]
+                    }),
+                    cancel.clone(),
+                    |_| admit(),
+                )?;
                 Ok(serde_json::json!({
                     "status":if mcp_transport_reported_success("mcp_call", &response) { "succeeded" } else { "unknown" },
                     "result":response["result"]
                 }))
             }
             _ => Err("AGENT_OPERATION_INVALID".into()),
-        }
-    })
+        },
+    )
 }
 
 pub(crate) fn coding_cancelled(root: &std::path::Path, session_id: &str) -> bool {
@@ -284,9 +378,13 @@ mod coding_bootstrap_scope_tests {
         assert_eq!(request["session_id"], session_id);
         let saved_path = storage.join("coding-sessions").join(format!("{id}.json"));
         assert!(saved_path.exists());
-        let saved = super::super::coding::execute(&root, &storage,
+        let saved = super::super::coding::execute(
+            &root,
+            &storage,
             serde_json::json!({"action":"session","session_id":session_id}),
-            |_, _| Err("AGENT_BOOTSTRAP_PROVIDER_DENIED".into())).unwrap();
+            |_, _| Err("AGENT_BOOTSTRAP_PROVIDER_DENIED".into()),
+        )
+        .unwrap();
         assert_eq!(saved["session_id"], session_id);
         assert_eq!(saved["status"], "ready");
 
@@ -411,14 +509,28 @@ mod mcp_transport_tests {
 
     #[test]
     fn method_result_and_error_flag_are_required_for_transport_success() {
-        assert!(mcp_transport_reported_success("mcp_call", &json!({"result":{"content":[]}})));
-        assert!(mcp_transport_reported_success("mcp_tools", &json!({"result":{"tools":[],"isError":false}})));
-        for value in [json!({}), json!({"result":null}), json!({"result":{}}),
+        assert!(mcp_transport_reported_success(
+            "mcp_call",
+            &json!({"result":{"content":[]}})
+        ));
+        assert!(mcp_transport_reported_success(
+            "mcp_tools",
+            &json!({"result":{"tools":[],"isError":false}})
+        ));
+        for value in [
+            json!({}),
+            json!({"result":null}),
+            json!({"result":{}}),
             json!({"result":{"content":[],"isError":true}}),
             json!({"result":{"content":[],"isError":"false"}}),
-            json!({"result":{"tools":[]}}), json!({"result":{"content":"invalid"}})] {
+            json!({"result":{"tools":[]}}),
+            json!({"result":{"content":"invalid"}}),
+        ] {
             assert!(!mcp_transport_reported_success("mcp_call", &value));
         }
-        assert!(!mcp_transport_reported_success("mcp_tools", &json!({"result":{"content":[]}})));
+        assert!(!mcp_transport_reported_success(
+            "mcp_tools",
+            &json!({"result":{"content":[]}})
+        ));
     }
 }

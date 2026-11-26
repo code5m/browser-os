@@ -82,8 +82,14 @@ fn append_bounded(path: &Path, event: &Value) {
 // Truncated reads are explicitly unavailable rather than partial PID lists.
 fn read_proc_bounded(path: impl AsRef<Path>, limit: usize) -> Option<String> {
     let mut bytes = Vec::new();
-    fs::File::open(path).ok()?.take(limit as u64 + 1).read_to_end(&mut bytes).ok()?;
-    if bytes.len() > limit { return None; }
+    fs::File::open(path)
+        .ok()?
+        .take(limit as u64 + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if bytes.len() > limit {
+        return None;
+    }
     String::from_utf8(bytes).ok()
 }
 
@@ -148,7 +154,8 @@ fn children_snapshot() -> Vec<Value> {
                 return result;
             }
             if token.parse::<u32>().ok().filter(|pid| *pid > 0).is_none()
-                || !seen.insert(token.to_owned()) {
+                || !seen.insert(token.to_owned())
+            {
                 continue;
             }
             let status = read_status(&format!("/proc/{token}/status"));
@@ -361,7 +368,8 @@ mod tests {
     use super::*;
     #[test]
     fn proc_metadata_reader_rejects_truncated_records() {
-        let path = std::env::temp_dir().join(format!("browseros-diag-read-{}", uuid::Uuid::new_v4()));
+        let path =
+            std::env::temp_dir().join(format!("browseros-diag-read-{}", uuid::Uuid::new_v4()));
         fs::write(&path, b"123 456").unwrap();
         assert_eq!(read_proc_bounded(&path, 7).as_deref(), Some("123 456"));
         assert!(read_proc_bounded(&path, 6).is_none());
