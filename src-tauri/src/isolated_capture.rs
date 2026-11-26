@@ -171,6 +171,154 @@ fn worker_root() -> Result<PathBuf, String> {
     safe_paths::ensure_private_directory(&root).map_err(|_| "CAPTURE_TEMP_PRIVATE_FAILED")?;
     Ok(root)
 }
+// Vertical bands cover every CSS pixel exactly once. The existing full
+// document limits remain in force; a band has an independent 1M-pixel
+// limit, and the final CPU assembly remains bounded inside the Worker.
+#[cfg(any(target_os = "windows", test))]
+#[derive(Debug, PartialEq, Eq)]
+struct BandPlan { x: i32, y: i32, width: i32, height: i32, rows: i32 }
+#[cfg(any(target_os = "windows", test))]
+impl BandPlan {
+    fn from_metrics(metrics: &serde_json::Value) -> Result<Self, String> {
+        let field = |name: &str| -> Result<i32, String> {
+            let n = metrics["clip"][name].as_f64().ok_or("CAPTURE_METRICS_INVALID")?;
+            // Reject fractional clips rather than create a rounded seam or
+            // silently rescale a high-DPI band.
+            if !n.is_finite() || n.fract() != 0.0 || n.abs() > 16_384.0 {
+                return Err("CAPTURE_BAND_COORDINATES_UNSUPPORTED".into());
+            }
+            Ok(n as i32)
+        };
+        let (x, y, width, height) = (field("x")?, field("y")?, field("width")?, field("height")?);
+        if width <= 0 || height <= 0 || i64::from(width) * i64::from(height) > 16_000_000 {
+            return Err("CAPTURE_DIMENSION_LIMIT".into());
+        }
+        let rows = (1_000_000 / width).min(1024);
+        Ok(Self { x, y, width, height, rows })
+    }
+    fn bands(&self) -> impl Iterator<Item = [i32; 4]> + '_ {
+        (0..self.height).step_by(self.rows as usize).map(move |offset|
+            [self.x, self.y + offset, self.width, self.rows.min(self.height - offset)])
+    }
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn rgba_band(bytes: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
+    if width == 0 || height == 0 || u64::from(width) * u64::from(height) > 1_000_000
+        || bytes.len() > 6 * 1024 * 1024 {
+        return Err("CAPTURE_BAND_LIMIT".into());
+    }
+    checked_png_header(bytes)?;
+    if !bytes.ends_with(b"\0\0\0\0IEND\xaeB\x60\x82") {
+        return Err("CAPTURE_INVALID_PNG".into());
+    }
+    let mut limits = png::Limits::default();
+    limits.bytes = 16 * 1024 * 1024;
+    let mut decoder = png::Decoder::new_with_limits(std::io::Cursor::new(bytes), limits);
+    decoder.set_ignore_text_chunk(true);
+    decoder.set_ignore_iccp_chunk(true);
+    decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
+    let mut reader = decoder.read_info().map_err(|_| "CAPTURE_INVALID_PNG")?;
+    let info = reader.info();
+    if info.width != width || info.height != height || info.animation_control.is_some() {
+        return Err("CAPTURE_BAND_SCALE_OR_SIZE_CHANGED".into());
+    }
+    let pixels = width as usize * height as usize;
+    let size = reader.output_buffer_size().filter(|size| *size <= pixels * 4)
+        .ok_or("CAPTURE_BAND_LIMIT")?;
+    let mut decoded = Vec::new();
+    decoded.try_reserve_exact(size).map_err(|_| "CAPTURE_ALLOCATION_FAILED")?;
+    decoded.resize(size, 0);
+    let frame = reader.next_frame(&mut decoded).map_err(|_| "CAPTURE_INVALID_PNG")?;
+    reader.finish().map_err(|_| "CAPTURE_INVALID_PNG")?;
+    if frame.width != width || frame.height != height || frame.bit_depth != png::BitDepth::Eight {
+        return Err("CAPTURE_BAND_SCALE_OR_SIZE_CHANGED".into());
+    }
+    decoded.truncate(frame.buffer_size());
+    if frame.color_type == png::ColorType::Rgba && decoded.len() == pixels * 4 { return Ok(decoded); }
+    if frame.color_type != png::ColorType::Rgb || decoded.len() != pixels * 3 {
+        return Err("CAPTURE_BAND_COLOR_UNSUPPORTED".into());
+    }
+    let mut rgba = Vec::new();
+    rgba.try_reserve_exact(pixels * 4).map_err(|_| "CAPTURE_ALLOCATION_FAILED")?;
+    for rgb in decoded.chunks_exact(3) {
+        rgba.extend_from_slice(&[rgb[0], rgb[1], rgb[2], 255]);
+    }
+    Ok(rgba)
+}
+
+#[cfg(any(target_os = "windows", test))]
+#[derive(Default)]
+struct BoundedOutput(Vec<u8>);
+#[cfg(any(target_os = "windows", test))]
+impl std::io::Write for BoundedOutput {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if bytes.len() > MAX_BYTES - self.0.len() {
+            return Err(std::io::Error::other("CAPTURE_SIZE_LIMIT"));
+        }
+        let required = self.0.len() + bytes.len();
+        if required > self.0.capacity() {
+            let capacity = required.max(self.0.capacity().saturating_mul(2)).min(MAX_BYTES);
+            self.0.try_reserve_exact(capacity - self.0.len())
+                .map_err(|_| std::io::Error::other("CAPTURE_ALLOCATION_FAILED"))?;
+        }
+        self.0.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+}
+
+#[cfg(target_os = "windows")]
+fn capture_windows_bands(
+    manager: &TabManager, id: &String, document: &tauri_plugin_browser_tabs::CaptureDocument,
+    deadline: Instant,
+) -> Result<Vec<u8>, String> {
+    use std::io::Write;
+    let current = || manager.isolated_document_ready() && manager.is_current_capture_document(id, document);
+    let request = |band: Option<[i32; 4]>| -> Result<Vec<u8>, String> {
+        if Instant::now() >= deadline { return Err("CAPTURE_DEADLINE_EXCEEDED".into()); }
+        if !current() { return Err("CAPTURE_DOCUMENT_STALE".into()); }
+        let cancellation = CaptureCancellation::new();
+        let (tx, rx) = mpsc::sync_channel(1);
+        manager.capture_isolated_band_request(id, document.clone(), cancellation.clone(), band, move |result| {
+            let _ = tx.try_send(result);
+        }).map_err(|_| "CAPTURE_RENDER_DISPATCH_FAILED")?;
+        let bytes = match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+            Ok(result) => result?,
+            Err(_) => { cancellation.cancel(); return Err("CAPTURE_RENDER_OUTCOME_UNKNOWN".into()); }
+        };
+        if !current() { return Err("CAPTURE_DOCUMENT_STALE".into()); }
+        Ok(bytes)
+    };
+    let metrics = request(None)?;
+    let layout: serde_json::Value = serde_json::from_slice(&metrics).map_err(|_| "CAPTURE_METRICS_INVALID")?;
+    let plan = BandPlan::from_metrics(&layout)?;
+    let mut output = BoundedOutput::default();
+    {
+        let mut encoder = png::Encoder::new(&mut output, plan.width as u32, plan.height as u32);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().map_err(|_| "CAPTURE_PNG_ENCODE_FAILED")?;
+        {
+            let mut stream = writer.stream_writer().map_err(|_| "CAPTURE_PNG_ENCODE_FAILED")?;
+            for band in plan.bands() {
+                // No scrolling, DOM mutation or reloading. Reject observable
+                // layout/viewport changes; same-size visual mutations remain
+                // best effort and are not an atomic document snapshot.
+                if request(None)? != metrics { return Err("CAPTURE_LAYOUT_CHANGED".into()); }
+                let png = request(Some(band))?;
+                let rows = rgba_band(&png, band[2] as u32, band[3] as u32)?;
+                stream.write_all(&rows).map_err(|_| "CAPTURE_PNG_ENCODE_FAILED")?;
+            }
+            if request(None)? != metrics { return Err("CAPTURE_LAYOUT_CHANGED".into()); }
+            stream.finish().map_err(|_| "CAPTURE_PNG_ENCODE_FAILED")?;
+        }
+        writer.finish().map_err(|_| "CAPTURE_PNG_ENCODE_FAILED")?;
+    }
+    if !current() { return Err("CAPTURE_DOCUMENT_STALE".into()); }
+    Ok(output.0)
+}
+
 fn run_render(manager: Arc<TabManager>, root: PathBuf, url: String) -> Result<(), String> {
     manager.prepare_storage().map_err(|_| "CAPTURE_PROFILE_PREPARE_FAILED")?;
     let id = PAGE.to_string();
@@ -187,16 +335,24 @@ fn run_render(manager: Arc<TabManager>, root: PathBuf, url: String) -> Result<()
     }
     let document = manager.capture_document(&id).map_err(|_| "CAPTURE_DOCUMENT_UNAVAILABLE")?;
     if !manager.isolated_document_ready() { return Err("CAPTURE_DOCUMENT_STALE".into()); }
-    let cancellation = CaptureCancellation::new();
-    let (tx, rx) = mpsc::sync_channel(1);
-    manager.capture_bound_document(&id, document.clone(), cancellation.clone(), move |result| {
-        let _ = tx.try_send(result);
-    }).map_err(|_| "CAPTURE_RENDER_DISPATCH_FAILED")?;
-    let bytes = match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
-        Ok(result) => result?,
-        Err(_) => {
-            cancellation.cancel();
-            return Err("CAPTURE_RENDER_OUTCOME_UNKNOWN".into());
+    #[cfg(target_os = "windows")]
+    let bytes = capture_windows_bands(&manager, &id, &document, deadline)?;
+    // WebKitGTK exposes a whole-document snapshot, not a native CSS clip.
+    // Keep its explicit independent process budget; never pretend a cropped
+    // full raster is tiled rendering or silently change scroll semantics.
+    #[cfg(target_os = "linux")]
+    let bytes = {
+        let cancellation = CaptureCancellation::new();
+        let (tx, rx) = mpsc::sync_channel(1);
+        manager.capture_bound_document(&id, document.clone(), cancellation.clone(), move |result| {
+            let _ = tx.try_send(result);
+        }).map_err(|_| "CAPTURE_RENDER_DISPATCH_FAILED")?;
+        match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+            Ok(result) => result?,
+            Err(_) => {
+                cancellation.cancel();
+                return Err("CAPTURE_RENDER_OUTCOME_UNKNOWN".into());
+            }
         }
     };
     if !manager.isolated_document_ready() || !manager.is_current_capture_document(&id, &document) {
@@ -298,6 +454,46 @@ mod tests {
         let idat = bytes.windows(4).position(|chunk| chunk == b"IDAT").unwrap();
         bytes[idat + 4] ^= 1;
         assert!(checked_png(&bytes).is_err());
+    }
+
+    #[test]
+    fn bands_cover_exact_rows_without_gaps_or_overlaps() {
+        let plan = BandPlan::from_metrics(&serde_json::json!({
+            "clip":{"x":-5,"y":7,"width":1200,"height":4000}
+        })).unwrap();
+        let mut y = 7;
+        for [x, top, width, height] in plan.bands() {
+            assert_eq!((x, top, width), (-5, y, 1200));
+            assert!(width * height <= 1_000_000);
+            y += height;
+        }
+        assert_eq!(y, 4007);
+        assert!(BandPlan::from_metrics(&serde_json::json!({
+            "clip":{"x":0,"y":0.5,"width":1200,"height":4000}
+        })).is_err());
+        assert!(BandPlan::from_metrics(&serde_json::json!({
+            "clip":{"x":0,"y":0,"width":16000,"height":16000}
+        })).is_err());
+    }
+
+    #[test]
+    fn band_decode_rejects_scale_changes_and_preserves_rgb() {
+        let mut bytes = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut bytes, 2, 1);
+            encoder.set_color(png::ColorType::Rgb);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder.write_header().unwrap();
+            writer.write_image_data(&[1,2,3,4,5,6]).unwrap();
+            writer.finish().unwrap();
+        }
+        assert_eq!(rgba_band(&bytes, 2, 1).unwrap(), vec![1,2,3,255,4,5,6,255]);
+        assert!(rgba_band(&bytes, 1, 1).is_err());
+        assert!(rgba_band(&bytes[..bytes.len()-1], 2, 1).is_err());
+        use std::io::Write;
+        let mut output = BoundedOutput(vec![0; MAX_BYTES-1]);
+        assert!(output.write_all(&[1,2]).is_err());
+        assert_eq!(output.0.len(), MAX_BYTES-1);
     }
 
     #[test]

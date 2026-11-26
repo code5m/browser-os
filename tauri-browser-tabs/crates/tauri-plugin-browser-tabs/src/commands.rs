@@ -1704,6 +1704,131 @@ impl TabManager {
         Ok(())
     }
 
+    /// Native host-only metrics or one bounded CDP band in the fresh
+    /// isolated renderer. Never registered as a Tauri/remote command.
+    /// The live-tab capture contract and GTK implementation are unchanged.
+    #[cfg(target_os = "windows")]
+    pub fn capture_isolated_band_request(
+        &self, id: &TabId, document: CaptureDocument,
+        cancellation: CaptureCancellation, band: Option<[i32; 4]>,
+        callback: impl FnOnce(std::result::Result<Vec<u8>, String>) + Send + 'static,
+    ) -> Result<()> {
+        if self.isolated_profile.is_none() || !self.isolated_document_ready() {
+            callback(Err("CAPTURE_ISOLATED_DOCUMENT_REQUIRED".into()));
+            return Ok(());
+        }
+        let (method, params) = match band {
+            None => ("Page.getLayoutMetrics", serde_json::json!({})),
+            Some([x, y, width, height]) => {
+                if x.abs_diff(0) > 16_384 || y.abs_diff(0) > 32_768
+                    || !(1..=16_384).contains(&width) || !(1..=1024).contains(&height)
+                    || i64::from(width) * i64::from(height) > 1_000_000 {
+                    callback(Err("CAPTURE_BAND_LIMIT".into()));
+                    return Ok(());
+                }
+                ("Page.captureScreenshot", serde_json::json!({
+                    "format":"png", "captureBeyondViewport":true, "fromSurface":true,
+                    "clip":{"x":x,"y":y,"width":width,"height":height,"scale":1}
+                }))
+            }
+        };
+        let Ok((_operation, tab)) = self.get_tab(id, TabAccessKind::Operation) else {
+            callback(Err("CAPTURE_INSTANCE_STALE".into()));
+            return Ok(());
+        };
+        if !std::sync::Weak::ptr_eq(&document.instance.0, &Arc::downgrade(&tab))
+            || !document.observed_generation_is_current() {
+            callback(Err("CAPTURE_DOCUMENT_STALE".into()));
+            return Ok(());
+        }
+        let Some(permit) = CaptureDispatchPermit::acquire() else {
+            callback(Err("CAPTURE_NATIVE_DISPATCH_BUSY".into()));
+            return Ok(());
+        };
+        let app = self.app.clone();
+        let id = id.clone();
+        let webview = tab.webview.clone();
+        webview.with_webview(move |native| {
+            use webview2_com::CallDevToolsProtocolMethodCompletedHandler;
+            use windows::core::PCWSTR;
+            if !cancellation.enter_native() || !document.observed_generation_is_current()
+                || !app.try_state::<TabManagerState>().is_some_and(|manager|
+                    manager.isolated_document_ready() && manager.is_current_capture_document(&id, &document))
+            {
+                callback(Err("CAPTURE_CANCELLED_OR_STALE".into()));
+                return;
+            }
+            let core = match unsafe { native.controller().CoreWebView2() } {
+                Ok(core) => core,
+                Err(_) => { callback(Err("CAPTURE_ENGINE_UNAVAILABLE".into())); return; }
+            };
+            let pending = Arc::new(parking_lot::Mutex::new(Some(callback)));
+            let reply = pending.clone();
+            let image = band.is_some();
+            let completion = CallDevToolsProtocolMethodCompletedHandler::create(Box::new(
+                move |status, json| {
+                    if cancellation.is_cancelled() || !document.observed_generation_is_current() {
+                        complete_capture(&reply, Err("CAPTURE_CANCELLED_OR_STALE".into()));
+                        return Ok(());
+                    }
+                    if status.is_err() {
+                        complete_capture(&reply, Err("CAPTURE_ENGINE_FAILED".into()));
+                        return Ok(());
+                    }
+                    // One band only; never accept a whole-document CDP reply
+                    // under the old, much larger response budget.
+                    let limit = if image { 8 * 1024 * 1024 } else { 64 * 1024 };
+                    if json.len() > limit {
+                        complete_capture(&reply, Err("CAPTURE_SIZE_LIMIT".into()));
+                        return Ok(());
+                    }
+                    let worker = std::thread::Builder::new().name("browseros-isolated-band-decode".into())
+                        .spawn(move || {
+                            let _permit = permit;
+                            if cancellation.is_cancelled() || !document.observed_generation_is_current() {
+                                return Err("CAPTURE_CANCELLED_OR_STALE".into());
+                            }
+                            if image {
+                                decode_capture_png(&json, || cancellation.is_cancelled()
+                                    || !document.observed_generation_is_current())
+                            } else {
+                                let clip = capture_clip_from_metrics(&json)?;
+                                let metrics: serde_json::Value = serde_json::from_str(&json)
+                                    .map_err(|_| "CAPTURE_METRICS_INVALID".to_string())?;
+                                // Preserve both coordinate spaces and the
+                                // viewport fingerprint for each remeasurement.
+                                serde_json::to_vec(&serde_json::json!({
+                                    "clip":clip["clip"],
+                                    "contentSize":metrics["contentSize"],
+                                    "cssLayoutViewport":metrics["cssLayoutViewport"],
+                                    "cssVisualViewport":metrics["cssVisualViewport"]
+                                })).map_err(|_| "CAPTURE_METRICS_INVALID".into())
+                            }
+                        });
+                    match worker {
+                        Ok(worker) => {
+                            tauri::async_runtime::spawn_blocking(move || {
+                                let result = worker.join()
+                                    .unwrap_or_else(|_| Err("CAPTURE_WORKER_FAILED".into()));
+                                complete_capture(&reply, result);
+                            });
+                        }
+                        Err(_) => complete_capture(&reply, Err("CAPTURE_WORKER_FAILED".into())),
+                    }
+                    Ok(())
+                },
+            ));
+            let method: Vec<u16> = method.encode_utf16().chain(std::iter::once(0)).collect();
+            let params: Vec<u16> = params.to_string().encode_utf16().chain(std::iter::once(0)).collect();
+            if unsafe { core.CallDevToolsProtocolMethod(
+                PCWSTR(method.as_ptr()), PCWSTR(params.as_ptr()), &completion,
+            ) }.is_err() {
+                complete_capture(&pending, Err("CAPTURE_DISPATCH_FAILED".into()));
+            }
+        })?;
+        Ok(())
+    }
+
     /// Native return channel; never grants the remote document an IPC permission.
     #[allow(deprecated)] // Supports WebKitGTK 2.22 as well as 2.40+.
     pub fn eval_result(
