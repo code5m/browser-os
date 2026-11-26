@@ -119,7 +119,20 @@ fn servers(root: &Path, storage: &Path) -> Vec<(String, String, PathBuf, Value)>
     }
     let mut out = vec![];
     for source in sources {
-        if let Ok(text) = read(&source) {
+        // Native user configuration can pin an authority. Use the bounded
+        // no-link file read rather than a check followed by an ordinary open.
+        let content = if source == storage.join("coding-mcp.json") {
+            crate::capabilities::workspace::safe_paths::read_regular(
+                &source,
+                &[storage.to_path_buf()],
+                LIMIT as usize,
+            )
+            .map_err(|_| "MCP_CONFIG_READ_DENIED".to_owned())
+            .and_then(|bytes| String::from_utf8(bytes).map_err(|_| "MCP_CONFIG_NOT_TEXT".to_owned()))
+        } else {
+            read(&source)
+        };
+        if let Ok(text) = content {
             if let Ok(config) = serde_json::from_str::<Value>(&text) {
                 let servers = config
                     .get("mcpServers")
