@@ -102,6 +102,35 @@ fn select(app: &AppHandle, id: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Only explicitly enabled, idle pristine blank pages can be reclaimed.
+/// Retain the logical tab and same listener generation across confirmed native
+/// retirement. A failed retirement is not a successful hibernation receipt.
+pub(super) fn hibernate_blank(app: &AppHandle, id: &str, idle_window: std::time::Duration) -> bool {
+    let Some(index) = route(id) else { return false; };
+    let Ok(_owner) = super::tab_mutation::reserve_internal() else { return false; };
+    let Ok(_transition) = super::tab_runtime::reserve_tab_transition(id) else { return false; };
+    let state = app.state::<AppState>();
+    if !state.hibernation_enabled.load(Ordering::Acquire)
+        || state.shutdown_requested.load(Ordering::Acquire)
+        || state.active_tab.lock().unwrap().as_deref() == Some(id)
+        || !state.tab_idle_since.lock().unwrap().get(id).is_some_and(|since| since.elapsed() >= idle_window)
+        || state.hibernated_tabs.lock().unwrap().contains(id)
+        || !state.tabs.lock().unwrap().get(id).is_some_and(|tab| tab.url == "about:blank")
+    {
+        return false;
+    }
+    if !matches!(state.grid_manager.hibernate_blank_tab_renderer(index, idle_window), Ok(true)) {
+        return false;
+    }
+    state.child_layouts.lock().unwrap().remove(id);
+    state.layout_revisions.lock().unwrap().remove(id);
+    state.last_position_at.lock().unwrap().remove(id);
+    state.tab_idle_since.lock().unwrap().remove(id);
+    state.hibernated_scroll.lock().unwrap().remove(id);
+    state.hibernated_tabs.lock().unwrap().insert(id.to_owned());
+    true
+}
+
 /// An explicit activation may restore a crashed tab from its last URL after
 /// original native retirement. It never silently reloads a healthy document.
 pub(super) fn activate(app: &AppHandle, id: &str) -> Result<(), String> {
@@ -111,8 +140,10 @@ pub(super) fn activate(app: &AppHandle, id: &str) -> Result<(), String> {
         let url = state.tabs.lock().unwrap().get(id).map(|tab| tab.url.clone())
             .ok_or("TAB_NOT_FOUND")?;
         state.grid_manager.start_tab_renderer(index, &url)?;
+        state.hibernated_tabs.lock().unwrap().remove(id);
     } else {
         state.grid_manager.request(index, GridCmd::Ping, 3000)?;
+        state.hibernated_tabs.lock().unwrap().remove(id);
     }
     // The normal frontend position command supplies the new active rectangle.
     select(app, id)

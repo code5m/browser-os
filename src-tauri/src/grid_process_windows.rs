@@ -41,6 +41,10 @@ pub struct ChildComms {
     spawn_epoch: AtomicU64,
     ready_generation: AtomicU64,
     connected: AtomicBool,
+    // One generation's uncertain or page-affecting command permanently
+    // disqualifies automatic pristine-blank reclaim.
+    blank_reclaiming: AtomicBool,
+    blank_reclaim_blocked: AtomicBool,
     closing: AtomicBool,
     cancellation: Mutex<Option<UnixStream>>,
     listener: Mutex<Option<Arc<UnixListener>>>,
@@ -58,6 +62,8 @@ impl ChildComms {
             spawn_epoch: AtomicU64::new(0),
             ready_generation: AtomicU64::new(0),
             connected: AtomicBool::new(false),
+            blank_reclaiming: AtomicBool::new(false),
+            blank_reclaim_blocked: AtomicBool::new(false),
             closing: AtomicBool::new(false),
             cancellation: Mutex::new(None),
             listener: Mutex::new(None),
@@ -71,6 +77,8 @@ impl ChildComms {
     fn prepare_spawn(&self) -> Result<(), String> {
         let mut writer = self.writer.lock().unwrap();
         let _owner = self.owner_gate.lock().unwrap();
+        self.blank_reclaiming.store(false, Ordering::SeqCst);
+        self.blank_reclaim_blocked.store(false, Ordering::SeqCst);
         self.expected_pid.store(0, Ordering::SeqCst);
         self.ready_generation.store(0, Ordering::SeqCst);
         self.connected.store(false, Ordering::SeqCst);
@@ -86,6 +94,22 @@ impl ChildComms {
             .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_add(1))
             .map_err(|_| "GRID_SPAWN_EPOCH_EXHAUSTED".to_string())?;
         Ok(())
+    }
+
+    fn try_claim_blank_reclaim(self: &Arc<Self>, generation: u64) -> Option<BlankReclaimGuard> {
+        // The writer excludes a send that passed its admission check but has
+        // not yet entered the pipe. Never wait on a potentially stalled pipe.
+        let _writer = self.writer.try_lock().ok()?;
+        let _owner = self.owner_gate.try_lock().ok()?;
+        if !self.is_current(generation)
+            || self.blank_reclaim_blocked.load(Ordering::SeqCst)
+            || self.blank_reclaiming.load(Ordering::SeqCst)
+            || !self.pending.try_lock().ok()?.is_empty()
+        {
+            return None;
+        }
+        self.blank_reclaiming.store(true, Ordering::SeqCst);
+        Some(BlankReclaimGuard { comms: Arc::clone(self), generation })
     }
 
     fn publish_owner(&self, pid: u32) {
@@ -271,6 +295,19 @@ fn grid_child_is_hibernatable(
         && !blur_hidden
         && !focused
         && hidden_since.is_some_and(|since| now.duration_since(since) >= idle_for)
+}
+
+struct BlankReclaimGuard {
+    comms: Arc<ChildComms>,
+    generation: u64,
+}
+impl Drop for BlankReclaimGuard {
+    fn drop(&mut self) {
+        let _owner = self.comms.owner_gate.lock().unwrap();
+        if self.comms.generation.load(Ordering::SeqCst) == self.generation {
+            self.comms.blank_reclaiming.store(false, Ordering::SeqCst);
+        }
+    }
 }
 
 pub struct GridChildHandle {
@@ -746,6 +783,66 @@ impl GridProcessManager {
         )
     }
 
+    /// Background reclaim is intentionally limited to pristine blank ordinary
+    /// pages. The caller owns the Browser mutation and tab-transition guards.
+    pub(crate) fn hibernate_blank_tab_renderer(&self, index: u32, idle_for: std::time::Duration)
+        -> Result<bool, String>
+    {
+        if !crate::grid_ipc::is_tab_renderer(index) {
+            return Err("TAB_RENDERER_ROUTE_INVALID".into());
+        }
+        let _operation = self.lifecycle.enter()?;
+        let Ok(_visibility) = self.visibility_dispatch.try_lock() else { return Ok(false); };
+        let app = self.app().ok_or("TAB_RENDERER_HOST_UNAVAILABLE")?;
+        let state = app.state::<crate::bridge::AppState>();
+        let id = crate::grid_ipc::renderer_label(index);
+        let eligible = |child: &GridChildHandle| {
+            child.document_ready
+                && child.last_url.as_deref() == Some("about:blank")
+                && !child.comms.blank_reclaim_blocked.load(Ordering::SeqCst)
+                && grid_child_is_hibernatable(child.hidden, child.blur_hidden, child.focused,
+                    child.hidden_since, std::time::Instant::now(), idle_for)
+                && state.hibernation_enabled.load(Ordering::Acquire)
+                && !state.shutdown_requested.load(Ordering::Acquire)
+                && state.active_tab.lock().unwrap().as_deref() != Some(id.as_str())
+        };
+        let (comms, binding) = {
+            let children = self.children.lock().unwrap();
+            let Some(child) = children.get(&index) else { return Ok(false); };
+            if !eligible(child) { return Ok(false); }
+            let owner = child.comms.owner_snapshot()?;
+            let generation = child.comms.generation.load(Ordering::SeqCst);
+            (Arc::clone(&child.comms), crate::grid_ipc::RendererBinding {
+                index, owner, generation, navigation_revision: child.navigation_revision,
+            })
+        };
+        let Some(_claim) = comms.try_claim_blank_reclaim(binding.generation) else { return Ok(false); };
+        // A hidden intent alone is insufficient. Confirm native hide before
+        // probing; any layout or page mutation is excluded until retirement.
+        self.renderer_request_data(binding, GridCmd::HideWindow { id: id.clone() }, 1500)?;
+        let probe = self.renderer_request_data(binding, GridCmd::HibernationProbe { id: id.clone() }, 1500)?;
+        if !probe.as_deref().is_some_and(grid_hibernation_probe_safe) { return Ok(false); }
+        self.ensure_cleanup()?;
+        let Ok(_gate) = self.lifecycle_lock.try_lock() else { return Ok(false); };
+        self.lifecycle.check()?;
+        {
+            let mut children = self.children.lock().unwrap();
+            let Some(child) = children.get(&index) else { return Ok(false); };
+            if !Arc::ptr_eq(&child.comms, &comms) || !comms.is_current(binding.generation)
+                || child.navigation_revision != binding.navigation_revision || !eligible(child)
+                || !state.tabs.lock().unwrap().get(&id).is_some_and(|tab| tab.url == "about:blank")
+            {
+                return Ok(false);
+            }
+            let owner = children.remove(&index).ok_or("TAB_RENDERER_RECOVERY_STALE")?;
+            self.lifecycle.retire(index, owner);
+        }
+        self.lifecycle.wait_route_retired_until(
+            index, std::time::Instant::now() + std::time::Duration::from_secs(3),
+        )?;
+        Ok(true)
+    }
+
     pub(crate) fn start_tab_renderer(&self, index: u32, url: &str) -> Result<(), String> {
         if !crate::grid_ipc::is_tab_renderer(index) {
             return Err("TAB_RENDERER_ROUTE_INVALID".into());
@@ -1093,6 +1190,12 @@ impl GridProcessManager {
             if !comms.is_current(generation) {
                 return Err("GRID_CONNECTION_GENERATION_CHANGED".into());
             }
+            if comms.blank_reclaiming.load(Ordering::SeqCst) && !cmd.allowed_during_blank_reclaim() {
+                return Err("TAB_RENDERER_RECLAIM_IN_PROGRESS".into());
+            }
+            if !cmd.preserves_pristine_blank() {
+                comms.blank_reclaim_blocked.store(true, Ordering::SeqCst);
+            }
             // Allocate in writer order, not caller/thread order. The worker
             // rejects replays and the counter must never wrap.
             seq = crate::grid_ipc::next_request_sequence(&comms.seq)?;
@@ -1119,6 +1222,7 @@ impl GridProcessManager {
             result
         };
         if let Err(e) = write_res {
+            comms.blank_reclaim_blocked.store(true, Ordering::SeqCst);
             comms.pending.lock().unwrap().remove(&seq);
             comms.detach_if_current(generation);
             self.terminate_child_job(index, &comms, generation, peer_pid);
@@ -1127,19 +1231,22 @@ impl GridProcessManager {
         let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
         loop {
             if let Err(error) = self.lifecycle.check() {
-                comms.pending.lock().unwrap().remove(&seq);
+                comms.blank_reclaim_blocked.store(true, Ordering::SeqCst);
+            comms.pending.lock().unwrap().remove(&seq);
                 return Err(format!("GRID_REQUEST_OUTCOME_UNKNOWN: {error}"));
             }
             let remaining = deadline.saturating_duration_since(std::time::Instant::now());
             if remaining.is_zero() {
-                comms.pending.lock().unwrap().remove(&seq);
+                comms.blank_reclaim_blocked.store(true, Ordering::SeqCst);
+            comms.pending.lock().unwrap().remove(&seq);
                 return Err("GRID_REQUEST_OUTCOME_UNKNOWN: 等待子进程响应超时".into());
             }
             match rx.recv_timeout(remaining.min(std::time::Duration::from_millis(50))) {
                 Ok(result) => return result,
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    comms.pending.lock().unwrap().remove(&seq);
+                    comms.blank_reclaim_blocked.store(true, Ordering::SeqCst);
+            comms.pending.lock().unwrap().remove(&seq);
                     return Err("GRID_REQUEST_OUTCOME_UNKNOWN: 子进程响应通道已关闭".into());
                 }
             }
@@ -1165,8 +1272,13 @@ impl GridProcessManager {
         };
         let generation = comms.generation.load(Ordering::SeqCst);
         let mut guard = comms.writer.lock().unwrap();
-        if self.lifecycle.is_stopping() || !comms.is_current(generation) {
+        if self.lifecycle.is_stopping() || !comms.is_current(generation)
+            || comms.blank_reclaiming.load(Ordering::SeqCst)
+        {
             return;
+        }
+        if !cmd.preserves_pristine_blank() {
+            comms.blank_reclaim_blocked.store(true, Ordering::SeqCst);
         }
         let peer_pid = comms.expected_pid.load(Ordering::SeqCst);
         let Ok(seq) = crate::grid_ipc::next_request_sequence(&comms.seq) else {
@@ -1184,6 +1296,7 @@ impl GridProcessManager {
             false
         };
         if failed {
+            comms.blank_reclaim_blocked.store(true, Ordering::SeqCst);
             comms.connected.store(false, Ordering::SeqCst);
             if let Some(control) = comms.cancellation.lock().unwrap().as_ref() {
                 let _ = control.cancel_io();
@@ -1559,6 +1672,9 @@ impl GridProcessManager {
                 let Some(revision) = child.navigation_revision.checked_add(1) else { return false; };
                 child.navigation_revision = revision;
                 child.last_url = payload["url"].as_str().map(str::to_owned);
+                if child.last_url.as_deref() != Some("about:blank") {
+                    comms.blank_reclaim_blocked.store(true, Ordering::SeqCst);
+                }
                 if crate::grid_ipc::is_tab_renderer(index) {
                     if let (Some(app), Some(url)) = (self.app(), child.last_url.as_ref()) {
                         let state = app.state::<crate::bridge::AppState>();

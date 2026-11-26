@@ -750,7 +750,11 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
                             .state::<tauri_plugin_browser_tabs::TabManagerState>()
                             .eval_result(
                                 id,
-                                include_str!("../injected/grid-hibernation-probe.js").to_string(),
+                                if grid_ipc::is_tab_renderer(index) {
+                                    include_str!("../injected/tab-hibernation-probe.js").to_string()
+                                } else {
+                                    include_str!("../injected/grid-hibernation-probe.js").to_string()
+                                },
                                 move |value| {
                                     let response = match value {
                                         Ok(data) => grid_ipc::Wire::Response {

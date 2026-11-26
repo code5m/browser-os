@@ -196,6 +196,18 @@ impl std::fmt::Debug for GridCmd {
 }
 
 impl GridCmd {
+    /// Only a newly created blank document with no subsequent page-affecting
+    /// native command can be considered for automatic ordinary-tab reclaim.
+    pub(crate) fn preserves_pristine_blank(&self) -> bool {
+        matches!(self, Self::CreateTab { url, .. } if url == "about:blank")
+            || matches!(self, Self::UpdateRect { .. } | Self::HideWindow { .. }
+                | Self::HibernationProbe { .. } | Self::Ping)
+    }
+
+    pub(crate) fn allowed_during_blank_reclaim(&self) -> bool {
+        matches!(self, Self::HideWindow { .. } | Self::HibernationProbe { .. })
+    }
+
     /// Each child owns exactly one renderer identity. A transport connection
     /// is not permission to address another WebView or create arbitrary tabs.
     pub(crate) fn targets(&self, index: u32) -> bool {
@@ -403,6 +415,19 @@ mod framing_tests {
             &serde_json::json!({"id":"tab-2","url":"about:blank"})));
         assert!(!valid_renderer_event(tab, "tab-navigated",
             &serde_json::json!({"id":"grid-2","url":"about:blank"})));
+    }
+
+    #[test]
+    fn only_pristine_blank_and_layout_commands_preserve_automatic_reclaim() {
+        let id = "tab-1".to_owned();
+        assert!(GridCmd::CreateTab { id: id.clone(), url: "about:blank".into() }.preserves_pristine_blank());
+        assert!(!GridCmd::CreateTab { id: id.clone(), url: "https://example.test".into() }.preserves_pristine_blank());
+        assert!(!GridCmd::Navigate { id: id.clone(), url: "about:blank".into() }.preserves_pristine_blank());
+        assert!(!GridCmd::Eval { id: id.clone(), js: "history.back()".into() }.preserves_pristine_blank());
+        assert!(!GridCmd::CaptureStart { id: id.clone(), ticket: "fixture".into() }.allowed_during_blank_reclaim());
+        assert!(GridCmd::HideWindow { id: id.clone() }.allowed_during_blank_reclaim());
+        assert!(GridCmd::HibernationProbe { id }.allowed_during_blank_reclaim());
+        assert!(!GridCmd::Ping.allowed_during_blank_reclaim());
     }
 
     #[test]

@@ -296,6 +296,13 @@ fn report_title_inner(
 /// webview 内已注入的 `window.ipc.postMessage` 通道（见 resources_eval.js 改造）由前端监听，
 /// 这里仅负责触发执行。插件的 Webview dispatcher 支持从扫描线程调用。
 fn scan_resources(app: &AppHandle, id: &str) -> Result<(), String> {
+    // A pristine blank isolated tab has no resource list to scan. Avoid
+    // injecting generic JavaScript into a candidate for safe blank reclaim.
+    if super::isolated_tabs::route(id).is_some()
+        && app.state::<AppState>().tabs.lock().unwrap().get(id).is_some_and(|tab| tab.url == "about:blank")
+    {
+        return Ok(());
+    }
     // 执行资源扫描脚本（脚本内部会把结果经 ipc 回传，由前端 onBrowserResources 接收）
     let js = include_str!("../../injected/resources_eval.js");
     plugin_eval(app, id, js)?;

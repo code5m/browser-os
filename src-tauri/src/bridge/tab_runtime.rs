@@ -607,6 +607,7 @@ fn resource_stats_for_owners(app: &AppHandle, owners: &[crate::grid_ipc::Rendere
     let starting = owners.iter().filter(|owner| owner.startup_reserved).count();
     let isolated_tab_start_budget = renderer_start_budget(available, starting)
         .min(crate::grid_ipc::MAX_ISOLATED_TAB_RENDERERS.saturating_sub(isolated_tabs.len()));
+    let hibernated_count = state.hibernated_tabs.lock().unwrap().len();
     ResourceStats {
         mem_total_mb: total.unwrap_or(0),
         mem_available_mb: available.unwrap_or(0),
@@ -622,7 +623,7 @@ fn resource_stats_for_owners(app: &AppHandle, owners: &[crate::grid_ipc::Rendere
         isolated_tab_start_budget,
         memory_sample_known: total.is_some() && available.is_some(),
         hibernation_enabled: state.hibernation_enabled.load(Ordering::Relaxed),
-        hibernated_count: state.hibernated_tabs.lock().unwrap().len(),
+        hibernated_count,
         hibernated_grid_count: state.grid_manager.hibernated_count(),
         grid_budget: affordable_grid_count(available.unwrap_or(0), &grid_indices, MAX_GRID),
     }
@@ -752,10 +753,10 @@ fn tab_hibernation_snapshot(app: &AppHandle, id: &str) -> Result<(f64, f64), Str
 /// not playing media, holding edited form/contenteditable data, focused in an
 /// editor, or requesting beforeunload. Only scroll coordinates are retained.
 fn hibernate_tab(app: &AppHandle, id: &str, idle_window: std::time::Duration) -> bool {
-    // Independent ordinary tabs retain their live documents; the embedded
-    // scroll-only hibernator has no authority over their native owners.
+    // The independent backend has its own strictly blank-only policy;
+    // never run the embedded scroll-only destroy path against it.
     if super::isolated_tabs::route(id).is_some() {
-        return false;
+        return super::isolated_tabs::hibernate_blank(app, id, idle_window);
     }
     let state = app.state::<AppState>();
     let expected_url = match state.tabs.lock().unwrap().get(id) {
