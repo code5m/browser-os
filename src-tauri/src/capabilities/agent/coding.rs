@@ -105,7 +105,7 @@ pub(crate) fn cancel_run_request(value: &str) -> Result<bool, String> {
     }
     Ok(true)
 }
-fn request_signal(request: &Value) -> Result<Arc<AtomicBool>, String> {
+pub(super) fn request_signal(request: &Value) -> Result<Arc<AtomicBool>, String> {
     match request["run_id"].as_str() {
         None | Some("") => Ok(Arc::new(AtomicBool::new(false))), // Rust-internal legacy callers.
         Some(value) => {

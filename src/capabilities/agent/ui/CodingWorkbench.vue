@@ -144,7 +144,7 @@ const mcpReview=ref<any>(null),mcpCredentialsApproved=ref(false),mcpReviewing=re
 let mcpReviewSequence=0;
 type McpObservation = {observation:string;evidence:string;recorded_at_ms:number;workspace_identity_bound:boolean;execution_ended_attested?:boolean};
 type ManualMcpReceipt = {id:string;phase:string;revision:string;updated_at_ms:number;tool:string|null;target:string|null;disposition:string|null;identity_bound:boolean;observations:number;can_reconcile:boolean;can_resolve?:boolean;can_archive?:boolean;archived?:boolean;request_digest?:string|null;review_revision?:string|null;response_digest?:string|null;approved_tool?:string|null;reviews?:McpObservation[];resolution?:McpObservation|null};
-const mcpRunId=ref('');
+const mcpRunId=ref(''),mcpCancelPending=ref(false);
 const mcpReceiptOpen=ref(false),mcpReceiptBusy=ref(false);
 const mcpReceipts=ref<ManualMcpReceipt[]>([]),mcpCursor=ref<string|null>(null),mcpUnavailable=ref(0);
 const mcpReceipt=ref<ManualMcpReceipt|null>(null),mcpReceiptError=ref('');
@@ -225,7 +225,8 @@ async function executeOwned(id:string,grant:Record<string,unknown>){
   try{
     const response=await call({action:'execute_operation',session_id:sessionId.value,operation_id:id,run_id:id,approved:true,...grant});
     updateSession(response);
-    notice.value=response.status==='operation_unknown'?'外部效果未知，必须核对终止与效果记录。':'原生执行回执已保存，请审核后继续。';
+    const receipt=response.operations?.find((item:any)=>item.id===id)?.execution;
+    notice.value=receipt?.phase==='not_dispatched'?'已确认派发前取消，旧审批不会重放；可继续任务。':response.status==='operation_unknown'?'外部效果未知，必须核对终止与效果记录。':'原生执行回执已保存，请审核后继续。';
   }catch(error){
     if(!(error instanceof ProjectScopeChanged)){
       sessionRecoveryRequired.value=true;
@@ -446,16 +447,34 @@ async function archiveMcpReceipt(){
   }catch(error){if(sequence===mcpReceiptSequence&&!(error instanceof ProjectScopeChanged))mcpReceiptError.value=String(error);}
   finally{if(sequence===mcpReceiptSequence)mcpReceiptBusy.value=false;}
 }
+async function cancelManualMcp(){
+  const runId=mcpRunId.value,epoch=projectEpoch;
+  if(!runId||!mcpRunning.value||mcpCancelPending.value)return;
+  mcpCancelPending.value=true;
+  try{
+    await call({action:'cancel',run_id:runId});
+    if(epoch===projectEpoch&&mcpRunId.value===runId&&mcpRunning.value)
+      notice.value='已请求取消 MCP，等待原生进程退出及回执；不能据此认定外部操作未生效。';
+  }catch(error){
+    if(!(error instanceof ProjectScopeChanged)&&epoch===projectEpoch&&mcpRunId.value===runId){
+      mcpCancelPending.value=false;notice.value='取消请求未确认，请等待或查询原 Run 回执。';
+    }
+  }
+}
 async function mcpAction(action:'mcp_tools'|'mcp_call'){
   if(mcpRunning.value||mcpReviewing.value)return;
   if(!mcpApproved.value||!mcpReview.value||mcpReview.value.action!==action||!mcpScopeApproved.value){notice.value='请先读取并批准本次完整执行范围';return;}
   const review=mcpReview.value,input=mcpRequest(action);
   if(reviewedMcpRequest.value!==JSON.stringify(input)){mcpReview.value=null;mcpApproved.value=false;notice.value='参数已变化，请重新读取执行范围';return;}
   const selectedTool=mcpTool.value,runId=createChatRequestId(),epoch=projectEpoch;
-  mcpRunId.value=runId;mcpApproved.value=false;mcpRunning.value=true;
+  mcpRunId.value=runId;mcpCancelPending.value=false;mcpApproved.value=false;mcpRunning.value=true;
   notice.value='MCP 正在执行，Run '+runId+'；失联时请查询回执，不要重复提交。';
   try{await act(async()=>{
     const result=await call({...input,run_id:runId,approved:true,review_revision:review.revision,approved_credential_refs:review.credential_refs,approved_environment_names:review.environment_names});
+    if(result.receipt_phase==='not_dispatched'){
+      notice.value='已确认 MCP 派发前取消，Run '+runId+' 不会重放。';
+      return;
+    }
     if(result.receipt_phase==='operation_unknown'){
       notice.value='MCP 外部结果未知，Run '+runId+'；请在运行回执中核对，不会自动重放。';
       return;
@@ -464,7 +483,7 @@ async function mcpAction(action:'mcp_tools'|'mcp_call'){
     output.value+='\nMCP '+action+'\n'+JSON.stringify(result.result,null,2);
     if(action==='mcp_call')context.value.push({name:'MCP '+selectedTool,text:JSON.stringify(result.result)});
     notice.value='MCP 调用完成，返回内容作为外部数据';
-  });}finally{mcpApproved.value=false;mcpCredentialsApproved.value=false;mcpReview.value=null;mcpRunning.value=false;}
+  });}finally{mcpApproved.value=false;mcpCredentialsApproved.value=false;mcpReview.value=null;mcpRunning.value=false;mcpCancelPending.value=false;}
   if(epoch===projectEpoch)await readMcpReceipt(runId);
 }
 async function send(resume=false){
@@ -581,6 +600,7 @@ onBeforeUnmount(()=>{
         <section v-if="sidebar==='mcp'" class="resource" aria-label="MCP 运行回执">
           <strong>加密运行回执及对账</strong>
           <p v-if="mcpRunId">最近请求：{{mcpRunId}}</p>
+          <button v-if="mcpRunId&&mcpRunning" :disabled="mcpCancelPending" @click="cancelManualMcp">{{mcpCancelPending?'等待取消回执':'请求取消 MCP'}}</button>
           <button :disabled="!connectedRoot||mcpRunning||mcpReceiptBusy" @click="loadMcpReceipts()">查询本项目回执</button>
           <button v-if="mcpRunId" :disabled="mcpRunning||mcpReceiptBusy" @click="readMcpReceipt(mcpRunId)">核对最近请求</button>
           <template v-if="mcpReceiptOpen">
@@ -592,7 +612,9 @@ onBeforeUnmount(()=>{
             <button v-if="mcpCursor" :disabled="mcpReceiptBusy||mcpRunning" @click="loadMcpReceipts(false)">下一页</button>
             <article v-if="mcpReceipt">
               <p>运行 {{mcpReceipt.id}} · {{mcpReceipt.phase}} · {{mcpReceipt.disposition||'未记录派发结果'}}</p>
-              <p class="hint" v-if="!mcpReceipt.identity_bound">旧记录或派发前记录缺少物理目录身份绑定，仅供辅助核对。</p>
+              <p class="hint" v-if="mcpReceipt.phase==='not_dispatched'">原生持久化记录确认尚未派发；旧 Run 不会重放。</p>
+              <p class="hint" v-else-if="mcpReceipt.disposition==='transport_returned'">仅确认本地协议调用已返回，不代表任意外部业务效果或远端任务终止。</p>
+              <p class="hint" v-if="!mcpReceipt.identity_bound">旧记录缺少物理目录身份绑定，仅供辅助核对。</p>
               <p v-if="mcpReceipt.request_digest" style="overflow-wrap:anywhere">请求摘要：{{mcpReceipt.request_digest}}</p>
               <p v-if="mcpReceipt.response_digest" style="overflow-wrap:anywhere">返回摘要：{{mcpReceipt.response_digest}}</p>
               <p v-for="(review,index) in mcpReceipt.reviews||[]" :key="index">{{review.observation}} · {{new Date(review.recorded_at_ms).toLocaleString()}}：{{review.evidence}}</p>

@@ -177,10 +177,16 @@ pub(crate) fn dispatch_coding_request(
             Some(Value::String(value)) => parse_run_id(value)?,
             _ => return Err("AGENT_RUN_ID_INVALID".into()),
         };
+        let cancellation = super::coding::request_signal(&request)?;
         let canonical = root.canonicalize().map_err(|_| "AGENT_ROOT_INVALID")?;
         #[cfg(any(target_os = "linux", target_os = "windows"))]
         let _workspace_owner = super::coding_checkpoint::workspace_owner(storage, &canonical)?;
         let mut execution = ProductionExecution::begin_workspace_run(storage, "manual_mcp", &canonical, run)?;
+        let cancelled_receipt = || serde_json::json!({"run_id":run,"receipt_phase":"not_dispatched"});
+        if cancellation.load(std::sync::atomic::Ordering::Acquire) {
+            execution.cancel_manual_before_dispatch()?;
+            return Ok(cancelled_receipt());
+        }
         let revision = format!("{:x}", Sha256::digest(
             serde_json::to_vec(&request).map_err(|_| "AGENT_OPERATION_INVALID")?));
         let arguments = serde_json::json!({"run_id":run,"review_digest":revision});
@@ -189,12 +195,17 @@ pub(crate) fn dispatch_coding_request(
             arguments.clone(), browseros_agent_foundation::tool::ToolEffect::ExternalSideEffect, revision.clone())?;
         execution.checkpoint_approval(claim.clone())?;
         let lease = execution.acquire_approved_native(permit, &claim, &arguments)?;
+        if cancellation.load(std::sync::atomic::Ordering::Acquire) {
+            drop(lease);
+            execution.cancel_manual_before_dispatch()?;
+            return Ok(cancelled_receipt());
+        }
         // The authenticated dispatch fence is the last durable write before
         // calling the adapter. A crash before this fence is distinguishable
         // from a crash after it; neither permits replay of the old Run.
         execution.checkpoint_manual_mcp(&canonical, revision, &request)?;
         let result_action = action.to_owned();
-        let result = super::coding_context::execute(&canonical, storage, request);
+        let result = super::coding_context::execute_cancelable(&canonical, storage, request, cancellation);
         drop(lease);
         let reported_success = result.as_ref().is_ok_and(|value| mcp_transport_reported_success(&result_action, value));
         execution.record_manual_mcp_return(&result, reported_success)?;

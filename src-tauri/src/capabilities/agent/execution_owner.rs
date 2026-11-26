@@ -1091,11 +1091,31 @@ impl ProductionExecution {
     pub(crate) fn tasks(&self) -> &'static TaskRegistry {
         self.tasks
     }
-    pub(crate) fn cancel(mut self) -> Result<(), String> {
+    /// A confirmed pre-dispatch cancellation is only legal while the new
+    /// authenticated manual admission has no effect intent. Once armed,
+    /// cancellation requests cannot turn uncertainty into non-application.
+    pub(crate) fn cancel_manual_before_dispatch(self) -> Result<(), String> {
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        {
+            let run = self.durable_run.as_ref().ok_or("AGENT_RUN_RECEIPT_REQUIRED")?;
+            let record = self.record()?;
+            if record.goal != "manual_mcp" || record.session_id != run.id
+                || run.manual_admission.is_none() || run.effect.is_some() {
+                return Err("AGENT_RECONCILIATION_REQUIRED".into());
+            }
+            self.cancel_with_phase("not_dispatched")
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        Err("AGENT_PRIVATE_STORAGE_UNAVAILABLE".into())
+    }
+    pub(crate) fn cancel(self) -> Result<(), String> {
+        self.cancel_with_phase("cancelled")
+    }
+    fn cancel_with_phase(mut self, phase: &str) -> Result<(), String> {
         self.tasks
             .cancel(self.id)
             .map_err(|_| "AGENT_TASK_CANCEL_FAILED")?;
-        self.checkpoint("cancelled")?;
+        self.checkpoint(phase)?;
         self.finished = true;
         self.tasks
             .retire_terminal(self.id)
@@ -1364,6 +1384,35 @@ mod tests {
         let execution = ProductionExecution::begin_durable(&storage, "manual_mcp", old, workspace, session, vec![]).unwrap();
         drop(execution);
         assert_eq!(ProductionExecution::read_manual_mcp(&storage, &root, old).unwrap()["phase"], "interrupted");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[test]
+    fn registered_manual_mcp_cancel_is_bound_to_one_run_and_retains_receipt() {
+        let root = std::env::temp_dir().join(format!("browseros-mcp-cancel-{}", Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let storage = root.join("state");
+        let run = Uuid::new_v4();
+        let unrelated = Uuid::new_v4();
+        // Cancel may arrive before the blocking worker is registered.
+        super::super::coding::cancel_run_request(&run.to_string()).unwrap();
+        let guard = super::super::coding::register_run_request(&run.to_string()).unwrap();
+        let other = super::super::coding::register_run_request(&unrelated.to_string()).unwrap();
+        let request = serde_json::json!({"run_id":run,"action":"mcp_call"});
+        let signal = super::super::coding::request_signal(&request).unwrap();
+        assert!(signal.load(std::sync::atomic::Ordering::Acquire));
+        assert!(guard.cancelled());
+        assert!(!other.cancelled());
+        let execution = ProductionExecution::begin_workspace_run(&storage, "manual_mcp", &root, run).unwrap();
+        execution.cancel_manual_before_dispatch().unwrap();
+        let receipt = ProductionExecution::read_manual_mcp(&storage, &root, run).unwrap();
+        assert_eq!(receipt["phase"], "not_dispatched");
+        assert_eq!(receipt["can_archive"], true);
+        assert_eq!(receipt["can_resolve"], false);
+        assert!(ProductionExecution::begin_workspace_run(&storage, "manual_mcp", &root, run).is_err());
+        drop(guard);
+        drop(other);
         std::fs::remove_dir_all(root).unwrap();
     }
 

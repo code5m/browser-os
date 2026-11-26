@@ -1918,11 +1918,15 @@ pub async fn coding_service(
         }
     }
     // Register before entering the blocking queue, while the run ID is already
-    // known to the main UI. A prior cancel remains attached to this exact run.
+    // known to the main UI. Coding and manual MCP share the same bounded
+    // cancellation owner. Legacy manual requests without an ID stay compatible.
     let run_guard = if matches!(request["action"].as_str(), Some("chat" | "resume_turn" | "execute_operation")) {
         Some(crate::capabilities::agent::public_api::register_coding_run(
             request["run_id"].as_str().ok_or("AGENT_RUN_ID_REQUIRED")?,
         )?)
+    } else if matches!(request["action"].as_str(), Some("mcp_tools" | "mcp_call")) {
+        request["run_id"].as_str()
+            .map(crate::capabilities::agent::public_api::register_coding_run).transpose()?
     } else {
         None
     };
