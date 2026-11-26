@@ -684,14 +684,38 @@ export const useBrowserStore = defineStore("browser", () => {
   // 仍在跑 JS 定时器/动画/视频，持续消耗 CPU/GPU。冻结=暂停媒体 + 暂停 CSS 动画
   // + requestAnimationFrame 节流至 1fps（页面脚本误以为仍在正常渲染，恢复时无缝续跑）
   // Browser only freezes ordinary tab WebViews; Grid owns grid-* processes.
-  function syncFreeze() {
-    for (const t of tabs) {
-      // An empty new tab has no site activity to throttle; generic Eval
-      // would otherwise permanently disqualify pristine-blank hibernation.
-      if (t.url === "about:blank") continue;
-      const visible = layout.mainView === "browser" && t.id === activeTabId.value;
-      bridge.evalInTab(t.id, visible ? WEBVIEW_UNFREEZE_JS : WEBVIEW_FREEZE_JS).catch(() => {});
+  let freezeRevision = 0;
+  let freezeRunning = false;
+  // Advisory throttling is coalesced, not one competing generic Eval per tab.
+  // Keep only the newest requested visibility plan and one in-flight call.
+  async function drainFreeze() {
+    if (freezeRunning) return;
+    freezeRunning = true;
+    try {
+      for (;;) {
+        const revision = freezeRevision;
+        const entries = tabs.map(tab => ({
+          tab, address: tab.url,
+          visible: layout.mainView === "browser" && tab.id === activeTabId.value,
+        }));
+        for (const entry of entries) {
+          if (revision !== freezeRevision || tabRecoveryRequired.value) break;
+          if (!tabs.some(tab => tab === entry.tab) || entry.tab.url !== entry.address ||
+              entry.address === "about:blank") continue;
+          // A rejection/unknown result is not automatically retried. A newer
+          // visibility plan is a distinct advisory observation.
+          await bridge.evalInTab(entry.tab.id,
+            entry.visible ? WEBVIEW_UNFREEZE_JS : WEBVIEW_FREEZE_JS).catch(() => {});
+        }
+        if (revision === freezeRevision || tabRecoveryRequired.value) break;
+      }
+    } finally {
+      freezeRunning = false;
     }
+  }
+  function syncFreeze() {
+    freezeRevision++;
+    void drainFreeze();
   }
 
   // ===== 子 webview 显隐同步 =====

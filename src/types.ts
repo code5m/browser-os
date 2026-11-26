@@ -390,6 +390,7 @@ export interface ResourceStats {
   grids: ProcStat[];
   isolated_tabs?: ProcStat[];
   isolated_tab_start_budget?: number;
+  isolated_tab_memory_limit_mb?: number;
   isolated_tab_mode_enabled?: boolean;
   memory_sample_known?: boolean;
   // 页签休眠开关状态

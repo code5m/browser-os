@@ -909,6 +909,10 @@ pub struct TabManager {
     lifecycle_busy: RwLock<HashMap<TabId, TabAccess>>,
     app: AppHandle<Wry>,
     host_label: String,
+    // Native-only callback installed by the independent GTK host. Remote
+    // WebView event emitters cannot reach this function pointer.
+    #[cfg(target_os = "linux")]
+    shell_shortcut_sink: RwLock<Option<Arc<dyn Fn(&str, &str) + Send + Sync>>>,
     // Native host-only alternate profile. Never selected by an IPC caller.
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     isolated_profile: Option<PathBuf>,
@@ -926,12 +930,23 @@ impl TabManager {
             lifecycle_busy: RwLock::new(HashMap::new()),
             app,
             host_label: host_label.into(),
+            #[cfg(target_os = "linux")]
+            shell_shortcut_sink: RwLock::new(None),
             #[cfg(any(target_os = "linux", target_os = "windows"))]
             isolated_profile: None,
             isolated_ready: None,
             #[cfg(any(target_os = "linux", target_os = "windows"))]
             profile: RwLock::new(None),
         }
+    }
+
+    /// Set in native application setup before creating any browser tab.
+    /// This is not a Tauri command and does not add a remote event permission.
+    #[cfg(target_os = "linux")]
+    pub fn set_native_shell_shortcut_sink(
+        &self, sink: impl Fn(&str, &str) + Send + Sync + 'static,
+    ) {
+        *self.shell_shortcut_sink.write() = Some(Arc::new(sink));
     }
 
     /// Only for the separate, fresh-profile capture host. The ordinary
@@ -1246,6 +1261,7 @@ impl TabManager {
         {
             let id_key = options.id.clone();
             let app_key = self.app.clone();
+            let native_shortcut = self.shell_shortcut_sink.read().clone();
             let _ = webview.with_webview(move |native| {
                 use gtk::prelude::*;
                 let child = native.inner();
@@ -1279,12 +1295,16 @@ impl TabManager {
                         None
                     };
                     if let Some(action) = action {
-                        let _ = app_key.emit(
-                            "browser-tabs://shell-shortcut",
-                            serde_json::json!({
-                                "id": id_key, "action": action
-                            }),
-                        );
+                        if let Some(sink) = &native_shortcut {
+                            sink(&id_key, action);
+                        } else {
+                            let _ = app_key.emit(
+                                "browser-tabs://shell-shortcut",
+                                serde_json::json!({
+                                    "id": id_key, "action": action
+                                }),
+                            );
+                        }
                         gtk::glib::Propagation::Stop
                     } else {
                         gtk::glib::Propagation::Proceed

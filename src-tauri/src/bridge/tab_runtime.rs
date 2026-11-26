@@ -313,6 +313,7 @@ pub struct ResourceStats {
     /// Live ordinary-tab renderer subtrees, excluded from main.rss_mb.
     pub isolated_tabs: Vec<ProcStat>,
     pub isolated_tab_start_budget: usize,
+    pub isolated_tab_memory_limit_mb: usize,
     pub isolated_tab_mode_enabled: bool,
     pub memory_sample_known: bool,
     /// 页签休眠开关状态
@@ -622,6 +623,7 @@ fn resource_stats_for_owners(app: &AppHandle, owners: &[crate::grid_ipc::Rendere
         grids,
         isolated_tabs,
         isolated_tab_start_budget,
+        isolated_tab_memory_limit_mb: crate::grid_ipc::TAB_RENDERER_MEMORY_LIMIT / (1024 * 1024),
         isolated_tab_mode_enabled: super::isolated_tabs::mode_enabled(),
         memory_sample_known: total.is_some() && available.is_some(),
         hibernation_enabled: state.hibernation_enabled.load(Ordering::Relaxed),

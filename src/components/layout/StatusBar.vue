@@ -131,6 +131,9 @@ const memLow = computed(() => {
     <div v-for="t in (stats.isolated_tabs ?? [])" :key="'tab-' + t.pid" class="rd-process">{{ t.name }}（独立） · PID {{ t.pid }} · {{ rssLabel(t) }}</div>
     <p v-if="stats.isolated_tab_mode_enabled" class="rd-note">
       独立页签预计还可启动 {{ stats.isolated_tab_start_budget ?? 0 }} 个进程域；实际仍受原生启动检查、路由数量上限和待回收进程限制。
+      <template v-if="stats.isolated_tab_memory_limit_mb">
+        每个独立页签进程域要求 {{ fmtMb(stats.isolated_tab_memory_limit_mb) }} 内核内存限额；无法安装和核实限额时拒绝启动，不退回无约束宿主。
+      </template>
       休眠仅回收经确认的原始空白页，不恢复任意网页内存状态。
     </p>
     <p class="rd-note">
