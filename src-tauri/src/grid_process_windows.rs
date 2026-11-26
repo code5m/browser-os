@@ -730,6 +730,84 @@ impl GridProcessManager {
         Ok(true)
     }
 
+    /// Caller holds the native lifecycle gate. Grid listeners persist across
+    /// normal retirement, so an absent route also has a reuse fence.
+    fn grid_route_stamps_locked(&self, indices: &[u32])
+        -> Vec<crate::grid_ipc::GridRouteStamp>
+    {
+        let children = self.children.lock().unwrap();
+        let listeners = self.listeners.lock().unwrap();
+        indices.iter().map(|&index| {
+            let child = children.get(&index);
+            let comms = child.map(|c| &c.comms).or_else(|| listeners.get(&index));
+            crate::grid_ipc::GridRouteStamp {
+                index, pid: child.map(|c| c.child.id()),
+                epoch: comms.map(|c| c.spawn_epoch.load(Ordering::SeqCst)),
+            }
+        }).collect()
+    }
+
+    pub(crate) fn grid_route_stamps(&self, indices: &[u32])
+        -> Result<Vec<crate::grid_ipc::GridRouteStamp>, String>
+    {
+        if indices.iter().any(|&i| i as usize >= crate::bridge::MAX_GRID) {
+            return Err("GRID_INDEX_INVALID".into());
+        }
+        self.lifecycle.check()?;
+        // Admission is performed on the IPC caller, never wait on a
+        // potentially long native spawn or retirement from that thread.
+        let _gate = self.lifecycle_lock.try_lock().map_err(|_| "GRID_LIFECYCLE_BUSY")?;
+        Ok(self.grid_route_stamps_locked(indices))
+    }
+
+    /// Validate every selected route before mutating any, then transfer only
+    /// the captured owners to the existing kernel-domain cleanup service.
+    /// This does not depend on HideWindow/CloseTab acknowledgements.
+    pub(crate) fn close_grid_targets(&self, targets: &[crate::grid_ipc::GridRouteStamp])
+        -> Result<(), String>
+    {
+        let _operation = self.lifecycle.enter()?;
+        self.ensure_cleanup()?;
+        let _gate = self.lifecycle_lock.lock().unwrap();
+        self.lifecycle.check()?;
+        let indices: Vec<_> = targets.iter().map(|t| t.index).collect();
+        if indices.iter().any(|&i| i as usize >= crate::bridge::MAX_GRID)
+            || self.grid_route_stamps_locked(&indices).as_slice() != targets
+        {
+            return Err("GRID_CLOSE_TARGET_STALE".into());
+        }
+        let app = self.app().ok_or("GRID_HOST_UNAVAILABLE")?;
+        let state = app.state::<crate::bridge::AppState>();
+        // Remove restart intent before releasing the process map. No new
+        // owner can be spawned under this gate until cleanup is admitted.
+        for &index in &indices {
+            self.crash_history.lock().unwrap().remove(&index);
+            self.hibernated.lock().unwrap().remove(&index);
+            self.pending_restarts.lock().unwrap().remove(&index);
+        }
+        {
+            let mut children = self.children.lock().unwrap();
+            for &index in &indices {
+                if let Some(owner) = children.remove(&index) {
+                    self.lifecycle.retire(index, owner);
+                }
+            }
+        }
+        // Clear only selected route preferences, while reuse remains fenced.
+        for &index in &indices {
+            let label = crate::grid_ipc::renderer_label(index);
+            state.child_layouts.lock().unwrap().remove(&label);
+            state.grid_zooms.lock().unwrap().remove(&label);
+            state.last_position_at.lock().unwrap().remove(&label);
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(750);
+        for index in indices {
+            self.lifecycle.wait_route_retired_until(index, deadline)
+                .map_err(|_| format!("GRID_CLOSE_CLEANUP_PENDING:{index}"))?;
+        }
+        Ok(())
+    }
+
     /// The process-generation binding is captured for prepared tab mutations.
     /// None means the route has no live child; activation may explicitly restore it.
     pub(crate) fn tab_renderer_owner(&self, index: u32) -> Result<Option<(u32, u64)>, String> {

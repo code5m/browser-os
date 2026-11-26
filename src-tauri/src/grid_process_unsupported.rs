@@ -16,6 +16,11 @@ pub struct GridProcessManager;
 impl GridProcessManager {
     pub fn set_app(&self, _app: AppHandle) {}
 
+    pub(crate) fn grid_route_stamps(&self, _indices: &[u32]) -> Result<Vec<crate::grid_ipc::GridRouteStamp>, String> { Ok(Vec::new()) }
+    pub(crate) fn close_grid_targets(&self, targets: &[crate::grid_ipc::GridRouteStamp]) -> Result<(), String> {
+        if targets.is_empty() { Ok(()) } else { Err(unsupported()) }
+    }
+
     pub fn get_or_spawn(&self, _index: u32) -> Result<bool, String> {
         Err(unsupported())
     }

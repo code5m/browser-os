@@ -312,45 +312,30 @@ pub fn create_grid_blocking(app: AppHandle, n: usize, urls: Vec<String>) -> Resu
     Ok(target)
 }
 
-/// 关闭所有宫格（销毁对应子进程）。
-/// 顺序：先 HideWindow（窗口立即从屏幕消失，消除"幽灵窗口残留几秒"的视觉问题），
-/// 再 CloseTab + kill（进程销毁与 X 窗口清理有延迟，藏在 hide 之后用户无感）。
+/// Close the exact Grid topology observed at submission. No ordinary tab
+/// belongs to this snapshot and no later replacement is implicitly closed.
 #[tauri::command]
 pub async fn close_grid(app: AppHandle) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || close_grid_blocking(app))
+    let targets = capture_all_grid_routes(&app)?;
+    tauri::async_runtime::spawn_blocking(move || close_grid_admitted(app, targets))
         .await
         .map_err(|_| "GRID_WORKER_FAILED".to_string())?
 }
 
+fn capture_all_grid_routes(app: &AppHandle) -> Result<Vec<crate::grid_ipc::GridRouteStamp>, String> {
+    let indices: Vec<_> = (0..MAX_GRID as u32).collect();
+    app.state::<AppState>().grid_manager.grid_route_stamps(&indices)
+}
+
+fn close_grid_admitted(app: AppHandle, targets: Vec<crate::grid_ipc::GridRouteStamp>)
+    -> Result<(), String>
+{
+    app.state::<AppState>().grid_manager.close_grid_targets(&targets)
+}
+
 pub fn close_grid_blocking(app: AppHandle) -> Result<(), String> {
-    let state = app.state::<AppState>();
-    let mgr = &state.grid_manager;
-    for index in mgr.indices() {
-        mgr.send(
-            index,
-            GridCmd::HideWindow {
-                id: format!("grid-{index}"),
-            },
-        );
-    }
-    // 给 hide 一个生效窗口期（UDS 是异步 send，100ms 足够子进程执行 hide）
-    std::thread::sleep(std::time::Duration::from_millis(100));
-    for index in mgr.indices() {
-        mgr.send(
-            index,
-            GridCmd::CloseTab {
-                id: format!("grid-{index}"),
-            },
-        );
-    }
-    mgr.shutdown_all()?;
-    for i in 0..MAX_GRID {
-        let label = format!("grid-{i}");
-        state.child_layouts.lock().unwrap().remove(&label);
-        state.grid_zooms.lock().unwrap().remove(&label);
-        state.last_position_at.lock().unwrap().remove(&label);
-    }
-    Ok(())
+    let targets = capture_all_grid_routes(&app)?;
+    close_grid_admitted(app, targets)
 }
 
 /// 在指定宫格(index)中打开网址（经 UDS Navigate 到子进程）。
@@ -577,30 +562,27 @@ fn grid_position_admitted(app: AppHandle, index: usize, css: (f64, f64, f64, f64
     mgr.grid_position_bound(binding, css, rect)
 }
 
-/// 关闭单个宫格（按 index）：销毁对应子进程，其余宫格保留。
-/// 同样先 HideWindow 再 kill（消除幽灵窗口）。
+/// Close one original process domain. Disconnected hosts may still be
+/// retired, but a replacement identity must never be selected by index.
 #[tauri::command]
 pub async fn grid_close_one(app: AppHandle, index: usize) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || grid_close_one_blocking(app, index))
+    let targets = capture_one_grid_route(&app, index)?;
+    tauri::async_runtime::spawn_blocking(move || close_grid_admitted(app, targets))
         .await
         .map_err(|_| "GRID_WORKER_FAILED".to_string())?
 }
 
+fn capture_one_grid_route(app: &AppHandle, index: usize)
+    -> Result<Vec<crate::grid_ipc::GridRouteStamp>, String>
+{
+    require_grid_platform()?;
+    if index >= MAX_GRID { return Err("GRID_INDEX_INVALID".into()); }
+    app.state::<AppState>().grid_manager.grid_route_stamps(&[index as u32])
+}
+
 pub fn grid_close_one_blocking(app: AppHandle, index: usize) -> Result<(), String> {
-    if index >= MAX_GRID {
-        return Err("GRID_INDEX_INVALID".into());
-    }
-    let label = format!("grid-{index}");
-    let state = app.state::<AppState>();
-    let mgr = &state.grid_manager;
-    mgr.send(index as u32, GridCmd::HideWindow { id: label.clone() });
-    std::thread::sleep(std::time::Duration::from_millis(100));
-    mgr.send(index as u32, GridCmd::CloseTab { id: label.clone() });
-    mgr.kill_child(index as u32);
-    state.child_layouts.lock().unwrap().remove(&label);
-    state.grid_zooms.lock().unwrap().remove(&label);
-    state.last_position_at.lock().unwrap().remove(&label);
-    Ok(())
+    let targets = capture_one_grid_route(&app, index)?;
+    close_grid_admitted(app, targets)
 }
 
 // ====== 系统应用启动器（Linux .desktop） ======

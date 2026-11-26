@@ -85,6 +85,16 @@ pub(crate) struct RendererBinding {
     pub generation: u64,
     pub navigation_revision: u64,
 }
+/// Process-domain identity for a Grid close or topology transaction.
+/// The listener epoch distinguishes absent slots that were reused and then
+/// retired. Closing does not depend on the IPC connection being responsive.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct GridRouteStamp {
+    pub index: u32,
+    pub pid: Option<u32>,
+    pub epoch: Option<u64>,
+}
+
 pub(crate) const MAX_RENDERER_CAPTURE_BYTES: usize = 32 * 1024 * 1024;
 pub(crate) const RENDERER_CAPTURE_CHUNK_BYTES: usize = 192 * 1024;
 
