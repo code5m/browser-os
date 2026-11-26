@@ -269,69 +269,85 @@ pub fn report_grid_load_failed(
     Ok(())
 }
 
-/// 主进程启动宫格加载失败自动重试：收到 grid-load-failed 事件后延迟 3s 重新导航。
-/// 每格 60s 内最多重试 2 次（防循环），成功页不会触发上报故不影响正常浏览。
-pub fn start_grid_load_retry(app: AppHandle) {
-    use tauri::Listener;
-    let retries: std::sync::Arc<Mutex<HashMap<u32, (std::time::Instant, u8)>>> =
-        std::sync::Arc::new(Mutex::new(HashMap::new()));
-    let app2 = app.clone();
-    app.listen("grid-load-failed", move |event| {
-        let payload: serde_json::Value = serde_json::from_str(event.payload()).unwrap_or_default();
-        let index: u32 = match payload["index"].as_str().and_then(|s| s.parse().ok()) {
-            Some(i) => i,
-            None => return,
-        };
-        if (index as usize) >= MAX_GRID {
-            // An ordinary tab never participates in automatic Grid retries.
-            return;
+// One worker per supported route, including its delay and native request.
+ // Only the authenticated native reader can schedule a retry. A frontend
+ // event bearing copied process identifiers is not native admission.
+struct GridRetrySlot {
+    window_started: std::time::Instant,
+    attempts: u8,
+    last: Option<crate::grid_ipc::RendererBinding>,
+    pending: bool,
+}
+static GRID_RETRY_SLOTS: std::sync::LazyLock<Mutex<[GridRetrySlot; MAX_GRID]>> =
+    std::sync::LazyLock::new(|| Mutex::new(std::array::from_fn(|_| GridRetrySlot {
+        window_started: std::time::Instant::now(), attempts: 0, last: None, pending: false,
+    })));
+
+struct GridRetryLease(usize);
+impl Drop for GridRetryLease {
+    fn drop(&mut self) {
+        GRID_RETRY_SLOTS.lock().unwrap_or_else(|e| e.into_inner())[self.0].pending = false;
+    }
+}
+
+pub(crate) fn schedule_grid_load_retry(app: &AppHandle, payload: &serde_json::Value) {
+    let Some(index) = payload["index"].as_str().and_then(|s| s.parse::<u32>().ok())
+        .filter(|i| (*i as usize) < MAX_GRID) else { return; };
+    let Some(generation) = payload["renderer_generation"].as_str()
+        .and_then(|value| value.parse::<u64>().ok()).filter(|value| *value != 0)
+        else { return; };
+    let Some(pid) = payload["renderer_pid"].as_u64().and_then(|value| u32::try_from(value).ok())
+        .filter(|pid| *pid != 0) else { return; };
+    let Some(epoch) = payload["renderer_epoch"].as_str().and_then(|value| value.parse::<u64>().ok())
+        .filter(|epoch| *epoch != 0) else { return; };
+    let Some(revision) = payload["renderer_navigation_revision"].as_str()
+        .and_then(|value| value.parse::<u64>().ok()) else { return; };
+    let binding = crate::grid_ipc::RendererBinding {
+        index, owner: (pid, epoch), generation, navigation_revision: revision,
+    };
+    let url = payload["url"].as_str().unwrap_or("");
+    if !crate::grid_ipc::restorable_address(url)
+        || !Url::parse(url).is_ok_and(|value| matches!(value.scheme(), "http" | "https")) {
+        return;
+    }
+    let state = app.state::<AppState>();
+    if state.shutdown_requested.load(Ordering::Acquire) { return; }
+    // Repeated error-page JS and native loadFailed reports for one document
+    // consume only one admission. The identity remains remembered across
+    // the rate-window boundary. A different report while a worker owns the
+    // slot is dropped, not queued for a later document or replacement.
+    let lease = {
+        let Ok(mut slots) = GRID_RETRY_SLOTS.try_lock() else { return; };
+        let slot = &mut slots[index as usize];
+        if slot.pending || slot.last == Some(binding) { return; }
+        let now = std::time::Instant::now();
+        if now.duration_since(slot.window_started) >= std::time::Duration::from_secs(60) {
+            slot.window_started = now;
+            slot.attempts = 0;
         }
-        let Some(generation) = payload["renderer_generation"].as_str()
-            .and_then(|value| value.parse::<u64>().ok()).filter(|value| *value != 0)
-        else {
-            return;
-        };
-        let Some(pid) = payload["renderer_pid"].as_u64().and_then(|value| u32::try_from(value).ok()).filter(|pid| *pid != 0) else { return; };
-        let Some(epoch) = payload["renderer_epoch"].as_str().and_then(|value| value.parse::<u64>().ok()).filter(|epoch| *epoch != 0) else { return; };
-        let Some(revision) = payload["renderer_navigation_revision"].as_str().and_then(|value| value.parse::<u64>().ok()) else { return; };
-        let binding = crate::grid_ipc::RendererBinding {
-            index, owner: (pid, epoch), generation, navigation_revision: revision,
-        };
-        let url = payload["url"].as_str().unwrap_or("").to_string();
-        if !crate::grid_ipc::restorable_address(&url)
-            || !Url::parse(&url).is_ok_and(|value| matches!(value.scheme(), "http" | "https")) {
-            return;
+        if slot.attempts >= 2 { return; }
+        slot.attempts += 1;
+        slot.last = Some(binding);
+        slot.pending = true;
+        GridRetryLease(index as usize)
+    };
+    let url = url.to_owned();
+    let app = app.clone();
+    let started = std::thread::Builder::new().name(format!("grid-load-retry-{index}")).spawn(move || {
+        let _lease = lease;
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        let state = app.state::<AppState>();
+        if state.shutdown_requested.load(Ordering::Acquire) { return; }
+        // Native retry rechecks the exact original process, connection,
+        // document revision and URL at execution and writer admission.
+        if let Err(error) = state.grid_manager.retry_failed_navigation(binding, &url) {
+            eprintln!("[grid] grid-{index} retry unconfirmed: {error}");
         }
-        // 重试配额：60s 窗口内最多 2 次
-        {
-            let mut map = retries.lock().unwrap();
-            let now = std::time::Instant::now();
-            let entry = map.entry(index).or_insert((now, 0));
-            if now.duration_since(entry.0).as_secs() > 60 {
-                *entry = (now, 0);
-            }
-            if entry.1 >= 2 {
-                eprintln!("[grid] grid-{index} 自动重试次数用尽，放弃");
-                return;
-            }
-            entry.1 += 1;
-        }
-        eprintln!("[grid] grid-{index} load failed; retry scheduled in 3s");
-        let app3 = app2.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_secs(3));
-            let state = app3.state::<AppState>();
-            if state.shutdown_requested.load(Ordering::SeqCst) {
-                return;
-            }
-            let mgr = &state.grid_manager;
-            if let Err(e) = mgr.retry_failed_navigation(binding, &url) {
-                eprintln!("[grid] grid-{index} 自动重试导航失败: {e}");
-            } else {
-                eprintln!("[grid] grid-{index} 自动重试导航已下发");
-            }
-        });
     });
+    if started.is_err() {
+        // Failed spawn drops the captured lease. Do not silently replay.
+        eprintln!("[grid] grid-{index} retry worker unavailable");
+    }
 }
 
 // ====== 资源监控（宫格设置行"资源"按钮） =====

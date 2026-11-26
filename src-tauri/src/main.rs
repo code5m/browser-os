@@ -2104,8 +2104,8 @@ fn main() {
             bridge::start_layout_enforcer(app.handle().clone());
             // 页签休眠清扫线程（开关默认关，设置面板开启后生效）
             bridge::start_hibernation_sweeper(app.handle().clone());
-            // 宫格加载失败自动重试（collect.js 上报错误页 → 重新导航）
-            bridge::start_grid_load_retry(app.handle().clone());
+            // Grid load-failure retries are admitted directly by the authenticated
+            // child reader; no globally emitted event grants retry authority.
             // GRID_SELFTEST=1：宫格多进程端到端自检（Phase 2 UDS 转发 + Phase 3 崩溃自愈）。
             // 跑完写 /tmp/grid-selftest-result.txt 并退出。日常运行不设该变量即可。
             if std::env::var("GRID_SELFTEST").is_ok() {

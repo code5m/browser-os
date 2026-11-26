@@ -408,3 +408,9 @@ Source-only scope; no compilation, tests, install/runtime validation, workflow d
 - All asynchronous and legacy blocking create/rebuild/open, full/single close and position/hide entrances acquire bounded worker ownership before capturing a route. One topology worker, two independent retirement workers and at most one layout-worker budget per supported Grid slot in aggregate. Existing zoom/eval lanes stay separate. A dropped waiter cannot release a live blocking permit. Saturation is rejected before work; no implicit replay.
 - Both platform managers collect IPC route stamps, live owner and sleeping-slot metadata through nonblocking admission locks. Busy does not mean absent; the original route stamp and connection fencing still apply in workers. Close does not share navigation worker capacity.
 - This fixes unbounded scheduling at these Grid entrances, not engine/OS syscall termination. Existing kernel retirement and explicit reconciliation remain authoritative. Source only; no build, tests, workflow edits or master merge.
+
+## 2026-11-26 — Deduplicate and bound Grid load-failure retry ownership
+
+- Replace global event-listener retry admission with a direct call from the authenticated native renderer reader on both Linux and Windows. Keep the emitted event advisory; it cannot itself schedule a retry. Ordinary tabs remain excluded.
+- A fixed slot per Grid index owns at most one delayed/running retry; the RAII lease survives until the native attempt settles, including spawn failure and panic. The exact last admitted process/connection/document identity remains deduplicated across the 60-second quota window; at most two admissions per index per window. Overlapping reports are deliberately dropped, not queued. The original 3-second delay and exact native execution fence remain.
+- This is a bounded retry policy, not a promise that every failure receives a retry or that navigation succeeds. No build/test execution, workflow edits or master merge.

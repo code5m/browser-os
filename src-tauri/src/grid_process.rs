@@ -863,6 +863,10 @@ impl GridProcessManager {
                                                     let error = payload["error"].as_str().unwrap_or("renderer load failed");
                                                     crate::bridge::report_tab_load_failed(app, &id, url, if error.is_empty() { "renderer load failed" } else { "native renderer load failed" });
                                                 }
+                                                "grid-load-failed" if comms_reader.is_current(generation) => {
+                                                    crate::bridge::schedule_grid_load_retry(app, &payload);
+                                                    let _ = app.emit(&name, payload);
+                                                }
                                                 _ if comms_reader.is_current(generation) => { let _ = app.emit(&name, payload); }
                                                 _ => break,
                                             }
