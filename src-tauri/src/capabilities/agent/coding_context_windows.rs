@@ -69,6 +69,10 @@ fn roots(workspace: &Path) -> Vec<PathBuf> {
         .filter(|path| path.is_dir())
         .collect()
 }
+fn context_check(cancelled: &dyn Fn() -> bool) -> Result<(), String> {
+    if cancelled() { Err("AGENT_CANCELLED".into()) } else { Ok(()) }
+}
+
 fn scan(
     dir: &Path,
     base: &Path,
@@ -76,15 +80,19 @@ fn scan(
     budget: &mut usize,
     files: &mut Vec<PathBuf>,
     only_skills: bool,
-) -> bool {
+    cancelled: &dyn Fn() -> bool,
+) -> Result<bool, String> {
+    context_check(cancelled)?;
     if depth > 6 || *budget == 0 {
-        return true;
+        return Ok(true);
     }
     let Ok(entries) = fs::read_dir(dir) else {
-        return true;
+        context_check(cancelled)?;
+        return Ok(true);
     };
     let mut limited = false;
     for entry in entries {
+        context_check(cancelled)?;
         if *budget == 0 {
             limited = true;
             break;
@@ -111,7 +119,7 @@ fn scan(
             continue;
         }
         if meta.is_dir() {
-            limited |= scan(&path, base, depth + 1, budget, files, only_skills);
+            limited |= scan(&path, base, depth + 1, budget, files, only_skills, cancelled)?;
         } else if meta.is_file()
             && path.starts_with(base)
             && ((only_skills && name == "SKILL.md")
@@ -122,17 +130,19 @@ fn scan(
             files.push(path);
         }
     }
-    limited
+    context_check(cancelled)?;
+    Ok(limited)
 }
-fn skill_files(allowed: &[PathBuf]) -> Vec<PathBuf> {
+fn skill_files(allowed: &[PathBuf], cancelled: &dyn Fn() -> bool) -> Result<Vec<PathBuf>, String> {
     let mut files = Vec::new();
     let mut budget = 4000;
     for dir in allowed {
-        scan(dir, dir, 0, &mut budget, &mut files, true);
+        scan(dir, dir, 0, &mut budget, &mut files, true, cancelled)?;
     }
     files.sort();
     files.dedup();
-    files
+    context_check(cancelled)?;
+    Ok(files)
 }
 pub fn execute(root: &Path, storage: &Path, request: Value) -> Result<Value, String> {
     execute_cancelable(root, storage, request, Arc::new(AtomicBool::new(false)))
@@ -161,14 +171,12 @@ pub(super) fn execute_cancelable_with_admission(
     )
 }
 
-pub(super) fn execute_cancelable_with_effect_admission(
-    root: &Path,
-    storage: &Path,
-    request: Value,
-    cancellation: Arc<AtomicBool>,
-    run: Option<uuid::Uuid>,
-    before_spawn: impl FnOnce(&Value, Option<&super::mcp_authority::Binding>) -> Result<(), String>,
+/// The model loop supplies the live Task/session cancellation check. The
+/// request facade can use its registered run signal. No new effect admission.
+pub(crate) fn execute_read_context(
+    root: &Path, request: &Value, cancelled: &dyn Fn() -> bool,
 ) -> Result<Value, String> {
+    context_check(cancelled)?;
     if !no_reparse_path(root) {
         return Err("CONTEXT_ROOT_INVALID".into());
     }
@@ -176,26 +184,21 @@ pub(super) fn execute_cancelable_with_effect_admission(
     if !root.is_dir() {
         return Err("CONTEXT_ROOT_INVALID".into());
     }
-    match request["action"].as_str().unwrap_or("") {
+    let result = match request["action"].as_str().unwrap_or("") {
         "skills_list" => {
             let allowed = roots(&root);
-            let skills = skill_files(&allowed)
-                .into_iter()
-                .take(256)
-                .filter_map(|file| {
-                    let base = allowed.iter().find(|base| file.starts_with(base))?;
-                    let text = read(&file, base).ok()?;
-                    let description = text.lines()
-                        .find(|line| line.starts_with("description:"))
-                        .unwrap_or("")
-                        .chars()
-                        .take(240)
-                        .collect::<String>();
-                    Some(json!({"path":file,"name":file.parent()
-                        .and_then(Path::file_name).map(|n|n.to_string_lossy()),
-                        "description":description}))
-                })
-                .collect::<Vec<_>>();
+            let mut skills = Vec::new();
+            for file in skill_files(&allowed, cancelled)?.into_iter().take(256) {
+                context_check(cancelled)?;
+                let Some(base) = allowed.iter().find(|base| file.starts_with(base)) else { continue; };
+                let result = read(&file, base);
+                context_check(cancelled)?;
+                let Ok(text) = result else { continue; };
+                let description = text.lines().find(|line| line.starts_with("description:"))
+                    .unwrap_or("").chars().take(240).collect::<String>();
+                skills.push(json!({"path":file,"name":file.parent()
+                    .and_then(Path::file_name).map(|n|n.to_string_lossy()),"description":description}));
+            }
             Ok(json!({"skills":skills,"platform":"windows","read_only":true}))
         }
         "skill_read" => {
@@ -206,14 +209,17 @@ pub(super) fn execute_cancelable_with_effect_admission(
             }
             let path = raw_path.canonicalize().map_err(|_| "SKILL_NOT_FOUND")?;
             let candidates = roots(&root);
-            if !skill_files(&candidates).contains(&path) {
+            if !skill_files(&candidates, cancelled)?.contains(&path) {
                 return Err("SKILL_OUTSIDE_ALLOWED_ROOTS".into());
             }
             let allowed = candidates
                 .into_iter()
                 .find(|allowed| path.starts_with(allowed))
                 .ok_or("SKILL_OUTSIDE_ALLOWED_ROOTS")?;
-            Ok(json!({"path":path,"text":read(&path,&allowed)?}))
+            context_check(cancelled)?;
+            let text = read(&path, &allowed)?;
+            context_check(cancelled)?;
+            Ok(json!({"path":path,"text":text}))
         }
         "knowledge_search" => {
             let query = request["query"]
@@ -233,16 +239,21 @@ pub(super) fn execute_cancelable_with_effect_admission(
             }
             let mut files = Vec::new();
             let mut budget = 3000;
-            let mut incomplete = scan(&base, &base, 0, &mut budget, &mut files, false);
+            let mut incomplete = scan(&base, &base, 0, &mut budget, &mut files, false, cancelled)?;
             let mut hits = Vec::new();
             for file in files {
-                match read(&file, &base) {
+                context_check(cancelled)?;
+                let result = read(&file, &base);
+                context_check(cancelled)?;
+                match result {
                     Ok(text) => {
                         for (line, content) in text.lines().enumerate() {
+                            if line % 64 == 0 { context_check(cancelled)?; }
                             if !sensitive(content) && content.to_lowercase().contains(&query) {
                                 hits.push(json!({"path":file,"line":line+1,
                                 "text":content.chars().take(400).collect::<String>()}));
                                 if hits.len() >= 40 {
+                                    context_check(cancelled)?;
                                     return Ok(
                                         json!({"hits":hits,"limited":true,"read_only":true}),
                                     );
@@ -257,6 +268,31 @@ pub(super) fn execute_cancelable_with_effect_admission(
             }
             Ok(json!({"hits":hits,"limited":incomplete,"read_only":true}))
         }
+        _ => Err("CONTEXT_ACTION_UNKNOWN".into()),
+    };
+    context_check(cancelled)?;
+    result
+}
+
+pub(super) fn execute_cancelable_with_effect_admission(
+    root: &Path,
+    storage: &Path,
+    request: Value,
+    cancellation: Arc<AtomicBool>,
+    run: Option<uuid::Uuid>,
+    before_spawn: impl FnOnce(&Value, Option<&super::mcp_authority::Binding>) -> Result<(), String>,
+) -> Result<Value, String> {
+    if matches!(request["action"].as_str(), Some("skills_list" | "skill_read" | "knowledge_search")) {
+        return execute_read_context(root, &request, &|| cancellation.load(std::sync::atomic::Ordering::Acquire));
+    }
+    if !no_reparse_path(root) {
+        return Err("CONTEXT_ROOT_INVALID".into());
+    }
+    let root = root.canonicalize().map_err(|_| "CONTEXT_ROOT_INVALID")?;
+    if !root.is_dir() {
+        return Err("CONTEXT_ROOT_INVALID".into());
+    }
+    match request["action"].as_str().unwrap_or("") {
         "mcp_list" => Ok(super::coding_mcp_windows::discover(&root, storage)),
         "mcp_review" | "mcp_tools" | "mcp_call" => {
             super::coding_mcp_windows::execute_cancelable_with_effect_admission(

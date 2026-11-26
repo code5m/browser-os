@@ -2708,23 +2708,23 @@ impl<P: FnMut(&[Value], &[Value]) -> Result<Value, String>>
                     "list_files" => tree(root, arguments["path"].as_str().unwrap_or("")),
                     "read_file" => read_model_file(root, &arguments),
                     "search_files" => search(root, arguments["query"].as_str().unwrap_or("")),
-                    "list_skills" => super::coding_context::execute(
+                    "list_skills" => super::coding_context::execute_read_context(
                         root,
-                        storage,
-                        json!({"action":"skills_list"}),
+                        &json!({"action":"skills_list"}),
+                        &|| !lease.is_active() || cancelled(root, &session.session_id),
                     ),
                     "list_mcp_servers" => {
                         super::coding_context::execute(root, storage, json!({"action":"mcp_list"}))
                     }
-                    "read_skill" => super::coding_context::execute(
+                    "read_skill" => super::coding_context::execute_read_context(
                         root,
-                        storage,
-                        json!({"action":"skill_read","path":arguments["path"]}),
+                        &json!({"action":"skill_read","path":arguments["path"]}),
+                        &|| !lease.is_active() || cancelled(root, &session.session_id),
                     ),
-                    "search_knowledge" => super::coding_context::execute(
+                    "search_knowledge" => super::coding_context::execute_read_context(
                         root,
-                        storage,
-                        json!({"action":"knowledge_search","query":arguments["query"]}),
+                        &json!({"action":"knowledge_search","query":arguments["query"]}),
+                        &|| !lease.is_active() || cancelled(root, &session.session_id),
                     ),
                     "write_file" if !plan => stage_model_change(root, session, &arguments),
                     "request_operation" if !plan => propose_operation(session, &arguments),

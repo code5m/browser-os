@@ -339,15 +339,11 @@ pub(crate) fn dispatch_coding_request(
             value
         });
     }
-    if [
-        "skills_list",
-        "skill_read",
-        "knowledge_search",
-        "mcp_list",
-        "mcp_review",
-    ]
-    .contains(&action)
-    {
+    if matches!(action, "skills_list" | "skill_read" | "knowledge_search") {
+        let cancellation = super::coding::request_signal(&request)?;
+        return super::coding_context::execute_cancelable(root, storage, request, cancellation);
+    }
+    if matches!(action, "mcp_list" | "mcp_review") {
         return super::coding_context::execute(root, storage, request);
     }
     super::coding::execute_with_effect_adapter(

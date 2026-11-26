@@ -2073,7 +2073,8 @@ pub async fn coding_service(
         Some(crate::capabilities::agent::public_api::register_coding_run(
             request["run_id"].as_str().ok_or("AGENT_RUN_ID_REQUIRED")?,
         )?)
-    } else if matches!(request["action"].as_str(), Some("mcp_tools" | "mcp_call")) {
+    } else if matches!(request["action"].as_str(),
+        Some("mcp_tools" | "mcp_call" | "skills_list" | "skill_read" | "knowledge_search")) {
         request["run_id"]
             .as_str()
             .map(crate::capabilities::agent::public_api::register_coding_run)

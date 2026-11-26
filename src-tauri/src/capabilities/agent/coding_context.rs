@@ -42,6 +42,10 @@ fn roots(root: &Path) -> Vec<PathBuf> {
         .filter(|p| crate::capabilities::workspace::safe_paths::directory_identity(p).is_ok())
         .collect()
 }
+fn context_check(cancelled: &dyn Fn() -> bool) -> Result<(), String> {
+    if cancelled() { Err("AGENT_CANCELLED".into()) } else { Ok(()) }
+}
+
 fn scan(
     dir: &Path,
     base: &Path,
@@ -49,24 +53,29 @@ fn scan(
     budget: &mut usize,
     out: &mut Vec<PathBuf>,
     skills: bool,
-) -> bool {
+    cancelled: &dyn Fn() -> bool,
+) -> Result<bool, String> {
+    context_check(cancelled)?;
     if depth > 6 || *budget == 0 {
-        return true;
+        return Ok(true);
     }
     let Ok(entries) = fs::read_dir(dir) else {
-        return true;
+        context_check(cancelled)?;
+        return Ok(true);
     };
     let mut incomplete = false;
     for entry in entries {
-        let Ok(entry) = entry else {
-            incomplete = true;
-            continue;
-        };
+        context_check(cancelled)?;
         if *budget == 0 {
             incomplete = true;
             break;
         }
+        // Failed iterator entries consume the same finite scan budget.
         *budget -= 1;
+        let Ok(entry) = entry else {
+            incomplete = true;
+            continue;
+        };
         let p = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
         let Ok(kind) = entry.file_type() else {
@@ -80,7 +89,7 @@ fn scan(
             continue;
         }
         if kind.is_dir() {
-            incomplete |= scan(&p, base, depth + 1, budget, out, skills);
+            incomplete |= scan(&p, base, depth + 1, budget, out, skills, cancelled)?;
         } else if kind.is_file()
             && p.starts_with(base)
             && ((skills && name == "SKILL.md")
@@ -91,17 +100,19 @@ fn scan(
             out.push(p);
         }
     }
-    incomplete
+    context_check(cancelled)?;
+    Ok(incomplete)
 }
-fn skills(allowed: &[PathBuf]) -> Vec<PathBuf> {
+fn skills(allowed: &[PathBuf], cancelled: &dyn Fn() -> bool) -> Result<Vec<PathBuf>, String> {
     let mut out = vec![];
     let mut budget = 4000;
     for base in allowed {
-        let _ = scan(base, base, 0, &mut budget, &mut out, true);
+        scan(base, base, 0, &mut budget, &mut out, true, cancelled)?;
     }
     out.sort();
     out.dedup();
-    out
+    context_check(cancelled)?;
+    Ok(out)
 }
 fn servers(root: &Path, storage: &Path) -> Vec<(String, String, PathBuf, Value)> {
     let mut sources = vec![
@@ -602,22 +613,23 @@ pub(super) fn execute_cancelable_with_admission(
     )
 }
 
-pub(super) fn execute_cancelable_with_effect_admission(
-    root: &Path,
-    storage: &Path,
-    request: Value,
-    cancellation: Arc<AtomicBool>,
-    run: Option<uuid::Uuid>,
-    before_spawn: impl FnOnce(&Value, Option<&super::mcp_authority::Binding>) -> Result<(), String>,
+/// The model loop supplies the live Task/session cancellation check. The
+/// request facade can use its registered run signal. No new effect admission.
+pub(crate) fn execute_read_context(
+    root: &Path, request: &Value, cancelled: &dyn Fn() -> bool,
 ) -> Result<Value, String> {
+    context_check(cancelled)?;
     let root = root.canonicalize().map_err(|_| "CONTEXT_ROOT_INVALID")?;
-    match request["action"].as_str().unwrap_or("") {
+    let result = match request["action"].as_str().unwrap_or("") {
         "skills_list" => {
             let allowed = roots(&root);
             let mut listed = Vec::new();
-            for path in skills(&allowed).into_iter().take(256) {
+            for path in skills(&allowed, cancelled)?.into_iter().take(256) {
+                context_check(cancelled)?;
                 let Some(base) = allowed.iter().find(|base| path.starts_with(base)) else { continue; };
-                let Ok(text) = read(&path, base) else { continue; };
+                let result = read(&path, base);
+                context_check(cancelled)?;
+                let Ok(text) = result else { continue; };
                 let description = safe_text(&text).lines()
                     .find(|line| line.starts_with("description:")).unwrap_or("")
                     .chars().take(240).collect::<String>();
@@ -629,12 +641,15 @@ pub(super) fn execute_cancelable_with_effect_admission(
         "skill_read" => {
             let path = PathBuf::from(request["path"].as_str().ok_or("SKILL_PATH_REQUIRED")?);
             let allowed = roots(&root);
-            if !skills(&allowed).contains(&path) {
+            if !skills(&allowed, cancelled)?.contains(&path) {
                 return Err("SKILL_OUTSIDE_ALLOWED_ROOTS".into());
             }
             let base = allowed.iter().find(|base| path.starts_with(base))
                 .ok_or("SKILL_OUTSIDE_ALLOWED_ROOTS")?;
-            Ok(json!({"path":path,"text":safe_text(&read(&path, base)?)}))
+            context_check(cancelled)?;
+            let text = safe_text(&read(&path, base)?);
+            context_check(cancelled)?;
+            Ok(json!({"path":path,"text":text}))
         }
         "knowledge_search" => {
             let query = request["query"]
@@ -646,14 +661,19 @@ pub(super) fn execute_cancelable_with_effect_admission(
             crate::capabilities::workspace::safe_paths::directory_identity(&base)
                 .map_err(|_| "KNOWLEDGE_ROOT_UNSAFE")?;
             let mut paths = vec![];
-            let mut incomplete = scan(&base, &base, 0, &mut 3000, &mut paths, false);
+            let mut incomplete = scan(&base, &base, 0, &mut 3000, &mut paths, false, cancelled)?;
             let mut hits = vec![];
             for p in paths {
-                if let Ok(text) = read(&p, &base) {
+                context_check(cancelled)?;
+                let result = read(&p, &base);
+                context_check(cancelled)?;
+                if let Ok(text) = result {
                     for (line, s) in text.lines().enumerate() {
+                        if line % 64 == 0 { context_check(cancelled)?; }
                         if !sensitive(s) && s.to_lowercase().contains(&query) {
                             hits.push(json!({"path":p,"line":line+1,"text":s.chars().take(400).collect::<String>()}));
                             if hits.len() == 40 {
+                                context_check(cancelled)?;
                                 return Ok(json!({"hits":hits,"limited":true}));
                             }
                         }
@@ -664,6 +684,25 @@ pub(super) fn execute_cancelable_with_effect_admission(
             }
             Ok(json!({"hits":hits,"limited":incomplete}))
         }
+        _ => Err("CONTEXT_ACTION_UNKNOWN".into()),
+    };
+    context_check(cancelled)?;
+    result
+}
+
+pub(super) fn execute_cancelable_with_effect_admission(
+    root: &Path,
+    storage: &Path,
+    request: Value,
+    cancellation: Arc<AtomicBool>,
+    run: Option<uuid::Uuid>,
+    before_spawn: impl FnOnce(&Value, Option<&super::mcp_authority::Binding>) -> Result<(), String>,
+) -> Result<Value, String> {
+    if matches!(request["action"].as_str(), Some("skills_list" | "skill_read" | "knowledge_search")) {
+        return execute_read_context(root, &request, &|| cancellation.load(std::sync::atomic::Ordering::Acquire));
+    }
+    let root = root.canonicalize().map_err(|_| "CONTEXT_ROOT_INVALID")?;
+    match request["action"].as_str().unwrap_or("") {
         "mcp_list" => Ok(discover(&root, storage)),
         "mcp_review" => {
             let config = resolved_config(&root, storage, &request)?;

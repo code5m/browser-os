@@ -19,6 +19,12 @@ pub fn execute(_root: &Path, _storage: &Path, request: Value) -> Result<Value, S
     ))
 }
 
+pub(crate) fn execute_read_context(
+    _root: &Path, _request: &Value, _cancelled: &dyn Fn() -> bool,
+) -> Result<Value, String> {
+    Err(format!("CONTEXT_PLATFORM_UNSUPPORTED:{}", std::env::consts::OS))
+}
+
 pub(crate) fn execute_cancelable(
     root: &Path,
     storage: &Path,
