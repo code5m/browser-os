@@ -406,6 +406,26 @@ impl GridRetirement {
         let Some(owner) = self.child.as_mut() else {
             return Ok(true);
         };
+        if let Some(scope) = owner.memory_scope.as_mut() {
+            // The pinned cgroup, not a recycled numeric PGID, owns every
+            // accounted descendant. Retain the exact owner on uncertainty.
+            scope.observe_orphan_guard();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_millis(100);
+            match scope.terminate_and_confirm(deadline) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::TimedOut => return Ok(false),
+                Err(_) => return Err("TAB_RENDERER_SCOPE_EXIT_UNKNOWN".into()),
+            }
+            match owner.child.try_wait() {
+                Ok(Some(_)) => {}
+                Ok(None) => return Ok(false),
+                Err(_) => return Err("TAB_RENDERER_CHILD_EXIT_UNKNOWN".into()),
+            }
+            scope.finish_orphan_guard(std::time::Instant::now() + std::time::Duration::from_millis(100))
+                .map_err(|_| "TAB_RENDERER_GUARD_EXIT_UNKNOWN")?;
+            self.child.take();
+            return Ok(true);
+        }
         let pid = i32::try_from(owner.child.id()).map_err(|_| "GRID_CHILD_PID_RANGE")?;
         if pid <= 0 {
             return Err("GRID_CHILD_PID_RANGE".into());
@@ -507,6 +527,9 @@ pub struct GridChildHandle {
     // index is the key in GridProcessManager::children;
     // communication state is retained in GridProcessManager::listeners.
     pub child: Child,
+    // Ordinary tabs require an independently limited, recursively killable
+    // scope. Legacy Grid retains its existing process-group retirement.
+    memory_scope: Option<crate::shared::process_scope::ProcessScope>,
     comms: Arc<ChildComms>,
     focused: bool,
     spawned_at: std::time::Instant,
@@ -877,7 +900,8 @@ impl GridProcessManager {
         let comms = self.ensure_listener(index)?;
         comms.prepare_spawn()?;
         let exe = std::env::current_exe().map_err(|e| format!("获取当前可执行文件失败: {e}"))?;
-        let child = Command::new(exe)
+        let mut command = Command::new(exe);
+        command
             .arg("--grid-child")
             .arg(index.to_string())
             .env("GRID_CHILD_INDEX", index.to_string())
@@ -887,13 +911,28 @@ impl GridProcessManager {
             .process_group(0)
             .stdin(Stdio::null())
             .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .map_err(|e| format!("spawn 宫格子进程 grid-{index} 失败: {e}"))?;
+            .stderr(Stdio::inherit());
+        // Prepare and read back the kernel limit before any renderer code
+        // executes. An unavailable delegation must not fall back to PGID.
+        let mut memory_scope = if crate::grid_ipc::is_tab_renderer(index) {
+            let mut scope = crate::shared::process_scope::ProcessScope::prepare()
+                .map_err(|_| "TAB_RENDERER_CGROUP_UNAVAILABLE")?
+                .ok_or("TAB_RENDERER_DELEGATED_CGROUP_REQUIRED")?;
+            scope.configure_memory_limit(crate::grid_ipc::TAB_RENDERER_MEMORY_LIMIT)
+                .map_err(|_| "TAB_RENDERER_CGROUP_MEMORY_LIMIT_UNCONFIRMED")?;
+            scope.arm_orphan_guard().map_err(|_| "TAB_RENDERER_CGROUP_GUARD_UNAVAILABLE")?;
+            scope.attach(&mut command).map_err(|_| "TAB_RENDERER_CGROUP_ATTACH_FAILED")?;
+            scope.contain_nested_owners(&mut command);
+            Some(scope)
+        } else { None };
+        let child = command.spawn()
+            .map_err(|e| format!("spawn renderer {index} failed: {e}"))?;
+        if let Some(scope) = &mut memory_scope { scope.mark_spawned(); }
         let pid = child.id();
         let saved = saved.unwrap_or_default();
         let handle = GridChildHandle {
             child,
+            memory_scope,
             comms: Arc::clone(&comms),
             focused: false,
             spawned_at: std::time::Instant::now(),
@@ -2062,7 +2101,12 @@ impl GridProcessManager {
                         let mut children = manager.children.lock().unwrap();
                         let indices: Vec<_> = children.keys().copied().collect();
                         for index in indices {
-                            let observed = children.get(&index).map(|owner| peek_grid_exit(&owner.child));
+                            let observed = children.get_mut(&index).map(|owner| {
+                                if let Some(scope) = owner.memory_scope.as_mut() {
+                                    scope.observe_orphan_guard();
+                                }
+                                peek_grid_exit(&owner.child)
+                            });
                             match observed {
                                 Some(Ok(Some(code))) => {
                                     let owner = children.remove(&index).expect("same locked map");
@@ -2452,6 +2496,7 @@ mod grid_process_termination_tests {
     fn owner(child: Child) -> GridChildHandle {
         GridChildHandle {
             child,
+            memory_scope: None,
             comms: Arc::new(ChildComms::new()),
             focused: false,
             spawned_at: std::time::Instant::now(),

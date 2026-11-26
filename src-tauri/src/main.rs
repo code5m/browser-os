@@ -405,6 +405,19 @@ fn parse_grid_child_arg() -> Option<u32> {
 ///   插件事件与桥命令事件经 UDS Event 回传主进程。主进程断开 → 自行退出（防孤儿窗口）。
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 fn run_grid_child(index: u32) {
+    // A parent flag is not evidence of kernel containment. Refuse ordinary
+    // renderer startup before Tauri, workspace preparation or any WebView
+    // if this process cannot observe the exact enforced domain limit.
+    if grid_ipc::is_tab_renderer(index) {
+        #[cfg(target_os = "linux")]
+        let verified = shared::process_scope::verify_current_render_budget(grid_ipc::TAB_RENDERER_MEMORY_LIMIT).is_ok();
+        #[cfg(target_os = "windows")]
+        let verified = windows_process::verify_current_render_budget(grid_ipc::TAB_RENDERER_MEMORY_LIMIT).is_ok();
+        if !verified {
+            eprintln!("[tab-renderer] TAB_RENDERER_KERNEL_MEMORY_OWNER_UNCONFIRMED");
+            std::process::exit(1);
+        }
+    }
     eprintln!(
         "[grid-child-{}] starting (pid={})",
         index,

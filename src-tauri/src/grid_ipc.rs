@@ -36,6 +36,9 @@ impl IpcRect {
 // manager or a second IPC transport. A tab route is never a Grid cell index.
 const TAB_RENDERER_BIT: u32 = 1 << 31;
 pub(crate) const MAX_ISOLATED_TAB_RENDERERS: usize = 8;
+/// Hard kernel-accounted per ordinary renderer domain. This does not include
+/// GPU/broker allocations outside the owned cgroup or Job.
+pub(crate) const TAB_RENDERER_MEMORY_LIMIT: usize = 2 * 1024 * 1024 * 1024;
 /// Reserve estimated startup memory while native children are still warming.
 /// This is host admission accounting, NOT an engine allocation hard limit.
 pub(crate) const RENDERER_STARTUP_RESERVE: std::time::Duration =

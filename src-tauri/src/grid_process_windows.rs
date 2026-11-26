@@ -641,7 +641,14 @@ impl GridProcessManager {
         }
         // Construct the Job first; assignment failure must retain both the
         // suspended Child and its partially assigned Job for actual cleanup.
-        let job = JobObject::create_for_spawn()?;
+        let job = if crate::grid_ipc::is_tab_renderer(index) {
+            // The suspended Child cannot run WebView2 before assignment to
+            // the preconfigured, verified limit and kill-on-close Job.
+            JobObject::create_with_memory_limit(crate::grid_ipc::TAB_RENDERER_MEMORY_LIMIT)
+                .map_err(|_| "TAB_RENDERER_JOB_MEMORY_LIMIT_UNCONFIRMED")?
+        } else {
+            JobObject::create_for_spawn()?
+        };
         self.lifecycle.check()?;
         let child = command
             .spawn()
