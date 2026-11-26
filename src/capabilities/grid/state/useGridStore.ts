@@ -241,10 +241,15 @@ export const useGridStore = defineStore("grid", () => {
       // Never automatically replay the queued rebuild after such a result.
       rebuildRequested = false;
       const reason = String(error);
+      const partial = /GRID_BUILD_PARTIAL|GRID_REQUEST_OUTCOME_UNKNOWN|GRID_WORKER_FAILED/.test(reason);
+      // Confirmed earlier cells may still be alive even though the layout is
+      // no longer published. Keep the explicit close path available and do
+      // not silently recreate that partial topology.
+      if (partial) gridCleanupUnconfirmed = true;
       gridStartupError.value = reason.includes("GRID_MEMORY_GUARD")
         ? "内存不足以安全启动宫格。请先尝试 2 格，或关闭其他应用后重试。"
-        : /GRID_BUILD_PARTIAL|GRID_REQUEST_OUTCOME_UNKNOWN|GRID_WORKER_FAILED/.test(reason)
-          ? "宫格重建结果部分完成或未知；请先核对现有宫格，不会自动重建。"
+        : partial
+          ? "宫格重建结果部分完成或未知；已确认的格子可能仍在运行。请显式关闭并核对后再重建。"
           : "原生宫格启动失败。请核对后手动重试。";
       bridge.debugLog(`buildGrid failed: ${reason}`);
       layout.showToast(gridStartupError.value);
