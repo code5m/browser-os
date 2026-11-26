@@ -1084,7 +1084,18 @@ impl GridProcessManager {
         // Admission is performed on the IPC caller, never wait on a
         // potentially long native spawn or retirement from that thread.
         let _gate = self.lifecycle_lock.try_lock().map_err(|_| "GRID_LIFECYCLE_BUSY")?;
-        Ok(self.grid_route_stamps_locked(indices))
+        let children = self.children.try_lock().map_err(|_| "GRID_LIFECYCLE_BUSY")?;
+        let listeners = self.listeners.try_lock().map_err(|_| "GRID_LIFECYCLE_BUSY")?;
+        let revisions = self.grid_route_revisions.try_lock().map_err(|_| "GRID_LIFECYCLE_BUSY")?;
+        Ok(indices.iter().map(|&index| {
+            let child = children.get(&index);
+            let comms = child.map(|c| &c.comms).or_else(|| listeners.get(&index));
+            crate::grid_ipc::GridRouteStamp {
+                index, pid: child.map(|c| c.child.id()),
+                epoch: comms.map(|c| c.spawn_epoch.load(Ordering::SeqCst)),
+                revision: revisions[index as usize],
+            }
+        }).collect())
     }
 
     /// Validate every selected route before mutating any, then transfer only
@@ -1441,9 +1452,15 @@ impl GridProcessManager {
             return Err("GRID_INDEX_INVALID".into());
         }
         self.lifecycle.check()?;
-        let children = self.children.lock().unwrap();
+        let children = self.children.try_lock().map_err(|_| "GRID_LIFECYCLE_BUSY")?;
         let Some(child) = children.get(&index) else { return Ok(None); };
-        let owner = child.comms.owner_snapshot()?;
+        let _owner = child.comms.owner_gate.try_lock().map_err(|_| "GRID_LIFECYCLE_BUSY")?;
+        let pid = child.child.id();
+        let epoch = child.comms.spawn_epoch.load(Ordering::SeqCst);
+        if pid == 0 || epoch == 0 || !child.comms.accepts_peer(pid) {
+            return Err("GRID_EVAL_HOST_UNAVAILABLE".into());
+        }
+        let owner = (pid, epoch);
         let generation = child.comms.generation.load(Ordering::SeqCst);
         if !child.comms.is_current(generation) || child.comms.blank_reclaiming.load(Ordering::SeqCst) {
             return Err("GRID_EVAL_HOST_UNAVAILABLE".into());
@@ -2177,6 +2194,10 @@ impl GridProcessManager {
             }
         }
         Ok(())
+    }
+
+    pub(crate) fn try_grid_is_hibernated(&self, index: u32) -> Result<bool, String> {
+        Ok(self.hibernated.try_lock().map_err(|_| "GRID_LIFECYCLE_BUSY")?.contains_key(&index))
     }
 
     pub fn is_hibernated(&self, index: u32) -> bool {

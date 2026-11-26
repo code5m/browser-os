@@ -8,6 +8,15 @@ use super::*;
 
 pub(crate) const MAX_GRID: usize = 12;
 
+// Close keeps an independent lane so a stalled navigation/layout cannot
+// consume all retirement admission. The permit lives with the native worker.
+static GRID_BUILD_WORKERS: crate::shared::blocking::BlockingLane =
+    crate::shared::blocking::BlockingLane::new(1, "GRID_TOPOLOGY_BUSY", "GRID_WORKER_FAILED");
+static GRID_CLOSE_WORKERS: crate::shared::blocking::BlockingLane =
+    crate::shared::blocking::BlockingLane::new(2, "GRID_CLOSE_BUSY", "GRID_WORKER_FAILED");
+static GRID_LAYOUT_WORKERS: crate::shared::blocking::BlockingLane =
+    crate::shared::blocking::BlockingLane::new(MAX_GRID, "GRID_POSITION_BUSY", "GRID_POSITION_WORKER_FAILED");
+
 static GRID_ZOOM_WORKERS: crate::shared::blocking::BlockingLane =
     crate::shared::blocking::BlockingLane::new(24, "GRID_ZOOM_BUSY", "GRID_ZOOM_WORKER_FAILED");
 // Only one send per cell may be in progress. Different cells remain independent.
@@ -158,10 +167,9 @@ mod grid_memory_budget_tests {
 #[tauri::command]
 pub async fn create_grid(app: AppHandle, n: usize, urls: Vec<String>) -> Result<usize, String> {
     require_grid_platform()?;
+    let permit = GRID_BUILD_WORKERS.reserve()?;
     let targets = capture_all_grid_routes(&app)?;
-    tauri::async_runtime::spawn_blocking(move || create_grid_admitted(app, n, urls, targets))
-        .await
-        .map_err(|_| "GRID_WORKER_FAILED".to_string())?
+    permit.run(move || create_grid_admitted(app, n, urls, targets)).await
 }
 
 pub(crate) fn requested_grid_url(
@@ -181,6 +189,7 @@ pub(crate) fn grid_url_needs_navigation(existing: Option<&str>, target: Option<&
 
 pub fn create_grid_blocking(app: AppHandle, n: usize, urls: Vec<String>) -> Result<usize, String> {
     require_grid_platform()?;
+    let _permit = GRID_BUILD_WORKERS.reserve()?;
     let targets = capture_all_grid_routes(&app)?;
     create_grid_admitted(app, n, urls, targets)
 }
@@ -270,10 +279,9 @@ fn create_grid_admitted(app: AppHandle, n: usize, urls: Vec<String>,
 /// belongs to this snapshot and no later replacement is implicitly closed.
 #[tauri::command]
 pub async fn close_grid(app: AppHandle) -> Result<(), String> {
+    let permit = GRID_CLOSE_WORKERS.reserve()?;
     let targets = capture_all_grid_routes(&app)?;
-    tauri::async_runtime::spawn_blocking(move || close_grid_admitted(app, targets))
-        .await
-        .map_err(|_| "GRID_WORKER_FAILED".to_string())?
+    permit.run(move || close_grid_admitted(app, targets)).await
 }
 
 fn capture_all_grid_routes(app: &AppHandle) -> Result<Vec<crate::grid_ipc::GridRouteStamp>, String> {
@@ -288,6 +296,7 @@ fn close_grid_admitted(app: AppHandle, targets: Vec<crate::grid_ipc::GridRouteSt
 }
 
 pub fn close_grid_blocking(app: AppHandle) -> Result<(), String> {
+    let _permit = GRID_CLOSE_WORKERS.reserve()?;
     let targets = capture_all_grid_routes(&app)?;
     close_grid_admitted(app, targets)
 }
@@ -314,7 +323,7 @@ fn capture_grid_cell(app: &AppHandle, index: usize) -> Result<GridCellAdmission,
         None if stamp.pid.is_none() => {}
         _ => return Err("GRID_OPEN_TARGET_CHANGED".into()),
     }
-    let sleeping = binding.is_none() && mgr.is_hibernated(index as u32);
+    let sleeping = binding.is_none() && mgr.try_grid_is_hibernated(index as u32)?;
     // A concurrent close/spawn between the two observations invalidates
     // this admission; native preparation will also verify the stamp.
     if mgr.grid_route_stamps(&[index as u32])?.first() != Some(&stamp) {
@@ -325,13 +334,13 @@ fn capture_grid_cell(app: &AppHandle, index: usize) -> Result<GridCellAdmission,
 
 #[tauri::command]
 pub async fn grid_open(app: AppHandle, index: usize, url: String) -> Result<(), String> {
+    let permit = GRID_BUILD_WORKERS.reserve()?;
     let admitted = capture_grid_cell(&app, index)?;
-    tauri::async_runtime::spawn_blocking(move || grid_open_admitted(app, url, admitted))
-        .await
-        .map_err(|_| "GRID_WORKER_FAILED".to_string())?
+    permit.run(move || grid_open_admitted(app, url, admitted)).await
 }
 
 pub fn grid_open_blocking(app: AppHandle, index: usize, url: String) -> Result<(), String> {
+    let _permit = GRID_BUILD_WORKERS.reserve()?;
     let admitted = capture_grid_cell(&app, index)?;
     grid_open_admitted(app, url, admitted)
 }
@@ -449,17 +458,13 @@ pub async fn grid_position(
     if ![x, y, width, height].iter().all(|value| value.is_finite()) || width < 0.0 || height < 0.0 {
         return Err("GRID_NATIVE_RECT_INVALID".into());
     }
+    let permit = GRID_LAYOUT_WORKERS.reserve()?;
     if x <= -20000.0 {
         let stamp = capture_one_grid_route(&app, index)?.into_iter().next().ok_or("GRID_INDEX_INVALID")?;
-        return tauri::async_runtime::spawn_blocking(move || app.state::<AppState>().grid_manager.hide_grid_route(stamp))
-            .await.map_err(|_| "GRID_POSITION_WORKER_FAILED".to_string())?;
+        return permit.run(move || app.state::<AppState>().grid_manager.hide_grid_route(stamp)).await;
     }
     let admitted = capture_grid_cell(&app, index)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        grid_position_admitted(app, (x, y, width, height), admitted)
-    })
-    .await
-    .map_err(|_| "GRID_POSITION_WORKER_FAILED".to_string())?
+    permit.run(move || grid_position_admitted(app, (x, y, width, height), admitted)).await
 }
 
 pub fn grid_position_blocking(
@@ -473,6 +478,7 @@ pub fn grid_position_blocking(
     if ![x, y, width, height].iter().all(|value| value.is_finite()) || width < 0.0 || height < 0.0 {
         return Err("GRID_NATIVE_RECT_INVALID".into());
     }
+    let _permit = GRID_LAYOUT_WORKERS.reserve()?;
     if x <= -20000.0 {
         let stamp = capture_one_grid_route(&app, index)?.into_iter().next().ok_or("GRID_INDEX_INVALID")?;
         return app.state::<AppState>().grid_manager.hide_grid_route(stamp);
@@ -515,10 +521,9 @@ fn grid_position_admitted(app: AppHandle, css: (f64, f64, f64, f64),
 /// retired, but a replacement identity must never be selected by index.
 #[tauri::command]
 pub async fn grid_close_one(app: AppHandle, index: usize) -> Result<(), String> {
+    let permit = GRID_CLOSE_WORKERS.reserve()?;
     let targets = capture_one_grid_route(&app, index)?;
-    tauri::async_runtime::spawn_blocking(move || close_grid_admitted(app, targets))
-        .await
-        .map_err(|_| "GRID_WORKER_FAILED".to_string())?
+    permit.run(move || close_grid_admitted(app, targets)).await
 }
 
 fn capture_one_grid_route(app: &AppHandle, index: usize)
@@ -530,6 +535,7 @@ fn capture_one_grid_route(app: &AppHandle, index: usize)
 }
 
 pub fn grid_close_one_blocking(app: AppHandle, index: usize) -> Result<(), String> {
+    let _permit = GRID_CLOSE_WORKERS.reserve()?;
     let targets = capture_one_grid_route(&app, index)?;
     close_grid_admitted(app, targets)
 }

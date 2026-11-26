@@ -402,3 +402,9 @@ Source-only scope; no compilation, tests, install/runtime validation, workflow d
 - Windows Grid sweeps no longer retain the lifecycle lock across IPC hide/probe waits; use the same final nonblocking lifecycle admission pattern as Linux. Explicit user-requested suspension is unaffected.
 - Settings publish and persist a changed preference only after native acknowledgement. Pending, rejected and unknown settings are visible, with explicit manual reapply. Clarify that independent tabs and Grid are automatic blank-only; embedded tabs retain their existing URL/scroll restoration.
 - This serializes host policy changes with automatic reclaim admission, not arbitrary page-internal mutation. Source only; no build, test, CI workflow change, default mode enablement or master merge.
+
+## 2026-11-26 — Bound Grid native topology and layout admission
+
+- All asynchronous and legacy blocking create/rebuild/open, full/single close and position/hide entrances acquire bounded worker ownership before capturing a route. One topology worker, two independent retirement workers and at most one layout-worker budget per supported Grid slot in aggregate. Existing zoom/eval lanes stay separate. A dropped waiter cannot release a live blocking permit. Saturation is rejected before work; no implicit replay.
+- Both platform managers collect IPC route stamps, live owner and sleeping-slot metadata through nonblocking admission locks. Busy does not mean absent; the original route stamp and connection fencing still apply in workers. Close does not share navigation worker capacity.
+- This fixes unbounded scheduling at these Grid entrances, not engine/OS syscall termination. Existing kernel retirement and explicit reconciliation remain authoritative. Source only; no build, tests, workflow edits or master merge.

@@ -94,6 +94,7 @@ impl GridProcessManager {
     }
     pub(crate) fn all_renderer_indices(&self) -> Vec<u32> { Vec::new() }
 
+    pub(crate) fn try_grid_is_hibernated(&self, _index: u32) -> Result<bool, String> { Err(unsupported()) }
     pub fn is_hibernated(&self, _index: u32) -> bool {
         false
     }
