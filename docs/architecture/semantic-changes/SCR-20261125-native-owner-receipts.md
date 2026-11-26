@@ -388,3 +388,10 @@ Source-only scope; no compilation, tests, install/runtime validation, workflow d
 - Run sampling in its own two-permit blocking lane with a single 800 ms Ping budget. A timed-out client cannot release the worker's capacity. The existing synchronous receipt-control logic remains in a separate helper called by the asynchronous Tauri entrypoint.
 - Publish a sample only if the same owner and connection still appear in the returned inventory. The UI labels explicit sampling separately from cache queries, invalidates stale panel results and never automatically replays a failed sample.
 - This closes the selected-host fresh-observation gap; it does not add per-transfer identity, engine cancellation, persistence or a download-completion guarantee. Source only, no build/test/CI workflow change or master merge.
+
+## 2026-11-26 — Bound Agent Channel JSON admission and local return checkpoint encoding
+
+- Use the existing bounded native JSON serializer for Channel input admission (4 KiB), native read result admission (64 KiB), initial/continued text Run input admission (128 KiB), and local-return checkpoint payloads (existing per-call limit).
+- Native read result encoding stays on the original bounded blocking worker; oversize is rejected without constructing an unlimited encoded copy on the async runtime. Recheck the cancellation/deadline after bounded encoding.
+- Local-return checkpoint still records the terminal local return even when an oversized or credential-bearing payload must be withheld; no replay is authorized. Existing decoded values and lower-level provider/OS allocations are not hard memory bounded by this change.
+- Source-only implementation; compilation, tests, workflow changes and master merge not performed.

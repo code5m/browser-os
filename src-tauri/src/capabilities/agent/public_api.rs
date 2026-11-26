@@ -13,6 +13,15 @@ pub(crate) use super::local_provider::{
     check as validate_local_chat, local_chat, LocalChatRequest,
 };
 
+/// Reuse the bounded native JSON writer for Agent Channel admission and
+/// results. This bounds encoded copies, not a provider's decoded Value.
+pub(crate) fn bounded_channel_json(value: &Value, limit: usize) -> Result<Vec<u8>, String> {
+    super::mcp_protocol::encode_bounded(value, limit)
+        .map_err(|error| if error == "MCP_REQUEST_LIMIT" {
+            "AGENT_CHANNEL_JSON_LIMIT".into()
+        } else { "AGENT_CHANNEL_JSON_INVALID".into() })
+}
+
 pub(crate) fn register_coding_run(id: &str) -> Result<super::coding::RunRequestGuard, String> {
     super::coding::register_run_request(id)
 }

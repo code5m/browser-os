@@ -2,7 +2,7 @@
 //! Reuses existing capability public commands and their invocation/policy checks.
 //! No remote WebView, model message or MCP peer can reach this control plane.
 use crate::capabilities::agent::public_api::{
-    ChannelAdmission, ChannelInput, ChannelStart, ProductionExecution,
+    bounded_channel_json, ChannelAdmission, ChannelInput, ChannelStart, ProductionExecution,
 };
 use crate::shared::blocking::BlockingLane;
 use browseros_agent_foundation as foundation;
@@ -359,21 +359,18 @@ impl PublicApiHost for NativeOwnerHost {
                     check_waiter()?;
                     let result = read.dispatch(app, webview)?;
                     check_waiter()?;
+                    // Check while the worker owns its permit; do not copy a
+                    // potentially huge native result onto the async runtime.
+                    bounded_channel_json(&result, MAX_RESULT_BYTES)?;
+                    check_waiter()?;
                     Ok(result)
                 })
                 .await
-                .map_err(|_| {
-                    foundation::FoundationError::Tool("OWNER_READ_FAILED_OR_BUSY".into())
+                .map_err(|error| {
+                    foundation::FoundationError::Tool(if error == "AGENT_CHANNEL_JSON_LIMIT" {
+                        "OWNER_RESULT_LIMIT".into()
+                    } else { "OWNER_READ_FAILED_OR_BUSY".into() })
                 })?;
-            if serde_json::to_vec(&result)
-                .map_err(|e| foundation::FoundationError::Serialization(e.to_string()))?
-                .len()
-                > MAX_RESULT_BYTES
-            {
-                return Err(foundation::FoundationError::Tool(
-                    "OWNER_RESULT_LIMIT".into(),
-                ));
-            }
             // Keep the cancellation guard alive across the entire worker wait.
             drop(waiter);
             Ok(result)
@@ -413,10 +410,7 @@ fn enabled_config(app: &AppHandle) -> Result<ExperimentConfig, String> {
 }
 fn checked_read(command: String, args: Value) -> Result<ChannelStart, String> {
     if !args.is_object()
-        || serde_json::to_vec(&args)
-            .map_err(|_| "AGENT_EXPERIMENT_ARGUMENT_INVALID")?
-            .len()
-            > 4096
+        || bounded_channel_json(&args, 4096).is_err()
     {
         return Err("AGENT_EXPERIMENT_ARGUMENT_INVALID".into());
     }

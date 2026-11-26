@@ -798,10 +798,7 @@ impl ProductionExecution {
         {
             if !matches!(kind, "chat" | "legacy_agent" | "local_chat")
                 || !input.is_object()
-                || serde_json::to_vec(&input)
-                    .map_err(|_| "AGENT_RUN_RECEIPT_INVALID")?
-                    .len()
-                    > 128 * 1024
+                || super::mcp_protocol::encode_bounded(&input, 128 * 1024).is_err()
             {
                 return Err("AGENT_RUN_INPUT_LIMIT".into());
             }
@@ -886,7 +883,11 @@ impl ProductionExecution {
 
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     fn checkpoint_local_return(&mut self, value: &Value, limit: usize) -> Result<(), String> {
-        let encoded = serde_json::to_string(value).map_err(|_| "AGENT_RUN_RECEIPT_INVALID")?;
+        let encoded = match super::mcp_protocol::encode_bounded(value, limit) {
+            Ok(bytes) => Some(bytes),
+            Err(error) if error == "MCP_REQUEST_LIMIT" => None,
+            Err(_) => return Err("AGENT_RUN_RECEIPT_INVALID".into()),
+        };
         let payload = self
             .durable_run
             .as_mut()
@@ -894,8 +895,8 @@ impl ProductionExecution {
             .ok_or("AGENT_RUN_RECEIPT_REQUIRED")?;
         // The provider has already scrubbed known credentials. Keep only
         // bounded results passing the existing additional secret screening.
-        payload.result = if encoded.len() <= limit
-            && !crate::security_policy::contains_credential_leak(&encoded)
+        payload.result = if encoded.as_deref().and_then(|bytes| std::str::from_utf8(bytes).ok())
+            .is_some_and(|text| !crate::security_policy::contains_credential_leak(text))
         {
             Some(value.clone())
         } else {
@@ -1164,10 +1165,7 @@ impl ProductionExecution {
                     return Err("AGENT_RUN_NOT_RESUMABLE".into());
                 }
             };
-            if serde_json::to_vec(&input)
-                .map_err(|_| "AGENT_RUN_RECEIPT_INVALID")?
-                .len()
-                > 128 * 1024
+            if super::mcp_protocol::encode_bounded(&input, 128 * 1024).is_err()
             {
                 return Err("AGENT_RUN_INPUT_LIMIT".into());
             }
@@ -1522,7 +1520,7 @@ impl ProductionExecution {
         }
         if let Some(latest) = proof {
             let applied = latest.outcome.applied();
-            let position = usize::from(applied);
+            let position = applied as usize;
             // The primary provider proof already lives in the original
             // authenticated record. Only independently late evidence needs
             // the sidecar. Keep at most one verified proof per outcome.
@@ -1535,13 +1533,13 @@ impl ProductionExecution {
                 if retained[position].is_none() { return Err("MCP_EFFECT_HISTORY_MISSING".into()); }
             }
         }
-        let historical_conflict = terminal_outcome.is_some_and(|applied| retained[usize::from(!applied)].is_some());
+        let historical_conflict = terminal_outcome.is_some_and(|applied| retained[(!applied) as usize].is_some());
         let state = if stored.is_some() {
             if historical_conflict { "conflicting_signed_terminal" } else { "settled" }
         } else if let Some(applied) = manual_outcome {
             if historical_conflict {
                 "conflicts_manual"
-            } else if retained[usize::from(applied)].is_some() {
+            } else if retained[applied as usize].is_some() {
                 "matches_manual"
             } else {
                 observed.state()
