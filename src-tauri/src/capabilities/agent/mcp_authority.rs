@@ -126,17 +126,44 @@ impl Binding {
 pub(super) enum FinalOutcome {
     AppliedFinal,
     NotAppliedFinal,
+    /// The provider durably cancelled this exact operation and guarantees
+    /// that it has not applied and will never apply its bound effect.
+    CancelledFinal,
 }
 impl FinalOutcome {
     fn wire(self) -> &'static str {
         match self {
             Self::AppliedFinal => "applied_final",
             Self::NotAppliedFinal => "not_applied_final",
+            Self::CancelledFinal => "cancelled_final",
         }
     }
     pub(super) fn applied(self) -> bool {
         self == Self::AppliedFinal
     }
+    pub(super) fn phase(self) -> &'static str {
+        match self {
+            Self::AppliedFinal => "provider_applied",
+            Self::NotAppliedFinal => "provider_not_applied",
+            Self::CancelledFinal => "provider_cancelled",
+        }
+    }
+    pub(super) fn evidence_name(self) -> &'static str {
+        match self {
+            Self::AppliedFinal => "applied",
+            Self::NotAppliedFinal => "not-applied",
+            Self::CancelledFinal => "cancelled",
+        }
+    }
+    pub(super) fn task_status(self) -> browseros_agent_foundation::task::TaskStatus {
+        use browseros_agent_foundation::task::TaskStatus;
+        match self {
+            Self::AppliedFinal => TaskStatus::Completed,
+            Self::NotAppliedFinal => TaskStatus::Failed,
+            Self::CancelledFinal => TaskStatus::Cancelled,
+        }
+    }
+    pub(super) const ALL: [Self; 3] = [Self::NotAppliedFinal, Self::AppliedFinal, Self::CancelledFinal];
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

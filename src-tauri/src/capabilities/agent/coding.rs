@@ -2252,7 +2252,8 @@ fn reconcile_provider_operations(
         operation.status = next.into();
         operation.review_revision = None;
         operation.result = Some(format!(
-            "Verified provider final status: {next}; original operation is not replayable."
+            "Verified provider final status: {}; effect settlement: {next}; original operation is not replayable.",
+            receipt.provider_proof.as_ref().ok_or("AGENT_OPERATION_RECEIPT_MISSING")?.outcome.phase()
         ));
         if let Some(run) = session.runs.iter_mut().find(|run| run.id == receipt.run_id) {
             run.status = next.into();
@@ -2260,8 +2261,8 @@ fn reconcile_provider_operations(
         // Only fixed native-generated text is appended; the status publisher
         // cannot use receipt content as a new instruction to the model.
         session.messages.push(json!({"role":"user","content":format!(
-            "Provider-signed final effect receipt: operation {} is {}. This describes only the bound provider effect; do not replay its original approval.",
-            operation.id,next)}));
+            "Provider-signed final effect receipt: operation {} is {} ({}). This describes only the bound provider effect; do not replay its original approval.",
+            operation.id,next,receipt.provider_proof.as_ref().ok_or("AGENT_OPERATION_RECEIPT_MISSING")?.outcome.phase())}));
         changed = true;
     }
     if changed && session.status != "recovery_conflict" {

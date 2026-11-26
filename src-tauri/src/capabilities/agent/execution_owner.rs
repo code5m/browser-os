@@ -307,7 +307,7 @@ impl DurableRun {
         {
             return Err("AGENT_RUN_RECEIPT_INVALID".into());
         }
-        if matches!(record.phase.as_str(), "provider_applied" | "provider_not_applied")
+        if matches!(record.phase.as_str(), "provider_applied" | "provider_not_applied" | "provider_cancelled")
             && !Self::provider_resolution_proven(&record)
         {
             return Err("AGENT_RUN_RECEIPT_INVALID".into());
@@ -427,11 +427,10 @@ impl DurableRun {
             })
     }
     fn provider_resolution_proven(record: &NativeRunReceipt) -> bool {
-        let (status, disposition, applied) = match record.phase.as_str() {
-            "provider_applied" => (TaskStatus::Completed, "provider_applied", true),
-            "provider_not_applied" => (TaskStatus::Failed, "provider_not_applied", false),
-            _ => return false,
-        };
+        let Some(outcome) = super::mcp_authority::FinalOutcome::ALL.into_iter()
+            .find(|outcome| outcome.phase() == record.phase) else { return false; };
+        let status = outcome.task_status();
+        let disposition = outcome.phase();
         record.task.status == status
             && Self::manual_admission_bound(record)
             && record.effect_resolution.is_none()
@@ -445,7 +444,7 @@ impl DurableRun {
                             binding.run_id == record.id
                                 && effect.review_revision.as_deref()
                                     == Some(binding.review_revision.as_str())
-                                && proof.outcome.applied() == applied
+                                && proof.outcome == outcome
                                 && proof.verify(binding)
                         })
             })
@@ -1477,11 +1476,10 @@ impl ProductionExecution {
         let proof = observed.proof();
         if Self::can_resolve_manual(&record) && DurableRun::manual_admission_bound(&record) {
             if let Some(proof) = proof {
-                let applied = proof.outcome.applied();
                 record.task.revision = record.task.revision.checked_add(1)
                     .ok_or("AGENT_TASK_REVISION_EXHAUSTED")?;
-                record.task.status = if applied { TaskStatus::Completed } else { TaskStatus::Failed };
-                record.phase = if applied { "provider_applied" } else { "provider_not_applied" }.into();
+                record.task.status = proof.outcome.task_status();
+                record.phase = proof.outcome.phase().into();
                 let effect = record.effect.as_mut().ok_or("AGENT_RUN_RECEIPT_REQUIRED")?;
                 effect.disposition = record.phase.clone();
                 effect.provider_proof = Some(proof.clone());
@@ -1494,7 +1492,7 @@ impl ProductionExecution {
         }
         // A terminal Run may already be archived. Retain independently
         // authenticated late proofs without rewriting the original receipt.
-        // Read both outcomes each time: removing/replacing the inbox file
+        // Read all outcomes each time: removing/replacing the inbox file
         // cannot erase an already recorded contradiction.
         let binding = record.effect.as_ref().and_then(|effect| effect.authority.as_ref())
             .ok_or("AGENT_RUN_RECEIPT_INVALID")?;
@@ -1505,22 +1503,22 @@ impl ProductionExecution {
             _ => None,
         };
         let terminal_outcome = stored.map(|proof| proof.outcome.applied()).or(manual_outcome);
-        let read_retained = |applied: bool| -> Result<Option<super::mcp_authority::SignedStatus>, String> {
-            let Some(bytes) = owner.checkpoint.read_provider_evidence(applied)? else { return Ok(None); };
+        use super::mcp_authority::FinalOutcome;
+        let read_retained = |outcome: FinalOutcome| -> Result<Option<super::mcp_authority::SignedStatus>, String> {
+            let Some(bytes) = owner.checkpoint.read_provider_evidence(outcome)? else { return Ok(None); };
             let retained: super::mcp_authority::SignedStatus =
                 serde_json::from_slice(&bytes).map_err(|_| "MCP_EFFECT_HISTORY_INVALID")?;
-            if retained.outcome.applied() != applied || !retained.verify(binding) {
+            if retained.outcome != outcome || !retained.verify(binding) {
                 return Err("MCP_EFFECT_HISTORY_INVALID".into());
             }
             Ok(Some(retained))
         };
-        let mut retained = [read_retained(false)?, read_retained(true)?];
+        let mut retained = [read_retained(FinalOutcome::NotAppliedFinal)?, read_retained(FinalOutcome::AppliedFinal)?, read_retained(FinalOutcome::CancelledFinal)?];
         if terminal_outcome.is_none() && retained.iter().any(Option::is_some) {
             return Err("MCP_EFFECT_HISTORY_INVALID".into());
         }
         if let Some(latest) = proof {
-            let applied = latest.outcome.applied();
-            let position = applied as usize;
+            let position = FinalOutcome::ALL.iter().position(|outcome| *outcome == latest.outcome).ok_or("MCP_EFFECT_HISTORY_INVALID")?;
             // The primary provider proof already lives in the original
             // authenticated record. Only independently late evidence needs
             // the sidecar. Keep at most one verified proof per outcome.
@@ -1528,18 +1526,18 @@ impl ProductionExecution {
                 && retained[position].is_none()
             {
                 let bytes = serde_json::to_vec(latest).map_err(|_| "MCP_EFFECT_HISTORY_INVALID")?;
-                owner.checkpoint.retain_provider_evidence(applied, &bytes)?;
-                retained[position] = read_retained(applied)?;
+                owner.checkpoint.retain_provider_evidence(latest.outcome, &bytes)?;
+                retained[position] = read_retained(latest.outcome)?;
                 if retained[position].is_none() { return Err("MCP_EFFECT_HISTORY_MISSING".into()); }
             }
         }
-        let historical_conflict = terminal_outcome.is_some_and(|applied| retained[(!applied) as usize].is_some());
+        let historical_conflict = terminal_outcome.is_some_and(|applied| retained.iter().flatten().any(|proof| proof.outcome.applied() != applied));
         let state = if stored.is_some() {
             if historical_conflict { "conflicting_signed_terminal" } else { "settled" }
         } else if let Some(applied) = manual_outcome {
             if historical_conflict {
                 "conflicts_manual"
-            } else if retained[applied as usize].is_some() {
+            } else if retained.iter().flatten().any(|proof| proof.outcome.applied() == applied) {
                 "matches_manual"
             } else {
                 observed.state()

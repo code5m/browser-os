@@ -143,7 +143,7 @@ const mcpRunning=manualMcpRunning;
 const mcpReview=ref<any>(null),mcpCredentialsApproved=ref(false),mcpReviewing=ref(false),reviewedMcpRequest=ref('');
 let mcpReviewSequence=0;
 type McpObservation = {observation:string;evidence:string;recorded_at_ms:number;workspace_identity_bound:boolean;execution_ended_attested?:boolean};
-type ManualMcpReceipt = {id:string;phase:string;revision:string;updated_at_ms:number;tool:string|null;target:string|null;disposition:string|null;identity_bound:boolean;observations:number;can_reconcile:boolean;can_resolve?:boolean;can_archive?:boolean;archived?:boolean;request_digest?:string|null;review_revision?:string|null;response_digest?:string|null;has_response?:boolean;response_payload?:{result:unknown;untrusted:true}|null;approved_tool?:string|null;reviews?:McpObservation[];resolution?:McpObservation|null;provider_binding?:{idempotency_key:string;account:string;namespace:string;review_revision:string}|null;provider_outcome?:'applied_final'|'not_applied_final'|null;provider_inbox?:{state:string;inbox_state?:string;observed_outcome?:'applied_final'|'not_applied_final'|null;retained_outcomes?:('applied_final'|'not_applied_final')[];historical_conflict?:boolean}};
+type ManualMcpReceipt = {id:string;phase:string;revision:string;updated_at_ms:number;tool:string|null;target:string|null;disposition:string|null;identity_bound:boolean;observations:number;can_reconcile:boolean;can_resolve?:boolean;can_archive?:boolean;archived?:boolean;request_digest?:string|null;review_revision?:string|null;response_digest?:string|null;has_response?:boolean;response_payload?:{result:unknown;untrusted:true}|null;approved_tool?:string|null;reviews?:McpObservation[];resolution?:McpObservation|null;provider_binding?:{idempotency_key:string;account:string;namespace:string;review_revision:string}|null;provider_outcome?:'applied_final'|'not_applied_final'|'cancelled_final'|null;provider_inbox?:{state:string;inbox_state?:string;observed_outcome?:'applied_final'|'not_applied_final'|'cancelled_final'|null;retained_outcomes?:('applied_final'|'not_applied_final'|'cancelled_final')[];historical_conflict?:boolean}};
 const mcpRunId=ref(''),mcpCancelPending=ref(false);
 const mcpReceiptOpen=ref(false),mcpReceiptBusy=ref(false);
 const mcpReceipts=ref<ManualMcpReceipt[]>([]),mcpCursor=ref<string|null>(null),mcpUnavailable=ref(0);
@@ -508,7 +508,7 @@ async function mcpAction(action:'mcp_tools'|'mcp_call'){
       return;
     }
     if(result.provider_binding){
-      notice.value=result.provider_outcome==='applied_final'?'提供方签名终态已确认生效。':result.provider_outcome==='not_applied_final'?'提供方签名终态已确认未生效。':'等待提供方签名终态；不会重放。';
+      notice.value=result.provider_outcome==='applied_final'?'提供方签名终态已确认生效。':result.provider_outcome==='not_applied_final'?'提供方签名终态已确认未生效。':result.provider_outcome==='cancelled_final'?'提供方签名确认已取消且本次效果不会生效。':'等待提供方签名终态；不会重放。';
       return;
     }
     if(action==='mcp_tools')mcpTools.value=result.result?.tools||[];
@@ -649,10 +649,10 @@ onBeforeUnmount(()=>{
               <p class="hint" v-else-if="mcpReceipt.disposition==='transport_returned'">仅确认本地协议调用已返回，不代表任意外部业务效果或远端任务终止。</p>
                <template v-if="mcpReceipt.provider_binding">
                  <p style="overflow-wrap:anywhere">提供方账户：{{mcpReceipt.provider_binding.account}} / {{mcpReceipt.provider_binding.namespace}}；幂等键：{{mcpReceipt.provider_binding.idempotency_key}}</p>
-                 <p class="hint" v-if="mcpReceipt.provider_outcome">已验签终态：{{mcpReceipt.provider_outcome==='applied_final'?'已生效':'未生效'}}。仅证明本次绑定的外部效果，不证明本地进程退出。</p>
+                 <p class="hint" v-if="mcpReceipt.provider_outcome">已验签终态：{{mcpReceipt.provider_outcome==='applied_final'?'已生效':mcpReceipt.provider_outcome==='cancelled_final'?'已取消且不会生效':'未生效'}}。仅证明本次绑定的外部效果，不证明本地进程退出。</p>
                  <p v-if="mcpReceipt.provider_inbox" class="hint" role="status">{{providerInboxLabels[mcpReceipt.provider_inbox.state]||'签名状态待核对。'}}</p>
-                 <p v-if="mcpReceipt.provider_inbox?.observed_outcome" class="hint">当前目录验签观察：{{mcpReceipt.provider_inbox.observed_outcome==='applied_final'?'已生效':'未生效'}}。不会覆盖原结案记录。</p>
-                 <p v-if="mcpReceipt.provider_inbox?.retained_outcomes?.length" class="hint">已持久保存的迟到签名终态：{{mcpReceipt.provider_inbox.retained_outcomes.map(value=>value==='applied_final'?'已生效':'未生效').join(' / ')}}。提供方删除或替换状态文件不会清除这些证据。</p>
+                 <p v-if="mcpReceipt.provider_inbox?.observed_outcome" class="hint">当前目录验签观察：{{mcpReceipt.provider_inbox.observed_outcome==='applied_final'?'已生效':mcpReceipt.provider_inbox.observed_outcome==='cancelled_final'?'已取消且不会生效':'未生效'}}。不会覆盖原结案记录。</p>
+                 <p v-if="mcpReceipt.provider_inbox?.retained_outcomes?.length" class="hint">已持久保存的迟到签名终态：{{mcpReceipt.provider_inbox.retained_outcomes.map(value=>value==='applied_final'?'已生效':value==='cancelled_final'?'已取消且不会生效':'未生效').join(' / ')}}。提供方删除或替换状态文件不会清除这些证据。</p>
                  <p v-if="mcpReceipt.provider_inbox?.historical_conflict" role="alert">存在已保存的签名冲突；原回执不变，禁止新增归档。</p>
                  <button :disabled="mcpReceiptBusy||mcpRunning" @click="readMcpReceipt(mcpReceipt.id)">重新核对签名终态</button>
                </template>
