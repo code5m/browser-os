@@ -20,6 +20,10 @@ impl GridProcessManager {
     pub(crate) fn close_grid_targets(&self, targets: &[crate::grid_ipc::GridRouteStamp]) -> Result<(), String> {
         if targets.is_empty() { Ok(()) } else { Err(unsupported()) }
     }
+    pub(crate) fn prepare_grid_slot(&self, _target: crate::grid_ipc::GridRouteStamp) -> Result<crate::grid_ipc::GridPreparedSlot, String> { Err(unsupported()) }
+    pub(crate) fn grid_binding_for_stamp(&self, _stamp: crate::grid_ipc::GridRouteStamp) -> Result<crate::grid_ipc::RendererBinding, String> { Err(unsupported()) }
+    pub(crate) fn rollback_grid_creation(&self, _prepared: &crate::grid_ipc::GridPreparedSlot) -> Result<(), String> { Err(unsupported()) }
+    pub(crate) fn grid_create_bound(&self, _binding: crate::grid_ipc::RendererBinding, _url: &str) -> Result<(), String> { Err(unsupported()) }
 
     pub fn get_or_spawn(&self, _index: u32) -> Result<bool, String> {
         Err(unsupported())

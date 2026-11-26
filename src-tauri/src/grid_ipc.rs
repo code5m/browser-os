@@ -93,6 +93,24 @@ pub(crate) struct GridRouteStamp {
     pub index: u32,
     pub pid: Option<u32>,
     pub epoch: Option<u64>,
+    // Explicit close invalidates an older cold-start intent even when the
+    // slot was already absent and no native spawn epoch changed.
+    pub revision: u64,
+}
+
+#[derive(Default, Clone)]
+pub(crate) struct GridSavedState {
+    pub last_url: Option<String>,
+    pub last_rect: Option<(f64, f64, f64, f64)>,
+    pub hidden: bool,
+    pub blur_hidden: bool,
+}
+
+pub(crate) struct GridPreparedSlot {
+    pub stamp: GridRouteStamp,
+    pub created: bool,
+    pub previous_url: Option<String>,
+    pub saved: Option<GridSavedState>,
 }
 
 pub(crate) const MAX_RENDERER_CAPTURE_BYTES: usize = 32 * 1024 * 1024;

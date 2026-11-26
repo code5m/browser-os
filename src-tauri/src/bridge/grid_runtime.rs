@@ -157,7 +157,9 @@ mod grid_memory_budget_tests {
 /// 前端据此调整 gridCount 并提示用户。
 #[tauri::command]
 pub async fn create_grid(app: AppHandle, n: usize, urls: Vec<String>) -> Result<usize, String> {
-    tauri::async_runtime::spawn_blocking(move || create_grid_blocking(app, n, urls))
+    require_grid_platform()?;
+    let targets = capture_all_grid_routes(&app)?;
+    tauri::async_runtime::spawn_blocking(move || create_grid_admitted(app, n, urls, targets))
         .await
         .map_err(|_| "GRID_WORKER_FAILED".to_string())?
 }
@@ -179,10 +181,18 @@ pub(crate) fn grid_url_needs_navigation(existing: Option<&str>, target: Option<&
 
 pub fn create_grid_blocking(app: AppHandle, n: usize, urls: Vec<String>) -> Result<usize, String> {
     require_grid_platform()?;
+    let targets = capture_all_grid_routes(&app)?;
+    create_grid_admitted(app, n, urls, targets)
+}
+
+fn create_grid_admitted(app: AppHandle, n: usize, urls: Vec<String>,
+    targets: Vec<crate::grid_ipc::GridRouteStamp>,
+) -> Result<usize, String> {
+    if targets.len() != MAX_GRID { return Err("GRID_BUILD_TOPOLOGY_INVALID".into()); }
     let requested = n.clamp(2, MAX_GRID);
     let state = app.state::<AppState>();
     let manager = &state.grid_manager;
-    let existing = manager.indices();
+    let existing: Vec<u32> = targets.iter().filter(|stamp| stamp.pid.is_some()).map(|stamp| stamp.index).collect();
     let target = match mem_available_mb() {
         Some(avail) => {
             let affordable = affordable_grid_count(avail, &existing, requested);
@@ -203,112 +213,51 @@ pub fn create_grid_blocking(app: AppHandle, n: usize, urls: Vec<String>) -> Resu
         None if (0..requested).all(|index| existing.contains(&(index as u32))) => requested,
         None => return Err("GRID_MEMORY_UNKNOWN: 无法测量可用内存，拒绝新建宫格".into()),
     };
-    let mut newly_created: Vec<(u32, bool)> = Vec::new();
-    let mut navigated_existing: Vec<(u32, String)> = Vec::new();
-
-    // Bring the target layout to a ready state before destroying surplus cells.
-    // This preserves the old Grid if a cold child fails to start or a navigation
-    // request times out during a resize.
+    let mut prepared_stamps = Vec::with_capacity(target);
+    // Keep confirmed cells on partial failure. Navigating them backward does
+    // not restore the old DOM, can discard new user input, and is not safe
+    // compensation. Only an unconfirmed newly spawned cell is rolled back.
     for i in 0..target {
-        let index = i as u32;
-        let label = format!("grid-{i}");
-        let was_hibernated = manager.is_hibernated(index);
+        let prepared = manager.prepare_grid_slot(targets[i])
+            .map_err(|error| format!("GRID_BUILD_PARTIAL:{i}:{error}"))?;
+        let previous_url = prepared.previous_url.as_deref();
         let requested_url = urls.get(i).map(String::as_str);
-        let created = match manager.get_or_spawn(index) {
-            Ok(created) => created,
-            Err(error) => {
-                for (rollback_index, old_url) in navigated_existing.iter().rev() {
-                    let _ = manager.request(
-                        *rollback_index,
-                        GridCmd::Navigate {
-                            id: format!("grid-{rollback_index}"),
-                            url: old_url.clone(),
-                        },
-                        10000,
-                    );
-                    manager.record_url(*rollback_index, old_url);
-                }
-                for (created_index, was_hibernated) in newly_created.iter().rev() {
-                    if *was_hibernated {
-                        manager.hibernate_child(*created_index);
-                    } else {
-                        manager.kill_child(*created_index);
-                    }
-                }
-                return Err(error);
-            }
-        };
-        let previous_url = manager.last_url(index);
-        let target_url = requested_grid_url(requested_url, previous_url.as_deref())
+        let target_url = requested_grid_url(requested_url, previous_url)
             .unwrap_or_else(|| "about:blank".to_string());
-        if created {
-            newly_created.push((index, was_hibernated));
-        }
-
-        let command = if created {
-            Some(GridCmd::CreateTab {
-                id: label.clone(),
-                url: target_url.clone(),
-            })
-        } else if grid_url_needs_navigation(
-            previous_url.as_deref(),
-            requested_grid_url(requested_url, None).as_deref(),
-        ) {
-            Some(GridCmd::Navigate {
-                id: label.clone(),
-                url: target_url.clone(),
-            })
-        } else {
-            None
-        };
-        if let Some(command) = command {
-            let timeout = if created { 20000 } else { 10000 };
-            if let Err(error) = manager.request(index, command, timeout) {
-                for (rollback_index, old_url) in navigated_existing.iter().rev() {
-                    let _ = manager.request(
-                        *rollback_index,
-                        GridCmd::Navigate {
-                            id: format!("grid-{rollback_index}"),
-                            url: old_url.clone(),
-                        },
-                        10000,
-                    );
-                    manager.record_url(*rollback_index, old_url);
-                }
-                for (created_index, was_hibernated) in newly_created.iter().rev() {
-                    if *was_hibernated {
-                        manager.hibernate_child(*created_index);
-                    } else {
-                        manager.kill_child(*created_index);
-                    }
-                }
-                return Err(error);
+        let operation = (|| -> Result<(), String> {
+            let binding = manager.grid_binding_for_stamp(prepared.stamp)?;
+            if prepared.created {
+                manager.grid_create_bound(binding, &target_url)?;
+            } else if grid_url_needs_navigation(previous_url, requested_grid_url(requested_url, None).as_deref()) {
+                manager.grid_navigate_bound(binding, &target_url)?;
             }
-            if !created {
-                if let Some(old_url) = previous_url {
-                    navigated_existing.push((index, old_url));
-                }
-            }
-            manager.record_url(index, &target_url);
+            Ok(())
+        })();
+        if let Err(error) = operation {
+            let compensation = if prepared.created {
+                manager.rollback_grid_creation(&prepared)
+                    .map(|_| "original new cell retired".to_string())
+                    .unwrap_or_else(|e| format!("rollback unconfirmed:{e}"))
+            } else { "retained cell not replayed".to_string() };
+            return Err(format!("GRID_BUILD_PARTIAL:{i}:{error};{compensation}"));
         }
-
-        if created {
-            schedule_grid_zoom(&app, &label);
+        prepared_stamps.push(prepared.stamp);
+        if prepared.created {
+            schedule_grid_zoom(&app, &format!("grid-{i}"));
             if i + 1 < target {
-                // Stagger only cold starts; healthy retained children need no delay.
                 std::thread::sleep(std::time::Duration::from_millis(300));
             }
         }
     }
 
-    // The new target layout is healthy; only now close cells outside its range.
-    for index in manager
-        .indices()
-        .into_iter()
-        .filter(|index| *index as usize >= target)
-    {
-        grid_close_one_blocking(app.clone(), index as usize)?;
+    // Validate the prepared cells before closing surplus routes. No
+    // re-enumeration of surplus owners after a long-running rebuild.
+    let indices: Vec<_> = (0..target as u32).collect();
+    if manager.grid_route_stamps(&indices)? != prepared_stamps {
+        return Err("GRID_BUILD_PARTIAL:prepared topology changed".into());
     }
+    manager.close_grid_targets(&targets[target..])
+        .map_err(|error| format!("GRID_BUILD_PARTIAL:surplus close:{error}"))?;
     Ok(target)
 }
 

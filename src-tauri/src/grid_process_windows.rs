@@ -267,13 +267,7 @@ impl ChildComms {
 }
 
 /// 崩溃重启时跨 spawn 保留的状态。
-#[derive(Default, Clone)]
-struct SavedChildState {
-    last_url: Option<String>,
-    last_rect: Option<(f64, f64, f64, f64)>,
-    hidden: bool,
-    blur_hidden: bool,
-}
+type SavedChildState = crate::grid_ipc::GridSavedState;
 
 /// A Grid process is an independent browser session. URL + rectangle do not
 /// preserve unsent AI prompts, streaming replies or SPA memory. Without a
@@ -356,6 +350,7 @@ pub struct GridProcessManager {
     /// Crash budget per grid cell; normal user-triggered shutdown is not counted.
     crash_history: Mutex<HashMap<u32, VecDeque<std::time::Instant>>>,
     pending_restarts: Mutex<HashMap<u32, (std::time::Instant, SavedChildState)>>,
+    grid_route_revisions: Mutex<[u64; crate::bridge::MAX_GRID]>,
     // One coalescing relocation worker, regardless of GTK move/resize rate.
     // The version is a latest-value notification, never an unbounded channel.
     reposition_pending: AtomicU64,
@@ -705,6 +700,11 @@ impl GridProcessManager {
     pub fn get_or_spawn(&self, index: u32) -> Result<bool, String> {
         let _operation = self.lifecycle.enter()?;
         let _lifecycle = self.lifecycle_lock.lock().unwrap();
+        self.get_or_spawn_locked(index)
+    }
+
+    // Caller has admitted the operation and holds lifecycle_lock.
+    fn get_or_spawn_locked(&self, index: u32) -> Result<bool, String> {
         self.lifecycle.check()?;
         if self.children.lock().unwrap().contains_key(&index) {
             return Ok(false);
@@ -737,12 +737,14 @@ impl GridProcessManager {
     {
         let children = self.children.lock().unwrap();
         let listeners = self.listeners.lock().unwrap();
+        let revisions = self.grid_route_revisions.lock().unwrap();
         indices.iter().map(|&index| {
             let child = children.get(&index);
             let comms = child.map(|c| &c.comms).or_else(|| listeners.get(&index));
             crate::grid_ipc::GridRouteStamp {
                 index, pid: child.map(|c| c.child.id()),
                 epoch: comms.map(|c| c.spawn_epoch.load(Ordering::SeqCst)),
+                revision: revisions[index as usize],
             }
         }).collect()
     }
@@ -778,6 +780,13 @@ impl GridProcessManager {
         }
         let app = self.app().ok_or("GRID_HOST_UNAVAILABLE")?;
         let state = app.state::<crate::bridge::AppState>();
+        {
+            let mut revisions = self.grid_route_revisions.lock().unwrap();
+            if indices.iter().any(|&index| revisions[index as usize] == u64::MAX) {
+                return Err("GRID_ROUTE_REVISION_EXHAUSTED".into());
+            }
+            for &index in &indices { revisions[index as usize] += 1; }
+        }
         // Remove restart intent before releasing the process map. No new
         // owner can be spawned under this gate until cleanup is admitted.
         for &index in &indices {
@@ -806,6 +815,98 @@ impl GridProcessManager {
                 .map_err(|_| format!("GRID_CLOSE_CLEANUP_PENDING:{index}"))?;
         }
         Ok(())
+    }
+
+    /// Rebuild or cold start may adopt only a slot captured at submission.
+    /// Capture the newly created owner before releasing the spawn gate.
+    pub(crate) fn prepare_grid_slot(&self, target: crate::grid_ipc::GridRouteStamp)
+        -> Result<crate::grid_ipc::GridPreparedSlot, String>
+    {
+        let _operation = self.lifecycle.enter()?;
+        self.ensure_cleanup()?;
+        let _gate = self.lifecycle_lock.lock().unwrap();
+        self.lifecycle.check()?;
+        let index = target.index;
+        if index as usize >= crate::bridge::MAX_GRID
+            || self.grid_route_stamps_locked(&[index]).first() != Some(&target)
+        {
+            return Err("GRID_BUILD_TARGET_STALE".into());
+        }
+        let saved = if target.pid.is_none() {
+            self.hibernated.lock().unwrap().get(&index).cloned().or_else(|| {
+                self.pending_restarts.lock().unwrap().get(&index).map(|(_, state)| state.clone())
+            })
+        } else { None };
+        let created = self.get_or_spawn_locked(index)?;
+        let stamp = self.grid_route_stamps_locked(&[index])[0];
+        if stamp.pid.is_none() {
+            return Err("GRID_BUILD_TARGET_UNAVAILABLE".into());
+        }
+        Ok(crate::grid_ipc::GridPreparedSlot {
+            stamp, created, previous_url: self.last_url(index), saved,
+        })
+    }
+
+    /// Wait only for the process admitted above, not whatever owns its route
+    /// when the connection eventually becomes ready.
+    pub(crate) fn grid_binding_for_stamp(&self, stamp: crate::grid_ipc::GridRouteStamp)
+        -> Result<crate::grid_ipc::RendererBinding, String>
+    {
+        let expected = (stamp.pid.ok_or("GRID_BUILD_TARGET_UNAVAILABLE")?,
+            stamp.epoch.ok_or("GRID_BUILD_TARGET_UNAVAILABLE")?);
+        let comms = {
+            let children = self.children.lock().unwrap();
+            let child = children.get(&stamp.index).ok_or("GRID_BUILD_TARGET_STALE")?;
+            if child.comms.owner_snapshot()? != expected {
+                return Err("GRID_BUILD_TARGET_STALE".into());
+            }
+            Arc::clone(&child.comms)
+        };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        loop {
+            self.lifecycle.check()?;
+            if let Some(generation) = comms.ready_for_owner(expected)? {
+                let binding = self.grid_eval_binding(stamp.index)?;
+                if binding.owner != expected || binding.generation != generation {
+                    return Err("GRID_BUILD_TARGET_STALE".into());
+                }
+                return Ok(binding);
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err("GRID_RENDERER_READY_TIMEOUT".into());
+            }
+            if self.lifecycle.wait_or_stop(std::time::Duration::from_millis(50)) {
+                return Err("GRID_SHUTDOWN_IN_PROGRESS".into());
+            }
+        }
+    }
+
+    /// Compensate only an unacknowledged newly created slot. Restore the
+    /// pre-spawn saved metadata (if any), never navigate retained pages back
+    /// or select a replacement process. Confirmed earlier cells stay intact.
+    pub(crate) fn rollback_grid_creation(&self, prepared: &crate::grid_ipc::GridPreparedSlot)
+        -> Result<(), String>
+    {
+        if !prepared.created { return Err("GRID_ROLLBACK_NOT_CREATED".into()); }
+        let _operation = self.lifecycle.enter()?;
+        self.ensure_cleanup()?;
+        let _gate = self.lifecycle_lock.lock().unwrap();
+        self.lifecycle.check()?;
+        let index = prepared.stamp.index;
+        if index as usize >= crate::bridge::MAX_GRID
+            || self.grid_route_stamps_locked(&[index]).first() != Some(&prepared.stamp)
+        {
+            return Err("GRID_ROLLBACK_TARGET_STALE".into());
+        }
+        let child = self.children.lock().unwrap().remove(&index).ok_or("GRID_ROLLBACK_TARGET_STALE")?;
+        self.pending_restarts.lock().unwrap().remove(&index);
+        if let Some(saved) = prepared.saved.clone() {
+            self.hibernated.lock().unwrap().insert(index, saved);
+        }
+        self.lifecycle.retire(index, child);
+        self.lifecycle.wait_route_retired_until(index,
+            std::time::Instant::now() + std::time::Duration::from_millis(750))
+            .map_err(|_| format!("GRID_ROLLBACK_CLEANUP_PENDING:{index}"))
     }
 
     /// The process-generation binding is captured for prepared tab mutations.
@@ -899,7 +1000,8 @@ impl GridProcessManager {
         let _operation = self.lifecycle.enter()?;
         if (binding.index as usize) >= crate::bridge::MAX_GRID || !cmd.targets(binding.index)
             || !matches!(&cmd, GridCmd::Eval { .. } | GridCmd::ReadReplies { .. }
-                | GridCmd::SetZoom { .. } | GridCmd::Navigate { .. } | GridCmd::UpdateRect { .. })
+                | GridCmd::SetZoom { .. } | GridCmd::Navigate { .. } | GridCmd::UpdateRect { .. }
+                | GridCmd::CreateTab { .. })
         {
             return Err("GRID_REQUEST_TARGET_REJECTED".into());
         }
@@ -926,6 +1028,20 @@ impl GridProcessManager {
     {
         let cmd = GridCmd::Navigate { id: crate::grid_ipc::renderer_label(binding.index), url: url.to_owned() };
         self.grid_bound_request(binding, cmd, 10000)?;
+        self.grid_publish_address(binding, url)
+    }
+
+    pub(crate) fn grid_create_bound(&self, binding: crate::grid_ipc::RendererBinding, url: &str)
+        -> Result<(), String>
+    {
+        let cmd = GridCmd::CreateTab { id: crate::grid_ipc::renderer_label(binding.index), url: url.to_owned() };
+        self.grid_bound_request(binding, cmd, 20000)?;
+        self.grid_publish_address(binding, url)
+    }
+
+    fn grid_publish_address(&self, binding: crate::grid_ipc::RendererBinding, url: &str)
+        -> Result<(), String>
+    {
         let mut children = self.children.lock().unwrap();
         let child = children.get_mut(&binding.index).ok_or("GRID_REQUEST_OUTCOME_UNKNOWN: navigation host retired")?;
         let _owner = child.comms.owner_gate.lock().unwrap();
