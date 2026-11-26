@@ -11,7 +11,7 @@ import { AI_PROVIDERS } from '../model/aiPresets.mjs';
 const layout = useLayoutStore();
 const grid = useGridStore();
 const hostElement = ref<HTMLElement | null>(null);
-useGridHost(hostElement);
+const { layoutIssue } = useGridHost(hostElement);
 // Grid child WebViews have native geometry; unlike the normal tab scheduler,
 // the Grid host needs its own bounded resize observation. Otherwise changes
 // to the address row, toolbar or viewport can strand all four cells offscreen.
@@ -133,6 +133,10 @@ onBeforeUnmount(() => {
     <label>AI 组合 <select aria-label="AI 组合模板" :value="grid.activeAiPreset" :disabled="grid.gridBusy || grid.gridCleanupUnconfirmed" @change="grid.applyAiPreset(($event.target as HTMLSelectElement).value)"><option value="" disabled>自定义网址</option><option v-for="p in grid.aiPresets" :key="p.id" :value="p.id">{{p.name}} · {{p.urls.length}} 格</option></select></label>
     <div role="group" aria-label="模式"><button :class="{active:grid.gridMode==='browse'}" @click="grid.gridMode='browse'">浏览</button><button :class="{active:grid.gridMode==='ai'}" @click="grid.gridMode='ai'">AI</button></div>
     <div role="group" aria-label="快捷布局"><button v-for="n in [2,4]" :key="n" :disabled="grid.gridBusy || grid.gridCleanupUnconfirmed" :class="{active:grid.gridCount===n}" @click="setGridCount(n)">{{n}} 格</button></div>
+    <template v-if="layoutIssue && grid.gridOpen">
+      <span class="er-warn" role="status">{{ layoutIssue }}</span>
+      <button :disabled="grid.gridBusy || grid.gridCleanupUnconfirmed" @click="grid.forceGridRelayout()">重新布局</button>
+    </template>
     <button class="grid-more" :aria-expanded="advancedOpen" aria-controls="grid-advanced" @click="advancedOpen=!advancedOpen">更多设置</button>
   </div>
   <div v-if="layout.mainView === 'grid' && !grid.gridOpen" class="expand-row" role="status">

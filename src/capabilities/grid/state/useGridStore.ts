@@ -125,8 +125,15 @@ export const useGridStore = defineStore("grid", () => {
     () => computeDesiredVisibility(layout.mainView, gridOpen.value).gridVisible
   );
 
+  const gridLayoutSuspended = ref(false);
   let scheduleGrid: () => void = () => {};
-  function bindGridScheduler(fn: () => void) { scheduleGrid = fn; }
+  let settleGridLayout: () => Promise<void> = async () => {};
+  function bindGridScheduler(fn: () => void, settle: () => Promise<void> = async () => {}) {
+    scheduleGrid = fn;
+    // Keep the global native settlement observer after host unmount.
+    settleGridLayout = settle;
+    return () => { if (scheduleGrid === fn) scheduleGrid = () => {}; };
+  }
 
   // Grid 只负责自己的子 WebView 冻结；普通 tab 仍由 Browser owner 管理。
   function syncGridFreeze() {
@@ -605,6 +612,14 @@ export const useGridStore = defineStore("grid", () => {
   );
 
   async function suspendGridResources() {
+    gridLayoutSuspended.value = true;
+    try {
+      await settleGridLayout();
+    } catch (error) {
+      gridLayoutSuspended.value = false;
+      layoutGrid();
+      throw error;
+    }
     if (!gridOpen.value) return;
     for (let i = 0; i < gridCount.value; i++) {
       await bridge.evalInTab(`grid-${i}`, WEBVIEW_FREEZE_JS).catch(() => {});
@@ -623,6 +638,7 @@ export const useGridStore = defineStore("grid", () => {
   }
 
   async function resumeGridResources() {
+    gridLayoutSuspended.value = false;
     if (!gridOpen.value) return;
     if (layout.mainView === "grid") {
       await nextTick();
@@ -644,6 +660,7 @@ export const useGridStore = defineStore("grid", () => {
     gridBusy,
     gridSending,
     gridClosing,
+    gridLayoutSuspended,
     gridSendResults,
     gridStartupError,
     gridCleanupUnconfirmed,
