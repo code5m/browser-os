@@ -311,6 +311,7 @@ pub struct CaptureCancellation {
     requested: Arc<std::sync::atomic::AtomicBool>,
     // 0 queued, 1 entered native callback, 2 irrevocably fenced.
     dispatch: Arc<std::sync::atomic::AtomicU8>,
+    entered_at: Arc<std::sync::OnceLock<std::time::Instant>>,
     #[cfg(target_os = "linux")]
     native: webkit2gtk::gio::Cancellable,
 }
@@ -320,6 +321,7 @@ impl CaptureCancellation {
         Self {
             requested: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             dispatch: Arc::new(std::sync::atomic::AtomicU8::new(0)),
+            entered_at: Arc::new(std::sync::OnceLock::new()),
             #[cfg(target_os = "linux")]
             native: webkit2gtk::gio::Cancellable::new(),
         }
@@ -348,9 +350,20 @@ impl CaptureCancellation {
             self.revoke_pending_native();
             return false;
         }
-        self.dispatch
+        if self
+            .dispatch
             .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
-            .is_ok()
+            .is_err()
+        {
+            return false;
+        }
+        let _ = self.entered_at.set(std::time::Instant::now());
+        true
+    }
+
+    /// Native entry is not proof of renderer completion or termination.
+    pub fn native_entered_at(&self) -> Option<std::time::Instant> {
+        self.entered_at.get().copied()
     }
 
     pub fn cancel(&self) {
@@ -402,8 +415,10 @@ fn capture_can_only_revoke_before_native_entry() {
     let queued = CaptureCancellation::new();
     assert!(queued.revoke_pending_native());
     assert!(!queued.enter_native());
+    assert!(queued.native_entered_at().is_none());
     let entered = CaptureCancellation::new();
     assert!(entered.enter_native());
+    assert!(entered.native_entered_at().is_some());
     assert!(!entered.revoke_pending_native());
     entered.cancel();
     assert!(!entered.native_dispatch_revoked());

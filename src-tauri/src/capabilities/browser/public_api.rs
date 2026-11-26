@@ -18,3 +18,9 @@ pub(crate) fn capture_diagnostic() -> Value {
 pub(crate) fn prepare_capture_exit(app: &AppHandle) -> Result<(), String> {
     super::commands::prepare_capture_exit(app)
 }
+
+// The supervisor may only claim the exact reviewed capture.
+pub(crate) use super::commands::{
+    claim_capture_domain_recovery, pending_capture_domain_recovery,
+    CaptureDomainRecoveryClaim, CaptureDomainRecoveryIntent,
+};

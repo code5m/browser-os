@@ -363,6 +363,30 @@ fn accepted_stream(
 // the same exit-admission latch used by graceful shutdown. Hold the
 // connection until retirement so the child does not relinquish that claim
 // merely because the parent returned from its monitoring loop.
+enum ManualRecoveryIntent {
+    Tab(crate::bridge::DomainRecoveryIntent),
+    Capture(crate::capabilities::browser::public_api::CaptureDomainRecoveryIntent),
+}
+enum ManualDomainClaim {
+    Tab { _guard: crate::bridge::DomainRecoveryClaim },
+    Capture { _guard: crate::capabilities::browser::public_api::CaptureDomainRecoveryClaim },
+}
+impl ManualRecoveryIntent {
+    fn pending() -> Option<Self> {
+        crate::bridge::pending_domain_recovery().map(Self::Tab).or_else(|| {
+            crate::capabilities::browser::public_api::pending_capture_domain_recovery().map(Self::Capture)
+        })
+    }
+    fn claim(&self) -> Option<ManualDomainClaim> {
+        match self {
+            Self::Tab(intent) => crate::bridge::claim_domain_recovery(intent)
+                .map(|guard| ManualDomainClaim::Tab { _guard: guard }),
+            Self::Capture(intent) => crate::capabilities::browser::public_api::claim_capture_domain_recovery(intent)
+                .map(|guard| ManualDomainClaim::Capture { _guard: guard }),
+        }
+    }
+}
+
 struct RecoveryClaim<'a> {
     started: &'a AtomicBool,
 }
@@ -870,7 +894,7 @@ pub(crate) fn start_child_probe(app: tauri::AppHandle, endpoint: ChildEndpoint) 
                     if let Some(intent) = manual_intent {
                         // The exact target and intent must still be current
                         // after taking the same exit latch as normal shutdown.
-                        if let Some(domain_claim) = crate::bridge::claim_domain_recovery(&intent) {
+                        if let Some(domain_claim) = intent.claim() {
                             if stream.write_all(b"G").is_ok() {
                                 let mut end = [0u8; 1];
                                 let _ = stream.read_exact(&mut end);
@@ -924,7 +948,7 @@ pub(crate) fn start_child_probe(app: tauri::AppHandle, endpoint: ChildEndpoint) 
                     }
                     continue;
                 }
-                if let Some(intent) = crate::bridge::pending_domain_recovery() {
+                if let Some(intent) = ManualRecoveryIntent::pending() {
                     last_manual_intent = Some(intent);
                     if stream.write_all(b"M").is_err() {
                         return;

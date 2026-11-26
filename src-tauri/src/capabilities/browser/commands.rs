@@ -497,13 +497,117 @@ struct CaptureSlot {
     receipt: CaptureReceipt,
     cancellation: CaptureCancellation,
     since: std::time::Instant,
+    // A live native callback return is not a shared renderer exit receipt.
+    native_returned: bool,
+    publishing: bool,
 }
+
+const CAPTURE_DOMAIN_STALL: std::time::Duration = std::time::Duration::from_secs(60);
+const CAPTURE_RECOVERY_TTL: std::time::Duration = std::time::Duration::from_secs(15);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CaptureRecoveryTarget {
+    epoch: String,
+    sequence: u64,
+    ticket: String,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CaptureDomainRecoveryIntent {
+    target: CaptureRecoveryTarget,
+    issued: std::time::Instant,
+}
+
 struct CaptureOwner {
     epoch: String,
     next_sequence: u64,
     slot: Option<CaptureSlot>,
     last_completed: Option<CaptureReceipt>,
+    recovery_intent: Option<CaptureDomainRecoveryIntent>,
+    recovery_claimed: bool,
 }
+impl CaptureOwner {
+    fn recovery_target(&self, now: std::time::Instant) -> Option<CaptureRecoveryTarget> {
+        let slot = self.slot.as_ref()?;
+        if self.recovery_claimed
+            || slot.native_returned
+            || slot.publishing
+            || slot.receipt.phase.terminal()
+        {
+            return None;
+        }
+        let eligible = match slot.receipt.mode {
+            CaptureMode::CurrentDocument => slot.cancellation.native_entered_at().is_some_and(|entered| {
+                slot.receipt.phase == CapturePhase::Unknown
+                    || now.saturating_duration_since(entered) >= CAPTURE_DOMAIN_STALL
+            }),
+            // Only the independent process owner reports this retirement
+            // uncertainty. Lost frontend IPC alone is not authority.
+            CaptureMode::IndependentAddress => slot.receipt.phase == CapturePhase::Unknown
+                && slot.receipt.error.as_deref() == Some("CAPTURE_ISOLATED_EXIT_PENDING"),
+        };
+        eligible.then(|| CaptureRecoveryTarget {
+            epoch: self.epoch.clone(),
+            sequence: self.next_sequence,
+            ticket: slot.receipt.ticket.clone(),
+        })
+    }
+
+    fn valid_intent(&self, intent: &CaptureDomainRecoveryIntent, now: std::time::Instant) -> bool {
+        now.saturating_duration_since(intent.issued) < CAPTURE_RECOVERY_TTL
+            && self.recovery_target(now).as_ref() == Some(&intent.target)
+    }
+
+    fn request_recovery(
+        &mut self,
+        target: CaptureRecoveryTarget,
+        now: std::time::Instant,
+    ) -> Result<(), String> {
+        if self.recovery_target(now).as_ref() != Some(&target) {
+            return Err("CAPTURE_DOMAIN_RECOVERY_NOT_ELIGIBLE".into());
+        }
+        if self.recovery_intent.as_ref().is_some_and(|intent| self.valid_intent(intent, now)) {
+            return Ok(());
+        }
+        self.recovery_intent = Some(CaptureDomainRecoveryIntent { target, issued: now });
+        Ok(())
+    }
+
+    fn claim_recovery(&mut self, intent: &CaptureDomainRecoveryIntent, now: std::time::Instant) -> bool {
+        if self.recovery_intent.as_ref() != Some(intent) || !self.valid_intent(intent, now) {
+            return false;
+        }
+        self.recovery_intent = None;
+        self.recovery_claimed = true;
+        true
+    }
+
+    fn mark_returned(&mut self, ticket: &str) -> Result<(), String> {
+        let slot = self.slot.as_mut().filter(|slot| slot.receipt.ticket == ticket)
+            .ok_or("CAPTURE_STALE_TICKET")?;
+        if slot.receipt.phase.terminal() || slot.native_returned {
+            return Err("CAPTURE_NOT_RUNNING".into());
+        }
+        slot.native_returned = true;
+        self.recovery_intent = None;
+        Ok(())
+    }
+
+    fn reserve_publication(&mut self, ticket: &str) -> Result<(), String> {
+        let slot = self.slot.as_mut().filter(|slot| slot.receipt.ticket == ticket)
+            .ok_or("CAPTURE_STALE_TICKET")?;
+        if self.recovery_claimed || slot.receipt.phase == CapturePhase::CancelRequested
+            || slot.cancellation.is_cancelled()
+        {
+            return Err("CAPTURE_CANCELLED_BEFORE_PUBLICATION".into());
+        }
+        if !slot.native_returned || slot.publishing || slot.receipt.phase.terminal() {
+            return Err("CAPTURE_PUBLICATION_NOT_ADMITTED".into());
+        }
+        slot.publishing = true;
+        Ok(())
+    }
+}
+
 static CAPTURE_OWNER: std::sync::LazyLock<std::sync::Mutex<CaptureOwner>> =
     std::sync::LazyLock::new(|| {
         std::sync::Mutex::new(CaptureOwner {
@@ -511,6 +615,8 @@ static CAPTURE_OWNER: std::sync::LazyLock<std::sync::Mutex<CaptureOwner>> =
             next_sequence: 1,
             slot: None,
             last_completed: None,
+            recovery_intent: None,
+            recovery_claimed: false,
         })
     });
 #[derive(serde::Serialize)]
@@ -519,6 +625,8 @@ struct CaptureView {
     next_sequence: String,
     receipt: Option<CaptureReceipt>,
     last_completed: Option<CaptureReceipt>,
+    domain_recovery_available: bool,
+    publishing: bool,
 }
 /// Non-blocking metadata only: no document, image or filesystem path.
 pub(crate) fn capture_diagnostic() -> serde_json::Value {
@@ -527,7 +635,8 @@ pub(crate) fn capture_diagnostic() -> serde_json::Value {
             Some(slot) => {
                 serde_json::json!({ "ticket": slot.receipt.ticket, "phase": slot.receipt.phase,
                 "age_ms": slot.since.elapsed().as_millis().min(u64::MAX as u128) as u64,
-                "cancel_requested": slot.cancellation.is_cancelled() })
+                "cancel_requested": slot.cancellation.is_cancelled(),
+                "native_returned": slot.native_returned, "publishing": slot.publishing })
             }
             None => serde_json::json!({"phase":"idle"}),
         },
@@ -541,8 +650,70 @@ fn capture_view() -> Result<CaptureView, String> {
         next_sequence: owner.next_sequence.to_string(),
         receipt: owner.slot.as_ref().map(|slot| slot.receipt.clone()),
         last_completed: owner.last_completed.clone(),
+        domain_recovery_available: capture_supervisor_ready()
+            && owner.recovery_target(std::time::Instant::now()).is_some(),
+        publishing: owner.slot.as_ref().is_some_and(|slot| slot.publishing),
     })
 }
+
+fn capture_supervisor_ready() -> bool {
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    {
+        crate::native_supervisor::domain_recovery_ready()
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        false
+    }
+}
+
+pub(crate) fn pending_capture_domain_recovery() -> Option<CaptureDomainRecoveryIntent> {
+    let mut owner = CAPTURE_OWNER.try_lock().ok()?;
+    let intent = owner.recovery_intent.clone()?;
+    if owner.valid_intent(&intent, std::time::Instant::now()) {
+        Some(intent)
+    } else {
+        owner.recovery_intent = None;
+        None
+    }
+}
+
+pub(crate) struct CaptureDomainRecoveryClaim;
+impl Drop for CaptureDomainRecoveryClaim {
+    fn drop(&mut self) {
+        if let Ok(mut owner) = CAPTURE_OWNER.lock() {
+            owner.recovery_claimed = false;
+        }
+    }
+}
+
+pub(crate) fn claim_capture_domain_recovery(
+    intent: &CaptureDomainRecoveryIntent,
+) -> Option<CaptureDomainRecoveryClaim> {
+    let mut owner = CAPTURE_OWNER.try_lock().ok()?;
+    if !owner.claim_recovery(intent, std::time::Instant::now()) {
+        return None;
+    }
+    drop(owner);
+    Some(CaptureDomainRecoveryClaim)
+}
+
+fn capture_returned(ticket: &str) -> Result<(), String> {
+    CAPTURE_OWNER.lock().map_err(|_| "CAPTURE_OWNER_UNKNOWN")?.mark_returned(ticket)
+}
+
+fn capture_publish(app: &AppHandle, ticket: &str, bytes: &[u8]) -> Result<String, String> {
+    {
+        let mut owner = CAPTURE_OWNER.lock().map_err(|_| "CAPTURE_OWNER_UNKNOWN")?;
+        if app.state::<crate::ExitLifecycleState>().started.load(Ordering::Acquire) {
+            return Err("CAPTURE_CANCELLED_BEFORE_PUBLICATION".into());
+        }
+        owner.reserve_publication(ticket)?;
+    }
+    // Never hold the native owner across filesystem I/O.
+    save_capture(&crate::workspace::data_dir(app), bytes)
+}
+
 fn capture_notify(app: &AppHandle, receipt: CaptureReceipt) {
     let _ = app.emit_to("main", "browser-capture-receipt", receipt);
 }
@@ -605,7 +776,9 @@ fn capture_cancel(app: &AppHandle, ticket: &str) -> Result<(), String> {
         if slot.receipt.phase.terminal() {
             return Ok(());
         }
-        if slot.receipt.mode == CaptureMode::CurrentDocument
+        if !slot.native_returned
+            && !slot.publishing
+            && slot.receipt.mode == CaptureMode::CurrentDocument
             && slot.cancellation.revoke_pending_native()
         {
             // This is proof that neither isolated-world layout measurement
@@ -626,6 +799,9 @@ fn capture_cancel(app: &AppHandle, ticket: &str) -> Result<(), String> {
 }
 fn capture_ack(ticket: &str) -> Result<(), String> {
     let mut owner = CAPTURE_OWNER.lock().map_err(|_| "CAPTURE_OWNER_UNKNOWN")?;
+    if owner.recovery_claimed {
+        return Err("CAPTURE_DOMAIN_RECOVERY_CLAIMED".into());
+    }
     if owner
         .last_completed
         .as_ref()
@@ -736,6 +912,12 @@ async fn run_capture(
         }
         return;
     };
+    if capture_returned(&ticket).is_err() {
+        // A pre-dispatch terminal cancellation may already be acknowledged.
+        // Never publish a late result for a replacement slot.
+        guard.completed = true;
+        return;
+    }
     if cancellation.is_cancelled() {
         capture_finish(
             &app,
@@ -767,12 +949,18 @@ async fn run_capture(
         guard.completed = true;
         return;
     }
-    let base = crate::workspace::data_dir(&app);
-    let storage = tauri::async_runtime::spawn_blocking(move || save_capture(&base, &bytes)).await;
-    // A cancel arriving during publication cannot erase a file that was
-    // actually committed. Report the publication outcome faithfully.
+    let publish_app = app.clone();
+    let publish_ticket = ticket.clone();
+    let storage = tauri::async_runtime::spawn_blocking(move || {
+        capture_publish(&publish_app, &publish_ticket, &bytes)
+    }).await;
+    // A cancel arriving after publication admission cannot erase a file
+    // that was actually committed. Report the outcome faithfully.
     match storage {
         Ok(Ok(path)) => capture_finish(&app, &ticket, CapturePhase::Succeeded, Ok(path)),
+        Ok(Err(error)) if error == "CAPTURE_CANCELLED_BEFORE_PUBLICATION" => {
+            capture_finish(&app, &ticket, CapturePhase::Cancelled, Err(error))
+        }
         Ok(Err(error)) => capture_finish(&app, &ticket, CapturePhase::Failed, Err(error)),
         Err(_) => return,
     }
@@ -804,18 +992,16 @@ async fn run_independent_capture(
                     Err("CAPTURE_ISOLATED_EXIT_PENDING".into()),
                 );
             },
-        )?;
-        if cancellation.is_cancelled() {
-            return Err("CAPTURE_ISOLATED_CANCELLED".into());
-        }
-        // Publication is the last irreversible step. A late cancellation
-        // cannot change an actually committed PNG into a cancelled receipt.
-        save_capture(&crate::workspace::data_dir(&worker_app), &bytes)
+        );
+        // The owner returns only before launch or after confirmed retirement.
+        capture_returned(&worker_ticket)?;
+        let bytes = bytes?;
+        capture_publish(&worker_app, &worker_ticket, &bytes)
     })
     .await;
     match result {
         Ok(Ok(path)) => capture_finish(&app, &ticket, CapturePhase::Succeeded, Ok(path)),
-        Ok(Err(error)) if error == "CAPTURE_ISOLATED_CANCELLED" => {
+        Ok(Err(error)) if matches!(error.as_str(), "CAPTURE_ISOLATED_CANCELLED" | "CAPTURE_CANCELLED_BEFORE_PUBLICATION") => {
             capture_finish(&app, &ticket, CapturePhase::Cancelled, Err(error))
         }
         Ok(Err(error)) => capture_finish(&app, &ticket, CapturePhase::Failed, Err(error)),
@@ -905,6 +1091,9 @@ fn begin_capture(
         if epoch != owner.epoch {
             return Err("CAPTURE_STALE_EPOCH".into());
         }
+        if owner.recovery_claimed {
+            return Err("CAPTURE_DOMAIN_RECOVERY_CLAIMED".into());
+        }
         if let Some(slot) = &owner.slot {
             if slot.receipt.ticket == ticket
                 && slot.receipt.tab_id == id
@@ -932,6 +1121,8 @@ fn begin_capture(
             },
             cancellation: cancellation.clone(),
             since: std::time::Instant::now(),
+            native_returned: false,
+            publishing: false,
         });
     }
     // Spawn independent work before returning the receipt. No callback needs
@@ -1028,6 +1219,12 @@ pub enum CaptureRequest {
     },
     Ack {
         ticket: String,
+    },
+    RecoverDomain {
+        epoch: String,
+        sequence: String,
+        ticket: String,
+        confirmed: bool,
     },
 }
 
@@ -1137,6 +1334,17 @@ pub async fn capture_full_page(
             )?,
             CaptureRequest::Cancel { ticket } => capture_cancel(&app, &ticket)?,
             CaptureRequest::Ack { ticket } => capture_ack(&ticket)?,
+            CaptureRequest::RecoverDomain { epoch, sequence, ticket, confirmed } => {
+                if !confirmed {
+                    return Err("CAPTURE_DOMAIN_RECOVERY_CONFIRMATION_REQUIRED".into());
+                }
+                if !capture_supervisor_ready() {
+                    return Err("CAPTURE_DOMAIN_SUPERVISOR_UNAVAILABLE".into());
+                }
+                let sequence = sequence.parse::<u64>().map_err(|_| "CAPTURE_STALE_SEQUENCE")?;
+                CAPTURE_OWNER.lock().map_err(|_| "CAPTURE_OWNER_UNKNOWN")?
+                    .request_recovery(CaptureRecoveryTarget { epoch, sequence, ticket }, std::time::Instant::now())?;
+            }
         }
         return serde_json::to_value(capture_view()?).map_err(|_| "CAPTURE_RECEIPT_FAILED".into());
     }
@@ -1224,6 +1432,74 @@ mod capture_storage_tests {
         assert!(CapturePhase::Cancelled.terminal());
         assert!(CapturePhase::Succeeded.terminal());
         assert!(CapturePhase::Failed.terminal());
+    }
+
+    fn capture_fixture() -> CaptureOwner {
+        CaptureOwner {
+            epoch: "fixture".into(),
+            next_sequence: 7,
+            slot: Some(CaptureSlot {
+                receipt: CaptureReceipt {
+                    ticket: "old".into(),
+                    tab_id: "tab-1".into(),
+                    mode: CaptureMode::IndependentAddress,
+                    phase: CapturePhase::Unknown,
+                    path: None,
+                    error: Some("CAPTURE_ISOLATED_EXIT_PENDING".into()),
+                },
+                cancellation: CaptureCancellation::new(),
+                since: std::time::Instant::now(),
+                native_returned: false,
+                publishing: false,
+            }),
+            last_completed: None,
+            recovery_intent: None,
+            recovery_claimed: false,
+        }
+    }
+
+    #[test]
+    fn renderer_recovery_claim_rechecks_exact_owner_and_return_boundary() {
+        let mut owner = capture_fixture();
+        let now = std::time::Instant::now();
+        let target = owner.recovery_target(now).unwrap();
+        owner.request_recovery(target.clone(), now).unwrap();
+        let intent = owner.recovery_intent.clone().unwrap();
+        assert!(!owner.claim_recovery(&intent, now + CAPTURE_RECOVERY_TTL));
+        owner.mark_returned("old").unwrap();
+        assert!(!owner.claim_recovery(&intent, now));
+        assert!(owner.recovery_target(now).is_none());
+        owner.reserve_publication("old").unwrap();
+        assert!(owner.reserve_publication("old").is_err());
+        assert!(owner.request_recovery(target, now).is_err());
+    }
+
+    #[test]
+    fn capture_publication_is_fenced_by_cancel_and_recovery_claim() {
+        let mut owner = capture_fixture();
+        let now = std::time::Instant::now();
+        let target = owner.recovery_target(now).unwrap();
+        owner.request_recovery(target, now).unwrap();
+        let intent = owner.recovery_intent.clone().unwrap();
+        assert!(owner.claim_recovery(&intent, now));
+        owner.mark_returned("old").unwrap();
+        assert_eq!(owner.reserve_publication("old").unwrap_err(), "CAPTURE_CANCELLED_BEFORE_PUBLICATION");
+        owner.recovery_claimed = false;
+        owner.slot.as_mut().unwrap().receipt.phase = CapturePhase::CancelRequested;
+        assert_eq!(owner.reserve_publication("old").unwrap_err(), "CAPTURE_CANCELLED_BEFORE_PUBLICATION");
+        assert!(owner.reserve_publication("replacement").is_err());
+    }
+
+    #[test]
+    fn queued_live_capture_and_ordinary_lost_reply_are_not_recovery_authority() {
+        let mut owner = capture_fixture();
+        let slot = owner.slot.as_mut().unwrap();
+        slot.receipt.mode = CaptureMode::CurrentDocument;
+        assert!(owner.recovery_target(std::time::Instant::now()).is_none());
+        let slot = owner.slot.as_mut().unwrap();
+        slot.receipt.mode = CaptureMode::IndependentAddress;
+        slot.receipt.error = Some("CAPTURE_WORKER_OUTCOME_UNKNOWN".into());
+        assert!(owner.recovery_target(std::time::Instant::now()).is_none());
     }
 
     #[test]
