@@ -56,28 +56,61 @@ pub async fn vault_save_note(
     Ok(())
 }
 
+static GRID_REPLY_WORKERS: crate::shared::blocking::BlockingLane =
+    crate::shared::blocking::BlockingLane::new(3, "GRID_REPLY_BUSY", "GRID_WORKER_FAILED");
+static GRID_ARCHIVE_WORKERS: crate::shared::blocking::BlockingLane =
+    crate::shared::blocking::BlockingLane::new(1, "ARCHIVE_BUSY", "ARCHIVE_WORKER_FAILED");
+
+fn grid_reply_source(binding: crate::grid_ipc::RendererBinding) -> serde_json::Value {
+    serde_json::json!({
+        "index":binding.index, "pid":binding.owner.0,
+        "spawn_epoch":binding.owner.1.to_string(),
+        "generation":binding.generation.to_string(),
+        "navigation_revision":binding.navigation_revision.to_string(),
+    })
+}
+
 #[tauri::command]
 pub async fn grid_read_replies(
     app: AppHandle,
     webview: tauri::Webview,
     index: u32,
+    capture_count: Option<u32>,
+    expected_source: Option<serde_json::Value>,
 ) -> Result<serde_json::Value, String> {
     check_invocation_source(&webview, "grid_read_replies", None, &app)?;
-    if index >= 12 {
+    if index >= MAX_GRID as u32 {
         return Err("GRID_INDEX_INVALID".into());
     }
-    // Capture the original cell before worker admission, not when the worker
-    // eventually starts. An archived reply must not come from a replacement.
+    if let Some(count) = capture_count {
+        if index != 0 || expected_source.is_some() || count == 0 || count > MAX_GRID as u32 {
+            return Err("GRID_REPLY_SNAPSHOT_INVALID".into());
+        }
+        let state = app.state::<AppState>();
+        let observe = || (0..count).map(|i| state.grid_manager.grid_eval_binding(i).ok())
+            .collect::<Vec<_>>();
+        let sources = observe();
+        if sources != observe() {
+            return Err("GRID_REPLY_SNAPSHOT_STALE".into());
+        }
+        // An unavailable route is not a grant to read a future replacement.
+        return Ok(serde_json::json!({"sources":sources.into_iter()
+            .map(|binding| binding.map(grid_reply_source)).collect::<Vec<_>>()}));
+    }
+    let permit = GRID_REPLY_WORKERS.reserve()?;
+    // Compare the batch's original native source before worker admission.
+    // Existing direct read callers without a batch keep their original path.
     let binding = app.state::<AppState>().grid_manager.grid_eval_binding(index)?;
-    tauri::async_runtime::spawn_blocking(move || {
+    if expected_source.as_ref().is_some_and(|source| *source != grid_reply_source(binding)) {
+        return Err("GRID_READ_TARGET_STALE".into());
+    }
+    permit.run(move || {
         let text = app.state::<AppState>().grid_manager.grid_read_replies_bound(binding)?;
         if text.len() > crate::workbench::MAX_NOTE_BYTES as usize {
             return Err("GRID_RESULT_LIMIT".into());
         }
         serde_json::from_str(&text).map_err(|_| "GRID_RESULT_INVALID".into())
-    })
-    .await
-    .map_err(|_| "GRID_WORKER_FAILED")?
+    }).await
 }
 
 #[tauri::command]
@@ -94,11 +127,9 @@ pub async fn archive_replies(
         &crate::workspace::allowed_roots(&app),
     )
     .map_err(|_| "ARCHIVE_PATH_DENIED")?;
-    let result = tauri::async_runtime::spawn_blocking(move || {
+    let result = GRID_ARCHIVE_WORKERS.run(move ||
         crate::workbench::save_archives(&root, items, &tags)
-    })
-    .await
-    .map_err(|_| "ARCHIVE_WORKER_FAILED")??;
+    ).await?;
     workspace::log_audit(
         &app,
         "archive.save",

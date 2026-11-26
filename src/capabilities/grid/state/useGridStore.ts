@@ -17,6 +17,8 @@ export const useGridStore = defineStore("grid", () => {
   const gridStarting = ref(false);
   const gridStartupError = ref("");
   const gridSession = ref(0);
+  // Archive identity follows content-changing host intents, not resizing.
+  const gridArchiveRevision = ref(0);
   const gridCount = ref(4);
   const gridUrl = ref("");
   const gridUrls = reactive<string[]>([
@@ -202,6 +204,7 @@ export const useGridStore = defineStore("grid", () => {
     let finishBuild!: () => void;
     gridBuildSettlement = new Promise<void>(resolve => { finishBuild = resolve; });
     const epoch = ++gridEpoch;
+    gridArchiveRevision.value += 1;
     const previouslyOpen = gridOpen.value;
     gridStarting.value = true;
     gridRecoveryStates.value = null;
@@ -299,6 +302,7 @@ export const useGridStore = defineStore("grid", () => {
     const u = (gridUrls[i] || browser.url || "").trim() || "about:blank";
     gridUrls[i] = u;
     const epoch = gridEpoch;
+    gridArchiveRevision.value += 1;
     gridCellBusy.value = true;
     const task = (async () => {
       try {
@@ -343,6 +347,7 @@ export const useGridStore = defineStore("grid", () => {
     const stillCurrent = () => epoch === gridEpoch && gridOpen.value && layout.mainView === "grid"
       && gridMode.value === "ai" && !gridCleanupUnconfirmed.value && isGridResourceAllowed()
       && gridCount.value === n && targets.every((url, i) => gridUrls[i] === url);
+    gridArchiveRevision.value += 1;
     gridSending.value = true;
     let settleSend!: () => void;
     const settlement = new Promise<void>(resolve => { settleSend = resolve; });
@@ -417,6 +422,7 @@ export const useGridStore = defineStore("grid", () => {
   async function closeGridOwned(): Promise<void> {
     if (gridCloseTask) return gridCloseTask;
     gridEpoch += 1;
+    gridArchiveRevision.value += 1;
     rebuildRequested = false;
     // Stop positioning/freezing without asserting that processes are gone.
     gridOpen.value = false;
@@ -668,6 +674,7 @@ export const useGridStore = defineStore("grid", () => {
     gridRecoveryStates,
     inspectGridRecovery,
     gridSession,
+    gridArchiveRevision,
     gridCount,
     gridUrl,
     gridUrls,

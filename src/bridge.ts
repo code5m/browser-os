@@ -43,6 +43,7 @@ type TabAction =
   | ({ kind: "park_renderer"; url: string; confirmed: true } & RendererParkTarget);
 export type RendererRecoveryTarget = { id: string; pid: number; spawn_epoch: string };
 export type RendererParkTarget = RendererRecoveryTarget & { renderer_generation: string; navigation_revision: string };
+export type GridReplySource = { index: number; pid: number; spawn_epoch: string; generation: string; navigation_revision: string };
 export type RendererState = "ready" | "not_ready" | "cleanup_pending" | "absent" | "hibernated";
 export type RendererDownloadObservation = {
   pid: number; spawn_epoch: string; renderer_generation: string;
@@ -884,7 +885,8 @@ export const bridge = {
   vaultOpen: (path: string) => invoke<{ root: string; notes: { path: string; text: string }[]; skipped: number; truncated: boolean }>("vault_open", { path }),
   vaultSaveNote: (root: string, relativePath: string, expectedText: string, content: string) =>
     invoke<void>("vault_save_note", { root, relativePath, expectedText, content }),
-  gridReadReplies: (index: number) => invoke<{ provider?: string; replies: string[]; error?: string; truncated?: boolean }>("grid_read_replies", { index }),
+  gridReplySources: (count: number) => invoke<{ sources: (GridReplySource | null)[] }>("grid_read_replies", { index: 0, captureCount: count }),
+  gridReadReplies: (index: number, expectedSource?: GridReplySource) => invoke<{ provider?: string; replies: string[]; error?: string; truncated?: boolean }>("grid_read_replies", { index, expectedSource }),
   archiveReplies: (path: string, items: { label: string; markdown: string }[], tags: string[]) => invoke<{ label: string; path?: string; error?: string }[]>("archive_replies", { path, items, tags }),
   gitLog: (repoId: string) => invoke<{ oid: string; parents: string[]; summary: string; author: string; time: number }[]>("git_log", { repoId }),
   gitCommitDiff: (repoId: string, oid: string) => invoke<string>("git_commit_diff", { repoId, oid }),
