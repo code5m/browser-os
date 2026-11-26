@@ -254,6 +254,10 @@ struct ModelContinuation {
 struct Session {
     session_id: String,
     root: String,
+    // A reused pathname must not adopt an existing authenticated session.
+    // Old path-only sessions remain readable without inventing historical proof.
+    #[serde(default)]
+    workspace_identity: Option<String>,
     messages: Vec<Value>,
     changes: Vec<Change>,
     tool_events: Vec<Value>,
@@ -294,6 +298,10 @@ struct Operation {
     result: Option<String>,
     #[serde(default)]
     execution: Option<OperationReceipt>,
+    #[serde(default)]
+    review_revision: Option<uuid::Uuid>,
+    #[serde(default)]
+    reconciliation: Option<super::execution_owner::EffectReview>,
 }
 #[derive(Serialize, Deserialize)]
 struct OperationReceipt {
@@ -306,12 +314,22 @@ struct OperationReceipt {
     approval: Option<browseros_agent_foundation::approval::ApprovalClaims>,
     #[serde(default)]
     owner_epoch: Option<uuid::Uuid>,
+    #[serde(default)]
+    workspace_identity: Option<String>,
 }
 fn frontend_owner_epoch() -> uuid::Uuid {
     static EPOCH: OnceLock<uuid::Uuid> = OnceLock::new();
     *EPOCH.get_or_init(uuid::Uuid::new_v4)
 }
 fn external_operation(kind: &str) -> bool { matches!(kind, "command" | "mcp") }
+fn verify_workspace_binding(root: &Path, expected: Option<&str>) -> Result<(), String> {
+    if let Some(expected) = expected {
+        if super::execution_owner::workspace_identity(root)? != expected {
+            return Err("AGENT_WORKSPACE_IDENTITY_CHANGED".into());
+        }
+    }
+    Ok(())
+}
 fn unresolved_operation(operation: &Operation) -> bool {
     matches!(operation.status.as_str(), "pending" | "executing" | "unknown" | "result_ready")
 }
@@ -409,6 +427,8 @@ fn propose_operation(session: &mut Session, args: &Value) -> Result<Value, Strin
         status: "pending".into(),
         result: None,
         execution: None,
+        review_revision: None,
+        reconciliation: None,
     });
     Ok(json!({"operation_id":id,"status":"pending_user_approval","executed":false}))
 }
@@ -1661,11 +1681,13 @@ fn load_without_recovery(root: &Path, storage: &Path, id: Option<&str>) -> Resul
         if session.session_id != id {
             return Err("AGENT_SESSION_INVALID".into());
         }
+        verify_workspace_binding(root, session.workspace_identity.as_deref())?;
         Ok(session)
     } else {
         Ok(Session {
             session_id: uuid::Uuid::new_v4().to_string(),
             root: root.to_string_lossy().to_string(),
+            workspace_identity: Some(super::execution_owner::workspace_identity(root)?),
             messages: vec![],
             changes: vec![],
             tool_events: vec![],
@@ -1689,6 +1711,7 @@ fn load(root: &Path, storage: &Path, id: Option<&str>) -> Result<Session, String
     if id.is_some() {
         #[cfg(any(target_os = "linux", target_os = "windows"))]
         let _process_workspace = super::coding_checkpoint::workspace_owner(storage, root)?;
+        verify_workspace_binding(root, session.workspace_identity.as_deref())?;
         recover_pending_apply(root, storage, &mut session)?;
         // A caller reaches load only after obtaining the session owner.
         // An interrupted model turn is never silently resumed or replayed.
@@ -1703,6 +1726,12 @@ fn load(root: &Path, storage: &Path, id: Option<&str>) -> Result<Session, String
             {
                 operation.status = "unknown".into();
                 if let Some(receipt) = &mut operation.execution { receipt.phase = "interrupted".into(); }
+                interrupted_external = true;
+            }
+            // Enroll a legacy unknown receipt in the revisioned review
+            // protocol without inventing an old workspace identity.
+            if operation.status == "unknown" && operation.review_revision.is_none() {
+                operation.review_revision = Some(uuid::Uuid::new_v4());
                 interrupted_external = true;
             }
         }
@@ -1785,7 +1814,7 @@ fn recent_sessions(root: &Path, storage: &Path) -> Result<Value, String> {
         }
         let session = match load_without_recovery(root, storage, Some(id)) {
             Ok(session) => session,
-            Err(error) if error == "AGENT_SESSION_ROOT_MISMATCH" => continue,
+            Err(error) if matches!(error.as_str(), "AGENT_SESSION_ROOT_MISMATCH" | "AGENT_WORKSPACE_IDENTITY_CHANGED") => continue,
             Err(_) => { truncated = true; continue; }
         };
         if session.session_id != id {
@@ -1836,6 +1865,7 @@ impl<P: FnMut(&[Value], &[Value]) -> Result<Value, String>>
         Ok(())
     }
     fn request(&mut self) -> Result<Value, String> {
+        verify_workspace_binding(self.root, self.session.workspace_identity.as_deref())?;
         (self.provider)(self.messages, &tools(self.plan))
     }
     fn provider_failure(&mut self, error: String) -> String {
@@ -1863,6 +1893,7 @@ impl<P: FnMut(&[Value], &[Value]) -> Result<Value, String>>
         let root = self.root;
         let storage = self.storage;
         let session = &mut *self.session;
+        verify_workspace_binding(root, session.workspace_identity.as_deref())?;
         let messages = &mut *self.messages;
         let plan = self.plan;
                 session.messages.push(reply.clone());
@@ -2048,6 +2079,13 @@ pub(crate) fn execute_with_bound_adapter(
                 return Err("SNIPPET_REVIEW_REQUIRED".into());
             }
             let signal = request_signal(&request)?;
+            // Share the actual interprocess workspace owner with manual MCP
+            // and file transactions. Never overlap effectful dispatch merely
+            // because the requests originate from different Coding sessions.
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
+            let _effect_workspace = super::coding_checkpoint::workspace_owner(storage, &root)?;
+            verify_workspace_binding(&root, session.workspace_identity.as_deref())?;
+            let effect_identity = super::execution_owner::workspace_identity(&root)?;
             let execution = super::execution_owner::ProductionExecution::resume_coding(
                 &root, &session.session_id, session.foundation_task.as_ref())?;
             // Bind the signed decision to the encrypted operation identity,
@@ -2066,7 +2104,7 @@ pub(crate) fn execute_with_bound_adapter(
             session.operations[index].execution = Some(OperationReceipt {
                 native_run_id: (kind == "command").then(|| format!("run-{operation_run}")),
                 run_id: operation_run, phase: "dispatching".into(), approval: Some(approval.clone()),
-                owner_epoch: None,
+                owner_epoch: None, workspace_identity: Some(effect_identity),
             });
             session.operations[index].status = "executing".into();
             session.status = "operation_executing".into();
@@ -2100,6 +2138,7 @@ pub(crate) fn execute_with_bound_adapter(
                         "AGENT_EXTERNAL_OUTCOME_UNKNOWN".into()
                     } else { detail });
                     operation.status = "unknown".into();
+                    operation.review_revision = Some(uuid::Uuid::new_v4());
                 }
             }
             session.status = session_after_review(&session).into();
@@ -2143,6 +2182,7 @@ pub(crate) fn execute_with_bound_adapter(
             session.operations[index].execution = Some(OperationReceipt {
                 run_id: run.clone(), native_run_id: None, phase: "frontend_claimed".into(),
                 approval: Some(approval), owner_epoch: Some(frontend_owner_epoch()),
+                workspace_identity: Some(super::execution_owner::workspace_identity(&root)?),
             });
             session.operations[index].status = "executing".into();
             session.status = "operation_executing".into();
@@ -2167,10 +2207,18 @@ pub(crate) fn execute_with_bound_adapter(
             let operation = session.operations.iter_mut().find(|op| op.id == id).ok_or("AGENT_OPERATION_NOT_PENDING")?;
             let external = external_operation(&operation.kind);
             let (next, result) = if reconcile {
-                // The live native adapter holds this session's OS lock.
-                // For interrupted work, the user must also verify actual
-                // external termination and effects, not momentary absence.
+                // Same user-attestation protocol as manual MCP, fenced by
+                // this exact encrypted operation revision and native root.
                 if operation.status != "unknown" { return Err("AGENT_OPERATION_NOT_PENDING".into()); }
+                let revision = operation.review_revision.ok_or("AGENT_EFFECT_REVIEW_STALE")?.to_string();
+                if request["review_revision"].as_str() != Some(revision.as_str()) {
+                    return Err("AGENT_EFFECT_REVIEW_STALE".into());
+                }
+                let bound = operation.execution.as_ref().and_then(|receipt| receipt.workspace_identity.as_deref());
+                verify_workspace_binding(&root, bound)?;
+                let observation = if status == "not_applied" { "observed_not_applied" } else { "observed_applied" };
+                operation.reconciliation = Some(super::execution_owner::EffectReview::checked(
+                    observation, submitted, bound.is_some(), true, revision, 20_000)?);
                 (if status == "not_applied" { "reconciled_not_applied" } else { "reconciled_succeeded" }, submitted.to_owned())
             } else if operation.status == "pending" && status == "rejected" {
                 ("rejected", submitted.to_owned())
@@ -2185,12 +2233,18 @@ pub(crate) fn execute_with_bound_adapter(
             } else { return Err("AGENT_OPERATION_NOT_PENDING".into()); };
             operation.status = next.into();
             operation.result = Some(result.clone());
-            if !external {
-                if let Some(receipt) = &mut operation.execution {
-                    receipt.phase = if next == "unknown" { "interrupted" } else { "frontend_returned" }.into();
-                    if let Some(run) = session.runs.iter_mut().find(|run| run.id == receipt.run_id) {
-                        run.status = next.into();
-                    }
+            operation.review_revision = (next == "unknown").then(uuid::Uuid::new_v4);
+            if let Some(receipt) = &mut operation.execution {
+                receipt.phase = if reconcile { "user_reconciled" } else if next == "unknown" {
+                    "interrupted"
+                } else if external { "native_reviewed" } else { "frontend_returned" }.into();
+                if let Some(run) = session.runs.iter_mut().find(|run| run.id == receipt.run_id) {
+                    run.status = next.into();
+                }
+            }
+            if let Some(task) = &mut session.foundation_task {
+                if task.status == browseros_agent_foundation::task::TaskStatus::Paused {
+                    task.revision = task.revision.checked_add(1).ok_or("AGENT_TASK_REVISION_EXHAUSTED")?;
                 }
             }
             if next != "unknown" {
@@ -2246,6 +2300,7 @@ pub(crate) fn execute_with_bound_adapter(
             let _write_guard = workspace_mutex.lock().map_err(|_| "AGENT_BUSY")?;
             #[cfg(any(target_os = "linux", target_os = "windows"))]
             let _process_workspace = super::coding_checkpoint::workspace_owner(storage, &root)?;
+            verify_workspace_binding(&root, session.workspace_identity.as_deref())?;
             return apply_changes_transactional(&root, storage, &mut session, None);
         }
         "chat" | "resume_turn" => {
@@ -2389,6 +2444,22 @@ mod tests {
             Ok(json!({"role":"assistant","content":"done"}))
         })
     }
+    #[test]
+    fn bound_session_does_not_adopt_reused_workspace_path() {
+        let f = Fixture::new();
+        let root = f.0.join("project");
+        let storage = f.0.join("state");
+        fs::create_dir(&root).unwrap();
+        let saved = execute(&root, &storage, json!({"action":"session"}), |_, _| unreachable!()).unwrap();
+        let id = saved["session_id"].as_str().unwrap();
+        fs::rename(&root, f.0.join("previous-project")).unwrap();
+        fs::create_dir(&root).unwrap();
+        assert_eq!(execute(&root, &storage, json!({"action":"session","session_id":id}),
+            |_, _| unreachable!()).unwrap_err(), "AGENT_WORKSPACE_IDENTITY_CHANGED");
+        assert!(execute(&root, &storage, json!({"action":"chat","session_id":id,"message":"resume"}),
+            |_, _| panic!("replacement workspace must not receive the old task")).is_err());
+    }
+
     #[test]
     fn workspace_locks_are_shared_per_root_and_isolated_across_roots() {
         let first = workspace_lock(Path::new("/workspace/a"));
@@ -2703,8 +2774,13 @@ mod tests {
         let result = execute_with_adapter(&f.0,&storage,json!({"action":"execute_operation","session_id":id,"operation_id":op,"approved":true}),|_,_|unreachable!(),|_,_,_,_|Err("fixture transport lost".into())).unwrap();
         assert_eq!(result["operations"][0]["status"],"unknown");
         assert!(run(&f,json!({"action":"reconcile_operation","session_id":id,"operation_id":op,"status":"not_applied","confirmed":true,"result":"not yet visible"})).is_err());
-        let reconciled = run(&f,json!({"action":"reconcile_operation","session_id":id,"operation_id":op,"status":"not_applied","confirmed":true,"execution_ended":true,"result":"fixture authoritative termination and effect record"})).unwrap();
+        let revision = &result["operations"][0]["review_revision"];
+        assert!(run(&f,json!({"action":"reconcile_operation","session_id":id,"operation_id":op,"status":"not_applied","confirmed":true,"execution_ended":true,"review_revision":"stale","result":"fixture"})).is_err());
+        let reconciled = run(&f,json!({"action":"reconcile_operation","session_id":id,"operation_id":op,"status":"not_applied","confirmed":true,"execution_ended":true,"review_revision":revision,"result":"fixture authoritative termination and effect record"})).unwrap();
         assert_eq!(reconciled["operations"][0]["status"],"reconciled_not_applied");
+        assert_eq!(reconciled["operations"][0]["reconciliation"]["execution_ended_attested"],true);
+        assert_eq!(reconciled["operations"][0]["execution"]["phase"],"user_reconciled");
+        assert_eq!(reconciled["runs"].as_array().unwrap().last().unwrap()["status"],"reconciled_not_applied");
     }
 
     #[test]

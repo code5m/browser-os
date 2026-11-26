@@ -141,15 +141,15 @@ const mcpCommand=ref(''),mcpArgs=ref('[]'),mcpTool=ref(''),mcpArguments=ref('{}'
 const mcpRunning=manualMcpRunning;
 const mcpReview=ref<any>(null),mcpCredentialsApproved=ref(false),mcpReviewing=ref(false),reviewedMcpRequest=ref('');
 let mcpReviewSequence=0;
-type McpObservation = {observation:string;evidence:string;recorded_at_ms:number;workspace_identity_bound:boolean};
-type ManualMcpReceipt = {id:string;phase:string;revision:string;updated_at_ms:number;tool:string|null;target:string|null;disposition:string|null;identity_bound:boolean;observations:number;can_reconcile:boolean;request_digest?:string|null;review_revision?:string|null;response_digest?:string|null;approved_tool?:string|null;reviews?:McpObservation[]};
+type McpObservation = {observation:string;evidence:string;recorded_at_ms:number;workspace_identity_bound:boolean;execution_ended_attested?:boolean};
+type ManualMcpReceipt = {id:string;phase:string;revision:string;updated_at_ms:number;tool:string|null;target:string|null;disposition:string|null;identity_bound:boolean;observations:number;can_reconcile:boolean;can_resolve?:boolean;can_archive?:boolean;archived?:boolean;request_digest?:string|null;review_revision?:string|null;response_digest?:string|null;approved_tool?:string|null;reviews?:McpObservation[];resolution?:McpObservation|null};
 const mcpRunId=ref('');
 const mcpReceiptOpen=ref(false),mcpReceiptBusy=ref(false);
 const mcpReceipts=ref<ManualMcpReceipt[]>([]),mcpCursor=ref<string|null>(null),mcpUnavailable=ref(0);
 const mcpReceipt=ref<ManualMcpReceipt|null>(null),mcpReceiptError=ref('');
-const mcpObservation=ref('unresolved'),mcpEvidence=ref('');
+const mcpObservation=ref('unresolved'),mcpEvidence=ref(''),mcpExecutionEnded=ref(false);
 let mcpReceiptSequence=0;
-watch(connectedRoot,()=>{mcpReceiptSequence++;mcpRunId.value='';mcpReceiptOpen.value=false;mcpReceiptBusy.value=false;mcpReceipts.value=[];mcpCursor.value=null;mcpReceipt.value=null;mcpReceiptError.value='';mcpEvidence.value='';},{flush:'sync'});
+watch(connectedRoot,()=>{mcpReceiptSequence++;mcpRunId.value='';mcpReceiptOpen.value=false;mcpReceiptBusy.value=false;mcpReceipts.value=[];mcpCursor.value=null;mcpReceipt.value=null;mcpReceiptError.value='';mcpEvidence.value='';mcpExecutionEnded.value=false;},{flush:'sync'});
 const mcpScopeApproved=computed(()=>!mcpReview.value?.credential_refs?.length&&!mcpReview.value?.environment_names?.length||mcpCredentialsApproved.value);
 watch([mcpServerId,mcpCommand,mcpArgs,mcpTool,mcpArguments,connectedRoot],()=>{mcpReviewSequence++;mcpReview.value=null;reviewedMcpRequest.value='';mcpApproved.value=false;mcpCredentialsApproved.value=false;mcpReviewing.value=false;},{flush:'sync'});
 const mcpDetached=ref(Boolean(remembered && (remembered.mcpDetached || manualMcpRunning.value)));
@@ -237,12 +237,12 @@ async function cancelOwned(){
   if(!ownedOperationId.value)return;
   await act(async()=>{await call({action:'cancel',run_id:ownedOperationId.value});notice.value='已请求取消，等待原生执行回执；不能据此认定外部操作未生效。';});
 }
-async function resolveOperation(value:{id:string;status:string;result:string}){
+async function resolveOperation(value:{id:string;status:string;result:string;review_revision?:string}){
   if(busy.value||sessionRecoveryRequired.value)return;
   busy.value=true;
   try{
     const reconcile=value.status==='reconciled_succeeded'||value.status==='reconciled_not_applied';
-    const response=await call({action:reconcile?'reconcile_operation':'resolve_operation',session_id:sessionId.value,operation_id:value.id,status:reconcile?(value.status==='reconciled_succeeded'?'succeeded':'not_applied'):value.status,result:value.result,...(reconcile?{confirmed:true,execution_ended:true}:{})});
+    const response=await call({action:reconcile?'reconcile_operation':'resolve_operation',session_id:sessionId.value,operation_id:value.id,status:reconcile?(value.status==='reconciled_succeeded'?'succeeded':'not_applied'):value.status,result:value.result,...(reconcile?{confirmed:true,execution_ended:true,review_revision:value.review_revision}:{})});
     updateSession(response);
     notice.value=pendingOperations.value.some(item=>item.status==='unknown')?'已保留未知结果，核对外部回执后才能继续。':'操作结果已记录，请处理剩余审批或继续任务';
   }
@@ -394,18 +394,30 @@ async function loadMcpReceipts(reset=true){
 async function readMcpReceipt(id:string){
   if(!id||mcpReceiptBusy.value||mcpRunning.value)return;
   const sequence=++mcpReceiptSequence;mcpReceiptOpen.value=true;mcpReceiptBusy.value=true;mcpReceiptError.value='';
-  try{const result=await call({action:'manual_mcp_receipt',run_id:id});if(sequence===mcpReceiptSequence){mcpReceipt.value=result;mcpEvidence.value='';mcpObservation.value='unresolved';}}
+  try{const result=await call({action:'manual_mcp_receipt',run_id:id});if(sequence===mcpReceiptSequence){mcpReceipt.value=result;mcpEvidence.value='';mcpObservation.value='unresolved';mcpExecutionEnded.value=false;}}
   catch(error){if(sequence===mcpReceiptSequence&&!(error instanceof ProjectScopeChanged))mcpReceiptError.value=String(error);}
   finally{if(sequence===mcpReceiptSequence)mcpReceiptBusy.value=false;}
 }
-async function reconcileMcpReceipt(){
+async function reconcileMcpReceipt(resolve=false){
   const record=mcpReceipt.value,evidence=mcpEvidence.value.trim();
-  if(!record?.can_reconcile||mcpReceiptBusy.value||mcpRunning.value||!evidence||utf8Bytes(evidence)>2048)return;
+  if(!record||mcpReceiptBusy.value||mcpRunning.value||!evidence||utf8Bytes(evidence)>2048)return;
+  if(resolve?(!record.can_resolve||!mcpExecutionEnded.value||mcpObservation.value==='unresolved'):!record.can_reconcile)return;
   const sequence=++mcpReceiptSequence;mcpReceiptBusy.value=true;mcpReceiptError.value='';
   try{
     const result=await call({action:'manual_mcp_reconcile',run_id:record.id,revision:record.revision,
-      observation:mcpObservation.value,evidence,approved:true});
-    if(sequence===mcpReceiptSequence){mcpReceipt.value=result;mcpEvidence.value='';}
+      observation:mcpObservation.value,evidence,approved:true,resolve,execution_ended:resolve&&mcpExecutionEnded.value});
+    if(sequence===mcpReceiptSequence){mcpReceipt.value=result;mcpEvidence.value='';mcpExecutionEnded.value=false;
+      mcpReceipts.value=mcpReceipts.value.map(row=>row.id===result.id?result:row);}
+  }catch(error){if(sequence===mcpReceiptSequence&&!(error instanceof ProjectScopeChanged))mcpReceiptError.value=String(error);}
+  finally{if(sequence===mcpReceiptSequence)mcpReceiptBusy.value=false;}
+}
+async function archiveMcpReceipt(){
+  const record=mcpReceipt.value;
+  if(!record?.can_archive||record.archived||mcpReceiptBusy.value||mcpRunning.value)return;
+  const sequence=++mcpReceiptSequence;mcpReceiptBusy.value=true;mcpReceiptError.value='';
+  try{
+    const result=await call({action:'manual_mcp_archive',run_id:record.id,revision:record.revision,approved:true});
+    if(sequence===mcpReceiptSequence){mcpReceipt.value=result;mcpReceipts.value=mcpReceipts.value.map(row=>row.id===result.id?result:row);}
   }catch(error){if(sequence===mcpReceiptSequence&&!(error instanceof ProjectScopeChanged))mcpReceiptError.value=String(error);}
   finally{if(sequence===mcpReceiptSequence)mcpReceiptBusy.value=false;}
 }
@@ -559,12 +571,19 @@ onBeforeUnmount(()=>{
               <p v-if="mcpReceipt.request_digest" style="overflow-wrap:anywhere">请求摘要：{{mcpReceipt.request_digest}}</p>
               <p v-if="mcpReceipt.response_digest" style="overflow-wrap:anywhere">返回摘要：{{mcpReceipt.response_digest}}</p>
               <p v-for="(review,index) in mcpReceipt.reviews||[]" :key="index">{{review.observation}} · {{new Date(review.recorded_at_ms).toLocaleString()}}：{{review.evidence}}</p>
-              <template v-if="mcpReceipt.can_reconcile">
-                <p class="hint">记录你核对到的外部事实。人工记录不能证明原执行者退出，也不会解锁旧 Run 或自动重试。</p>
+              <p v-if="mcpReceipt.resolution">人工结案 · {{mcpReceipt.resolution.observation}}：{{mcpReceipt.resolution.evidence}}</p>
+              <template v-if="mcpReceipt.can_reconcile||mcpReceipt.can_resolve">
+                <p class="hint">普通观察不会关闭未知状态。仅在核实原执行者和外部任务已结束、结果明确后，才可人工结案；这不是外部服务的自动证明，旧 Run 仍禁止重试。</p>
                 <select v-model="mcpObservation" aria-label="对账观察"><option value="unresolved">仍无法确定</option><option value="observed_applied">观察到已生效</option><option value="observed_not_applied">观察到未生效</option></select>
                 <textarea v-model="mcpEvidence" maxlength="2048" aria-label="对账证据" placeholder="外部订单、提交、查询结果等证据（勿输入凭据）"/>
-                <button :disabled="mcpRunning||mcpReceiptBusy||!mcpEvidence.trim()||utf8Bytes(mcpEvidence)>2048" @click="reconcileMcpReceipt">确认记录对账观察（不重试）</button>
+                <button v-if="mcpReceipt.can_reconcile" :disabled="mcpRunning||mcpReceiptBusy||!mcpEvidence.trim()||utf8Bytes(mcpEvidence)>2048" @click="reconcileMcpReceipt(false)">确认记录对账观察（不重试）</button>
+                <template v-if="mcpReceipt.can_resolve">
+                  <label><input v-model="mcpExecutionEnded" type="checkbox">已核实原执行者及外部任务均已终止，不存在迟到副作用</label>
+                  <button :disabled="mcpRunning||mcpReceiptBusy||!mcpExecutionEnded||mcpObservation==='unresolved'||!mcpEvidence.trim()||utf8Bytes(mcpEvidence)>2048" @click="reconcileMcpReceipt(true)">确认人工结案（不重试）</button>
+                </template>
               </template>
+              <button v-if="mcpReceipt.can_archive&&!mcpReceipt.archived" :disabled="mcpRunning||mcpReceiptBusy" @click="archiveMcpReceipt">归档终态回执（保留全部证据）</button>
+              <p v-if="mcpReceipt.archived" class="hint">已归档，原 Run ID 及对账证据保留。</p>
             </article>
             <p v-if="mcpReceiptError" role="status">{{mcpReceiptError}}</p>
           </template>

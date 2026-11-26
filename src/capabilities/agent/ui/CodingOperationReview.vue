@@ -4,14 +4,17 @@ import { bridge } from '../../../bridge';
 import { operationResultText, mcpFailureHint } from '../model/codingWorkbench.mjs';
 import CodingCommandPanel from './CodingCommandPanel.vue';
 import McpExecutionReview from './McpExecutionReview.vue';
-type Operation={id:string;kind:'command'|'mcp'|'git_context'|'database_context'|'browser_context'|'code_diagnostics';input:any;status:string;result?:string};
+type Operation={id:string;kind:'command'|'mcp'|'git_context'|'database_context'|'browser_context'|'code_diagnostics';input:any;status:string;result?:string;review_revision?:string};
 const props=defineProps<{operation:Operation;root:string;claimOperation:(id:string)=>Promise<void>;executeOwned:(id:string,grant:Record<string,unknown>)=>Promise<void>;diagnosticsAvailable?:boolean;runDiagnostics?:(input:any)=>Promise<any>}>();
-const emit=defineEmits<{(event:'resolve',value:{id:string;status:string;result:string}):void}>();
+const emit=defineEmits<{(event:'resolve',value:{id:string;status:string;result:string;review_revision?:string}):void}>();
 const approved=ref(false),busy=ref(false),consumed=ref(false),result=ref(''),notice=ref('');
 const outcome=ref('succeeded');
 const evidence=ref('');
 const executionEnded=ref(false);
 const reconciliation=ref<'succeeded'|'not_applied'>('succeeded');
+watch(()=>[props.root,props.operation.id,props.operation.review_revision],()=>{
+  evidence.value='';executionEnded.value=false;reconciliation.value='succeeded';
+},{flush:'sync'});
 const resultOwner=ref<{id:string;root:string}|null>(null);
 const mcpReview=ref<any>(null),credentialsApproved=ref(false),reviewing=ref(false);
 let reviewSequence=0;
@@ -62,14 +65,14 @@ function record(){if(!result.value||busy.value||resultOwner.value?.id!==props.op
 function commandResult(value:{status:string;text:string}){emit('resolve',{id:props.operation.id,status:value.status,result:value.text});}
 function reject(){if(!busy.value&&!consumed.value)emit('resolve',{id:props.operation.id,status:'rejected',result:'The user rejected this operation.'});}
 function recordUnknown(){emit('resolve',{id:props.operation.id,status:'unknown',result:'OPERATION_RESULT_UNKNOWN_USER_REVIEW_REQUIRED'});}
-function reconcile(){if(!executionEnded.value||!evidence.value.trim())return;emit('resolve',{id:props.operation.id,status:reconciliation.value==='succeeded'?'reconciled_succeeded':'reconciled_not_applied',result:evidence.value.trim()});}
+function reconcile(){if(!executionEnded.value||!evidence.value.trim()||!props.operation.review_revision)return;emit('resolve',{id:props.operation.id,status:reconciliation.value==='succeeded'?'reconciled_succeeded':'reconciled_not_applied',result:evidence.value.trim(),review_revision:props.operation.review_revision});}
 </script>
 <template><section class="operation-review" :aria-label="'审批操作 '+operation.kind">
  <strong>等待审批 · {{({command:'命令片段',mcp:'MCP 工具',code_diagnostics:'代码诊断',git_context:'Git 状态',database_context:'数据库结构',browser_context:'浏览器标签'} as any)[operation.kind]}}</strong><pre>{{JSON.stringify(operation.input,null,2)}}</pre>
  <p v-if="operation.kind==='git_context'">只读当前编码项目的 Git 状态：{{root}}。不提交、拉取或推送。</p><p v-if="operation.kind==='database_context'">仅读取数据库模块当前已加载的表/视图名称，不连接数据库、不执行 SQL。</p><p v-if="operation.kind==='browser_context'">仅读取现有标签标题和地址；地址移除账号、密码、查询参数和片段，不读取网页内容。</p>
  <p v-if="operation.kind==='code_diagnostics'">请先在编辑器启用本项目语言服务，并处理待审核变更。仅使用你已批准的隔离范围分析 Rust 文本；不运行 Cargo、测试或项目脚本，诊断成功不代表编译通过。</p>
  <template v-if="operation.status==='result_ready'"><p>原生执行回执已持久化。核对后再将实际结果交给模型；命令详细输出可在命令运行历史中查看。</p><pre>{{operation.result}}</pre><button :disabled="busy" @click="emit('resolve',{id:operation.id,status:'accepted',result:''})">接受原生回执并记录结果</button></template>
- <template v-else-if="operation.status==='unknown'||(operation.status==='executing'&&!consumed)"><p class="recovery-warning">外部结果尚未确认。超时、取消或通信失败不代表操作未生效；不会自动重试。</p><button v-if="operation.status==='executing'" @click="recordUnknown">暂时记录为结果未知</button><label>核对外部系统后的结果 <select v-model="reconciliation"><option value="succeeded">已确认生效</option><option value="not_applied">已确认未生效</option></select></label><textarea v-model="evidence" placeholder="填写实际回执、外部系统记录或核对依据（不要包含凭据）" aria-label="对账依据"></textarea><label><input v-model="executionEnded" type="checkbox">已核实原执行者和外部任务均已终止，不存在迟到副作用</label><button :disabled="!executionEnded||!evidence.trim()||busy||operation.status==='executing'" @click="reconcile">确认并记录对账结果</button></template>
+ <template v-else-if="operation.status==='unknown'||(operation.status==='executing'&&!consumed)"><p class="recovery-warning">外部结果尚未确认。超时、取消或通信失败不代表操作未生效；不会自动重试。</p><button v-if="operation.status==='executing'" @click="recordUnknown">暂时记录为结果未知</button><label>核对外部系统后的结果 <select v-model="reconciliation"><option value="succeeded">已确认生效</option><option value="not_applied">已确认未生效</option></select></label><textarea v-model="evidence" placeholder="填写实际回执、外部系统记录或核对依据（不要包含凭据）" aria-label="对账依据"></textarea><label><input v-model="executionEnded" type="checkbox">已核实原执行者和外部任务均已终止，不存在迟到副作用</label><button :disabled="!executionEnded||!evidence.trim()||busy||operation.status==='executing'||!operation.review_revision" @click="reconcile">确认并记录对账结果</button></template>
  <template v-else>
  <p>{{consumed?'请求已发出，请核实并记录结果。':'这是模型提出的请求，尚未执行。请核对目标和参数。'}}{{operation.kind==='code_diagnostics'?'本次只分析源文本，不修改项目文件或应用修复。':'执行可能修改文件、外部系统或数据。'}}</p>
  <CodingCommandPanel v-if="operation.kind==='command'" :proposal="operation.input" :execute-owned="(values,revision)=>executeOwned(operation.id,{values,expected_revision:revision})" @result="commandResult" @running="busy=$event" @attempt="consumed=true"/>

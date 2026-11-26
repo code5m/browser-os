@@ -497,7 +497,7 @@ impl RunCheckpoint {
         Ok(Some(bytes))
     }
     /// Caller holds this Run lock and has already authenticated a terminal
-    /// compacted text record. Publish an identical ciphertext with
+    /// record eligible for archival. Publish an identical ciphertext with
     /// no-replace before removing the active copy. Neither a crash between
     /// publication/removal nor a repeated archival can resurrect a Run ID.
     pub(super) fn archive_terminal(&self) -> Result<(), String> {

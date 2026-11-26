@@ -131,12 +131,24 @@ pub(crate) fn dispatch_coding_request(
             parse_run_id(request["run_id"].as_str().ok_or("AGENT_RUN_ID_REQUIRED")?)?),
         "manual_mcp_reconcile" => {
             if request["approved"] != true { return Err("AGENT_EXPLICIT_APPROVAL_REQUIRED".into()); }
-            return ProductionExecution::reconcile_manual_mcp(storage, root,
+            let id = parse_run_id(request["run_id"].as_str().ok_or("AGENT_RUN_ID_REQUIRED")?)?;
+            let revision = request["revision"].as_str().ok_or("AGENT_EFFECT_REVIEW_STALE")?.parse()
+                .map_err(|_| "AGENT_EFFECT_REVIEW_STALE")?;
+            let observation = request["observation"].as_str().ok_or("AGENT_EFFECT_EVIDENCE_INVALID")?;
+            let evidence = request["evidence"].as_str().ok_or("AGENT_EFFECT_EVIDENCE_INVALID")?;
+            return if request["resolve"] == true {
+                ProductionExecution::resolve_manual_mcp(storage, root, id, revision, observation,
+                    evidence, request["execution_ended"] == true)
+            } else {
+                ProductionExecution::reconcile_manual_mcp(storage, root, id, revision, observation, evidence)
+            };
+        }
+        "manual_mcp_archive" => {
+            if request["approved"] != true { return Err("AGENT_EXPLICIT_APPROVAL_REQUIRED".into()); }
+            return ProductionExecution::archive_manual_mcp(storage, root,
                 parse_run_id(request["run_id"].as_str().ok_or("AGENT_RUN_ID_REQUIRED")?)?,
                 request["revision"].as_str().ok_or("AGENT_EFFECT_REVIEW_STALE")?.parse()
-                    .map_err(|_| "AGENT_EFFECT_REVIEW_STALE")?,
-                request["observation"].as_str().ok_or("AGENT_EFFECT_EVIDENCE_INVALID")?,
-                request["evidence"].as_str().ok_or("AGENT_EFFECT_EVIDENCE_INVALID")?);
+                    .map_err(|_| "AGENT_EFFECT_REVIEW_STALE")?);
         }
         _ => {}
     }

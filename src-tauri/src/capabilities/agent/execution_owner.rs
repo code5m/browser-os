@@ -75,12 +75,37 @@ struct EffectEvidence {
     #[serde(default)]
     review_revision: Option<String>,
 }
+/// Shared native reconciliation evidence for Coding and manual MCP. A user
+/// attestation is not a provider-side idempotency or termination receipt.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
-struct ManualEffectReview {
+pub(super) struct EffectReview {
     observation: String,
     evidence: String,
     recorded_at_ms: u64,
     workspace_identity_bound: bool,
+    #[serde(default)]
+    execution_ended_attested: bool,
+    #[serde(default)]
+    reviewed_revision: Option<String>,
+}
+impl EffectReview {
+    pub(super) fn checked(observation: &str, evidence: &str, bound: bool,
+        ended: bool, revision: String, limit: usize) -> Result<Self, String> {
+        if !matches!(observation, "observed_applied" | "observed_not_applied" | "unresolved")
+            || evidence.trim().is_empty() || evidence.len() > limit
+            || crate::security_policy::contains_credential_leak(evidence)
+            || (ended && observation == "unresolved") {
+            return Err("AGENT_EFFECT_EVIDENCE_INVALID".into());
+        }
+        Ok(Self { observation: observation.into(), evidence: evidence.trim().into(),
+            recorded_at_ms: unix_ms(), workspace_identity_bound: bound,
+            execution_ended_attested: ended, reviewed_revision: Some(revision) })
+    }
+}
+pub(super) fn workspace_identity(root: &Path) -> Result<String, String> {
+    let identity = crate::capabilities::workspace::safe_paths::directory_identity(root)
+        .map_err(|_| "AGENT_WORKSPACE_IDENTITY_UNAVAILABLE")?;
+    Ok(format!("{:x}", Sha256::digest(identity.as_bytes())))
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -105,7 +130,9 @@ struct NativeRunReceipt {
     #[serde(default)]
     payload_forgotten: bool,
     #[serde(default)]
-    effect_reviews: Vec<ManualEffectReview>,
+    effect_reviews: Vec<EffectReview>,
+    #[serde(default)]
+    effect_resolution: Option<EffectReview>,
 }
 fn unix_ms() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
@@ -135,7 +162,7 @@ impl DurableRun {
             text: self.text.clone(), effect: self.effect.clone(),
             created_at_ms: self.created_at_ms, updated_at_ms: unix_ms(),
             previous_run: self.previous_run, successor: None, payload_forgotten: false,
-            effect_reviews: Vec::new(),
+            effect_reviews: Vec::new(), effect_resolution: None,
         };
         self.write_record(&receipt)
     }
@@ -558,11 +585,10 @@ impl ProductionExecution {
                     .filter(|name| name.len() <= 256 && !crate::security_policy::contains_credential_leak(name))
                     .map(str::to_owned)
             });
-            let identity = crate::capabilities::workspace::safe_paths::directory_identity(root)
-                .map_err(|_| "AGENT_WORKSPACE_IDENTITY_UNAVAILABLE")?;
+            let identity = workspace_identity(root)?;
             run.effect = Some(EffectEvidence { request_digest: digest.clone(), target,
                 tool: safe_label("tool"), disposition: "dispatching".into(), response_digest: None,
-                workspace_identity: Some(format!("{:x}", Sha256::digest(identity.as_bytes()))),
+                workspace_identity: Some(identity),
                 review_revision: safe_label("review_revision") });
         }
         let _ = (root, digest, request);
@@ -588,9 +614,7 @@ impl ProductionExecution {
         if !canonical.is_dir() { return Err("AGENT_ROOT_INVALID".into()); }
         let (workspace, _) = coding_scope(&canonical, Some(&Uuid::new_v4().to_string()))?
             .ok_or("AGENT_SESSION_REQUIRED")?;
-        let identity = crate::capabilities::workspace::safe_paths::directory_identity(&canonical)
-            .map_err(|_| "AGENT_WORKSPACE_IDENTITY_UNAVAILABLE")?;
-        Ok((workspace, format!("{:x}", Sha256::digest(identity.as_bytes()))))
+        Ok((workspace, workspace_identity(&canonical)?))
     }
 
     #[cfg(any(target_os = "linux", target_os = "windows"))]
@@ -602,6 +626,16 @@ impl ProductionExecution {
             return Err("AGENT_RUN_SCOPE_MISMATCH".into());
         }
         Ok(())
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    fn can_resolve_manual(record: &NativeRunReceipt) -> bool {
+        record.phase == "operation_unknown" && record.task.status == TaskStatus::Paused
+            && record.task.pending.is_none() && record.effect_resolution.is_none()
+            && record.effect.as_ref().and_then(|effect| effect.workspace_identity.as_ref()).is_some()
+            && record.approval.as_ref().is_some_and(|claim| claim.accepted
+                && claim.task_id == record.task.id && claim.workspace_id == record.task.workspace_id
+                && claim.session_id == record.task.session_id && claim.effect == ToolEffect::ExternalSideEffect)
     }
 
     #[cfg(any(target_os = "linux", target_os = "windows"))]
@@ -617,12 +651,15 @@ impl ProductionExecution {
             "observations":record.effect_reviews.len(),
             "can_reconcile":record.phase == "operation_unknown" && record.task.status == TaskStatus::Paused
                 && record.effect_reviews.len() < 16,
+            "can_resolve":Self::can_resolve_manual(record),
+            "can_archive":matches!(record.task.status, TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Cancelled),
         });
         if detail {
             result["request_digest"] = serde_json::json!(effect.map(|value| &value.request_digest));
             result["review_revision"] = serde_json::json!(effect.and_then(|value| value.review_revision.as_ref()));
             result["response_digest"] = serde_json::json!(effect.and_then(|value| value.response_digest.as_ref()));
             result["reviews"] = serde_json::json!(&record.effect_reviews);
+            result["resolution"] = serde_json::json!(&record.effect_resolution);
             result["approved_tool"] = serde_json::json!(record.approval.as_ref().map(|claim| &claim.tool_name));
         }
         result
@@ -657,7 +694,9 @@ impl ProductionExecution {
             let owner = DurableRun::lookup(storage, id)?;
             let record = owner.read_record()?.ok_or("AGENT_RUN_NOT_FOUND")?;
             Self::check_manual_scope(&record, workspace, &identity)?;
-            Ok(Self::manual_summary(&owner.recover_record(record)?, true))
+            let mut summary = Self::manual_summary(&owner.recover_record(record)?, true);
+            summary["archived"] = serde_json::json!(owner.checkpoint.archive_confirmed()?);
+            Ok(summary)
         }
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         { let _ = (storage, root, id); Err("AGENT_PRIVATE_STORAGE_UNAVAILABLE".into()) }
@@ -670,11 +709,6 @@ impl ProductionExecution {
         observation: &str, evidence: &str) -> Result<serde_json::Value, String> {
         #[cfg(any(target_os = "linux", target_os = "windows"))]
         {
-            if !matches!(observation, "observed_applied" | "observed_not_applied" | "unresolved")
-                || evidence.trim().is_empty() || evidence.len() > 2048
-                || crate::security_policy::contains_credential_leak(evidence) {
-                return Err("AGENT_EFFECT_EVIDENCE_INVALID".into());
-            }
             let (workspace, identity) = Self::manual_scope(root)?;
             let owner = DurableRun::lookup(storage, id)?;
             let record = owner.read_record()?.ok_or("AGENT_RUN_NOT_FOUND")?;
@@ -685,10 +719,8 @@ impl ProductionExecution {
                 return Err("AGENT_EFFECT_REVIEW_STALE".into());
             }
             let bound = record.effect.as_ref().and_then(|effect| effect.workspace_identity.as_ref()).is_some();
-            record.effect_reviews.push(ManualEffectReview {
-                observation: observation.into(), evidence: evidence.trim().into(),
-                recorded_at_ms: unix_ms(), workspace_identity_bound: bound,
-            });
+            record.effect_reviews.push(EffectReview::checked(observation, evidence, bound,
+                false, revision.to_string(), 2048)?);
             record.task.revision = record.task.revision.checked_add(1).ok_or("AGENT_TASK_REVISION_EXHAUSTED")?;
             record.updated_at_ms = unix_ms();
             owner.write_record(&record)?;
@@ -696,6 +728,71 @@ impl ProductionExecution {
         }
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         { let _ = (storage, root, id, revision, observation, evidence); Err("AGENT_PRIVATE_STORAGE_UNAVAILABLE".into()) }
+    }
+
+    /// Explicitly close an unknown manual effect based on the user's checked
+    /// termination and outcome evidence. The old Run remains permanently
+    /// non-replayable. This is a terminal *attestation*, never automatic
+    /// provider proof and never a fresh permission to dispatch.
+    pub(crate) fn resolve_manual_mcp(storage: &Path, root: &Path, id: Uuid, revision: u64,
+        observation: &str, evidence: &str, execution_ended: bool) -> Result<serde_json::Value, String> {
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        {
+            if !execution_ended || !matches!(observation, "observed_applied" | "observed_not_applied") {
+                return Err("AGENT_RECONCILIATION_REQUIRED".into());
+            }
+            let canonical = root.canonicalize().map_err(|_| "AGENT_ROOT_INVALID")?;
+            // Same lock order as the actual manual MCP dispatch.
+            let _workspace = super::coding_checkpoint::workspace_owner(storage, &canonical)?;
+            let (workspace, identity) = Self::manual_scope(&canonical)?;
+            let owner = DurableRun::lookup(storage, id)?;
+            let record = owner.read_record()?.ok_or("AGENT_RUN_NOT_FOUND")?;
+            Self::check_manual_scope(&record, workspace, &identity)?;
+            let mut record = owner.recover_record(record)?;
+            if record.task.revision != revision || !Self::can_resolve_manual(&record) {
+                return Err("AGENT_EFFECT_REVIEW_STALE".into());
+            }
+            let resolution = EffectReview::checked(observation, evidence, true,
+                true, revision.to_string(), 2048)?;
+            let applied = observation == "observed_applied";
+            // Paused Task has no live in-memory lease; the authenticated Run
+            // is authoritative. Do not start a new Task/Run to reconcile it.
+            record.task.revision = record.task.revision.checked_add(1).ok_or("AGENT_TASK_REVISION_EXHAUSTED")?;
+            record.task.status = if applied { TaskStatus::Completed } else { TaskStatus::Failed };
+            record.phase = if applied { "reconciled_applied" } else { "reconciled_not_applied" }.into();
+            if let Some(effect) = &mut record.effect {
+                effect.disposition = if applied { "user_attested_applied" } else { "user_attested_not_applied" }.into();
+            }
+            record.effect_resolution = Some(resolution);
+            record.updated_at_ms = unix_ms();
+            owner.write_record(&record)?;
+            Ok(Self::manual_summary(&record, true))
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        { let _ = (storage, root, id, revision, observation, evidence, execution_ended); Err("AGENT_PRIVATE_STORAGE_UNAVAILABLE".into()) }
+    }
+
+    /// Archive the entire authenticated terminal receipt without dropping
+    /// approval, effect evidence, reviews or the original Run identity.
+    pub(crate) fn archive_manual_mcp(storage: &Path, root: &Path, id: Uuid, revision: u64) -> Result<serde_json::Value, String> {
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        {
+            let (workspace, identity) = Self::manual_scope(root)?;
+            let owner = DurableRun::lookup(storage, id)?;
+            let record = owner.read_record()?.ok_or("AGENT_RUN_NOT_FOUND")?;
+            Self::check_manual_scope(&record, workspace, &identity)?;
+            let record = owner.recover_record(record)?;
+            if record.task.revision != revision
+                || !matches!(record.task.status, TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Cancelled) {
+                return Err("AGENT_RUN_NOT_TERMINAL".into());
+            }
+            owner.checkpoint.archive_terminal()?;
+            let mut summary = Self::manual_summary(&record, true);
+            summary["archived"] = serde_json::json!(true);
+            Ok(summary)
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        { let _ = (storage, root, id, revision); Err("AGENT_PRIVATE_STORAGE_UNAVAILABLE".into()) }
     }
 
     pub(crate) fn checkpoint(&self, phase: &str) -> Result<(), String> {
@@ -1047,6 +1144,23 @@ mod tests {
         assert_eq!(reconciled["reviews"][0]["observation"], "observed_not_applied");
         assert!(ProductionExecution::reconcile_manual_mcp(&storage, &root, run, revision,
             "observed_applied", "Stale observation").is_err());
+        assert!(ProductionExecution::begin_workspace_run(&storage, "manual_mcp", &root, run).is_err());
+        let current = reconciled["revision"].as_str().unwrap().parse().unwrap();
+        assert!(ProductionExecution::archive_manual_mcp(&storage, &root, run, current).is_err());
+        assert!(ProductionExecution::resolve_manual_mcp(&storage, &root, run, current,
+            "observed_not_applied", "Termination unconfirmed", false).is_err());
+        assert!(ProductionExecution::resolve_manual_mcp(&storage, &root, run, revision,
+            "observed_not_applied", "Stale revision", true).is_err());
+        let settled = ProductionExecution::resolve_manual_mcp(&storage, &root, run, current,
+            "observed_not_applied", "Operator verified process ended and external record absent", true).unwrap();
+        assert_eq!(settled["phase"], "reconciled_not_applied");
+        assert_eq!(settled["resolution"]["execution_ended_attested"], true);
+        assert_eq!(settled["can_resolve"], false);
+        let terminal_revision = settled["revision"].as_str().unwrap().parse().unwrap();
+        let archived = ProductionExecution::archive_manual_mcp(&storage, &root, run, terminal_revision).unwrap();
+        assert_eq!(archived["archived"], true);
+        assert_eq!(archived["reviews"], settled["reviews"]);
+        assert_eq!(archived["resolution"], settled["resolution"]);
         assert!(ProductionExecution::begin_workspace_run(&storage, "manual_mcp", &root, run).is_err());
         std::fs::remove_dir_all(root).unwrap();
     }
