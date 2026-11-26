@@ -4,7 +4,7 @@
 use crate::{
     rig_run::RigRunPilot,
     task::{TaskRegistry, TaskStatus},
-    tool::ToolRegistry,
+    tool::{ToolExecutionReceipt, ToolRegistry},
     FoundationError, Result,
 };
 use rig_agent::run::{AgentRunStep, ModelTurn, ModelTurnOutcome};
@@ -14,6 +14,7 @@ use rig_core::{
     message::{ToolCall, ToolResult, ToolResultContent, UserContent},
     operation::Completion,
 };
+#[cfg(test)]
 use serde_json::Value;
 use std::{collections::BTreeSet, future::Future, pin::Pin, time::Duration};
 use uuid::Uuid;
@@ -90,148 +91,146 @@ impl RigMultiTurnDriver {
             return Err(FoundationError::InvalidTransition);
         }
         let revision = start.revision;
-
-        loop {
-            let step = self
-                .pilot
-                .state()
-                .next_step()
-                .map_err(|_| FoundationError::Provider("RIG_NEXT_STEP".into()))?;
-            match step {
-                AgentRunStep::CallModel {
-                    prompt,
-                    history,
-                    turn,
-                } => {
-                    let task = tasks.get(task_id)?;
-                    if task.status != TaskStatus::Running || task.revision != revision {
-                        return Err(FoundationError::Cancelled);
+        // Keep the same owner across SDK state advancement, provider
+        // transport, proposal admission and terminal settlement.
+        let mut gate =
+            crate::engine::ModelTurnGate::acquire(tasks, task_id, revision, Duration::from_secs(45))?;
+        let run = async {
+            loop {
+                gate.active()?;
+                let step = self
+                    .pilot
+                    .state()
+                    .next_step()
+                    .map_err(|_| FoundationError::Provider("RIG_NEXT_STEP".into()))?;
+                match step {
+                    AgentRunStep::CallModel {
+                        prompt,
+                        history,
+                        turn,
+                    } => {
+                        let request = CompletionRequest::new(prompt)
+                            .messages(history)
+                            .model::<String>(Some(model_id.to_owned()))
+                            .tools(definitions.to_vec());
+                        self.pilot
+                            .state()
+                            .advertise_tools(turn, definitions.to_vec());
+                        let response = gate.receive(model.complete(request)).await?;
+                        if response.choice.len() > 64 {
+                            return Err(FoundationError::Provider("RIG_CONTENT_LIMIT".into()));
+                        }
+                        let turn =
+                            ModelTurn::from_response_parts(&response, names.clone(), names.clone());
+                        let outcome =
+                            self.pilot.state().model_response(turn).map_err(|_| {
+                                FoundationError::Provider("RIG_MODEL_TURN_REJECTED".into())
+                            })?;
+                        if !matches!(outcome, ModelTurnOutcome::Continue { .. }) {
+                            return Err(FoundationError::Provider(
+                                "RIG_TOOL_REQUIRES_RESOLUTION".into(),
+                            ));
+                        }
                     }
-                    let mut gate = crate::engine::ModelTurnGate::acquire(
-                        tasks,
-                        task_id,
-                        revision,
-                        Duration::from_secs(45),
-                    )?;
-                    let request = CompletionRequest::new(prompt)
-                        .messages(history)
-                        .model::<String>(Some(model_id.to_owned()))
-                        .tools(definitions.to_vec());
-                    self.pilot
-                        .state()
-                        .advertise_tools(turn, definitions.to_vec());
-                    let response = gate.receive(model.complete(request)).await?;
-                    if response.choice.len() > 64 {
-                        return Err(FoundationError::Provider("RIG_CONTENT_LIMIT".into()));
-                    }
-                    let turn =
-                        ModelTurn::from_response_parts(&response, names.clone(), names.clone());
-                    let outcome =
-                        self.pilot.state().model_response(turn).map_err(|_| {
-                            FoundationError::Provider("RIG_MODEL_TURN_REJECTED".into())
-                        })?;
-                    if !matches!(outcome, ModelTurnOutcome::Continue { .. }) {
-                        return Err(FoundationError::Provider(
-                            "RIG_TOOL_REQUIRES_RESOLUTION".into(),
-                        ));
-                    }
-                }
-                AgentRunStep::CallTools { calls } => {
-                    // Rig may suggest parallel calls. Our single-owner TaskRegistry
-                    // explicitly has ONE pending grant; reject all ambiguous batches.
-                    if calls.len() != 1 || calls[0].preresolved_result.is_some() {
-                        return Err(FoundationError::PermissionDenied);
-                    }
-                    let call = calls[0].tool_call.clone();
-                    if !names.contains(call.function.name.as_ref()) {
-                        return Err(FoundationError::PermissionDenied);
-                    }
-                    let json = serde_json::to_vec(&call.function.arguments)
-                        .map_err(|e| FoundationError::Serialization(e.to_string()))?;
-                    if json.len() > 16_384 {
-                        return Err(FoundationError::InvalidInput("rig tool arguments"));
-                    }
-                    let tool_name = call.function.name.to_string();
-                    let approved_revision = revision
-                        .checked_add(2)
-                        .ok_or(FoundationError::InvalidTransition)?;
-                    let proposed = registry
-                        .propose_at_revision(
-                            tasks,
-                            task_id,
-                            &tool_name,
-                            call.function.arguments.clone(),
-                            revision,
-                        )
-                        .map_err(stale_transition)?;
-                    self.pending = Some((task_id, proposed, approved_revision, call));
-                    return Ok(RigDriverStep::NeedsApproval {
-                        call_id: proposed,
-                        tool_name,
-                    });
-                }
-                AgentRunStep::Done(response) => {
-                    // Validation must precede committing a successful terminal
-                    // state; the previous order permanently marked an oversized
-                    // error as Completed. Fail closed and retain a Failed event.
-                    if response.output.len() > 256 * 1024 {
-                        tasks
-                            .finish_at_revision(task_id, false, revision)
+                    AgentRunStep::CallTools { calls } => {
+                        // Rig may suggest parallel calls. Our single-owner TaskRegistry
+                        // explicitly has ONE pending grant; reject all ambiguous batches.
+                        if calls.len() != 1 || calls[0].preresolved_result.is_some() {
+                            return Err(FoundationError::PermissionDenied);
+                        }
+                        let call = calls[0].tool_call.clone();
+                        if !names.contains(call.function.name.as_ref()) {
+                            return Err(FoundationError::PermissionDenied);
+                        }
+                        let json = serde_json::to_vec(&call.function.arguments)
+                            .map_err(|e| FoundationError::Serialization(e.to_string()))?;
+                        if json.len() > 16_384 {
+                            return Err(FoundationError::InvalidInput("rig tool arguments"));
+                        }
+                        let tool_name = call.function.name.to_string();
+                        let approved_revision = revision
+                            .checked_add(2)
+                            .ok_or(FoundationError::InvalidTransition)?;
+                        let proposed = registry
+                            .propose_at_revision(
+                                tasks,
+                                task_id,
+                                &tool_name,
+                                call.function.arguments.clone(),
+                                revision,
+                            )
                             .map_err(stale_transition)?;
-                        return Err(FoundationError::Provider("RIG_OUTPUT_LIMIT".into()));
+                        self.pending = Some((task_id, proposed, approved_revision, call));
+                        return Ok(RigDriverStep::NeedsApproval {
+                            call_id: proposed,
+                            tool_name,
+                        });
                     }
-                    tasks
-                        .finish_at_revision(task_id, true, revision)
-                        .map_err(stale_transition)?;
-                    return Ok(RigDriverStep::Completed {
-                        text: response.output,
-                        input_tokens: response.usage.input_tokens,
-                        output_tokens: response.usage.output_tokens,
-                    });
+                    AgentRunStep::Done(response) => {
+                        // Validation must precede committing a successful terminal
+                        // state; the previous order permanently marked an oversized
+                        // error as Completed. Fail closed and retain a Failed event.
+                        if response.output.len() > 256 * 1024 {
+                            tasks
+                                .finish_at_revision(task_id, false, revision)
+                                .map_err(stale_transition)?;
+                            return Err(FoundationError::Provider("RIG_OUTPUT_LIMIT".into()));
+                        }
+                        tasks
+                            .finish_at_revision(task_id, true, revision)
+                            .map_err(stale_transition)?;
+                        return Ok(RigDriverStep::Completed {
+                            text: response.output,
+                            input_tokens: response.usage.input_tokens,
+                            output_tokens: response.usage.output_tokens,
+                        });
+                    }
                 }
             }
+        };
+        let result = run.await;
+        if result.is_err() && tasks.active_at_revision(task_id, revision) {
+            let _ = tasks.finish_at_revision(task_id, false, revision);
         }
+        result
     }
 
-    /// This accepts ONLY the result returned by the trusted host's
-    /// ToolRegistry::execute, AFTER HMAC approval and Owner revalidation.
-    /// Caller must NOT use this API with a model-generated fabricated result.
+    /// Only the opaque execution receipt returned by ToolRegistry can
+    /// advance a pending Rig turn. Approval alone is not execution.
     pub fn accept_host_tool_result(
         &mut self,
-        task_id: Uuid,
-        call_id: Uuid,
-        result: Value,
+        receipt: &ToolExecutionReceipt<'_>,
         tasks: &TaskRegistry,
     ) -> Result<()> {
-        let Some((pending_task, pending, approved_revision, call)) = self.pending.take() else {
+        let Some((task_id, call_id, approved_revision, call)) = self.pending.as_ref() else {
             return Err(FoundationError::ApprovalMismatch);
         };
-        if pending_task != task_id || pending != call_id {
-            self.pending = Some((pending_task, pending, approved_revision, call));
+        let (task_id, call_id, approved_revision) = (*task_id, *call_id, *approved_revision);
+        if !receipt.matches_approval(tasks, task_id, call_id, approved_revision) {
             return Err(FoundationError::ApprovalMismatch);
         }
-        if serde_json::to_vec(&result)
+        if serde_json::to_vec(receipt.value())
             .map_err(|e| FoundationError::Serialization(e.to_string()))?
             .len()
             > 64 * 1024
         {
-            self.pending = Some((pending_task, pending, approved_revision, call));
             return Err(FoundationError::InvalidInput("rig tool result"));
         }
-        let accepted = tasks.with_active_revision(task_id, approved_revision, || {
+        // Exclude a competing model or tool execution even during the SDK
+        // state transition. A rejected receipt leaves the pending call intact.
+        let _lease = tasks.acquire_execution(task_id, approved_revision)?;
+        tasks.with_active_revision(task_id, approved_revision, || {
             self.pilot
                 .state()
                 .tool_results(vec![UserContent::ToolResult(ToolResult {
                     call: call.id.clone(),
                     name: call.function.name.clone(),
-                    content: vec![ToolResultContent::json(result)],
+                    content: vec![ToolResultContent::json(receipt.value().clone())],
                 })])
                 .map_err(|_| FoundationError::Provider("RIG_TOOL_RESULTS".into()))
-        });
-        if accepted.is_err() {
-            self.pending = Some((pending_task, pending, approved_revision, call));
-        }
-        accepted
+        })?;
+        self.pending = None;
+        Ok(())
     }
 
     pub fn snapshot(&self) -> Result<String> {
@@ -302,13 +301,55 @@ mod tests {
         }
     }
 
-    #[test]
-    fn stale_tool_result_cannot_resume_a_new_task_generation() {
-        let tasks = TaskRegistry::new(Arc::new(EventJournal::new(16)));
-        let task = tasks.create(Uuid::new_v4(), "test", vec![]).unwrap();
+    async fn approved_read_receipt<'a>(
+        tasks: &'a TaskRegistry,
+        tools: &ToolRegistry,
+        task_id: Uuid,
+        call_id: Uuid,
+    ) -> ToolExecutionReceipt<'a> {
+        let task = tasks.get(task_id).unwrap();
+        let issuer = HostApprovalIssuer::new([23; 32]).unwrap();
+        let approval = issuer
+            .issue(
+                tasks,
+                task_id,
+                call_id,
+                HostApprovalDecision {
+                    principal_id: Uuid::new_v4(),
+                    resource: ResourceBinding {
+                        resource_id: format!("workspace:{}", task.workspace_id),
+                        resource_revision: "head-1".into(),
+                    },
+                    accepted: true,
+                    ttl: Duration::from_secs(30),
+                },
+            )
+            .unwrap();
+        let permit = ApprovalBroker::new([23; 32])
+            .unwrap()
+            .resolve(tasks, &approval)
+            .unwrap()
+            .unwrap();
+        tools
+            .execute_receipted(permit, tasks, Duration::from_secs(2))
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn stale_tool_result_cannot_resume_a_new_task_generation() {
+        let tasks = TaskRegistry::new(Arc::new(EventJournal::new(32)));
+        let task = tasks
+            .create_scoped(Uuid::new_v4(), Uuid::new_v4(), "test", vec![])
+            .unwrap();
         tasks.start(task.id).unwrap();
+        let tools = ToolRegistry::default();
+        tools.register(Arc::new(ReadTool)).unwrap();
+        let call_id = tools
+            .propose(&tasks, task.id, "demo.inspect", json!({}))
+            .unwrap();
+        let receipt = approved_read_receipt(&tasks, &tools, task.id, call_id).await;
         let revision = tasks.get(task.id).unwrap().revision;
-        let call_id = Uuid::new_v4();
         let call = ToolCall::from_wire(
             "test-call",
             ToolFunction::new(ToolName::new("demo.inspect").unwrap(), json!({})),
@@ -319,7 +360,7 @@ mod tests {
         tasks.start(task.id).unwrap();
         assert_eq!(
             driver
-                .accept_host_tool_result(task.id, call_id, json!({}), &tasks)
+                .accept_host_tool_result(&receipt, &tasks)
                 .err(),
             Some(FoundationError::InvalidTransition)
         );
@@ -403,12 +444,16 @@ mod tests {
             panic!("expected approval");
         };
         assert!(driver.snapshot().is_err());
-        let other = tasks.create(Uuid::new_v4(), "Other task", vec![]).unwrap();
+        let other = tasks
+            .create_scoped(Uuid::new_v4(), Uuid::new_v4(), "Other task", vec![])
+            .unwrap();
         tasks.start(other.id).unwrap();
+        let other_call = tools
+            .propose(&tasks, other.id, "demo.inspect", json!({}))
+            .unwrap();
+        let wrong = approved_read_receipt(&tasks, &tools, other.id, other_call).await;
         assert_eq!(
-            driver
-                .accept_host_tool_result(other.id, call_id, json!({"forged": true}), &tasks)
-                .err(),
+            driver.accept_host_tool_result(&wrong, &tasks).err(),
             Some(FoundationError::ApprovalMismatch)
         );
         assert!(
@@ -438,12 +483,22 @@ mod tests {
             .unwrap()
             .unwrap();
         let output = tools
-            .execute(permit, &tasks, Duration::from_secs(2))
+            .execute_receipted(permit, &tasks, Duration::from_secs(2))
             .await
             .unwrap();
-        driver
-            .accept_host_tool_result(task.id, call_id, output, &tasks)
+        let competing = tasks
+            .acquire_execution(task.id, tasks.get(task.id).unwrap().revision)
             .unwrap();
+        assert_eq!(
+            driver.accept_host_tool_result(&output, &tasks).err(),
+            Some(FoundationError::InvalidTransition)
+        );
+        drop(competing);
+        driver.accept_host_tool_result(&output, &tasks).unwrap();
+        assert_eq!(
+            driver.accept_host_tool_result(&output, &tasks).err(),
+            Some(FoundationError::ApprovalMismatch)
+        );
         let next = driver
             .drive(task.id, "model-mock", &backend, &tasks, &tools, &defs)
             .await

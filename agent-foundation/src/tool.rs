@@ -100,6 +100,42 @@ pub trait AgentTool: Send + Sync {
     }
 }
 
+/// An in-process result attestation from the sole tool execution path.
+/// Neither JSON nor the model can construct it, and it is bound to the
+/// actual registry, task generation and one-shot approved call.
+pub struct ToolExecutionReceipt<'a> {
+    tasks: &'a TaskRegistry,
+    task_id: uuid::Uuid,
+    call_id: uuid::Uuid,
+    revision: u64,
+    signed: bool,
+    value: Value,
+}
+
+impl ToolExecutionReceipt<'_> {
+    pub fn matches_approval(
+        &self,
+        tasks: &TaskRegistry,
+        task_id: uuid::Uuid,
+        call_id: uuid::Uuid,
+        revision: u64,
+    ) -> bool {
+        self.signed
+            && std::ptr::eq(self.tasks, tasks)
+            && self.task_id == task_id
+            && self.call_id == call_id
+            && self.revision == revision
+    }
+
+    pub fn value(&self) -> &Value {
+        &self.value
+    }
+
+    pub fn into_value(self) -> Value {
+        self.value
+    }
+}
+
 #[derive(Default)]
 pub struct ToolRegistry {
     tools: RwLock<HashMap<String, Arc<dyn AgentTool>>>,
@@ -244,6 +280,17 @@ impl ToolRegistry {
         tasks: &TaskRegistry,
         timeout: Duration,
     ) -> Result<Value> {
+        self.execute_receipted(permit, tasks, timeout)
+            .await
+            .map(ToolExecutionReceipt::into_value)
+    }
+
+    pub async fn execute_receipted<'a>(
+        &self,
+        permit: ApprovedOperation,
+        tasks: &'a TaskRegistry,
+        timeout: Duration,
+    ) -> Result<ToolExecutionReceipt<'a>> {
         if timeout.is_zero() || timeout > Duration::from_secs(120) {
             return Err(FoundationError::InvalidInput("tool timeout"));
         }
@@ -265,6 +312,7 @@ impl ToolRegistry {
 
         let effectful = permit.operation.effect != ToolEffect::ReadOnly;
         let binding = permit.binding.as_ref();
+        let signed = binding.is_some();
         if let Some(binding) = binding {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -375,7 +423,14 @@ impl ToolRegistry {
                 succeeded: result.is_ok(),
             },
         )?;
-        result
+        result.map(|value| ToolExecutionReceipt {
+            tasks,
+            task_id: permit.task_id,
+            call_id: permit.operation.call_id,
+            revision: permit.revision,
+            signed,
+            value,
+        })
     }
 }
 
