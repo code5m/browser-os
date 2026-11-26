@@ -320,6 +320,10 @@ struct OperationReceipt {
     // original approved Run before the enclosing Task is settled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     return_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    authority: Option<super::mcp_authority::Binding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    provider_proof: Option<super::mcp_authority::SignedStatus>,
 }
 fn frontend_owner_epoch() -> uuid::Uuid {
     static EPOCH: OnceLock<uuid::Uuid> = OnceLock::new();
@@ -1862,14 +1866,19 @@ fn native_return_digest(
         .as_ref()
         .ok_or("AGENT_OPERATION_RECEIPT_MISSING")?;
     let claim = receipt.approval.as_ref().ok_or("AGENT_APPROVAL_REQUIRED")?;
-    let encoded = serde_json::to_vec(&json!({
+    let mut descriptor = json!({
         "domain":"browseros.coding.native-return.v1","operation":operation.id,"kind":operation.kind,
         "input_digest":hash(&serde_json::to_vec(&operation.input).map_err(|_| "AGENT_OPERATION_INVALID")?),
         "status":operation.status,"result":operation.result,"review_revision":operation.review_revision,
         "run":receipt.run_id,"native_run":receipt.native_run_id,"workspace_identity":receipt.workspace_identity,
         "task_id":task.id,"task_revision":task.revision,"session_id":task.session_id,
         "approval":claim
-    })).map_err(|_| "AGENT_OPERATION_INVALID")?;
+    });
+    // Keep legacy receipt digests byte-for-byte compatible.
+    if let Some(authority) = &receipt.authority {
+        descriptor["provider_authority"] = json!(authority);
+    }
+    let encoded = serde_json::to_vec(&descriptor).map_err(|_| "AGENT_OPERATION_INVALID")?;
     Ok(hash(&encoded))
 }
 
@@ -1963,6 +1972,12 @@ fn operation_approval_bound(
                 && allowed_run_statuses.contains(&run.status.as_str())
         })
         && operation.reconciliation.is_none()
+        && receipt.provider_proof.is_none()
+        && receipt.authority.as_ref().is_none_or(|binding| {
+            operation.kind == "mcp"
+                && binding.valid()
+                && binding.run_id.to_string() == receipt.run_id
+        })
 }
 
 fn verify_native_return(
@@ -2002,7 +2017,7 @@ fn verify_native_return(
         .as_ref()
         .is_some_and(|text| text.len() <= 20_000 && !secret(text))
         && match operation.status.as_str() {
-            "result_ready" => operation.review_revision.is_none(),
+            "result_ready" => operation.review_revision.is_none() && receipt.authority.is_none(),
             "unknown" => operation.review_revision.is_some(),
             _ => false,
         };
@@ -2099,9 +2114,13 @@ fn checkpoint_native_return(
     {
         return Err("AGENT_OPERATION_NOT_PENDING".into());
     }
+    let provider_bound = operation
+        .execution
+        .as_ref()
+        .is_some_and(|receipt| receipt.authority.is_some());
     match response {
         Ok(value)
-            if value["status"] == "succeeded"
+            if !provider_bound && value["status"] == "succeeded"
                 && value.get("result").is_some_and(|r| !r.is_null()) =>
         {
             let text = value["result"]
@@ -2138,6 +2157,111 @@ fn checkpoint_native_return(
     receipt.phase = "return_checkpoint".into();
     receipt.return_digest = Some(digest);
     Ok(())
+}
+
+/// Only the exact unknown operation under the original native session and
+/// workspace owner may adopt a signed terminal provider status.
+fn reconcile_provider_operations(
+    storage: &Path,
+    session: &mut Session,
+    identity: &str,
+) -> Result<bool, String> {
+    let mut changed = false;
+    for index in 0..session.operations.len() {
+        let operation = &session.operations[index];
+        let Some(receipt) = operation.execution.as_ref() else {
+            continue;
+        };
+        let Some(binding) = receipt.authority.as_ref() else {
+            if receipt.provider_proof.is_some() || receipt.phase == "provider_reconciled" {
+                return Err("AGENT_OPERATION_RECEIPT_INVALID".into());
+            }
+            continue;
+        };
+        if operation.kind != "mcp"
+            || !binding.valid()
+            || binding.run_id.to_string() != operation.id
+            || receipt.run_id != operation.id
+            || receipt.workspace_identity.as_deref() != Some(identity)
+            || !receipt.approval.as_ref().is_some_and(|claim| {
+                claim.accepted
+                    && claim.session_id.to_string() == session.session_id
+                    && native_approval_matches_input(operation, claim)
+                    && session.runs.iter().any(|run| {
+                        run.id == receipt.run_id && run.task_id == claim.task_id
+                    })
+            })
+        {
+            return Err("AGENT_OPERATION_RECEIPT_INVALID".into());
+        }
+        if receipt.phase == "provider_reconciled" || receipt.provider_proof.is_some() {
+            if receipt.phase != "provider_reconciled"
+                || operation.reconciliation.is_some()
+                || !receipt.provider_proof.as_ref().is_some_and(|proof| {
+                    proof.verify(binding)
+                        && operation.status
+                            == if proof.outcome.applied() {
+                                "reconciled_succeeded"
+                            } else {
+                                "reconciled_not_applied"
+                            }
+                })
+            {
+                return Err("AGENT_OPERATION_RECEIPT_INVALID".into());
+            }
+            continue;
+        }
+        if !can_reconcile_operation(
+            operation,
+            session.foundation_task.as_ref(),
+            &session.runs,
+            identity,
+            &session.session_id,
+        ) {
+            continue;
+        }
+        let Some(proof) = super::mcp_authority::lookup(storage, binding).ok().flatten() else {
+            continue;
+        };
+        let next = if proof.outcome.applied() {
+            "reconciled_succeeded"
+        } else {
+            "reconciled_not_applied"
+        };
+        let task = session
+            .foundation_task
+            .as_mut()
+            .ok_or("AGENT_TASK_RECOVERY_REQUIRED")?;
+        task.revision = task
+            .revision
+            .checked_add(1)
+            .ok_or("AGENT_TASK_REVISION_EXHAUSTED")?;
+        let operation = &mut session.operations[index];
+        let receipt = operation
+            .execution
+            .as_mut()
+            .ok_or("AGENT_OPERATION_RECEIPT_MISSING")?;
+        receipt.phase = "provider_reconciled".into();
+        receipt.provider_proof = Some(proof);
+        operation.status = next.into();
+        operation.review_revision = None;
+        operation.result = Some(format!(
+            "Verified provider final status: {next}; original operation is not replayable."
+        ));
+        if let Some(run) = session.runs.iter_mut().find(|run| run.id == receipt.run_id) {
+            run.status = next.into();
+        }
+        // Only fixed native-generated text is appended; the status publisher
+        // cannot use receipt content as a new instruction to the model.
+        session.messages.push(json!({"role":"user","content":format!(
+            "Provider-signed final effect receipt: operation {} is {}. This describes only the bound provider effect; do not replay its original approval.",
+            operation.id,next)}));
+        changed = true;
+    }
+    if changed && session.status != "recovery_conflict" {
+        session.status = session_after_review(session).into();
+    }
+    Ok(changed)
 }
 
 fn load(root: &Path, storage: &Path, id: Option<&str>) -> Result<Session, String> {
@@ -2350,6 +2474,11 @@ fn load(root: &Path, storage: &Path, id: Option<&str>) -> Result<Session, String
                 }
                 .into();
             }
+            save(storage, &session)?;
+        }
+        // Also check after restart and every session reload, without
+        // contacting the original MCP executable or invoking a model.
+        if reconcile_provider_operations(storage, &mut session, &workspace_identity)? {
             save(storage, &session)?;
         }
     }
@@ -2680,13 +2809,40 @@ pub(crate) fn execute_with_admission_adapter(
     storage: &Path,
     request: Value,
     provider_binding: Option<CodingProviderBinding>,
-    mut provider: impl FnMut(&[Value], &[Value]) -> Result<Value, String>,
+    provider: impl FnMut(&[Value], &[Value]) -> Result<Value, String>,
     mut adapter: impl FnMut(
         &str,
         &Value,
         &Value,
         &Arc<AtomicBool>,
         &mut dyn FnMut() -> Result<(), String>,
+    ) -> Result<Value, String>,
+) -> Result<Value, String> {
+    execute_with_effect_adapter(
+        root,
+        storage,
+        request,
+        provider_binding,
+        provider,
+        |kind, input, approved, cancel, _, admit| {
+            adapter(kind, input, approved, cancel, &mut || admit(None))
+        },
+    )
+}
+
+pub(crate) fn execute_with_effect_adapter(
+    root: &Path,
+    storage: &Path,
+    request: Value,
+    provider_binding: Option<CodingProviderBinding>,
+    mut provider: impl FnMut(&[Value], &[Value]) -> Result<Value, String>,
+    mut adapter: impl FnMut(
+        &str,
+        &Value,
+        &Value,
+        &Arc<AtomicBool>,
+        uuid::Uuid,
+        &mut dyn FnMut(Option<&super::mcp_authority::Binding>) -> Result<(), String>,
     ) -> Result<Value, String>,
 ) -> Result<Value, String> {
     #[cfg(all(not(unix), not(windows)))]
@@ -2820,7 +2976,8 @@ pub(crate) fn execute_with_admission_adapter(
             }
             let kind = session.operations[index].kind.clone();
             let input = session.operations[index].input.clone();
-            let operation_run = run_id(id)?.to_string();
+            let operation_uuid = run_id(id)?;
+            let operation_run = operation_uuid.to_string();
             if request["run_id"]
                 .as_str()
                 .is_some_and(|run| run != operation_run)
@@ -2886,6 +3043,8 @@ pub(crate) fn execute_with_admission_adapter(
                 owner_epoch: None,
                 workspace_identity: Some(effect_identity),
                 return_digest: None,
+                authority: None,
+                provider_proof: None,
             });
             session.operations[index].status = "executing".into();
             session.status = "operation_executing".into();
@@ -2907,19 +3066,28 @@ pub(crate) fn execute_with_admission_adapter(
             let response = if !execution_lease.is_active() || signal.load(Ordering::SeqCst) {
                 Err("AGENT_OPERATION_CANCELLED_BEFORE_DISPATCH".into())
             } else {
-                adapter(&kind, &input, &request, &signal, &mut || {
+                adapter(&kind, &input, &request, &signal, operation_uuid, &mut |authority| {
                     if attempted {
                         return Err("AGENT_RUN_ALREADY_RECORDED".into());
                     }
                     if !execution_lease.is_active() || signal.load(Ordering::SeqCst) {
                         return Err("AGENT_OPERATION_CANCELLED_BEFORE_DISPATCH".into());
                     }
+                    if authority.is_some_and(|binding| {
+                        kind != "mcp"
+                            || !binding.valid()
+                            || binding.run_id != operation_uuid
+                            || request["review_revision"].as_str() != Some(binding.review_revision.as_str())
+                    }) {
+                        return Err("MCP_EFFECT_AUTHORITY_INVALID".into());
+                    }
                     attempted = true;
-                    session.operations[index]
+                    let receipt = session.operations[index]
                         .execution
                         .as_mut()
-                        .ok_or("AGENT_OPERATION_RECEIPT_MISSING")?
-                        .phase = "dispatching".into();
+                        .ok_or("AGENT_OPERATION_RECEIPT_MISSING")?;
+                    receipt.phase = "dispatching".into();
+                    receipt.authority = authority.cloned();
                     save(storage, &session)?;
                     // A durable fence is not permission to dispatch on an
                     // invalidated lease. Keep the published fence unknown.
@@ -2979,6 +3147,8 @@ pub(crate) fn execute_with_admission_adapter(
             if let Some(run) = session.runs.last_mut() {
                 run.status = session.status.clone();
             }
+            let identity = super::execution_owner::workspace_identity(&root)?;
+            reconcile_provider_operations(storage, &mut session, &identity)?;
             return save(storage, &session);
         }
         "claim_operation" => {
@@ -3040,6 +3210,8 @@ pub(crate) fn execute_with_admission_adapter(
                 owner_epoch: Some(frontend_owner_epoch()),
                 workspace_identity: Some(super::execution_owner::workspace_identity(&root)?),
                 return_digest: None,
+                authority: None,
+                provider_proof: None,
             });
             session.operations[index].status = "executing".into();
             session.status = "operation_executing".into();

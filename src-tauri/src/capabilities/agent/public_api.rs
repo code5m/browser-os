@@ -327,20 +327,20 @@ pub(crate) fn dispatch_coding_request(
     {
         return super::coding_context::execute(root, storage, request);
     }
-    super::coding::execute_with_admission_adapter(
+    super::coding::execute_with_effect_adapter(
         root,
         storage,
         request,
         binding,
         provider,
-        |kind, input, approved, cancel, admit| match kind {
+        |kind, input, approved, cancel, run, admit| match kind {
             "command" => {
                 crate::bridge::run_command_for_coding(app, webview, input, approved, cancel, || {
-                    admit()
+                    admit(None)
                 })
             }
             "mcp" => {
-                let response = super::coding_context::execute_cancelable_with_admission(
+                let response = super::coding_context::execute_cancelable_with_effect_admission(
                     root,
                     storage,
                     serde_json::json!({
@@ -351,7 +351,8 @@ pub(crate) fn dispatch_coding_request(
                         "approved_environment_names":approved["approved_environment_names"]
                     }),
                     cancel.clone(),
-                    |_| admit(),
+                    Some(run),
+                    |_, binding| admit(binding),
                 )?;
                 Ok(serde_json::json!({
                     "status":if mcp_transport_reported_success("mcp_call", &response) { "succeeded" } else { "unknown" },
