@@ -76,6 +76,18 @@ pub(super) fn safe_text(text: &str) -> String {
         "[credential-bearing line omitted]"
     } else { line }).collect::<Vec<_>>().join("\n")
 }
+// A credential-bearing property must lose its VALUE as well as its
+// name. Renaming "password" while preserving an opaque value is not
+// redaction. Match common normalized names, not arbitrary schema keys
+// such as "token_count" or "password_policy".
+fn credential_property(name: &str) -> bool {
+    let normalized: String = name.chars().filter(|c| c.is_ascii_alphanumeric())
+        .flat_map(|c| c.to_lowercase()).collect();
+    matches!(normalized.as_str(), "password" | "passwd" | "passphrase" | "apikey"
+        | "authorization" | "proxyauthorization" | "accesstoken" | "refreshtoken"
+        | "idtoken" | "token" | "clientsecret" | "secret" | "privatekey"
+        | "cookie" | "setcookie" | "sessiontoken" | "sessionid" | "credential" | "credentials")
+}
 pub(super) fn scrub(value: &mut Value, secrets: &[String]) {
     match value {
         Value::String(text) => {
@@ -94,8 +106,13 @@ pub(super) fn scrub(value: &mut Value, secrets: &[String]) {
             let reserved: std::collections::BTreeSet<_> = previous.keys().cloned().collect();
             let mut next = 0usize;
             for (name, mut item) in previous {
-                scrub(&mut item, secrets);
-                let sensitive_name = sensitive(&name) || secrets.iter().any(|s| !s.is_empty() && name.contains(s));
+                let sensitive_name = credential_property(&name) || sensitive(&name)
+                    || secrets.iter().any(|s| !s.is_empty() && name.contains(s));
+                if sensitive_name {
+                    item = Value::Null;
+                } else {
+                    scrub(&mut item, secrets);
+                }
                 let safe_name = if sensitive_name {
                     loop {
                         let candidate = format!("[redacted-key-{next}]");
@@ -153,5 +170,20 @@ mod tests {
         assert_eq!(value["[redacted-key-0]"],"keep");
         assert_eq!(value["text"],"[redacted]");
         assert!(!value.to_string().contains("password"));
+        assert!(value["[redacted-key-1]"].is_null());
+    }
+
+    #[test]
+    fn opaque_credential_properties_are_removed_recursively() {
+        let mut value = json!({"Authorization":"opaque-a","nested":[{"refresh_token":"opaque-b",
+            "clientSecret":{"raw":"opaque-c"},"cookie":"opaque-d","token_count":12}],
+            "ordinary":"visible"});
+        scrub(&mut value, &[]);
+        let encoded = value.to_string();
+        for secret in ["opaque-a","opaque-b","opaque-c","opaque-d"] {
+            assert!(!encoded.contains(secret));
+        }
+        assert_eq!(value["nested"][0]["token_count"],12);
+        assert_eq!(value["ordinary"],"visible");
     }
 }

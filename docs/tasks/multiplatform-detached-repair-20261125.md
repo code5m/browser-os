@@ -423,3 +423,8 @@ Coding command/MCP previously saved the bounded native result only together with
 ## 2026-11-26 — Linux visible-band preflight and terminal handoff
 
 Measure the actual viewport before a native Visible snapshot; apply the 1M-pixel band budget at the native preflight as well as after surface allocation. Preserve full-document measurement for live-page and fallback captures, and preserve the independent worker's overall page budget. Reject left scrollbar/root border, RTL or shifted visual viewport in initial isolated tiling eligibility rather than cropping the wrong edge. Release the native metrics permit before publishing its terminal result to the sequential worker; never release on mere timeout. Existing pixel, scale, cancellation and document generation checks remain. Added source assertions for visible-band vs full-document budgets and scaled viewport rejection. Actual viewport geometry/paint fidelity and installation still require real Linux evidence; this does not isolate an existing logged-in document. NOT_RUN; no builds/tests/CI/Actions/ref/GTK layout/gate changes.
+
+
+## 2026-11-26 — MCP credential property value redaction
+
+Shared Linux/Windows MCP scrub previously renamed sensitive JSON property names but could retain opaque credential values under those renamed keys. Drop the entire value (including nested arrays/objects) for sensitive names and common normalized credential properties; retain collision-safe placeholders and ordinary keys. Source fixtures cover opaque values, nested credential fields and noncredential token_count. Heuristic screening is not a universal guarantee against arbitrary secrets; no new provider trust or effect reconciliation authority. NOT_RUN; no refs/builds/tests/CI/Actions/gate changes.
