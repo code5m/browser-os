@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { ref, reactive, computed, nextTick, watch } from "vue";
-import { bridge, isRendererDownloadObservation, type RendererRecoveryTarget, type RendererParkTarget, type RendererState, type RendererDownloadObservation } from "../../../bridge";
+import { bridge, isRendererDownloadObservation, type RendererRecoveryTarget, type RendererReopenTarget, type RendererParkTarget, type RendererState, type RendererDownloadObservation } from "../../../bridge";
 import { WEBVIEW_FREEZE_JS, WEBVIEW_UNFREEZE_JS } from "../../../utils/webviewFreeze";
 import { isBrowserResourceAllowed } from "../resource/guard";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
@@ -563,17 +563,19 @@ export const useBrowserStore = defineStore("browser", () => {
       return false;
     }
   }
-  async function prepareRendererReopen(id: string): Promise<boolean> {
+  async function prepareRendererReopen(id: string): Promise<RendererReopenTarget | null> {
     if (!isolatedRendererMode.value || !isBrowserResourceAllowed()
-        || !tabs.some(tab => tab.id === id) || tabRecoveryRequired.value || tabRecoveryBusy.value) return false;
+        || !tabs.some(tab => tab.id === id) || tabRecoveryRequired.value || tabRecoveryBusy.value) return null;
     const view = await refreshRendererState(id);
-    if (view?.renderer_state !== "absent" || view.renderer_recovery_target) {
+    if (view?.renderer_state !== "absent" || view.renderer_recovery_target
+        || view.renderer_reopen_target?.id !== id) {
       layout.showToast("仅已确认无原生宿主的页签支持更换恢复地址；休眠页签请直接激活。");
-      return false;
+      return null;
     }
-    return true;
+    return view.renderer_reopen_target;
   }
-  async function reopenRenderer(id: string, address: string): Promise<boolean> {
+  async function reopenRenderer(review: RendererReopenTarget, address: string): Promise<boolean> {
+    const id = review.id;
     const tab = tabs.find(item => item.id === id);
     const target = address.trim();
     if (!tab || !target || !reopenableAddress(target)) {
@@ -585,14 +587,18 @@ export const useBrowserStore = defineStore("browser", () => {
         if (!isolatedRendererMode.value || !isBrowserResourceAllowed()
             || !tabs.some(item => item === tab)) return false;
         const view = await refreshRendererState(id);
-        if (view?.renderer_state !== "absent" || view.renderer_recovery_target) {
-          layout.showToast("原生宿主状态已变化，未执行重开。");
+        const current = view?.renderer_reopen_target;
+        if (view?.renderer_state !== "absent" || view.renderer_recovery_target || !current
+            || current.id !== review.id || current.review_owner_epoch !== review.review_owner_epoch
+            || current.review_owner_sequence !== review.review_owner_sequence
+            || current.absence_epoch !== review.absence_epoch) {
+          layout.showToast("原恢复确认已失效，请重新核对页签后确认。");
           return false;
         }
         const previousUrl = tab.url;
         clearRendererState(id);
         rendererStates.set(id, "unknown");
-        const restored = await bridge.reopenRenderer(id, target);
+        const restored = await bridge.reopenRenderer(review, target);
         if (!restored || restored.id !== id || typeof restored.url !== "string"
             || typeof restored.title !== "string" || !tabs.some(item => item === tab)) {
           throw new Error("TAB_MUTATION_TERMINAL_FAILURE: reopen receipt inconsistent");

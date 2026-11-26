@@ -80,6 +80,8 @@ impl GridProcessManager {
     pub(crate) fn hibernate_blank_tab_renderer(&self, _index: u32, _idle_for: std::time::Duration) -> Result<bool, String> {
         Err(unsupported())
     }
+    pub(crate) fn tab_renderer_absence_epoch(&self, _index: u32) -> Result<u64, String> { Err(unsupported()) }
+    pub(crate) fn start_tab_renderer_at_absence(&self, _index: u32, _url: &str, _expected: u64) -> Result<(), String> { Err(unsupported()) }
     pub(crate) fn start_tab_renderer(&self, _index: u32, _url: &str) -> Result<(), String> {
         Err(unsupported())
     }

@@ -39,8 +39,9 @@ type TabAction =
   | { kind: "open"; id: string; url: string }
   | { kind: "close" | "activate" | "back" | "forward" | "reload"; id: string }
   | { kind: "retire_renderer"; id: string; pid: number; spawn_epoch: string; confirmed: true }
-  | { kind: "reopen_renderer"; id: string; url: string; confirmed: true }
+  | ({ kind: "reopen_renderer"; url: string; confirmed: true } & RendererReopenTarget)
   | ({ kind: "park_renderer"; url: string; confirmed: true } & RendererParkTarget);
+export type RendererReopenTarget = { id: string; review_owner_epoch: string; review_owner_sequence: string; absence_epoch: string };
 export type RendererRecoveryTarget = { id: string; pid: number; spawn_epoch: string };
 export type RendererParkTarget = RendererRecoveryTarget & { renderer_generation: string; navigation_revision: string };
 export type GridReplySource = { index: number; pid: number; spawn_epoch: string; generation: string; navigation_revision: string };
@@ -129,6 +130,7 @@ type TabOwnerView = {
   recovery_scope?: "renderer" | "application" | null;
   renderer_recovery_target?: RendererRecoveryTarget | null;
   renderer_park_target?: RendererParkTarget | null;
+  renderer_reopen_target?: RendererReopenTarget | null;
   isolated_renderer_mode?: boolean;
   renderer_state?: RendererState | null;
   renderer_download?: RendererDownloadObservation | null;
@@ -1184,8 +1186,8 @@ export const bridge = {
     ownedTabMutation<void>({kind:"retire_renderer",...target,confirmed:true}),
   parkRenderer: (target: RendererParkTarget, url: string) =>
     ownedTabMutation<void>({kind:"park_renderer",...target,url,confirmed:true}),
-  reopenRenderer: (id: string, url: string) =>
-    ownedTabMutation<TabInfo>({kind:"reopen_renderer",id,url,confirmed:true}),
+  reopenRenderer: (target: RendererReopenTarget, url: string) =>
+    ownedTabMutation<TabInfo>({kind:"reopen_renderer",...target,url,confirmed:true}),
 
   // 激活页签：后端隐藏其它页签的子 webview 并恢复目标页签显示
   tabActivate: (id: string) => ownedTabMutation<void>({ kind: "activate", id }),

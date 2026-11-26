@@ -20,7 +20,7 @@ const tabActions = useUnifiedTabs();
 const projectedTabs = tabActions.projectedTabs;
 const restartTarget = ref<Awaited<ReturnType<typeof browser.inspectNativeDomainRecovery>>>(null);
 const rendererTarget = ref<Awaited<ReturnType<typeof browser.inspectRendererRecovery>>>(null);
-const reopenTarget = ref<{id: string; address: string} | null>(null);
+const reopenTarget = ref<{target: NonNullable<Awaited<ReturnType<typeof browser.prepareRendererReopen>>>; address: string} | null>(null);
 const reopening = ref(false);
 const parkTarget = ref<Awaited<ReturnType<typeof browser.prepareRendererPark>>>(null);
 const parking = ref(false);
@@ -107,18 +107,20 @@ function downloadLabel(row: DownloadOwnerObservation) {
 async function prepareRendererReopen() {
   const selected = context.value;
   if (!selected || selected.kind !== 'web') return;
-  const eligible = await browser.prepareRendererReopen(selected.id);
+  const reviewed = await browser.prepareRendererReopen(selected.id);
   if (context.value !== selected) return;
   context.value = null;
-  if (eligible) reopenTarget.value = { id: selected.id, address: "about:blank" };
+  if (reviewed) reopenTarget.value = { target: reviewed, address: "about:blank" };
 }
 async function confirmRendererReopen() {
   const target = reopenTarget.value;
   if (!target || reopening.value) return;
   reopening.value = true;
   try {
-    const success = await browser.reopenRenderer(target.id, target.address);
-    if (success && reopenTarget.value === target) reopenTarget.value = null;
+    // Consume one confirmation. A failed or stale review must be reopened,
+    // not silently rebound to a newly absent native incarnation.
+    reopenTarget.value = null;
+    await browser.reopenRenderer(target.target, target.address);
   } finally {
     reopening.value = false;
   }
@@ -327,7 +329,7 @@ async function newTab() {
     <button :disabled="parking" @click="parkTarget = null">取消</button>
   </div>
   <form v-if="reopenTarget" class="tab-actions" aria-label="独立页签新地址恢复" @submit.prevent="confirmRendererReopen">
-    <span>在原逻辑页签 {{ reopenTarget.id }} 打开新地址，不恢复原页面内容。</span>
+    <span>在原逻辑页签 {{ reopenTarget.target.id }} 打开新地址，不恢复原页面内容。</span>
     <input v-model="reopenTarget.address" aria-label="完整恢复地址" :disabled="reopening" maxlength="8192" required />
     <button type="submit" :disabled="reopening || browser.tabRecoveryBusy || browser.tabRecoveryRequired || !reopenTarget.address.trim()">确认重开</button>
     <button type="button" :disabled="reopening" @click="reopenTarget = null">取消</button>

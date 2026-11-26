@@ -1535,14 +1535,52 @@ impl GridProcessManager {
         Ok(true)
     }
 
-    pub(crate) fn start_tab_renderer(&self, index: u32, url: &str) -> Result<(), String> {
+    /// The absence identity changes when a retained listener admits a new
+    /// process. Hold lifecycle admission while capturing or consuming it.
+    fn tab_renderer_absence_epoch_locked(&self, index: u32) -> Result<u64, String> {
         if !crate::grid_ipc::is_tab_renderer(index) {
             return Err("TAB_RENDERER_ROUTE_INVALID".into());
         }
+        let children = self.children.try_lock().map_err(|_| "TAB_RENDERER_OBSERVATION_BUSY")?;
+        if children.contains_key(&index) || self.lifecycle.try_is_retiring(index)? {
+            return Err("TAB_RENDERER_REOPEN_STALE".into());
+        }
+        let listeners = self.listeners.try_lock().map_err(|_| "TAB_RENDERER_OBSERVATION_BUSY")?;
+        Ok(listeners.get(&index).map_or(0, |comms| comms.spawn_epoch.load(Ordering::SeqCst)))
+    }
+
+    pub(crate) fn tab_renderer_absence_epoch(&self, index: u32) -> Result<u64, String> {
+        self.lifecycle.check()?;
+        let _gate = self.lifecycle_lock.try_lock().map_err(|_| "TAB_RENDERER_OBSERVATION_BUSY")?;
+        self.tab_renderer_absence_epoch_locked(index)
+    }
+
+    pub(crate) fn start_tab_renderer(&self, index: u32, url: &str) -> Result<(), String> {
+        self.start_tab_renderer_admitted(index, url, None)
+    }
+
+    pub(crate) fn start_tab_renderer_at_absence(&self, index: u32, url: &str, expected: u64) -> Result<(), String> {
+        self.start_tab_renderer_admitted(index, url, Some(expected))
+    }
+
+    fn start_tab_renderer_admitted(&self, index: u32, url: &str, absence: Option<u64>) -> Result<(), String> {
+        if !crate::grid_ipc::is_tab_renderer(index) {
+            return Err("TAB_RENDERER_ROUTE_INVALID".into());
+        }
+        let _operation = self.lifecycle.enter()?;
+        self.ensure_cleanup()?;
         let (expected, result) = {
             let _dispatch = self.visibility_dispatch.lock().unwrap_or_else(|p| p.into_inner());
-            if !self.get_or_spawn(index)? {
-                return Err("TAB_RENDERER_ALREADY_RUNNING".into());
+            {
+                let _gate = self.lifecycle_lock.lock().unwrap_or_else(|p| p.into_inner());
+                if let Some(epoch) = absence {
+                    if self.tab_renderer_absence_epoch_locked(index)? != epoch {
+                        return Err("TAB_RENDERER_REOPEN_STALE".into());
+                    }
+                }
+                if !self.get_or_spawn_locked(index)? {
+                    return Err("TAB_RENDERER_ALREADY_RUNNING".into());
+                }
             }
             let (expected, original) = {
                 let mut children = self.children.lock().unwrap();

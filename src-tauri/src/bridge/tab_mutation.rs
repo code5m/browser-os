@@ -21,7 +21,8 @@ pub(crate) enum Action {
     Forward { id: String },
     Reload { id: String },
     RetireRenderer { id: String, pid: u32, spawn_epoch: String, confirmed: bool },
-    ReopenRenderer { id: String, url: String, confirmed: bool },
+    ReopenRenderer { id: String, url: String, confirmed: bool,
+        review_owner_epoch: String, review_owner_sequence: String, absence_epoch: String },
     ParkRenderer { id: String, url: String, pid: u32, spawn_epoch: String,
         renderer_generation: String, navigation_revision: String, confirmed: bool },
 }
@@ -71,11 +72,17 @@ impl Action {
             | Self::Back { id }
             | Self::Forward { id }
             | Self::Reload { id } => bound_text(cmd, "id", id),
-            Self::ReopenRenderer { id, url, confirmed } => {
+            Self::ReopenRenderer { id, url, confirmed, review_owner_epoch, review_owner_sequence, absence_epoch } => {
                 bound_text(cmd, "id", id)?;
                 bound_text(cmd, "url", url)?;
                 if !confirmed || super::isolated_tabs::route(id).is_none()
-                    || !crate::grid_ipc::explicit_reopen_address(url) {
+                    || !crate::grid_ipc::explicit_reopen_address(url)
+                    || review_owner_epoch.len() != 36
+                    || uuid::Uuid::parse_str(review_owner_epoch).is_err()
+                    || review_owner_sequence.parse::<u64>().ok().filter(|n| *n > 0)
+                        .is_none_or(|n| n.to_string() != *review_owner_sequence)
+                    || absence_epoch.parse::<u64>().ok()
+                        .is_none_or(|n| n.to_string() != *absence_epoch) {
                     return Err("TAB_RENDERER_REOPEN_INVALID".into());
                 }
                 Ok(())
@@ -168,11 +175,11 @@ impl Action {
             Self::Reload { id } => tab_reload_impl(webview, app, id).map(|_| Value::Null),
             Self::ParkRenderer { .. } => Err("TAB_RENDERER_PARK_STALE".into()),
             Self::ReopenRenderer { id, url, .. } => {
-                if !matches!(binding, Binding::Isolated(None)) {
+                let Binding::IsolatedAbsent(epoch) = binding else {
                     return Err("TAB_RENDERER_REOPEN_STALE".into());
-                }
+                };
                 let _transition = reserve_tab_transition(&id)?;
-                serde_json::to_value(super::isolated_tabs::reopen_absent(&app, &id, &url)?)
+                serde_json::to_value(super::isolated_tabs::reopen_absent(&app, &id, &url, *epoch)?)
                     .map_err(|_| "TAB_RENDERER_REOPEN_PARTIAL: receipt serialization".into())
             }
             Self::RetireRenderer { id, pid, spawn_epoch, .. } => {
@@ -223,6 +230,7 @@ enum Binding {
     Live(TabInstance),
     LiveDocument(CaptureDocument),
     Isolated(Option<(u32, u64)>),
+    IsolatedAbsent(u64),
     IsolatedDocument(crate::grid_ipc::RendererBinding),
     Hibernated,
 }
@@ -265,13 +273,22 @@ impl Binding {
                 // Never take a second binding after checking the reviewed one.
                 return Ok(Self::IsolatedDocument(binding));
             }
-            if matches!(action, Action::ReopenRenderer { .. }) {
-                let (observed, status, _) = state.grid_manager.tab_renderer_inspection(index)?;
-                if owner.is_some() || observed.is_some() || status != "absent"
+            if let Action::ReopenRenderer { review_owner_epoch, review_owner_sequence, absence_epoch, .. } = action {
+                let epoch = absence_epoch.parse::<u64>().map_err(|_| "TAB_RENDERER_REOPEN_INVALID")?;
+                // The original user-visible absence review, not a fresh
+                // inspect issued by the mutation transport, grants admission.
+                {
+                    let control = self::owner()?;
+                    if control.epoch != *review_owner_epoch || control.next_sequence.to_string() != *review_owner_sequence {
+                        return Err("TAB_RENDERER_REOPEN_STALE".into());
+                    }
+                }
+                if owner.is_some()
+                    || state.grid_manager.tab_renderer_absence_epoch(index)? != epoch
                     || state.hibernated_tabs.try_lock().map_err(|_| "TAB_MUTATION_INSTANCE_UNAVAILABLE")?.contains(id) {
                     return Err("TAB_RENDERER_REOPEN_STALE".into());
                 }
-                return Ok(Self::Isolated(None));
+                return Ok(Self::IsolatedAbsent(epoch));
             }
             if owner.is_none() && !matches!(action, Action::Activate { .. } | Action::Close { .. }) {
                 return Err("TAB_RENDERER_RECOVERY_REQUIRED".into());
@@ -320,10 +337,14 @@ impl Binding {
                     let state = app.state::<crate::AppState>();
                     let exists = state.tabs.lock().unwrap().contains_key(id);
                     exists && state.grid_manager.tab_renderer_owner(index).is_ok_and(|owner| owner == *expected)
-                        && (!matches!(action, Action::ReopenRenderer { .. })
-                            || state.grid_manager.tab_renderer_inspection(index)
-                                .is_ok_and(|(owner, status, _)| owner.is_none() && status == "absent")
-                                && !state.hibernated_tabs.lock().unwrap().contains(id))
+                })
+            }
+            (Self::IsolatedAbsent(epoch), Some(id)) => {
+                super::isolated_tabs::route(id).is_some_and(|index| {
+                    let state = app.state::<crate::AppState>();
+                    let exists = state.tabs.lock().unwrap().contains_key(id);
+                    exists && !state.hibernated_tabs.lock().unwrap().contains(id)
+                        && state.grid_manager.tab_renderer_absence_epoch(index).is_ok_and(|current| current == *epoch)
                 })
             }
             (Self::IsolatedDocument(binding), Some(id)) => {
@@ -580,6 +601,14 @@ struct RendererParkTarget {
 }
 
 #[derive(Clone, Debug, Serialize)]
+struct RendererReopenTarget {
+    id: String,
+    review_owner_epoch: String,
+    review_owner_sequence: String,
+    absence_epoch: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
 pub(crate) struct OwnerView {
     epoch: String,
     next_sequence: String,
@@ -592,6 +621,7 @@ pub(crate) struct OwnerView {
     recovery_scope: Option<&'static str>,
     renderer_recovery_target: Option<RendererRecoveryTarget>,
     renderer_park_target: Option<RendererParkTarget>,
+    renderer_reopen_target: Option<RendererReopenTarget>,
     isolated_renderer_mode: bool,
     renderer_state: Option<&'static str>,
     // Advisory native counts, not per-transfer state or filesystem access.
@@ -618,6 +648,7 @@ fn snapshot(app: &AppHandle) -> Result<OwnerView, String> {
                 else { None },
             renderer_recovery_target: None,
             renderer_park_target: None,
+            renderer_reopen_target: None,
             isolated_renderer_mode: super::isolated_tabs::mode_enabled(),
             renderer_state: None,
             renderer_download: None,
@@ -1058,6 +1089,17 @@ fn tab_mutation_control(
             view.renderer_state = Some(if status == "absent" && hibernated {
                 "hibernated"
             } else { status });
+            if status == "absent" && observed_owner.is_none() && !hibernated
+                && view.receipt.is_none() && !view.internal_active {
+                if let Ok(epoch) = state.grid_manager.tab_renderer_absence_epoch(index) {
+                    if owner()?.matches_view(&view) {
+                        view.renderer_reopen_target = Some(RendererReopenTarget {
+                            id: id.clone(), review_owner_epoch: view.epoch.clone(),
+                            review_owner_sequence: view.next_sequence.clone(), absence_epoch: epoch.to_string(),
+                        });
+                    }
+                }
+            }
             if let Some((pid, epoch)) = observed_owner {
                 view.renderer_download = download;
                 if status == "ready" && view.active_known
@@ -1333,6 +1375,7 @@ mod tests {
             recovery_scope: None,
             renderer_recovery_target: None,
             renderer_park_target: None,
+            renderer_reopen_target: None,
             isolated_renderer_mode: false,
             renderer_state: None,
             renderer_download: None,
