@@ -143,13 +143,26 @@ const mcpRunning=manualMcpRunning;
 const mcpReview=ref<any>(null),mcpCredentialsApproved=ref(false),mcpReviewing=ref(false),reviewedMcpRequest=ref('');
 let mcpReviewSequence=0;
 type McpObservation = {observation:string;evidence:string;recorded_at_ms:number;workspace_identity_bound:boolean;execution_ended_attested?:boolean};
-type ManualMcpReceipt = {id:string;phase:string;revision:string;updated_at_ms:number;tool:string|null;target:string|null;disposition:string|null;identity_bound:boolean;observations:number;can_reconcile:boolean;can_resolve?:boolean;can_archive?:boolean;archived?:boolean;request_digest?:string|null;review_revision?:string|null;response_digest?:string|null;has_response?:boolean;response_payload?:{result:unknown;untrusted:true}|null;approved_tool?:string|null;reviews?:McpObservation[];resolution?:McpObservation|null;provider_binding?:{idempotency_key:string;account:string;namespace:string;review_revision:string}|null;provider_outcome?:'applied_final'|'not_applied_final'|null};
+type ManualMcpReceipt = {id:string;phase:string;revision:string;updated_at_ms:number;tool:string|null;target:string|null;disposition:string|null;identity_bound:boolean;observations:number;can_reconcile:boolean;can_resolve?:boolean;can_archive?:boolean;archived?:boolean;request_digest?:string|null;review_revision?:string|null;response_digest?:string|null;has_response?:boolean;response_payload?:{result:unknown;untrusted:true}|null;approved_tool?:string|null;reviews?:McpObservation[];resolution?:McpObservation|null;provider_binding?:{idempotency_key:string;account:string;namespace:string;review_revision:string}|null;provider_outcome?:'applied_final'|'not_applied_final'|null;provider_inbox?:{state:string;inbox_state?:string;observed_outcome?:'applied_final'|'not_applied_final'|null}};
 const mcpRunId=ref(''),mcpCancelPending=ref(false);
 const mcpReceiptOpen=ref(false),mcpReceiptBusy=ref(false);
 const mcpReceipts=ref<ManualMcpReceipt[]>([]),mcpCursor=ref<string|null>(null),mcpUnavailable=ref(0);
 const mcpReceipt=ref<ManualMcpReceipt|null>(null),mcpReceiptError=ref('');
 const mcpObservation=ref('unresolved'),mcpEvidence=ref(''),mcpExecutionEnded=ref(false);
 let mcpReceiptSequence=0;
+const providerInboxLabels:Record<string,string>={
+  awaiting:'尚未收到签名终态，不能判断执行结果。',
+  unverified:'签名、格式或身份校验未通过；不能作为终态证据。',
+  unavailable:'签名回执暂不可读取；请核对提供方发布程序及本地回执目录。',
+  settled:'签名终态已保存到原运行回执。',
+  matches_manual:'新收到的签名终态与既有人工结案一致；原人工记录保持不变。',
+  conflicts_manual:'新收到的签名终态与既有人工结案冲突；原记录保留，暂停归档，请人工调查。',
+  conflicting_signed_terminal:'提供方发布了与已保存签名终态矛盾的回执；原终态保留，暂停归档，请人工调查。',
+  verified_not_settled:'收到有效签名，但此运行不符合自动结案条件；未改变原记录。',
+};
+function clearMcpReceiptDetail(){
+  mcpReceipt.value=null;mcpEvidence.value='';mcpObservation.value='unresolved';mcpExecutionEnded.value=false;
+}
 watch(connectedRoot,()=>{mcpReceiptSequence++;mcpRunId.value='';mcpReceiptOpen.value=false;mcpReceiptBusy.value=false;mcpReceipts.value=[];mcpCursor.value=null;mcpReceipt.value=null;mcpReceiptError.value='';mcpEvidence.value='';mcpExecutionEnded.value=false;},{flush:'sync'});
 const mcpScopeApproved=computed(()=>!mcpReview.value?.credential_refs?.length&&!mcpReview.value?.environment_names?.length||mcpCredentialsApproved.value);
 watch([mcpServerId,mcpCommand,mcpArgs,mcpTool,mcpArguments,connectedRoot],()=>{mcpReviewSequence++;mcpReview.value=null;reviewedMcpRequest.value='';mcpApproved.value=false;mcpCredentialsApproved.value=false;mcpReviewing.value=false;},{flush:'sync'});
@@ -420,8 +433,16 @@ async function loadMcpReceipts(reset=true){
 async function readMcpReceipt(id:string){
   if(!id||mcpReceiptBusy.value||mcpRunning.value)return;
   const sequence=++mcpReceiptSequence;mcpReceiptOpen.value=true;mcpReceiptBusy.value=true;mcpReceiptError.value='';
-  try{const result=await call({action:'manual_mcp_receipt',run_id:id});if(sequence===mcpReceiptSequence){mcpReceipt.value=result;mcpEvidence.value='';mcpObservation.value='unresolved';mcpExecutionEnded.value=false;}}
-  catch(error){if(sequence===mcpReceiptSequence&&!(error instanceof ProjectScopeChanged))mcpReceiptError.value=String(error);}
+  clearMcpReceiptDetail();
+  try{
+    const result=await call({action:'manual_mcp_receipt',run_id:id});
+    if(sequence===mcpReceiptSequence){
+      if(!result||result.id!==id||typeof result.revision!=='string')throw Error('回执身份或版本不一致');
+      mcpReceipt.value=result;
+      mcpReceipts.value=mcpReceipts.value.map(row=>row.id===id?result:row);
+    }
+  }
+  catch(error){if(sequence===mcpReceiptSequence&&!(error instanceof ProjectScopeChanged)){clearMcpReceiptDetail();mcpReceiptError.value=String(error);}}
   finally{if(sequence===mcpReceiptSequence)mcpReceiptBusy.value=false;}
 }
 async function reconcileMcpReceipt(resolve=false){
@@ -434,7 +455,12 @@ async function reconcileMcpReceipt(resolve=false){
       observation:mcpObservation.value,evidence,approved:true,resolve,execution_ended:resolve&&mcpExecutionEnded.value});
     if(sequence===mcpReceiptSequence){mcpReceipt.value=result;mcpEvidence.value='';mcpExecutionEnded.value=false;
       mcpReceipts.value=mcpReceipts.value.map(row=>row.id===result.id?result:row);}
-  }catch(error){if(sequence===mcpReceiptSequence&&!(error instanceof ProjectScopeChanged))mcpReceiptError.value=String(error);}
+  }catch(error){
+    if(sequence===mcpReceiptSequence&&!(error instanceof ProjectScopeChanged)){
+      clearMcpReceiptDetail();
+      mcpReceiptError.value='对账未确认；请重新查看原运行回执。'+String(error);
+    }
+  }
   finally{if(sequence===mcpReceiptSequence)mcpReceiptBusy.value=false;}
 }
 async function archiveMcpReceipt(){
@@ -444,7 +470,9 @@ async function archiveMcpReceipt(){
   try{
     const result=await call({action:'manual_mcp_archive',run_id:record.id,revision:record.revision,approved:true});
     if(sequence===mcpReceiptSequence){mcpReceipt.value=result;mcpReceipts.value=mcpReceipts.value.map(row=>row.id===result.id?result:row);}
-  }catch(error){if(sequence===mcpReceiptSequence&&!(error instanceof ProjectScopeChanged))mcpReceiptError.value=String(error);}
+  }catch(error){if(sequence===mcpReceiptSequence&&!(error instanceof ProjectScopeChanged)){
+    clearMcpReceiptDetail();mcpReceiptError.value='归档未确认；请重新核对原运行。'+String(error);
+  }}
   finally{if(sequence===mcpReceiptSequence)mcpReceiptBusy.value=false;}
 }
 async function cancelManualMcp(){
@@ -611,6 +639,7 @@ onBeforeUnmount(()=>{
             <p v-if="mcpUnavailable" class="hint">有 {{mcpUnavailable}} 条记录暂不可读，可能正在执行或存储异常。</p>
             <div v-for="item in mcpReceipts" :key="item.id">
               <span>{{item.tool||item.target||'MCP'}} · {{item.phase}} · {{item.id.slice(0,8)}}</span>
+              <span v-if="item.provider_inbox?.state==='conflicts_manual'||item.provider_inbox?.state==='conflicting_signed_terminal'" class="hint" role="status">签名冲突，请核对</span>
               <button :disabled="mcpReceiptBusy||mcpRunning" @click="readMcpReceipt(item.id)">查看</button>
             </div>
             <button v-if="mcpCursor" :disabled="mcpReceiptBusy||mcpRunning" @click="loadMcpReceipts(false)">下一页</button>
@@ -621,8 +650,9 @@ onBeforeUnmount(()=>{
                <template v-if="mcpReceipt.provider_binding">
                  <p style="overflow-wrap:anywhere">提供方账户：{{mcpReceipt.provider_binding.account}} / {{mcpReceipt.provider_binding.namespace}}；幂等键：{{mcpReceipt.provider_binding.idempotency_key}}</p>
                  <p class="hint" v-if="mcpReceipt.provider_outcome">已验签终态：{{mcpReceipt.provider_outcome==='applied_final'?'已生效':'未生效'}}。仅证明本次绑定的外部效果，不证明本地进程退出。</p>
-                 <p class="hint" v-else-if="mcpReceipt.phase==='operation_unknown'">等待独立提供方发布签名终态。再次查询会自动验签核对，不会再次执行原工具。</p>
-                 <button v-if="mcpReceipt.phase==='operation_unknown'" :disabled="mcpReceiptBusy||mcpRunning" @click="readMcpReceipt(mcpReceipt.id)">查询签名终态</button>
+                 <p v-if="mcpReceipt.provider_inbox" class="hint" role="status">{{providerInboxLabels[mcpReceipt.provider_inbox.state]||'签名状态待核对。'}}</p>
+                 <p v-if="mcpReceipt.provider_inbox?.observed_outcome" class="hint">当前目录验签观察：{{mcpReceipt.provider_inbox.observed_outcome==='applied_final'?'已生效':'未生效'}}。不会覆盖原结案记录。</p>
+                 <button :disabled="mcpReceiptBusy||mcpRunning" @click="readMcpReceipt(mcpReceipt.id)">重新核对签名终态</button>
                </template>
               <p class="hint" v-if="!mcpReceipt.identity_bound">旧记录缺少物理目录身份绑定，仅供辅助核对。</p>
               <p v-if="mcpReceipt.request_digest" style="overflow-wrap:anywhere">请求摘要：{{mcpReceipt.request_digest}}</p>

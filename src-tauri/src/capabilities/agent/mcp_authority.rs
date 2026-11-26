@@ -213,6 +213,45 @@ pub(super) fn lookup(storage: &Path, binding: &Binding) -> Result<Option<SignedS
     Ok(Some(proof))
 }
 
+/// Query observations are not a replacement for the persisted terminal
+/// receipt. A read error, invalid signature or absent file never proves
+/// that the provider cancelled or did not apply the original operation.
+pub(super) enum InboxObservation {
+    Missing,
+    Unverified,
+    Unavailable,
+    Verified(SignedStatus),
+}
+
+impl InboxObservation {
+    pub(super) fn state(&self) -> &'static str {
+        match self {
+            Self::Missing => "awaiting",
+            Self::Unverified => "unverified",
+            Self::Unavailable => "unavailable",
+            Self::Verified(_) => "verified",
+        }
+    }
+
+    pub(super) fn proof(&self) -> Option<&SignedStatus> {
+        match self {
+            Self::Verified(proof) => Some(proof),
+            _ => None,
+        }
+    }
+}
+
+pub(super) fn observe(storage: &Path, binding: &Binding) -> InboxObservation {
+    match lookup(storage, binding) {
+        Ok(None) => InboxObservation::Missing,
+        Ok(Some(proof)) => InboxObservation::Verified(proof),
+        Err(error) if matches!(error.as_str(),
+            "MCP_EFFECT_STATUS_INVALID" | "MCP_EFFECT_STATUS_UNVERIFIED" |
+            "MCP_EFFECT_AUTHORITY_INVALID") => InboxObservation::Unverified,
+        Err(_) => InboxObservation::Unavailable,
+    }
+}
+
 #[cfg(test)]
 pub(super) fn fixture_binding() -> (Binding, ring::signature::Ed25519KeyPair) {
     use ring::signature::{Ed25519KeyPair, KeyPair};

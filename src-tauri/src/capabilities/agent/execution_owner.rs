@@ -1466,39 +1466,64 @@ impl ProductionExecution {
         storage: &Path,
         owner: &DurableRun,
         mut record: NativeRunReceipt,
-    ) -> Result<NativeRunReceipt, String> {
-        if !Self::can_resolve_manual(&record) || !DurableRun::manual_admission_bound(&record) {
-            return Ok(record);
-        }
+    ) -> Result<(NativeRunReceipt, serde_json::Value), String> {
         let Some(binding) = record.effect.as_ref().and_then(|effect| effect.authority.as_ref()) else {
-            return Ok(record);
+            return Ok((record, serde_json::json!({"state":"not_configured"})));
         };
         if binding.run_id != record.id {
             return Err("AGENT_RUN_RECEIPT_INVALID".into());
         }
-        // A missing, malformed or unverified sidecar is not a terminal
-        // status. Never turn it into evidence of non-application.
-        let Some(proof) = super::mcp_authority::lookup(storage, binding).ok().flatten() else {
-            return Ok(record);
-        };
-        let applied = proof.outcome.applied();
-        record.task.revision = record.task.revision.checked_add(1)
-            .ok_or("AGENT_TASK_REVISION_EXHAUSTED")?;
-        record.task.status = if applied { TaskStatus::Completed } else { TaskStatus::Failed };
-        record.phase = if applied { "provider_applied" } else { "provider_not_applied" }.into();
-        let effect = record.effect.as_mut().ok_or("AGENT_RUN_RECEIPT_REQUIRED")?;
-        effect.disposition = record.phase.clone();
-        effect.provider_proof = Some(proof);
-        record.updated_at_ms = unix_ms();
-        if !DurableRun::provider_resolution_proven(&record) {
-            return Err("AGENT_RUN_RECEIPT_INVALID".into());
+        // Query exactly once under the authenticated Run owner. Never turn
+        // a missing/malformed sidecar into evidence of non-application.
+        let observed = super::mcp_authority::observe(storage, binding);
+        let proof = observed.proof();
+        if Self::can_resolve_manual(&record) && DurableRun::manual_admission_bound(&record) {
+            if let Some(proof) = proof {
+                let applied = proof.outcome.applied();
+                record.task.revision = record.task.revision.checked_add(1)
+                    .ok_or("AGENT_TASK_REVISION_EXHAUSTED")?;
+                record.task.status = if applied { TaskStatus::Completed } else { TaskStatus::Failed };
+                record.phase = if applied { "provider_applied" } else { "provider_not_applied" }.into();
+                let effect = record.effect.as_mut().ok_or("AGENT_RUN_RECEIPT_REQUIRED")?;
+                effect.disposition = record.phase.clone();
+                effect.provider_proof = Some(proof.clone());
+                record.updated_at_ms = unix_ms();
+                if !DurableRun::provider_resolution_proven(&record) {
+                    return Err("AGENT_RUN_RECEIPT_INVALID".into());
+                }
+                owner.write_record(&record)?;
+            }
         }
-        owner.write_record(&record)?;
-        Ok(record)
+        // Preserve a previously settled receipt, including manual evidence.
+        // Later contradictory signatures are reported, never silently applied.
+        let stored = record.effect.as_ref().and_then(|effect| effect.provider_proof.as_ref());
+        let state = if let Some(stored) = stored {
+            if proof.is_some_and(|latest| latest.outcome != stored.outcome) {
+                "conflicting_signed_terminal"
+            } else {
+                "settled"
+            }
+        } else if let Some(proof) = proof {
+            match record.phase.as_str() {
+                "reconciled_applied" | "reconciled_not_applied" => {
+                    if proof.outcome.applied() == (record.phase == "reconciled_applied") {
+                        "matches_manual"
+                    } else {
+                        "conflicts_manual"
+                    }
+                }
+                _ => "verified_not_settled",
+            }
+        } else {
+            observed.state()
+        };
+        let view = serde_json::json!({"state":state,"inbox_state":observed.state(),
+            "observed_outcome":proof.map(|proof| proof.outcome)});
+        Ok((record, view))
     }
 
     #[cfg(any(target_os = "linux", target_os = "windows"))]
-    fn manual_summary(record: &NativeRunReceipt, detail: bool) -> serde_json::Value {
+    fn manual_summary(record: &NativeRunReceipt, detail: bool, provider_inbox: serde_json::Value) -> serde_json::Value {
         let effect = record.effect.as_ref();
         let response = if record.phase == "completed" && record.task.status == TaskStatus::Completed
         {
@@ -1522,7 +1547,9 @@ impl ProductionExecution {
             "can_reconcile":record.phase == "operation_unknown" && record.task.status == TaskStatus::Paused
                 && record.effect_reviews.len() < 16,
             "can_resolve":Self::can_resolve_manual(record),
-            "can_archive":matches!(record.task.status, TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Cancelled),
+            "can_archive":matches!(record.task.status, TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Cancelled)
+                && !matches!(provider_inbox["state"].as_str(), Some("conflicts_manual" | "conflicting_signed_terminal")),
+            "provider_inbox":provider_inbox,
         });
         if detail {
             result["request_digest"] = serde_json::json!(effect.map(|value| &value.request_digest));
@@ -1560,8 +1587,8 @@ impl ProductionExecution {
                         return Ok(None);
                     }
                     let recovered = owner.recover_record(record)?;
-                    let reconciled = Self::reconcile_provider_status(storage, &owner, recovered)?;
-                    Ok(Some(Self::manual_summary(&reconciled, false)))
+                    let (reconciled, inbox) = Self::reconcile_provider_status(storage, &owner, recovered)?;
+                    Ok(Some(Self::manual_summary(&reconciled, false, inbox)))
                 })();
                 match result {
                     Ok(Some(record)) => records.push(record),
@@ -1590,8 +1617,8 @@ impl ProductionExecution {
             let record = owner.read_record()?.ok_or("AGENT_RUN_NOT_FOUND")?;
             Self::check_manual_scope(&record, workspace, &identity)?;
             let recovered = owner.recover_record(record)?;
-            let reconciled = Self::reconcile_provider_status(storage, &owner, recovered)?;
-            let mut summary = Self::manual_summary(&reconciled, true);
+            let (reconciled, inbox) = Self::reconcile_provider_status(storage, &owner, recovered)?;
+            let mut summary = Self::manual_summary(&reconciled, true, inbox);
             summary["archived"] = serde_json::json!(owner.checkpoint.archive_confirmed()?);
             Ok(summary)
         }
@@ -1622,7 +1649,7 @@ impl ProductionExecution {
             let recovered = owner.recover_record(record)?;
             // A newly arrived signed receipt takes precedence over a stale
             // manual observation. Its revision change invalidates the form.
-            let mut record = Self::reconcile_provider_status(storage, &owner, recovered)?;
+            let (mut record, inbox) = Self::reconcile_provider_status(storage, &owner, recovered)?;
             if record.task.revision != revision
                 || record.phase != "operation_unknown"
                 || record.task.status != TaskStatus::Paused
@@ -1650,7 +1677,7 @@ impl ProductionExecution {
                 .ok_or("AGENT_TASK_REVISION_EXHAUSTED")?;
             record.updated_at_ms = unix_ms();
             owner.write_record(&record)?;
-            Ok(Self::manual_summary(&record, true))
+            Ok(Self::manual_summary(&record, true, inbox))
         }
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         {
@@ -1687,7 +1714,7 @@ impl ProductionExecution {
             let record = owner.read_record()?.ok_or("AGENT_RUN_NOT_FOUND")?;
             Self::check_manual_scope(&record, workspace, &identity)?;
             let recovered = owner.recover_record(record)?;
-            let mut record = Self::reconcile_provider_status(storage, &owner, recovered)?;
+            let (mut record, inbox) = Self::reconcile_provider_status(storage, &owner, recovered)?;
             if record.task.revision != revision || !Self::can_resolve_manual(&record) {
                 return Err("AGENT_EFFECT_REVIEW_STALE".into());
             }
@@ -1729,7 +1756,7 @@ impl ProductionExecution {
             record.effect_resolution = Some(resolution);
             record.updated_at_ms = unix_ms();
             owner.write_record(&record)?;
-            Ok(Self::manual_summary(&record, true))
+            Ok(Self::manual_summary(&record, true, inbox))
         }
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         {
@@ -1760,7 +1787,8 @@ impl ProductionExecution {
             let owner = DurableRun::lookup(storage, id)?;
             let record = owner.read_record()?.ok_or("AGENT_RUN_NOT_FOUND")?;
             Self::check_manual_scope(&record, workspace, &identity)?;
-            let record = owner.recover_record(record)?;
+            let recovered = owner.recover_record(record)?;
+            let (record, inbox) = Self::reconcile_provider_status(storage, &owner, recovered)?;
             if record.task.revision != revision
                 || !matches!(
                     record.task.status,
@@ -1769,8 +1797,13 @@ impl ProductionExecution {
             {
                 return Err("AGENT_RUN_NOT_TERMINAL".into());
             }
+            // Contradictory signed evidence needs explicit investigation,
+            // not an archive action that appears to finish the dispute.
+            if matches!(inbox["state"].as_str(), Some("conflicts_manual" | "conflicting_signed_terminal")) {
+                return Err("MCP_EFFECT_STATUS_CONFLICT".into());
+            }
             owner.checkpoint.archive_terminal()?;
-            let mut summary = Self::manual_summary(&record, true);
+            let mut summary = Self::manual_summary(&record, true, inbox);
             summary["archived"] = serde_json::json!(true);
             Ok(summary)
         }
