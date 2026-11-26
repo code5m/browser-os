@@ -1565,6 +1565,25 @@ mod capture_storage_tests {
 
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     #[test]
+    fn complete_png_can_publish_through_the_existing_owner_storage() {
+        let base = std::env::temp_dir().join(format!("browseros-capture-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&base).unwrap();
+        let mut bytes = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut bytes, 2, 2);
+            encoder.set_color(png::ColorType::Rgb);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder.write_header().unwrap();
+            writer.write_image_data(&[0; 12]).unwrap();
+            writer.finish().unwrap();
+        }
+        let path = save_capture(&base, &bytes).unwrap();
+        assert_eq!(std::fs::read(path).unwrap(), bytes);
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[test]
     fn truncated_png_never_creates_capture_storage() {
         let base = std::env::temp_dir().join(format!("browseros-capture-{}", uuid::Uuid::new_v4()));
         assert_eq!(
@@ -1582,7 +1601,19 @@ mod capture_storage_tests {
         let elsewhere = base.join("elsewhere");
         std::fs::create_dir(&elsewhere).unwrap();
         std::os::unix::fs::symlink(&elsewhere, base.join("screenshots")).unwrap();
-        assert!(save_capture(&base, &image_header(2, 2)).is_err());
+        // Use a complete PNG so the no-link storage check is exercised
+        // rather than short-circuiting at the stricter PNG verifier.
+        let mut bytes = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut bytes, 2, 2);
+            encoder.set_color(png::ColorType::Rgb);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder.write_header().unwrap();
+            writer.write_image_data(&[0; 12]).unwrap();
+            writer.finish().unwrap();
+        }
+        crate::isolated_capture::checked_png(&bytes).unwrap();
+        assert!(save_capture(&base, &bytes).is_err());
         assert_eq!(std::fs::read_dir(&elsewhere).unwrap().count(), 0);
         std::fs::remove_dir_all(base).unwrap();
     }

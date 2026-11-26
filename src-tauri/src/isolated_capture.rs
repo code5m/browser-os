@@ -194,6 +194,11 @@ pub(crate) fn render_job(
             if cancelled() {
                 break Err("CAPTURE_ISOLATED_CANCELLED".to_owned());
             }
+            // The admission and execution consume one parent deadline.
+            // A completion only observed after it cannot publish output.
+            if Instant::now() >= deadline {
+                break Err("CAPTURE_DEADLINE_EXCEEDED".to_owned());
+            }
             match owner.exited() {
                 Ok(Some(status)) => {
                     break if status.success() {
@@ -202,8 +207,7 @@ pub(crate) fn render_job(
                         Err("CAPTURE_WORKER_FAILED".to_owned())
                     }
                 }
-                Ok(None) if Instant::now() < deadline => thread::sleep(POLL),
-                Ok(None) => break Err("CAPTURE_DEADLINE_EXCEEDED".to_owned()),
+                Ok(None) => thread::sleep(POLL.min(deadline.saturating_duration_since(Instant::now()))),
                 Err(error) => break Err(error),
             }
         };
