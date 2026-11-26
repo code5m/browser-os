@@ -270,6 +270,11 @@ struct Session {
     operations: Vec<Operation>,
     #[serde(default)]
     apply_operation_id: Option<String>,
+    // File publication commits independently of the Task's UI state.
+    // Persist this exact operation ID in the same authenticated session
+    // record that clears the proposals and settles the Task.
+    #[serde(default)]
+    apply_committed_operation_id: Option<String>,
 }
 #[derive(Serialize, Deserialize)]
 struct RunReceipt {
@@ -1339,9 +1344,33 @@ fn recover_pending_apply(root: &Path, storage: &Path, session: &mut Session) -> 
         save(storage, session)?;
         return Err("AGENT_RECOVERY_PROOF_REQUIRED".into());
     }
-    if session.status == "applied" {
+    if let Some(committed) = &session.apply_committed_operation_id {
+        if journal.operation_id.as_ref() != Some(committed) || !session.changes.is_empty() {
+            session.status = "recovery_conflict".into();
+            save(storage, session)?;
+            return Err("AGENT_RECOVERY_COMMIT_PROOF_REQUIRED".into());
+        }
+        // A successful file transaction can leave its Task paused (ready
+        // for another model batch, or with an outstanding review). Do not
+        // inspect or compensate project files once this exact commit exists.
         fs::remove_file(path).map_err(|_| "AGENT_RECOVERY_CLEAR_FAILED")?;
         return Ok(());
+    }
+    if session.status == "applied" && session.changes.is_empty() {
+        // Compatibility with the old authenticated terminal-apply record.
+        session.apply_committed_operation_id = journal.operation_id.clone();
+        save(storage, session)?;
+        fs::remove_file(path).map_err(|_| "AGENT_RECOVERY_CLEAR_FAILED")?;
+        return Ok(());
+    }
+    if session.changes.is_empty() || session.status == "applied" {
+        // The previous continuation implementation could save a successful
+        // apply as "ready" without a commit ID. No proposals remain from
+        // which to prove that compensation is still authorized. Preserve
+        // both the journal and files for explicit recovery review.
+        session.status = "recovery_conflict".into();
+        save(storage, session)?;
+        return Err("AGENT_RECOVERY_COMMIT_PROOF_REQUIRED".into());
     }
     if let Err(error) = apply_journal_restore(root, storage, &path, &mut journal) {
         session.status = "recovery_conflict".into();
@@ -1528,6 +1557,7 @@ fn apply_changes_with_write_hook(
     )?;
     session.status = "apply_prepared".into();
     session.apply_operation_id = Some(operation_id);
+    session.apply_committed_operation_id = None;
     save(storage, session)?;
     persist_journal(&journal_path, &journal)?;
     let result: Result<Vec<String>, String> = (|| {
@@ -1583,6 +1613,7 @@ fn apply_changes_with_write_hook(
                 session.messages.push(json!({"role":"user","content":
                     "The user applied the reviewed staged changes. Re-read relevant files before proposing further changes."}));
             }
+            session.apply_committed_operation_id = session.apply_operation_id.clone();
             let mut result = match save(storage, session) {
                 Ok(result) => result,
                 Err(error) => {
@@ -1590,6 +1621,7 @@ fn apply_changes_with_write_hook(
                     // session commit failed. Never clear the journal on this path.
                     session.changes = changes;
                     session.status = "apply_prepared".into();
+                    session.apply_committed_operation_id = None;
                     return Err(error);
                 }
             };
@@ -1644,6 +1676,7 @@ fn load_without_recovery(root: &Path, storage: &Path, id: Option<&str>) -> Resul
             foundation_task: None,
             operations: vec![],
             apply_operation_id: None,
+            apply_committed_operation_id: None,
         })
     }
 }
@@ -3174,6 +3207,61 @@ mod tests {
     }
 
     #[test]
+    fn committed_apply_survives_crash_before_journal_cleanup_while_task_is_paused() {
+        let f = Fixture::new();
+        let storage = f.0.join("state");
+        let (id, journal_path) = interrupted_apply(&f);
+        // This is the durable crash boundary after the session commit and
+        // before deletion of its already-published apply journal.
+        let mut session = load_without_recovery(&f.0, &storage, Some(&id)).unwrap();
+        let execution = super::super::execution_owner::ProductionExecution::resume_coding(
+            &f.0, &id, None).unwrap();
+        session.foundation_task = Some(execution.settle_coding("ready").unwrap());
+        session.changes.clear();
+        session.status = "ready".into();
+        session.apply_committed_operation_id = session.apply_operation_id.clone();
+        save(&storage, &session).unwrap();
+
+        // The user may already have edited a successfully published file.
+        fs::write(f.0.join("first.txt"), b"post-commit edit").unwrap();
+        let recovered = run(&f, json!({"action":"session","session_id":id})).unwrap();
+        assert_eq!(recovered["status"], "ready");
+        assert_eq!(recovered["foundation_task"]["status"], "paused");
+        assert_eq!(recovered["apply_committed_operation_id"], recovered["apply_operation_id"]);
+        assert_eq!(fs::read(f.0.join("first.txt")).unwrap(), b"post-commit edit");
+        assert!(!journal_path.exists());
+    }
+
+    #[test]
+    fn legacy_nonterminal_apply_without_commit_proof_does_not_rollback() {
+        let f = Fixture::new();
+        let storage = f.0.join("state");
+        let (id, journal_path) = interrupted_apply(&f);
+        let mut session = load_without_recovery(&f.0, &storage, Some(&id)).unwrap();
+        session.changes.clear();
+        session.status = "ready".into();
+        save(&storage, &session).unwrap();
+        assert_eq!(run(&f, json!({"action":"session","session_id":id})).unwrap_err(),
+            "AGENT_RECOVERY_COMMIT_PROOF_REQUIRED");
+        assert_eq!(fs::read(f.0.join("first.txt")).unwrap(), b"proposed");
+        assert!(journal_path.exists());
+    }
+
+    #[test]
+    fn mismatched_commit_id_never_authorizes_compensation_or_cleanup() {
+        let f = Fixture::new();
+        let storage = f.0.join("state");
+        let (id, journal_path) = interrupted_apply(&f);
+        let mut session = load_without_recovery(&f.0, &storage, Some(&id)).unwrap();
+        session.apply_committed_operation_id = Some(uuid::Uuid::new_v4().to_string());
+        save(&storage, &session).unwrap();
+        assert_eq!(run(&f, json!({"action":"session","session_id":id})).unwrap_err(),
+            "AGENT_RECOVERY_COMMIT_PROOF_REQUIRED");
+        assert_eq!(fs::read(f.0.join("first.txt")).unwrap(), b"proposed");
+        assert!(journal_path.exists());
+    }
+
+    #[test]
     fn recovery_refuses_to_overwrite_external_modification() {
         let f = Fixture::new();
         let (id, journal_path) = interrupted_apply(&f);
@@ -3306,6 +3394,8 @@ mod tests {
         .unwrap();
         let r = run(&f, json!({"action":"apply","session_id":s["session_id"]})).unwrap();
         assert_eq!(r["applied"][0], "a.rs");
+        assert!(r["apply_committed_operation_id"].is_string());
+        assert_eq!(r["apply_committed_operation_id"], r["apply_operation_id"]);
         assert_eq!(fs::read_to_string(f.0.join("a.rs")).unwrap(), "new");
         let backup = fs::read_dir(
             f.0.join("state/coding-backups")
