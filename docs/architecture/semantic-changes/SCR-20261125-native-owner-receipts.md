@@ -322,3 +322,9 @@ Source-only scope; no compilation, tests, install/runtime validation, workflow d
 - Before accepting a manual effect observation, re-read the pinned provider's signed status through the existing owner reconciliation path. A newly verified terminal receipt updates the revision and rejects stale manual forms. No provider retry, new trust root, automatic effect inference or Agent permission is added.
 - Source-only changes; no compilation, test run, CI workflow change, master merge or installed acceptance. Real provider cancellation/finality still requires provider-side support and authoritative evidence.
 
+## 2026-11-26 — Grid batch-dispatch ownership and explicit observations
+
+- Keep a single host-side scheduling settlement for the active AI broadcast. Explicit Grid close invalidates its epoch, publishes a reactive closing interlock, waits for the admitted dispatch loop, then performs the existing native close. Interrupt stagger waits at 100 ms intervals. Never infer that a queued page script or remote AI stopped merely because host scheduling ended.
+- Retain a bounded in-memory per-cell observation for the latest batch: not attempted, invalid address, dispatch acknowledgement or unknown. Do not store the prompt or claim delivery, failure/non-application, or permission to replay. Clear on a new topology build. UI exposes each cell's outcome and prevents editing the target list during busy/unknown ownership.
+- Resource-detail polling is single-flight and scoped to the visible panel epoch. A delayed result after hide/unmount is discarded; a failed sample is not represented as fresh.
+- Source-only candidate; no build, test execution, workflow change or master merge.

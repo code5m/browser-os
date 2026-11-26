@@ -156,14 +156,18 @@ export const useGridStore = defineStore("grid", () => {
   let gridCellTask: Promise<void> | null = null;
   const gridCellBusy = ref(false);
   const gridSending = ref(false);
-  const gridBusy = computed(() => gridStarting.value || gridCellBusy.value || gridSending.value);
+  const gridClosing = ref(false);
+  let gridSendSettlement: Promise<void> | null = null;
+  type SendObservation = { index: number; state: "not_attempted" | "dispatch_ack" | "unknown" | "invalid_address" };
+  const gridSendResults = ref<SendObservation[]>([]);
+  const gridBusy = computed(() => gridStarting.value || gridCellBusy.value || gridSending.value || gridClosing.value);
   const gridCleanupUnconfirmed = ref(false);
   const gridInspecting = ref(false);
   const gridRecoveryStates = ref<Array<{index: number; state: string}> | null>(null);
   let rebuildRequested = false;
   let gridEpoch = 0;
   async function buildGrid() {
-    if (gridCloseTask || gridCellTask || gridSending.value || gridCleanupUnconfirmed.value) {
+    if (gridCloseTask || gridClosing.value || gridCellTask || gridSending.value || gridCleanupUnconfirmed.value) {
       layout.showToast("宫格关闭状态尚未核实，请先重新核对关闭结果");
       return;
     }
@@ -198,6 +202,7 @@ export const useGridStore = defineStore("grid", () => {
     try {
     const n = gridCount.value;
     gridSession.value += 1;
+    gridSendResults.value = [];
     bridge.debugLog(`buildGrid start n=${n} mainView=${layout.mainView}`);
     // 每格首导航 URL：优先格子自身配置，其次当前地址栏；未配置用 about:blank 占位。
     // 严禁回退第三方站点（如百度）——子 webview 首导航即目标服务，消除"先百度再跳真实服务"双导航。
@@ -332,6 +337,13 @@ export const useGridStore = defineStore("grid", () => {
       && gridMode.value === "ai" && !gridCleanupUnconfirmed.value && isGridResourceAllowed()
       && gridCount.value === n && targets.every((url, i) => gridUrls[i] === url);
     gridSending.value = true;
+    let settleSend!: () => void;
+    const settlement = new Promise<void>(resolve => { settleSend = resolve; });
+    gridSendSettlement = settlement;
+    gridSendResults.value = Array.from({length:n}, (_, index) => ({index, state:"not_attempted"}));
+    const record = (index: number, state: SendObservation["state"]) => {
+      gridSendResults.value[index] = {index, state};
+    };
     let dispatched = 0;
     let stopped = false;
     try {
@@ -350,6 +362,7 @@ export const useGridStore = defineStore("grid", () => {
         if (!["https:", "http:"].includes(target.protocol) || target.username || target.password) throw new Error("unsupported");
         origin = target.origin;
       } catch {
+        record(i, "invalid_address");
         fails.push(`${i + 1}格(目标地址不可核对)`);
         continue;
       }
@@ -358,16 +371,23 @@ export const useGridStore = defineStore("grid", () => {
       try {
         bridge.debugLog(`gridSendAi evalInTab[${label}] begin`);
         await bridge.evalInTab(label, js);
+        record(i, "dispatch_ack");
         dispatched += 1;
         bridge.debugLog(`gridSendAi evalInTab[${label}] done`);
       } catch (e: any) {
         bridge.debugLog(`gridSendAi evalInTab[${label}] fail: ${String(e).slice(0, 60)}`);
-        fails.push(`${i + 1}格(${String(e).slice(0, 40)})`);
+        record(i, "unknown");
+        // A transport error is not evidence that the script did not run.
+        fails.push(`${i + 1}格(调度结果未知)`);
       }
       // 串行错峰：最后一格无需再等；前面的格子提交后错峰，让流式响应错开启动
-      if (i < n - 1) {
+      if (i < n - 1 && stillCurrent()) {
         bridge.debugLog(`gridSendAi stagger wait ${GRID_STAGGER_MS}ms before grid-${i + 1}`);
-        await new Promise((r) => setTimeout(r, GRID_STAGGER_MS));
+        const until = performance.now() + GRID_STAGGER_MS;
+        // Stop scheduling promptly when the close owner invalidates this batch.
+        while (stillCurrent() && performance.now() < until) {
+          await new Promise(resolve => setTimeout(resolve, Math.min(100, Math.max(0, until - performance.now()))));
+        }
       }
     }
     bridge.debugLog(`gridSendAi loop end fails=${fails.length}`);
@@ -381,6 +401,8 @@ export const useGridStore = defineStore("grid", () => {
     if (!stopped && stillCurrent() && !fails.length && gridAiInput.value.trim() === q) gridAiInput.value = "";
     } finally {
       gridSending.value = false;
+      if (gridSendSettlement === settlement) gridSendSettlement = null;
+      settleSend();
     }
   }
   // Capability deactivation must receive the actual native close outcome.
@@ -393,11 +415,16 @@ export const useGridStore = defineStore("grid", () => {
     gridOpen.value = false;
     const settling = gridBuildSettlement;
     const settlingCell = gridCellTask;
+    const settlingSend = gridSendSettlement;
+    gridClosing.value = true;
     const task = (async () => {
       // The user's explicit close covers the earlier in-flight build.
       // Wait for its settlement, then take one native close snapshot.
       await settling;
       await settlingCell;
+      // Await only the host scheduling owner, never claim that page scripts
+      // or external services stopped. No new send can enter while closing.
+      await settlingSend;
       try {
         await bridge.closeGrid();
       } catch (error) {
@@ -423,7 +450,12 @@ export const useGridStore = defineStore("grid", () => {
     })();
     gridCloseTask = task;
     try { await task; }
-    finally { if (gridCloseTask === task) gridCloseTask = null; }
+    finally {
+      if (gridCloseTask === task) {
+        gridCloseTask = null;
+        gridClosing.value = false;
+      }
+    }
   }
   async function closeGridAll() {
     // Error text is already displayed by the resource owner. Do not create
@@ -611,6 +643,8 @@ export const useGridStore = defineStore("grid", () => {
     gridStarting,
     gridBusy,
     gridSending,
+    gridClosing,
+    gridSendResults,
     gridStartupError,
     gridCleanupUnconfirmed,
     gridInspecting,
