@@ -707,7 +707,9 @@ pub fn set_tab_hibernation(
     Ok(())
 }
 
-fn tab_hibernation_snapshot(app: &AppHandle, id: &str) -> Result<(f64, f64), String> {
+fn tab_hibernation_snapshot(app: &AppHandle, id: &str,
+    instance: &tauri_plugin_browser_tabs::TabInstance, expected_url: &str,
+) -> Result<(f64, f64), String> {
     use tauri_plugin_browser_tabs::TabManagerState;
     let manager = app.state::<TabManagerState>();
     let script = r#"(() => {
@@ -738,13 +740,14 @@ fn tab_hibernation_snapshot(app: &AppHandle, id: &str) -> Result<(f64, f64), Str
         !!window.onbeforeunload || window.__browserosPreventHibernate === true;
       return JSON.stringify({
         protected: protectedPage,
+        address: location.href,
         scrollX: Number(window.scrollX) || 0,
         scrollY: Number(window.scrollY) || 0
       });
     })()"#;
     let (tx, rx) = std::sync::mpsc::channel();
     manager
-        .eval_result(&id.to_string(), script.to_string(), move |result| {
+        .eval_result_instance(&id.to_string(), instance, script.to_string(), move |result| {
             let _ = tx.send(result);
         })
         .map_err(|_| "TAB_HIBERNATION_SNAPSHOT_FAILED")?;
@@ -753,6 +756,10 @@ fn tab_hibernation_snapshot(app: &AppHandle, id: &str) -> Result<(f64, f64), Str
         .map_err(|_| "TAB_HIBERNATION_SNAPSHOT_TIMEOUT")??;
     let snapshot: serde_json::Value =
         serde_json::from_str(&encoded).map_err(|_| "TAB_HIBERNATION_SNAPSHOT_INVALID")?;
+    if snapshot.get("address").and_then(serde_json::Value::as_str) != Some(expected_url)
+        || !manager.is_current_instance(&id.to_string(), instance) {
+        return Err("TAB_HIBERNATION_DOCUMENT_STALE".into());
+    }
     accepted_hibernation_scroll(&snapshot)
         .ok_or_else(|| "TAB_HIBERNATION_PROTECTED_OR_INVALID".to_string())
 }
@@ -800,7 +807,9 @@ fn hibernate_tab(app: &AppHandle, id: &str, idle_window: std::time::Duration) ->
     if !still_idle() {
         return false;
     }
-    let scroll = match tab_hibernation_snapshot(app, id) {
+    let manager = app.state::<tauri_plugin_browser_tabs::TabManagerState>();
+    let Ok(instance) = manager.instance(&id.to_string()) else { return false; };
+    let scroll = match tab_hibernation_snapshot(app, id, &instance, &expected_url) {
         Ok(scroll) => scroll,
         Err(error) => {
             eprintln!("[hibernation] skip tab={} reason={}", id, error);
@@ -815,11 +824,9 @@ fn hibernate_tab(app: &AppHandle, id: &str, idle_window: std::time::Duration) ->
     let Ok(_transition) = reserve_tab_transition(id) else {
         return false;
     };
-    if !still_idle() {
+    if !still_idle() || !manager.is_current_instance(&id.to_string(), &instance) {
         return false;
     }
-    use tauri_plugin_browser_tabs::TabManagerState;
-    let manager = app.state::<TabManagerState>();
     if manager.close_tab(&id.to_string()).is_ok() {
         state.child_layouts.lock().unwrap().remove(id);
         state.layout_revisions.lock().unwrap().remove(id);
@@ -1224,8 +1231,8 @@ pub(crate) fn tab_activate_impl(
         .state::<TabManagerState>()
         .instance(&id)
         .map_err(|error| error.to_string())?;
-    // Keep scroll metadata until the restored WebView accepts the command. If
-    // the first load is still racing, a later activation can retry restoration.
+    // Keep scroll metadata until the exact restored WebView reports a
+    // terminal observation. A script dispatch is not a scroll receipt.
     let scroll = app
         .state::<AppState>()
         .hibernated_scroll
@@ -1259,20 +1266,27 @@ pub(crate) fn tab_activate_impl(
             // document address inside the already instance-bound script.
             let Ok(address) = serde_json::to_string(&expected_url) else { return; };
             let js = format!(
-                "if (location.href === {} && window.scrollX === 0 && window.scrollY === 0) window.scrollTo({:.3},{:.3});",
+                "(() => {{ if (location.href !== {} || document.readyState !== 'complete') return 'deferred'; if (window.scrollX !== 0 || window.scrollY !== 0) return 'skip_nonzero'; const x={:.3}, y={:.3}; window.scrollTo({{left:x,top:y,behavior:'instant'}}); return Math.abs(window.scrollX-x)<=1 && Math.abs(window.scrollY-y)<=1 ? 'applied' : 'deferred'; }})()",
                 address, x.max(0.0), y.max(0.0)
             );
-            if restore_app
-                .state::<TabManagerState>()
-                .eval_instance(&restore_id, &instance, &js)
-                .is_ok()
-            {
-                restore_app
-                    .state::<AppState>()
-                    .hibernated_scroll
-                    .lock()
-                    .unwrap()
-                    .remove(&restore_id);
+            let manager = restore_app.state::<TabManagerState>();
+            let (tx, rx) = std::sync::mpsc::channel();
+            if manager.eval_result_instance(&restore_id, &instance, js, move |result| {
+                let _ = tx.send(result);
+            }).is_err() {
+                return;
+            }
+            // Bounded worker wait; do not release a pending snapshot on a
+            // dispatch-only success, failed script or navigation mismatch.
+            let confirmed = matches!(rx.recv_timeout(std::time::Duration::from_secs(2)),
+                Ok(Ok(value)) if value == "applied" || value == "skip_nonzero");
+            if confirmed && manager.is_current_instance(&restore_id, &instance)
+                && state.tabs.lock().unwrap().get(&restore_id).is_some_and(|tab| tab.url == expected_url)
+                && state.active_tab.lock().unwrap().as_deref() == Some(restore_id.as_str()) {
+                let mut saved = state.hibernated_scroll.lock().unwrap();
+                if saved.get(&restore_id).is_some_and(|entry| entry.0 == expected_url && entry.1 == (x, y)) {
+                    saved.remove(&restore_id);
+                }
             }
         });
     }

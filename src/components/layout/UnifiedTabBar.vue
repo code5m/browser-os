@@ -153,12 +153,13 @@ async function newTab() {
       :class="['tab', {active:tab.active}]"
       @click="activateProjectedTab(tab)"
       @contextmenu.prevent="context = { id: tab.id, kind: tab.kind === 'web' ? 'web' : 'module' }"
-      :title="tab.kind === 'web' && browser.rendererStateLabel(tab.id) ? (tab.title + ' · ' + browser.rendererStateLabel(tab.id)) : (tab.path || tab.title)"
+      :title="tab.kind === 'web' ? [tab.title, browser.rendererStateLabel(tab.id), browser.rendererDownloadLabel(tab.id)].filter(Boolean).join(' · ') : (tab.path || tab.title)"
     >
       <Globe v-if="tab.kind === 'web'" class="tab-ic" :size="15"/>
       <span v-else class="tab-ic">{{ tab.icon }}</span>
       <span class="tab-title">{{ tab.title }}</span>
       <span v-if="tab.kind === 'web' && browser.rendererStateLabel(tab.id)" class="renderer-state" role="status">{{ browser.rendererStateLabel(tab.id) }}</span>
+      <span v-else-if="tab.kind === 'web' && browser.rendererDownloadLabel(tab.id)" class="renderer-state" role="status">{{ browser.rendererDownloadLabel(tab.id) }}</span>
       <button class="tab-close" @click.stop="closeProjectedTab(tab)" title="关闭"><X :size="14"/></button>
     </div>
     <button class="tab-new" @click="newTab" title="新建页签"><Plus :size="18"/></button>

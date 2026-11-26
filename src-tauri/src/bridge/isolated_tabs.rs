@@ -147,7 +147,11 @@ pub(super) fn activate(app: &AppHandle, id: &str) -> Result<(), String> {
         state.grid_manager.start_tab_renderer(index, &url)?;
         state.hibernated_tabs.lock().unwrap().remove(id);
     } else {
-        state.grid_manager.request(index, GridCmd::Ping, 3000)?;
+        let binding = state.grid_manager.renderer_binding(index)?;
+        state.grid_manager.renderer_request_data(binding, GridCmd::Ping, 3000)?;
+        if state.grid_manager.renderer_binding(index)? != binding {
+            return Err("TAB_RENDERER_ACTIVATION_STALE".into());
+        }
         state.hibernated_tabs.lock().unwrap().remove(id);
     }
     // The normal frontend position command supplies the new active rectangle.
@@ -211,15 +215,8 @@ pub(super) fn hide_all(app: &AppHandle) -> Result<(), String> {
             errors.push(format!("{id}:{error}"));
         }
     }
-    let mut indices: Vec<_> = state.grid_manager.indices().into_iter().collect();
-    indices.sort_unstable();
-    for index in indices {
-        state.grid_manager.record_hidden(index);
-        if let Err(error) = state.grid_manager.request(index, GridCmd::HideWindow {
-            id: crate::grid_ipc::renderer_label(index),
-        }, 3000) {
-            errors.push(format!("grid-{index}:{error}"));
-        }
+    if let Err(error) = state.grid_manager.hide_grid_renderers() {
+        errors.push(error);
     }
     if errors.is_empty() { Ok(()) }
     else { Err(format!("TAB_RENDERER_HIDE_PARTIAL:{}", errors.join("; "))) }

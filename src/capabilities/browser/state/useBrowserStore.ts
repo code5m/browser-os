@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { ref, reactive, computed, nextTick, watch } from "vue";
-import { bridge, type RendererRecoveryTarget, type RendererState } from "../../../bridge";
+import { bridge, type RendererRecoveryTarget, type RendererState, type RendererDownloadObservation } from "../../../bridge";
 import { WEBVIEW_FREEZE_JS, WEBVIEW_UNFREEZE_JS } from "../../../utils/webviewFreeze";
 import { isBrowserResourceAllowed } from "../resource/guard";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
@@ -24,10 +24,12 @@ export const useBrowserStore = defineStore("browser", () => {
   const nativeTabFailures = new Map<string, NativeTabLoadFailureRecord>();
   const isolatedRendererMode = ref(false);
   const rendererStates = reactive(new Map<string, RendererState>());
+  const rendererDownloads = reactive(new Map<string, RendererDownloadObservation>());
   const rendererObservations = new Map<string, symbol>();
   function clearRendererState(id: string) {
     rendererObservations.delete(id);
     rendererStates.delete(id);
+    rendererDownloads.delete(id);
   }
   function rendererUnavailable(id: string): boolean {
     const state = rendererStates.get(id);
@@ -42,6 +44,13 @@ export const useBrowserStore = defineStore("browser", () => {
       default: return "";
     }
   }
+  function rendererDownloadLabel(id: string): string {
+    const download = rendererDownloads.get(id);
+    if (!download?.connection_current || rendererStates.get(id) !== "ready") return "";
+    if (download.observed_unfinished === null) return "下载结果待核对";
+    if (download.observed_unfinished > 0) return "下载未完观察 " + download.observed_unfinished;
+    return "下载回调 " + download.succeeded + " 成功 / " + download.failed + " 失败";
+  }
   async function refreshRendererState(id: string) {
     const tab = tabs.find(item => item.id === id);
     if (!isolatedRendererMode.value || !tab) return null;
@@ -52,6 +61,13 @@ export const useBrowserStore = defineStore("browser", () => {
       if (rendererObservations.get(id) !== observation || !tabs.some(item => item === tab)) return null;
       if (!view.renderer_state) return null;
       rendererStates.set(id, view.renderer_state);
+      const download = view.renderer_download;
+      if (download && view.renderer_recovery_target?.pid === download.pid
+          && view.renderer_recovery_target?.spawn_epoch === download.spawn_epoch) {
+        rendererDownloads.set(id, download);
+      } else {
+        rendererDownloads.delete(id);
+      }
       return view;
     } catch {
       // An unreadable observation is not proof of absence or permission to recover.
@@ -238,9 +254,12 @@ export const useBrowserStore = defineStore("browser", () => {
       const seen = new Set(ordered.map(tab => tab.id));
       ordered.push(...actual.filter(tab => !seen.has(tab.id)));
       rendererObservations.clear();
-      for (const id of rendererStates.keys()) if (!byId.has(id)) rendererStates.delete(id);
+      for (const id of rendererStates.keys()) if (!byId.has(id)) clearRendererState(id);
       isolatedRendererMode.value = view.isolated_renderer_mode === true;
-      if (!isolatedRendererMode.value) rendererStates.clear();
+      if (!isolatedRendererMode.value) {
+        rendererStates.clear();
+        rendererDownloads.clear();
+      }
       tabs.splice(0, tabs.length, ...ordered);
       activeTabId.value = view.active_tab_id && byId.has(view.active_tab_id) ? view.active_tab_id : "";
       url.value = byId.get(activeTabId.value)?.url ?? "";
@@ -898,6 +917,7 @@ export const useBrowserStore = defineStore("browser", () => {
         }
         nativeTabFailures.clear();
         rendererStates.clear();
+        rendererDownloads.clear();
         rendererObservations.clear();
         activeTabId.value = "";
         resources.value = null;
@@ -920,6 +940,7 @@ export const useBrowserStore = defineStore("browser", () => {
     isolatedRendererMode,
     rendererUnavailable,
     rendererStateLabel,
+    rendererDownloadLabel,
     refreshRendererState,
     tabRecoveryRequired,
     tabRecoveryBusy,

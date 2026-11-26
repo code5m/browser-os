@@ -435,6 +435,8 @@ pub(crate) struct OwnerView {
     renderer_recovery_target: Option<RendererRecoveryTarget>,
     isolated_renderer_mode: bool,
     renderer_state: Option<&'static str>,
+    // Advisory native counts, not per-transfer state or filesystem access.
+    renderer_download: Option<Value>,
 }
 fn snapshot(app: &AppHandle) -> Result<OwnerView, String> {
     let mut view = {
@@ -456,6 +458,7 @@ fn snapshot(app: &AppHandle) -> Result<OwnerView, String> {
             renderer_recovery_target: None,
             isolated_renderer_mode: super::isolated_tabs::mode_enabled(),
             renderer_state: None,
+            renderer_download: None,
         }
     };
     // Do not hold the Owner mutex while observing app metadata.
@@ -828,6 +831,7 @@ pub(crate) fn tab_mutation(
                 "hibernated"
             } else { status });
             if let Some((pid, epoch)) = observed_owner {
+                view.renderer_download = state.grid_manager.tab_renderer_download_observation(index, (pid, epoch))?;
                 view.renderer_recovery_target = Some(RendererRecoveryTarget {
                     id, pid, spawn_epoch: epoch.to_string(),
                 });
@@ -1070,6 +1074,7 @@ mod tests {
             renderer_recovery_target: None,
             isolated_renderer_mode: false,
             renderer_state: None,
+            renderer_download: None,
         };
         assert!(state.matches_view(&view));
         state.admit_background().unwrap();

@@ -2469,9 +2469,27 @@ impl TabManager {
         js: String,
         callback: impl FnOnce(std::result::Result<String, String>) + Send + 'static,
     ) -> Result<()> {
+        self.eval_result_bound(id, None, js, callback)
+    }
+
+    pub fn eval_result_instance(
+        &self, id: &TabId, instance: &TabInstance, js: String,
+        callback: impl FnOnce(std::result::Result<String, String>) + Send + 'static,
+    ) -> Result<()> {
+        self.eval_result_bound(id, Some(instance), js, callback)
+    }
+
+    #[allow(deprecated)]
+    fn eval_result_bound(
+        &self, id: &TabId, instance: Option<&TabInstance>, js: String,
+        callback: impl FnOnce(std::result::Result<String, String>) + Send + 'static,
+    ) -> Result<()> {
         // Protect dispatch only, never keep a reservation across an
         // asynchronous WebKit/WebView2 completion callback.
         let (_operation, tab) = self.get_tab(id, TabAccessKind::Operation)?;
+        if instance.is_some_and(|expected| !std::sync::Weak::ptr_eq(&expected.0, &Arc::downgrade(&tab))) {
+            return Err(BrowserTabError::Platform("TAB_INSTANCE_STALE".into()));
+        }
         let webview = tab.webview.clone();
         #[cfg(target_os = "linux")]
         webview.with_webview(move |native| {

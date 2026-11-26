@@ -46,6 +46,9 @@ impl GridProcessManager {
         Err(unsupported())
     }
     pub(crate) fn tab_renderer_observation(&self, _index: u32) -> Result<(Option<(u32, u64)>, &'static str), String> { Err(unsupported()) }
+    pub(crate) fn tab_renderer_download_observation(&self, _index: u32, _expected: (u32, u64))
+        -> Result<Option<serde_json::Value>, String> { Err(unsupported()) }
+    pub(crate) fn hide_grid_renderers(&self) -> Result<(), String> { Err(unsupported()) }
     pub(crate) fn renderer_binding(&self, _index: u32) -> Result<crate::grid_ipc::RendererBinding, String> { Err(unsupported()) }
     pub(crate) fn grid_eval_binding(&self, _index: u32) -> Result<crate::grid_ipc::RendererBinding, String> { Err(unsupported()) }
     pub(crate) fn grid_live_binding(&self, _index: u32) -> Result<Option<crate::grid_ipc::RendererBinding>, String> { Err(unsupported()) }

@@ -245,12 +245,28 @@ onMounted(async () => {
     if (typeof event?.id === "string") void browser.refreshRendererState(event.id);
   });
   unlistenRendererDownload = await bridge.onIsolatedDownload(async (event) => {
-    if (typeof event?.id !== "string" || !Number.isInteger(event.pid)
-        || !["requested", "succeeded", "failed"].includes(event.phase)) return;
+    if (typeof event?.id !== "string" || !Number.isSafeInteger(event.pid)
+        || !["requested", "succeeded", "failed", "owner_retired"].includes(event.phase)) return;
     const view = await browser.refreshRendererState(event.id);
-    const target = view?.renderer_recovery_target;
-    // The event is not permission to open a file or to act on a replacement.
-    if (!target || target.pid !== event.pid || target.spawn_epoch !== event.spawn_epoch) return;
+    if (!view) return;
+    const target = view.renderer_recovery_target;
+    if (event.phase === "owner_retired") {
+      // An old retirement must not overwrite a newly activated renderer.
+      // Even a confirmed process exit does not prove any transfer failed.
+      if (!target && view.renderer_state === "absent" && event.outcome === "unknown"
+          && (event.observed_unfinished ?? 0) > 0) {
+        layout.showToast("原下载宿主已回收；曾观察到未完成下载，最终结果待核对。");
+      }
+      return;
+    }
+    const observed = view.renderer_download;
+    // Only the latest authenticated owner/connection observation can notify.
+    // Cumulative counts are advisory; never infer a per-transfer identity.
+    if (!target || !observed?.connection_current || target.pid !== event.pid
+        || target.spawn_epoch !== event.spawn_epoch
+        || observed.renderer_generation !== event.renderer_generation
+        || observed.requested !== event.requested || observed.succeeded !== event.succeeded
+        || observed.failed !== event.failed) return;
     layout.showToast(event.phase === "requested"
       ? "独立页签收到下载请求；关闭宿主可能中断下载"
       : event.phase === "succeeded" ? "原生引擎报告下载成功" : "原生引擎报告下载未成功");

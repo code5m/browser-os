@@ -41,6 +41,15 @@ type TabAction =
   | { kind: "retire_renderer"; id: string; pid: number; spawn_epoch: string; confirmed: true };
 export type RendererRecoveryTarget = { id: string; pid: number; spawn_epoch: string };
 export type RendererState = "ready" | "not_ready" | "cleanup_pending" | "absent" | "hibernated";
+export type RendererDownloadObservation = {
+  pid: number; spawn_epoch: string; renderer_generation: string;
+  connection_current: boolean; requested: number; succeeded: number;
+  failed: number; observed_unfinished: number | null;
+};
+export type RendererDownloadEvent = Omit<RendererDownloadObservation, "connection_current"> & {
+  id: string; phase: "requested" | "succeeded" | "failed" | "owner_retired";
+  outcome?: "unknown";
+};
 type TabReceipt = {
   ticket: string; client_id: string; command: string;
   phase: "prepared" | "running" | "cancel_requested" | "succeeded" | "failed" | "cancelled" | "unknown";
@@ -54,6 +63,7 @@ type TabOwnerView = {
   renderer_recovery_target?: RendererRecoveryTarget | null;
   isolated_renderer_mode?: boolean;
   renderer_state?: RendererState | null;
+  renderer_download?: RendererDownloadObservation | null;
 };
 const terminalTabReceipt = (r: TabReceipt) => ["succeeded", "failed", "cancelled"].includes(r.phase);
 const receiptDelay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -1175,8 +1185,8 @@ export const bridge = {
   // Advisory recovery invalidation shared by screenshot and tab mutation owners.
   onIsolatedRendererRecoveryChanged: (cb: (event: { id: string }) => void) =>
     listen<{ id: string }>("isolated-tab-renderer-recovery-changed", (e) => cb(e.payload)),
-  onIsolatedDownload: (cb: (event: { id: string; pid: number; spawn_epoch: string; phase: "requested" | "succeeded" | "failed" }) => void) =>
-    listen<{ id: string; pid: number; spawn_epoch: string; phase: "requested" | "succeeded" | "failed" }>("isolated-renderer-download", (e) => cb(e.payload)),
+  onIsolatedDownload: (cb: (event: RendererDownloadEvent) => void) =>
+    listen<RendererDownloadEvent>("isolated-renderer-download", (e) => cb(e.payload)),
 
   // ====== M1-4 默认浏览器接入（外部打开 URL 路由） ======
   // 拉取并清空后端 pending 队列（冷启动 argv / 单实例转发 / RunEvent::Opened
