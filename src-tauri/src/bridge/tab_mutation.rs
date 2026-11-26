@@ -8,7 +8,7 @@ use serde_json::Value;
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, Webview};
-use tauri_plugin_browser_tabs::{TabInstance, TabManagerState};
+use tauri_plugin_browser_tabs::{CaptureDocument, TabInstance, TabManagerState};
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -76,13 +76,44 @@ impl Action {
             }
         }
     }
+    fn is_document_mutation(&self) -> bool {
+        matches!(self, Self::Open { .. } | Self::Back { .. } | Self::Forward { .. } | Self::Reload { .. })
+    }
+
     fn execute(self, webview: Webview, app: AppHandle, binding: &Binding) -> Result<Value, String> {
-        if let Binding::IsolatedDocument(document) = binding {
-            self.authorize(&webview)?;
-            let state = app.state::<crate::AppState>();
-            if state.shutdown_requested.load(std::sync::atomic::Ordering::Acquire) {
-                return Err("TAB_APPLICATION_SHUTTING_DOWN".into());
+        self.authorize(&webview)?;
+        let state = app.state::<crate::AppState>();
+        if state.shutdown_requested.load(std::sync::atomic::Ordering::Acquire) {
+            return Err("TAB_APPLICATION_SHUTTING_DOWN".into());
+        }
+        if let Self::Close { ref id } = self {
+            let admitted = match binding {
+                Binding::Live(instance) => super::TabCloseAdmission::Embedded(instance),
+                Binding::Isolated(owner) => super::TabCloseAdmission::Isolated(*owner),
+                Binding::Hibernated => super::TabCloseAdmission::Hibernated,
+                _ => return Err("TAB_MUTATION_INSTANCE_STALE".into()),
+            };
+            return super::close_tab_admitted(&app, id, Some(admitted)).map(|_| Value::Null);
+        }
+        if let Binding::LiveDocument(document) = binding {
+            let (id, js) = match self {
+                Self::Open { id, url } => return tab_open_document(&app, &id, &url, document).map(|_| Value::Null),
+                Self::Back { id } => (id, "if (history.length > 1) { history.back(); }"),
+                Self::Forward { id } => (id, "history.forward();"),
+                Self::Reload { id } => (id, "location.reload();"),
+                _ => return Err("TAB_MUTATION_INSTANCE_STALE".into()),
+            };
+            app.state::<TabManagerState>().eval_navigation_document(&id, document, js)
+                .map_err(|error| error.to_string())?;
+            state.hibernated_scroll.lock().unwrap().remove(&id);
+            return Ok(Value::Null);
+        }
+        if let Binding::Isolated(expected) = binding {
+            if let Self::Activate { ref id } = self {
+                return tab_activate_admitted(webview, app.clone(), id.clone(), Some(*expected)).map(|_| Value::Null);
             }
+        }
+        if let Binding::IsolatedDocument(document) = binding {
             return match self {
                 Self::Open { id, url } => tab_open_admitted(webview, app.clone(), id, url, Some(*document)).map(|_| Value::Null),
                 Self::Back { id } => super::isolated_tabs::eval_bound(&app, &id, "if (history.length > 1) { history.back(); }", *document).map(|_| Value::Null),
@@ -91,6 +122,7 @@ impl Action {
                 _ => Err("TAB_MUTATION_INSTANCE_STALE".into()),
             };
         }
+        drop(state);
         match self {
             Self::New { url } => serde_json::to_value(tab_new_impl(webview, app, url)?)
                 .map_err(|_| "TAB_RECEIPT_SERIALIZATION_FAILED".into()),
@@ -146,6 +178,7 @@ pub(crate) struct Receipt {
 enum Binding {
     New,
     Live(TabInstance),
+    LiveDocument(CaptureDocument),
     Isolated(Option<(u32, u64)>),
     IsolatedDocument(crate::grid_ipc::RendererBinding),
     Hibernated,
@@ -175,7 +208,7 @@ impl Binding {
             if owner.is_none() && !matches!(action, Action::Activate { .. } | Action::Close { .. }) {
                 return Err("TAB_RENDERER_RECOVERY_REQUIRED".into());
             }
-            if matches!(action, Action::Open { .. } | Action::Back { .. } | Action::Forward { .. } | Action::Reload { .. }) {
+            if action.is_document_mutation() {
                 let binding = state.grid_manager.renderer_binding(index)?;
                 if Some(binding.owner) != owner {
                     return Err("TAB_MUTATION_INSTANCE_STALE".into());
@@ -190,7 +223,15 @@ impl Binding {
             .map_err(|_| "TAB_MUTATION_INSTANCE_UNAVAILABLE")?
             .contains(id)
         {
+            if action.is_document_mutation() {
+                return Err("TAB_RENDERER_HIBERNATED_ACTIVATE_FIRST".into());
+            }
             return Ok(Self::Hibernated);
+        }
+        if action.is_document_mutation() {
+            return app.state::<TabManagerState>().capture_document(&id.to_owned())
+                .map(Self::LiveDocument)
+                .map_err(|_| "TAB_MUTATION_INSTANCE_UNAVAILABLE".into());
         }
         app.state::<TabManagerState>()
             .instance(&id.to_owned())
@@ -203,6 +244,9 @@ impl Binding {
             (Self::Live(instance), Some(id)) => app
                 .state::<TabManagerState>()
                 .is_current_instance(&id.to_owned(), instance),
+            (Self::LiveDocument(document), Some(id)) => app
+                .state::<TabManagerState>()
+                .is_current_capture_document(&id.to_owned(), document),
             (Self::Isolated(expected), Some(id)) => {
                 super::isolated_tabs::route(id).is_some_and(|index| {
                     let state = app.state::<crate::AppState>();
@@ -594,7 +638,7 @@ fn matching<'a>(state: &'a mut Owner, ticket: &str) -> Result<&'a mut Slot, Stri
         .ok_or_else(|| "TAB_MUTATION_STALE_TICKET".into())
 }
 fn completion_unknown(error: &str) -> bool {
-    error.contains("GRID_REQUEST_OUTCOME_UNKNOWN") || matches!(
+    error.contains("GRID_REQUEST_OUTCOME_UNKNOWN") || error.contains("TAB_RENDERER_CLEANUP_PENDING") || matches!(
         error,
         "TAB_CREATE_CALLBACK_LOST" | "TAB_ACTIVATION_CALLBACK_LOST"
     )
@@ -954,16 +998,26 @@ pub(crate) fn tab_mutation(
 
 // Keep the old trusted command contract for compatibility without giving it
 // a second admission lane. A legacy command does not expose replayable results.
-pub(super) async fn legacy<T: Send + 'static>(
-    webview: Webview,
-    command: &'static str,
-    operation: impl FnOnce(Webview) -> Result<T, String> + Send + 'static,
+pub(super) async fn legacy_action<T: serde::de::DeserializeOwned + Send + 'static>(
+    webview: Webview, app: AppHandle, action: Action,
 ) -> Result<T, String> {
-    crate::shared::native_legacy_policy::require_main(&webview, command)?;
+    action.authorize(&webview)?;
     let ticket = uuid::Uuid::new_v4().to_string();
+    // As with Prepare, reserve admission across native identity capture,
+    // without holding the Owner mutex across native locks.
+    let reservation = {
+        let mut state = owner()?;
+        state.expire_prepared();
+        if state.slot.is_some() || state.internal_active || state.recovery_claimed {
+            return Err("TAB_MUTATION_OWNER_BUSY".into());
+        }
+        state.internal_active = true;
+        Some(InternalMutation)
+    };
+    let binding = Binding::capture(&app, &action)?;
     {
         let mut state = owner()?;
-        if state.slot.is_some() || state.internal_active || state.recovery_claimed {
+        if state.slot.is_some() || !state.internal_active || state.recovery_claimed {
             return Err("TAB_MUTATION_OWNER_BUSY".into());
         }
         state.advance_sequence()?;
@@ -971,17 +1025,18 @@ pub(super) async fn legacy<T: Send + 'static>(
             receipt: Receipt {
                 ticket: ticket.clone(),
                 client_id: "legacy".into(),
-                command,
+                command: action.command(),
                 phase: Phase::Running,
                 value: None,
                 error: None,
             },
-            action: None,
-            binding: None,
+            action: Some(action.clone()),
+            binding: Some(binding.clone()),
             since: std::time::Instant::now(),
             entered: false,
         });
     }
+    drop(reservation);
     tauri::async_runtime::spawn_blocking(move || {
         let mut guard = WorkerGuard {
             ticket: ticket.clone(),
@@ -996,22 +1051,21 @@ pub(super) async fn legacy<T: Send + 'static>(
             guard.completed = true;
             return Err("TAB_MUTATION_CANCELLED_BEFORE_EXECUTION".into());
         }
-        let result = operation(webview);
-        if result
-            .as_ref()
-            .is_err_and(|error| completion_unknown(error))
-        {
+        let result = if binding.current(&app, &action) {
+            action.execute(webview, app, &binding)
+                .and_then(|value| serde_json::from_value::<T>(value)
+                    .map_err(|_| "GRID_REQUEST_OUTCOME_UNKNOWN: legacy receipt decoding rejected".into()))
+        } else {
+            Err("TAB_MUTATION_INSTANCE_STALE".into())
+        };
+        if result.as_ref().is_err_and(|error| completion_unknown(error)) {
             unknown(&ticket);
         } else if let Ok(mut state) = owner() {
-            if matching(&mut state, &ticket).is_ok() {
-                state.slot = None;
-            }
+            if matching(&mut state, &ticket).is_ok() { state.slot = None; }
         }
         guard.completed = true;
         result
-    })
-    .await
-    .map_err(|_| "TAB_MUTATION_WORKER_UNKNOWN".to_string())?
+    }).await.map_err(|_| "TAB_MUTATION_WORKER_UNKNOWN".to_string())?
 }
 
 pub(crate) fn tab_mutation_diagnostic() -> Value {

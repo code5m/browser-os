@@ -59,10 +59,7 @@ pub async fn tab_new(
     app: AppHandle,
     url: String,
 ) -> Result<TabInfo, String> {
-    super::tab_mutation::legacy(webview, "tab_new", move |webview| {
-        tab_new_impl(webview, app, url)
-    })
-    .await
+    super::tab_mutation::legacy_action(webview, app, super::tab_mutation::Action::New { url }).await
 }
 
 pub(crate) fn tab_new_impl(
@@ -85,10 +82,7 @@ pub(crate) fn tab_close_native(app: AppHandle, id: String) -> Result<(), String>
 }
 #[tauri::command]
 pub async fn tab_close(webview: tauri::Webview, app: AppHandle, id: String) -> Result<(), String> {
-    super::tab_mutation::legacy(webview, "tab_close", move |webview| {
-        tab_close_impl(webview, app, id)
-    })
-    .await
+    super::tab_mutation::legacy_action(webview, app, super::tab_mutation::Action::Close { id }).await
 }
 
 pub(crate) fn tab_close_impl(
@@ -109,10 +103,7 @@ pub async fn tab_open(
     id: String,
     url: String,
 ) -> Result<(), String> {
-    super::tab_mutation::legacy(webview, "tab_open", move |webview| {
-        tab_open_impl(webview, app, id, url)
-    })
-    .await
+    super::tab_mutation::legacy_action(webview, app, super::tab_mutation::Action::Open { id, url }).await
 }
 
 pub(crate) fn tab_open_impl(
@@ -166,6 +157,33 @@ pub(super) fn tab_open_admitted(
     if let Some(t) = tabs.get_mut(&id) {
         t.url = target.clone();
     }
+    Ok(())
+}
+
+/// Prepared embedded navigation uses the admitted document and never
+/// destroys/recreates a page on a stale or failed navigation dispatch.
+pub(super) fn tab_open_document(
+    app: &AppHandle, id: &str, url: &str, document: &tauri_plugin_browser_tabs::CaptureDocument,
+) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    if state.shutdown_requested.load(Ordering::Acquire) || super::isolated_tabs::route(id).is_some() {
+        return Err("TAB_MUTATION_INSTANCE_STALE".into());
+    }
+    let target = normalize_url(url);
+    Url::parse(&target).map_err(|_| "TAB_URL_INVALID")?;
+    let previous = state.tabs.lock().unwrap().get(id).map(|tab| tab.url.clone())
+        .ok_or("TAB_NOT_FOUND")?;
+    app.state::<tauri_plugin_browser_tabs::TabManagerState>()
+        .navigate_document(&id.to_owned(), document, &target)
+        .map_err(|error| error.to_string())?;
+    state.hibernated_scroll.lock().unwrap().remove(id);
+    let mut tabs = state.tabs.lock().unwrap();
+    if state.shutdown_requested.load(Ordering::Acquire) {
+        return Err("GRID_REQUEST_OUTCOME_UNKNOWN: navigation dispatched during shutdown".into());
+    }
+    let tab = tabs.get_mut(id).ok_or("GRID_REQUEST_OUTCOME_UNKNOWN: navigation owner removed")?;
+    // Do not overwrite a more recent native URL observation.
+    if tab.url == previous { tab.url = target; }
     Ok(())
 }
 
@@ -1040,10 +1058,7 @@ pub async fn tab_go_back(
     app: AppHandle,
     id: String,
 ) -> Result<(), String> {
-    super::tab_mutation::legacy(webview, "tab_go_back", move |webview| {
-        tab_go_back_impl(webview, app, id)
-    })
-    .await
+    super::tab_mutation::legacy_action(webview, app, super::tab_mutation::Action::Back { id }).await
 }
 
 pub(crate) fn tab_go_back_impl(
@@ -1065,10 +1080,7 @@ pub async fn tab_go_forward(
     app: AppHandle,
     id: String,
 ) -> Result<(), String> {
-    super::tab_mutation::legacy(webview, "tab_go_forward", move |webview| {
-        tab_go_forward_impl(webview, app, id)
-    })
-    .await
+    super::tab_mutation::legacy_action(webview, app, super::tab_mutation::Action::Forward { id }).await
 }
 
 pub(crate) fn tab_go_forward_impl(
@@ -1086,10 +1098,7 @@ pub(crate) fn tab_go_forward_impl(
 /// 刷新当前激活页签的 webview（location.reload）。
 #[tauri::command]
 pub async fn tab_reload(webview: tauri::Webview, app: AppHandle, id: String) -> Result<(), String> {
-    super::tab_mutation::legacy(webview, "tab_reload", move |webview| {
-        tab_reload_impl(webview, app, id)
-    })
-    .await
+    super::tab_mutation::legacy_action(webview, app, super::tab_mutation::Action::Reload { id }).await
 }
 
 pub(crate) fn tab_reload_impl(
@@ -1198,10 +1207,7 @@ pub async fn tab_activate(
     app: AppHandle,
     id: String,
 ) -> Result<(), String> {
-    super::tab_mutation::legacy(webview, "tab_activate", move |webview| {
-        tab_activate_impl(webview, app, id)
-    })
-    .await
+    super::tab_mutation::legacy_action(webview, app, super::tab_mutation::Action::Activate { id }).await
 }
 
 pub(crate) fn tab_activate_impl(
@@ -1209,14 +1215,24 @@ pub(crate) fn tab_activate_impl(
     app: AppHandle,
     id: String,
 ) -> Result<(), String> {
+    tab_activate_admitted(webview, app, id, None)
+}
+
+pub(super) fn tab_activate_admitted(
+    webview: tauri::Webview,
+    app: AppHandle,
+    id: String,
+    admitted: Option<Option<(u32, u64)>>,
+) -> Result<(), String> {
     crate::shared::native_legacy_policy::require_main(&webview, "tab_activate")?;
     crate::shared::native_legacy_policy::bound_text("tab_activate", "id", &id)?;
     use crate::shared::dispatch_receipt::{DispatchReceipt, WaitError};
     let receipt = std::sync::Arc::new(DispatchReceipt::new()?);
     let _transition = reserve_tab_transition(&id)?;
     if super::isolated_tabs::route(&id).is_some() {
-        return super::isolated_tabs::activate(&app, &id);
+        return super::isolated_tabs::activate_admitted(&app, &id, admitted);
     }
+    if admitted.is_some() { return Err("TAB_RENDERER_ACTIVATION_STALE".into()); }
 
     {
         let state = app.state::<AppState>();

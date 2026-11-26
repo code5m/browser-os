@@ -334,7 +334,7 @@ export const useBrowserStore = defineStore("browser", () => {
             const value = await operation();
             if (!owner.unknown) resolve(value);
           } catch (error) {
-            if (/TAB_MUTATION_OWNER_BUSY|TAB_MUTATION_STALE_|TAB_CONTROL_|TAB_MUTATION_NATIVE_EPOCH_CHANGED|TAB_MUTATION_ACK_UNKNOWN|TAB_MUTATION_OUTCOME_UNKNOWN|TAB_MUTATION_TERMINAL_FAILURE|BROWSER_CLEANUP_FAILED/.test(String(error))) {
+            if (/TAB_MUTATION_OWNER_BUSY|TAB_MUTATION_STALE_|TAB_CONTROL_|TAB_MUTATION_NATIVE_EPOCH_CHANGED|TAB_MUTATION_ACK_UNKNOWN|TAB_MUTATION_OUTCOME_UNKNOWN|TAB_MUTATION_TERMINAL_FAILURE|TAB_CREATED_ACTIVATION_PARTIAL|TAB_RENDERER_ACTIVATION_PARTIAL|TAB_RENDERER_CLEANUP_PENDING|BROWSER_CLEANUP_FAILED/.test(String(error))) {
               tabRecoveryRequired.value = true;
               tabRecoveryMessage.value = "原生执行记录需核对；请使用页签恢复。";
               for (const queued of waitingMutations.splice(0)) rejectWaiting(queued);
@@ -555,7 +555,12 @@ export const useBrowserStore = defineStore("browser", () => {
             }
           } catch (error) {
             if (isolatedRendererMode.value) void refreshRendererState(activateNext);
-            throw error;
+            // The close already has its native success receipt. The next
+            // activation is a separate effect; do not report close failure.
+            tabRecoveryRequired.value = true;
+            tabRecoveryMessage.value = "页签已关闭；下一页签激活未确认，请核对原生状态。";
+            for (const queued of waitingMutations.splice(0)) rejectWaiting(queued);
+            layout.showToast("页签已关闭，但下一页签激活失败，请核对状态。");
           }
         }
       } finally {

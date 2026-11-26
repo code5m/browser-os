@@ -176,6 +176,10 @@ fn recover_tab_webview(
         || source_error.contains("TAB_LIFECYCLE_BUSY")
         || source_error.contains("TAB_LAYOUT_BUSY")
         || source_error.contains("TAB_LAYOUT_SUPERSEDED")
+        || source_error.contains("TAB_INSTANCE_STALE")
+        || source_error.contains("TAB_DOCUMENT_STALE")
+        || source_error.contains("TAB_MUTATION_INSTANCE_STALE")
+        || source_error.contains("GRID_REQUEST_OUTCOME_UNKNOWN")
     {
         return Err(source_error.to_string());
     }
@@ -191,6 +195,9 @@ fn recover_tab_webview(
         .get(id)
         .map(|t| t.url.clone())
         .ok_or_else(|| format!("{source_error}; 页签元数据不存在"))?;
+    if !crate::grid_ipc::restorable_address(&url) {
+        return Err("TAB_RESTORE_URL_UNSUPPORTED".into());
+    }
     let layout = state.child_layouts.lock().unwrap().get(id).copied();
     let attempt = {
         let mut budgets = state.tab_recovery.lock().unwrap();
@@ -469,22 +476,40 @@ mod normalize_url_tests {
     }
 }
 
+enum TabCloseAdmission<'a> {
+    Embedded(&'a tauri_plugin_browser_tabs::TabInstance),
+    Isolated(Option<(u32, u64)>),
+    Hibernated,
+}
+
 fn close_tab(app: &AppHandle, id: &str) -> Result<(), String> {
+    close_tab_admitted(app, id, None)
+}
+
+fn close_tab_admitted(app: &AppHandle, id: &str, admitted: Option<TabCloseAdmission<'_>>) -> Result<(), String> {
     let _transition = tab_runtime::reserve_tab_transition(id)?;
     let state = app.state::<AppState>();
-    // 销毁对应子 webview（插件内部走 dispatcher，跨线程安全）
     let close_result = if let Some(index) = isolated_tabs::route(id) {
-        state.grid_manager.close_tab_renderer(index, true)
+        match admitted {
+            Some(TabCloseAdmission::Isolated(expected)) =>
+                state.grid_manager.close_tab_renderer_bound(index, true, expected),
+            None => state.grid_manager.close_tab_renderer(index, true),
+            _ => Err("TAB_MUTATION_INSTANCE_STALE".into()),
+        }
     } else if state.hibernated_tabs.lock().unwrap().contains(id) {
-        // Hibernation already released the native instance. The transition
-        // guard prevents activation from recreating it during this cleanup.
-        Ok(())
+        match admitted {
+            None | Some(TabCloseAdmission::Hibernated) => Ok(()),
+            _ => Err("TAB_MUTATION_INSTANCE_STALE".into()),
+        }
     } else {
         use tauri_plugin_browser_tabs::TabManagerState;
         let manager = app.state::<TabManagerState>();
-        manager
-            .close_tab(&id.to_string())
-            .map_err(|e| format!("关闭子 webview {id} 失败: {e}"))
+        let result = match admitted {
+            Some(TabCloseAdmission::Embedded(instance)) => manager.close_tab_instance(&id.to_owned(), instance),
+            None => manager.close_tab(&id.to_owned()),
+            _ => return Err("TAB_MUTATION_INSTANCE_STALE".into()),
+        };
+        result.map_err(|error| format!("native tab close failed: {error}"))
     };
     // A failed close keeps every owner record and draft available for retry.
     // Do not issue a successful cleanup receipt while the WebView still exists.
@@ -504,7 +529,11 @@ fn close_tab(app: &AppHandle, id: &str) -> Result<(), String> {
     state.resource_buffer.lock().unwrap().remove_tab(id);
     // M1-9：释放会话草稿（未显式保存的不落盘，符合「不静默保存」）
     state.session_drafts.lock().unwrap().remove(id);
-    state.tabs.lock().unwrap().remove(id);
+    let next = {
+        let mut tabs = state.tabs.lock().unwrap();
+        tabs.remove(id);
+        tabs.keys().next().cloned()
+    };
     let mut active = state.active_tab.lock().unwrap();
     if active.as_deref() == Some(id) {
         // Independent hosts are explicitly activated by Browser Owner. An
@@ -512,7 +541,7 @@ fn close_tab(app: &AppHandle, id: &str) -> Result<(), String> {
         *active = if isolated_tabs::route(id).is_some() {
             None
         } else {
-            state.tabs.lock().unwrap().keys().next().cloned()
+            next
         };
     }
     Ok(())

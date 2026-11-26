@@ -38,6 +38,8 @@ impl GridProcessManager {
     pub(crate) fn select_tab_renderer(&self, _index: u32, _others: &[u32]) -> Result<(), String> {
         Err(unsupported())
     }
+    pub(crate) fn select_tab_renderer_bound(&self, _target: crate::grid_ipc::RendererBinding, _others: &[u32]) -> Result<(), String> { Err(unsupported()) }
+    pub(crate) fn close_tab_renderer_bound(&self, _index: u32, _release_listener: bool, _expected: Option<(u32, u64)>) -> Result<(), String> { Err(unsupported()) }
     pub(crate) fn publish_tab_renderer_info(&self, _index: u32, _info: crate::domain::TabInfo)
         -> Result<crate::domain::TabInfo, String> {
         Err(unsupported())

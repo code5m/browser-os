@@ -75,12 +75,17 @@ pub(super) fn create(app: &AppHandle, url: &str) -> Result<TabInfo, String> {
             };
         }
     };
-    // A failure here is a partial activation, not a claim creation never ran.
-    select(app, &id)?;
+    // The tab is already published. Report the partial outcome explicitly
+    // so the UI reconciles its logical list instead of creating a duplicate.
+    let selection = state.grid_manager.renderer_binding(index)
+        .and_then(|target| select_bound(app, &id, target));
+    if let Err(error) = selection {
+        return Err(format!("TAB_CREATED_ACTIVATION_PARTIAL:{id}:{error}"));
+    }
     Ok(info)
 }
 
-fn select(app: &AppHandle, id: &str) -> Result<(), String> {
+fn select_bound(app: &AppHandle, id: &str, target: crate::grid_ipc::RendererBinding) -> Result<(), String> {
     check_running(app)?;
     let state = app.state::<AppState>();
     let ids: Vec<String> = state.tabs.lock().unwrap().keys().cloned().collect();
@@ -91,7 +96,8 @@ fn select(app: &AppHandle, id: &str) -> Result<(), String> {
     let others = ids.iter().filter(|other| other.as_str() != id)
         .map(|other| route(other).ok_or("TAB_RENDERER_MIXED_BACKEND_UNSUPPORTED"))
         .collect::<Result<Vec<_>, _>>()?;
-    state.grid_manager.select_tab_renderer(index, &others)?;
+    if target.index != index { return Err("TAB_RENDERER_ACTIVATION_STALE".into()); }
+    state.grid_manager.select_tab_renderer_bound(target, &others)?;
     let mut idle = state.tab_idle_since.lock().unwrap();
     idle.remove(id);
     let now = std::time::Instant::now();
@@ -134,10 +140,14 @@ pub(super) fn hibernate_blank(app: &AppHandle, id: &str, idle_window: std::time:
 
 /// An explicit activation may restore a crashed tab from its last URL after
 /// original native retirement. It never silently reloads a healthy document.
-pub(super) fn activate(app: &AppHandle, id: &str) -> Result<(), String> {
+pub(super) fn activate_admitted(app: &AppHandle, id: &str, admitted: Option<Option<(u32, u64)>>) -> Result<(), String> {
     let index = exists(app, id)?;
     let state = app.state::<AppState>();
-    if state.grid_manager.tab_renderer_owner(index)?.is_none() {
+    let owner = state.grid_manager.tab_renderer_owner(index)?;
+    if admitted.is_some_and(|expected| expected != owner) {
+        return Err("TAB_RENDERER_ACTIVATION_STALE".into());
+    }
+    let binding = if owner.is_none() {
         let url = state.tabs.lock().unwrap().get(id).map(|tab| tab.url.clone())
             .ok_or("TAB_NOT_FOUND")?;
         // A crash is not authorization to re-execute a transient document
@@ -146,17 +156,23 @@ pub(super) fn activate(app: &AppHandle, id: &str) -> Result<(), String> {
             return Err("TAB_RESTORE_URL_UNSUPPORTED".into());
         }
         state.grid_manager.start_tab_renderer(index, &url)?;
+        let binding = state.grid_manager.renderer_binding(index)?;
         state.hibernated_tabs.lock().unwrap().remove(id);
+        binding
     } else {
         let binding = state.grid_manager.renderer_binding(index)?;
+        if Some(binding.owner) != owner {
+            return Err("TAB_RENDERER_ACTIVATION_STALE".into());
+        }
         state.grid_manager.renderer_request_data(binding, GridCmd::Ping, 3000)?;
         if state.grid_manager.renderer_binding(index)? != binding {
             return Err("TAB_RENDERER_ACTIVATION_STALE".into());
         }
         state.hibernated_tabs.lock().unwrap().remove(id);
-    }
+        binding
+    };
     // The normal frontend position command supplies the new active rectangle.
-    select(app, id)
+    select_bound(app, id, binding)
 }
 
 pub(super) fn navigate(app: &AppHandle, id: &str, url: &str) -> Result<(), String> {

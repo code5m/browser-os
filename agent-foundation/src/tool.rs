@@ -294,6 +294,7 @@ impl ToolRegistry {
         if timeout.is_zero() || timeout > Duration::from_secs(120) {
             return Err(FoundationError::InvalidInput("tool timeout"));
         }
+        let deadline = tokio::time::Instant::now() + timeout;
         if !tasks.active_at_revision(permit.task_id, permit.revision) {
             return Err(FoundationError::PermissionDenied);
         }
@@ -327,6 +328,9 @@ impl ToolRegistry {
             return Err(FoundationError::PermissionDenied);
         }
 
+        if tokio::time::Instant::now() >= deadline {
+            return Err(FoundationError::Timeout);
+        }
         if effectful && !tool.supports_idempotency() {
             return Err(FoundationError::PermissionDenied);
         }
@@ -372,6 +376,14 @@ impl ToolRegistry {
                     return Err(FoundationError::PermissionDenied);
                 }
                 tool.validate_binding(binding, &permit.operation.arguments)?;
+                let after_validation = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|_| FoundationError::PermissionDenied)?.as_millis();
+                if after_validation >= u128::from(binding.expires_at_unix_ms) {
+                    return Err(FoundationError::PermissionDenied);
+                }
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Err(FoundationError::Timeout);
             }
             if !_lease.is_active() || *cancellation.borrow_and_update() {
                 return Err(FoundationError::Cancelled);
@@ -398,7 +410,7 @@ impl ToolRegistry {
         let result = tokio::select! {
             biased;
             _ = cancellation.changed() => Err(FoundationError::Cancelled),
-            _ = tokio::time::sleep(timeout) => Err(FoundationError::Timeout),
+            _ = tokio::time::sleep_until(deadline) => Err(FoundationError::Timeout),
             response = future => response,
         };
         // Reject stale results from paused/cancelled/completed/restarted work.

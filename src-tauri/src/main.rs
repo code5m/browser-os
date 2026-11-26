@@ -681,10 +681,11 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
             std::process::exit(1);
         }
         let _ = CHILD_CRITICAL.set(critical_send);
-        if grid_ipc::is_tab_renderer(index) {
+        {
+            // Grid and ordinary renderers both emit advisory bridge events.
             let (send, recv) = std::sync::mpsc::sync_channel::<grid_ipc::Wire>(32);
             let report_writer = writer.clone();
-            if std::thread::Builder::new().name("tab-renderer-reports".into()).spawn(move || {
+            if std::thread::Builder::new().name("renderer-advisory-reports".into()).spawn(move || {
                 loop {
                     // Never hold the callback's coalescing lock during IPC.
                     let latest = LATEST_DOWNLOAD_REPORT.lock().unwrap_or_else(|p| p.into_inner()).take();
@@ -696,8 +697,8 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
                     match recv.recv_timeout(std::time::Duration::from_millis(100)) {
                         Ok(report) => {
                             if let Err(error) = write_child_frame(&report_writer, &report) {
-                            if error != "GRID_CHILD_FRAME_REJECTED" { std::process::exit(1); }
-                        }
+                                if error != "GRID_CHILD_FRAME_REJECTED" { std::process::exit(1); }
+                            }
                         }
                         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
                         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
@@ -796,11 +797,19 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
                 let payload: serde_json::Value =
                     serde_json::from_str(event.payload()).unwrap_or(serde_json::Value::Null);
                 if grid_ipc::valid_renderer_event(index, &name_owned, &payload) {
-                    let report = grid_ipc::Wire::Event { name: name_owned.clone(), payload };
-                    // Optional bridge notifications can be dropped locally
-                    // when oversized, but never send a truncated frame.
-                    if grid_ipc::encode_wire(&report).is_ok() {
-                        enqueue_child_critical(report);
+                    if name_owned == "grid-load-failed" {
+                        // A valid load-failure observation participates in
+                        // document-bound retry ordering. Keep it on the
+                        // critical lane, with a bounded normalized payload.
+                        let report = serde_json::json!({
+                            "index": index.to_string(), "url": payload["url"],
+                            "error": "renderer load failed",
+                        });
+                        grid_child_send_event(&name_owned, report);
+                    } else {
+                        // Optional bridge notifications are best effort. The
+                        // report worker enforces the encoded frame bound.
+                        enqueue_renderer_report(&name_owned, payload);
                     }
                 }
             });

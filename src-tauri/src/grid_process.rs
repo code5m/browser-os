@@ -1658,6 +1658,18 @@ impl GridProcessManager {
     /// Retire only this route. Retain the same listener across an explicit
     /// recovery so process/connection generations cannot reset.
     pub(crate) fn close_tab_renderer(&self, index: u32, release_listener: bool) -> Result<(), String> {
+        self.close_tab_renderer_admitted(index, release_listener, None)
+    }
+
+    pub(crate) fn close_tab_renderer_bound(&self, index: u32, release_listener: bool,
+        expected: Option<(u32, u64)>,
+    ) -> Result<(), String> {
+        self.close_tab_renderer_admitted(index, release_listener, Some(expected))
+    }
+
+    fn close_tab_renderer_admitted(&self, index: u32, release_listener: bool,
+        expected: Option<Option<(u32, u64)>>,
+    ) -> Result<(), String> {
         if !crate::grid_ipc::is_tab_renderer(index) {
             return Err("TAB_RENDERER_ROUTE_INVALID".into());
         }
@@ -1666,12 +1678,24 @@ impl GridProcessManager {
         self.lifecycle.ensure_cleanup(Arc::clone(&self.children), Arc::clone(&self.listeners))?;
         let _gate = self.lifecycle_lock.lock().unwrap();
         self.lifecycle.check()?;
+        {
+            let mut children = self.children.lock().unwrap();
+            if let Some(expected) = expected {
+                let actual = children.get(&index).map(|child|
+                    (child.child.id(), child.comms.spawn_epoch.load(Ordering::SeqCst)));
+                if actual != expected {
+                    return Err("TAB_RENDERER_CLOSE_TARGET_STALE".into());
+                }
+            }
+            // Publish retirement before releasing the live-map lock:
+            // inspect_renderer must not observe a false clean absence.
+            if let Some(owner) = children.remove(&index) {
+                self.lifecycle.retire(index, owner);
+            }
+        }
         self.crash_history.lock().unwrap().remove(&index);
         self.hibernated.lock().unwrap().remove(&index);
         self.pending_restarts.lock().unwrap().remove(&index);
-        if let Some(owner) = self.children.lock().unwrap().remove(&index) {
-            self.lifecycle.retire(index, owner);
-        }
         self.lifecycle.wait_route_retired_until(
             index, std::time::Instant::now() + std::time::Duration::from_secs(3),
         )?;
@@ -1820,6 +1844,11 @@ impl GridProcessManager {
     }
 
     pub(crate) fn select_tab_renderer(&self, index: u32, others: &[u32]) -> Result<(), String> {
+        self.select_tab_renderer_bound(self.renderer_binding(index)?, others)
+    }
+
+    pub(crate) fn select_tab_renderer_bound(&self, target: crate::grid_ipc::RendererBinding, others: &[u32]) -> Result<(), String> {
+        let index = target.index;
         if !crate::grid_ipc::is_tab_renderer(index)
             || others.iter().any(|id| *id == index || !crate::grid_ipc::is_tab_renderer(*id))
         {
@@ -1828,7 +1857,10 @@ impl GridProcessManager {
         let _dispatch = self.visibility_dispatch.lock().unwrap_or_else(|p| p.into_inner());
         let app = self.app().ok_or("TAB_RENDERER_HOST_UNAVAILABLE")?;
         let state = app.state::<crate::bridge::AppState>();
-        let target = self.renderer_binding(index)?;
+        let current = self.renderer_binding(index)?;
+        if current.owner != target.owner || current.generation != target.generation {
+            return Err("TAB_RENDERER_ACTIVATION_STALE".into());
+        }
         let peers: Vec<_> = others.iter().map(|&other| (other, self.capture_window_route(other))).collect();
         let mut failures = Vec::new();
         for (other, target) in peers {
@@ -1854,7 +1886,11 @@ impl GridProcessManager {
         {
             return Err("TAB_RENDERER_ACTIVATION_STALE".into());
         }
-        *state.active_tab.lock().unwrap() = Some(crate::grid_ipc::renderer_label(index));
+        let label = crate::grid_ipc::renderer_label(index);
+        if !state.tabs.lock().unwrap().contains_key(&label) {
+            return Err("TAB_RENDERER_ACTIVATION_STALE".into());
+        }
+        *state.active_tab.lock().unwrap() = Some(label);
         Ok(())
     }
 

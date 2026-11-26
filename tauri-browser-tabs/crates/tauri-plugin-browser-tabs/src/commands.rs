@@ -1728,25 +1728,31 @@ impl TabManager {
     }
 
     pub fn close_tab(&self, id: &TabId) -> Result<()> {
-        self.close_tab_bound(id, None)
+        self.close_tab_bound(id, None, None)
     }
 
     pub fn close_tab_document(&self, id: &TabId, document: &CaptureDocument) -> Result<()> {
-        self.close_tab_bound(id, Some(document))
+        self.close_tab_bound(id, Some(&document.instance), Some(document))
     }
 
-    fn close_tab_bound(&self, id: &TabId, document: Option<&CaptureDocument>) -> Result<()> {
+    pub fn close_tab_instance(&self, id: &TabId, instance: &TabInstance) -> Result<()> {
+        self.close_tab_bound(id, Some(instance), None)
+    }
+
+    fn close_tab_bound(&self, id: &TabId, instance: Option<&TabInstance>, document: Option<&CaptureDocument>) -> Result<()> {
         let _reservation = self.reserve_lifecycle(id)?;
         // A successful native close may outlive its IPC reply. Retrying an
         // already-closed or hibernated tab is successful and creates no resource.
         let tab = self.tabs.read().get(id).cloned();
         let Some(tab) = tab else {
-            return if document.is_some() {
-                Err(BrowserTabError::Platform("TAB_DOCUMENT_STALE".into()))
+            return if instance.is_some() {
+                Err(BrowserTabError::Platform("TAB_INSTANCE_STALE".into()))
             } else { Ok(()) };
         };
-        if document.is_some_and(|expected| !std::sync::Weak::ptr_eq(&expected.instance.0, &Arc::downgrade(&tab))
-            || !expected.observed_generation_is_current()) {
+        if instance.is_some_and(|expected| !std::sync::Weak::ptr_eq(&expected.0, &Arc::downgrade(&tab))) {
+            return Err(BrowserTabError::Platform("TAB_INSTANCE_STALE".into()));
+        }
+        if document.is_some_and(|expected| !expected.observed_generation_is_current()) {
             return Err(BrowserTabError::Platform("TAB_DOCUMENT_STALE".into()));
         }
         // Document-bound close is the automatic hibernation path. Native
@@ -1772,6 +1778,34 @@ impl TabManager {
             .map_err(|_| BrowserTabError::InvalidUrl(url.to_string()))?;
         invalidate_capture_document(&tab.document_revision);
         tab.webview.navigate(url)?;
+        Ok(())
+    }
+
+    /// Prepared navigation cannot silently follow an instance or document
+    /// that was replaced after the user admitted the operation.
+    pub fn navigate_document(&self, id: &TabId, document: &CaptureDocument, url: &str) -> Result<()> {
+        let (_operation, tab) = self.get_tab(id, TabAccessKind::Operation)?;
+        let url: tauri::Url = url.parse()
+            .map_err(|_| BrowserTabError::InvalidUrl(url.to_string()))?;
+        if !std::sync::Weak::ptr_eq(&document.instance.0, &Arc::downgrade(&tab))
+            || !document.observed_generation_is_current() {
+            return Err(BrowserTabError::Platform("TAB_DOCUMENT_STALE".into()));
+        }
+        invalidate_capture_document(&tab.document_revision);
+        tab.webview.navigate(url)?;
+        Ok(())
+    }
+
+    /// History navigation invalidates prior document admission immediately,
+    /// even before the native engine publishes its asynchronous load event.
+    pub fn eval_navigation_document(&self, id: &TabId, document: &CaptureDocument, js: &str) -> Result<()> {
+        let (_operation, tab) = self.get_tab(id, TabAccessKind::Operation)?;
+        if !std::sync::Weak::ptr_eq(&document.instance.0, &Arc::downgrade(&tab))
+            || !document.observed_generation_is_current() {
+            return Err(BrowserTabError::Platform("TAB_DOCUMENT_STALE".into()));
+        }
+        invalidate_capture_document(&tab.document_revision);
+        tab.webview.eval(js)?;
         Ok(())
     }
 
