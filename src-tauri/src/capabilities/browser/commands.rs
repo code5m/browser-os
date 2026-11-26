@@ -461,6 +461,34 @@ pub fn report_resources(
     sp::check_text_field("page_url", &page_url, sp::MAX_TEXT_FIELD_BYTES)
         .map_err(|e| e.to_string())?;
     sp::check_items_count(items.len(), sp::MAX_RESOURCE_ITEMS).map_err(|e| e.to_string())?;
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    if let Some(index) = std::env::var("GRID_CHILD_INDEX").ok().and_then(|v| v.parse::<u32>().ok()) {
+        let id = webview.label();
+        if !crate::grid_ipc::is_tab_renderer(index) || crate::grid_ipc::renderer_label(index) != id {
+            return Err("TAB_RENDERER_ROUTE_INVALID".into());
+        }
+        let actual = webview.url().map_err(|_| "TAB_RENDERER_DOCUMENT_UNAVAILABLE")?.to_string();
+        if actual != page_url || actual.len() > 8192 {
+            return Err("TAB_RENDERER_DOCUMENT_STALE".into());
+        }
+        let mut budget = 96 * 1024usize;
+        let items: Vec<_> = items.into_iter().filter(|item|
+            item.res_type.len() <= 32 && item.absolute.len() <= 8192
+            && (item.absolute.starts_with("http://") || item.absolute.starts_with("https://")))
+            .take(100)
+            .filter_map(|mut item| {
+                item.absolute = sp::redact_sensitive_url(&item.absolute);
+                item.url = item.absolute.clone();
+                let cost = item.absolute.len().saturating_mul(2).saturating_add(item.res_type.len() + 64);
+                if cost > budget { return None; }
+                budget -= cost;
+                Some(item)
+            }).collect();
+        crate::enqueue_renderer_report("browser-resources", serde_json::json!({
+            "id": id, "page_url": actual, "items": items
+        }));
+        return Ok(());
+    }
     let _ = app.emit(
         "browser-resources",
         serde_json::json!({ "page_url": page_url, "items": items }),

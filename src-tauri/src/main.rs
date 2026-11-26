@@ -14,6 +14,8 @@ mod crashlog;
 mod crashlog;
 mod domain;
 mod grid_ipc;
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+mod renderer_services;
 mod gui_regression_receipt;
 #[cfg(target_os = "windows")]
 mod windows_apps;
@@ -426,8 +428,11 @@ fn run_grid_child(index: u32) {
     tauri::Builder::default()
         .plugin(tauri_plugin_browser_tabs::init_with_host(&label_for_plugin))
         .manage(AppState::default())
+        .manage(security_policy::IntentRegistry::new())
         .manage(startup::PendingOpenUrls::default())
         .invoke_handler(tauri::generate_handler![
+            bridge::report_title,
+            crate::capabilities::browser::commands::report_resources,
             bridge::collect_selection,
             bridge::save_note,
             bridge::request_open_terminal,
@@ -498,6 +503,19 @@ fn run_grid_child(index: u32) {
 static CHILD_WRITER: std::sync::OnceLock<std::sync::Arc<std::sync::Mutex<GridStream>>> =
     std::sync::OnceLock::new();
 
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+static RENDERER_REPORTS: std::sync::OnceLock<std::sync::mpsc::SyncSender<grid_ipc::Wire>> =
+    std::sync::OnceLock::new();
+
+/// Resource and title notifications never synchronously write on the native
+/// WebView event thread. Overload drops observations, not lifecycle receipts.
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+pub(crate) fn enqueue_renderer_report(name: &str, payload: serde_json::Value) {
+    if let Some(sender) = RENDERER_REPORTS.get() {
+        let _ = sender.try_send(grid_ipc::Wire::Event { name: name.to_owned(), payload });
+    }
+}
+
 /// 子进程 → 主进程 发异步事件（焦点上报 / 导航 / 新窗口 / 桥命令事件转发）。
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 fn grid_child_send_event(name: &str, payload: serde_json::Value) {
@@ -557,6 +575,20 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
         };
         let mut initial_writer = writer.lock().unwrap();
         let _ = CHILD_WRITER.set(writer.clone());
+        if grid_ipc::is_tab_renderer(index) {
+            let (send, recv) = std::sync::mpsc::sync_channel::<grid_ipc::Wire>(32);
+            let report_writer = writer.clone();
+            if std::thread::Builder::new().name("tab-renderer-reports".into()).spawn(move || {
+                while let Ok(report) = recv.recv() {
+                    if grid_ipc::write_wire(&mut *report_writer.lock().unwrap(), &report).is_err() {
+                        break;
+                    }
+                }
+            }).is_err() {
+                std::process::exit(1);
+            }
+            let _ = RENDERER_REPORTS.set(send);
+        }
 
         // 插件事件（宫格 webview 内导航完成 / window.open）→ 主进程。
         {
@@ -593,13 +625,26 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
                             },
                         );
                     }
+                    Some("resourceReceived") if grid_ipc::is_tab_renderer(index) => {
+                        if let Ok(mut raw) = serde_json::from_value::<bridge::RawResourceEvent>(payload.clone()) {
+                            raw.url = security_policy::redact_sensitive_url(&raw.url);
+                            if raw.method.as_ref().is_some_and(|v| v.len() > 32)
+                                || raw.mime.as_ref().is_some_and(|v| v.len() > 256)
+                            {
+                                return;
+                            }
+                            enqueue_renderer_report("renderer-resource", serde_json::json!({
+                                "id": label, "resource": raw
+                            }));
+                        }
+                    }
                     // 原生 load-failed（TLS/网络错误页，JS 无法感知）→ 主进程自动重试
                     Some("loadFailed") => {
                         let url = payload.get("url").and_then(|u| u.as_str()).unwrap_or("");
                         let err = payload.get("error").and_then(|e| e.as_str()).unwrap_or("");
                         eprintln!(
-                            "[grid-child-{}] loadFailed 转发 url={} err={}",
-                            index, url, err
+                            "[grid-child-{}] loadFailed url_bytes={}",
+                            index, url.len()
                         );
                         let _ = grid_ipc::write_wire(
                             &mut *w.lock().unwrap(),
@@ -648,6 +693,7 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
         // 避免主进程退出后残留置顶孤儿窗口。
         let mut reader = std::io::BufReader::new(stream);
         let mut request_fence = grid_ipc::GridRequestFence::default();
+        let mut renderer_capture = crate::renderer_services::CaptureBuffer::default();
         loop {
             match grid_ipc::read_wire(&mut reader) {
                 Ok(Some(grid_ipc::Wire::Request { seq, cmd })) => {
@@ -656,6 +702,16 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
                         // Do not acknowledge a duplicate sequence or execute a
                         // foreign renderer command. The parent observes disconnect.
                         break;
+                    }
+                    if let Some(result) = crate::renderer_services::dispatch(&app, &mut renderer_capture, &cmd) {
+                        let response = match result {
+                            Ok(data) => grid_ipc::Wire::Response { seq, ok: true, err: None, data },
+                            Err(error) => grid_ipc::Wire::err(seq, error),
+                        };
+                        if grid_ipc::write_wire(&mut *writer.lock().unwrap(), &response).is_err() {
+                            break;
+                        }
+                        continue;
                     }
                     if let grid_ipc::GridCmd::ReadReplies { ref id } = cmd {
                         let reply_writer = writer.clone();
@@ -848,7 +904,9 @@ fn dispatch_grid_cmd(
             }
         }
         GridCmd::Ping => Ok(()),
-        GridCmd::ReadReplies { .. } | GridCmd::HibernationProbe { .. } => {
+        GridCmd::FillCredential { .. } | GridCmd::CaptureStart { .. }
+        | GridCmd::CaptureRead { .. } | GridCmd::CaptureRelease { .. }
+        | GridCmd::ReadReplies { .. } | GridCmd::HibernationProbe { .. } => {
             Err("GRID_ASYNC_ONLY".into())
         }
     }

@@ -7,7 +7,7 @@
 use super::*;
 
 /// 插件上报的原始资源事件（browser-tabs://event payload，未脱敏，仅进程内使用）。
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RawResourceEvent {
     pub url: String,
     pub method: Option<String>,
@@ -187,7 +187,7 @@ pub fn build_resource_received(
     // 未知长度映射：0 视为未知（WebKit content_length 未知时返回 0），不伪造
     let size_bytes = raw.size_bytes.filter(|n| *n > 0);
     let duration_ms = if raw.finished_at >= raw.started_at {
-        Some((raw.finished_at - raw.started_at) as u64)
+        raw.finished_at.checked_sub(raw.started_at).map(|value| value as u64)
     } else {
         None
     };
@@ -247,6 +247,19 @@ pub fn report_title(app: AppHandle, webview: tauri::Webview, title: String) -> R
         return Err("page title must originate from a browser tab".to_string());
     }
     let page_url = webview.url().map_err(|e| e.to_string())?.to_string();
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    if let Some(index) = std::env::var("GRID_CHILD_INDEX").ok().and_then(|v| v.parse::<u32>().ok()) {
+        if crate::grid_ipc::is_tab_renderer(index) && crate::grid_ipc::renderer_label(index) == id {
+            let title = title.trim();
+            if !title.is_empty() && title.len() <= 8192 && page_url.len() <= 8192 {
+                crate::enqueue_renderer_report("tab-title", serde_json::json!({
+                    "id": id, "url": page_url, "title": title
+                }));
+            }
+            return Ok(());
+        }
+        return Err("TAB_RENDERER_ROUTE_INVALID".into());
+    }
     report_title_inner(app, id, page_url, title)
 }
 

@@ -231,7 +231,7 @@ pub fn credential_origin(raw: &str) -> Option<String> {
 }
 
 /// 允许的填充结果码（全部非敏感，可安全回传前端与写入日志）。
-const AUTOFILL_CODES: [&str; 10] = [
+pub(crate) const AUTOFILL_CODES: [&str; 10] = [
     "FILLED",
     "ORIGIN_MISMATCH",
     "TAB_NOT_FOUND",
@@ -251,7 +251,7 @@ const AUTOFILL_CODES: [&str; 10] = [
 /// - 用户名/密码经 JSON 字符串转义嵌入，密码中的引号/反斜杠/换行不会破坏字面量。
 /// - **绝不**提交表单：不 `submit()`、不 `requestSubmit()`、不点按钮、不派发 Enter。
 /// - 用原生 value setter + input/change 事件，兼容 Vue/React/Angular 受控输入。
-fn build_autofill_script(expected_origin: &str, username: &str, password: &str) -> String {
+pub(crate) fn build_autofill_script(expected_origin: &str, username: &str, password: &str) -> String {
     // U+2028/U+2029 在部分旧 JS 解析器里是行终止符，JSON 不转义 → 额外处理
     let j = |s: &str| {
         serde_json::to_string(s)
@@ -331,10 +331,12 @@ fn build_autofill_script(expected_origin: &str, username: &str, password: &str) 
     return 'FILL_FAILED';
   }
 })()"#;
-    SCRIPT
-        .replace("__ORIGIN__", &j(expected_origin))
-        .replace("__USERNAME__", &j(username))
-        .replace("__PASSWORD__", &j(password))
+    // Insert the three literals once; user data cannot become a second
+    // template marker and accidentally alter another literal.
+    let (head, rest) = SCRIPT.split_once("__ORIGIN__").expect("origin marker");
+    let (before_user, rest) = rest.split_once("__USERNAME__").expect("username marker");
+    let (before_password, tail) = rest.split_once("__PASSWORD__").expect("password marker");
+    format!("{head}{}{before_user}{}{before_password}{}{tail}", j(expected_origin), j(username), j(password))
 }
 
 /// 用户**主动点击**才触发的一次性填充：读单条密码 → 注入当前 WebView → 结束。
@@ -351,6 +353,24 @@ pub async fn fill_browser_credential(
     tab_id: String,
 ) -> Result<String, String> {
     check_invocation_source(&webview, "fill_browser_credential", None, &app)?;
+    crate::shared::native_legacy_policy::require_main(&webview, "fill_browser_credential")?;
+    static FILL_LANE: crate::shared::blocking::BlockingLane =
+        crate::shared::blocking::BlockingLane::new(1, "CREDENTIAL_FILL_BUSY", "CREDENTIAL_FILL_WORKER_FAILED");
+    FILL_LANE.run(move || fill_browser_credential_inner(app, credential_id, tab_id)).await
+}
+
+fn fill_browser_credential_inner(
+    app: AppHandle, credential_id: String, tab_id: String,
+) -> Result<String, String> {
+    let route = super::isolated_tabs::route(&tab_id);
+    let _owner = if route.is_some() {
+        Some(super::tab_mutation::reserve_internal()?)
+    } else {
+        None
+    };
+    let binding = if let Some(index) = route {
+        Some(app.state::<AppState>().grid_manager.renderer_binding(index)?)
+    } else { None };
 
     // 1) opaque handle → 非敏感元数据（会话级，不落盘）
     let cred = {
@@ -414,6 +434,19 @@ pub async fn fill_browser_credential(
         Err(_) => return Ok("KEYRING_READ_FAILED".to_string()),
     };
 
+    if let Some(binding) = binding {
+        if password.len() > 8192 || cred.username.len() > 8192 {
+            return Ok("FILL_FAILED".into());
+        }
+        let cmd = GridCmd::FillCredential { id: tab_id, origin: cred_origin,
+            username: cred.username, password };
+        let result = st.grid_manager.renderer_request_data(binding, cmd, 5000);
+        return match result {
+            Ok(Some(code)) if AUTOFILL_CODES.contains(&code.as_str()) => Ok(code),
+            Err(error) if error.contains("OUTCOME_UNKNOWN") => Ok("FILL_OUTCOME_UNKNOWN".into()),
+            _ => Ok("FILL_FAILED".into()),
+        };
+    }
     // 5) 构造一次性脚本（password 只活在这一段调用栈里，不写日志、不回传前端）
     let js = build_autofill_script(&cred_origin, &cred.username, &password);
     drop(password);
