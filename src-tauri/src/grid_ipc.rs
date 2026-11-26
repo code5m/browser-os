@@ -106,6 +106,14 @@ pub(crate) struct GridSavedState {
     pub blur_hidden: bool,
 }
 
+/// Advisory native status; contains no address, process identifier or
+/// operation authority. None at the response boundary means busy/unknown.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct GridRouteStatus {
+    pub index: u32,
+    pub state: &'static str,
+}
+
 pub(crate) struct GridPreparedSlot {
     pub stamp: GridRouteStamp,
     pub created: bool,

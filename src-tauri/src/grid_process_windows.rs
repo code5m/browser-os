@@ -2517,10 +2517,34 @@ impl GridProcessManager {
     /// Snapshot each live native owner, including ordinary tabs. Do not
     /// include retiring owners as live; their residual RSS stays unattributed
     /// in the parent process tree until operating-system cleanup completes.
+    /// Read the current Grid topology, including owners omitted by RSS
+    /// inventory. The observation does not authorize closing or reopening.
+    pub(crate) fn grid_route_statuses(&self) -> Option<Vec<crate::grid_ipc::GridRouteStatus>> {
+        self.lifecycle.check().ok()?;
+        let _gate = self.lifecycle_lock.try_lock().ok()?;
+        let children = self.children.lock().ok()?;
+        let sleeping = self.hibernated.lock().ok()?;
+        let restarting = self.pending_restarts.lock().ok()?;
+        Some((0..crate::bridge::MAX_GRID as u32).map(|index| {
+            let state = if self.lifecycle.is_retiring(index) {
+                "cleanup_pending"
+            } else if let Some(child) = children.get(&index) {
+                if child.comms.is_connected() && child.document_ready
+                    && !child.comms.blank_reclaiming.load(Ordering::SeqCst) {
+                    "ready"
+                } else { "not_ready" }
+            } else if restarting.contains_key(&index) {
+                "restart_pending"
+            } else if sleeping.contains_key(&index) {
+                "hibernated"
+            } else { "absent" };
+            crate::grid_ipc::GridRouteStatus { index, state }
+        }).collect())
+    }
+
     pub(crate) fn renderer_processes(&self) -> Vec<crate::grid_ipc::RendererProcess> {
         let children = self.children.lock().unwrap();
         let mut result: Vec<_> = children.iter().map(|(&index, child)| {
-            let ordinary = crate::grid_ipc::is_tab_renderer(index);
             crate::grid_ipc::RendererProcess {
                 index,
                 pid: child.child.id(),

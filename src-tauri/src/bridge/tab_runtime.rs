@@ -322,6 +322,8 @@ pub struct ResourceStats {
     pub hibernated_count: usize,
     /// 当前已休眠 Grid 子进程数
     pub hibernated_grid_count: usize,
+    /// Fresh native Grid topology, independent of the cached RSS sample.
+    pub grid_routes: Option<Vec<crate::grid_ipc::GridRouteStatus>>,
     /// 内存预算守卫：当前可用内存最多支撑几格（创建宫格时的降级上限）
     pub grid_budget: usize,
 }
@@ -537,6 +539,7 @@ pub async fn resource_stats(
                 refreshed.hibernation_enabled = state.hibernation_enabled.load(Ordering::Relaxed);
                 refreshed.hibernated_count = state.hibernated_tabs.lock().unwrap().len();
                 refreshed.hibernated_grid_count = state.grid_manager.hibernated_count();
+                refreshed.grid_routes = state.grid_manager.grid_route_statuses();
                 return refreshed;
             }
         }
@@ -629,6 +632,7 @@ fn resource_stats_for_owners(app: &AppHandle, owners: &[crate::grid_ipc::Rendere
         hibernation_enabled: state.hibernation_enabled.load(Ordering::Relaxed),
         hibernated_count,
         hibernated_grid_count: state.grid_manager.hibernated_count(),
+        grid_routes: state.grid_manager.grid_route_statuses(),
         grid_budget: affordable_grid_count(available.unwrap_or(0), &grid_indices, MAX_GRID),
     }
 }

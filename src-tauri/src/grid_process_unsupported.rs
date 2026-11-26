@@ -143,6 +143,7 @@ impl GridProcessManager {
     pub fn pid_of(&self, _index: u32) -> Option<u32> {
         None
     }
+    pub(crate) fn grid_route_statuses(&self) -> Option<Vec<crate::grid_ipc::GridRouteStatus>> { None }
     pub(crate) fn renderer_processes(&self) -> Vec<crate::grid_ipc::RendererProcess> {
         Vec::new()
     }

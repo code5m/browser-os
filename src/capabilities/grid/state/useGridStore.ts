@@ -153,11 +153,13 @@ export const useGridStore = defineStore("grid", () => {
   let gridBuilding = false;
   let gridBuildSettlement: Promise<void> | null = null;
   let gridCloseTask: Promise<void> | null = null;
-  let gridCleanupUnconfirmed = false;
+  const gridCleanupUnconfirmed = ref(false);
+  const gridInspecting = ref(false);
+  const gridRecoveryStates = ref<Array<{index: number; state: string}> | null>(null);
   let rebuildRequested = false;
   let gridEpoch = 0;
   async function buildGrid() {
-    if (gridCloseTask || gridCleanupUnconfirmed) {
+    if (gridCloseTask || gridCleanupUnconfirmed.value) {
       layout.showToast("宫格关闭状态尚未核实，请先重新核对关闭结果");
       return;
     }
@@ -186,6 +188,7 @@ export const useGridStore = defineStore("grid", () => {
     gridBuildSettlement = new Promise<void>(resolve => { finishBuild = resolve; });
     const epoch = ++gridEpoch;
     gridStarting.value = true;
+    gridRecoveryStates.value = null;
     gridStartupError.value = "";
     try {
     const n = gridCount.value;
@@ -245,7 +248,7 @@ export const useGridStore = defineStore("grid", () => {
       // Confirmed earlier cells may still be alive even though the layout is
       // no longer published. Keep the explicit close path available and do
       // not silently recreate that partial topology.
-      if (partial) gridCleanupUnconfirmed = true;
+      if (partial) gridCleanupUnconfirmed.value = true;
       gridStartupError.value = reason.includes("GRID_MEMORY_GUARD")
         ? "内存不足以安全启动宫格。请先尝试 2 格，或关闭其他应用后重试。"
         : partial
@@ -334,14 +337,15 @@ export const useGridStore = defineStore("grid", () => {
       try {
         await bridge.closeGrid();
       } catch (error) {
-        gridCleanupUnconfirmed = true;
+        gridCleanupUnconfirmed.value = true;
         gridStartupError.value = /GRID_CLOSE_CLEANUP_PENDING/.test(String(error))
           ? "宫格进程域仍在回收中，请重新核对关闭状态"
           : "原生宫格关闭未确认，请重新核对；不会自动重试";
         layout.showToast(gridStartupError.value);
         throw error;
       }
-      gridCleanupUnconfirmed = false;
+      gridCleanupUnconfirmed.value = false;
+      gridRecoveryStates.value = null;
       gridStartupError.value = "";
       layout.gridToolbarOpen = false;
       gridRects.splice(0, gridRects.length);
@@ -361,6 +365,40 @@ export const useGridStore = defineStore("grid", () => {
     // Error text is already displayed by the resource owner. Do not create
     // an unhandled rejection from a user click; lifecycle uses the owner.
     await closeGridOwned().catch(() => {});
+  }
+  // This is an observation only; do not infer a close receipt from PID
+  // absence. Native status includes cleanup, restart and saved-slot owners.
+  async function inspectGridRecovery() {
+    if (gridInspecting.value || gridBuilding || gridCloseTask) return;
+    const epoch = gridEpoch;
+    gridInspecting.value = true;
+    try {
+      const sample = await bridge.resourceStats();
+      if (epoch !== gridEpoch || gridBuilding || gridCloseTask) return;
+      const routes = sample.grid_routes;
+      if (!routes || routes.length !== 12 || new Set(routes.map(route => route.index)).size !== 12
+          || routes.some(route => !Number.isInteger(route.index) || route.index < 0 || route.index >= 12)) {
+        gridRecoveryStates.value = null;
+        layout.showToast("原生拓扑暂不可核实，请稍后手动查询");
+        return;
+      }
+      gridRecoveryStates.value = routes;
+      if (routes.every(route => route.state === "absent")) {
+        // This only removes the UI interlock; subsequent native admission
+        // still verifies the new request's identities. No automatic build.
+        gridCleanupUnconfirmed.value = false;
+        gridStartupError.value = "";
+        layout.showToast("当前无残留宫格；可手动重新加载");
+      } else {
+        gridCleanupUnconfirmed.value = true;
+        gridStartupError.value = "仍有原生宫格或待清理状态，请核对后显式关闭";
+      }
+    } catch {
+      if (epoch === gridEpoch) {
+        gridRecoveryStates.value = null;
+        layout.showToast("原生拓扑查询未确认");
+      }
+    } finally { gridInspecting.value = false; }
   }
   // 关闭单个宫格：销毁对应子 webview，其余保留，并按剩余数量重排
   async function closeGridOne(i: number) {
@@ -444,7 +482,7 @@ export const useGridStore = defineStore("grid", () => {
     (open) => {
       if (!isGridResourceAllowed()) return;
       if (open && !gridOpen.value) void openGrid();
-      else if (!open && (gridOpen.value || gridCleanupUnconfirmed)) void closeGrid();
+      else if (!open && (gridOpen.value || gridCleanupUnconfirmed.value)) void closeGrid();
     }
   );
 
@@ -506,6 +544,10 @@ export const useGridStore = defineStore("grid", () => {
     gridOpen,
     gridStarting,
     gridStartupError,
+    gridCleanupUnconfirmed,
+    gridInspecting,
+    gridRecoveryStates,
+    inspectGridRecovery,
     gridSession,
     gridCount,
     gridUrl,

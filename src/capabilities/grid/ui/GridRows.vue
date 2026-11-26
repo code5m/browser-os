@@ -113,7 +113,15 @@ onBeforeUnmount(() => {
   </div>
   <div v-if="layout.mainView === 'grid' && !grid.gridOpen" class="expand-row" role="status">
     <span class="er-warn">{{ grid.gridStarting ? '正在创建宫格网页，请稍候…' : (grid.gridStartupError || '宫格尚未启动，点击重新加载。') }}</span>
-    <button class="er-primary" :disabled="grid.gridStarting" @click="grid.openGrid()">重新加载宫格</button>
+    <button v-if="!grid.gridCleanupUnconfirmed" class="er-primary" :disabled="grid.gridStarting" @click="grid.openGrid()">重新加载宫格</button>
+  </div>
+  <div v-if="grid.gridCleanupUnconfirmed" class="expand-row" role="status">
+    <span class="er-warn">原生宫格状态待核对，不会自动重建。</span>
+    <button :disabled="grid.gridInspecting || grid.gridStarting" @click="grid.inspectGridRecovery()">核对原生状态</button>
+    <button :disabled="grid.gridStarting" class="grid-danger" @click="grid.closeGrid()">关闭残留宫格</button>
+    <template v-if="grid.gridRecoveryStates">
+      <span v-for="route in grid.gridRecoveryStates.filter(item => item.state !== 'absent')" :key="route.index" class="er-label">第 {{route.index + 1}} 格：{{ ({ready:'就绪',not_ready:'未就绪',cleanup_pending:'回收中',restart_pending:'等待重启',hibernated:'休眠'} as Record<string,string>)[route.state] || route.state }}</span>
+    </template>
   </div>
   <div v-if="layout.mainView === 'grid' && advancedOpen" id="grid-advanced" class="grid-advanced">
     <label>布局 <select aria-label="宫格布局" :value="grid.gridLayout" @change="setGridLayout(($event.target as HTMLSelectElement).value as (typeof gridLayouts)[number]['key'])"><option v-for="l in gridLayouts" :key="l.key" :value="l.key">{{l.title}}</option></select></label>
