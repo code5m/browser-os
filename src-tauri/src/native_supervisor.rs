@@ -411,8 +411,8 @@ fn monitor(owner: &mut OwnedHost, stream: &mut TcpStream) -> Result<Outcome, Str
         };
         match health.observe(reply, Instant::now()) {
             ProbeDecision::Recover => {
-                // The last B is not authorization to kill. Ask the live
-                // transport owner for a fresh exclusive recovery claim.
+                // Neither pending heartbeat evidence nor a manual intent is
+                // authorization by itself. Require a fresh exclusive claim.
                 match exchange(stream, b'C') {
                     Some(b'G') => {
                         if let Some(status) = owner.exited()? {
@@ -469,7 +469,7 @@ fn launch(args: Vec<OsString>, nested_memory: bool) -> Result<i32, String> {
             }
             Ok(Outcome::Unresponsive) => {
                 eprintln!(
-                    "[native-supervisor] owned UI unresponsive; terminating its execution domain"
+                    "[native-supervisor] owned native fault-domain recovery authorized; terminating its execution domain"
                 );
                 owner.retire_confirmed(report_retirement_pending);
                 eprintln!("[native-supervisor] execution domain empty and child exit confirmed");

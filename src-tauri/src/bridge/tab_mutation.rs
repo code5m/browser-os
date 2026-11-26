@@ -257,11 +257,10 @@ impl Owner {
             {
                 Some(slot.receipt.ticket.clone())
             }
-            None
-                if self.internal_active
-                    && self.internal_started.is_some_and(|started| {
-                        now.saturating_duration_since(started) >= DOMAIN_STALL
-                    }) =>
+            None if self.internal_active
+                && self.internal_started.is_some_and(|started| {
+                    now.saturating_duration_since(started) >= DOMAIN_STALL
+                }) =>
             {
                 None
             }
@@ -396,7 +395,10 @@ fn snapshot(app: &AppHandle) -> Result<OwnerView, String> {
         view.active_known = false;
         view.active_tab_id = None;
     }
-    if !state.matches_view(&view) || state.recovery_target(Instant::now()).is_none() {
+    if !supervisor_ready()
+        || !state.matches_view(&view)
+        || state.recovery_target(Instant::now()).is_none()
+    {
         view.domain_recovery_available = false;
     }
     Ok(view)
@@ -457,9 +459,12 @@ impl Drop for DomainRecoveryClaim {
 
 pub(crate) fn claim_domain_recovery(intent: &DomainRecoveryIntent) -> Option<DomainRecoveryClaim> {
     let mut state = OWNER.try_lock().ok()?;
-    state
-        .claim_recovery(intent, Instant::now())
-        .then_some(DomainRecoveryClaim)
+    // A refused claim must not construct a Drop guard while OWNER is held.
+    if !state.claim_recovery(intent, Instant::now()) {
+        return None;
+    }
+    drop(state);
+    Some(DomainRecoveryClaim)
 }
 
 fn matching<'a>(state: &'a mut Owner, ticket: &str) -> Result<&'a mut Slot, String> {
@@ -928,8 +933,13 @@ mod tests {
             .request_recovery(target, later + Duration::from_secs(1))
             .unwrap();
         assert_eq!(state.recovery_intent.as_ref(), Some(&intent));
-        assert!(!state.claim_recovery(&intent, later + RECOVERY_INTENT_TTL));
-        assert!(state.claim_recovery(&intent, later));
+        let expired = later + RECOVERY_INTENT_TTL;
+        assert!(!state.claim_recovery(&intent, expired));
+        let current = state.recovery_target(expired).unwrap();
+        state.request_recovery(current, expired).unwrap();
+        let fresh = state.recovery_intent.clone().unwrap();
+        assert!(!state.claim_recovery(&intent, expired));
+        assert!(state.claim_recovery(&fresh, expired));
         assert!(state.recovery_target(later).is_none());
         state.internal_active = false;
         state.internal_started = None;
