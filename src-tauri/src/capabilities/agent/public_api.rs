@@ -258,17 +258,18 @@ pub(crate) fn dispatch_coding_request(
         let result_action = action.to_owned();
         let mut attempted = false;
         let mut published = false;
-        let result = super::coding_context::execute_cancelable_with_admission(
+        let result = super::coding_context::execute_cancelable_with_effect_admission(
             &canonical,
             storage,
             request,
             cancellation.clone(),
-            |request| {
+            Some(run),
+            |request, authority| {
                 if !lease.is_active() || cancellation.load(std::sync::atomic::Ordering::Acquire) {
                     return Err("AGENT_OPERATION_CANCELLED_BEFORE_DISPATCH".into());
                 }
                 attempted = true;
-                execution.checkpoint_manual_mcp(&canonical, revision, request)?;
+                execution.checkpoint_manual_mcp(&canonical, revision, request, authority)?;
                 // A successfully written effect fence is not a fresh grant.
                 if !lease.is_active() {
                     return Err("AGENT_OPERATION_OWNER_STALE".into());
@@ -297,20 +298,21 @@ pub(crate) fn dispatch_coding_request(
         let reported_success = result
             .as_ref()
             .is_ok_and(|value| mcp_transport_reported_success(&result_action, value));
-        execution.record_manual_mcp_return(&result, reported_success)?;
+        let transport_terminal = execution.record_manual_mcp_return(&result, reported_success)?;
         drop(lease);
-        if reported_success {
+        if transport_terminal {
             execution.finish(true)?;
         } else {
             execution.finish_unknown()?;
         }
+        // No new request or replay. Inspect the now-released durable Run
+        // and its independent signed status once after local completion.
+        let summary = ProductionExecution::read_manual_mcp(storage, &canonical, run)?;
         return result.map(|mut value| {
             value["run_id"] = serde_json::json!(run);
-            value["receipt_phase"] = serde_json::json!(if reported_success {
-                "completed"
-            } else {
-                "operation_unknown"
-            });
+            value["receipt_phase"] = summary["phase"].clone();
+            value["provider_outcome"] = summary["provider_outcome"].clone();
+            value["provider_binding"] = summary["provider_binding"].clone();
             value
         });
     }

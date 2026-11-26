@@ -136,6 +136,10 @@ struct EffectEvidence {
     workspace_identity: Option<String>,
     #[serde(default)]
     review_revision: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    authority: Option<super::mcp_authority::Binding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    provider_proof: Option<super::mcp_authority::SignedStatus>,
 }
 /// Shared native reconciliation evidence for Coding and manual MCP. A user
 /// attestation is not a provider-side idempotency or termination receipt.
@@ -303,7 +307,27 @@ impl DurableRun {
         {
             return Err("AGENT_RUN_RECEIPT_INVALID".into());
         }
+        if matches!(record.phase.as_str(), "provider_applied" | "provider_not_applied")
+            && !Self::provider_resolution_proven(&record)
+        {
+            return Err("AGENT_RUN_RECEIPT_INVALID".into());
+        }
         if let Some(effect) = &record.effect {
+            if let Some(binding) = &effect.authority {
+                if !binding.valid()
+                    || binding.run_id != record.id
+                    || effect.review_revision.as_deref() != Some(binding.review_revision.as_str())
+                    || record.approval.as_ref().map(|claim| claim.tool_name.as_str())
+                        != Some("coding.manual_mcp_call")
+                    || effect.response_payload.is_some()
+                    || matches!(record.phase.as_str(), "completed" | "transport_returned")
+                {
+                    return Err("AGENT_RUN_RECEIPT_INVALID".into());
+                }
+            }
+            if effect.provider_proof.is_some() && !Self::provider_resolution_proven(&record) {
+                return Err("AGENT_RUN_RECEIPT_INVALID".into());
+            }
             if let Some(value) = &effect.response_payload {
                 let bytes = serde_json::to_vec(value).map_err(|_| "AGENT_RUN_RECEIPT_INVALID")?;
                 let digest = format!("{:x}", Sha256::digest(&bytes));
@@ -402,6 +426,30 @@ impl DurableRun {
                         == Some(record.task.revision)
             })
     }
+    fn provider_resolution_proven(record: &NativeRunReceipt) -> bool {
+        let (status, disposition, applied) = match record.phase.as_str() {
+            "provider_applied" => (TaskStatus::Completed, "provider_applied", true),
+            "provider_not_applied" => (TaskStatus::Failed, "provider_not_applied", false),
+            _ => return false,
+        };
+        record.task.status == status
+            && Self::manual_admission_bound(record)
+            && record.effect_resolution.is_none()
+            && record.effect_reviews.len() <= 16
+            && Self::manual_effect_binding(record, 3 + record.effect_reviews.len() as u64)
+            && record.effect.as_ref().is_some_and(|effect| {
+                effect.disposition == disposition
+                    && effect.response_payload.is_none()
+                    && effect.authority.as_ref().zip(effect.provider_proof.as_ref())
+                        .is_some_and(|(binding, proof)| {
+                            binding.run_id == record.id
+                                && effect.review_revision.as_deref()
+                                    == Some(binding.review_revision.as_str())
+                                && proof.outcome.applied() == applied
+                                && proof.verify(binding)
+                        })
+            })
+    }
     fn manual_transport_proven(record: &NativeRunReceipt) -> bool {
         let delta = match (record.phase.as_str(), record.task.status) {
             ("transport_returned", TaskStatus::Running) => 1,
@@ -414,6 +462,8 @@ impl DurableRun {
             && record.effect_resolution.is_none()
             && record.effect.as_ref().is_some_and(|effect| {
                 effect.disposition == "transport_returned"
+                    && effect.authority.is_none()
+                    && effect.provider_proof.is_none()
                     && effect.response_digest.as_ref().is_some_and(|digest| {
                         digest.len() == 64 && digest.bytes().all(|b| b.is_ascii_hexdigit())
                     })
@@ -1194,6 +1244,7 @@ impl ProductionExecution {
         root: &Path,
         digest: String,
         request: &serde_json::Value,
+        authority: Option<&super::mcp_authority::Binding>,
     ) -> Result<(), String> {
         #[cfg(any(target_os = "linux", target_os = "windows"))]
         {
@@ -1254,6 +1305,14 @@ impl ProductionExecution {
                     })
                     .map(str::to_owned)
             });
+            if authority.is_some_and(|binding| {
+                !binding.valid()
+                    || binding.run_id != run.id
+                    || request["action"] != "mcp_call"
+                    || request["review_revision"].as_str() != Some(binding.review_revision.as_str())
+            }) {
+                return Err("MCP_EFFECT_AUTHORITY_INVALID".into());
+            }
             run.effect = Some(EffectEvidence {
                 request_digest: digest.clone(),
                 target,
@@ -1263,9 +1322,11 @@ impl ProductionExecution {
                 response_payload: None,
                 workspace_identity: Some(identity),
                 review_revision: safe_label("review_revision"),
+                authority: authority.cloned(),
+                provider_proof: None,
             });
         }
-        let _ = (root, digest, request);
+        let _ = (root, digest, request, authority);
         self.checkpoint("dispatching")
     }
 
@@ -1273,7 +1334,8 @@ impl ProductionExecution {
         &mut self,
         result: &Result<serde_json::Value, String>,
         reported_success: bool,
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
+        let mut transport_terminal = reported_success;
         #[cfg(any(target_os = "linux", target_os = "windows"))]
         {
             let run = self
@@ -1314,14 +1376,15 @@ impl ProductionExecution {
             if reported_success && response_digest.is_none() {
                 return Err("AGENT_RUN_RECEIPT_INVALID".into());
             }
-            effect.disposition = if reported_success {
+            transport_terminal = reported_success && effect.authority.is_none();
+            effect.disposition = if transport_terminal {
                 "transport_returned"
             } else {
                 "unknown"
             }
             .into();
             effect.response_digest = response_digest;
-            effect.response_payload = if reported_success {
+            effect.response_payload = if transport_terminal {
                 result
                     .as_ref()
                     .ok()
@@ -1333,11 +1396,12 @@ impl ProductionExecution {
             };
         }
         let _ = (result, reported_success);
-        self.checkpoint(if reported_success {
+        self.checkpoint(if transport_terminal {
             "transport_returned"
         } else {
             "operation_unknown"
-        })
+        })?;
+        Ok(transport_terminal)
     }
 
     #[cfg(any(target_os = "linux", target_os = "windows"))]
@@ -1391,6 +1455,44 @@ impl ProductionExecution {
             && DurableRun::manual_effect_binding(record, 2 + record.effect_reviews.len() as u64)
     }
 
+    /// Query the original pinned provider's signed status inbox while the
+    /// authenticated Run owner is held. No original tool is dispatched.
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    fn reconcile_provider_status(
+        storage: &Path,
+        owner: &DurableRun,
+        mut record: NativeRunReceipt,
+    ) -> Result<NativeRunReceipt, String> {
+        if !Self::can_resolve_manual(&record) || !DurableRun::manual_admission_bound(&record) {
+            return Ok(record);
+        }
+        let Some(binding) = record.effect.as_ref().and_then(|effect| effect.authority.as_ref()) else {
+            return Ok(record);
+        };
+        if binding.run_id != record.id {
+            return Err("AGENT_RUN_RECEIPT_INVALID".into());
+        }
+        // A missing, malformed or unverified sidecar is not a terminal
+        // status. Never turn it into evidence of non-application.
+        let Some(proof) = super::mcp_authority::lookup(storage, binding).ok().flatten() else {
+            return Ok(record);
+        };
+        let applied = proof.outcome.applied();
+        record.task.revision = record.task.revision.checked_add(1)
+            .ok_or("AGENT_TASK_REVISION_EXHAUSTED")?;
+        record.task.status = if applied { TaskStatus::Completed } else { TaskStatus::Failed };
+        record.phase = if applied { "provider_applied" } else { "provider_not_applied" }.into();
+        let effect = record.effect.as_mut().ok_or("AGENT_RUN_RECEIPT_REQUIRED")?;
+        effect.disposition = record.phase.clone();
+        effect.provider_proof = Some(proof);
+        record.updated_at_ms = unix_ms();
+        if !DurableRun::provider_resolution_proven(&record) {
+            return Err("AGENT_RUN_RECEIPT_INVALID".into());
+        }
+        owner.write_record(&record)?;
+        Ok(record)
+    }
+
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     fn manual_summary(record: &NativeRunReceipt, detail: bool) -> serde_json::Value {
         let effect = record.effect.as_ref();
@@ -1411,6 +1513,8 @@ impl ProductionExecution {
             "identity_bound":record.manual_admission.is_some() || effect.and_then(|value| value.workspace_identity.as_ref()).is_some(),
             "observations":record.effect_reviews.len(),
             "has_response":response.is_some(),
+            "provider_binding":effect.and_then(|value| value.authority.as_ref()).map(|binding| binding.metadata()),
+            "provider_outcome":effect.and_then(|value| value.provider_proof.as_ref()).map(|proof| proof.outcome),
             "can_reconcile":record.phase == "operation_unknown" && record.task.status == TaskStatus::Paused
                 && record.effect_reviews.len() < 16,
             "can_resolve":Self::can_resolve_manual(record),
@@ -1425,6 +1529,7 @@ impl ProductionExecution {
             result["response_payload"] = serde_json::json!(response);
             result["reviews"] = serde_json::json!(&record.effect_reviews);
             result["resolution"] = serde_json::json!(&record.effect_resolution);
+            result["provider_proof"] = serde_json::json!(effect.and_then(|value| value.provider_proof.as_ref()));
             result["approved_tool"] =
                 serde_json::json!(record.approval.as_ref().map(|claim| &claim.tool_name));
         }
@@ -1450,10 +1555,9 @@ impl ProductionExecution {
                     if Self::check_manual_scope(&record, workspace, &identity).is_err() {
                         return Ok(None);
                     }
-                    Ok(Some(Self::manual_summary(
-                        &owner.recover_record(record)?,
-                        false,
-                    )))
+                    let recovered = owner.recover_record(record)?;
+                    let reconciled = Self::reconcile_provider_status(storage, &owner, recovered)?;
+                    Ok(Some(Self::manual_summary(&reconciled, false)))
                 })();
                 match result {
                     Ok(Some(record)) => records.push(record),
@@ -1481,7 +1585,9 @@ impl ProductionExecution {
             let owner = DurableRun::lookup(storage, id)?;
             let record = owner.read_record()?.ok_or("AGENT_RUN_NOT_FOUND")?;
             Self::check_manual_scope(&record, workspace, &identity)?;
-            let mut summary = Self::manual_summary(&owner.recover_record(record)?, true);
+            let recovered = owner.recover_record(record)?;
+            let reconciled = Self::reconcile_provider_status(storage, &owner, recovered)?;
+            let mut summary = Self::manual_summary(&reconciled, true);
             summary["archived"] = serde_json::json!(owner.checkpoint.archive_confirmed()?);
             Ok(summary)
         }
@@ -1573,7 +1679,8 @@ impl ProductionExecution {
             let owner = DurableRun::lookup(storage, id)?;
             let record = owner.read_record()?.ok_or("AGENT_RUN_NOT_FOUND")?;
             Self::check_manual_scope(&record, workspace, &identity)?;
-            let mut record = owner.recover_record(record)?;
+            let recovered = owner.recover_record(record)?;
+            let mut record = Self::reconcile_provider_status(storage, &owner, recovered)?;
             if record.task.revision != revision || !Self::can_resolve_manual(&record) {
                 return Err("AGENT_EFFECT_REVIEW_STALE".into());
             }
@@ -2351,7 +2458,7 @@ mod tests {
         ));
         assert!(!manual_approval_matches_request(&claim, run, "different"));
         execution
-            .checkpoint_manual_mcp(&root, digest, &request)
+            .checkpoint_manual_mcp(&root, digest, &request, None)
             .unwrap();
         drop(lease);
         execution
@@ -2491,13 +2598,13 @@ mod tests {
                         .acquire_approved_native(permit, &claim, &args)
                         .unwrap();
                     assert!(execution
-                        .checkpoint_manual_mcp(&root, "wrong".into(), &request)
+                        .checkpoint_manual_mcp(&root, "wrong".into(), &request, None)
                         .is_err());
                     execution
-                        .checkpoint_manual_mcp(&root, digest.clone(), &request)
+                        .checkpoint_manual_mcp(&root, digest.clone(), &request, None)
                         .unwrap();
                     assert!(execution
-                        .checkpoint_manual_mcp(&root, digest, &request)
+                        .checkpoint_manual_mcp(&root, digest, &request, None)
                         .is_err());
                     drop(lease);
                     if stage == 3 {

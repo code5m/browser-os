@@ -72,18 +72,21 @@ impl Authority {
 pub(super) struct Binding {
     pub authority: Authority,
     pub run_id: Uuid,
+    pub effect_id: Uuid,
     pub review_revision: String,
 }
 impl Binding {
     pub(super) fn valid(&self) -> bool {
         self.authority.valid()
             && self.run_id.get_version_num() == 4
+            && self.effect_id.get_version_num() == 4
+            && self.effect_id != self.run_id
             && digest(&self.review_revision)
     }
     pub(super) fn metadata(&self) -> Value {
         json!({
             "version":1, "run_id":self.run_id,
-            "idempotency_key":format!("browseros:{}", self.run_id),
+            "idempotency_key":format!("browseros:{}", self.effect_id),
             "review_revision":self.review_revision,
             "account":self.authority.account, "namespace":self.authority.namespace
         })
@@ -102,6 +105,7 @@ impl Binding {
         let binding = Self {
             authority,
             run_id: run_id.ok_or("MCP_EFFECT_OWNER_REQUIRED")?,
+            effect_id: Uuid::new_v4(),
             review_revision: prepared.review["revision"]
                 .as_str()
                 .ok_or("MCP_EFFECT_AUTHORITY_INVALID")?
@@ -166,7 +170,7 @@ impl SignedStatus {
         if !binding.valid()
             || self.version != 1
             || self.run_id != binding.run_id
-            || self.idempotency_key != format!("browseros:{}", binding.run_id)
+            || self.idempotency_key != format!("browseros:{}", binding.effect_id)
             || self.review_revision != binding.review_revision
             || self.account != binding.authority.account
             || self.namespace != binding.authority.namespace
@@ -186,14 +190,14 @@ impl SignedStatus {
 }
 
 /// Query-only native delivery boundary. An independent provider/status relay
-/// publishes an atomic signed file named by the original Run UUID. Missing,
+/// publishes an atomic signed file named by the native effect UUID. Missing,
 /// malformed, pending, wrong-account and forged replies never settle a Run.
 pub(super) fn lookup(storage: &Path, binding: &Binding) -> Result<Option<SignedStatus>, String> {
     if !binding.valid() {
         return Err("MCP_EFFECT_AUTHORITY_INVALID".into());
     }
     let directory = storage.join(INBOX);
-    let path = directory.join(format!("{}.json", binding.run_id));
+    let path = directory.join(format!("{}.json", binding.effect_id));
     let Some(snapshot) = crate::capabilities::workspace::safe_paths::read_versioned(
         &path,
         &[directory.clone()],
@@ -221,6 +225,7 @@ pub(super) fn fixture_binding() -> (Binding, ring::signature::Ed25519KeyPair) {
             public_key: STANDARD.encode(key.public_key().as_ref()),
         },
         run_id: Uuid::new_v4(),
+        effect_id: Uuid::new_v4(),
         review_revision: "a".repeat(64),
     };
     (binding, key)
@@ -234,7 +239,7 @@ pub(super) fn fixture_proof(
     let mut proof = SignedStatus {
         version: 1,
         run_id: binding.run_id,
-        idempotency_key: format!("browseros:{}", binding.run_id),
+        idempotency_key: format!("browseros:{}", binding.effect_id),
         review_revision: binding.review_revision.clone(),
         account: binding.authority.account.clone(),
         namespace: binding.authority.namespace.clone(),
@@ -260,6 +265,9 @@ mod tests {
         assert!(!forged.verify(&binding));
         let mut another = binding.clone();
         another.run_id = Uuid::new_v4();
+        assert!(!applied.verify(&another));
+        another = binding.clone();
+        another.effect_id = Uuid::new_v4();
         assert!(!applied.verify(&another));
         another = binding.clone();
         another.authority.account = "other".into();
