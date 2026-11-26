@@ -75,6 +75,7 @@ impl OwnedHost {
             if let Some(bytes) = memory_limit {
                 scope.configure_memory_limit(bytes).map_err(|_| "SUPERVISOR_MEMORY_BUDGET_UNAVAILABLE")?;
             }
+            scope.arm_orphan_guard().map_err(|_| "SUPERVISOR_ORPHAN_GUARD_UNAVAILABLE")?;
             scope.attach(&mut command).map_err(|_| "SUPERVISOR_CGROUP_ATTACH_FAILED")?;
             scope.contain_nested_owners(&mut command);
             let child = command.spawn().map_err(|_| "SUPERVISOR_SPAWN_FAILED")?;
@@ -108,6 +109,8 @@ impl OwnedHost {
     }
 
     pub(crate) fn exited(&mut self) -> Result<Option<ExitStatus>, String> {
+        #[cfg(target_os = "linux")]
+        self.scope.observe_orphan_guard();
         self.child.try_wait().map_err(|_| "SUPERVISOR_WAIT_FAILED".into())
     }
 
@@ -127,7 +130,11 @@ impl OwnedHost {
             }
         }
         loop {
-            if let Some(status) = self.exited()? { return Ok(status); }
+            if let Some(status) = self.exited()? {
+                #[cfg(target_os = "linux")]
+                self.scope.finish_orphan_guard(deadline).map_err(|_| "SUPERVISOR_GUARD_EXIT_UNKNOWN")?;
+                return Ok(status);
+            }
             // Failed Job assignment may leave the original suspended child
             // outside the Job. An empty Job is not proof of that child's exit.
             #[cfg(target_os = "windows")]

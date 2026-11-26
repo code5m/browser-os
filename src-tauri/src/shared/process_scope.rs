@@ -1,5 +1,5 @@
 //! Linux delegated cgroup-v2 containment for existing process owners.
-//! No daemon, sudo, mount, chmod or implicit delegation. Only the explicit
+//! No persistent daemon, sudo, mount, chmod or implicit delegation. Only the explicit
 //! supervised-memory mode enables an already delegated memory controller,
 //! and only inside a fresh, empty domain owned by this process.
 //! The operator must supply an existing delegated subtree containing this
@@ -10,15 +10,209 @@ use std::{
     ffi::{CStr, CString},
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
-    os::{fd::{AsRawFd, FromRawFd}, unix::{ffi::OsStrExt, fs::{MetadataExt, OpenOptionsExt}, process::CommandExt}},
+    os::{fd::{AsRawFd, FromRawFd, RawFd}, unix::{ffi::OsStrExt, fs::{MetadataExt, OpenOptionsExt}, net::UnixStream, process::CommandExt}},
     path::{Path, PathBuf},
-    process::Command,
+    process::{Child, Command, Stdio},
     time::{Duration, Instant},
 };
 
 const MOUNT: &str = "/sys/fs/cgroup";
 const CGROUP2_MAGIC: i64 = 0x63677270;
 const ROOT_ENV: &str = "BROWSEROS_DELEGATED_CGROUP_ROOT";
+const GUARD_FLAG: &str = "--owned-cgroup-guardian";
+const GUARD_GROUP_FD: &str = "BROWSEROS_GUARD_GROUP_FD";
+const GUARD_SOCKET_FD: &str = "BROWSEROS_GUARD_SOCKET_FD";
+const GUARD_READY: u8 = b'R';
+const GUARD_START: Duration = Duration::from_secs(3);
+
+fn group_populated(group: &File) -> io::Result<bool> {
+    let events = CStr::from_bytes_with_nul(b"cgroup.events\0").expect("static cgroup filename");
+    parse_populated(&read_control(group, events)?)
+}
+fn group_kill(group: &File) -> io::Result<()> {
+    let kill = CStr::from_bytes_with_nul(b"cgroup.kill\0").expect("static cgroup filename");
+    open_at(group, kill, libc::O_WRONLY)?.write_all(b"1")
+}
+
+/// A one-shot guardian lives outside the owned domain. Only a descriptor
+/// to a fresh group is inherited, never a path used as a kill target.
+/// The socket is an ownership-liveness channel, not a UI heartbeat.
+/// Its parent endpoint is CLOEXEC, so an in-flight fork before attachment
+/// retains it until exec/exit: EOF cannot race ahead of that attachment.
+struct OrphanGuard {
+    control: Option<UnixStream>,
+    child: Child,
+    warned: bool,
+}
+impl OrphanGuard {
+    fn spawn(group: &File, exe: &Path) -> io::Result<Self> {
+        let (mut control, inherited) = UnixStream::pair()?;
+        control.set_read_timeout(Some(GUARD_START))?;
+        let group_fd = group.as_raw_fd();
+        let socket_fd = inherited.as_raw_fd();
+        let mut command = Command::new(exe);
+        command.arg(GUARD_FLAG)
+            .env(GUARD_GROUP_FD, group_fd.to_string())
+            .env(GUARD_SOCKET_FD, socket_fd.to_string())
+            .stdin(Stdio::null()).stdout(Stdio::null());
+        // No allocation/locks after fork. All unrelated descriptors remain
+        // CLOEXEC, including the owner's endpoint of the liveness socket.
+        unsafe {
+            command.pre_exec(move || {
+                if libc::setsid() < 0 { return Err(io::Error::last_os_error()); }
+                for fd in [group_fd, socket_fd] {
+                    if libc::fcntl(fd, libc::F_SETFD, 0) < 0 {
+                        return Err(io::Error::last_os_error());
+                    }
+                }
+                Ok(())
+            });
+        }
+        let mut child = command.spawn()?;
+        drop(inherited);
+        let mut ready = [0u8; 1];
+        let accepted = control.read_exact(&mut ready).is_ok() && ready[0] == GUARD_READY
+            && matches!(child.try_wait(), Ok(None));
+        if !accepted {
+            // No domain process has been admitted yet.
+            drop(control);
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(denied());
+        }
+        Ok(Self { control: Some(control), child, warned: false })
+    }
+
+    fn observe(&mut self) {
+        if !self.warned && !matches!(self.child.try_wait(), Ok(None)) {
+            self.warned = true;
+            eprintln!("[native-supervisor] Linux orphan guard unavailable; live owner retained");
+        }
+    }
+
+    // The caller already has the kernel empty-domain receipt and original
+    // child exit. Only then may it retire the guardian and unlink the group.
+    fn finish_after_empty(&mut self, deadline: Instant) -> io::Result<()> {
+        drop(self.control.take());
+        loop {
+            if let Some(status) = self.child.try_wait()? {
+                if !status.success() && !self.warned {
+                    self.warned = true;
+                    eprintln!("[native-supervisor] Linux orphan guard exited without its own receipt; domain independently confirmed empty");
+                }
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                // No live domain remains. Terminate only this exact owned
+                // guardian, never a discovered PID or another process group.
+                self.child.kill()?;
+                return Err(io::Error::new(io::ErrorKind::TimedOut, "BROWSEROS_GUARD_EXIT_PENDING"));
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+}
+
+fn take_guard_fd(name: &str) -> io::Result<RawFd> {
+    let value = std::env::var(name).map_err(|_| denied())?;
+    std::env::remove_var(name);
+    let fd: RawFd = value.parse().map_err(|_| denied())?;
+    if fd < 3 || unsafe { libc::fcntl(fd, libc::F_GETFD) } < 0 { return Err(denied()); }
+    if unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) } < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(fd)
+}
+fn verify_guard_group(group: &File) -> io::Result<()> {
+    cgroup_fs(group)?;
+    let meta = group.metadata()?;
+    let uid = unsafe { libc::geteuid() };
+    if uid == 0 || !meta.is_dir() || meta.uid() != uid { return Err(denied()); }
+    let root = fs::canonicalize(PathBuf::from(std::env::var_os(ROOT_ENV).ok_or_else(denied)?))?;
+    let mount = fs::canonicalize(MOUNT)?;
+    let path = fs::read_link(format!("/proc/self/fd/{}", group.as_raw_fd()))?;
+    let current = membership_path()?;
+    let name = path.file_name().and_then(|name| name.to_str()).and_then(|name| name.strip_prefix("browseros-run-")).ok_or_else(denied)?;
+    let id = uuid::Uuid::parse_str(name).map_err(|_| denied())?;
+    if root == mount || !root.starts_with(&mount) || path.parent() != Some(root.as_path())
+        || !current.starts_with(&root) || current.starts_with(&path)
+        || id.get_version_num() != 4 || id.to_string() != name || group_populated(group)? {
+        return Err(denied());
+    }
+    let kill = CStr::from_bytes_with_nul(b"cgroup.kill\0").expect("static cgroup filename");
+    open_at(group, kill, libc::O_WRONLY)?;
+    Ok(())
+}
+fn verify_guard_socket(fd: RawFd) -> io::Result<()> {
+    // SO_PEERCRED is kernel-bound to the process creating the socket pair.
+    // No guardian starts after a missing/changed original parent.
+    let mut peer: libc::ucred = unsafe { std::mem::zeroed() };
+    let mut length = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    if unsafe { libc::getsockopt(fd, libc::SOL_SOCKET, libc::SO_PEERCRED,
+        (&mut peer as *mut libc::ucred).cast(), &mut length) } < 0
+        || length as usize != std::mem::size_of::<libc::ucred>()
+        || peer.pid <= 1 || peer.pid != unsafe { libc::getppid() }
+        || peer.uid != unsafe { libc::geteuid() } {
+        return Err(denied());
+    }
+    let mut kind: libc::c_int = 0;
+    let mut length = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
+    if unsafe { libc::getsockopt(fd, libc::SOL_SOCKET, libc::SO_TYPE,
+        (&mut kind as *mut libc::c_int).cast(), &mut length) } < 0
+        || length as usize != std::mem::size_of::<libc::c_int>() || kind != libc::SOCK_STREAM {
+        return Err(denied());
+    }
+    Ok(())
+}
+fn run_orphan_guard() -> io::Result<()> {
+    let group_fd = take_guard_fd(GUARD_GROUP_FD)?;
+    let socket_fd = take_guard_fd(GUARD_SOCKET_FD)?;
+    if group_fd == socket_fd { return Err(denied()); }
+    verify_guard_socket(socket_fd)?;
+    // Each validated inherited FD is owned once. No other application
+    // startup, plugins, workspace paths or webview code runs in this child.
+    let group = unsafe { File::from_raw_fd(group_fd) };
+    let mut socket = unsafe { UnixStream::from_raw_fd(socket_fd) };
+    verify_guard_group(&group)?;
+    socket.write_all(&[GUARD_READY])?;
+    let mut byte = [0u8; 1];
+    loop {
+        match socket.read(&mut byte) {
+            Ok(0) => break, // last copy of the original owner endpoint closed
+            Ok(_) => {},   // no byte is an instruction or a kill request
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error), // uncertainty is not EOF
+        }
+    }
+    // The parent may have exited normally after confirming emptiness or
+    // died before cleanup. The pinned cgroup descriptor is the authority.
+    // Do not adopt, enumerate or signal any other PID or scope.
+    let mut warned = false;
+    loop {
+        match group_populated(&group) {
+            Ok(false) => return Ok(()),
+            Ok(true) => { let _ = group_kill(&group); }
+            Err(_) => {}
+        }
+        if !warned {
+            warned = true;
+            eprintln!("[native-supervisor] orphan domain cleanup requested; awaiting kernel empty receipt");
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+}
+
+/// Exact private early entry: this is not a command routed through Tauri.
+/// The guardian cannot accept a caller-provided cgroup path or PID.
+pub(crate) fn launch_guard_if_requested() -> Option<i32> {
+    let mut args = std::env::args_os().skip(1);
+    if args.next().as_deref() != Some(std::ffi::OsStr::new(GUARD_FLAG)) { return None; }
+    if args.next().is_some() { return Some(1); }
+    Some(match run_orphan_guard() {
+        Ok(()) => 0,
+        Err(_) => { eprintln!("[native-supervisor] invalid or unavailable orphan guard"); 1 }
+    })
+}
 
 fn denied() -> io::Error { io::Error::new(io::ErrorKind::PermissionDenied, "BROWSEROS_CGROUP_DELEGATION_INVALID") }
 fn open_at(parent: &File, name: &CStr, flags: i32) -> io::Result<File> {
@@ -74,6 +268,7 @@ pub(crate) struct ProcessScope {
     path: PathBuf,
     spawned: bool,
     host_leaf: Option<HostLeaf>,
+    orphan_guard: Option<OrphanGuard>,
 }
 struct HostLeaf {
     group: File,
@@ -110,7 +305,7 @@ impl ProcessScope {
         };
         let metadata = group.metadata()?;
         let path = root.join(std::ffi::OsStr::from_bytes(name.as_bytes()));
-        let scope = Self { parent, group, name, identity: (metadata.dev(), metadata.ino()), path, spawned: false, host_leaf: None };
+        let scope = Self { parent, group, name, identity: (metadata.dev(), metadata.ino()), path, spawned: false, host_leaf: None, orphan_guard: None };
         cgroup_fs(&scope.group)?;
         // Require all controls before spawning any user code. The leaf
         // must be empty, and the kernel must provide recursive kill.
@@ -178,6 +373,28 @@ impl ProcessScope {
         Ok(())
     }
 
+    /// Arm the independent owner-liveness guard before admitting any host
+    /// or renderer. Failure is a pre-dispatch failure, never an unguarded
+    /// strict-mode launch. Existing non-supervisor ProcessScope callers
+    /// retain their previous behavior.
+    pub(crate) fn arm_orphan_guard(&mut self) -> io::Result<()> {
+        if self.spawned || self.orphan_guard.is_some() || self.populated()? { return Err(denied()); }
+        let exe = std::env::current_exe()?;
+        self.orphan_guard = Some(OrphanGuard::spawn(&self.group, &exe)?);
+        Ok(())
+    }
+    pub(crate) fn observe_orphan_guard(&mut self) {
+        if let Some(guard) = &mut self.orphan_guard { guard.observe(); }
+    }
+    pub(crate) fn finish_orphan_guard(&mut self, deadline: Instant) -> io::Result<()> {
+        if self.populated()? { return Err(denied()); }
+        if let Some(guard) = &mut self.orphan_guard {
+            guard.finish_after_empty(deadline)?;
+        }
+        self.orphan_guard = None;
+        Ok(())
+    }
+
     /// Install membership BEFORE exec, not after the child may have forked.
     /// Only async-signal-safe write is used between fork and exec.
     pub(crate) fn attach(&self, command: &mut Command) -> io::Result<()> {
@@ -207,9 +424,7 @@ impl ProcessScope {
     }
 
     fn populated(&self) -> io::Result<bool> {
-        let mut value = String::new();
-        open_at(&self.group, CStr::from_bytes_with_nul(b"cgroup.events\0").expect("static cgroup filename"), libc::O_RDONLY)?.take(4096).read_to_string(&mut value)?;
-        parse_populated(&value)
+        group_populated(&self.group)
     }
 
     /// Only a successful child spawn confers termination authority.
@@ -217,7 +432,7 @@ impl ProcessScope {
 
     pub(crate) fn request_kill(&self) -> io::Result<()> {
         if !self.spawned { return Err(denied()); }
-        open_at(&self.group, CStr::from_bytes_with_nul(b"cgroup.kill\0").expect("static cgroup filename"), libc::O_WRONLY)?.write_all(b"1")
+        group_kill(&self.group)
     }
 
     pub(crate) fn terminate_and_confirm(&self, deadline: Instant) -> io::Result<()> {
@@ -236,6 +451,10 @@ impl Drop for ProcessScope {
         // An error/unwind may request cleanup but cannot manufacture a receipt.
         if self.spawned && self.populated().ok() == Some(true) { let _ = self.request_kill(); }
         if self.populated().ok() != Some(false) { return; }
+        // The guardian must stop accessing the descriptor before unlink.
+        // On an uncertain exit leave the directory and let its endpoint
+        // close with the owner; never claim a cleanup receipt from Drop.
+        if self.orphan_guard.is_some() && self.finish_orphan_guard(Instant::now() + GUARD_START).is_err() { return; }
         // Remove only the exact host leaf we created, after recursive-empty
         // confirmation. Unexpected or replaced children are never adopted.
         if let Some(leaf) = &self.host_leaf {
@@ -283,6 +502,29 @@ mod tests {
         let subtree = CStr::from_bytes_with_nul(b"cgroup.subtree_control\0").unwrap();
         assert!(has_controller(&read_control(&scope.group, subtree).unwrap(), "memory"));
         scope.terminate_and_confirm(Instant::now() + Duration::from_secs(5)).unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires writable delegated cgroup v2 and BROWSEROS_TEST_GUARD_EXE pointing to the real application binary"]
+    fn orphan_guard_retires_owned_process_after_owner_endpoint_loss() {
+        let mut scope = ProcessScope::prepare().unwrap().expect("explicit delegated root");
+        let exe = PathBuf::from(std::env::var_os("BROWSEROS_TEST_GUARD_EXE").expect("real application binary"));
+        scope.orphan_guard = Some(OrphanGuard::spawn(&scope.group, &exe).unwrap());
+        let mut command = Command::new("/bin/sleep");
+        command.arg("60");
+        scope.attach(&mut command).unwrap();
+        let mut child = command.spawn().unwrap();
+        scope.mark_spawned();
+        assert!(scope.populated().unwrap());
+        // Simulate loss of the owner's liveness endpoint, not a UI timeout.
+        drop(scope.orphan_guard.as_mut().unwrap().control.take());
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while scope.populated().unwrap() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(!scope.populated().unwrap());
+        assert!(!child.wait().unwrap().success());
+        scope.finish_orphan_guard(deadline).unwrap();
     }
 
     #[test]

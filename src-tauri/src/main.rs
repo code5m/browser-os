@@ -1575,6 +1575,12 @@ fn run_m0_driver(app: tauri::AppHandle, cfg: bridge::M0Config) {
 }
 
 fn main() {
+    // The one-shot Linux domain guardian must never enter Tauri, GTK,
+    // application plugins, profile migration or the single-instance path.
+    #[cfg(target_os = "linux")]
+    if let Some(code) = shared::process_scope::launch_guard_if_requested() {
+        std::process::exit(code);
+    }
     // Explicit separate render job: no single-instance forwarding, workspace
     // loading, remote bridge commands or access to the live browser profile.
     #[cfg(any(target_os = "linux", target_os = "windows"))]
