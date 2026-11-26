@@ -39,10 +39,11 @@ pub(crate) fn agent_tab_summary(app: AppHandle) -> Value {
             let route = crate::bridge::isolated_tabs::route(&tab.id);
             let owner = route.and_then(|index| owners.iter().find(|process| process.index == index));
             let availability = tab_availability(route.is_some(), hibernated.contains(&tab.id), owner, consistent);
+            let is_active = active.as_deref() == Some(tab.id.as_str());
             json!({"id":tab.id,"title":tab.title,
                 "backend":if route.is_some() { "isolated" } else { "embedded" },
                 "availability":availability,
-                "active":active.as_deref() == Some(tab.id.as_str())})
+                "active":is_active})
         }).collect::<Vec<_>>()})
 }
 

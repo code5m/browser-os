@@ -68,4 +68,5 @@ for (const scenario of [
 ]) {
   assert.equal(ordinaryProbe(scenario).safe,false,JSON.stringify(scenario));
 }
-console.log('GRID_HIBERNATION_PROBE_SELF_TEST=PASS (Grid and ordinary-tab VM fixtures only; GUI_PENDING)');
+console.log('TAB_HIBERNATION_PROBE_SELF_TEST=PASS (VM fixtures only; GUI_PENDING)');
+console.log('GRID_HIBERNATION_PROBE_SELF_TEST=PASS (VM fixtures only; GUI_PENDING)');

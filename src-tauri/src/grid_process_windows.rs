@@ -96,6 +96,13 @@ impl ChildComms {
         Ok(())
     }
 
+    fn block_blank_reclaim_for(&self, generation: u64) {
+        let _owner = self.owner_gate.lock().unwrap();
+        if self.generation.load(Ordering::SeqCst) == generation {
+            self.blank_reclaim_blocked.store(true, Ordering::SeqCst);
+        }
+    }
+
     fn try_claim_blank_reclaim(self: &Arc<Self>, generation: u64) -> Option<BlankReclaimGuard> {
         // The writer excludes a send that passed its admission check but has
         // not yet entered the pipe. Never wait on a potentially stalled pipe.
@@ -1222,7 +1229,7 @@ impl GridProcessManager {
             result
         };
         if let Err(e) = write_res {
-            comms.blank_reclaim_blocked.store(true, Ordering::SeqCst);
+            comms.block_blank_reclaim_for(generation);
             comms.pending.lock().unwrap().remove(&seq);
             comms.detach_if_current(generation);
             self.terminate_child_job(index, &comms, generation, peer_pid);
@@ -1231,22 +1238,22 @@ impl GridProcessManager {
         let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
         loop {
             if let Err(error) = self.lifecycle.check() {
-                comms.blank_reclaim_blocked.store(true, Ordering::SeqCst);
-            comms.pending.lock().unwrap().remove(&seq);
+                comms.block_blank_reclaim_for(generation);
+                comms.pending.lock().unwrap().remove(&seq);
                 return Err(format!("GRID_REQUEST_OUTCOME_UNKNOWN: {error}"));
             }
             let remaining = deadline.saturating_duration_since(std::time::Instant::now());
             if remaining.is_zero() {
-                comms.blank_reclaim_blocked.store(true, Ordering::SeqCst);
-            comms.pending.lock().unwrap().remove(&seq);
+                comms.block_blank_reclaim_for(generation);
+                comms.pending.lock().unwrap().remove(&seq);
                 return Err("GRID_REQUEST_OUTCOME_UNKNOWN: 等待子进程响应超时".into());
             }
             match rx.recv_timeout(remaining.min(std::time::Duration::from_millis(50))) {
                 Ok(result) => return result,
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    comms.blank_reclaim_blocked.store(true, Ordering::SeqCst);
-            comms.pending.lock().unwrap().remove(&seq);
+                    comms.block_blank_reclaim_for(generation);
+                    comms.pending.lock().unwrap().remove(&seq);
                     return Err("GRID_REQUEST_OUTCOME_UNKNOWN: 子进程响应通道已关闭".into());
                 }
             }
@@ -2131,7 +2138,8 @@ impl GridProcessManager {
                 index,
                 pid: child.child.id(),
                 spawn_epoch: child.comms.spawn_epoch.load(Ordering::SeqCst),
-                ready: child.comms.is_connected() && (!ordinary || child.document_ready),
+                ready: child.comms.is_connected() && (!ordinary || child.document_ready)
+                    && !child.comms.blank_reclaiming.load(Ordering::SeqCst),
                 startup_reserved: child.spawned_at.elapsed() < crate::grid_ipc::RENDERER_STARTUP_RESERVE
                     || (ordinary && !child.document_ready),
             }
