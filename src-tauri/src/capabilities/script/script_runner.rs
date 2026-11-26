@@ -90,6 +90,8 @@ pub enum RunError {
     UnsupportedPlatform,
     /// `spawn` 失败。
     SpawnFailed(String),
+    /// Trusted host rejected the pre-spawn admission; no process started.
+    AdmissionRejected(String),
     /// 参数校验未通过（包装 `ScriptError`，保留其稳定错误码）。
     InvalidParam(ScriptError),
     /// `run_id` 不存在。
@@ -107,6 +109,7 @@ impl RunError {
             RunError::CwdRejected(_) => "CWD_REJECTED",
             RunError::UnsupportedPlatform => "UNSUPPORTED_PLATFORM",
             RunError::SpawnFailed(_) => "SPAWN_FAILED",
+            RunError::AdmissionRejected(_) => "SCRIPT_ADMISSION_REJECTED",
             RunError::InvalidParam(e) => e.code(),
             RunError::UnknownRun(_) => "UNKNOWN_RUN",
         }
@@ -923,7 +926,7 @@ fn start_argv_run(
     app: Option<AppHandle>,
     records_file: Option<PathBuf>,
 ) -> Result<String, RunError> {
-    start_argv_run_owned(table, script_id, timeout_secs, argv, cwd, home_dir, app, records_file, None)
+    start_argv_run_owned(table, script_id, timeout_secs, argv, cwd, home_dir, app, records_file, None, || Ok(()))
 }
 
 fn start_argv_run_owned(
@@ -936,6 +939,7 @@ fn start_argv_run_owned(
     app: Option<AppHandle>,
     records_file: Option<PathBuf>,
     owned_id: Option<uuid::Uuid>,
+    before_spawn: impl FnOnce() -> Result<(), RunError>,
 ) -> Result<String, RunError> {
     let timeout = effective_timeout(timeout_secs)?;
 
@@ -1068,6 +1072,17 @@ fn start_argv_run_owned(
             return Err(RunError::SpawnFailed(format!("BROWSEROS_CGROUP_UNAVAILABLE: {error}")));
         }
     };
+    // All local validation and the exclusive run reservation precede
+    // the trusted durable admission. Never spawn after an admission error.
+    // No table mutex is held across the callback's private storage write.
+    if cancel.load(Ordering::Acquire) {
+        table.lock_runs().remove(&run_id);
+        return Err(RunError::AdmissionRejected("AGENT_OPERATION_CANCELLED_BEFORE_DISPATCH".into()));
+    }
+    if let Err(error) = before_spawn() {
+        table.lock_runs().remove(&run_id);
+        return Err(error);
+    }
     let mut child = match spawn_in_new_group(&mut cmd) {
         Ok(c) => c,
         Err(e) => {
@@ -1211,10 +1226,26 @@ pub(crate) fn start_command_owned(
     records_file: Option<PathBuf>,
     owned_id: Option<uuid::Uuid>,
 ) -> Result<String, RunError> {
+    start_command_owned_with_admission(table, snippet, values, roots, home_dir, app, records_file, owned_id, || Ok(()))
+}
+
+/// Same reviewed argv/runner path; the optional host-owned fence executes
+/// synchronously on the caller before any external process can start.
+pub(crate) fn start_command_owned_with_admission(
+    table: &Arc<ScriptProcessTable>,
+    snippet: &CommandSnippet,
+    values: &HashMap<String, String>,
+    roots: &[PathBuf],
+    home_dir: &Path,
+    app: Option<AppHandle>,
+    records_file: Option<PathBuf>,
+    owned_id: Option<uuid::Uuid>,
+    before_spawn: impl FnOnce() -> Result<(), RunError>,
+) -> Result<String, RunError> {
     let argv = build_command_argv(snippet, values, roots)?;
     start_argv_run_owned(
         table, &snippet.id, snippet.timeout_secs, argv,
-        home_dir.to_path_buf(), home_dir, app, records_file, owned_id,
+        home_dir.to_path_buf(), home_dir, app, records_file, owned_id, before_spawn,
     )
 }
 
@@ -1460,6 +1491,29 @@ mod script_runner_tests {
 
         let err = build_command_argv(&snippet, &values, &roots).unwrap_err();
         assert_eq!(err.code(), "SCRIPT_PATH_REJECTED");
+    }
+
+    #[test]
+    fn reviewed_command_denied_admission_removes_only_its_reservation() {
+        let dir = temp_dir("admission");
+        let table = Arc::new(ScriptProcessTable::default());
+        let snippet = snippet_with(vec!["printf", "must-not-start"], vec![]);
+        let id = uuid::Uuid::new_v4();
+        let run = format!("run-{id}");
+        let error = start_command_owned_with_admission(&table, &snippet, &HashMap::new(),
+            &[dir.clone()], &dir, None, None, Some(id), || {
+                assert!(table.snapshot(&run).is_some());
+                Err(RunError::AdmissionRejected("fixture denied".into()))
+            }).unwrap_err();
+        assert_eq!(error.code(), "SCRIPT_ADMISSION_REJECTED");
+        assert!(table.snapshot(&run).is_none());
+        assert_eq!(table.running_count(), 0);
+        let malformed = snippet_with(vec!["grep", "-r{PATTERN}"],
+            vec![param("PATTERN", ParamType::String, true)]);
+        assert!(start_command_owned_with_admission(&table, &malformed, &HashMap::new(),
+            &[dir.clone()], &dir, None, None, Some(uuid::Uuid::new_v4()),
+            || panic!("invalid argv must not reach admission")).is_err());
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

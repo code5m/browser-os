@@ -241,12 +241,7 @@ pub(crate) fn dispatch_coding_request(
     }
     super::coding::execute_with_admission_adapter(root, storage, request, binding, provider, |kind, input, approved, cancel, admit| {
         match kind {
-            "command" => {
-                // The snippet runner retains its existing conservative
-                // outer fence until it can provide its own spawn admission.
-                admit()?;
-                crate::bridge::run_command_for_coding(app, webview, input, approved, cancel)
-            }
+            "command" => crate::bridge::run_command_for_coding(app, webview, input, approved, cancel, || admit()),
             "mcp" => {
                 let response = super::coding_context::execute_cancelable_with_admission(root, storage, serde_json::json!({
                     "action":"mcp_call", "approved":true,
