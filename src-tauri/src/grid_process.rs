@@ -1079,19 +1079,20 @@ impl GridProcessManager {
         self.grid_bound_request(binding, cmd, 10000).map(|_| ())
     }
 
-    /// Only the reviewed Grid data/zoom commands may use this path. Zoom is
-    /// a host preference, not a document operation; it survives navigation
-    /// within the original host, never process/transport replacement.
+    /// Only the reviewed Grid operations may use this bound path. Host
+    /// preferences and geometry survive same-host navigation; data and a
+    /// queued navigation intent are fenced by the observed document revision.
     fn grid_bound_request(
         &self, binding: crate::grid_ipc::RendererBinding, cmd: GridCmd, timeout_ms: u64,
     ) -> Result<Option<String>, String> {
         let _operation = self.lifecycle.enter()?;
         if (binding.index as usize) >= crate::bridge::MAX_GRID || !cmd.targets(binding.index)
-            || !matches!(&cmd, GridCmd::Eval { .. } | GridCmd::ReadReplies { .. } | GridCmd::SetZoom { .. })
+            || !matches!(&cmd, GridCmd::Eval { .. } | GridCmd::ReadReplies { .. }
+                | GridCmd::SetZoom { .. } | GridCmd::Navigate { .. } | GridCmd::UpdateRect { .. })
         {
             return Err("GRID_REQUEST_TARGET_REJECTED".into());
         }
-        let document_bound = !matches!(&cmd, GridCmd::SetZoom { .. });
+        let document_bound = !matches!(&cmd, GridCmd::SetZoom { .. } | GridCmd::UpdateRect { .. });
         let comms = {
             let children = self.children.lock().unwrap();
             let child = children.get(&binding.index).ok_or("GRID_EVAL_TARGET_STALE")?;
@@ -1105,6 +1106,66 @@ impl GridProcessManager {
             Arc::clone(&child.comms)
         };
         self.request_once_with(comms, binding.generation, &cmd, timeout_ms)
+    }
+
+    /// A late acknowledgement must not rewrite the URL of a replacement
+    /// host, nor overwrite a newer native navigation observation.
+    pub(crate) fn grid_navigate_bound(&self, binding: crate::grid_ipc::RendererBinding, url: &str)
+        -> Result<(), String>
+    {
+        let cmd = GridCmd::Navigate { id: crate::grid_ipc::renderer_label(binding.index), url: url.to_owned() };
+        self.grid_bound_request(binding, cmd, 10000)?;
+        let mut children = self.children.lock().unwrap();
+        let child = children.get_mut(&binding.index).ok_or("GRID_REQUEST_OUTCOME_UNKNOWN: navigation host retired")?;
+        let _owner = child.comms.owner_gate.lock().unwrap();
+        if child.child.id() != binding.owner.0
+            || child.comms.spawn_epoch.load(Ordering::SeqCst) != binding.owner.1
+            || !child.comms.is_current(binding.generation)
+        {
+            return Err("GRID_REQUEST_OUTCOME_UNKNOWN: navigation host changed".into());
+        }
+        if child.navigation_revision == binding.navigation_revision {
+            child.last_url = Some(url.to_owned());
+        }
+        Ok(())
+    }
+
+    /// Serialize the existing geometry path with focus/visibility changes.
+    /// Do not publish layout intent against a replacement route.
+    pub(crate) fn grid_position_bound(&self, binding: crate::grid_ipc::RendererBinding,
+        css: (f64, f64, f64, f64), rect: crate::grid_ipc::IpcRect,
+    ) -> Result<(), String> {
+        rect.validate()?;
+        let _dispatch = self.visibility_dispatch.lock().unwrap_or_else(|p| p.into_inner());
+        {
+            let mut children = self.children.lock().unwrap();
+            let child = children.get_mut(&binding.index).ok_or("GRID_POSITION_TARGET_STALE")?;
+            let _owner = child.comms.owner_gate.lock().unwrap();
+            if child.child.id() != binding.owner.0
+                || child.comms.spawn_epoch.load(Ordering::SeqCst) != binding.owner.1
+                || !child.comms.is_current(binding.generation)
+                || child.comms.blank_reclaiming.load(Ordering::SeqCst)
+            {
+                return Err("GRID_POSITION_TARGET_STALE".into());
+            }
+            // Preserve the prior layout intent semantics: foreground geometry
+            // blocks blank hibernation while IPC is pending. This is not a
+            // native geometry acknowledgement.
+            child.last_rect = Some(css);
+            child.hidden = css.0 <= -20000.0;
+            child.blur_hidden = false;
+            child.hidden_since = if child.hidden {
+                Some(child.hidden_since.unwrap_or_else(std::time::Instant::now))
+            } else { None };
+        }
+        let cmd = GridCmd::UpdateRect { id: crate::grid_ipc::renderer_label(binding.index), rect };
+        self.grid_bound_request(binding, cmd, 3000)?;
+        let now = self.grid_eval_binding(binding.index)
+            .map_err(|_| "GRID_REQUEST_OUTCOME_UNKNOWN: position host retired")?;
+        if now.owner != binding.owner || now.generation != binding.generation {
+            return Err("GRID_REQUEST_OUTCOME_UNKNOWN: position host changed".into());
+        }
+        Ok(())
     }
 
     pub(crate) fn grid_zoom_bound(&self, binding: crate::grid_ipc::RendererBinding, zoom: f64)
