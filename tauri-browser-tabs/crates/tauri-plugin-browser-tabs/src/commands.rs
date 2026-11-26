@@ -306,6 +306,8 @@ fn offscreen_rect(rect: LogicalRect) -> LogicalRect {
 struct ManagedTab {
     webview: Webview<Wry>,
     document_revision: Arc<std::sync::atomic::AtomicU64>,
+    // Never reclaim a previously download-affecting host as pristine blank.
+    download_seen: Arc<std::sync::atomic::AtomicBool>,
     #[cfg(target_os = "linux")]
     layout: RwLock<TabLayout>,
     #[cfg(not(target_os = "linux"))]
@@ -913,6 +915,8 @@ pub struct TabManager {
     // WebView event emitters cannot reach this function pointer.
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     shell_shortcut_sink: RwLock<Option<Arc<dyn Fn(&str, &str) + Send + Sync>>>,
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    download_sink: RwLock<Option<Arc<dyn Fn(&str, &str) + Send + Sync>>>,
     // Native host-only alternate profile. Never selected by an IPC caller.
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     isolated_profile: Option<PathBuf>,
@@ -933,6 +937,8 @@ impl TabManager {
             #[cfg(any(target_os = "linux", target_os = "windows"))]
             shell_shortcut_sink: RwLock::new(None),
             #[cfg(any(target_os = "linux", target_os = "windows"))]
+            download_sink: RwLock::new(None),
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
             isolated_profile: None,
             isolated_ready: None,
             #[cfg(any(target_os = "linux", target_os = "windows"))]
@@ -947,6 +953,21 @@ impl TabManager {
         &self, sink: impl Fn(&str, &str) + Send + Sync + 'static,
     ) {
         *self.shell_shortcut_sink.write() = Some(Arc::new(sink));
+    }
+
+    /// Native-only observation of the existing engine download lifecycle.
+    /// Not an IPC command, destination override, or file access capability.
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    pub fn set_native_download_sink(
+        &self, sink: impl Fn(&str, &str) + Send + Sync + 'static,
+    ) {
+        *self.download_sink.write() = Some(Arc::new(sink));
+    }
+
+    /// Missing native identity is not proof of a pristine download history.
+    pub fn download_history_clear(&self, id: &TabId) -> bool {
+        self.tabs.read().get(id).is_some_and(|tab|
+            !tab.download_seen.load(std::sync::atomic::Ordering::Acquire))
     }
 
     /// Only for the separate, fresh-profile capture host. The ordinary
@@ -1103,6 +1124,7 @@ impl TabManager {
         // NavigationFinished before the document actually finishes loading.
         // Linux continues to use native WebKit main-frame URI observations.
         let document_revision = Arc::new(std::sync::atomic::AtomicU64::new(1));
+        let download_seen = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let isolated = self.isolated_ready.clone();
         let nav_ready = isolated.clone();
         let nav_revision = document_revision.clone();
@@ -1134,6 +1156,25 @@ impl TabManager {
                 })
                 .on_download(|_, _| false);
         } else {
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
+            if let Some(sink) = self.download_sink.read().clone() {
+                let download_id = options.id.clone();
+                let seen = Arc::clone(&download_seen);
+                builder = builder.on_download(move |_, event| {
+                    use tauri::webview::DownloadEvent;
+                    let phase = match event {
+                        DownloadEvent::Requested { .. } => "requested",
+                        DownloadEvent::Finished { success: true, .. } => "succeeded",
+                        DownloadEvent::Finished { success: false, .. } => "failed",
+                        _ => return true,
+                    };
+                    // The native safety flag does not depend on best-effort
+                    // report delivery. Never expose URL, destination or path.
+                    seen.store(true, std::sync::atomic::Ordering::Release);
+                    sink(&download_id, phase);
+                    true
+                });
+            }
             #[cfg(not(target_os = "linux"))]
             {
                 let nav_id = options.id.clone();
@@ -1500,6 +1541,7 @@ impl TabManager {
         let entry = Arc::new(ManagedTab {
             webview,
             document_revision,
+            download_seen,
             #[cfg(target_os = "linux")]
             layout: RwLock::new(TabLayout {
                 rect: native_rect,

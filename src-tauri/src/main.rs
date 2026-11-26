@@ -468,6 +468,13 @@ fn run_grid_child(index: u32) {
                             enqueue_renderer_report("browser-tabs://shell-shortcut", payload);
                         }
                     });
+                app.state::<tauri_plugin_browser_tabs::TabManagerState>()
+                    .set_native_download_sink(move |id, phase| {
+                        let payload = serde_json::json!({"id": id, "phase": phase});
+                        if grid_ipc::valid_renderer_event(index, "renderer-download", &payload) {
+                            enqueue_renderer_report("renderer-download", payload);
+                        }
+                    });
             }
             let window = WebviewWindowBuilder::new(
                 app,
@@ -775,10 +782,16 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
                         continue;
                     }
                     if let grid_ipc::GridCmd::HibernationProbe { ref id } = cmd {
+                        let manager = app.state::<tauri_plugin_browser_tabs::TabManagerState>();
+                        if !manager.download_history_clear(id) {
+                            let _ = grid_ipc::write_wire(&mut *writer.lock().unwrap(),
+                                &grid_ipc::Wire::err(seq, "GRID_HIBERNATION_DOWNLOAD_HISTORY"));
+                            continue;
+                        }
+                        let probe_manager = Arc::clone(manager.inner());
+                        let probe_id = id.clone();
                         let reply_writer = writer.clone();
-                        let result = app
-                            .state::<tauri_plugin_browser_tabs::TabManagerState>()
-                            .eval_result(
+                        let result = manager.eval_result(
                                 id,
                                 if grid_ipc::is_tab_renderer(index) {
                                     include_str!("../injected/tab-hibernation-probe.js").to_string()
@@ -786,6 +799,8 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
                                     include_str!("../injected/grid-hibernation-probe.js").to_string()
                                 },
                                 move |value| {
+                                    let value = if probe_manager.download_history_clear(&probe_id) { value }
+                                        else { Err("GRID_HIBERNATION_DOWNLOAD_HISTORY".into()) };
                                     let response = match value {
                                         Ok(data) => grid_ipc::Wire::Response {
                                             seq,

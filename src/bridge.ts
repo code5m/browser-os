@@ -1175,6 +1175,8 @@ export const bridge = {
   // Advisory recovery invalidation shared by screenshot and tab mutation owners.
   onIsolatedRendererRecoveryChanged: (cb: (event: { id: string }) => void) =>
     listen<{ id: string }>("isolated-tab-renderer-recovery-changed", (e) => cb(e.payload)),
+  onIsolatedDownload: (cb: (event: { id: string; pid: number; spawn_epoch: string; phase: "requested" | "succeeded" | "failed" }) => void) =>
+    listen<{ id: string; pid: number; spawn_epoch: string; phase: "requested" | "succeeded" | "failed" }>("isolated-renderer-download", (e) => cb(e.payload)),
 
   // ====== M1-4 默认浏览器接入（外部打开 URL 路由） ======
   // 拉取并清空后端 pending 队列（冷启动 argv / 单实例转发 / RunEvent::Opened

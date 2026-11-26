@@ -516,6 +516,11 @@ impl GridProcessManager {
                                             "grid-child-focus" => {}
                                             "grid-child-blur" => state.grid_manager.request_hide_for_blur_async(),
                                                 "renderer-resource" => {}
+                                                "renderer-download" => {
+                                                    if payload["renderer_drop"] != true && comms_reader.is_current(generation) {
+                                                        let _ = app.emit_to("main", "isolated-renderer-download", payload);
+                                                    }
+                                                }
                                                 "browser-tabs://shell-shortcut" => {
                                                     if payload["renderer_drop"] != true && comms_reader.is_current(generation) {
                                                         let _ = app.emit_to("main", "browser-tabs://shell-shortcut", payload);
@@ -2124,6 +2129,20 @@ impl GridProcessManager {
                 // Background pages retain the existing popup policy; stale,
                 // unpublished, shutdown and unsupported sources cannot open.
                 payload["renderer_drop"] = serde_json::json!(!allowed);
+            }
+            "renderer-download" => {
+                // Even an early native observation disqualifies blank
+                // reclaim. Notification is advisory and only for a live tab.
+                comms.blank_reclaim_blocked.store(true, Ordering::SeqCst);
+                let id = crate::grid_ipc::renderer_label(index);
+                let live = self.app().is_some_and(|app| {
+                    let state = app.state::<crate::bridge::AppState>();
+                    !state.shutdown_requested.load(Ordering::Acquire)
+                        && state.tabs.lock().unwrap().contains_key(&id)
+                });
+                payload["renderer_drop"] = serde_json::json!(!live);
+                payload["pid"] = serde_json::json!(child.child.id());
+                payload["spawn_epoch"] = serde_json::json!(comms.spawn_epoch.load(Ordering::SeqCst).to_string());
             }
             "browser-tabs://shell-shortcut" => {
                 let id = crate::grid_ipc::renderer_label(index);

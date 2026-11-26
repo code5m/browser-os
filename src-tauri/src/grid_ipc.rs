@@ -204,6 +204,10 @@ pub(crate) fn valid_renderer_event(index: u32, name: &str, payload: &serde_json:
             && payload["id"].as_str() == Some(label.as_str())
             && payload["page_url"].as_str().is_some_and(|url| url.len() <= 8192)
             && payload["items"].as_array().is_some_and(|items| items.len() <= 100),
+        "renderer-download" => is_tab_renderer(index)
+            && payload.as_object().is_some_and(|fields| fields.len() == 2)
+            && payload["id"].as_str() == Some(label.as_str())
+            && matches!(payload["phase"].as_str(), Some("requested" | "succeeded" | "failed")),
         "browser-tabs://shell-shortcut" => is_tab_renderer(index)
             && payload["id"].as_str() == Some(label.as_str())
             && matches!(payload["action"].as_str(), Some("immersive" | "compact" | "address")),

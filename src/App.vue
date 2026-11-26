@@ -79,6 +79,7 @@ let unlistenResize: (() => void) | null = null;
 let unlistenChildShortcut: (() => void) | null = null;
 let unlistenExitStatus: (() => void) | null = null;
 let unlistenRendererRecovery: (() => void) | null = null;
+let unlistenRendererDownload: (() => void) | null = null;
 let stopPendingOpenWatch: (() => void) | null = null;
 let uiHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let layoutBusy = false;
@@ -134,6 +135,7 @@ onBeforeUnmount(() => {
   unlistenChildShortcut?.();
   unlistenExitStatus?.();
   unlistenRendererRecovery?.();
+  unlistenRendererDownload?.();
   stopPendingOpenWatch?.();
   if (uiHeartbeatTimer !== null) clearInterval(uiHeartbeatTimer);
   uiHeartbeatTimer = null;
@@ -241,6 +243,17 @@ onMounted(async () => {
   bridge.onIsolatedRendererExited((event) => { void browser.handleIsolatedRendererExited(event); });
   unlistenRendererRecovery = await bridge.onIsolatedRendererRecoveryChanged((event) => {
     if (typeof event?.id === "string") void browser.refreshRendererState(event.id);
+  });
+  unlistenRendererDownload = await bridge.onIsolatedDownload(async (event) => {
+    if (typeof event?.id !== "string" || !Number.isInteger(event.pid)
+        || !["requested", "succeeded", "failed"].includes(event.phase)) return;
+    const view = await browser.refreshRendererState(event.id);
+    const target = view?.renderer_recovery_target;
+    // The event is not permission to open a file or to act on a replacement.
+    if (!target || target.pid !== event.pid || target.spawn_epoch !== event.spawn_epoch) return;
+    layout.showToast(event.phase === "requested"
+      ? "独立页签收到下载请求；关闭宿主可能中断下载"
+      : event.phase === "succeeded" ? "原生引擎报告下载成功" : "原生引擎报告下载未成功");
   });
   bridge.onNewTabRequest((u) => {
     setTimeout(() => browser.tabNew(u.url), 0);
