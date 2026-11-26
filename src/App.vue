@@ -245,27 +245,25 @@ onMounted(async () => {
   const notifiedRetirements = new Set<string>();
   unlistenRendererDownload = await bridge.onIsolatedDownload(async (event) => {
     // The bridge already validated the runtime payload and count arithmetic.
-    const hadLogicalTab = browser.tabs.some(tab => tab.id === event.id);
-    const view = hadLogicalTab ? await browser.refreshRendererState(event.id) : null;
-    const target = view?.renderer_recovery_target;
     if (event.phase === "owner_retired") {
-      // A final close removes the logical tab before the retirement notice.
-      // Keep that notice useful without publishing state onto a replacement.
-      const stillExists = browser.tabs.some(tab => tab.id === event.id);
-      const retired = !stillExists || (!target &&
-        (view?.renderer_state === "absent" || view?.renderer_state === "hibernated"));
+      // This is the original owner's confirmed retirement notification,
+      // not an update to the replacement tab. A new live host or failed
+      // inspection must not suppress the old owner's download warning.
       const key = event.id + ":" + event.pid + ":" + event.spawn_epoch;
-      if (retired && event.outcome === "unknown" && !notifiedRetirements.has(key)
+      if (event.outcome === "unknown" && !notifiedRetirements.has(key)
           && (event.observed_unfinished === null || event.observed_unfinished > 0)) {
         if (notifiedRetirements.size >= 128) {
           const oldest = notifiedRetirements.values().next().value;
           if (oldest !== undefined) notifiedRetirements.delete(oldest);
         }
         notifiedRetirements.add(key);
-        layout.showToast("原下载宿主已回收；曾观察到未完成或无法对账的下载，最终结果待核对。");
+        layout.showToast(event.id + " 原下载宿主已回收；曾观察到未完成或无法对账的下载，最终结果待核对。");
       }
       return;
     }
+    if (!browser.tabs.some(tab => tab.id === event.id)) return;
+    const view = await browser.refreshRendererState(event.id);
+    const target = view?.renderer_recovery_target;
     if (!view) return;
     const observed = view.renderer_download;
     // Only the latest authenticated owner/connection observation can notify.

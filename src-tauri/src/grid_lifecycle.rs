@@ -112,6 +112,18 @@ type Children = Arc<Mutex<HashMap<u32, GridChildHandle>>>;
 type Listeners = Arc<Mutex<HashMap<u32, Arc<ChildComms>>>>;
 
 #[derive(Default)]
+struct DownloadRetirements {
+    // Pending evidence is owned by the native retirement, never evicted
+    // by the bounded completed-history policy.
+    pending: Vec<serde_json::Value>,
+    completed: VecDeque<serde_json::Value>,
+}
+
+fn same_download_owner(a: &serde_json::Value, b: &serde_json::Value) -> bool {
+    a["id"] == b["id"] && a["pid"] == b["pid"] && a["spawn_epoch"] == b["spawn_epoch"]
+}
+
+#[derive(Default)]
 pub(super) struct GridLifecycle {
     stopping: AtomicBool,
     operations: AtomicUsize,
@@ -124,7 +136,7 @@ pub(super) struct GridLifecycle {
     retirement_app: Mutex<Option<AppHandle>>,
     // Bounded in-memory observations of retired independent renderer owners.
     // Never persist paths, URLs or an invented per-transfer outcome.
-    download_history: Mutex<VecDeque<serde_json::Value>>,
+    download_history: Mutex<DownloadRetirements>,
     cleanup_worker: Mutex<Option<JoinHandle<()>>>,
     cleanup_done: AtomicBool,
     wake_lock: Mutex<()>,
@@ -146,16 +158,32 @@ impl GridLifecycle {
         *self.retirement_app.lock().unwrap() = Some(app);
     }
 
-    pub(super) fn download_history(&self) -> Result<Vec<serde_json::Value>, String> {
+    pub(super) fn download_history(&self) -> Result<(Vec<serde_json::Value>, Vec<serde_json::Value>), String> {
         let history = self.download_history.try_lock().map_err(|_| "TAB_DOWNLOAD_HISTORY_BUSY")?;
-        Ok(history.iter().rev().cloned().collect())
+        Ok((history.pending.clone(), history.completed.iter().rev().cloned().collect()))
+    }
+
+    fn begin_download_retirement(&self, payload: &serde_json::Value) {
+        let mut history = self.download_history.lock().unwrap_or_else(|p| p.into_inner());
+        if history.pending.iter().any(|row| same_download_owner(row, payload)) {
+            return;
+        }
+        let mut pending = payload.clone();
+        pending["phase"] = serde_json::json!("owner_retiring");
+        history.pending.push(pending);
     }
 
     fn remember_download_retirement(&self, payload: &serde_json::Value) {
         const LIMIT: usize = 128;
         let mut history = self.download_history.lock().unwrap_or_else(|p| p.into_inner());
-        if history.len() == LIMIT { history.pop_front(); }
-        history.push_back(payload.clone());
+        // One registry lock publishes the pending -> completed transition.
+        // Never report disappearance or a second owner for the same evidence.
+        history.pending.retain(|row| !same_download_owner(row, payload));
+        if history.completed.iter().any(|row| same_download_owner(row, payload)) {
+            return;
+        }
+        if history.completed.len() == LIMIT { history.completed.pop_front(); }
+        history.completed.push_back(payload.clone());
     }
 
     pub(super) fn check(&self) -> Result<(), String> {
@@ -229,10 +257,14 @@ impl GridLifecycle {
         child.comms.revoke_owner(child.child.id());
         *self.retiring.lock().unwrap().entry(index).or_insert(0) += 1;
         self.retiring_total.fetch_add(1, Ordering::SeqCst);
+        let retirement = GridRetirement::new(index, child);
+        if let Some(payload) = retirement.download_retired.as_ref() {
+            self.begin_download_retirement(payload);
+        }
         self.retired
             .lock()
             .unwrap()
-            .push_back(Arc::new(Mutex::new(GridRetirement::new(index, child))));
+            .push_back(Arc::new(Mutex::new(retirement)));
         self.wake.notify_all();
     }
 

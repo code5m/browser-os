@@ -58,12 +58,12 @@ export type RendererDownloadEvent =
 // Native owner observations only. Null means the count was never observed;
  // an exited owner does not certify a transfer's terminal outcome.
 export type DownloadOwnerObservation = {
-  id: string; phase: "live" | "owner_retired"; pid: number; spawn_epoch: string;
+  id: string; phase: "live" | "owner_retiring" | "owner_retired"; pid: number; spawn_epoch: string;
   renderer_generation: string | null; connection_current: boolean;
   requested: number | null; succeeded: number | null; failed: number | null;
   observed_unfinished: number | null; outcome: "unknown";
 };
-export type DownloadInventory = { live: DownloadOwnerObservation[]; retired: DownloadOwnerObservation[]; retired_limit: number };
+export type DownloadInventory = { live: DownloadOwnerObservation[]; retiring: DownloadOwnerObservation[]; retired: DownloadOwnerObservation[]; retired_limit: number };
 
 // IPC results are runtime data, not TypeScript guarantees. Share one
 // non-mutating validator across notification, tab inspection and inventory.
@@ -98,9 +98,9 @@ export function isRendererDownloadObservation(value: unknown): value is Renderer
 export function isDownloadOwnerObservation(value: unknown): value is DownloadOwnerObservation {
   const row = downloadRecord(value);
   if (!row || !nativeTabId(row.id) || !nativeDownloadIdentity(row)
-      || (row.phase !== "live" && row.phase !== "owner_retired")
+      || (row.phase !== "live" && row.phase !== "owner_retiring" && row.phase !== "owner_retired")
       || typeof row.connection_current !== "boolean" || row.outcome !== "unknown"
-      || (row.phase === "owner_retired" && row.connection_current)) return false;
+      || (row.phase !== "live" && row.connection_current)) return false;
   if (row.renderer_generation === null) {
     return !row.connection_current && row.requested === null && row.succeeded === null
       && row.failed === null && row.observed_unfinished === null;

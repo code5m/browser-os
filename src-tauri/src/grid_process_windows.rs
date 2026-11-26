@@ -1078,9 +1078,15 @@ impl GridProcessManager {
             }));
         }
         live.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
+        // Observe retirement ownership before releasing the live map. A
+        // pending retirement must not look like a completed/absent transfer.
+        let (retiring, retired) = self.lifecycle.download_history()?;
+        if live.iter().any(|row| retiring.iter().chain(&retired).any(|old|
+            row["id"] == old["id"] && row["pid"] == old["pid"] && row["spawn_epoch"] == old["spawn_epoch"])) {
+            return Err("TAB_DOWNLOAD_HISTORY_BUSY".into());
+        }
         drop(children);
-        let retired = self.lifecycle.download_history()?;
-        Ok(serde_json::json!({"live":live,"retired":retired,"retired_limit":128}))
+        Ok(serde_json::json!({"live":live,"retiring":retiring,"retired":retired,"retired_limit":128}))
     }
 
     /// Optional counters carried by the original authenticated Ping. Late or

@@ -58,13 +58,17 @@ async function refreshDownloadInventory(sample?: DownloadOwnerObservation) {
     const view = sample ? await bridge.sampleDownload(sample) : await bridge.inspectDownloadInventory();
     if (epoch !== downloadPanelEpoch || !downloadPanelOpen.value) return;
     const data = view.download_inventory;
-    if (!data || !Array.isArray(data.live) || !Array.isArray(data.retired)
+    if (!data || !Array.isArray(data.live) || !Array.isArray(data.retiring) || !Array.isArray(data.retired)
         || data.retired_limit !== 128 || data.retired.length > 128
         || data.live.some(row => !isDownloadOwnerObservation(row) || row.phase !== "live")
+        || data.retiring.some(row => !isDownloadOwnerObservation(row) || row.phase !== "owner_retiring")
         || data.retired.some(row => !isDownloadOwnerObservation(row) || row.phase !== "owner_retired")
-        || new Set(data.live.map(row => row.id)).size !== data.live.length
-        || new Set(data.retired.map(row => row.id + ":" + row.pid + ":" + row.spawn_epoch)).size !== data.retired.length) {
+        || new Set(data.live.map(row => row.id)).size !== data.live.length) {
       throw new Error("invalid download inventory");
+    }
+    const all = [...data.live, ...data.retiring, ...data.retired];
+    if (new Set(all.map(row => row.id + ":" + row.pid + ":" + row.spawn_epoch)).size !== all.length) {
+      throw new Error("duplicate download owner");
     }
     if (sample && !data.live.some(row => row.id === sample.id && row.pid === sample.pid
         && row.spawn_epoch === sample.spawn_epoch && row.connection_current && row.requested !== null)) {
@@ -93,12 +97,12 @@ function toggleDownloadInventory() {
   }
 }
 const downloadRows = computed(() => downloadInventory.value
-  ? [...downloadInventory.value.live, ...downloadInventory.value.retired] : []);
+  ? [...downloadInventory.value.live, ...downloadInventory.value.retiring, ...downloadInventory.value.retired] : []);
 function downloadLabel(row: DownloadOwnerObservation) {
   if (row.requested === null) return "尚无可信计数；结果待核对";
   const counts = `请求 ${row.requested} / 成功回调 ${row.succeeded} / 失败回调 ${row.failed}`;
   const pending = row.observed_unfinished === null ? "计数无法对账" : `未完成观察 ${row.observed_unfinished}`;
-  return counts + "；" + pending + (row.phase === "owner_retired" || !row.connection_current ? "；最终结果未知" : "；非逐项完成回执");
+  return counts + "；" + pending + (row.phase !== "live" || !row.connection_current ? "；最终结果未知" : "；非逐项完成回执");
 }
 async function prepareRendererReopen() {
   const selected = context.value;
@@ -289,12 +293,12 @@ async function newTab() {
       <button :disabled="downloadPanelBusy" @click="refreshDownloadInventory()">重新查询缓存及回收记录</button>
       <span v-if="downloadPanelBusy" role="status">正在核对原生记录…</span>
       <span v-else-if="downloadPanelError" role="status">{{downloadPanelError}}</span>
-      <span v-else-if="downloadInventory">当前宿主 {{downloadInventory.live.length}} / 最近回收 {{downloadInventory.retired.length}}（最多 128）</span>
+      <span v-else-if="downloadInventory">当前宿主 {{downloadInventory.live.length}} / 回收中 {{downloadInventory.retiring.length}} / 最近回收 {{downloadInventory.retired.length}}（最多 128）</span>
       <span v-if="downloadSampleLabel" role="status">{{downloadSampleLabel}}</span>
       <div v-if="downloadInventory" class="download-owner-list">
         <div v-if="!downloadRows.length">暂无宿主观察</div>
         <div v-for="row in downloadRows" :key="row.phase + ':' + row.id + ':' + row.pid + ':' + row.spawn_epoch">
-          <strong>{{row.id}} · {{row.phase === 'live' ? '当前宿主' : '已回收'}}</strong>
+          <strong>{{row.id}} · {{row.phase === 'live' ? '当前宿主' : row.phase === 'owner_retiring' ? '回收中' : '已回收'}}</strong>
           <span>{{downloadLabel(row)}}</span>
           <button v-if="row.phase === 'live'" :disabled="downloadPanelBusy" @click="refreshDownloadInventory(row)">主动采样</button>
         </div>
