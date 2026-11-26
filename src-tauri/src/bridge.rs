@@ -478,7 +478,9 @@ mod normalize_url_tests {
 
 enum TabCloseAdmission<'a> {
     Embedded(&'a tauri_plugin_browser_tabs::TabInstance),
+    EmbeddedDocument(&'a tauri_plugin_browser_tabs::CaptureDocument),
     Isolated(Option<(u32, u64)>),
+    IsolatedDocument(crate::grid_ipc::RendererBinding),
     Hibernated,
 }
 
@@ -493,6 +495,8 @@ fn close_tab_admitted(app: &AppHandle, id: &str, admitted: Option<TabCloseAdmiss
         match admitted {
             Some(TabCloseAdmission::Isolated(expected)) =>
                 state.grid_manager.close_tab_renderer_bound(index, true, expected),
+            Some(TabCloseAdmission::IsolatedDocument(document)) =>
+                state.grid_manager.close_tab_renderer_document(index, true, document),
             None => state.grid_manager.close_tab_renderer(index, true),
             _ => Err("TAB_MUTATION_INSTANCE_STALE".into()),
         }
@@ -506,6 +510,7 @@ fn close_tab_admitted(app: &AppHandle, id: &str, admitted: Option<TabCloseAdmiss
         let manager = app.state::<TabManagerState>();
         let result = match admitted {
             Some(TabCloseAdmission::Embedded(instance)) => manager.close_tab_instance(&id.to_owned(), instance),
+            Some(TabCloseAdmission::EmbeddedDocument(document)) => manager.close_tab_reviewed_document(&id.to_owned(), document),
             None => manager.close_tab(&id.to_owned()),
             _ => return Err("TAB_MUTATION_INSTANCE_STALE".into()),
         };

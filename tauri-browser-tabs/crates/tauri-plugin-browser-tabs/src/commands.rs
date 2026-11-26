@@ -1808,18 +1808,25 @@ impl TabManager {
     }
 
     pub fn close_tab(&self, id: &TabId) -> Result<()> {
-        self.close_tab_bound(id, None, None)
+        self.close_tab_bound(id, None, None, false)
     }
 
     pub fn close_tab_document(&self, id: &TabId, document: &CaptureDocument) -> Result<()> {
-        self.close_tab_bound(id, Some(&document.instance), Some(document))
+        self.close_tab_bound(id, Some(&document.instance), Some(document), true)
     }
 
     pub fn close_tab_instance(&self, id: &TabId, instance: &TabInstance) -> Result<()> {
-        self.close_tab_bound(id, Some(instance), None)
+        self.close_tab_bound(id, Some(instance), None, false)
     }
 
-    fn close_tab_bound(&self, id: &TabId, instance: Option<&TabInstance>, document: Option<&CaptureDocument>) -> Result<()> {
+    /// Explicit reviewed Agent close: retain the same native document check
+    /// as hibernation, without changing explicit user-close download policy.
+    pub fn close_tab_reviewed_document(&self, id: &TabId, document: &CaptureDocument) -> Result<()> {
+        self.close_tab_bound(id, Some(&document.instance), Some(document), false)
+    }
+
+    fn close_tab_bound(&self, id: &TabId, instance: Option<&TabInstance>, document: Option<&CaptureDocument>,
+        protect_download_history: bool) -> Result<()> {
         let _reservation = self.reserve_lifecycle(id)?;
         // A successful native close may outlive its IPC reply. Retrying an
         // already-closed or hibernated tab is successful and creates no resource.
@@ -1835,10 +1842,9 @@ impl TabManager {
         if document.is_some_and(|expected| !expected.observed_generation_is_current()) {
             return Err(BrowserTabError::Platform("TAB_DOCUMENT_STALE".into()));
         }
-        // Document-bound close is the automatic hibernation path. Native
-        // download history is a conservative veto; explicit close is still
-        // the user's existing direct-close operation.
-        if document.is_some() && tab.download_seen.load(std::sync::atomic::Ordering::Acquire) {
+        // Only automatic hibernation requires a pristine download history.
+        // Explicit reviewed close still checks the original document.
+        if protect_download_history && tab.download_seen.load(std::sync::atomic::Ordering::Acquire) {
             return Err(BrowserTabError::Platform("TAB_HIBERNATION_DOWNLOAD_HISTORY".into()));
         }
         // Keep ownership on failure. Admission excludes other synchronous

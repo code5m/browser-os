@@ -1910,17 +1910,25 @@ impl GridProcessManager {
     /// Retire only this route. Retain the same listener across an explicit
     /// recovery so process/connection generations cannot reset.
     pub(crate) fn close_tab_renderer(&self, index: u32, release_listener: bool) -> Result<(), String> {
-        self.close_tab_renderer_admitted(index, release_listener, None)
+        self.close_tab_renderer_admitted(index, release_listener, None, None)
     }
 
     pub(crate) fn close_tab_renderer_bound(&self, index: u32, release_listener: bool,
         expected: Option<(u32, u64)>,
     ) -> Result<(), String> {
-        self.close_tab_renderer_admitted(index, release_listener, Some(expected))
+        self.close_tab_renderer_admitted(index, release_listener, Some(expected), None)
+    }
+
+    pub(crate) fn close_tab_renderer_document(&self, index: u32, release_listener: bool,
+        document: crate::grid_ipc::RendererBinding,
+    ) -> Result<(), String> {
+        if document.index != index { return Err("TAB_RENDERER_CLOSE_TARGET_STALE".into()); }
+        self.close_tab_renderer_admitted(index, release_listener, Some(Some(document.owner)), Some(document))
     }
 
     fn close_tab_renderer_admitted(&self, index: u32, release_listener: bool,
         expected: Option<Option<(u32, u64)>>,
+        document: Option<crate::grid_ipc::RendererBinding>,
     ) -> Result<(), String> {
         if !crate::grid_ipc::is_tab_renderer(index) {
             return Err("TAB_RENDERER_ROUTE_INVALID".into());
@@ -1943,6 +1951,19 @@ impl GridProcessManager {
                 let actual = children.get(&index).map(|child|
                     (child.child.id(), child.comms.spawn_epoch.load(Ordering::SeqCst)));
                 if actual != expected {
+                    return Err("TAB_RENDERER_CLOSE_TARGET_STALE".into());
+                }
+            }
+            // For reviewed Agent close, recheck the admitted connection and
+            // document revision at native retirement, not only at UI review.
+            // The live-map guard excludes parent-side navigation reports.
+            if let Some(document) = document {
+                let child = children.get(&index).ok_or("TAB_RENDERER_CLOSE_TARGET_STALE")?;
+                let _owner = child.comms.owner_gate.try_lock().map_err(|_| "TAB_RENDERER_CLOSE_TARGET_BUSY")?;
+                if !Self::window_binding_matches(child, document)
+                    || child.navigation_revision != document.navigation_revision
+                    || !child.comms.native_document.try_lock().map_err(|_| "TAB_RENDERER_CLOSE_TARGET_BUSY")?
+                        .is_some_and(|stamp| stamp.usable()) {
                     return Err("TAB_RENDERER_CLOSE_TARGET_STALE".into());
                 }
             }

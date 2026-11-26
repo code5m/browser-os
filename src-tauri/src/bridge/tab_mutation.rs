@@ -126,7 +126,9 @@ impl Action {
         if let Self::Close { ref id } = self {
             let admitted = match binding {
                 Binding::Live(instance) => super::TabCloseAdmission::Embedded(instance),
+                Binding::LiveDocument(document) => super::TabCloseAdmission::EmbeddedDocument(document),
                 Binding::Isolated(owner) => super::TabCloseAdmission::Isolated(*owner),
+                Binding::IsolatedDocument(document) => super::TabCloseAdmission::IsolatedDocument(*document),
                 Binding::Hibernated => super::TabCloseAdmission::Hibernated,
                 _ => return Err("TAB_MUTATION_INSTANCE_STALE".into()),
             };
@@ -787,7 +789,6 @@ struct AgentBrowserReview {
     workspace: String,
     action: Action,
     binding: Binding,
-    close_document: Option<Binding>,
     epoch: String,
     sequence: u64,
     expires: Instant,
@@ -808,12 +809,13 @@ pub(crate) fn review_agent_browser_action(
         }
         (state.epoch.clone(), state.next_sequence)
     };
-    let binding = Binding::capture(app, &action)?;
-    // Closing must also bind the live reviewed document. Do not grant
-    // closing a sleeping/absent tab or a replacement document.
-    let close_document = if let Action::Close { id } = &action {
-        Some(Binding::capture(app, &Action::Reload { id: id.clone() })?)
-    } else { None };
+    // Use the document binding as the actual close admission, not a
+    // detached preliminary check followed by process-only close.
+    let binding = if let Action::Close { id } = &action {
+        Binding::capture(app, &Action::Reload { id: id.clone() })?
+    } else {
+        Binding::capture(app, &action)?
+    };
     let origin = action.target().and_then(|id| {
         let state = app.state::<crate::AppState>();
         let tabs = state.tabs.try_lock().ok()?;
@@ -821,8 +823,7 @@ pub(crate) fn review_agent_browser_action(
         let url = url::Url::parse(address).ok()?;
         Some(url.origin().ascii_serialization())
     });
-    if !binding.current(app, &action)
-        || close_document.as_ref().is_some_and(|document| !document.current(app, &action)) {
+    if !binding.current(app, &action) {
         return Err("AGENT_BROWSER_REVIEW_STALE".into());
     }
     {
@@ -836,7 +837,7 @@ pub(crate) fn review_agent_browser_action(
     let command = action.command();
     *AGENT_BROWSER_REVIEW.lock().map_err(|_| "AGENT_BROWSER_REVIEW_BUSY")? =
         Some(AgentBrowserReview {
-            token, operation, workspace, action, binding, close_document, epoch, sequence,
+            token, operation, workspace, action, binding, epoch, sequence,
             expires: Instant::now() + Duration::from_secs(90),
         });
     Ok(serde_json::json!({"token":token,"operation_id":operation,"command":command,
@@ -870,8 +871,7 @@ pub(crate) fn execute_agent_browser_action(
         slot.take().ok_or("AGENT_BROWSER_REVIEW_STALE")?
     };
     let current = || !cancelled() && Instant::now() < review.expires
-        && review.binding.current(app, &action)
-        && review.close_document.as_ref().is_none_or(|document| document.current(app, &action));
+        && review.binding.current(app, &action);
     if !current() { return Err("AGENT_BROWSER_REVIEW_STALE".into()); }
     let ticket = uuid::Uuid::new_v4().to_string();
     {
