@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { ref, reactive, computed, nextTick, watch } from "vue";
-import { bridge } from "../../../bridge";
+import { bridge, type RendererRecoveryTarget } from "../../../bridge";
 import { WEBVIEW_FREEZE_JS, WEBVIEW_UNFREEZE_JS } from "../../../utils/webviewFreeze";
 import { isBrowserResourceAllowed } from "../resource/guard";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
@@ -73,7 +73,7 @@ export const useBrowserStore = defineStore("browser", () => {
   const tabRecoveryRequired = ref(false);
   const tabRecoveryMessage = ref("");
   const tabRecoveryBusy = ref(false);
-  type DomainRecoveryTarget = { epoch: string; sequence: string; ticket: string | null };
+  type DomainRecoveryTarget = { epoch: string; sequence: string; ticket: string | null; scope: "renderer" | "application" };
 
   // Capture the exact current target before showing confirmation. Never
   // refresh the target silently between the warning and the user's decision.
@@ -85,7 +85,8 @@ export const useBrowserStore = defineStore("browser", () => {
         tabRecoveryMessage.value = "尚未达到故障域重启条件，或当前未启用原生监管。请先核对页签。";
         return null;
       }
-      return { epoch: view.epoch, sequence: view.next_sequence, ticket: view.receipt?.ticket ?? null };
+      return { epoch: view.epoch, sequence: view.next_sequence, ticket: view.receipt?.ticket ?? null,
+        scope: view.recovery_scope === "renderer" ? "renderer" : "application" };
     } catch {
       tabRecoveryMessage.value = "无法核对原生故障域，未请求重启。";
       return null;
@@ -97,7 +98,9 @@ export const useBrowserStore = defineStore("browser", () => {
     tabRecoveryBusy.value = true;
     try {
       await bridge.requestTabDomainRecovery(target.epoch, target.sequence, target.ticket);
-      tabRecoveryMessage.value = "已请求监管器核对并重启故障域；旧进程退出前不会启动替代进程。";
+      tabRecoveryMessage.value = target.scope === "renderer"
+        ? "已请求回收原故障页签进程；核对回执后可重新激活，不会重放原操作。"
+        : "已请求监管器核对并重启应用故障域；旧进程退出前不会启动替代进程。";
     } catch {
       tabRecoveryMessage.value = "重启请求未确认或原生状态已变化；请重新核对，禁止自动重试。";
     } finally {
@@ -385,6 +388,30 @@ export const useBrowserStore = defineStore("browser", () => {
       syncFreeze();
       return true;
     });
+  }
+  // Explicit user recovery may discard one native page's volatile state
+  // without closing its logical tab or restarting the application.
+  async function inspectRendererRecovery(id: string): Promise<RendererRecoveryTarget | null> {
+    if (!tabs.some(tab => tab.id === id) || !isBrowserResourceAllowed()) return null;
+    try {
+      const view = await bridge.inspectRendererRecovery(id);
+      if (view.renderer_recovery_target?.id === id) return view.renderer_recovery_target;
+      layout.showToast("该页签当前没有独立宿主，可尝试重新激活。");
+    } catch {
+      layout.showToast("无法核实独立页签原生身份，未请求回收。");
+    }
+    return null;
+  }
+  async function retireRenderer(target: RendererRecoveryTarget) {
+    try {
+      await mutateTabs(async () => {
+        if (!isBrowserResourceAllowed() || !tabs.some(tab => tab.id === target.id)) return;
+        await bridge.retireRenderer(target);
+        layout.showToast("原生页签已回收；点击该页签重新打开记录的网址。");
+      });
+    } catch {
+      layout.showToast("页签回收未确认或身份已变化，请核对状态，不要重复执行。");
+    }
   }
   // ===== 普通 Tab 关闭 =====
   // Owner 最终裁决（2026-09-12）：普通 Tab 关闭 = 不弹确认框 + 不持久化 + 直接关闭。
@@ -740,6 +767,8 @@ export const useBrowserStore = defineStore("browser", () => {
     initializeNativeTabs,
     inspectNativeDomainRecovery,
     requestNativeDomainRecovery,
+    inspectRendererRecovery,
+    retireRenderer,
     aiFiltered,
     tabNew,
     consumeActiveBlankTab,

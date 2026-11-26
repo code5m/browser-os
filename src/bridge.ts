@@ -37,7 +37,9 @@ function invoke<T>(
 type TabAction =
   | { kind: "new"; url: string }
   | { kind: "open"; id: string; url: string }
-  | { kind: "close" | "activate" | "back" | "forward" | "reload"; id: string };
+  | { kind: "close" | "activate" | "back" | "forward" | "reload"; id: string }
+  | { kind: "retire_renderer"; id: string; pid: number; spawn_epoch: string; confirmed: true };
+export type RendererRecoveryTarget = { id: string; pid: number; spawn_epoch: string };
 type TabReceipt = {
   ticket: string; client_id: string; command: string;
   phase: "prepared" | "running" | "cancel_requested" | "succeeded" | "failed" | "cancelled" | "unknown";
@@ -47,6 +49,8 @@ type TabOwnerView = {
   epoch: string; next_sequence: string; receipt: TabReceipt | null; last_ack: string | null;
   internal_active: boolean; active_known: boolean; active_tab_id: string | null;
   domain_recovery_available: boolean;
+  recovery_scope?: "renderer" | "application" | null;
+  renderer_recovery_target?: RendererRecoveryTarget | null;
 };
 const terminalTabReceipt = (r: TabReceipt) => ["succeeded", "failed", "cancelled"].includes(r.phase);
 const receiptDelay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -113,7 +117,7 @@ function boundedReceiptControl<T>(
 const tabReceiptCall = (request: Record<string, unknown>, recovery = false) => {
   const phase = String(request.phase);
   return boundedReceiptControl<TabOwnerView>("tab-" + phase, JSON.stringify(request),
-    () => invoke<TabOwnerView>("tab_mutation", { request }), recovery, phase === "inspect" || phase === "poll");
+    () => invoke<TabOwnerView>("tab_mutation", { request }), recovery, phase === "inspect" || phase === "inspect_renderer" || phase === "poll");
 };
 let terminalEvent: TabReceipt | null = null;
 let receiptListenerStarted = false;
@@ -125,7 +129,7 @@ function ensureTabReceiptListener() {
   }).catch(() => { receiptListenerStarted = false; });
 }
 function receiptErrorIsAuthoritative(error: unknown) {
-  return /TAB_MUTATION_OWNER_BUSY|TAB_MUTATION_INVALID_ID|TAB_MUTATION_STALE_EPOCH|TAB_MUTATION_STALE_SEQUENCE|TAB_MUTATION_INSTANCE_UNAVAILABLE|TAB_NOT_FOUND|NATIVE_LEGACY_ARGUMENT_|NATIVE_SOURCE_DENIED/.test(String(error));
+  return /TAB_MUTATION_OWNER_BUSY|TAB_MUTATION_INVALID_ID|TAB_MUTATION_STALE_EPOCH|TAB_MUTATION_STALE_SEQUENCE|TAB_MUTATION_INSTANCE_UNAVAILABLE|TAB_RENDERER_RECOVERY_INVALID_TARGET|TAB_RENDERER_RECOVERY_STALE|TAB_RENDERER_ROUTE_INVALID|TAB_NOT_FOUND|NATIVE_LEGACY_ARGUMENT_|NATIVE_SOURCE_DENIED/.test(String(error));
 }
 async function acknowledgeTabReceipt(ticket: string, epoch: string, deadline: number): Promise<void> {
   while (performance.now() < deadline) {
@@ -1088,6 +1092,10 @@ export const bridge = {
   tabNew: (url: string) => ownedTabMutation<TabInfo>({ kind: "new", url }),
 
   tabClose: (id: string) => ownedTabMutation<void>({ kind: "close", id }),
+
+  inspectRendererRecovery: (id: string) => tabReceiptCall({phase:"inspect_renderer",id}, true),
+  retireRenderer: (target: RendererRecoveryTarget) =>
+    ownedTabMutation<void>({kind:"retire_renderer",...target,confirmed:true}),
 
   // 激活页签：后端隐藏其它页签的子 webview 并恢复目标页签显示
   tabActivate: (id: string) => ownedTabMutation<void>({ kind: "activate", id }),

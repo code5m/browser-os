@@ -20,6 +20,7 @@ pub(crate) enum Action {
     Back { id: String },
     Forward { id: String },
     Reload { id: String },
+    RetireRenderer { id: String, pid: u32, spawn_epoch: String, confirmed: bool },
 }
 impl Action {
     fn command(&self) -> &'static str {
@@ -31,6 +32,7 @@ impl Action {
             Self::Back { .. } => "tab_go_back",
             Self::Forward { .. } => "tab_go_forward",
             Self::Reload { .. } => "tab_reload",
+            Self::RetireRenderer { .. } => "tab_renderer_retire",
         }
     }
     fn target(&self) -> Option<&str> {
@@ -41,12 +43,15 @@ impl Action {
             | Self::Open { id, .. }
             | Self::Back { id }
             | Self::Forward { id }
-            | Self::Reload { id } => Some(id),
+            | Self::Reload { id }
+            | Self::RetireRenderer { id, .. } => Some(id),
         }
     }
     fn authorize(&self, webview: &Webview) -> Result<(), String> {
         use crate::shared::native_legacy_policy::{bound_text, require_main};
-        let cmd = self.command();
+        // Retiring one native renderer is the same destructive privilege
+        // as closing it, but retains the logical tab. No new IPC permission.
+        let cmd = if matches!(self, Self::RetireRenderer { .. }) { "tab_close" } else { self.command() };
         require_main(webview, cmd)?;
         match self {
             Self::New { url } => bound_text(cmd, "url", url),
@@ -59,6 +64,16 @@ impl Action {
             | Self::Back { id }
             | Self::Forward { id }
             | Self::Reload { id } => bound_text(cmd, "id", id),
+            Self::RetireRenderer { id, pid, spawn_epoch, confirmed } => {
+                bound_text(cmd, "id", id)?;
+                if !confirmed || *pid == 0 || spawn_epoch.parse::<u64>().ok().filter(|n| *n > 0)
+                    .is_none_or(|n| n.to_string() != *spawn_epoch)
+                    || super::isolated_tabs::route(id).is_none()
+                {
+                    return Err("TAB_RENDERER_RECOVERY_INVALID_TARGET".into());
+                }
+                Ok(())
+            }
         }
     }
     fn execute(self, webview: Webview, app: AppHandle) -> Result<Value, String> {
@@ -71,6 +86,19 @@ impl Action {
             Self::Back { id } => tab_go_back_impl(webview, app, id).map(|_| Value::Null),
             Self::Forward { id } => tab_go_forward_impl(webview, app, id).map(|_| Value::Null),
             Self::Reload { id } => tab_reload_impl(webview, app, id).map(|_| Value::Null),
+            Self::RetireRenderer { id, pid, spawn_epoch, .. } => {
+                let index = super::isolated_tabs::route(&id).ok_or("TAB_RENDERER_ROUTE_INVALID")?;
+                let epoch = spawn_epoch.parse::<u64>().map_err(|_| "TAB_RENDERER_RECOVERY_INVALID_TARGET")?;
+                let _transition = reserve_tab_transition(&id)?;
+                let state = app.state::<crate::AppState>();
+                state.grid_manager.retire_bound_tab_renderer(index, (pid, epoch))
+                    .map_err(|error| if error.contains("CLEANUP_PENDING") {
+                        format!("GRID_REQUEST_OUTCOME_UNKNOWN: {error}")
+                    } else { error })?;
+                state.hibernated_tabs.lock().unwrap().remove(&id);
+                state.hibernated_scroll.lock().unwrap().remove(&id);
+                Ok(Value::Null)
+            }
         }
     }
 }
@@ -123,6 +151,12 @@ impl Binding {
         }
         if let Some(index) = super::isolated_tabs::route(id) {
             let owner = state.grid_manager.tab_renderer_owner(index)?;
+            if let Action::RetireRenderer { pid, spawn_epoch, .. } = action {
+                let expected = spawn_epoch.parse::<u64>().map_err(|_| "TAB_RENDERER_RECOVERY_INVALID_TARGET")?;
+                if owner != Some((*pid, expected)) {
+                    return Err("TAB_RENDERER_RECOVERY_STALE".into());
+                }
+            }
             if owner.is_none() && !matches!(action, Action::Activate { .. } | Action::Close { .. }) {
                 return Err("TAB_RENDERER_RECOVERY_REQUIRED".into());
             }
@@ -381,6 +415,13 @@ pub(super) fn reserve_internal() -> Result<InternalMutation, String> {
     Ok(InternalMutation)
 }
 #[derive(Clone, Debug, Serialize)]
+struct RendererRecoveryTarget {
+    id: String,
+    pid: u32,
+    spawn_epoch: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
 pub(crate) struct OwnerView {
     epoch: String,
     next_sequence: String,
@@ -390,6 +431,8 @@ pub(crate) struct OwnerView {
     active_known: bool,
     active_tab_id: Option<String>,
     domain_recovery_available: bool,
+    recovery_scope: Option<&'static str>,
+    renderer_recovery_target: Option<RendererRecoveryTarget>,
 }
 fn snapshot(app: &AppHandle) -> Result<OwnerView, String> {
     let mut view = {
@@ -405,6 +448,10 @@ fn snapshot(app: &AppHandle) -> Result<OwnerView, String> {
             active_tab_id: None,
             domain_recovery_available: state.local_renderer_recovery().is_some()
                 || (supervisor_ready() && state.recovery_target(Instant::now()).is_some()),
+            recovery_scope: if state.local_renderer_recovery().is_some() { Some("renderer") }
+                else if supervisor_ready() && state.recovery_target(Instant::now()).is_some() { Some("application") }
+                else { None },
+            renderer_recovery_target: None,
         }
     };
     // Do not hold the Owner mutex while observing app metadata.
@@ -425,6 +472,7 @@ fn snapshot(app: &AppHandle) -> Result<OwnerView, String> {
             && (!supervisor_ready() || state.recovery_target(Instant::now()).is_none()))
     {
         view.domain_recovery_available = false;
+        view.recovery_scope = None;
     }
     Ok(view)
 }
@@ -571,6 +619,7 @@ pub(crate) enum Request {
         ticket: String,
     },
     Inspect,
+    InspectRenderer { id: String },
     Fence {
         epoch: String,
         sequence: String,
@@ -752,6 +801,22 @@ pub(crate) fn tab_mutation(
             }
         }
         Request::Inspect => {}
+        Request::InspectRenderer { id } => {
+            crate::shared::native_legacy_policy::require_main(&webview, "tab_close")?;
+            crate::shared::native_legacy_policy::bound_text("tab_close", "id", &id)?;
+            let index = super::isolated_tabs::route(&id).ok_or("TAB_RENDERER_ROUTE_INVALID")?;
+            let state = app.state::<crate::AppState>();
+            if !state.tabs.lock().unwrap().contains_key(&id) {
+                return Err("TAB_NOT_FOUND".into());
+            }
+            let mut view = snapshot(&app)?;
+            if let Some((pid, epoch)) = state.grid_manager.tab_renderer_owner(index)? {
+                view.renderer_recovery_target = Some(RendererRecoveryTarget {
+                    id, pid, spawn_epoch: epoch.to_string(),
+                });
+            }
+            return Ok(view);
+        }
         Request::RecoverDomain {
             epoch,
             sequence,
@@ -966,6 +1031,8 @@ mod tests {
             active_known: true,
             active_tab_id: None,
             domain_recovery_available: false,
+            recovery_scope: None,
+            renderer_recovery_target: None,
         };
         assert!(state.matches_view(&view));
         state.admit_background().unwrap();
