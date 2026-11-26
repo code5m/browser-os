@@ -814,3 +814,13 @@ pub(crate) fn checked_viewport(encoded: &str, address: &str) -> Result<(f64, f64
 pub(crate) fn valid_viewport(x: f64, y: f64) -> bool {
     x.is_finite() && y.is_finite() && x.abs() <= 100_000_000.0 && y.abs() <= 100_000_000.0
 }
+
+/// "deferred" is permitted only before any write, so a later retry cannot
+/// mistake a partial scroll from our own earlier attempt for page-owned state.
+pub(crate) fn viewport_restore_script(address: &str, x: f64, y: f64) -> Result<String, String> {
+    if !restorable_address(address) || !valid_viewport(x,y) {
+        return Err("TAB_VIEWPORT_INVALID".into());
+    }
+    let address = serde_json::to_string(address).map_err(|_| "TAB_VIEWPORT_INVALID")?;
+    Ok(format!("(() => {{ if(location.href!=={} ) return 'stale'; if(document.readyState!=='complete') return 'deferred'; const x={:.3}, y={:.3}; const matches=()=>Math.abs(window.scrollX-x)<=1&&Math.abs(window.scrollY-y)<=1; if(matches()) return 'applied'; if(window.scrollX!==0||window.scrollY!==0) return 'skip_nonzero'; window.scrollTo({{left:x,top:y,behavior:'instant'}}); return matches()?'applied':'not_restored'; }})()",address,x,y))
+}

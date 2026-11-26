@@ -753,7 +753,7 @@ fn accepted_hibernation_scroll(snapshot: &serde_json::Value) -> Option<(f64, f64
     }
     let x = snapshot.get("scrollX")?.as_f64()?;
     let y = snapshot.get("scrollY")?.as_f64()?;
-    (x.is_finite() && y.is_finite()).then_some((x, y))
+    crate::grid_ipc::valid_viewport(x,y).then_some((x, y))
 }
 
 // Policy generations prevent a disable/re-enable cycle from authorizing
@@ -819,6 +819,7 @@ fn tab_hibernation_snapshot(app: &AppHandle, id: &str,
     let encoded = rx
         .recv_timeout(std::time::Duration::from_secs(2))
         .map_err(|_| "TAB_HIBERNATION_SNAPSHOT_TIMEOUT")??;
+    if encoded.len() > 32 * 1024 { return Err("TAB_HIBERNATION_SNAPSHOT_INVALID".into()); }
     let snapshot: serde_json::Value =
         serde_json::from_str(&encoded).map_err(|_| "TAB_HIBERNATION_SNAPSHOT_INVALID")?;
     if snapshot.get("address").and_then(serde_json::Value::as_str) != Some(expected_url)
@@ -1339,68 +1340,64 @@ pub(super) fn tab_activate_admitted(
         .state::<TabManagerState>()
         .instance(&id)
         .map_err(|error| error.to_string())?;
-    // Keep scroll metadata until the exact restored WebView reports a
-    // terminal observation. A script dispatch is not a scroll receipt.
-    let scroll = app
-        .state::<AppState>()
-        .hibernated_scroll
-        .lock()
-        .unwrap()
-        .get(&id)
-        .cloned();
-    if let Some((expected_url, (x, y))) = scroll {
-        let instance = active_instance.clone();
-        let restore_app = app.clone();
-        let restore_id = id.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(900));
-            let Ok(_owner) = super::tab_mutation::reserve_internal() else {
-                return;
-            };
-            let Ok(_transition) = reserve_tab_transition(&restore_id) else {
-                return;
-            };
-            let state = restore_app.state::<AppState>();
-            if state.shutdown_requested.load(Ordering::Acquire)
-                || state.active_tab.lock().unwrap().as_deref() != Some(restore_id.as_str())
-                || !state.tabs.lock().unwrap().get(&restore_id)
-                    .is_some_and(|tab| tab.url == expected_url)
-                || !state.hibernated_scroll.lock().unwrap().get(&restore_id)
-                    .is_some_and(|saved| saved.0 == expected_url && saved.1 == (x, y))
-            {
-                return;
-            }
-            // Native metadata is only an observation; check the actual
-            // document address inside the already instance-bound script.
-            let Ok(address) = serde_json::to_string(&expected_url) else { return; };
-            let js = format!(
-                "(() => {{ if (location.href !== {} || document.readyState !== 'complete') return 'deferred'; if (window.scrollX !== 0 || window.scrollY !== 0) return 'skip_nonzero'; const x={:.3}, y={:.3}; window.scrollTo({{left:x,top:y,behavior:'instant'}}); return Math.abs(window.scrollX-x)<=1 && Math.abs(window.scrollY-y)<=1 ? 'applied' : 'deferred'; }})()",
-                address, x.max(0.0), y.max(0.0)
-            );
-            let manager = restore_app.state::<TabManagerState>();
-            if !manager.is_current_instance(&restore_id, &instance) { return; }
-            let Ok(document) = manager.capture_document(&restore_id) else { return; };
-            if !manager.is_current_instance(&restore_id, &instance) { return; }
-            let (tx, rx) = std::sync::mpsc::channel();
-            if manager.eval_result_document(&restore_id, &document, js, move |result| {
-                let _ = tx.send(result);
-            }).is_err() {
-                return;
-            }
-            // Bounded worker wait; do not release a pending snapshot on a
-            // dispatch-only success, failed script or navigation mismatch.
-            let confirmed = matches!(rx.recv_timeout(std::time::Duration::from_secs(2)),
-                Ok(Ok(value)) if value == "applied" || value == "skip_nonzero");
-            if confirmed && manager.is_current_instance(&restore_id, &instance)
-                && manager.is_current_capture_document(&restore_id, &document)
-                && state.tabs.lock().unwrap().get(&restore_id).is_some_and(|tab| tab.url == expected_url)
-                && state.active_tab.lock().unwrap().as_deref() == Some(restore_id.as_str()) {
-                let mut saved = state.hibernated_scroll.lock().unwrap();
-                if saved.get(&restore_id).is_some_and(|entry| entry.0 == expected_url && entry.1 == (x, y)) {
-                    saved.remove(&restore_id);
+    // A restore belongs only to the newly recreated instance. An ordinary
+    // later activation must not reschedule an old checkpoint after an
+    // ambiguous script dispatch. Preserve the map entry until final admission
+    // so explicit navigation can still invalidate it.
+    if was_hibernated {
+        let scroll = app.state::<AppState>().hibernated_scroll.lock().unwrap().get(&id).cloned();
+        if let Some((expected_url, (x,y))) = scroll {
+            let instance = active_instance.clone();
+            let restore_app = app.clone();
+            let restore_id = id.clone();
+            let spawned = std::thread::Builder::new().name("tab-viewport-restore".into()).spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(900));
+                let manager = restore_app.state::<TabManagerState>();
+                let state = restore_app.state::<AppState>();
+                let pending = || state.hibernated_scroll.lock().unwrap().get(&restore_id)
+                    .is_some_and(|saved| saved.0 == expected_url && saved.1 == (x,y));
+                let current = || !state.shutdown_requested.load(Ordering::Acquire)
+                    && manager.is_current_instance(&restore_id,&instance)
+                    && state.active_tab.lock().unwrap().as_deref() == Some(restore_id.as_str())
+                    && state.tabs.lock().unwrap().get(&restore_id).is_some_and(|tab| tab.url == expected_url);
+                let report = || {
+                    if manager.is_current_instance(&restore_id,&instance) {
+                        let _ = restore_app.emit("tab-viewport-restore-unconfirmed", serde_json::json!({"id":restore_id}));
+                    }
+                };
+                let consume = || {
+                    let mut saved = state.hibernated_scroll.lock().unwrap();
+                    if saved.get(&restore_id).is_some_and(|v| v.0 == expected_url && v.1 == (x,y)) {
+                        saved.remove(&restore_id);
+                    }
+                };
+                // Never touch an unrelated replacement's checkpoint.
+                if !manager.is_current_instance(&restore_id,&instance) || !pending() { return; }
+                if !current() { consume(); report(); return; }
+                let Ok(_owner) = super::tab_mutation::reserve_internal() else { consume(); report(); return; };
+                let Ok(_transition) = reserve_tab_transition(&restore_id) else { consume(); report(); return; };
+                if !current() || !pending() { return; }
+                // Consume before the first possible dispatch. No subsequent
+                // activation can replay an ambiguous or partially applied write.
+                consume();
+                let Ok(js) = crate::grid_ipc::viewport_restore_script(&expected_url,x,y) else { report(); return; };
+                let Ok(document) = manager.capture_document(&restore_id) else { report(); return; };
+                if !current() { report(); return; }
+                let (tx,rx) = std::sync::mpsc::channel();
+                if manager.eval_result_document(&restore_id,&document,js,move |result| { let _=tx.send(result); }).is_err() {
+                    report(); return;
                 }
+                let confirmed = matches!(rx.recv_timeout(std::time::Duration::from_secs(2)),
+                    Ok(Ok(value)) if value=="applied" || value=="skip_nonzero");
+                if !confirmed || !current() || !manager.is_current_capture_document(&restore_id,&document) {
+                    report();
+                }
+            });
+            if spawned.is_err() {
+                app.state::<AppState>().hibernated_scroll.lock().unwrap().remove(&id);
+                let _ = app.emit("tab-viewport-restore-unconfirmed", serde_json::json!({"id":id}));
             }
-        });
+        }
     }
     // 暂存激活页签，前端会随后调用 tab_position 精确布局
     *app.state::<AppState>().active_tab.lock().unwrap() = Some(id.clone());

@@ -124,11 +124,7 @@ pub(crate) fn dispatch(app: &AppHandle, buffer: &mut CaptureBuffer, cmd: &GridCm
         GridCmd::ViewportSnapshot { id } => require_document().and_then(|document|
             viewport_script(app,id,document,include_str!("../injected/tab-viewport-checkpoint.js").to_string())),
         GridCmd::ViewportRestore { id,address,x,y } => require_document().and_then(|document| {
-            if !crate::grid_ipc::restorable_address(address) || !crate::grid_ipc::valid_viewport(*x,*y) {
-                return Err("TAB_VIEWPORT_INVALID".into());
-            }
-            let address = serde_json::to_string(address).map_err(|_| "TAB_VIEWPORT_INVALID")?;
-            let js = format!("(() => {{ if(location.href!=={} || document.readyState!=='complete') return 'deferred'; if(window.scrollX!==0||window.scrollY!==0) return 'skip_nonzero'; const x={:.3}, y={:.3}; window.scrollTo({{left:x,top:y,behavior:'instant'}}); return Math.abs(window.scrollX-x)<=1&&Math.abs(window.scrollY-y)<=1?'applied':'deferred'; }})()",address,x,y);
+            let js = crate::grid_ipc::viewport_restore_script(address,*x,*y)?;
             viewport_script(app,id,document,js)
         }),
         GridCmd::DownloadTasks { id, control } => app.state::<TabManagerState>()

@@ -238,6 +238,11 @@ onMounted(async () => {
   // 关闭入口统一走 browser.tabClose → closeTabNow（内部写入 recentlyClosed 内存栈）。
   // 不再挂接任何关闭拦截器 / 确认框（旧的关闭确认弹窗已撤销）。
   bridge.onTabRecovery((d) => browser.handleTabRecovery(d));
+  bridge.onTabViewportUnconfirmed((d) => {
+    if (d && typeof d.id === "string" && browser.tabs.some(tab => tab.id === d.id)) {
+      layout.showToast("页签已重建，但滚动位置恢复未确认；不会自动重复恢复。");
+    }
+  });
   bridge.onIsolatedRendererExited((event) => { void browser.handleIsolatedRendererExited(event); });
   unlistenRendererRecovery = await bridge.onIsolatedRendererRecoveryChanged((event) => {
     if (typeof event?.id === "string") void browser.refreshRendererState(event.id);
