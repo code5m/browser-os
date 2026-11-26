@@ -104,6 +104,7 @@ pub(crate) struct Receipt {
 enum Binding {
     New,
     Live(TabInstance),
+    Isolated(Option<(u32, u64)>),
     Hibernated,
 }
 impl Binding {
@@ -119,6 +120,13 @@ impl Binding {
             .contains_key(id)
         {
             return Err("TAB_NOT_FOUND".into());
+        }
+        if let Some(index) = super::isolated_tabs::route(id) {
+            let owner = state.grid_manager.tab_renderer_owner(index)?;
+            if owner.is_none() && !matches!(action, Action::Activate { .. } | Action::Close { .. }) {
+                return Err("TAB_RENDERER_RECOVERY_REQUIRED".into());
+            }
+            return Ok(Self::Isolated(owner));
         }
         if state
             .hibernated_tabs
@@ -139,6 +147,13 @@ impl Binding {
             (Self::Live(instance), Some(id)) => app
                 .state::<TabManagerState>()
                 .is_current_instance(&id.to_owned(), instance),
+            (Self::Isolated(expected), Some(id)) => {
+                super::isolated_tabs::route(id).is_some_and(|index| {
+                    let state = app.state::<crate::AppState>();
+                    state.tabs.lock().unwrap().contains_key(id)
+                        && state.grid_manager.tab_renderer_owner(index).is_ok_and(|owner| owner == *expected)
+                })
+            }
             (Self::Hibernated, Some(id)) => app
                 .state::<crate::AppState>()
                 .hibernated_tabs
@@ -475,7 +490,7 @@ fn matching<'a>(state: &'a mut Owner, ticket: &str) -> Result<&'a mut Slot, Stri
         .ok_or_else(|| "TAB_MUTATION_STALE_TICKET".into())
 }
 fn completion_unknown(error: &str) -> bool {
-    matches!(
+    error.contains("GRID_REQUEST_OUTCOME_UNKNOWN") || matches!(
         error,
         "TAB_CREATE_CALLBACK_LOST" | "TAB_ACTIVATION_CALLBACK_LOST"
     )

@@ -384,6 +384,9 @@ pub fn grid_open_blocking(app: AppHandle, index: usize, url: String) -> Result<(
 /// resume path for memory-hibernated cells; the process manager restores the
 /// last URL/rect metadata, and this command recreates the WebView exactly once.
 fn ensure_grid_child(app: &AppHandle, index: usize) -> Result<(), String> {
+    if index >= MAX_GRID {
+        return Err("GRID_INDEX_INVALID".into());
+    }
     let state = app.state::<AppState>();
     let manager = &state.grid_manager;
     let was_hibernated = manager.is_hibernated(index as u32);
@@ -554,6 +557,9 @@ pub async fn grid_close_one(app: AppHandle, index: usize) -> Result<(), String> 
 }
 
 pub fn grid_close_one_blocking(app: AppHandle, index: usize) -> Result<(), String> {
+    if index >= MAX_GRID {
+        return Err("GRID_INDEX_INVALID".into());
+    }
     let label = format!("grid-{index}");
     let state = app.state::<AppState>();
     let mgr = &state.grid_manager;

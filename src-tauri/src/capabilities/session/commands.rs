@@ -530,13 +530,19 @@ pub async fn session_restore(
         .run(move || {
             let session = crate::session::load_session(&workspace::sessions_dir(&app), &id)?;
             let url = session.url.clone();
-            let native_app = app.clone();
-            let (send, receive) = std::sync::mpsc::sync_channel(1);
-            app.run_on_main_thread(move || {
-                let _ = send.send(create_tab(native_app, &url));
-            })
-            .map_err(|_| "SESSION_RESTORE_DISPATCH_FAILED")?;
-            let tab = receive.recv().map_err(|_| "SESSION_RESTORE_REPLY_LOST")??;
+            let tab = if crate::bridge::isolated_tabs::mode_enabled() {
+                // SESSION_IO already owns a blocking worker; acquire the
+                // existing Browser mutation owner, not a GUI IPC wait.
+                crate::bridge::tab_new_native(app.clone(), url)?
+            } else {
+                let native_app = app.clone();
+                let (send, receive) = std::sync::mpsc::sync_channel(1);
+                app.run_on_main_thread(move || {
+                    let _ = send.send(create_tab(native_app, &url));
+                })
+                .map_err(|_| "SESSION_RESTORE_DISPATCH_FAILED")?;
+                receive.recv().map_err(|_| "SESSION_RESTORE_REPLY_LOST")??
+            };
             workspace::log_audit(
                 &app,
                 "session_restore",

@@ -53,17 +53,20 @@ mod layout_revision_tests {
 /// 打开浏览器（内嵌为 main 窗口的子 webview）。
 /// 内部等价于「新建一个页签」并设为激活页签。前端优先使用 tab_new 多开页签。
 #[tauri::command]
-pub fn open_browser(webview: tauri::Webview, app: AppHandle, url: String) -> Result<(), String> {
+pub async fn open_browser(webview: tauri::Webview, app: AppHandle, url: String) -> Result<(), String> {
     crate::shared::native_legacy_policy::require_main(&webview, "open_browser")?;
     crate::shared::native_legacy_policy::bound_text("open_browser", "url", &url)?;
 
+    if super::isolated_tabs::mode_enabled() {
+        return super::isolated_tabs::on_worker(move || tab_new_native(app, url).map(|_| ())).await;
+    }
     let _tab = create_tab(app.clone(), &url)?;
     Ok(())
 }
 
 /// 关闭内嵌浏览器（默认关闭当前激活页签）。
 #[tauri::command]
-pub fn close_browser(webview: tauri::Webview, app: AppHandle) -> Result<(), String> {
+pub async fn close_browser(webview: tauri::Webview, app: AppHandle) -> Result<(), String> {
     crate::shared::native_legacy_policy::require_main(&webview, "close_browser")?;
 
     // Copy the active id then DROP its mutex guard before close_tab().
@@ -75,6 +78,9 @@ pub fn close_browser(webview: tauri::Webview, app: AppHandle) -> Result<(), Stri
         active.clone()
     };
     if let Some(id) = active_id {
+        if super::isolated_tabs::route(&id).is_some() {
+            return super::isolated_tabs::on_worker(move || tab_close_native(app, id)).await;
+        }
         close_tab(&app, &id)?;
     }
     Ok(())
@@ -83,7 +89,7 @@ pub fn close_browser(webview: tauri::Webview, app: AppHandle) -> Result<(), Stri
 /// 把当前激活页签的子窗口定位到主窗内容区指定矩形（CSS 坐标）。
 /// 坐标由前端传入：相对主窗内容区左上角的 CSS 像素（getBoundingClientRect 的 left/top/width/height）。
 #[tauri::command]
-pub fn position_browser(
+pub async fn position_browser(
     webview: tauri::Webview,
     app: AppHandle,
     x: f64,
@@ -104,6 +110,11 @@ pub fn position_browser(
         .unwrap()
         .clone()
         .ok_or_else(|| "没有打开的页签".to_string())?;
+    if super::isolated_tabs::route(&id).is_some() {
+        return super::isolated_tabs::on_worker(move || {
+            super::isolated_tabs::position(&app, &id, (x, y, width, height))
+        }).await;
+    }
     if let Err(e) = apply_bounds(&app, &id, x, y, width, height) {
         recover_tab_webview(&app, &id, "position", &e)?;
         apply_bounds_inner(&app, &id, x, y, width, height)
@@ -223,9 +234,12 @@ pub(crate) fn apply_bounds_inner(
 /// 宫格显示时移出激活页签、页签切换时移出非激活页签都走这里，
 /// 避免 tab_position/apply_bounds 的 50ms 去重把"移出屏幕"请求丢弃。
 #[tauri::command]
-pub fn hide_webview(webview: tauri::Webview, app: AppHandle, id: String) -> Result<(), String> {
+pub async fn hide_webview(webview: tauri::Webview, app: AppHandle, id: String) -> Result<(), String> {
     crate::shared::native_legacy_policy::require_main(&webview, "hide_webview")?;
     crate::shared::native_legacy_policy::bound_text("hide_webview", "id", &id)?;
+    if super::isolated_tabs::route(&id).is_some() {
+        return super::isolated_tabs::on_worker(move || super::isolated_tabs::hide(&app, &id)).await;
+    }
 
     #[cfg(not(target_os = "linux"))]
     use tauri_plugin_browser_tabs::{LogicalRect, TabManagerState};
@@ -258,8 +272,11 @@ pub fn hide_webview(webview: tauri::Webview, app: AppHandle, id: String) -> Resu
 }
 
 #[tauri::command]
-pub fn hide_all_webviews(webview: tauri::Webview, app: AppHandle) -> Result<(), String> {
+pub async fn hide_all_webviews(webview: tauri::Webview, app: AppHandle) -> Result<(), String> {
     crate::shared::native_legacy_policy::require_main(&webview, "hide_all_webviews")?;
+    if super::isolated_tabs::mode_enabled() {
+        return super::isolated_tabs::on_worker(move || super::isolated_tabs::hide_all(&app)).await;
+    }
 
     #[cfg(not(target_os = "linux"))]
     use tauri_plugin_browser_tabs::LogicalRect;

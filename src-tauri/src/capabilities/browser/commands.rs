@@ -38,6 +38,9 @@ pub fn spawn_child_window(
     {
         return Err("TAB_APPLICATION_SHUTTING_DOWN".into());
     }
+    if crate::bridge::isolated_tabs::route(label).is_some() {
+        return Err("TAB_RENDERER_EMBEDDED_FALLBACK_DENIED".into());
+    }
     let init_script = include_str!("../../../injected/collect.js");
     let manager = app.state::<TabManagerState>();
     manager
@@ -172,10 +175,18 @@ pub fn hide_bounds(app: &AppHandle, id: &str) {
 }
 /// 创建一个浏览器页签（独立子窗口，方案 B），返回其信息并设为激活页签。
 pub fn create_tab(app: AppHandle, url: &str) -> Result<TabInfo, String> {
+    if crate::bridge::isolated_tabs::mode_enabled() {
+        // Synchronous embedded-only paths cannot silently bypass the
+        // experimental process backend or block the UI on renderer IPC.
+        return Err("TAB_RENDERER_REQUIRES_ADMITTED_WORKER".into());
+    }
     create_tab_with_completion(app, url, None)
 }
 
 pub(crate) fn create_tab_receipted(app: AppHandle, url: &str) -> Result<TabInfo, String> {
+    if crate::bridge::isolated_tabs::mode_enabled() {
+        return Err("TAB_RENDERER_REQUIRES_ADMITTED_WORKER".into());
+    }
     use crate::shared::dispatch_receipt::{DispatchReceipt, WaitError};
     let completion = std::sync::Arc::new(DispatchReceipt::new()?);
     let info = create_tab_with_completion(app, url, Some(completion.clone()))?;
@@ -1142,6 +1153,11 @@ fn begin_capture(
     }
     let work = match mode {
         CaptureMode::CurrentDocument => {
+            if crate::bridge::isolated_tabs::route(&id).is_some() {
+                // Never reload the isolated tab URL or capture another document
+                // to impersonate a current-document screenshot.
+                return Err("CAPTURE_ISOLATED_TAB_NOT_YET_SUPPORTED".into());
+            }
             if expected_url.is_some() {
                 return Err("CAPTURE_MODE_INVALID".into());
             }

@@ -47,6 +47,9 @@ mod transition_tests {
 
 pub(crate) fn tab_new_native(app: AppHandle, url: String) -> Result<TabInfo, String> {
     let _owner = super::tab_mutation::reserve_internal()?;
+    if super::isolated_tabs::mode_enabled() {
+        return super::isolated_tabs::create(&app, &url);
+    }
     let tab = create_tab(app.clone(), &url)?;
     Ok(tab)
 }
@@ -69,6 +72,9 @@ pub(crate) fn tab_new_impl(
 ) -> Result<TabInfo, String> {
     crate::shared::native_legacy_policy::require_main(&webview, "tab_new")?;
     crate::shared::native_legacy_policy::bound_text("tab_new", "url", &url)?;
+    if super::isolated_tabs::mode_enabled() {
+        return super::isolated_tabs::create(&app, &url);
+    }
     create_tab_receipted(app, &url)
 }
 
@@ -128,7 +134,9 @@ pub(crate) fn tab_open_impl(
 
     let target = normalize_url(&url);
     let _ = Url::parse(&target).map_err(|e| format!("无效网址: {e}"))?;
-    if let Err(e) = navigate_tab_webview(&app, &id, &target) {
+    if super::isolated_tabs::route(&id).is_some() {
+        navigate_tab_webview(&app, &id, &target)?;
+    } else if let Err(e) = navigate_tab_webview(&app, &id, &target) {
         recover_tab_webview(&app, &id, "navigate", &e)?;
         navigate_tab_webview(&app, &id, &target)
             .map_err(|retry| format!("{e}; 恢复后重试导航失败: {retry}"))?;
@@ -148,7 +156,7 @@ pub(crate) fn tab_open_impl(
 /// 将指定页签定位到主窗口内容区给定矩形。
 /// 前端传 CSS 像素（相对主窗口内容区左上角），换算成屏幕物理坐标后 set_position/set_size。
 #[tauri::command]
-pub fn tab_position(
+pub async fn tab_position(
     webview: tauri::Webview,
     app: AppHandle,
     id: String,
@@ -164,6 +172,11 @@ pub fn tab_position(
     crate::shared::native_legacy_policy::bound_dimension("tab_position", "width", width)?;
     crate::shared::native_legacy_policy::bound_dimension("tab_position", "height", height)?;
 
+    if super::isolated_tabs::route(&id).is_some() {
+        return super::isolated_tabs::on_worker(move || {
+            super::isolated_tabs::position(&app, &id, (x, y, width, height))
+        }).await;
+    }
     if let Err(e) = apply_bounds(&app, &id, x, y, width, height) {
         let _owner = super::tab_mutation::reserve_internal()?;
         recover_tab_webview(&app, &id, "position", &e)?;
@@ -212,6 +225,10 @@ pub fn start_grid_load_retry(app: AppHandle) {
             Some(i) => i,
             None => return,
         };
+        if (index as usize) >= MAX_GRID {
+            // An ordinary tab never participates in automatic Grid retries.
+            return;
+        }
         let Some(generation) = payload["renderer_generation"].as_str()
             .and_then(|value| value.parse::<u64>().ok()).filter(|value| *value != 0)
         else {
@@ -669,6 +686,11 @@ fn tab_hibernation_snapshot(app: &AppHandle, id: &str) -> Result<(f64, f64), Str
 /// not playing media, holding edited form/contenteditable data, focused in an
 /// editor, or requesting beforeunload. Only scroll coordinates are retained.
 fn hibernate_tab(app: &AppHandle, id: &str, idle_window: std::time::Duration) -> bool {
+    // Independent ordinary tabs retain their live documents; the embedded
+    // scroll-only hibernator has no authority over their native owners.
+    if super::isolated_tabs::route(id).is_some() {
+        return false;
+    }
     let state = app.state::<AppState>();
     let expected_url = match state.tabs.lock().unwrap().get(id) {
         Some(tab) => tab.url.clone(),
@@ -1033,6 +1055,9 @@ pub(crate) fn tab_activate_impl(
     use crate::shared::dispatch_receipt::{DispatchReceipt, WaitError};
     let receipt = std::sync::Arc::new(DispatchReceipt::new()?);
     let _transition = reserve_tab_transition(&id)?;
+    if super::isolated_tabs::route(&id).is_some() {
+        return super::isolated_tabs::activate(&app, &id);
+    }
 
     {
         let state = app.state::<AppState>();

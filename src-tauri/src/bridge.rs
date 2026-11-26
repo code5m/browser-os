@@ -22,6 +22,7 @@ mod credential_commands;
 mod filesystem_commands;
 mod grid_runtime;
 mod integration_commands;
+pub(crate) mod isolated_tabs;
 mod resource_commands;
 mod system_commands;
 mod tab_mutation;
@@ -48,9 +49,10 @@ use self::workbench_commands::{
 };
 pub(crate) use self::workspace_commands::*;
 
-/// 宫格 label（grid-N）→ 子进程 index；页签 tab-N 返回 None（页签仍在主进程）。
+/// A Grid caller may address only real Grid indices, never tab routes.
 fn grid_index_of(label: &str) -> Option<u32> {
-    label.strip_prefix("grid-")?.parse().ok()
+    let index: u32 = label.strip_prefix("grid-")?.parse().ok()?;
+    ((index as usize) < MAX_GRID && label == format!("grid-{index}")).then_some(index)
 }
 
 fn is_tab_label(label: &str) -> bool {
@@ -135,6 +137,9 @@ pub fn report_tab_load_failed(app: &AppHandle, id: &str, url: &str, message: &st
 /// 直接在当前线程调用（Tauri v2 的 Webview::eval 内部走 dispatcher，跨线程安全，
 /// 与 apply_bounds_inner 同一模式），错误经返回值上报前端，不再静默。
 fn plugin_eval(app: &AppHandle, id: &str, js: &str) -> Result<(), String> {
+    if isolated_tabs::route(id).is_some() {
+        return isolated_tabs::eval(app, id, js);
+    }
     use tauri_plugin_browser_tabs::TabManagerState;
     let manager = app.state::<TabManagerState>();
     // Background freeze/probe failures are not proof of engine corruption.
@@ -145,6 +150,9 @@ fn plugin_eval(app: &AppHandle, id: &str, js: &str) -> Result<(), String> {
 }
 
 fn navigate_tab_webview(app: &AppHandle, id: &str, url: &str) -> Result<(), String> {
+    if isolated_tabs::route(id).is_some() {
+        return isolated_tabs::navigate(app, id, url);
+    }
     use tauri_plugin_browser_tabs::TabManagerState;
     app.state::<TabManagerState>()
         .navigate(&id.to_string(), url)
@@ -157,6 +165,11 @@ fn recover_tab_webview(
     reason: &str,
     source_error: &str,
 ) -> Result<(), String> {
+    if isolated_tabs::route(id).is_some() {
+        // Never replace an independent renderer with an embedded WebView or
+        // replay an uncertain navigation. Explicit activation handles exit.
+        return Err(format!("TAB_RENDERER_RECOVERY_REQUIRED:{source_error}"));
+    }
     // Creation/closure already in progress is not an engine failure. Do not
     // consume recovery budget or recursively destroy a live WebView.
     if !is_tab_label(id)
@@ -459,7 +472,9 @@ fn close_tab(app: &AppHandle, id: &str) -> Result<(), String> {
     let _transition = tab_runtime::reserve_tab_transition(id)?;
     let state = app.state::<AppState>();
     // 销毁对应子 webview（插件内部走 dispatcher，跨线程安全）
-    let close_result = if state.hibernated_tabs.lock().unwrap().contains(id) {
+    let close_result = if let Some(index) = isolated_tabs::route(id) {
+        state.grid_manager.close_tab_renderer(index, true)
+    } else if state.hibernated_tabs.lock().unwrap().contains(id) {
         // Hibernation already released the native instance. The transition
         // guard prevents activation from recreating it during this cleanup.
         Ok(())
