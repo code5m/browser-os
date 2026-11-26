@@ -75,7 +75,8 @@ assert.match(plugin, /TabAccessKind::Lifecycle if access\.lifecycle \|\| access\
 assert.match(plugin, /let \(_operation, tab\) = self\.get_tab\(id, TabAccessKind::Operation\)\?/);
 assert.match(plugin, /fn reconcile_rect\(/);
 assert.match(plugin, /if current\.rect == rect \{\s*return platform::linux::ensure_size_allocated/);
-assert.match(layout, /manager\.reconcile_rect\(&id, \|\|/);
+// Verify live rectangle lookup under the bounded per-tab reservation.
+assert.match(layout, /let id = &ids\[\(start \+ offset\) % ids\.len\(\)\];\s*let _ = manager\.reconcile_rect\(id, \|\| \{\s*let layouts = state\.child_layouts\.try_lock\(\)\.ok\(\)\?;\s*layouts\s*\.get\(id\)/);
 assert.match(layout, /manager\.position_visible\(/);
 assert.match(layout, /if result\.is_ok\(\) \{[\s\S]{0,250}last\.insert/);
 assert.match(plugin, /pub fn position_visible\(/);

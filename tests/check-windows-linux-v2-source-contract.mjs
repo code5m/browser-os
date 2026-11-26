@@ -1031,7 +1031,14 @@ assert.match(privateReadWrite, /policy\.descriptor\(false\)/);
 assert.match(privateReadWrite, /audit_private_file\(&file\)\?/);
 assert.match(privateReadWrite, /_parents:\s*parent/);
 assert.doesNotMatch(privateReadWrite, /\brepair_object\s*\(|\bSetSecurityInfo\s*\(|\.truncate\s*\(/);
-assert.match(auditLock, /open_private_read_write_file\(&lock_path\)/);
+// The shared named-lock helper takes an already borrowed path. Verify
+// both the fixed audit entry point and actual private handle acquisition.
+assert.match(auditLock, /Self::acquire_named\(&parent\.join\("audit-write\.lock"\), LOCK_WAIT\)/);
+const namedAuditLock = sourceRegion(auditLock, "pub(crate) fn acquire_named(", "fn file(");
+assert.match(namedAuditLock, /#\[cfg\(target_os = "windows"\)\]\s*let owned_file =\s*browseros_platform_security::windows::open_private_read_write_file\(lock_path\)\?;/);
+assert.match(namedAuditLock, /let file = owned_file\.file\(\);/);
+assert.match(namedAuditLock, /\.truncate\(false\)/);
+assert.match(namedAuditLock, /libc::O_NOFOLLOW \| libc::O_CLOEXEC/);
 assert.match(platformSecurity, /private_read_write_file_preserves_identity_and_rejects_existing_extra_aces/);
 const platformSelection = nativeRequired.selections.find((selection) => selection.id === 'platform-security');
 assert.equal(platformSelection.required_count, 39);

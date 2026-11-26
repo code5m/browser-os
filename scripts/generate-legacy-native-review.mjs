@@ -32,7 +32,11 @@ for(const name of names){
   const dispatch=new RegExp('super::tab_mutation::legacy\\(\\s*webview,\\s*"'+name+'",\\s*move\\s*\\|webview\\|\\s*(?:\\{\\s*)?'+name+'_impl\\(webview,\\s*app(?:,\\s*[a-z_]+)*\\)\\s*(?:\\}\\s*)?\\)\\s*\\.await');
   assert.match(body,dispatch,name+': receipt wrapper must dispatch exactly the guarded implementation');
   const owner=rust.find(([file])=>file.endsWith('/bridge/tab_mutation.rs'));
-  assert.ok(owner&&/native_legacy_policy::require_main\\(&webview,\\s*command\\)\\?;/.test(owner[1]),name+': receipt admission must validate main caller');
+  assert.ok(owner,name+': native receipt owner missing');
+  const admissionStart=owner[1].indexOf('pub(super) async fn legacy<');
+  assert.ok(admissionStart>=0,name+': legacy admission missing');
+  const admission=owner[1].slice(admissionStart);
+  assert.match(admission,/crate::shared::native_legacy_policy::require_main\(&webview,\s*command\)\?;\s*let ticket[\s\S]*?let mut state = owner\(\)\?;/,name+': receipt admission must validate main caller before taking owner');
   const helper=new RegExp('pub\\(crate\\)\\s+fn\\s+'+name+'_impl\\s*\\(').exec(source);
   assert.ok(helper,name+': exact native implementation missing');
   body=source.slice(helper.index,source.indexOf('\n}',helper.index)+2);
