@@ -252,11 +252,7 @@ fn create_grid_admitted(app: AppHandle, n: usize, urls: Vec<String>,
 
     // Validate the prepared cells before closing surplus routes. No
     // re-enumeration of surplus owners after a long-running rebuild.
-    let indices: Vec<_> = (0..target as u32).collect();
-    if manager.grid_route_stamps(&indices)? != prepared_stamps {
-        return Err("GRID_BUILD_PARTIAL:prepared topology changed".into());
-    }
-    manager.close_grid_targets(&targets[target..])
+    manager.close_grid_targets_checked(&targets[target..], &prepared_stamps)
         .map_err(|error| format!("GRID_BUILD_PARTIAL:surplus close:{error}"))?;
     Ok(target)
 }

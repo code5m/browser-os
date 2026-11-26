@@ -385,6 +385,7 @@ impl GridProcessManager {
 
     /// 主进程 setup 时注入 AppHandle（事件转发/重放/定位换算用）。
     pub fn set_app(&self, app: AppHandle) {
+        self.lifecycle.set_retirement_app(app.clone());
         *self.app.lock().unwrap() = Some(app);
     }
 
@@ -768,13 +769,25 @@ impl GridProcessManager {
     pub(crate) fn close_grid_targets(&self, targets: &[crate::grid_ipc::GridRouteStamp])
         -> Result<(), String>
     {
+        self.close_grid_targets_checked(targets, &[])
+    }
+
+    pub(crate) fn close_grid_targets_checked(&self, targets: &[crate::grid_ipc::GridRouteStamp],
+        retained: &[crate::grid_ipc::GridRouteStamp]) -> Result<(), String>
+    {
         let _operation = self.lifecycle.enter()?;
         self.ensure_cleanup()?;
         let _gate = self.lifecycle_lock.lock().unwrap();
         self.lifecycle.check()?;
         let indices: Vec<_> = targets.iter().map(|t| t.index).collect();
-        if indices.iter().any(|&i| i as usize >= crate::bridge::MAX_GRID)
+        let retained_indices: Vec<_> = retained.iter().map(|t| t.index).collect();
+        let mut all = indices.clone();
+        all.extend_from_slice(&retained_indices);
+        all.sort_unstable();
+        if all.iter().any(|&i| i as usize >= crate::bridge::MAX_GRID)
+            || all.windows(2).any(|pair| pair[0] == pair[1])
             || self.grid_route_stamps_locked(&indices).as_slice() != targets
+            || self.grid_route_stamps_locked(&retained_indices).as_slice() != retained
         {
             return Err("GRID_CLOSE_TARGET_STALE".into());
         }
@@ -898,12 +911,17 @@ impl GridProcessManager {
         {
             return Err("GRID_ROLLBACK_TARGET_STALE".into());
         }
-        let child = self.children.lock().unwrap().remove(&index).ok_or("GRID_ROLLBACK_TARGET_STALE")?;
         self.pending_restarts.lock().unwrap().remove(&index);
-        if let Some(saved) = prepared.saved.clone() {
-            self.hibernated.lock().unwrap().insert(index, saved);
+        {
+            let mut children = self.children.lock().unwrap();
+            let child = children.remove(&index).ok_or("GRID_ROLLBACK_TARGET_STALE")?;
+            if let Some(saved) = prepared.saved.clone() {
+                self.hibernated.lock().unwrap().insert(index, saved);
+            }
+            // A missing live child must not be observable as fully retired
+            // between removing it and registering the cleanup owner.
+            self.lifecycle.retire(index, child);
         }
-        self.lifecycle.retire(index, child);
         self.lifecycle.wait_route_retired_until(index,
             std::time::Instant::now() + std::time::Duration::from_millis(750))
             .map_err(|_| format!("GRID_ROLLBACK_CLEANUP_PENDING:{index}"))

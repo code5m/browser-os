@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
+use tauri::{AppHandle, Emitter};
 
 const MAX_GRID_WORKERS: usize = 64;
 
@@ -109,6 +110,9 @@ pub(super) struct GridLifecycle {
     retired: Mutex<VecDeque<Arc<Mutex<GridRetirement>>>>,
     retiring: Mutex<HashMap<u32, usize>>,
     retiring_total: AtomicUsize,
+    // The existing cleanup worker is the source of completion, even when
+    // a foreground recovery waiter has already returned Pending.
+    retirement_app: Mutex<Option<AppHandle>>,
     cleanup_worker: Mutex<Option<JoinHandle<()>>>,
     cleanup_done: AtomicBool,
     wake_lock: Mutex<()>,
@@ -126,6 +130,10 @@ impl Drop for GridOperation {
 }
 
 impl GridLifecycle {
+    pub(super) fn set_retirement_app(&self, app: AppHandle) {
+        *self.retirement_app.lock().unwrap() = Some(app);
+    }
+
     pub(super) fn check(&self) -> Result<(), String> {
         if self.is_stopping() {
             Err("GRID_SHUTDOWN_IN_PROGRESS".into())
@@ -259,15 +267,30 @@ impl GridLifecycle {
                     };
                     if removed.is_some() {
                         drop(removed);
-                        let mut retiring = self.retiring.lock().unwrap();
-                        if let Some(count) = retiring.get_mut(&index) {
-                            *count -= 1;
-                            if *count == 0 {
-                                retiring.remove(&index);
-                            }
-                        }
+                        let route_complete = {
+                            let mut retiring = self.retiring.lock().unwrap();
+                            if let Some(count) = retiring.get_mut(&index) {
+                                *count -= 1;
+                                if *count == 0 {
+                                    retiring.remove(&index);
+                                    true
+                                } else { false }
+                            } else { false }
+                        };
                         self.retiring_total.fetch_sub(1, Ordering::SeqCst);
                         self.wake.notify_all();
+                        if route_complete && crate::grid_ipc::is_tab_renderer(index)
+                            && !self.is_stopping()
+                        {
+                            // Drop every retirement/registry lock before
+                            // notifying. A replacement may already exist;
+                            // the UI treats this as invalidation only.
+                            let app = self.retirement_app.lock().unwrap().clone();
+                            if let Some(app) = app {
+                                let _ = app.emit_to("main", "isolated-tab-renderer-recovery-changed",
+                                    serde_json::json!({"id": crate::grid_ipc::renderer_label(index)}));
+                            }
+                        }
                     }
                 }
                 Ok(Ok(false)) => {}
@@ -353,6 +376,7 @@ impl GridLifecycle {
                     {
                         if let Ok(mut map) = listeners.try_lock() {
                             map.clear();
+                            self.retirement_app.lock().unwrap().take();
                             self.cleanup_done.store(true, Ordering::SeqCst);
                             self.wake.notify_all();
                             return;
