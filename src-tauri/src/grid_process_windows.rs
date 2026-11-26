@@ -1073,6 +1073,13 @@ impl GridProcessManager {
     pub(crate) fn refresh_tab_downloads(&self, binding: crate::grid_ipc::RendererBinding, timeout_ms: u64)
         -> Result<(), String>
     {
+        self.sample_tab_downloads(binding, timeout_ms).map(|_| ())
+    }
+
+    // A missing optional payload cannot satisfy explicit suspension preflight.
+    fn sample_tab_downloads(&self, binding: crate::grid_ipc::RendererBinding, timeout_ms: u64)
+        -> Result<bool, String>
+    {
         if !crate::grid_ipc::is_tab_renderer(binding.index) { return Err("TAB_RENDERER_ROUTE_INVALID".into()); }
         // Ping is process scoped. A navigation inside this exact host does
         // not invalidate a download count or a liveness acknowledgement.
@@ -1099,7 +1106,7 @@ impl GridProcessManager {
         if !Self::window_binding_matches(child, binding) {
             return Err("TAB_RENDERER_DOCUMENT_STALE".into());
         }
-        let Some(observation) = observation else { return Ok(()); };
+        let Some(observation) = observation else { return Ok(false); };
         let mut last = child.comms.download_observation.lock().unwrap();
         if last.as_ref().is_none_or(|(_, previous)| observation == *previous || observation.advances(*previous)) {
             *last = Some((binding.generation, observation));
@@ -1107,7 +1114,7 @@ impl GridProcessManager {
         if observation.requested > 0 || observation.succeeded > 0 || observation.failed > 0 {
             child.comms.blank_reclaim_blocked.store(true, Ordering::SeqCst);
         }
-        Ok(())
+        Ok(true)
     }
 
     pub(crate) fn tab_renderer_download_observation(&self, index: u32, expected: (u32, u64))
@@ -1366,6 +1373,68 @@ impl GridProcessManager {
         drop(_gate);
         notify();
         result
+    }
+
+    /// User-confirmed suspension of an inactive tab. This discards the
+    /// document; it does not serialize its DOM, history or form state.
+    pub(crate) fn park_tab_renderer(&self, binding: crate::grid_ipc::RendererBinding, address: &str)
+        -> Result<(), String>
+    {
+        if !crate::grid_ipc::is_tab_renderer(binding.index)
+            || !crate::grid_ipc::restorable_address(address) {
+            return Err("TAB_RENDERER_PARK_INVALID".into());
+        }
+        let _operation = self.lifecycle.enter()?;
+        let _visibility = self.visibility_dispatch.try_lock().map_err(|_| "TAB_RENDERER_PARK_BUSY")?;
+        let app = self.app().ok_or("TAB_RENDERER_HOST_UNAVAILABLE")?;
+        let state = app.state::<crate::bridge::AppState>();
+        let id = crate::grid_ipc::renderer_label(binding.index);
+        let eligible = |child: &GridChildHandle| {
+            Self::window_binding_matches(child, binding)
+                && child.navigation_revision == binding.navigation_revision
+                && child.last_url.as_deref() == Some(address)
+                && child.hidden && !child.blur_hidden && !child.focused
+                && child.native_window_visibility == Some((binding.generation, false))
+                && !state.shutdown_requested.load(Ordering::Acquire)
+                && state.active_tab.lock().unwrap().as_deref() != Some(id.as_str())
+                && state.tabs.lock().unwrap().get(&id).is_some_and(|tab| tab.url == address)
+        };
+        {
+            let children = self.children.lock().unwrap();
+            let child = children.get(&binding.index).ok_or("TAB_RENDERER_PARK_STALE")?;
+            if !eligible(child) { return Err("TAB_RENDERER_PARK_STALE".into()); }
+        }
+        if !self.sample_tab_downloads(binding, 1000)? {
+            return Err("TAB_RENDERER_PARK_DOWNLOAD_UNKNOWN".into());
+        }
+        self.ensure_cleanup()?;
+        let _gate = self.lifecycle_lock.try_lock().map_err(|_| "TAB_RENDERER_PARK_BUSY")?;
+        self.lifecycle.check()?;
+        {
+            let mut children = self.children.lock().unwrap();
+            let child = children.get(&binding.index).ok_or("TAB_RENDERER_PARK_STALE")?;
+            {
+                let _owner = child.comms.owner_gate.try_lock().map_err(|_| "TAB_RENDERER_PARK_BUSY")?;
+                if !eligible(child)
+                    || !child.comms.native_document.try_lock().map_err(|_| "TAB_RENDERER_PARK_BUSY")?
+                        .is_some_and(|stamp| stamp.usable()) {
+                    return Err("TAB_RENDERER_PARK_STALE".into());
+                }
+                if !child.comms.pending.try_lock().map_err(|_| "TAB_RENDERER_PARK_BUSY")?.is_empty() {
+                    return Err("TAB_RENDERER_PARK_BUSY".into());
+                }
+                let counts = *child.comms.download_observation.try_lock().map_err(|_| "TAB_RENDERER_PARK_BUSY")?;
+                if !counts.is_some_and(|(generation, observation)| generation == binding.generation
+                    && observation.observed_unfinished() == Some(0)) {
+                    return Err("TAB_RENDERER_PARK_DOWNLOAD_UNKNOWN".into());
+                }
+            }
+            let child = children.remove(&binding.index).ok_or("TAB_RENDERER_PARK_STALE")?;
+            self.lifecycle.retire(binding.index, child);
+        }
+        self.lifecycle.wait_route_retired_until(
+            binding.index, std::time::Instant::now() + std::time::Duration::from_secs(5),
+        ).map_err(|error| format!("GRID_REQUEST_OUTCOME_UNKNOWN: park retirement:{error}"))
     }
 
     /// Background reclaim is intentionally limited to pristine blank ordinary

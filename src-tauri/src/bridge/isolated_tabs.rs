@@ -138,6 +138,27 @@ pub(super) fn hibernate_blank(app: &AppHandle, id: &str, idle_window: std::time:
     true
 }
 
+/// Explicit suspension publishes sleeping state only after native retirement.
+pub(super) fn park_admitted(app: &AppHandle, id: &str, address: &str,
+    binding: crate::grid_ipc::RendererBinding) -> Result<(), String> {
+    let index = exists(app, id)?;
+    if index != binding.index { return Err("TAB_RENDERER_PARK_STALE".into()); }
+    let state = app.state::<AppState>();
+    if state.hibernated_tabs.lock().unwrap().contains(id)
+        || state.active_tab.lock().unwrap().as_deref() == Some(id) {
+        return Err("TAB_RENDERER_PARK_STALE".into());
+    }
+    state.grid_manager.park_tab_renderer(binding, address)?;
+    state.child_layouts.lock().unwrap().remove(id);
+    state.layout_revisions.lock().unwrap().remove(id);
+    state.last_position_at.lock().unwrap().remove(id);
+    state.tab_idle_since.lock().unwrap().remove(id);
+    state.hibernated_scroll.lock().unwrap().remove(id);
+    state.tab_recovery.lock().unwrap().remove(id);
+    state.hibernated_tabs.lock().unwrap().insert(id.to_owned());
+    Ok(())
+}
+
 /// An explicit activation may restore a crashed tab from its last URL after
 /// original native retirement. It never silently reloads a healthy document.
 pub(super) fn activate_admitted(app: &AppHandle, id: &str, admitted: Option<Option<(u32, u64)>>) -> Result<(), String> {

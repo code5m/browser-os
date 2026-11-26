@@ -501,6 +501,51 @@ export const useBrowserStore = defineStore("browser", () => {
       : "该页签当前没有独立宿主，可尝试重新激活。");
     return null;
   }
+  async function prepareRendererPark(id: string): Promise<{target: RendererRecoveryTarget; address: string} | null> {
+    const tab = tabs.find(item => item.id === id);
+    if (!tab || !isolatedRendererMode.value || !isBrowserResourceAllowed()
+        || activeTabId.value === id || !reopenableAddress(tab.url)
+        || tabRecoveryBusy.value || tabRecoveryRequired.value) {
+      layout.showToast("仅支持休眠非当前、地址可恢复的独立页签。");
+      return null;
+    }
+    const address = tab.url;
+    const view = await refreshRendererState(id);
+    if (!view || view.renderer_state !== "ready" || view.renderer_recovery_target?.id !== id
+        || !tabs.some(item => item === tab) || tab.url !== address || activeTabId.value === id) {
+      layout.showToast("页签原生身份尚不可核对。");
+      return null;
+    }
+    return {target:view.renderer_recovery_target,address};
+  }
+  async function parkRenderer(selection: {target: RendererRecoveryTarget; address: string}): Promise<boolean> {
+    const {target,address} = selection;
+    try {
+      return await mutateTabs(async () => {
+        const tab = tabs.find(item => item.id === target.id);
+        if (!tab || tab.url !== address || activeTabId.value === target.id
+            || !isolatedRendererMode.value || !isBrowserResourceAllowed()) return false;
+        const view = await refreshRendererState(target.id);
+        if (view?.renderer_state !== "ready" || view.renderer_recovery_target?.pid !== target.pid
+            || view.renderer_recovery_target?.spawn_epoch !== target.spawn_epoch
+            || tab.url !== address || activeTabId.value === target.id) {
+          layout.showToast("页签身份或地址已变化，未执行休眠。");
+          return false;
+        }
+        clearRendererState(target.id);
+        rendererStates.set(target.id, "unknown");
+        await bridge.parkRenderer(target,address);
+        nativeTabFailures.delete(target.id);
+        void refreshRendererState(target.id);
+        layout.showToast("原生宿主已回收；下次点击页签时重新打开记录的地址。");
+        return true;
+      });
+    } catch {
+      void refreshRendererState(target.id);
+      layout.showToast("休眠未确认，可能存在未完成下载或原生状态变化；请核对，不自动重试。");
+      return false;
+    }
+  }
   async function prepareRendererReopen(id: string): Promise<boolean> {
     if (!isolatedRendererMode.value || !isBrowserResourceAllowed()
         || !tabs.some(tab => tab.id === id) || tabRecoveryRequired.value || tabRecoveryBusy.value) return false;
@@ -1045,6 +1090,8 @@ export const useBrowserStore = defineStore("browser", () => {
     requestNativeDomainRecovery,
     inspectRendererRecovery,
     prepareRendererReopen,
+    prepareRendererPark,
+    parkRenderer,
     reopenRenderer,
     retireRenderer,
     aiFiltered,

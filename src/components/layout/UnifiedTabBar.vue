@@ -22,6 +22,25 @@ const restartTarget = ref<Awaited<ReturnType<typeof browser.inspectNativeDomainR
 const rendererTarget = ref<Awaited<ReturnType<typeof browser.inspectRendererRecovery>>>(null);
 const reopenTarget = ref<{id: string; address: string} | null>(null);
 const reopening = ref(false);
+const parkTarget = ref<Awaited<ReturnType<typeof browser.prepareRendererPark>>>(null);
+const parking = ref(false);
+async function prepareRendererPark() {
+  const selected = context.value;
+  if (!selected || selected.kind !== "web" || parking.value) return;
+  const target = await browser.prepareRendererPark(selected.id);
+  if (context.value !== selected) return;
+  context.value = null;
+  parkTarget.value = target;
+}
+async function confirmRendererPark() {
+  const target = parkTarget.value;
+  if (!target || parking.value) return;
+  parking.value = true;
+  try {
+    parkTarget.value = null;
+    await browser.parkRenderer(target);
+  } finally { parking.value = false; }
+}
 const downloadPanelOpen = ref(false);
 const downloadPanelBusy = ref(false);
 const downloadInventory = ref<DownloadInventory | null>(null);
@@ -278,6 +297,7 @@ async function newTab() {
     <button role="menuitem" @click="closeContext()">关闭</button>
     <button role="menuitem" @click="closeContext(true)">关闭其他</button>
     <button v-if="context.kind === 'web' && browser.isolatedRendererMode" role="menuitem" @click="prepareRendererRetire">核对并恢复独立页签</button>
+    <button v-if="context.kind === 'web' && browser.isolatedRendererMode" role="menuitem" :disabled="parking" @click="prepareRendererPark">休眠后台页签（保留网址）</button>
     <button v-if="context.kind === 'web' && browser.isolatedRendererMode" role="menuitem" @click="prepareRendererReopen">更换故障页签恢复地址</button>
     <template v-if="contextPath">
       <span class="tab-actions-sep" aria-hidden="true"></span>
@@ -286,6 +306,12 @@ async function newTab() {
       <button role="menuitem" @click="copyRelPath">复制相对路径</button>
     </template>
     <button role="menuitem" @click="context = null">取消</button>
+  </div>
+  <div v-if="parkTarget" class="tab-actions" role="group" aria-label="独立页签休眠确认">
+    <span>休眠 {{parkTarget.target.id}}：仅保留当前网址；表单、历史、滚动及未保存内容不保证恢复。观察到未完成下载时拒绝。</span>
+    <span class="park-address">{{parkTarget.address}}</span>
+    <button :disabled="parking || browser.tabRecoveryBusy || browser.tabRecoveryRequired" @click="confirmRendererPark">确认休眠</button>
+    <button :disabled="parking" @click="parkTarget = null">取消</button>
   </div>
   <form v-if="reopenTarget" class="tab-actions" aria-label="独立页签新地址恢复" @submit.prevent="confirmRendererReopen">
     <span>在原逻辑页签 {{ reopenTarget.id }} 打开新地址，不恢复原页面内容。</span>
@@ -301,6 +327,7 @@ async function newTab() {
 </template>
 
 <style scoped>
+.park-address {max-width:100%;overflow-wrap:anywhere;font-size:12px;color:#667085}
 .download-owner-list {flex-basis:100%;max-height:200px;overflow:auto;font-size:12px;display:grid;gap:4px}
 .download-owner-list>div {display:flex;flex-wrap:wrap;gap:8px;padding:3px 0;border-bottom:1px solid #e5e6eb}
 .tab-actions { display:flex; flex-wrap:wrap; align-items:center; flex:none; gap:6px; padding:4px 8px; background:#f2f4f6; border-bottom:1px solid #e5e6eb; }

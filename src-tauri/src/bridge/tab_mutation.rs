@@ -22,6 +22,7 @@ pub(crate) enum Action {
     Reload { id: String },
     RetireRenderer { id: String, pid: u32, spawn_epoch: String, confirmed: bool },
     ReopenRenderer { id: String, url: String, confirmed: bool },
+    ParkRenderer { id: String, url: String, pid: u32, spawn_epoch: String, confirmed: bool },
 }
 impl Action {
     fn command(&self) -> &'static str {
@@ -35,6 +36,7 @@ impl Action {
             Self::Reload { .. } => "tab_reload",
             Self::RetireRenderer { .. } => "tab_renderer_retire",
             Self::ReopenRenderer { .. } => "tab_open",
+            Self::ParkRenderer { .. } => "tab_renderer_park",
         }
     }
     fn target(&self) -> Option<&str> {
@@ -47,14 +49,15 @@ impl Action {
             | Self::Forward { id }
             | Self::Reload { id }
             | Self::RetireRenderer { id, .. }
-            | Self::ReopenRenderer { id, .. } => Some(id),
+            | Self::ReopenRenderer { id, .. }
+            | Self::ParkRenderer { id, .. } => Some(id),
         }
     }
     fn authorize(&self, webview: &Webview) -> Result<(), String> {
         use crate::shared::native_legacy_policy::{bound_text, require_main};
         // Retiring one native renderer is the same destructive privilege
         // as closing it, but retains the logical tab. No new IPC permission.
-        let cmd = if matches!(self, Self::RetireRenderer { .. }) { "tab_close" } else { self.command() };
+        let cmd = if matches!(self, Self::RetireRenderer { .. } | Self::ParkRenderer { .. }) { "tab_close" } else { self.command() };
         require_main(webview, cmd)?;
         match self {
             Self::New { url } => bound_text(cmd, "url", url),
@@ -76,6 +79,17 @@ impl Action {
                 }
                 Ok(())
             }
+            Self::ParkRenderer { id, url, pid, spawn_epoch, confirmed } => {
+                bound_text(cmd, "id", id)?;
+                bound_text(cmd, "url", url)?;
+                if !confirmed || *pid == 0 || !crate::grid_ipc::restorable_address(url)
+                    || spawn_epoch.parse::<u64>().ok().filter(|n| *n > 0)
+                        .is_none_or(|n| n.to_string() != *spawn_epoch)
+                    || super::isolated_tabs::route(id).is_none() {
+                    return Err("TAB_RENDERER_PARK_INVALID".into());
+                }
+                Ok(())
+            }
             Self::RetireRenderer { id, pid, spawn_epoch, confirmed } => {
                 bound_text(cmd, "id", id)?;
                 if !confirmed || *pid == 0 || spawn_epoch.parse::<u64>().ok().filter(|n| *n > 0)
@@ -89,7 +103,7 @@ impl Action {
         }
     }
     fn is_document_mutation(&self) -> bool {
-        matches!(self, Self::Open { .. } | Self::Back { .. } | Self::Forward { .. } | Self::Reload { .. })
+        matches!(self, Self::Open { .. } | Self::Back { .. } | Self::Forward { .. } | Self::Reload { .. } | Self::ParkRenderer { .. })
     }
 
     fn execute(self, webview: Webview, app: AppHandle, binding: &Binding) -> Result<Value, String> {
@@ -131,6 +145,10 @@ impl Action {
                 Self::Back { id } => super::isolated_tabs::eval_bound(&app, &id, "if (history.length > 1) { history.back(); }", *document).map(|_| Value::Null),
                 Self::Forward { id } => super::isolated_tabs::eval_bound(&app, &id, "history.forward();", *document).map(|_| Value::Null),
                 Self::Reload { id } => super::isolated_tabs::eval_bound(&app, &id, "location.reload();", *document).map(|_| Value::Null),
+                Self::ParkRenderer { id, url, .. } => {
+                    let _transition = reserve_tab_transition(&id)?;
+                    super::isolated_tabs::park_admitted(&app, &id, &url, *document).map(|_| Value::Null)
+                }
                 _ => Err("TAB_MUTATION_INSTANCE_STALE".into()),
             };
         }
@@ -144,6 +162,7 @@ impl Action {
             Self::Back { id } => tab_go_back_impl(webview, app, id).map(|_| Value::Null),
             Self::Forward { id } => tab_go_forward_impl(webview, app, id).map(|_| Value::Null),
             Self::Reload { id } => tab_reload_impl(webview, app, id).map(|_| Value::Null),
+            Self::ParkRenderer { .. } => Err("TAB_RENDERER_PARK_STALE".into()),
             Self::ReopenRenderer { id, url, .. } => {
                 if !matches!(binding, Binding::Isolated(None)) {
                     return Err("TAB_RENDERER_REOPEN_STALE".into());
@@ -223,6 +242,15 @@ impl Binding {
                 let expected = spawn_epoch.parse::<u64>().map_err(|_| "TAB_RENDERER_RECOVERY_INVALID_TARGET")?;
                 if owner != Some((*pid, expected)) {
                     return Err("TAB_RENDERER_RECOVERY_STALE".into());
+                }
+            }
+            if let Action::ParkRenderer { pid, spawn_epoch, url, .. } = action {
+                let epoch = spawn_epoch.parse::<u64>().map_err(|_| "TAB_RENDERER_PARK_INVALID")?;
+                if owner != Some((*pid, epoch))
+                    || state.active_tab.try_lock().map_err(|_| "TAB_MUTATION_INSTANCE_UNAVAILABLE")?.as_deref() == Some(id)
+                    || !state.tabs.try_lock().map_err(|_| "TAB_MUTATION_INSTANCE_UNAVAILABLE")?
+                        .get(id).is_some_and(|tab| tab.url == *url) {
+                    return Err("TAB_RENDERER_PARK_STALE".into());
                 }
             }
             if matches!(action, Action::ReopenRenderer { .. }) {
