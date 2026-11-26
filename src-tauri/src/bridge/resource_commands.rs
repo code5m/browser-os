@@ -246,21 +246,30 @@ pub fn report_title(app: AppHandle, webview: tauri::Webview, title: String) -> R
     if !is_tab_label(&id) {
         return Err("page title must originate from a browser tab".to_string());
     }
+    let manager = app.state::<tauri_plugin_browser_tabs::TabManagerState>();
+    let Some((instance, revision, _)) = manager.observed_navigation(&id)
+        .map_err(|_| "TAB_METADATA_BUSY")? else { return Ok(()); };
     let page_url = webview.url().map_err(|e| e.to_string())?.to_string();
+    if !manager.observed_navigation(&id).is_ok_and(|current|
+        current.is_some_and(|(i, r, _)| i == instance && r == revision)) {
+        return Ok(());
+    }
+    drop(manager);
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     if let Some(index) = std::env::var("GRID_CHILD_INDEX").ok().and_then(|v| v.parse::<u32>().ok()) {
         if crate::grid_ipc::is_tab_renderer(index) && crate::grid_ipc::renderer_label(index) == id {
             let title = title.trim();
             if !title.is_empty() && title.len() <= 8192 && page_url.len() <= 8192 {
                 crate::enqueue_renderer_report("tab-title", serde_json::json!({
-                    "id": id, "url": page_url, "title": title
+                    "id": id, "url": page_url, "title": title,
+                    "instance":instance.to_string(), "revision":revision.to_string()
                 }));
             }
             return Ok(());
         }
         return Err("TAB_RENDERER_ROUTE_INVALID".into());
     }
-    report_title_inner(app, id, page_url, title)
+    report_title_inner(app, id, page_url, title, (instance, revision))
 }
 
 fn report_title_inner(
@@ -268,22 +277,28 @@ fn report_title_inner(
     id: String,
     page_url: String,
     title: String,
+    expected: (u64, u64),
 ) -> Result<(), String> {
     let t = title.trim().to_string();
     if t.is_empty() {
         return Ok(());
     }
-    // Bind title to the invoking WebView, not whichever tab became active
-    // while this asynchronous IPC message was in flight.
-    if !app
-        .state::<AppState>()
-        .tabs
-        .lock()
-        .unwrap()
-        .contains_key(&id)
-    {
+    // Publish the title in the native logical record only if the same
+    // observed native instance/document and current address still match.
+    let state = app.state::<AppState>();
+    let mut tabs = state.tabs.try_lock().map_err(|_| "TAB_METADATA_BUSY")?;
+    if state.shutdown_requested.load(Ordering::Acquire) { return Ok(()); }
+    let manager = app.state::<tauri_plugin_browser_tabs::TabManagerState>();
+    let Some((instance, revision, observed)) = manager.observed_navigation(&id)
+        .map_err(|_| "TAB_METADATA_BUSY")? else { return Ok(()); };
+    let Some(tab) = tabs.get_mut(&id) else { return Ok(()); };
+    if (instance, revision) != expected || page_url.is_empty() || page_url.len() > 8192
+        || observed.as_deref().unwrap_or(tab.url.as_str()) != page_url.as_str() {
         return Ok(());
     }
+    tab.url = page_url.clone();
+    tab.title = t.clone();
+    drop(tabs);
     let _ = app.emit(
         "tab-title",
         serde_json::json!({ "id": id, "url": page_url, "title": t }),

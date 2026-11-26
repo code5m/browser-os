@@ -155,6 +155,7 @@ pub(super) fn tab_open_admitted(
         return Err("TAB_APPLICATION_SHUTTING_DOWN".into());
     }
     if let Some(t) = tabs.get_mut(&id) {
+        if t.url != target { t.title = target.clone(); }
         t.url = target.clone();
     }
     Ok(())
@@ -183,7 +184,10 @@ pub(super) fn tab_open_document(
     }
     let tab = tabs.get_mut(id).ok_or("GRID_REQUEST_OUTCOME_UNKNOWN: navigation owner removed")?;
     // Do not overwrite a more recent native URL observation.
-    if tab.url == previous { tab.url = target; }
+    if tab.url == previous {
+        if tab.url != target { tab.title = target.clone(); }
+        tab.url = target;
+    }
     Ok(())
 }
 
@@ -1068,10 +1072,45 @@ pub(crate) fn tab_list_native(app: AppHandle) -> Vec<TabInfo> {
     let tabs = state.tabs.lock().unwrap();
     tabs.values().cloned().collect()
 }
+/// Navigation notifications are hints, not authority for their URL payload.
+/// Read the live plugin instance's cached native observation instead.
+pub(crate) fn refresh_embedded_navigation(app: &AppHandle, id: &str) {
+    if !is_tab_label(id) || super::isolated_tabs::route(id).is_some() { return; }
+    let state = app.state::<AppState>();
+    let Ok(mut tabs) = state.tabs.try_lock() else { return; };
+    if state.shutdown_requested.load(Ordering::Acquire) { return; }
+    let manager = app.state::<tauri_plugin_browser_tabs::TabManagerState>();
+    let Ok(Some((_, _, Some(address)))) = manager.observed_navigation(&id.to_owned()) else { return; };
+    if address.is_empty() || address.len() > 8192 { return; }
+    if let Some(tab) = tabs.get_mut(id) {
+        if tab.url != address {
+            tab.title = address.clone();
+            tab.url = address;
+        }
+    }
+}
+
 #[tauri::command]
 pub fn tab_list(webview: tauri::Webview, app: AppHandle) -> Result<Vec<TabInfo>, String> {
     crate::shared::native_legacy_policy::require_main(&webview, "tab_list")?;
-    Ok(tab_list_native(app))
+    let state = app.state::<AppState>();
+    let tabs = state.tabs.try_lock().map_err(|_| "TAB_METADATA_BUSY")?;
+    let manager = app.state::<tauri_plugin_browser_tabs::TabManagerState>();
+    let mut result = Vec::with_capacity(tabs.len());
+    for logical in tabs.values() {
+        let mut tab = logical.clone();
+        if super::isolated_tabs::route(&tab.id).is_none() {
+            if let Some((_, _, Some(address))) = manager.observed_navigation(&tab.id)
+                .map_err(|_| "TAB_METADATA_BUSY")? {
+                if !address.is_empty() && address.len() <= 8192 && tab.url != address {
+                    tab.title = address.clone();
+                    tab.url = address;
+                }
+            }
+        }
+        result.push(tab);
+    }
+    Ok(result)
 }
 
 /// 前端设置页签标题（如用户手动改名）。

@@ -227,11 +227,9 @@ onMounted(async () => {
   });
   bridge.onTabTitle((t) => browser.setTitle(t));
   bridge.onTabNavigated((d) => {
-    const previous = browser.tabs.find((tab) => tab.id === d.id)?.url;
-    browser.setNavigated(d.id, d.url);
-    if (previous !== undefined && previous !== d.url) {
-      recordNavigationApplied(d.id, d.seq ?? 0, d.url.length);
-    }
+    browser.setNavigated(d.id, d.url, (actual) => {
+      recordNavigationApplied(d.id, actual === d.url ? (d.seq ?? 0) : 0, actual.length);
+    });
   });
   // M1-8：资源瀑布实时事件（payload 已是后端脱敏 DTO）。订阅放全局，
   // 保证 Dock 面板未挂载时记录也不丢。

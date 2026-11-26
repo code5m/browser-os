@@ -278,7 +278,8 @@ pub(crate) fn valid_renderer_event(index: u32, name: &str, payload: &serde_json:
         "tab-title" => is_tab_renderer(index)
             && payload["id"].as_str() == Some(label.as_str())
             && valid_url()
-            && payload["title"].as_str().is_some_and(|title| title.len() <= 8192),
+            && payload["title"].as_str().is_some_and(|title| title.len() <= 8192)
+            && NativeDocumentStamp::from_report(payload).is_some_and(|stamp| stamp.usable()),
         "browser-resources" => is_tab_renderer(index)
             && payload["id"].as_str() == Some(label.as_str())
             && payload["page_url"].as_str().is_some_and(|url| url.len() <= 8192)

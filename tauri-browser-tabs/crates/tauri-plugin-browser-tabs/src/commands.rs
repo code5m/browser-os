@@ -319,6 +319,9 @@ struct ManagedTab {
     webview: Webview<Wry>,
     native_instance: u64,
     document_revision: Arc<std::sync::atomic::AtomicU64>,
+    // Per-native-instance top-level URL observation. A retired WebView
+    // cannot update a replacement's cache through a reused logical label.
+    observed_url: Arc<RwLock<Option<String>>>,
     // Never reclaim a previously download-affecting host as pristine blank.
     download_seen: Arc<std::sync::atomic::AtomicBool>,
     #[cfg(target_os = "linux")]
@@ -996,6 +999,9 @@ impl TabManager {
     }
 
     fn invalidate_tab_document(&self, id: &str, tab: &ManagedTab) {
+        // Explicit navigation invalidates the previous observed address
+        // until the current native engine reports its top-level URL.
+        *tab.observed_url.write() = None;
         invalidate_capture_document(&tab.document_revision);
         let sink = self.document_sink.read().clone();
         publish_native_document(sink.as_ref(), id, tab.native_instance, &tab.document_revision);
@@ -1166,6 +1172,7 @@ impl TabManager {
             .map_err(|_| BrowserTabError::Platform("TAB_NATIVE_INSTANCE_EXHAUSTED".into()))?;
         let document_sink = self.document_sink.read().clone();
         let document_revision = Arc::new(std::sync::atomic::AtomicU64::new(1));
+        let observed_url = Arc::new(RwLock::new(None::<String>));
         let download_seen = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let isolated = self.isolated_ready.clone();
         let nav_ready = isolated.clone();
@@ -1226,10 +1233,14 @@ impl TabManager {
                 let nav_app = self.app.clone();
                 let revision = document_revision.clone();
                 let native_sink = document_sink.clone();
+                let observed = observed_url.clone();
                 builder = builder.on_page_load(move |_webview, payload| {
                     invalidate_capture_document(&revision);
                     publish_native_document(native_sink.as_ref(), &nav_id, native_instance, &revision);
                     let url = payload.url().to_string();
+                    if matches!(payload.event(), PageLoadEvent::Finished) && !url.is_empty() {
+                        *observed.write() = Some(url.clone());
+                    }
                     let event = match payload.event() {
                         PageLoadEvent::Started => BrowserTabEvent::NavigationStarted {
                             id: nav_id.clone(),
@@ -1311,6 +1322,7 @@ impl TabManager {
             let uri_id = options.id.clone();
             let uri_app = self.app.clone();
             let uri_revision = document_revision.clone();
+            let observed = observed_url.clone();
             let load_revision = document_revision.clone();
             let load_app = self.app.clone();
             let load_id = options.id.clone();
@@ -1336,6 +1348,7 @@ impl TabManager {
                     publish_native_document(uri_sink.as_ref(), &uri_id, native_instance, &uri_revision);
                     let Some(uri) = wv.uri() else { return };
                     let value = uri.as_str();
+                    if !value.is_empty() { *observed.write() = Some(value.to_owned()); }
                     let mut previous = last_uri.borrow_mut();
                     if value.is_empty() || value == previous.as_str() {
                         return;
@@ -1600,6 +1613,7 @@ impl TabManager {
             webview,
             native_instance,
             document_revision,
+            observed_url,
             download_seen,
             #[cfg(target_os = "linux")]
             layout: RwLock::new(TabLayout {
@@ -1864,6 +1878,20 @@ impl TabManager {
 
     pub fn get_tab_ids(&self) -> Vec<TabId> {
         self.tabs.read().keys().cloned().collect()
+    }
+
+    /// Cached native observation only; no WebView/GTK/COM round trip.
+    /// Hold the registry read guard while copying the current instance data.
+    pub fn observed_navigation(&self, id: &TabId) -> Result<Option<(u64, u64, Option<String>)>> {
+        let tabs = self.tabs.try_read().ok_or_else(|| BrowserTabError::Platform("TAB_METADATA_BUSY".into()))?;
+        let Some(tab) = tabs.get(id) else { return Ok(None); };
+        let revision = tab.document_revision.load(std::sync::atomic::Ordering::Acquire);
+        let observed = tab.observed_url.try_read()
+            .ok_or_else(|| BrowserTabError::Platform("TAB_METADATA_BUSY".into()))?.clone();
+        if revision == u64::MAX || revision != tab.document_revision.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(BrowserTabError::Platform("TAB_METADATA_BUSY".into()));
+        }
+        Ok(Some((tab.native_instance, revision, observed)))
     }
 
     pub fn instance(&self, id: &TabId) -> Result<TabInstance> {

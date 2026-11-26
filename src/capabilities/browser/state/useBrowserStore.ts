@@ -20,6 +20,13 @@ export const useBrowserStore = defineStore("browser", () => {
 
   const url = ref("");
   const tabs = reactive<TabInfo[]>([]);
+  // Native notifications only invalidate metadata. They never publish a
+  // delayed payload directly onto a logical tab or its replacement.
+  type MetadataApplied = (address: string) => void;
+  const metadataDirty = new Map<string, MetadataApplied | undefined>();
+  let metadataEpoch = 0;
+  let metadataInFlight = false;
+  let metadataScheduled = false;
   const activeTabId = ref("");
   const nativeTabFailures = new Map<string, NativeTabLoadFailureRecord>();
   const isolatedRendererMode = ref(false);
@@ -205,6 +212,7 @@ export const useBrowserStore = defineStore("browser", () => {
   async function recoverNativeTabs(allowCancellation = true) {
     if (tabRecoveryBusy.value) return;
     tabRecoveryBusy.value = true;
+    ++metadataEpoch;
     // Recovery supersedes all queued user intents. Do not dispatch one while
     // the native snapshot is being reconciled.
     for (const queued of waitingMutations.splice(0)) rejectWaiting(queued);
@@ -293,7 +301,10 @@ export const useBrowserStore = defineStore("browser", () => {
       tabRecoveryRequired.value = true;
       tabNativeState.value = "unknown";
       tabRecoveryMessage.value = "控制面未确认，原生执行权仍受保护；可再次查询，必要时正常退出应用后重新打开。";
-    } finally { tabRecoveryBusy.value = false; }
+    } finally {
+      tabRecoveryBusy.value = false;
+      queueAllTabMetadata();
+    }
   }
 
   function clearMutationTimer(timer: number) {
@@ -333,6 +344,7 @@ export const useBrowserStore = defineStore("browser", () => {
         reject,
         run: async () => {
           const owner = { startedAt: Date.now(), unknown: false };
+          ++metadataEpoch;
           runningMutation = owner;
           tabNativeState.value = "running";
           const watchdog = window.setTimeout(() => {
@@ -363,6 +375,7 @@ export const useBrowserStore = defineStore("browser", () => {
             runningMutation = null;
             tabNativeState.value = tabRecoveryRequired.value ? "unknown" : "ready";
             scheduleMutationDrain();
+            queueAllTabMetadata();
           }
         },
       };
@@ -812,31 +825,70 @@ export const useBrowserStore = defineStore("browser", () => {
       relocate();
     });
   }
-  function setTitle(t: TabInfo) {
-    const existing = tabs.find((x) => x.id === t.id);
-    // Never apply a stale title from an earlier URL or another WebView.
-    if (!existing || !t.title || !t.url) return;
-    // URL canonicalization accounts for a bare origin acquiring its trailing
-    // slash from WebKit while still rejecting a different navigation.
-    const canonical = (value: string) => {
-      try { return new URL(value).href; } catch { return value; }
-    };
-    if (canonical(existing.url) !== canonical(t.url)) return;
-    existing.title = t.title;
-    if (t.id === activeTabId.value) nextTick(relocate);
+  function queueNativeTabMetadata(id: string, applied?: MetadataApplied) {
+    if (typeof id !== "string" || !tabs.some(tab => tab.id === id)) return;
+    if (applied || !metadataDirty.has(id)) metadataDirty.set(id, applied);
+    scheduleMetadataDrain();
   }
-  // 子 webview 内导航完成（点链接/前进/后退/刷新）：同步页签 URL 与地址栏
-  function setNavigated(id: string, navUrl: string) {
-    const t = tabs.find((x) => x.id === id);
-    // A late event from a closed tab or an empty native URI must not rewrite
-    // the visible address. Linux navigation events now come from the native
-    // top-level WebKit URI property rather than iframe on_navigation hooks.
-    if (!t || !navUrl.trim()) return;
-    if (t.url !== navUrl) {
-      t.url = navUrl;
-      t.title = navUrl; // Placeholder until document.title arrives.
-    }
-    if (id === activeTabId.value && layout.mainView === "browser") url.value = navUrl;
+  function queueAllTabMetadata() {
+    const live = new Set(tabs.map(tab => tab.id));
+    for (const id of metadataDirty.keys()) if (!live.has(id)) metadataDirty.delete(id);
+    for (const id of live) if (!metadataDirty.has(id)) metadataDirty.set(id, undefined);
+    scheduleMetadataDrain();
+  }
+  function scheduleMetadataDrain() {
+    if (metadataScheduled || metadataInFlight || !metadataDirty.size || runningMutation
+        || tabRecoveryBusy.value || tabRecoveryRequired.value) return;
+    metadataScheduled = true;
+    void Promise.resolve().then(async () => {
+      metadataScheduled = false;
+      if (metadataInFlight || !metadataDirty.size || runningMutation
+          || tabRecoveryBusy.value || tabRecoveryRequired.value) return;
+      metadataInFlight = true;
+      const epoch = metadataEpoch;
+      const requested = [...metadataDirty].map(([id, applied]) => ({
+        id, applied, tab: tabs.find(tab => tab.id === id),
+      }));
+      metadataDirty.clear();
+      try {
+        const snapshot = await bridge.tabList();
+        if (epoch !== metadataEpoch || runningMutation || tabRecoveryBusy.value || tabRecoveryRequired.value) {
+          // A mutation/reattach crossed the query. Reobserve the live
+          // objects later; do not publish this older metadata snapshot.
+          for (const row of requested) if (tabs.some(tab => tab === row.tab) && !metadataDirty.has(row.id)) {
+            metadataDirty.set(row.id, row.applied);
+          }
+          return;
+        }
+        if (!Array.isArray(snapshot) || new Set(snapshot.map(row => row.id)).size !== snapshot.length) return;
+        const actual = new Map(snapshot.map(row => [row.id, row]));
+        for (const row of requested) {
+          const tab = row.tab;
+          const native = actual.get(row.id);
+          if (!tab || !tabs.some(item => item === tab) || metadataDirty.has(row.id)
+              || !native || typeof native.url !== "string" || !native.url.trim()
+              || typeof native.title !== "string") continue;
+          const changed = tab.url !== native.url;
+          tab.url = native.url;
+          tab.title = native.title || native.url;
+          if (changed && tab.id === activeTabId.value && layout.mainView === "browser") url.value = tab.url;
+          if (changed) row.applied?.(tab.url);
+          if (tab.id === activeTabId.value) nextTick(relocate);
+        }
+      } catch {
+        // A failed advisory read cannot manufacture current metadata.
+        // Later native hints or explicit tab operations can reobserve it.
+      } finally {
+        metadataInFlight = false;
+        scheduleMetadataDrain();
+      }
+    });
+  }
+  function setTitle(t: TabInfo) {
+    if (t && typeof t.id === "string") queueNativeTabMetadata(t.id);
+  }
+  function setNavigated(id: string, _navUrl: string, applied?: MetadataApplied) {
+    queueNativeTabMetadata(id, applied);
   }
   async function handleIsolatedRendererExited(event: { id: string; exit_code: number }) {
     const tab = tabs.find(item => item.id === event.id);

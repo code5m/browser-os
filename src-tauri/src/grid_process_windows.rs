@@ -1918,6 +1918,7 @@ impl GridProcessManager {
         }
         if let Some(tab) = tabs.get_mut(&crate::grid_ipc::renderer_label(index)) {
             if let Some(current_url) = &child.last_url {
+                if tab.url != *current_url { tab.title = current_url.clone(); }
                 tab.url = current_url.clone();
             }
         }
@@ -2669,6 +2670,7 @@ impl GridProcessManager {
                         let mut tabs = state.tabs.lock().unwrap();
                         if !state.shutdown_requested.load(Ordering::Acquire) {
                             if let Some(tab) = tabs.get_mut(&crate::grid_ipc::renderer_label(index)) {
+                                if tab.url != *url { tab.title = url.clone(); }
                                 tab.url = url.clone();
                             }
                         }
@@ -2693,6 +2695,13 @@ impl GridProcessManager {
                 }
             }
             "tab-title" | "browser-resources" => {
+                if name == "tab-title" && *comms.native_document.lock().unwrap()
+                    != crate::grid_ipc::NativeDocumentStamp::from_report(payload) {
+                    // Optional old-document report; discard rather than
+                    // disconnecting the current host or changing its title.
+                    payload["renderer_drop"] = serde_json::json!(true);
+                    return true;
+                }
                 let id = crate::grid_ipc::renderer_label(index);
                 let url = if name == "tab-title" { payload["url"].as_str() } else { payload["page_url"].as_str() };
                 let mut drop_event = true;

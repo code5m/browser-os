@@ -1958,6 +1958,7 @@ fn main() {
                         static NAV_SEQUENCE: std::sync::atomic::AtomicU64 =
                             std::sync::atomic::AtomicU64::new(1);
                         let seq = NAV_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        bridge::refresh_embedded_navigation(&forward, id);
                         eprintln!("[navigation] main_forward seq={} tab={} url_bytes={}", seq, id, url.len());
                         let _ = forward
                             .emit("tab-navigated", serde_json::json!({ "id": id, "url": url, "seq": seq }));
