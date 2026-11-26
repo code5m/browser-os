@@ -40,6 +40,10 @@ async function captureCurrentPage(independent = false, interactive = false) {
     layout.showToast((interactive?'独立登录截图':independent?'独立地址截图':'整页截图')+'已保存；主页已加入“截图目录”');
   } catch (error) {
     const code = String(error).match(/(?:CAPTURE|TAB_CONTROL)_[A-Z_]+/)?.[0] ?? 'CAPTURE_FAILED';
+    if(code==='CAPTURE_INTERACTIVE_PROFILE_CLEANUP_FAILED'){
+      layout.showToast('独立登录进程已退出，但临时登录资料清理失败；未发布截图。请查看应用日志中的保留目录。');
+      return;
+    }
     layout.showToast(code==='CAPTURE_RECOVERY_REQUIRED'||code==='CAPTURE_OUTCOME_UNKNOWN'||code==='TAB_CONTROL_REPLY_TIMEOUT'
       ? '截图状态未确认，请通过菜单查询或取消截图任务；不会自动重试。'
       : (interactive?'独立登录截图失败：':independent?'独立地址截图失败：':'整页截图失败：') + code);
@@ -64,6 +68,8 @@ async function recoverCapture() {
       const directory=receipt.path.replace(/[\\/]webpage-[^\\/]+\.png$/, '');
       addHomeDirectoryShortcut(directory);
       layout.showToast((receipt.mode==='interactive_address'?'独立登录截图':receipt.mode==='independent_address'?'独立地址截图':'截图')+'已保存；主页已加入截图目录');
+    }else if(receipt.error==='CAPTURE_INTERACTIVE_PROFILE_CLEANUP_FAILED'){
+      layout.showToast('独立登录进程已退出，但临时登录资料清理失败；未发布截图。请查看应用日志中的保留目录。');
     }else{layout.showToast('截图终态：'+(receipt.error||receipt.phase));}
     if(view.receipt)await bridge.acknowledgeCapture(receipt.ticket);
   }catch{layout.showToast('截图回执尚未确认，请重新查询');}

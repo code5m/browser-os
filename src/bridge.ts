@@ -249,7 +249,7 @@ async function ownedCapture(id: string, expectedUrl?: string, interactive = fals
   // The frontend timeout cannot establish native process exit.
   const deadline=performance.now()+(mode==="interactive_address"?750000:mode==="independent_address"?85000:35000);
   while(performance.now()<deadline) {
-    if(startError && /CAPTURE_(?:INVALID_TICKET|TAB_UNAVAILABLE|APPLICATION_SHUTTING_DOWN|STALE_EPOCH|STALE_SEQUENCE|BUSY|MODE_INVALID|ADDRESS_REQUIRED|ADDRESS_CHANGED|URL_INVALID|HTTPS_URL_REQUIRED|INDEPENDENT_UNSUPPORTED)|CAPTURE_MAIN_ONLY/.test(String(startError))) throw startError;
+    if(startError && /CAPTURE_(?:INVALID_TICKET|TAB_UNAVAILABLE|APPLICATION_SHUTTING_DOWN|STALE_EPOCH|STALE_SEQUENCE|BUSY|MODE_INVALID|ADDRESS_REQUIRED|ADDRESS_CHANGED|URL_INVALID|HTTPS_URL_REQUIRED|INDEPENDENT_UNSUPPORTED|DOMAIN_RECOVERY_CLAIMED)|CAPTURE_MAIN_ONLY/.test(String(startError))) throw startError;
     let receipt=(captureEvent as CaptureReceipt|null)?.ticket===ticket?captureEvent:null;
     try {
       const view=await captureControl({phase:"inspect"});

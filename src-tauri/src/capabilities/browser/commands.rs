@@ -1074,8 +1074,15 @@ async fn run_independent_capture(
         let bytes = if interactive {
             let ready = || CAPTURE_OWNER.lock().map_err(|_| "CAPTURE_OWNER_UNKNOWN")?
                 .mark_interactive_ready(&worker_ticket);
-            let requested = || CAPTURE_OWNER.lock().map_err(|_| "CAPTURE_OWNER_UNKNOWN")?
-                .interactive_capture_requested(&worker_ticket);
+            let requested = || {
+                let mut owner = CAPTURE_OWNER.lock().map_err(|_| "CAPTURE_OWNER_UNKNOWN")?;
+                if worker_app.state::<crate::ExitLifecycleState>().started.load(Ordering::Acquire)
+                    || worker_app.state::<AppState>().shutdown_requested.load(Ordering::Acquire)
+                {
+                    return Err("CAPTURE_ISOLATED_CANCELLED".into());
+                }
+                owner.interactive_capture_requested(&worker_ticket)
+            };
             crate::isolated_capture::render_interactive_job(
                 &address,
                 cancelled,
@@ -1446,13 +1453,15 @@ pub async fn capture_full_page(
                 if !confirmed {
                     return Err("CAPTURE_INTERACTIVE_CONFIRMATION_REQUIRED".into());
                 }
+                // Check shutdown under the same capture-owner lock used by
+                // exit preflight, before publishing the one-shot request.
+                let mut owner = CAPTURE_OWNER.lock().map_err(|_| "CAPTURE_OWNER_UNKNOWN")?;
                 if app.state::<crate::ExitLifecycleState>().started.load(Ordering::Acquire)
                     || app.state::<AppState>().shutdown_requested.load(Ordering::Acquire)
                 {
                     return Err("CAPTURE_APPLICATION_SHUTTING_DOWN".into());
                 }
-                CAPTURE_OWNER.lock().map_err(|_| "CAPTURE_OWNER_UNKNOWN")?
-                    .request_interactive_capture(&epoch, &sequence, &ticket)?;
+                owner.request_interactive_capture(&epoch, &sequence, &ticket)?;
             }
             CaptureRequest::RecoverDomain { epoch, sequence, ticket, confirmed } => {
                 if !confirmed {

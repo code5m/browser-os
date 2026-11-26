@@ -248,7 +248,7 @@ fn render_owned_job(
                             READY_MAGIC.len(),
                         )?;
                         if let Some(marker) = marker {
-                            if marker.bytes != READY_MAGIC
+                            if marker.bytes.as_slice() != READY_MAGIC
                                 || safe_paths::directory_identity(&root)
                                     .map_err(|_| "CAPTURE_TEMP_IDENTITY_FAILED")? != identity
                             {
@@ -299,6 +299,12 @@ fn render_owned_job(
             "[isolated-capture] {error}; scratch retained: {}",
             root.display()
         );
+        if interactive.is_some() {
+            // The temporary profile may contain an authenticated session.
+            // Never advertise a clean successful interactive capture when
+            // the original profile could not be removed after retirement.
+            return Err("CAPTURE_INTERACTIVE_PROFILE_CLEANUP_FAILED".into());
+        }
     }
     result
 }
@@ -811,13 +817,15 @@ fn run_render(
     // Fallback only before a scroll is attempted; never call a FullDocument
     // capture after a failed or stale viewport stitching attempt.
     #[cfg(target_os = "linux")]
-    let bytes = if let Some(bytes) = if interactive {
+    let tiled = if interactive {
         // Do not scroll an authenticated interactive document. FullDocument
         // is permitted here only inside the already budgeted process domain.
         None
     } else {
         capture_linux_viewports(&manager, &id, &document, deadline)?
-    } {
+    };
+    #[cfg(target_os = "linux")]
+    let bytes = if let Some(bytes) = tiled {
         bytes
     } else {
         eprintln!("[isolated-capture] full-document mode");
