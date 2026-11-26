@@ -2,6 +2,7 @@
 //! Uses an injected, already-configured SDK DynModel. No provider credentials
 //! are read here; no tools are executed by Rig or the model.
 use crate::{
+    engine::{ModelAdmissionBudget, TurnLimits},
     model::{ModelEvent, ModelFuture, ModelProvider, ModelRequest},
     FoundationError, Result,
 };
@@ -30,17 +31,42 @@ pub fn to_rig_request(request: &ModelRequest) -> Result<CompletionRequest> {
     Ok(candidate)
 }
 
+// Bound the local serialization of SDK-decoded arguments before allocation.
+fn bounded_arguments(value: &impl serde::Serialize) -> Result<String> {
+    use std::io::{self, Write};
+    struct Capped(Vec<u8>);
+    impl Write for Capped {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            if bytes.len() > 16_384usize.saturating_sub(self.0.len()) {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "RIG_ARGUMENT_LIMIT"));
+            }
+            self.0.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> io::Result<()> { Ok(()) }
+    }
+    let mut out = Capped(Vec::new());
+    serde_json::to_writer(&mut out, value)
+        .map_err(|_| FoundationError::InvalidInput("rig tool arguments"))?;
+    let text = String::from_utf8(out.0)
+        .map_err(|_| FoundationError::InvalidInput("rig tool arguments"))?;
+    if !crate::model::parse_tool_arguments(&text)?.is_object() {
+        return Err(FoundationError::InvalidInput("rig tool arguments object"));
+    }
+    Ok(text)
+}
+
 /// Non-streaming SDK completion response -> bounded, typed single-turn events.
 /// Multiple tool calls are rejected instead of partly executing a response.
 pub fn from_rig_response(response: CompletionResponse) -> Result<Vec<ModelEvent>> {
     let mut events = Vec::new();
     let mut proposal = None;
+    let mut budget = ModelAdmissionBudget::new(TurnLimits::default())?;
     for content in response.choice {
+        budget.admit_events(1)?;
         match content {
             AssistantContent::Text(text) => {
-                if text.text.len() > 65_536 {
-                    return Err(FoundationError::Provider("RIG_TEXT_LIMIT".into()));
-                }
+                budget.admit_text(text.text.len())?;
                 events.push(ModelEvent::TextDelta { text: text.text });
             }
             AssistantContent::ToolCall(tool) => {
@@ -49,11 +75,7 @@ pub fn from_rig_response(response: CompletionResponse) -> Result<Vec<ModelEvent>
                         "RIG_MULTIPLE_TOOL_CALLS_UNSUPPORTED".into(),
                     ));
                 }
-                let arguments_json = serde_json::to_string(&tool.function.arguments)
-                    .map_err(|e| FoundationError::Serialization(e.to_string()))?;
-                if arguments_json.len() > 16_384 {
-                    return Err(FoundationError::InvalidInput("rig tool arguments"));
-                }
+                let arguments_json = bounded_arguments(&tool.function.arguments)?;
                 proposal = Some(ModelEvent::ToolSuggestion {
                     tool_name: tool.function.name.to_string(),
                     arguments_json,
@@ -69,6 +91,7 @@ pub fn from_rig_response(response: CompletionResponse) -> Result<Vec<ModelEvent>
     if let (Some(input_tokens), Some(output_tokens)) =
         (response.usage.input_tokens, response.usage.output_tokens)
     {
+        budget.admit_events(1)?;
         events.push(ModelEvent::Usage {
             input_tokens,
             output_tokens,
@@ -77,6 +100,7 @@ pub fn from_rig_response(response: CompletionResponse) -> Result<Vec<ModelEvent>
     if let Some(proposal) = proposal {
         events.push(proposal);
     } else {
+        budget.admit_events(1)?;
         events.push(ModelEvent::Finished);
     }
     Ok(events)
@@ -91,6 +115,8 @@ impl ModelProvider for RigCompletionProvider {
                 return Err(FoundationError::PermissionDenied);
             }
             let request = to_rig_request(&request)?;
+            let limits = TurnLimits::default();
+            let deadline = tokio::time::Instant::now() + limits.deadline;
             // A real SDK model, injected by the trusted host, owns the
             // provider transport. The receiver closing cancels the stream.
             let mut streamed = self
@@ -100,12 +126,13 @@ impl ModelProvider for RigCompletionProvider {
             let (sender, receiver) = mpsc::channel(8);
             tokio::spawn(async move {
                 let mut streamed_text = String::new();
-                let result: Result<()> = async {
+                let run = async {
+                    let mut budget = ModelAdmissionBudget::new(limits)?;
                     loop {
-                        let item = tokio::select! {
-                            _ = sender.closed() => return Err(FoundationError::Cancelled),
-                            item = streamed.next() => item,
-                        };
+                        let item = streamed.next().await;
+                        // Ignored SDK control/argument/reasoning frames are
+                        // still transport work and consume the event budget.
+                        if item.is_some() { budget.admit_events(1)?; }
                         match item {
                             None => break,
                             Some(Err(_)) => {
@@ -117,9 +144,7 @@ impl ModelProvider for RigCompletionProvider {
                                 ));
                             }
                             Some(Ok(Item::Event(StreamEvent::Text { text, .. }))) => {
-                                if streamed_text.len().saturating_add(text.len()) > 64 * 1024 {
-                                    return Err(FoundationError::Provider("RIG_TEXT_LIMIT".into()));
-                                }
+                                budget.admit_text(text.len())?;
                                 streamed_text.push_str(&text);
                                 sender
                                     .send(ModelEvent::TextDelta { text })
@@ -166,15 +191,25 @@ impl ModelProvider for RigCompletionProvider {
                         }
                     }
                     Ok(())
-                }
-                .await;
+                };
+                // Receiver close and the same absolute deadline cover every
+                // read, send/backpressure wait and the SDK finish future.
+                let result: Result<()> = tokio::select! {
+                    biased;
+                    _ = sender.closed() => Err(FoundationError::Cancelled),
+                    _ = tokio::time::sleep_until(deadline) => Err(FoundationError::Timeout),
+                    result = run => result,
+                };
                 if let Err(error) = result {
                     // Only a machine-readable code crosses the model event bus.
                     let code = match error {
                         FoundationError::Cancelled => "RIG_CANCELLED",
+                        FoundationError::Timeout => "RIG_TIMEOUT",
                         _ => "RIG_STREAM_FAILURE",
                     };
-                    let _ = sender.send(ModelEvent::Failed { code: code.into() }).await;
+                    // Do not wait indefinitely to report a fault. EOF without
+                    // Finished or a proposal is itself a failed turn.
+                    let _ = sender.try_send(ModelEvent::Failed { code: code.into() });
                 }
             });
             Ok(receiver)
