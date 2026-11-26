@@ -275,6 +275,9 @@ impl PublicApiHost for NativeOwnerHost {
             let command = spec.command.clone();
             let result = READ_LANE
                 .run(move || -> Result<Value, String> {
+                    // A queued read may outlive the experiment being
+                    // disabled. Recheck before entering any native owner.
+                    enabled_config(&app)?;
                     match command.as_str() {
                         "tab_list" => {
                             // Recheck the actual invoking main WebView and
@@ -398,7 +401,7 @@ async fn run_admitted(
                 assignment,
             } => {
                 if assignment.task_id != execution.id() {
-                    return Err("AGENT_RUN_SCOPE_MISMATCH".into());
+                    return publish_channel(execution, Err("AGENT_RUN_SCOPE_MISMATCH".into())).await;
                 }
                 let result = run_routed_fixture_owned(
                     assignment.kind,
@@ -443,53 +446,64 @@ async fn execute_read(
     args: Value,
     resource: String,
 ) -> Result<Value, String> {
-    if resource_for(&command, &args)? != resource {
-        return publish_channel(execution, Err("AGENT_RUN_SCOPE_MISMATCH".into())).await;
-    }
-    let spec = current_public_api_catalog()
-        .into_iter()
-        .find(|entry| entry.command == command && entry.effect == ToolEffect::ReadOnly)
-        .ok_or("AGENT_EXPERIMENT_TOOL_DENIED")?;
-    let registry = PublicApiRegistry::default();
-    let host = Arc::new(NativeOwnerHost { app, webview });
-    registry
-        .register(spec.owner, host)
-        .map_err(|_| "AGENT_EXPERIMENT_OWNER_DENIED")?;
-    let tool = registry
-        .read_tool(spec)
-        .map_err(|_| "AGENT_EXPERIMENT_OWNER_DENIED")?;
-    let tools = ToolRegistry::default();
-    tools
-        .register(Arc::new(tool))
-        .map_err(|_| "AGENT_EXPERIMENT_REGISTRY_FAILED")?;
     let tasks = execution.tasks();
     let task_id = execution.id();
-    let call = tools
-        .propose(tasks, task_id, &command, args)
-        .map_err(|_| "AGENT_EXPERIMENT_TOOL_DENIED")?;
-    let mut secret = [0_u8; 32];
-    use ring::rand::{SecureRandom, SystemRandom};
-    SystemRandom::new()
-        .fill(&mut secret)
-        .map_err(|_| "AGENT_EXPERIMENT_APPROVAL_FAILED")?;
-    let (ticket, permit) = HostApprovalIssuer::new(secret)
-        .map_err(|_| "AGENT_EXPERIMENT_APPROVAL_FAILED")?
-        .resolve_local_decision(
-            tasks,
-            task_id,
-            call,
-            HostApprovalDecision {
-                principal_id: uuid::Uuid::new_v4(),
-                resource: ResourceBinding {
-                    resource_id: resource,
-                    resource_revision: "local-main-ui-v1".into(),
+    // All failures here precede tool dispatch. Publish them through the
+    // existing durable execution owner instead of dropping a running receipt
+    // (which would leave an interrupted run that appears resumable).
+    let setup = (|| -> Result<_, String> {
+        enabled_config(&app)?;
+        if resource_for(&command, &args)? != resource {
+            return Err("AGENT_RUN_SCOPE_MISMATCH".into());
+        }
+        let spec = current_public_api_catalog()
+            .into_iter()
+            .find(|entry| entry.command == command && entry.effect == ToolEffect::ReadOnly)
+            .ok_or("AGENT_EXPERIMENT_TOOL_DENIED")?;
+        let registry = PublicApiRegistry::default();
+        let host = Arc::new(NativeOwnerHost { app, webview });
+        registry
+            .register(spec.owner, host)
+            .map_err(|_| "AGENT_EXPERIMENT_OWNER_DENIED")?;
+        let tool = registry
+            .read_tool(spec)
+            .map_err(|_| "AGENT_EXPERIMENT_OWNER_DENIED")?;
+        let tools = ToolRegistry::default();
+        tools
+            .register(Arc::new(tool))
+            .map_err(|_| "AGENT_EXPERIMENT_REGISTRY_FAILED")?;
+        let call = tools
+            .propose(tasks, task_id, &command, args)
+            .map_err(|_| "AGENT_EXPERIMENT_TOOL_DENIED")?;
+        let mut secret = [0_u8; 32];
+        use ring::rand::{SecureRandom, SystemRandom};
+        SystemRandom::new()
+            .fill(&mut secret)
+            .map_err(|_| "AGENT_EXPERIMENT_APPROVAL_FAILED")?;
+        let (ticket, permit) = HostApprovalIssuer::new(secret)
+            .map_err(|_| "AGENT_EXPERIMENT_APPROVAL_FAILED")?
+            .resolve_local_decision(
+                tasks,
+                task_id,
+                call,
+                HostApprovalDecision {
+                    principal_id: uuid::Uuid::new_v4(),
+                    resource: ResourceBinding {
+                        resource_id: resource,
+                        resource_revision: "local-main-ui-v1".into(),
+                    },
+                    accepted: true,
+                    ttl: Duration::from_secs(20),
                 },
-                accepted: true,
-                ttl: Duration::from_secs(20),
-            },
-        )
-        .map_err(|_| "AGENT_EXPERIMENT_APPROVAL_FAILED")?;
-    let permit = permit.ok_or("AGENT_EXPERIMENT_APPROVAL_DENIED")?;
+            )
+            .map_err(|_| "AGENT_EXPERIMENT_APPROVAL_FAILED")?;
+        let permit = permit.ok_or("AGENT_EXPERIMENT_APPROVAL_DENIED")?;
+        Ok((tools, ticket, permit))
+    })();
+    let (tools, ticket, permit) = match setup {
+        Ok(approved) => approved,
+        Err(error) => return publish_channel(execution, Err(error)).await,
+    };
     let execution = tauri::async_runtime::spawn_blocking(move || {
         execution.checkpoint_approval(ticket.claims)?;
         Ok::<_, String>(execution)
