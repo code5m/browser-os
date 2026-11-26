@@ -566,7 +566,7 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
                     Ok(v) => v,
                     Err(_) => return,
                 };
-                let label = format!("grid-{index}");
+                let label = grid_ipc::renderer_label(index);
                 if payload.get("id").and_then(|id| id.as_str()) != Some(label.as_str()) {
                     return;
                 }

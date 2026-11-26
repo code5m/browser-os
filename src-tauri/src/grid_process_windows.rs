@@ -373,6 +373,12 @@ impl GridProcessManager {
         if let Some(c) = listeners.get(&index) {
             return Ok(c.clone());
         }
+        if crate::grid_ipc::is_tab_renderer(index)
+            && listeners.keys().filter(|id| crate::grid_ipc::is_tab_renderer(**id)).count()
+                >= crate::grid_ipc::MAX_ISOLATED_TAB_RENDERERS
+        {
+            return Err("TAB_RENDERER_LIMIT".into());
+        }
         let path = Self::socket_path(index);
         let listener = Arc::new(
             UnixListener::bind(&path)
@@ -388,13 +394,13 @@ impl GridProcessManager {
         let app = self.app();
         let accept_lifecycle = Arc::clone(&self.lifecycle);
         let result = self.spawn_worker("grid-accept", move || loop {
-            if accept_lifecycle.is_stopping() {
+            if accept_lifecycle.is_stopping() || comms_accept.closing.load(Ordering::SeqCst) {
                 listener.cancel();
                 break;
             }
             match listener.accept() {
                 Ok((stream, _)) => {
-                    if accept_lifecycle.is_stopping() {
+                    if accept_lifecycle.is_stopping() || comms_accept.closing.load(Ordering::SeqCst) {
                         let _ = stream.cancel_io();
                         break;
                     }
@@ -633,6 +639,108 @@ impl GridProcessManager {
         Ok(true)
     }
 
+    /// The process-generation binding is captured for prepared tab mutations.
+    /// None means the route has no live child; activation may explicitly restore it.
+    pub(crate) fn tab_renderer_owner(&self, index: u32) -> Result<Option<(u32, u64)>, String> {
+        if !crate::grid_ipc::is_tab_renderer(index) {
+            return Err("TAB_RENDERER_ROUTE_INVALID".into());
+        }
+        let children = self.children.lock().unwrap();
+        children.get(&index).map(|child| child.comms.owner_snapshot()).transpose()
+    }
+
+    pub(crate) fn start_tab_renderer(&self, index: u32, url: &str) -> Result<(), String> {
+        if !crate::grid_ipc::is_tab_renderer(index) {
+            return Err("TAB_RENDERER_ROUTE_INVALID".into());
+        }
+        if !self.get_or_spawn(index)? {
+            return Err("TAB_RENDERER_ALREADY_RUNNING".into());
+        }
+        // Keep the actual window hidden until the active tab receives its
+        // first acknowledged rectangle. No embedded fallback exists.
+        self.record_hidden(index);
+        let command = GridCmd::CreateTab {
+            id: crate::grid_ipc::renderer_label(index),
+            url: url.to_owned(),
+        };
+        match self.request(index, command, 20000) {
+            Ok(()) => {
+                self.record_url(index, url);
+                Ok(())
+            }
+            Err(error) => {
+                match self.close_tab_renderer(index, true) {
+                    Ok(()) => Err(error),
+                    Err(cleanup) => Err(format!("{error}; {cleanup}")),
+                }
+            }
+        }
+    }
+
+    /// Retire only this route. Retain the same listener across an explicit
+    /// recovery so process/connection generations cannot reset.
+    pub(crate) fn close_tab_renderer(&self, index: u32, release_listener: bool) -> Result<(), String> {
+        if !crate::grid_ipc::is_tab_renderer(index) {
+            return Err("TAB_RENDERER_ROUTE_INVALID".into());
+        }
+        let _operation = self.lifecycle.enter()?;
+        self.ensure_cleanup()?;
+        let _gate = self.lifecycle_lock.lock().unwrap();
+        self.lifecycle.check()?;
+        self.crash_history.lock().unwrap().remove(&index);
+        self.hibernated.lock().unwrap().remove(&index);
+        self.pending_restarts.lock().unwrap().remove(&index);
+        if let Some(owner) = self.children.lock().unwrap().remove(&index) {
+            self.lifecycle.retire(index, owner);
+        }
+        self.lifecycle.wait_route_retired_until(
+            index, std::time::Instant::now() + std::time::Duration::from_secs(3),
+        )?;
+        if release_listener {
+            if let Some(comms) = self.listeners.lock().unwrap().remove(&index) {
+                comms.request_shutdown();
+            }
+        }
+        Ok(())
+    }
+
+    /// Serialize normal-tab visibility with the native move/focus workers.
+    /// This is a blocking-worker API; never call it on the GUI event loop.
+    pub(crate) fn position_tab_renderer(
+        &self, index: u32, css: (f64, f64, f64, f64),
+    ) -> Result<(), String> {
+        if !crate::grid_ipc::is_tab_renderer(index) {
+            return Err("TAB_RENDERER_ROUTE_INVALID".into());
+        }
+        if css.0 <= -20000.0 {
+            return self.hide_tab_renderer(index);
+        }
+        let _dispatch = self.visibility_dispatch.lock().unwrap_or_else(|p| p.into_inner());
+        let app = self.app().ok_or("TAB_RENDERER_HOST_UNAVAILABLE")?;
+        let label = crate::grid_ipc::renderer_label(index);
+        if app.state::<crate::bridge::AppState>().active_tab.lock().unwrap().as_deref() != Some(label.as_str()) {
+            return Err("TAB_RENDERER_LAYOUT_SUPERSEDED".into());
+        }
+        let rect = self.abs_rect(css).ok_or("TAB_RENDERER_HOST_UNAVAILABLE")?;
+        rect.validate()?;
+        self.request(index, GridCmd::UpdateRect { id: label, rect }, 3000)?;
+        self.record_rect(index, css);
+        Ok(())
+    }
+
+    pub(crate) fn hide_tab_renderer(&self, index: u32) -> Result<(), String> {
+        if !crate::grid_ipc::is_tab_renderer(index) {
+            return Err("TAB_RENDERER_ROUTE_INVALID".into());
+        }
+        let _dispatch = self.visibility_dispatch.lock().unwrap_or_else(|p| p.into_inner());
+        self.record_hidden(index);
+        // A confirmed absent native process has no window to hide.
+        if self.pid_of(index).is_none() && !self.lifecycle.is_retiring(index) {
+            return Ok(());
+        }
+        self.request(index, GridCmd::HideWindow { id: crate::grid_ipc::renderer_label(index) }, 3000)
+    }
+
     pub fn is_hibernated(&self, index: u32) -> bool {
         self.hibernated.lock().unwrap().contains_key(&index)
     }
@@ -651,7 +759,7 @@ impl GridProcessManager {
         let _ = self.request(
             index,
             GridCmd::CloseTab {
-                id: format!("grid-{index}"),
+                id: crate::grid_ipc::renderer_label(index),
             },
             1000,
         );
@@ -714,7 +822,7 @@ impl GridProcessManager {
             }
             Arc::clone(&child.comms)
         };
-        let cmd = GridCmd::Navigate { id: format!("grid-{index}"), url: url.to_string() };
+        let cmd = GridCmd::Navigate { id: crate::grid_ipc::renderer_label(index), url: url.to_string() };
         self.request_once_with(index, comms, generation, &cmd, 10000).map(|_| ())
     }
 
@@ -729,7 +837,7 @@ impl GridProcessManager {
             comms,
             generation,
             &GridCmd::HibernationProbe {
-                id: format!("grid-{index}"),
+                id: crate::grid_ipc::renderer_label(index),
             },
             1000,
         ) {
@@ -748,7 +856,7 @@ impl GridProcessManager {
             comms,
             generation,
             &GridCmd::ReadReplies {
-                id: format!("grid-{index}"),
+                id: crate::grid_ipc::renderer_label(index),
             },
             5000,
         )?
@@ -933,6 +1041,11 @@ impl GridProcessManager {
             .unwrap()
             .iter()
             .filter_map(|(index, child)| {
+                // Ordinary tabs can contain unsaved documents. Grid's blank
+                // page reclamation policy must never retire them.
+                if crate::grid_ipc::is_tab_renderer(*index) {
+                    return None;
+                }
                 if !grid_child_is_hibernatable(
                     child.hidden,
                     child.blur_hidden,
@@ -974,7 +1087,7 @@ impl GridProcessManager {
             let closed = self.request(
                 index,
                 GridCmd::CloseTab {
-                    id: format!("grid-{index}"),
+                    id: crate::grid_ipc::renderer_label(index),
                 },
                 1000,
             );
@@ -1033,7 +1146,12 @@ impl GridProcessManager {
 
     /// 当前存活子进程 index 列表。
     pub fn indices(&self) -> Vec<u32> {
-        self.children.lock().unwrap().keys().cloned().collect()
+        self.children.lock().unwrap().keys().copied()
+            .filter(|index| !crate::grid_ipc::is_tab_renderer(*index)).collect()
+    }
+
+    pub(crate) fn all_renderer_indices(&self) -> Vec<u32> {
+        self.children.lock().unwrap().keys().copied().collect()
     }
 
     /// CSS 矩形（相对主窗内容区）→ 绝对屏幕物理矩形。
@@ -1197,7 +1315,7 @@ impl GridProcessManager {
                 self.send(
                     index,
                     GridCmd::UpdateRect {
-                        id: format!("grid-{index}"),
+                        id: crate::grid_ipc::renderer_label(index),
                         rect,
                     },
                 );
@@ -1260,7 +1378,7 @@ impl GridProcessManager {
     }
 
     fn apply_hide_for_blur(&self) {
-        let indices = self.indices();
+        let indices = self.all_renderer_indices();
         for index in indices {
             let need = {
                 let mut children = self.children.lock().unwrap();
@@ -1276,7 +1394,7 @@ impl GridProcessManager {
                 self.send(
                     index,
                     GridCmd::HideWindow {
-                        id: format!("grid-{index}"),
+                        id: crate::grid_ipc::renderer_label(index),
                     },
                 );
             }
@@ -1305,7 +1423,7 @@ impl GridProcessManager {
                 self.send(
                     index,
                     GridCmd::UpdateRect {
-                        id: format!("grid-{index}"),
+                        id: crate::grid_ipc::renderer_label(index),
                         rect,
                     },
                 );
@@ -1386,6 +1504,12 @@ impl GridProcessManager {
                     }
                 }
                 for (index, code, saved) in exited {
+                    if crate::grid_ipc::is_tab_renderer(index) {
+                        let _ = app.emit("isolated-tab-renderer-exited", serde_json::json!({
+                            "id": crate::grid_ipc::renderer_label(index), "exit_code": code
+                        ));
+                        continue;
+                    }
                     // Preserve the crash circuit/backoff without attempting a
                     // new process while the old Job still owns descendants.
                     let (allowed, attempts) = {
@@ -1436,6 +1560,7 @@ impl GridProcessManager {
 
     /// 重启后状态重放：等 UDS 重连 → 重建 webview（url）→ 恢复定位（若可见）→ 恢复缩放。
     fn replay(&self, index: u32) {
+        if crate::grid_ipc::is_tab_renderer(index) { return; }
         let (url, rect, visible) = {
             let children = self.children.lock().unwrap();
             match children.get(&index) {
@@ -1465,7 +1590,7 @@ impl GridProcessManager {
             let Some(app) = app else { return };
             let state = app.state::<crate::bridge::AppState>();
             let manager = &state.grid_manager;
-            let label = format!("grid-{index}");
+            let label = crate::grid_ipc::renderer_label(index);
             if let Err(e) = manager.request(
                 index,
                 GridCmd::CreateTab {
@@ -1593,7 +1718,7 @@ impl GridProcessManager {
 
     /// 当前存活子进程数量。
     pub fn count(&self) -> usize {
-        self.children.lock().unwrap().len()
+        self.indices().len()
     }
 
     /// 指定宫格子进程的 OS pid（自检/调试用）。
@@ -1611,6 +1736,7 @@ impl GridProcessManager {
             .lock()
             .unwrap()
             .iter()
+            .filter(|(i, _)| !crate::grid_ipc::is_tab_renderer(**i))
             .map(|(i, h)| (*i, h.child.id()))
             .collect()
     }
@@ -1624,12 +1750,16 @@ impl GridProcessManager {
         {
             let _lifecycle = self.lifecycle_lock.lock().unwrap();
             self.lifecycle.check()?;
-            self.crash_history.lock().unwrap().clear();
-            self.hibernated.lock().unwrap().clear();
-            self.pending_restarts.lock().unwrap().clear();
+            self.crash_history.lock().unwrap().retain(|id, _| crate::grid_ipc::is_tab_renderer(*id));
+            self.hibernated.lock().unwrap().retain(|id, _| crate::grid_ipc::is_tab_renderer(*id));
+            self.pending_restarts.lock().unwrap().retain(|id, _| crate::grid_ipc::is_tab_renderer(*id));
             let mut children = self.children.lock().unwrap();
-            for (index, child) in children.drain() {
-                self.lifecycle.retire(index, child);
+            let indices: Vec<_> = children.keys().copied()
+                .filter(|id| !crate::grid_ipc::is_tab_renderer(*id)).collect();
+            for index in indices {
+                if let Some(owner) = children.remove(&index) {
+                    self.lifecycle.retire(index, owner);
+                }
             }
         }
         self.lifecycle.wait_retired_until(deadline)

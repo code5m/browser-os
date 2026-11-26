@@ -20,6 +20,23 @@ impl GridProcessManager {
         Err(unsupported())
     }
 
+    pub(crate) fn tab_renderer_owner(&self, _index: u32) -> Result<Option<(u32, u64)>, String> {
+        Err(unsupported())
+    }
+    pub(crate) fn start_tab_renderer(&self, _index: u32, _url: &str) -> Result<(), String> {
+        Err(unsupported())
+    }
+    pub(crate) fn close_tab_renderer(&self, _index: u32, _release_listener: bool) -> Result<(), String> {
+        Err(unsupported())
+    }
+    pub(crate) fn position_tab_renderer(&self, _index: u32, _css: (f64, f64, f64, f64)) -> Result<(), String> {
+        Err(unsupported())
+    }
+    pub(crate) fn hide_tab_renderer(&self, _index: u32) -> Result<(), String> {
+        Err(unsupported())
+    }
+    pub(crate) fn all_renderer_indices(&self) -> Vec<u32> { Vec::new() }
+
     pub fn is_hibernated(&self, _index: u32) -> bool {
         false
     }

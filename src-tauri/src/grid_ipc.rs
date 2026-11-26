@@ -32,7 +32,32 @@ impl IpcRect {
     }
 }
 
-const RENDERER_PROTOCOL: &str = "browseros-renderer-v1";
+// Separate ordinary-tab and Grid route namespaces without a second process
+// manager or a second IPC transport. A tab route is never a Grid cell index.
+const TAB_RENDERER_BIT: u32 = 1 << 31;
+pub(crate) const MAX_ISOLATED_TAB_RENDERERS: usize = 8;
+
+pub(crate) fn tab_renderer_index(id: &str) -> Option<u32> {
+    let n: u32 = id.strip_prefix("tab-")?.parse().ok()?;
+    if n == 0 || n >= TAB_RENDERER_BIT || id != format!("tab-{n}") {
+        return None;
+    }
+    Some(TAB_RENDERER_BIT | n)
+}
+
+pub(crate) fn is_tab_renderer(index: u32) -> bool {
+    index > TAB_RENDERER_BIT
+}
+
+pub(crate) fn renderer_label(index: u32) -> String {
+    if is_tab_renderer(index) {
+        format!("tab-{}", index & !TAB_RENDERER_BIT)
+    } else {
+        format!("grid-{index}")
+    }
+}
+
+const RENDERER_PROTOCOL: &str = "browseros-renderer-v2";
 
 pub(crate) fn renderer_ready(index: u32) -> Wire {
     Wire::Event {
@@ -53,7 +78,7 @@ pub(crate) fn is_renderer_ready(index: u32, frame: &Wire) -> bool {
 
 /// Only existing renderer events may cross the process boundary.
 pub(crate) fn valid_renderer_event(index: u32, name: &str, payload: &serde_json::Value) -> bool {
-    let label = format!("grid-{index}");
+    let label = renderer_label(index);
     let index_text = index.to_string();
     let valid_url = || {
         payload["url"].as_str().is_some_and(|url| !url.is_empty() && url.len() <= 8192)
@@ -139,7 +164,7 @@ impl GridCmd {
             | Self::CloseTab { id } => id,
             Self::Ping => return true,
         };
-        id == &format!("grid-{index}")
+        id == &renderer_label(index)
     }
 }
 
@@ -302,6 +327,27 @@ pub fn read_wire<R: std::io::BufRead>(r: &mut R) -> std::io::Result<Option<Wire>
 #[cfg(test)]
 mod framing_tests {
     use super::*;
+    #[test]
+    fn ordinary_renderer_and_grid_routes_never_alias() {
+        let tab = tab_renderer_index("tab-2").unwrap();
+        assert!(is_tab_renderer(tab));
+        assert_ne!(tab, 2);
+        assert_eq!(renderer_label(tab), "tab-2");
+        assert_eq!(renderer_label(2), "grid-2");
+        assert!(tab_renderer_index("tab-02").is_none());
+        assert!(tab_renderer_index("tab-0").is_none());
+        assert!(tab_renderer_index("grid-2").is_none());
+        assert!(tab_renderer_index("tab-2147483648").is_none());
+        let navigate = GridCmd::Navigate { id: "tab-2".into(), url: "about:blank".into() };
+        assert!(navigate.targets(tab));
+        assert!(!navigate.targets(2));
+        assert!(!GridCmd::HideWindow { id: "grid-2".into() }.targets(tab));
+        assert!(valid_renderer_event(tab, "tab-navigated",
+            &serde_json::json!({"id":"tab-2","url":"about:blank"})));
+        assert!(!valid_renderer_event(tab, "tab-navigated",
+            &serde_json::json!({"id":"grid-2","url":"about:blank"})));
+    }
+
     #[test]
     fn renderer_ready_and_event_route_are_exact() {
         use serde_json::json;

@@ -379,6 +379,18 @@ impl GridLifecycle {
         )
     }
 
+    /// One tab may be closed/recovered while unrelated native owners are
+    /// still retiring. Never use a global-empty receipt for that operation.
+    pub(super) fn wait_route_retired_until(&self, index: u32, deadline: Instant) -> Result<(), String> {
+        while self.is_retiring(index) {
+            if Instant::now() >= deadline {
+                return Err(format!("TAB_RENDERER_CLEANUP_PENDING:{index}"));
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        Ok(())
+    }
+
     pub(super) fn wait_retired_until(&self, deadline: Instant) -> Result<(), String> {
         while self.retiring_total.load(Ordering::SeqCst) != 0 {
             let remaining = deadline.saturating_duration_since(Instant::now());
