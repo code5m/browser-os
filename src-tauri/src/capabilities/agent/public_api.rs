@@ -143,6 +143,12 @@ pub(crate) fn dispatch_coding_request(
         Ok(id)
     };
     match action {
+        "browser_operation_review" => {
+            let operation = parse_run_id(request["operation_id"].as_str().ok_or("AGENT_OPERATION_REQUIRED")?)?;
+            let canonical = root.canonicalize().map_err(|_| "AGENT_ROOT_INVALID")?;
+            let workspace = super::execution_owner::workspace_identity(&canonical)?;
+            return crate::bridge::review_agent_browser_action(app, webview, workspace, operation, &request["input"]);
+        }
         "manual_mcp_history" => {
             return ProductionExecution::manual_mcp_catalog(
                 storage,
@@ -357,6 +363,16 @@ pub(crate) fn dispatch_coding_request(
                 crate::bridge::run_command_for_coding(app, webview, input, approved, cancel, || {
                     admit(None)
                 })
+            }
+            "browser_navigation" => {
+                let canonical = root.canonicalize().map_err(|_| "AGENT_ROOT_INVALID")?;
+                let workspace = super::execution_owner::workspace_identity(&canonical)?;
+                crate::bridge::execute_agent_browser_action(
+                    app, webview, &workspace, run, input,
+                    approved["browser_review_token"].as_str().ok_or("AGENT_BROWSER_REVIEW_REQUIRED")?,
+                    &|| cancel.load(std::sync::atomic::Ordering::Acquire),
+                    || admit(None),
+                )
             }
             "mcp" => {
                 let response = super::coding_context::execute_cancelable_with_effect_admission(

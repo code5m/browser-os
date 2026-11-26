@@ -199,6 +199,32 @@ impl Action {
     }
 }
 
+// A model may propose only these typed operations. No script, DOM write,
+// arbitrary native command, recovery permission or hidden file navigation.
+fn agent_action(input: &Value) -> Result<Action, String> {
+    let action: Action = serde_json::from_value(input.clone())
+        .map_err(|_| "AGENT_BROWSER_ARGUMENT_INVALID")?;
+    match &action {
+        Action::New { url } | Action::Open { url, .. } => {
+            let parsed = url::Url::parse(url).map_err(|_| "AGENT_BROWSER_ADDRESS_DENIED")?;
+            if url.len() > 8192 || !matches!(parsed.scheme(), "http" | "https")
+                || parsed.host().is_none() || !parsed.username().is_empty() || parsed.password().is_some()
+                || url.chars().any(char::is_control) {
+                return Err("AGENT_BROWSER_ADDRESS_DENIED".into());
+            }
+        }
+        Action::Close { .. } | Action::Back { .. } | Action::Forward { .. } | Action::Reload { .. } => {}
+        _ => return Err("AGENT_BROWSER_ACTION_DENIED".into()),
+    }
+    if action.target().is_some_and(|id| !super::tab_runtime::is_tab_label(id)) {
+        return Err("AGENT_BROWSER_ARGUMENT_INVALID".into());
+    }
+    Ok(action)
+}
+pub(crate) fn validate_agent_browser_action(input: &Value) -> Result<(), String> {
+    agent_action(input).map(|_| ())
+}
+
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 enum Phase {
@@ -745,6 +771,175 @@ pub(crate) fn claim_domain_recovery(intent: &DomainRecoveryIntent) -> Option<Dom
     }
     drop(state);
     Some(DomainRecoveryClaim)
+}
+
+// One ephemeral native review, never a serialized or model-supplied grant.
+// Exact encrypted Coding proposal identity is rechecked at consumption.
+struct AgentBrowserReview {
+    token: uuid::Uuid,
+    operation: uuid::Uuid,
+    workspace: String,
+    action: Action,
+    binding: Binding,
+    close_document: Option<Binding>,
+    epoch: String,
+    sequence: u64,
+    expires: Instant,
+}
+static AGENT_BROWSER_REVIEW: Mutex<Option<AgentBrowserReview>> = Mutex::new(None);
+
+pub(crate) fn review_agent_browser_action(
+    app: &AppHandle, webview: &Webview, workspace: String, operation: uuid::Uuid,
+    input: &Value,
+) -> Result<Value, String> {
+    let action = agent_action(input)?;
+    action.authorize(webview)?;
+    let (epoch, sequence) = {
+        let mut state = owner()?;
+        state.expire_prepared();
+        if state.slot.is_some() || state.internal_active || state.recovery_claimed {
+            return Err("TAB_MUTATION_OWNER_BUSY".into());
+        }
+        (state.epoch.clone(), state.next_sequence)
+    };
+    let binding = Binding::capture(app, &action)?;
+    // Closing must also bind the live reviewed document. Do not grant
+    // closing a sleeping/absent tab or a replacement document.
+    let close_document = if let Action::Close { id } = &action {
+        Some(Binding::capture(app, &Action::Reload { id: id.clone() })?)
+    } else { None };
+    let origin = action.target().and_then(|id| {
+        let state = app.state::<crate::AppState>();
+        let tabs = state.tabs.try_lock().ok()?;
+        let address = &tabs.get(id)?.url;
+        let url = url::Url::parse(address).ok()?;
+        Some(url.origin().ascii_serialization())
+    });
+    if !binding.current(app, &action)
+        || close_document.as_ref().is_some_and(|document| !document.current(app, &action)) {
+        return Err("AGENT_BROWSER_REVIEW_STALE".into());
+    }
+    {
+        let state = owner()?;
+        if state.epoch != epoch || state.next_sequence != sequence
+            || state.slot.is_some() || state.internal_active || state.recovery_claimed {
+            return Err("AGENT_BROWSER_REVIEW_STALE".into());
+        }
+    }
+    let token = uuid::Uuid::new_v4();
+    let command = action.command();
+    *AGENT_BROWSER_REVIEW.lock().map_err(|_| "AGENT_BROWSER_REVIEW_BUSY")? =
+        Some(AgentBrowserReview {
+            token, operation, workspace, action, binding, close_document, epoch, sequence,
+            expires: Instant::now() + Duration::from_secs(90),
+        });
+    Ok(serde_json::json!({"token":token,"operation_id":operation,"command":command,
+        "input":input,"observed_origin":origin,"expires_seconds":90,
+        "scope":"native_host_dispatch_only"}))
+}
+
+fn cancel_agent_prepared(webview: &Webview, app: &AppHandle, ticket: &str) {
+    // No native operation entered. Only a terminal cancelled slot may be
+    // acknowledged; an unexpected phase remains for normal recovery.
+    let _ = tab_mutation_control(webview.clone(), app.clone(), Request::Cancel { ticket: ticket.into() });
+    let _ = tab_mutation_control(webview.clone(), app.clone(), Request::Ack { ticket: ticket.into() });
+}
+
+/// Called only by the durable Coding execution adapter, on its owned worker.
+/// Browser Owner and Coding Owner both retain the effect until settlement.
+pub(crate) fn execute_agent_browser_action(
+    app: &AppHandle, webview: &Webview, workspace: &str, operation: uuid::Uuid,
+    input: &Value, review_token: &str, cancelled: &dyn Fn() -> bool,
+    admit: impl FnOnce() -> Result<(), String>,
+) -> Result<Value, String> {
+    let action = agent_action(input)?;
+    action.authorize(webview)?;
+    let token = uuid::Uuid::parse_str(review_token).map_err(|_| "AGENT_BROWSER_REVIEW_REQUIRED")?;
+    let review = {
+        let mut slot = AGENT_BROWSER_REVIEW.lock().map_err(|_| "AGENT_BROWSER_REVIEW_BUSY")?;
+        if !slot.as_ref().is_some_and(|r| r.token == token && r.operation == operation
+            && r.workspace == workspace && r.action == action && Instant::now() < r.expires) {
+            return Err("AGENT_BROWSER_REVIEW_STALE".into());
+        }
+        slot.take().ok_or("AGENT_BROWSER_REVIEW_STALE")?
+    };
+    let current = || !cancelled() && Instant::now() < review.expires
+        && review.binding.current(app, &action)
+        && review.close_document.as_ref().is_none_or(|document| document.current(app, &action));
+    if !current() { return Err("AGENT_BROWSER_REVIEW_STALE".into()); }
+    let ticket = uuid::Uuid::new_v4().to_string();
+    {
+        let mut state = owner()?;
+        state.expire_prepared();
+        if state.epoch != review.epoch || state.next_sequence != review.sequence
+            || state.slot.is_some() || state.internal_active || state.recovery_claimed {
+            return Err("AGENT_BROWSER_REVIEW_STALE".into());
+        }
+        state.advance_sequence()?;
+        state.slot = Some(Slot {
+            receipt: Receipt { ticket: ticket.clone(), client_id: operation.to_string(),
+                command: action.command(), phase: Phase::Prepared, value: None, error: None },
+            action: Some(action.clone()), binding: Some(review.binding.clone()),
+            since: Instant::now(), entered: false,
+        });
+    }
+    if !current() {
+        cancel_agent_prepared(webview, app, &ticket);
+        return Err("AGENT_BROWSER_REVIEW_STALE".into());
+    }
+    // Write Coding's authenticated dispatch intent before the first effect.
+    if let Err(error) = admit() {
+        cancel_agent_prepared(webview, app, &ticket);
+        return Err(error);
+    }
+    if !current() {
+        cancel_agent_prepared(webview, app, &ticket);
+        return Err("AGENT_BROWSER_REVIEW_STALE".into());
+    }
+    let entered = {
+        let mut state = owner()?;
+        state.expire_prepared();
+        if state.recovery_claimed { false } else {
+            let slot = matching(&mut state, &ticket)?;
+            if slot.receipt.phase != Phase::Prepared { false } else {
+                slot.receipt.phase = Phase::Running;
+                slot.enter()
+            }
+        }
+    };
+    if !entered {
+        cancel_agent_prepared(webview, app, &ticket);
+        return Err("AGENT_BROWSER_REVIEW_STALE".into());
+    }
+    let mut guard = WorkerGuard { ticket: ticket.clone(), completed: false };
+    let command = action.command();
+    let id = action.target().map(str::to_owned);
+    let result = if current() {
+        action.execute(webview.clone(), app.clone(), &review.binding)
+    } else {
+        Err("TAB_MUTATION_INSTANCE_STALE".into())
+    };
+    // Any failure after entry is conservatively unknown. Do not release a
+    // potentially affected renderer or allow the Agent to retry the action.
+    match result {
+        Ok(value) => {
+            let created_id = value.get("id").and_then(Value::as_str).map(str::to_owned);
+            finish(&ticket, Ok(value));
+            guard.completed = true;
+            notify(app, &ticket);
+            // The main browser store reconciles/ACKs the terminal receipt.
+            // The model receives only a host dispatch observation.
+            Ok(serde_json::json!({"status":"succeeded","result":{
+                "command":command,"tab_id":id.or(created_id),
+                "host_dispatched":true,"page_or_remote_effect_confirmed":false}}))
+        }
+        Err(_) => {
+            unknown(&ticket);
+            guard.completed = true;
+            notify(app, &ticket);
+            Err("AGENT_BROWSER_NATIVE_OUTCOME_UNKNOWN".into())
+        }
+    }
 }
 
 fn matching<'a>(state: &'a mut Owner, ticket: &str) -> Result<&'a mut Slot, String> {

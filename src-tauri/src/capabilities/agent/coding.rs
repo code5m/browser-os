@@ -330,7 +330,7 @@ fn frontend_owner_epoch() -> uuid::Uuid {
     *EPOCH.get_or_init(uuid::Uuid::new_v4)
 }
 fn external_operation(kind: &str) -> bool {
-    matches!(kind, "command" | "mcp")
+    matches!(kind, "command" | "mcp" | "browser_navigation")
 }
 fn verify_workspace_binding(root: &Path, expected: Option<&str>) -> Result<(), String> {
     if let Some(expected) = expected {
@@ -425,6 +425,8 @@ fn propose_operation(session: &mut Session, args: &Value) -> Result<Value, Strin
         &["server_id", "tool", "arguments"][..]
     } else if kind == "command" {
         &["snippet_id", "values"][..]
+    } else if kind == "browser_navigation" {
+        &["kind", "id", "url"][..]
     } else if kind == "code_diagnostics" {
         &["path"][..]
     } else if ["git_context", "database_context", "browser_context"].contains(&kind) {
@@ -454,6 +456,9 @@ fn propose_operation(session: &mut Session, args: &Value) -> Result<Value, Strin
                 .is_some_and(|v| v.values().all(Value::is_string)))
     {
         return Err("AGENT_OPERATION_INVALID".into());
+    }
+    if kind == "browser_navigation" {
+        crate::bridge::validate_agent_browser_action(input)?;
     }
     if kind == "code_diagnostics" {
         let path = input["path"].as_str().ok_or("AGENT_OPERATION_INVALID")?;
@@ -1046,7 +1051,7 @@ fn tools(plan: bool) -> Vec<Value> {
      ("read_skill","Read a discovered SKILL.md without running scripts",json!({"path":{"type":"string"}}),vec!["path"]),
      ("search_knowledge","Search project docs for relevant knowledge excerpts",json!({"query":{"type":"string"}}),vec!["query"]),
      ("list_mcp_servers","Discover MCP server metadata without starting any server. Ask the user to approve connecting or invoking tools in the MCP panel",json!({}),vec![]),
-     ("request_operation","Propose a workspace operation for explicit user review. Never executes. command input={snippet_id,values}; mcp input={server_id,tool,arguments}; code_diagnostics input={path} requests the user's already-enabled local Rust language service, after proposed changes are reviewed/applied. Diagnostics are not compiler/test verification. git_context, database_context, browser_context use empty input={} and only read existing workspace metadata. Do not include approval flags, server configuration or credentials",json!({"kind":{"type":"string","enum":["command","mcp","code_diagnostics","git_context","database_context","browser_context"]},"input":{"type":"object"}}),vec!["kind","input"]),
+     ("request_operation","Propose a workspace operation for explicit user review. Never executes. command input={snippet_id,values}; mcp input={server_id,tool,arguments}; browser_navigation input={kind:'new',url} or {kind:'open',id,url} or {kind:'close'|'back'|'forward'|'reload',id}. Only typed browser host operations after fresh user review; no JavaScript, arbitrary click, form submission or file address. code_diagnostics input={path} requests the user's already-enabled local Rust language service, after proposed changes are reviewed/applied. Diagnostics are not compiler/test verification. git_context, database_context, browser_context use empty input={} and only read existing workspace metadata. Do not include approval flags, server configuration or credentials",json!({"kind":{"type":"string","enum":["command","mcp","browser_navigation","code_diagnostics","git_context","database_context","browser_context"]},"input":{"type":"object"}}),vec!["kind","input"]),
      ("write_file","Propose COMPLETE file content for user review; does not write. Read all required file pages first. expected_hash MUST match read_file.hash or a reviewed diagnostic document_hash for this exact source; use null ONLY for a new file. Missing or stale hashes are rejected; re-read after a conflict. Never silently replace unseen content",json!({"path":{"type":"string"},"content":{"type":"string"},"expected_hash":{"type":["string","null"]}}),vec!["path","content","expected_hash"])]
         .into_iter().filter(|(name,_,_,_)| !plan || !["write_file","request_operation"].contains(name)).map(|(name,description,properties,required)|json!({"type":"function","function":{"name":name,"description":description,"parameters":{"type":"object","properties":properties,"required":required,"additionalProperties":false}}})).collect()
 }
@@ -1890,6 +1895,7 @@ fn native_approval_matches_input(
     let (tool, effect) = match operation.kind.as_str() {
         "command" => ("coding.command", ToolEffect::ExecuteProcess),
         "mcp" => ("coding.mcp", ToolEffect::ExternalSideEffect),
+        "browser_navigation" => ("coding.browser_navigation", ToolEffect::ExternalSideEffect),
         _ => return false,
     };
     let Ok(encoded) = serde_json::to_vec(&operation.input) else {
@@ -3019,10 +3025,11 @@ pub(crate) fn execute_with_effect_adapter(
                 browseros_agent_foundation::tool::ToolEffect::ExternalSideEffect
             };
             let (approval, permit) = execution.approve_native(
-                if kind == "command" {
-                    "coding.command"
-                } else {
-                    "coding.mcp"
+                match kind.as_str() {
+                    "command" => "coding.command",
+                    "mcp" => "coding.mcp",
+                    "browser_navigation" => "coding.browser_navigation",
+                    _ => return Err("AGENT_OPERATION_INVALID".into()),
                 },
                 approved_arguments.clone(),
                 effect,
