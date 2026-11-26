@@ -36,7 +36,7 @@ pub(crate) fn checked_url(raw: &str) -> Result<String, String> {
     }
     Ok(url.into())
 }
-fn checked_png(bytes: &[u8]) -> Result<(), String> {
+fn checked_png_header(bytes: &[u8]) -> Result<(), String> {
     if bytes.len() < 24 || bytes.len() > MAX_BYTES
         || !bytes.starts_with(b"\x89PNG\r\n\x1a\n") || &bytes[12..16] != b"IHDR" {
         return Err("CAPTURE_INVALID_PNG".into());
@@ -47,6 +47,28 @@ fn checked_png(bytes: &[u8]) -> Result<(), String> {
         || u64::from(width) * u64::from(height) > 16_000_000 {
         return Err("CAPTURE_DIMENSION_LIMIT".into());
     }
+    Ok(())
+}
+// Validate the complete worker artifact before publishing it. Decode one
+// row/pass at a time instead of allocating a second full raster in the host.
+// The existing encoded-byte and dimension limits still apply. PNG decoder
+// limits are best-effort intermediate allocation limits, not renderer limits.
+fn checked_png(bytes: &[u8]) -> Result<(), String> {
+    checked_png_header(bytes)?;
+    if !bytes.ends_with(b"\0\0\0\0IEND\xaeB\x60\x82") {
+        return Err("CAPTURE_INVALID_PNG".into());
+    }
+    let mut limits = png::Limits::default();
+    limits.bytes = MAX_BYTES;
+    let mut decoder = png::Decoder::new_with_limits(std::io::Cursor::new(bytes), limits);
+    decoder.set_ignore_text_chunk(true);
+    decoder.set_ignore_iccp_chunk(true);
+    let mut reader = decoder.read_info().map_err(|_| "CAPTURE_INVALID_PNG")?;
+    if reader.info().animation_control.is_some() {
+        return Err("CAPTURE_ANIMATED_PNG_DENIED".into());
+    }
+    while reader.next_interlaced_row().map_err(|_| "CAPTURE_INVALID_PNG")?.is_some() {}
+    reader.finish().map_err(|_| "CAPTURE_INVALID_PNG")?;
     Ok(())
 }
 fn scratch_parent() -> Result<PathBuf, String> {
@@ -181,7 +203,7 @@ fn run_render(app: tauri::AppHandle, root: PathBuf, url: String) -> Result<(), S
     if !manager.isolated_document_ready() || !manager.is_current_capture_document(&id, &document) {
         return Err("CAPTURE_DOCUMENT_STALE".into());
     }
-    checked_png(&bytes)?;
+    checked_png_header(&bytes)?;
     safe_paths::create_new_file(&root.join("capture.png"), &[root], &bytes)
         .map_err(|_| "CAPTURE_WORKER_OUTPUT_FAILED".into())
 }
@@ -256,12 +278,31 @@ mod tests {
         assert!(checked_url("https://user:pass@example.com/").is_err());
     }
     #[test]
+    fn complete_png_is_required_before_publication() {
+        let mut bytes = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut bytes, 2, 2);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder.write_header().unwrap();
+            writer.write_image_data(&[127u8; 16]).unwrap();
+            writer.finish().unwrap();
+        }
+        assert!(checked_png(&bytes).is_ok());
+        assert!(checked_png(&bytes[..bytes.len() - 1]).is_err());
+        let idat = bytes.windows(4).position(|chunk| chunk == b"IDAT").unwrap();
+        bytes[idat + 4] ^= 1;
+        assert!(checked_png(&bytes).is_err());
+    }
+
+    #[test]
     fn output_requires_bounded_png_dimensions() {
         let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
         png.extend_from_slice(&1280u32.to_be_bytes());
         png.extend_from_slice(&720u32.to_be_bytes());
-        assert!(checked_png(&png).is_ok());
+        assert!(checked_png_header(&png).is_ok());
+        assert!(checked_png(&png).is_err(), "IHDR alone is not a complete image");
         png[16..20].copy_from_slice(&20_000u32.to_be_bytes());
-        assert!(checked_png(&png).is_err());
+        assert!(checked_png_header(&png).is_err());
     }
 }

@@ -9,7 +9,7 @@ use std::{
     io::{self, Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
     process::{Child, Command, ExitStatus},
-    sync::{atomic::Ordering, mpsc},
+    sync::{atomic::{AtomicBool, Ordering}, mpsc},
     thread,
     time::{Duration, Instant},
 };
@@ -246,30 +246,60 @@ fn accepted_stream(listener: &TcpListener, owner: &mut OwnedHost, token: &str) -
         thread::sleep(POLL);
     }
 }
-fn monitor(owner: &mut OwnedHost, mut stream: TcpStream) -> Result<Outcome, String> {
+// A recovery decision is provisional until the actual child acquires
+// the same exit-admission latch used by graceful shutdown. Hold the
+// connection until retirement so the child does not relinquish that claim
+// merely because the parent returned from its monitoring loop.
+struct RecoveryClaim<'a> { started: &'a AtomicBool }
+impl<'a> RecoveryClaim<'a> {
+    fn acquire(state: &'a crate::ExitLifecycleState) -> Option<Self> {
+        // Do not block the probe on the shutdown worker mutex. A rejected
+        // but still-live shutdown worker retains ownership too.
+        let worker = state.worker.try_lock().ok()?;
+        if state.completed() || worker.as_ref().is_some_and(|worker| !worker.is_finished()) {
+            return None;
+        }
+        state.started.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).ok()?;
+        Some(Self { started: &state.started })
+    }
+}
+impl Drop for RecoveryClaim<'_> {
+    fn drop(&mut self) { self.started.store(false, Ordering::Release); }
+}
+fn exchange(stream: &mut TcpStream, command: u8) -> Option<u8> {
+    let started = Instant::now();
+    stream.write_all(&[command]).ok()?;
+    loop {
+        if started.elapsed() >= REPLY_LIMIT { return None; }
+        let mut reply = [0u8; 1];
+        match stream.read_exact(&mut reply) {
+            Ok(()) if started.elapsed() < REPLY_LIMIT => return Some(reply[0]),
+            Ok(()) => return None,
+            Err(error) if matches!(error.kind(), io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted) => {},
+            Err(_) => return None,
+        }
+    }
+}
+fn monitor(owner: &mut OwnedHost, stream: &mut TcpStream) -> Result<Outcome, String> {
     let mut health = ProbeHealth::default();
     loop {
         if let Some(status) = owner.exited()? { return Ok(Outcome::Exited(status)); }
-        let started = Instant::now();
-        if stream.write_all(b"P").is_err() { return Ok(Outcome::ProbeUnavailable); }
-        loop {
-            if let Some(status) = owner.exited()? { return Ok(Outcome::Exited(status)); }
-            if started.elapsed() >= REPLY_LIMIT { return Ok(Outcome::ProbeUnavailable); }
-            let mut reply = [0u8; 1];
-            match stream.read_exact(&mut reply) {
-                Ok(()) => {
-                    // A buffered reply after supervisor descheduling is
-                    // not fresh evidence of current native health.
-                    if started.elapsed() >= REPLY_LIMIT { return Ok(Outcome::ProbeUnavailable); }
-                    match health.observe(reply[0], Instant::now()) {
-                        ProbeDecision::Recover => return Ok(Outcome::Unresponsive),
-                        ProbeDecision::NoRecovery => return Ok(Outcome::ProbeUnavailable),
-                        ProbeDecision::Wait => break,
+        let Some(reply) = exchange(stream, b'P') else { return Ok(Outcome::ProbeUnavailable); };
+        match health.observe(reply, Instant::now()) {
+            ProbeDecision::Recover => {
+                // The last B is not authorization to kill. Ask the live
+                // transport owner for a fresh exclusive recovery claim.
+                match exchange(stream, b'C') {
+                    Some(b'G') => {
+                        if let Some(status) = owner.exited()? { return Ok(Outcome::Exited(status)); }
+                        return Ok(Outcome::Unresponsive);
                     }
+                    Some(b'D') => health = ProbeHealth::default(),
+                    _ => return Ok(Outcome::ProbeUnavailable),
                 }
-                Err(error) if matches!(error.kind(), io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted) => {},
-                Err(_) => return Ok(Outcome::ProbeUnavailable),
             }
+            ProbeDecision::NoRecovery => return Ok(Outcome::ProbeUnavailable),
+            ProbeDecision::Wait => {},
         }
         thread::sleep(PULSE);
     }
@@ -283,15 +313,18 @@ fn launch(args: Vec<OsString>, nested_memory: bool) -> Result<i32, String> {
         listener.set_nonblocking(true).map_err(|_| "SUPERVISOR_LISTENER_FAILED")?;
         let token = uuid::Uuid::new_v4().to_string();
         let mut owner = OwnedHost::spawn(if attempt == 0 { &args } else { &[] }, &listener, &token, nested_memory)?;
-        let outcome = match accepted_stream(&listener, &mut owner, &token) {
-            Ok(Some(stream)) => monitor(&mut owner, stream),
-            Ok(None) => Ok(match owner.exited() {
+        let mut stream = accepted_stream(&listener, &mut owner, &token).ok().flatten();
+        let outcome = match stream.as_mut() {
+            Some(stream) => monitor(&mut owner, stream),
+            None => Ok(match owner.exited() {
                 Ok(Some(status)) => Outcome::Exited(status),
                 _ => Outcome::ProbeUnavailable,
             }),
-            Err(_) => Ok(Outcome::ProbeUnavailable),
         };
         drop(listener);
+        // A granted recovery connection stays open through retire_confirmed.
+        // On an unavailable probe, close it before waiting without recovery.
+        if !matches!(&outcome, Ok(Outcome::Unresponsive)) { drop(stream.take()); }
         match outcome {
             Ok(Outcome::Exited(status)) => {
                 owner.retire_confirmed(report_retirement_pending);
@@ -375,11 +408,43 @@ pub(crate) fn start_child_probe(app: tauri::AppHandle, endpoint: ChildEndpoint) 
         // A pre-shutdown acknowledgement cannot rearm recovery.
         let mut pending: Option<mpsc::Receiver<()>> = None;
         let mut discard_ack = false;
+        let mut last_pending_reply = false;
         let exiting = || app.try_state::<crate::ExitLifecycleState>()
             .is_some_and(|state| state.started.load(Ordering::Acquire));
         loop {
             let mut command = [0u8; 1];
-            if stream.read_exact(&mut command).is_err() || command[0] != b'P' { return; }
+            if stream.read_exact(&mut command).is_err() { return; }
+            if command[0] == b'C' {
+                if !last_pending_reply { return; }
+                last_pending_reply = false;
+                let Some(state) = app.try_state::<crate::ExitLifecycleState>() else { return; };
+                let Some(claim) = RecoveryClaim::acquire(&state) else {
+                    if stream.write_all(b"D").is_err() { return; }
+                    continue;
+                };
+                // Recheck the outstanding native callback AFTER claiming
+                // exit admission. No new recovery may use an old B.
+                match pending.as_ref().map(|receive| receive.try_recv()) {
+                    Some(Err(mpsc::TryRecvError::Empty)) => {
+                        if stream.write_all(b"G").is_ok() {
+                            // Parent holds this stream until actual retirement.
+                            // On loss of the supervisor the RAII claim releases;
+                            // this is not Linux hard-crash domain containment.
+                            let mut end = [0u8; 1];
+                            let _ = stream.read_exact(&mut end);
+                        }
+                        drop(claim);
+                        return;
+                    }
+                    Some(Ok(())) => { pending = None; discard_ack = false; }
+                    _ => return,
+                }
+                drop(claim);
+                if stream.write_all(b"D").is_err() { return; }
+                continue;
+            }
+            if command[0] != b'P' { return; }
+            last_pending_reply = false;
             if exiting() {
                 discard_ack |= pending.is_some();
                 if stream.write_all(b"S").is_err() { return; }
@@ -409,6 +474,7 @@ pub(crate) fn start_child_probe(app: tauri::AppHandle, endpoint: ChildEndpoint) 
                 }
                 Err(mpsc::RecvTimeoutError::Disconnected) => return,
             };
+            last_pending_reply = reply == b'B';
             if stream.write_all(&[reply]).is_err() { return; }
         }
     });
@@ -417,6 +483,17 @@ pub(crate) fn start_child_probe(app: tauri::AppHandle, endpoint: ChildEndpoint) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn recovery_claim_and_graceful_shutdown_have_one_admission_owner() {
+        let state = crate::ExitLifecycleState::default();
+        let claim = RecoveryClaim::acquire(&state).expect("recovery claim");
+        assert!(!state.claim());
+        assert!(RecoveryClaim::acquire(&state).is_none());
+        drop(claim);
+        assert!(state.claim());
+        assert!(RecoveryClaim::acquire(&state).is_none());
+    }
+
     #[test]
     fn recovery_requires_continuous_pending_evidence_after_a_real_ui_ack() {
         let now = Instant::now();
