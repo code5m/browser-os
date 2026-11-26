@@ -5,7 +5,7 @@ import { ref, computed } from "vue";
 import { useFileStore } from "../../capabilities/workspace/public";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Globe, Plus, X } from '@lucide/vue';
-import { bridge, isDownloadOwnerObservation, type DownloadInventory, type DownloadOwnerObservation, type DownloadTaskTarget, type DownloadTaskView, type NativeDownloadTask } from '../../bridge';
+import { bridge, isDownloadOwnerObservation, type DownloadInventory, type DownloadOwnerObservation, type DownloadTaskTarget, type DownloadTaskView, type NativeDownloadTask, type DownloadHistoryView } from '../../bridge';
 import { useUnifiedTabs } from "../../composables/useUnifiedTabs";
 import { documentPathName, relativeDocumentPath } from "../../application/documentPaths.mjs";
 
@@ -52,6 +52,23 @@ const taskView=ref<DownloadTaskView|null>(null);
 const taskBusy=ref(false),taskNotice=ref("");
 const taskConfirm=ref<{target:DownloadTaskTarget;task:NativeDownloadTask;operation:"pause"|"resume"|"cancel"}|null>(null);
 let taskEpoch=0;
+const savedHistory=ref<DownloadHistoryView|null>(null);
+const historyBusy=ref(false),historyNotice=ref(""),confirmClearHistory=ref(false);
+async function readSavedHistory(clear=false){
+  if(!downloadPanelOpen.value||historyBusy.value||taskBusy.value)return;
+  const epoch=downloadPanelEpoch;
+  historyBusy.value=true;confirmClearHistory.value=false;historyNotice.value="";
+  try{
+    const result=clear?await bridge.clearDownloadHistory():await bridge.inspectDownloadHistory();
+    if(epoch!==downloadPanelEpoch||!downloadPanelOpen.value)return;
+    const view=result.download_history;
+    if(!view||view.coverage!=="explicit_observations"||view.limit!==256||!Array.isArray(view.rows)||view.rows.length>256)throw Error("DOWNLOAD_HISTORY_INVALID");
+    savedHistory.value=view;
+    if(clear)historyNotice.value="已清空本机保存的观察记录，不会删除文件或取消下载。";
+  }catch{
+    if(epoch===downloadPanelEpoch){savedHistory.value=null;historyNotice.value=clear?"清空结果未确认，请重新查询。":"本机历史不可读取。";}
+  }finally{historyBusy.value=false;}
+}
 function validTransferView(view:DownloadTaskView,target:DownloadTaskTarget){
   const data=view?.observation;
   const epoch=(v:unknown)=>typeof v==='string'&&/^[1-9][0-9]{0,19}$/.test(v)&&(v.length<20||v<='18446744073709551615');
@@ -69,17 +86,22 @@ function validTransferView(view:DownloadTaskView,target:DownloadTaskTarget){
       &&(row.progress===null||typeof row.progress==='number'&&Number.isFinite(row.progress)&&row.progress>=0&&row.progress<=1)
       &&Array.isArray(row.controls)&&row.controls.every(op=>['pause','resume','cancel'].includes(op)));
 }
-async function readDownloadTasks(target:DownloadTaskTarget,control?:{transfer_id:string;operation:"pause"|"resume"|"cancel"}){
+async function readDownloadTasks(target:DownloadTaskTarget,control?:{transfer_id:string;operation:"pause"|"resume"|"cancel"},remember=false){
   if(taskBusy.value||!downloadPanelOpen.value)return;
   const epoch=++taskEpoch;
   taskTarget.value={id:target.id,pid:target.pid,spawn_epoch:target.spawn_epoch};
   taskBusy.value=true;taskView.value=null;taskConfirm.value=null;taskNotice.value="";
   try{
-    const view=(await bridge.downloadTasks(target,control)).download_tasks;
+    const result=await bridge.downloadTasks(target,control,remember);
+    const view=result.download_tasks;
     if(epoch!==taskEpoch||!downloadPanelOpen.value)return;
     if(!view||!validTransferView(view,target)||view.observation.control_dispatched!==!!control)throw Error("DOWNLOAD_RESULT_INVALID");
     taskView.value=view;
     if(control)taskNotice.value="原生控制已派发，以下为当前观察状态；操作结果尚需核对。";
+    if(remember){
+      taskNotice.value=result.download_history_saved===true?"已将本次原生观察保存到本机历史。":"本次观察已返回，但历史保存未确认；请重新查询历史。";
+      savedHistory.value=null;
+    }
   }catch{
     if(epoch===taskEpoch)taskNotice.value=control?"下载操作结果未确认；不会自动重试，请先重新读取原任务。":"原生下载对象暂不可用，请重新查询。";
   }finally{taskBusy.value=false;}
@@ -140,6 +162,7 @@ function toggleDownloadInventory() {
   } else {
     ++taskEpoch;taskTarget.value=null;taskView.value=null;taskConfirm.value=null;taskNotice.value="";
     ++downloadPanelEpoch;
+    savedHistory.value=null;historyNotice.value="";confirmClearHistory.value=false;
     downloadInventory.value = null;
     // Keep the unresolved native request's single-flight ownership until
     // it actually settles. A reopened panel can refresh after settlement.
@@ -362,6 +385,7 @@ async function newTab() {
       <div v-if="taskTarget" class="download-owner-list">
         <strong>{{taskTarget.id}} · 原生下载任务</strong>
         <button :disabled="taskBusy" @click="readDownloadTasks(taskTarget)">重新读取</button>
+        <button :disabled="taskBusy||historyBusy" @click="readDownloadTasks(taskTarget,undefined,true)">重新读取并保存本机历史</button>
         <span v-if="taskBusy" role="status">正在读取原生对象…</span>
         <span v-if="taskNotice" role="status">{{taskNotice}}</span>
         <template v-if="taskView">
@@ -378,7 +402,22 @@ async function newTab() {
           <button :disabled="taskBusy" @click="executeTaskControl">确认执行</button><button @click="taskConfirm=null">返回</button>
         </div>
       </div>
-      <span>累计观察与逐项任务仅本次应用会话有效；不显示下载 URL 或完整保存路径。宿主退出后不能继续控制原下载对象。</span>
+      <div class="download-owner-list">
+        <strong>本机保存的下载观察（跨重启）</strong>
+        <button :disabled="historyBusy||taskBusy" @click="readSavedHistory()">查询本机历史</button>
+        <button :disabled="historyBusy||taskBusy" @click="confirmClearHistory=true">清空历史</button>
+        <template v-if="confirmClearHistory"><span>仅清空保存的观察记录，确定？</span><button :disabled="historyBusy||taskBusy" @click="readSavedHistory(true)">确认清空</button><button @click="confirmClearHistory=false">返回</button></template>
+        <span v-if="historyNotice" role="status">{{historyNotice}}</span>
+        <template v-if="savedHistory">
+          <span>最多 256 个曾手动保存的任务，状态是当时观察，不代表当前文件存在或仍在下载。</span>
+          <div v-if="!savedHistory.rows.length">暂无已保存记录</div>
+          <div v-for="row in savedHistory.rows" :key="row.session+':'+row.id+':'+row.pid+':'+row.spawn_epoch+':'+row.transfer_id">
+            <strong>{{row.name||'未命名下载'}} · {{transferLabels[row.state]||'未知'}}</strong>
+            <span>{{row.id}} · {{new Date(row.observed_at_ms).toLocaleString()}} · {{row.received_bytes??'未知'}} / {{row.total_bytes??'未知'}} 字节</span>
+          </div>
+        </template>
+      </div>
+      <span>只有明确选择保存才落盘文件名及观察状态；不保存下载 URL 或完整路径。宿主退出后不能控制原下载对象。</span>
     </template>
   </div>
   <div v-if="context" class="tab-actions" role="menu" @keydown.esc="context = null">

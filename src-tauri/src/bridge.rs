@@ -19,6 +19,7 @@ use crate::workspace;
 mod automation_commands;
 mod browser_commands;
 mod credential_commands;
+mod download_history;
 mod filesystem_commands;
 mod grid_runtime;
 mod integration_commands;

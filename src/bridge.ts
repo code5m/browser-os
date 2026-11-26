@@ -67,6 +67,8 @@ export type DownloadOwnerObservation = {
 export type DownloadTaskTarget = {id:string;pid?:number|null;spawn_epoch?:string|null};
 export type NativeDownloadTask = {transfer_id:string;name:string|null;state:string;received_bytes:string|null;total_bytes:string|null;progress:number|null;controls:("pause"|"resume"|"cancel")[]};
 export type DownloadTaskView = {id:string;pid:number|null;spawn_epoch:string|null;observation:{native_instance:string;coverage:"since_registration";platform:string;limited:boolean;limit:number;control_dispatched:boolean;items:NativeDownloadTask[]}};
+export type DownloadHistoryRow = {session:string;id:string;pid:number|null;spawn_epoch:string|null;transfer_id:string;name:string|null;state:string;received_bytes:string|null;total_bytes:string|null;observed_at_ms:number};
+export type DownloadHistoryView = {coverage:"explicit_observations";limit:number;rows:DownloadHistoryRow[]};
 export type DownloadInventory = { live: DownloadOwnerObservation[]; retiring: DownloadOwnerObservation[]; retired: DownloadOwnerObservation[]; retired_limit: number };
 
 // IPC results are runtime data, not TypeScript guarantees. Share one
@@ -139,6 +141,8 @@ type TabOwnerView = {
   renderer_download?: RendererDownloadObservation | null;
   download_inventory?: DownloadInventory;
   download_tasks?: DownloadTaskView;
+  download_history?: DownloadHistoryView;
+  download_history_saved?: boolean;
 };
 const terminalTabReceipt = (r: TabReceipt) => ["succeeded", "failed", "cancelled"].includes(r.phase);
 const receiptDelay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -1186,9 +1190,11 @@ export const bridge = {
   inspectDownloadInventory: () => tabReceiptCall({phase:"inspect_downloads"}, true),
   sampleDownload: (row: DownloadOwnerObservation) =>
     tabReceiptCall({phase:"sample_download",id:row.id,pid:row.pid,spawn_epoch:row.spawn_epoch}, true),
-  downloadTasks: (target:DownloadTaskTarget, control?:{transfer_id:string;operation:"pause"|"resume"|"cancel"}) =>
+  downloadTasks: (target:DownloadTaskTarget, control?:{transfer_id:string;operation:"pause"|"resume"|"cancel"}, remember=false) =>
     tabReceiptCall({phase:"download_tasks",id:target.id,pid:target.pid??null,spawn_epoch:target.spawn_epoch??null,
-      ...(control?{...control,confirmed:true}:{})},true),
+      remember,...(control?{...control,confirmed:true}:{})},true),
+  inspectDownloadHistory: () => tabReceiptCall({phase:"inspect_download_history"},true),
+  clearDownloadHistory: () => tabReceiptCall({phase:"clear_download_history",confirmed:true},true),
   retireRenderer: (target: RendererRecoveryTarget) =>
     ownedTabMutation<void>({kind:"retire_renderer",...target,confirmed:true}),
   parkRenderer: (target: RendererParkTarget, url: string) =>

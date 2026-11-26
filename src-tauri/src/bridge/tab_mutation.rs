@@ -661,6 +661,10 @@ pub(crate) struct OwnerView {
     download_inventory: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     download_tasks: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    download_history: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    download_history_saved: Option<bool>,
 }
 fn snapshot(app: &AppHandle) -> Result<OwnerView, String> {
     let mut view = {
@@ -687,6 +691,8 @@ fn snapshot(app: &AppHandle) -> Result<OwnerView, String> {
             renderer_download: None,
             download_inventory: None,
             download_tasks: None,
+            download_history: None,
+            download_history_saved: None,
         }
     };
     // Do not hold the Owner mutex while observing app metadata.
@@ -1032,7 +1038,10 @@ pub(crate) enum Request {
     InspectDownloads,
     SampleDownload { id: String, pid: u32, spawn_epoch: String },
     DownloadTasks { id:String, pid:Option<u32>, spawn_epoch:Option<String>,
-        transfer_id:Option<String>, operation:Option<String>, confirmed:Option<bool> },
+        transfer_id:Option<String>, operation:Option<String>, confirmed:Option<bool>,
+        #[serde(default)] remember: bool },
+    InspectDownloadHistory,
+    ClearDownloadHistory { confirmed: bool },
     Fence {
         epoch: String,
         sequence: String,
@@ -1046,6 +1055,8 @@ pub(crate) enum Request {
         scope: Option<String>,
     },
 }
+static DOWNLOAD_HISTORY_LANE: crate::shared::blocking::BlockingLane =
+    crate::shared::blocking::BlockingLane::new(1, "DOWNLOAD_HISTORY_BUSY", "DOWNLOAD_HISTORY_WORKER_FAILED");
 static DOWNLOAD_SAMPLE_LANE: crate::shared::blocking::BlockingLane =
     crate::shared::blocking::BlockingLane::new(2, "TAB_DOWNLOAD_SAMPLE_BUSY", "TAB_DOWNLOAD_SAMPLE_WORKER_FAILED");
 
@@ -1056,7 +1067,26 @@ pub(crate) async fn tab_mutation(
     request: Request,
 ) -> Result<OwnerView, String> {
     match request {
-        Request::DownloadTasks { id,pid,spawn_epoch,transfer_id,operation,confirmed } => {
+        Request::InspectDownloadHistory => {
+            crate::shared::native_legacy_policy::require_main(&webview,"tab_list")?;
+            DOWNLOAD_HISTORY_LANE.run(move || {
+                let guard=super::download_history::claim()?;
+                let mut view=snapshot(&app)?;
+                view.download_history=Some(super::download_history::inspect(&crate::workspace::data_dir(&app),&guard)?);
+                Ok(view)
+            }).await
+        }
+        Request::ClearDownloadHistory { confirmed } => {
+            crate::shared::native_legacy_policy::require_main(&webview,"tab_list")?;
+            if !confirmed { return Err("DOWNLOAD_HISTORY_CONFIRM_REQUIRED".into()); }
+            DOWNLOAD_HISTORY_LANE.run(move || {
+                let guard=super::download_history::claim()?;
+                let mut view=snapshot(&app)?;
+                view.download_history=Some(super::download_history::clear(&crate::workspace::data_dir(&app),&guard)?);
+                Ok(view)
+            }).await
+        }
+        Request::DownloadTasks { id,pid,spawn_epoch,transfer_id,operation,confirmed,remember } => {
             crate::shared::native_legacy_policy::require_main(&webview,"tab_list")?;
             crate::shared::native_legacy_policy::bound_text("tab_list","id",&id)?;
             if !super::is_tab_label(&id){return Err("DOWNLOAD_TRANSFER_STALE".into());}
@@ -1070,6 +1100,7 @@ pub(crate) async fn tab_mutation(
                 }
                 _=>return Err("DOWNLOAD_CONTROL_INVALID".into()),
             };
+            if remember && control.is_some() { return Err("DOWNLOAD_HISTORY_READ_ONLY".into()); }
             let binding=if let Some(index)=super::isolated_tabs::route(&id){
                 let pid=pid.filter(|v|*v>0).ok_or("DOWNLOAD_OWNER_STALE")?;
                 let epoch=spawn_epoch.as_deref().and_then(|v|v.parse::<u64>().ok())
@@ -1087,6 +1118,9 @@ pub(crate) async fn tab_mutation(
                     || !state.tabs.try_lock().map_err(|_|"TAB_DOWNLOAD_SAMPLE_BUSY")?.contains_key(&id){
                     return Err("DOWNLOAD_OWNER_STALE".into());
                 }
+                // Hold the history gate from explicit sample through publication.
+                // A concurrent clear cannot be followed by a stale sample write.
+                let history_guard=if remember {Some(super::download_history::claim()?)} else {None};
                 let dispatched=control.is_some();
                 let tasks=if let Some(binding)=binding{
                     let data=state.grid_manager.download_tasks_bound(binding,
@@ -1102,6 +1136,11 @@ pub(crate) async fn tab_mutation(
                     return Err("DOWNLOAD_RESULT_INVALID".into());
                 }
                 let mut view=snapshot(&app)?;
+                if let Some(guard)=history_guard.as_ref() {
+                    let session=uuid::Uuid::parse_str(&view.epoch).map_err(|_| "DOWNLOAD_HISTORY_INVALID")?;
+                    view.download_history_saved=Some(super::download_history::remember(
+                        &crate::workspace::data_dir(&app),guard,session,&id,binding.map(|v|v.owner),&tasks).is_ok());
+                }
                 view.download_tasks=Some(serde_json::json!({"id":id,
                     "pid":binding.map(|v|v.owner.0),"spawn_epoch":binding.map(|v|v.owner.1.to_string()),
                     "observation":tasks}));
@@ -1317,7 +1356,9 @@ fn tab_mutation_control(
             }
         }
         Request::Inspect => {}
-        Request::SampleDownload { .. } | Request::DownloadTasks { .. } => return Err("TAB_DOWNLOAD_SAMPLE_INVALID".into()),
+        Request::SampleDownload { .. } | Request::DownloadTasks { .. }
+        | Request::InspectDownloadHistory | Request::ClearDownloadHistory { .. } =>
+            return Err("TAB_DOWNLOAD_SAMPLE_INVALID".into()),
         Request::InspectDownloads => {
             crate::shared::native_legacy_policy::require_main(&webview, "tab_list")?;
             if !super::isolated_tabs::mode_enabled() {
@@ -1644,6 +1685,8 @@ mod tests {
             renderer_download: None,
             download_inventory: None,
             download_tasks: None,
+            download_history: None,
+            download_history_saved: None,
         };
         assert!(state.matches_view(&view));
         state.admit_background().unwrap();
