@@ -196,10 +196,12 @@ async function resumeRestoredRun() {
   await submitTurn(turn);
   if (lastRun.value === id && sessionVersion === turn.session) await restoreRun(id);
 }
+function canForget(record:TextRunRecord) {
+  return record.can_forget ?? ['completed','failed','cancelled'].includes(record.phase);
+}
 async function forgetRestoredRun() {
   const record = restored.value;
-  if (!record || busy.value || historyLoading.value ||
-      !['completed','failed','cancelled'].includes(record.phase)) return;
+  if (!record || busy.value || historyLoading.value || !canForget(record) || record.archived) return;
   const revision = ++historyRevision;
   historyLoading.value = true;
   let archived = false;
@@ -243,11 +245,11 @@ onMounted(refreshModels);
     </section>
     <section v-if="restored" class="restored-run" aria-label="恢复运行">
       <p>会话 {{restored.session_id.slice(0,8)}} · 运行 {{restored.id.slice(0,8)}} · {{restored.phase}} · {{restored.model || restored.kind}}</p>
-      <button v-if="restored.can_resume||restored.successor" :disabled="busy||historyLoading" @click="resumeRestoredRun">{{restored.successor?'恢复已登记的后续运行（未发布的请求可能重新计费）':'明确重新执行此未完成的模型请求（可能再次计费）'}}</button>
+      <button v-if="restored.can_resume||restored.successor" :disabled="busy||historyLoading" @click="resumeRestoredRun">{{restored.successor?(restored.reserved_input_available?'恢复已登记的后续运行（未发布的请求可能重新计费）':'查看已登记的后续运行（不会重新执行）'):'明确重新执行此未完成的模型请求（可能再次计费）'}}</button>
       <p v-if="!restored.can_continue&&!restored.can_resume&&!restored.successor" class="hint">此记录仅供查看；如需新任务请新建会话。</p>
       <p v-if="restored.can_continue&&restored.profile_id!==modelId" class="hint">原模型未配置，不能通过其他模型接续此记录。</p>
-      <p v-if="restored.archived" class="hint">终态回执已归档，活跃记录容量已释放；运行 ID 仍保留。</p>
-      <details v-if="['completed','failed','cancelled'].includes(restored.phase)&&(restored.has_payload||restored.forgotten&&!restored.archived)"><summary>{{restored.forgotten?'重试终态归档':'清理本条终态记录的内容并归档'}}</summary><p>清理后此条内容不可恢复，保留运行 ID；其他记录可能仍保存上下文副本。归档发布确认前不会移除活跃记录。</p><button :disabled="busy||historyLoading" @click="forgetRestoredRun">{{restored.forgotten?'确认重试归档':'确认清理并归档'}}</button></details>
+      <p v-if="restored.archived" class="hint">历史运行回执已归档，活跃记录容量已释放；运行 ID 仍保留。</p>
+      <details v-if="canForget(restored)&&!restored.archived&&(restored.has_payload||restored.forgotten)"><summary>{{restored.forgotten?'重试归档':'清理本条历史运行的内容并归档'}}</summary><p>已被接替的运行只有在后续检查点确实持久化后才能归档，不会结束仍在进行的任务。清理后此条内容不可恢复，保留运行 ID；其他记录可能仍保存上下文副本。归档发布确认前不会移除活跃记录。</p><button :disabled="busy||historyLoading" @click="forgetRestoredRun">{{restored.forgotten?'确认重试归档':'确认清理并归档'}}</button></details>
     </section>
     <main class="history" aria-live="polite"><p v-if="!lines.length" class="hint">选择一个已配置模型即可开始聊天，无需输入项目地址。编码和文件操作请切换到「编码工作区」。</p><article v-for="(line,index) in lines" :key="index" :class="line.role"><strong>{{line.role==='user'?'你':'智能体'}}</strong><p>{{line.content}}</p></article></main>
     <p v-if="error" class="error" role="alert">{{error}}</p><p v-if="utf8Bytes(prompt.trim()) > 24000" class="error">消息超过后端 24000 字节限制</p>

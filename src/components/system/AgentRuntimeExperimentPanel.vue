@@ -27,7 +27,7 @@ const toolRoot = ref("");
 const confirmRead = ref(false);
 const toolPayloadText = ref("");
 const showResults = ref(false);
-type ChannelReceipt = {id:string;task_id:string;phase:string;kind:string|null;can_resume:boolean;successor:string|null;has_result:boolean;forgotten:boolean;input?:unknown;result?:unknown};
+type ChannelReceipt = {id:string;task_id:string;phase:string;kind:string|null;can_resume:boolean;successor:string|null;has_result:boolean;forgotten:boolean;can_forget?:boolean;reserved_input_available?:boolean;archived?:boolean;input?:unknown;result?:unknown};
 const runId = ref("");
 const receipts = ref<ChannelReceipt[]>([]);
 const cursor = ref<string|null>(null);
@@ -164,22 +164,25 @@ async function restoreRun(id:string) {
 }
 async function resumeRun(){
   const old=receipt.value;
-  if(!old?.can_resume||!resumeConfirmed.value||!persisted.value?.enabled||requestBusy.value)return;
+  if(!old||(!old.can_resume&&!old.successor)||!resumeConfirmed.value||!persisted.value?.enabled||requestBusy.value)return;
   historyBusy.value=true;error.value="";resumeConfirmed.value=false;
   const id=old.successor||createChatRequestId();runId.value=id;
   try {
     if(old.successor){
       try{receipt.value=await bridge.aiService({action:"channel_restore",id});return;}
-      catch(reason){if(!String(reason).includes("AGENT_RUN_NOT_FOUND"))throw reason;}
+      catch(reason){if(!String(reason).includes("AGENT_RUN_NOT_FOUND")||old.reserved_input_available===false)throw reason;}
     }
     await bridge.aiService({action:"channel_resume",id:old.id,request_id:id,confirmed:true});
     receipt.value=await bridge.aiService({action:"channel_restore",id});
   }catch(reason){error.value=String(reason);}
   finally{historyBusy.value=false;}
 }
+function canForgetChannel(record:ChannelReceipt) {
+  return record.can_forget ?? ["completed","failed","cancelled"].includes(record.phase);
+}
 async function archiveRun(){
   const old=receipt.value;
-  if(!old||requestBusy.value||!["completed","failed","cancelled"].includes(old.phase))return;
+  if(!old||requestBusy.value||!canForgetChannel(old)||old.archived)return;
   historyBusy.value=true;error.value="";
   try{
     const result=await bridge.aiService({action:"channel_forget",id:old.id,confirmed:true});
@@ -318,13 +321,14 @@ onMounted(refresh);
         <p class="disclaimer">Task {{receipt.task_id}} · Run {{receipt.id}} · {{receipt.phase}}</p>
         <pre v-if="receipt.input" class="payload">{{JSON.stringify(receipt.input,null,2)}}</pre>
         <pre v-if="receipt.has_result" class="payload">{{JSON.stringify(receipt.result,null,2)}}</pre>
-        <template v-if="receipt.can_resume">
+        <template v-if="receipt.can_resume||receipt.successor">
           <label class="confirm"><input v-model="resumeConfirmed" type="checkbox"/> 我明确继续此检查点；只读调用将重新核对当前权限与资源</label>
-          <button :disabled="!resumeConfirmed||requestBusy||!persisted?.enabled" @click="resumeRun">恢复已登记任务</button>
+          <button :disabled="!resumeConfirmed||requestBusy||!persisted?.enabled" @click="resumeRun">{{receipt.successor&&!receipt.reserved_input_available?'查看后续运行（不重放）':'恢复已登记任务'}}</button>
         </template>
-        <details v-if="['completed','failed','cancelled'].includes(receipt.phase)">
+        <p v-if="receipt.archived" class="disclaimer">已归档，保留运行身份与后续运行链接。</p>
+        <details v-if="canForgetChannel(receipt)&&!receipt.archived">
           <summary>清理此条运行内容并归档</summary>
-          <p class="disclaimer">仅清理当前记录的输入输出，保留运行身份与审批证据。</p>
+          <p class="disclaimer">仅清理当前记录的输入输出，保留运行身份与审批证据。已被接替的运行必须先确认后续检查点已持久化。</p>
           <button :disabled="requestBusy" @click="archiveRun">确认清理／归档</button>
         </details>
       </div>

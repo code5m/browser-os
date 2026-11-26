@@ -381,8 +381,9 @@ pub(super) fn write(storage: &Path, id: &str, plaintext: &[u8], limit: usize) ->
 const RUN_LIMIT: usize = 1024 * 1024;
 const MAX_RUN_RECORDS: usize = 4096;
 const MAX_RUN_DIRECTORY_ENTRIES: usize = 32768;
-// Terminal payload compaction is explicit. The immutable archive preserves
-// replay IDs, Task/Session identity and lineage without model text.
+// Explicit terminal/superseded payload compaction preserves replay IDs,
+// Task/Session identity and lineage without model text. Other eligible
+// owner receipts retain their bounded effect and approval evidence.
 const ARCHIVE_LIMIT: usize = 64 * 1024;
 const MAX_ARCHIVED_RUNS: usize = 16384;
 const MAX_ARCHIVE_DIRECTORY_ENTRIES: usize = 65536;
@@ -497,7 +498,7 @@ impl RunCheckpoint {
         Ok(Some(bytes))
     }
     /// Caller holds this Run lock and has already authenticated a terminal
-    /// record eligible for archival. Publish an identical ciphertext with
+    /// or superseded record eligible for archival. Publish an identical ciphertext with
     /// no-replace before removing the active copy. Neither a crash between
     /// publication/removal nor a repeated archival can resurrect a Run ID.
     pub(super) fn archive_terminal(&self) -> Result<(), String> {

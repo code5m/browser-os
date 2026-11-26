@@ -72,6 +72,8 @@ fn summary(record: &NativeRunReceipt, detail: bool) -> Result<Value, String> {
         "phase":record.phase,"updated_at_ms":record.updated_at_ms,
         "previous_run":record.previous_run,"successor":record.successor.as_ref().map(|next| next.id),
         "can_resume":record.phase == "interrupted" && record.task.status == TaskStatus::Paused && input.is_some(),
+        "reserved_input_available":record.successor.as_ref().is_some_and(|next| next.input.is_some()),
+        "can_forget":DurableRun::can_compact_payload(record),
         "has_result":record.text.as_ref().and_then(|payload| payload.result.as_ref()).is_some(),
         "forgotten":record.payload_forgotten,
         "kind":input.as_ref().map(|input| match input { ChannelInput::Fixture { .. } => "fixture", ChannelInput::Read { .. } => "read" })
@@ -130,28 +132,33 @@ impl ProductionExecution {
             if previous == run || run.is_nil() { return Err("AGENT_RUN_ADVANCE_INVALID".into()); }
             let predecessor = DurableRun::lookup(storage, previous)?;
             let record = predecessor.read_record()?.ok_or("AGENT_RUN_NOT_FOUND")?;
-            let input = checked_input(&record)?.ok_or("AGENT_RUN_RESULT_UNAVAILABLE")?;
+            let input = checked_input(&record)?;
             let mut record = predecessor.recover_record(record)?;
             if record.successor.as_ref().is_some_and(|next| next.id != run) {
                 return Err("AGENT_RUN_SUCCESSOR_EXISTS".into());
             }
+            let mut child = DurableRun::new(storage, run)?;
+            let existing = child.read_record()?;
+            if let Some(next) = &record.successor {
+                if !next.resume { return Err("AGENT_RUN_SCOPE_MISMATCH".into()); }
+                if let Some(existing) = existing {
+                    checked_input(&existing)?;
+                    DurableRun::verify_successor(&record, &existing)?;
+                    return recovered(child.recover_record(existing)?);
+                }
+            } else if existing.is_some() {
+                return Err("AGENT_RUN_ALREADY_RECORDED".into());
+            }
+            // An archived predecessor may restore a durable successor, but
+            // must never dispatch a missing successor or recover a permit.
             if record.phase != "interrupted" || record.task.status != TaskStatus::Paused {
                 return Err("AGENT_RUN_NOT_RESUMABLE".into());
             }
+            let input = input.ok_or("AGENT_RUN_RESULT_UNAVAILABLE")?;
             let saved = serde_json::to_value(&input).map_err(|_| "AGENT_RUN_RECEIPT_INVALID")?;
-            let mut child = DurableRun::new(storage, run)?;
             if let Some(next) = &record.successor {
-                if !next.resume || next.input.as_ref() != Some(&saved) { return Err("AGENT_RUN_SCOPE_MISMATCH".into()); }
-                if let Some(existing) = child.read_record()? {
-                    if existing.previous_run != Some(previous) || existing.task.id != record.task.id
-                        || existing.task.session_id != record.task.session_id
-                        || checked_input(&existing)?.as_ref() != Some(&input) {
-                        return Err("AGENT_RUN_SCOPE_MISMATCH".into());
-                    }
-                    return recovered(child.recover_record(existing)?);
-                }
+                if next.input.as_ref() != Some(&saved) { return Err("AGENT_RUN_SCOPE_MISMATCH".into()); }
             } else {
-                if child.read_record()?.is_some() { return Err("AGENT_RUN_ALREADY_RECORDED".into()); }
                 record.successor = Some(TextSuccessor { id: run, input: Some(saved), resume: true });
                 record.updated_at_ms = unix_ms();
                 predecessor.write_record(&record)?;
@@ -213,7 +220,9 @@ impl ProductionExecution {
             let owner = DurableRun::lookup(storage, id)?;
             let record = owner.read_record()?.ok_or("AGENT_RUN_NOT_FOUND")?;
             checked_input(&record)?;
-            summary(&owner.recover_record(record)?, true)
+            let mut value = summary(&owner.recover_record(record)?, true)?;
+            value["archived"] = json!(owner.checkpoint.archive_confirmed()?);
+            Ok(value)
         }
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         { let _ = (storage, id); Err("AGENT_PRIVATE_STORAGE_UNAVAILABLE".into()) }
@@ -224,18 +233,8 @@ impl ProductionExecution {
             let owner = DurableRun::lookup(storage, id)?;
             let record = owner.read_record()?.ok_or("AGENT_RUN_NOT_FOUND")?;
             checked_input(&record)?;
-            let mut record = owner.recover_record(record)?;
-            if !matches!(record.task.status, TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Cancelled)
-                || record.successor.is_some() {
-                return Err("AGENT_RUN_NOT_TERMINAL".into());
-            }
-            if !record.payload_forgotten {
-                record.text = None;
-                record.payload_forgotten = true;
-                record.updated_at_ms = unix_ms();
-                owner.write_record(&record)?;
-            }
-            Ok(owner.checkpoint.archive_terminal().is_ok())
+            let record = owner.recover_record(record)?;
+            owner.compact_payload(storage, record)
         }
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         { let _ = (storage, id); Err("AGENT_PRIVATE_STORAGE_UNAVAILABLE".into()) }
@@ -266,6 +265,16 @@ mod tests {
             else { panic!("recover result without dispatch") };
         assert_eq!(saved, result);
         assert!(ProductionExecution::resume_channel(&storage, first, Uuid::new_v4()).is_err());
+        assert!(ProductionExecution::forget_channel(&storage, first).unwrap());
+        let archived = ProductionExecution::read_channel(&storage, first).unwrap();
+        assert_eq!(archived["phase"], "superseded");
+        assert_eq!(archived["task_id"], json!(task));
+        assert_eq!(archived["successor"], json!(second));
+        assert_eq!(archived["archived"], true);
+        assert_eq!(archived["can_resume"], false);
+        let ChannelAdmission::Recovered(saved) = ProductionExecution::resume_channel(&storage, first, second).unwrap()
+            else { panic!("compacted predecessor may only restore committed successor") };
+        assert_eq!(saved, result);
         ProductionExecution::forget_channel(&storage, second).unwrap();
         assert!(ProductionExecution::resume_channel(&storage, first, second).is_err());
         std::fs::remove_dir_all(storage).unwrap();

@@ -206,6 +206,75 @@ impl DurableRun {
         if self.recover_existing()?.is_some() { Err("AGENT_RUN_ALREADY_RECORDED".into()) }
         else { Ok(()) }
     }
+
+    /// A durable successor is the only proof that a paused historical Run
+    /// has relinquished continuation. A reservation alone is not proof.
+    /// Both records are authenticated and the caller holds their OS locks.
+    fn verify_successor(record: &NativeRunReceipt, child: &NativeRunReceipt) -> Result<(), String> {
+        let next = record.successor.as_ref().ok_or("AGENT_RUN_SUCCESSOR_PENDING")?;
+        if next.id == record.id || child.id != next.id || child.previous_run != Some(record.id)
+            || child.task.goal != record.task.goal || child.task.session_id != record.task.session_id
+            || child.task.workspace_id != record.task.workspace_id || child.task.context != record.task.context
+            || record.effect.is_some() || child.effect.is_some()
+            || child.approval.as_ref().is_some_and(|claim| claim.effect != ToolEffect::ReadOnly)
+            || (next.resume && (child.task.id != record.task.id || child.task.revision <= record.task.revision))
+            || (!next.resume && (record.task.goal != "chat" || child.task.id == record.task.id))
+        {
+            return Err("AGENT_RUN_SCOPE_MISMATCH".into());
+        }
+        if let Some(reserved) = &next.input {
+            match &child.text {
+                Some(payload) if &payload.input == reserved => {},
+                None if child.payload_forgotten => {}, // authenticated compacted identity
+                _ => return Err("AGENT_RUN_INPUT_MISMATCH".into()),
+            }
+        }
+        if child.text.is_none() && !child.payload_forgotten {
+            return Err("AGENT_RUN_SUCCESSOR_PENDING".into());
+        }
+        Ok(())
+    }
+
+    fn can_compact_payload(record: &NativeRunReceipt) -> bool {
+        matches!(record.task.status, TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Cancelled)
+            || (record.task.status == TaskStatus::Paused
+                && matches!(record.phase.as_str(), "interrupted" | "superseded")
+                && record.successor.as_ref().is_some_and(|next| next.resume))
+    }
+
+    /// Shared text/Channel retention policy. Retain the old Task snapshot,
+    /// Run identity, approval metadata and successor link. Mark the old Run
+    /// superseded only after authenticating its independently durable child.
+    /// This is NOT a Task completion transition.
+    fn compact_payload(&self, storage: &Path, mut record: NativeRunReceipt) -> Result<bool, String> {
+        if !Self::can_compact_payload(&record) { return Err("AGENT_RUN_NOT_TERMINAL".into()); }
+        if record.payload_forgotten && record.text.is_none()
+            && record.successor.as_ref().map_or(true, |next| next.input.is_none())
+        {
+            return Ok(self.checkpoint.archive_terminal().is_ok());
+        }
+        if let Some(next) = &record.successor {
+            if next.id == record.id { return Err("AGENT_RUN_SCOPE_MISMATCH".into()); }
+            let child_owner = Self::lookup(storage, next.id).map_err(|error|
+                if error == "AGENT_RUN_NOT_FOUND" { "AGENT_RUN_SUCCESSOR_PENDING".into() } else { error })?;
+            let child = child_owner.read_record()?.ok_or("AGENT_RUN_SUCCESSOR_PENDING")?;
+            Self::verify_successor(&record, &child)?;
+            // Keep the child lock through predecessor publication. The
+            // durable child identity is never deleted by this protocol.
+            if let Some(next) = &mut record.successor { next.input = None; }
+            if record.task.status == TaskStatus::Paused { record.phase = "superseded".into(); }
+            record.text = None;
+            record.payload_forgotten = true;
+            record.updated_at_ms = unix_ms();
+            self.write_record(&record)?;
+        } else {
+            record.text = None;
+            record.payload_forgotten = true;
+            record.updated_at_ms = unix_ms();
+            self.write_record(&record)?;
+        }
+        Ok(self.checkpoint.archive_terminal().is_ok())
+    }
 }
 
 pub(crate) struct ProductionExecution {
@@ -338,7 +407,8 @@ impl ProductionExecution {
             "created_at_ms":record.created_at_ms,"updated_at_ms":record.updated_at_ms,
             "has_payload":record.text.is_some(),"has_result":has_result,"forgotten":record.payload_forgotten,
             "can_resume":interrupted && record.text.is_some() && record.successor.is_none(),
-            "can_continue":completed && record.task.goal == "chat" && has_result && record.successor.is_none()
+            "can_continue":completed && record.task.goal == "chat" && has_result && record.successor.is_none(),
+            "can_forget":DurableRun::can_compact_payload(record)
         })
     }
 
@@ -473,10 +543,8 @@ impl ProductionExecution {
                     return Err("AGENT_RUN_INPUT_MISMATCH".into());
                 }
                 if let Some(existing) = existing_child {
-                    if existing.previous_run != Some(previous_id) || existing.task.session_id != record.task.session_id
-                        || Self::text_kind(&existing)? != kind {
-                        return Err("AGENT_RUN_SCOPE_MISMATCH".into());
-                    }
+                    if Self::text_kind(&existing)? != kind { return Err("AGENT_RUN_SCOPE_MISMATCH".into()); }
+                    DurableRun::verify_successor(&record, &existing)?;
                     let existing = child.recover_record(existing)?;
                     if existing.phase == "completed" && existing.task.status == TaskStatus::Completed {
                         return existing.text.and_then(|text| text.result)
@@ -538,29 +606,8 @@ impl ProductionExecution {
             let owner = DurableRun::lookup(storage, id)?;
             let record = owner.read_record()?.ok_or("AGENT_RUN_NOT_FOUND")?;
             Self::text_kind(&record)?;
-            let mut record = owner.recover_record(record)?;
-            if !matches!(record.task.status, TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Cancelled) {
-                return Err("AGENT_RUN_NOT_TERMINAL".into());
-            }
-            if record.payload_forgotten && record.text.is_none()
-                && record.successor.as_ref().map_or(true, |next| next.input.is_none()) {
-                return Ok(owner.checkpoint.archive_terminal().is_ok());
-            }
-            if let Some(next) = &mut record.successor {
-                let child = DurableRun::lookup(storage, next.id)?.read_record()?.ok_or("AGENT_RUN_SUCCESSOR_PENDING")?;
-                if child.previous_run != Some(id) || child.task.session_id != record.task.session_id
-                    || Self::text_kind(&child)? != record.task.goal.as_str() {
-                    return Err("AGENT_RUN_SCOPE_MISMATCH".into());
-                }
-                next.input = None;
-            }
-            record.text = None;
-            record.payload_forgotten = true;
-            record.updated_at_ms = unix_ms();
-            owner.write_record(&record)?;
-            // The compact receipt is already durable even if archival is
-            // pending. Report capacity release separately and allow retry.
-            Ok(owner.checkpoint.archive_terminal().is_ok())
+            let record = owner.recover_record(record)?;
+            owner.compact_payload(storage, record)
         }
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         { let _ = (storage, id); Err("AGENT_PRIVATE_STORAGE_UNAVAILABLE".into()) }
@@ -1101,6 +1148,17 @@ mod tests {
         drop(execution);
         drop(durable);
         let answer = serde_json::json!({"content":"resumed"});
+        assert!(ProductionExecution::forget_text_payload(&storage, first).is_err(),
+            "an interrupted Run without a durable successor must retain its payload");
+        // A reservation alone must not authorize compaction.
+        {
+            let predecessor = DurableRun::lookup(&storage, first).unwrap();
+            let mut receipt = predecessor.recover_existing().unwrap().unwrap();
+            receipt.successor = Some(TextSuccessor { id: second, input: Some(input.clone()), resume: true });
+            predecessor.write_record(&receipt).unwrap();
+        }
+        assert_eq!(ProductionExecution::forget_text_payload(&storage, first).unwrap_err(), "AGENT_RUN_SUCCESSOR_PENDING");
+        assert_eq!(ProductionExecution::read_text_run(&storage, first).unwrap()["has_payload"], true);
         assert_eq!(ProductionExecution::advance_text(&storage, first, second, "", || false, |kind, saved| {
             assert_eq!(kind, "chat"); assert_eq!(saved, &input);
             Ok(|| Ok(answer.clone()))
@@ -1112,6 +1170,16 @@ mod tests {
             |_,_| Ok(|| panic!("second successor must be rejected"))).is_err());
         assert_eq!(ProductionExecution::advance_text(&storage, first, second, "", || false,
             |_,_| Ok(|| panic!("committed successor must not replay"))).unwrap(), answer);
+        assert!(ProductionExecution::forget_text_payload(&storage, first).unwrap());
+        let archived = ProductionExecution::read_text_run(&storage, first).unwrap();
+        assert_eq!(archived["phase"], "superseded");
+        assert_eq!(archived["task_id"], serde_json::json!(task_id));
+        assert_eq!(archived["successor"], serde_json::json!(second));
+        assert_eq!(archived["archived"], true);
+        assert_eq!(archived["has_payload"], false);
+        assert_eq!(archived["can_resume"], false);
+        assert_eq!(ProductionExecution::advance_text(&storage, first, second, "", || false,
+            |_,_| Ok(|| panic!("compacted predecessor must only recover committed child"))).unwrap(), answer);
         ProductionExecution::forget_text_payload(&storage, second).unwrap();
         assert_eq!(ProductionExecution::read_text_run(&storage, second).unwrap()["forgotten"], true);
         assert!(ProductionExecution::advance_text(&storage, first, second, "", || false,

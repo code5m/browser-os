@@ -7,7 +7,7 @@ export type TextRunSummary = {
   id:string; kind:'chat'|'legacy_agent'|'local_chat'; phase:string; task_id:string; session_id:string;
   previous_run:string|null; successor:string|null; reserved_input_available:boolean;
   updated_at_ms:number; has_payload:boolean; has_result:boolean; forgotten:boolean;
-  can_resume:boolean; can_continue:boolean;
+  can_resume:boolean; can_continue:boolean; can_forget?:boolean;
 };
 export type TextRunRecord = TextRunSummary & {
   profile_id?:string|null; model?:string; archived?:boolean; messages:{role:'user'|'assistant';content:string}[];
