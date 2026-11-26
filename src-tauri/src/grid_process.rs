@@ -39,6 +39,8 @@ pub struct ChildComms {
     pending: Mutex<HashMap<u64, mpsc::Sender<Result<Option<String>, String>>>>,
     seq: AtomicU64,
     generation: AtomicU64,
+    // Mirrored under owner_gate from authenticated navigation observations.
+    navigation_revision: AtomicU64,
     // Published only after the exact spawned Child has entered the owner map.
     expected_pid: AtomicU32,
     owner_gate: Mutex<()>,
@@ -61,6 +63,7 @@ impl ChildComms {
             pending: Mutex::new(HashMap::new()),
             seq: AtomicU64::new(1),
             generation: AtomicU64::new(0),
+            navigation_revision: AtomicU64::new(0),
             expected_pid: AtomicU32::new(0),
             owner_gate: Mutex::new(()),
             spawn_epoch: AtomicU64::new(0),
@@ -77,6 +80,7 @@ impl ChildComms {
     fn prepare_spawn(&self) -> Result<(), String> {
         let mut writer = self.writer.lock().unwrap();
         let _owner = self.owner_gate.lock().unwrap();
+        self.navigation_revision.store(0, Ordering::SeqCst);
         self.blank_reclaiming.store(false, Ordering::SeqCst);
         self.blank_reclaim_blocked.store(false, Ordering::SeqCst);
         *self.download_observation.lock().unwrap() = None;
@@ -232,7 +236,7 @@ impl ChildComms {
         }
         if let Ok(mut pending) = self.pending.try_lock() {
             for (_, tx) in pending.drain() {
-                let _ = tx.send(Err("GRID_CONNECTION_CLOSING".into()));
+                let _ = tx.send(Err("GRID_REQUEST_OUTCOME_UNKNOWN: connection shutdown after admission".into()));
             }
         }
     }
@@ -245,18 +249,26 @@ impl ChildComms {
     }
 
     fn detach_if_current(&self, generation: u64) {
-        let mut writer = self.writer.lock().unwrap();
-        let _owner = self.owner_gate.lock().unwrap();
-        if self.generation.load(Ordering::SeqCst) != generation {
-            return;
+        // Revoke first using the independent native cancellation handle.
+        // Do not wait for a writer that may itself need this cancellation.
+        {
+            let _owner = self.owner_gate.lock().unwrap();
+            if self.generation.load(Ordering::SeqCst) != generation { return; }
+            self.ready_generation.store(0, Ordering::SeqCst);
+            self.connected.store(false, Ordering::SeqCst);
+            if let Some(control) = self.control.lock().unwrap().take() {
+                let _ = control.shutdown(std::net::Shutdown::Both);
+            }
+            self.fail_pending("GRID_REQUEST_OUTCOME_UNKNOWN: renderer connection closed");
         }
-        if let Some(control) = self.control.lock().unwrap().take() {
-            let _ = control.shutdown(std::net::Shutdown::Both);
+        // A new attach owns the writer and increments generation. Never
+        // clear that replacement stream as part of old detach cleanup.
+        if let Ok(mut writer) = self.writer.try_lock() {
+            let _owner = self.owner_gate.lock().unwrap();
+            if self.generation.load(Ordering::SeqCst) == generation {
+                *writer = None;
+            }
         }
-        *writer = None;
-        self.ready_generation.store(0, Ordering::SeqCst);
-        self.connected.store(false, Ordering::SeqCst);
-        self.fail_pending("GRID_REQUEST_OUTCOME_UNKNOWN: renderer connection closed");
     }
 
     fn is_transport_current(&self, generation: u64) -> bool {
@@ -1366,7 +1378,8 @@ impl GridProcessManager {
             }
             Arc::clone(&child.comms)
         };
-        self.request_once_with(comms, binding.generation, &cmd, timeout_ms)
+        self.request_once_fenced(comms, binding.generation,
+            document_bound.then_some(binding.navigation_revision), &cmd, timeout_ms)
     }
 
     /// A late acknowledgement must not rewrite the URL of a replacement
@@ -1476,7 +1489,8 @@ impl GridProcessManager {
             }
             Arc::clone(&child.comms)
         };
-        self.request_once_with(comms, binding.generation, &cmd, timeout_ms)
+        self.request_once_fenced(comms, binding.generation,
+            Some(binding.navigation_revision), &cmd, timeout_ms)
     }
 
     /// Recover only the exact original Child/Job, without the potentially
@@ -1989,16 +2003,16 @@ impl GridProcessManager {
     /// A delayed load retry must retain its original renderer generation.
     pub(crate) fn retry_failed_navigation(&self, index: u32, generation: u64, url: &str) -> Result<(), String> {
         let _operation = self.lifecycle.enter()?;
-        let comms = {
+        let (comms, revision) = {
             let children = self.children.lock().unwrap();
             let child = children.get(&index).ok_or("GRID_RENDERER_NOT_OWNED")?;
             if !child.comms.is_current(generation) || child.last_url.as_deref() != Some(url) {
                 return Err("GRID_RETRY_SUPERSEDED".into());
             }
-            Arc::clone(&child.comms)
+            (Arc::clone(&child.comms), child.navigation_revision)
         };
         let cmd = GridCmd::Navigate { id: crate::grid_ipc::renderer_label(index), url: url.to_string() };
-        self.request_once_with(comms, generation, &cmd, 10000).map(|_| ())
+        self.request_once_fenced(comms, generation, Some(revision), &cmd, 10000).map(|_| ())
     }
 
     /// Fail-closed native probe of the actual Grid page. Stored last_url is
@@ -2014,23 +2028,38 @@ impl GridProcessManager {
         cmd: &GridCmd,
         timeout_ms: u64,
     ) -> Result<Option<String>, String> {
+        self.request_once_fenced(comms, generation, None, cmd, timeout_ms)
+    }
+
+    fn request_once_fenced(
+        &self,
+        comms: Arc<ChildComms>,
+        generation: u64,
+        document_revision: Option<u64>,
+        cmd: &GridCmd,
+        timeout_ms: u64,
+    ) -> Result<Option<String>, String> {
         self.lifecycle.check()?;
         if comms.closing.load(Ordering::SeqCst) {
             return Err("GRID_CONNECTION_CLOSING".into());
         }
         let seq;
         let (tx, rx) = mpsc::channel();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
         let write_res = {
-            let mut guard = comms.writer.lock().unwrap();
+            let mut guard = crate::grid_ipc::lock_renderer_writer(&comms.writer, deadline, || {
+                self.lifecycle.check()?;
+                if !comms.is_current(generation) {
+                    return Err("GRID_CONNECTION_GENERATION_CHANGED".into());
+                }
+                Ok(())
+            })?;
             self.lifecycle.check()?;
             if !comms.is_current(generation) {
                 return Err("GRID_CONNECTION_GENERATION_CHANGED".into());
             }
             if comms.blank_reclaiming.load(Ordering::SeqCst) && !cmd.allowed_during_blank_reclaim() {
                 return Err("TAB_RENDERER_RECLAIM_IN_PROGRESS".into());
-            }
-            if !cmd.preserves_pristine_blank() {
-                comms.blank_reclaim_blocked.store(true, Ordering::SeqCst);
             }
             // Allocate in writer order, not caller/thread order. The worker
             // rejects replays and the counter must never wrap.
@@ -2045,7 +2074,22 @@ impl GridProcessManager {
                         if !comms.is_current(generation) {
                             return Err("GRID_CONNECTION_GENERATION_CHANGED".into());
                         }
-                        comms.pending.lock().unwrap().insert(seq, tx);
+                        if document_revision.is_some_and(|revision| {
+                            revision != comms.navigation_revision.load(Ordering::SeqCst)
+                        }) {
+                            return Err("GRID_REQUEST_DOCUMENT_STALE".into());
+                        }
+                        if std::time::Instant::now() >= deadline {
+                            return Err("GRID_WRITER_ADMISSION_TIMEOUT".into());
+                        }
+                        let mut pending = comms.pending.lock().unwrap();
+                        if pending.len() >= crate::grid_ipc::MAX_PENDING_RENDERER_REQUESTS {
+                            return Err("GRID_REQUEST_CAPACITY_EXHAUSTED".into());
+                        }
+                        if !cmd.preserves_pristine_blank() {
+                            comms.blank_reclaim_blocked.store(true, Ordering::SeqCst);
+                        }
+                        pending.insert(seq, tx);
                     }
                     crate::grid_ipc::write_wire(w, &Wire::Request { seq, cmd: cmd.clone() })
                 }
@@ -2065,12 +2109,18 @@ impl GridProcessManager {
             comms.detach_if_current(generation);
             return Err(format!("GRID_REQUEST_OUTCOME_UNKNOWN: UDS write failed: {e}"));
         }
-        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
         loop {
             if self.lifecycle.is_stopping() || comms.closing.load(Ordering::SeqCst) {
                 comms.block_blank_reclaim_for(generation);
                 comms.pending.lock().unwrap().remove(&seq);
                 return Err("GRID_REQUEST_OUTCOME_UNKNOWN: shutdown after dispatch".into());
+            }
+            // A transport replacement after dispatch cannot establish that
+            // the original action did not run. Never wait on its new owner.
+            if !comms.is_current(generation) {
+                comms.block_blank_reclaim_for(generation);
+                comms.pending.lock().unwrap().remove(&seq);
+                return Err("GRID_REQUEST_OUTCOME_UNKNOWN: original connection changed after dispatch".into());
             }
             let remaining = deadline.saturating_duration_since(std::time::Instant::now());
             if remaining.is_zero() {
@@ -2443,13 +2493,15 @@ impl GridProcessManager {
     /// Worker thread only: recompute latest CSS→screen rectangles and emit UDS
     /// writes in sequence. Visibility checks remain the source of truth.
     pub fn reposition_visible(&self) {
-        let _dispatch = self.visibility_dispatch.lock().unwrap_or_else(|p| p.into_inner());
-        let items: Vec<_> = self.children.lock().unwrap().iter()
-            .filter(|(_, h)| !h.hidden && !h.blur_hidden)
-            .filter_map(|(&index, child)| Some((Self::window_binding(index, child)?, child.last_rect?)))
-            .collect();
-        for (binding, css) in items {
-            if let Some(rect) = self.abs_rect(css) {
+        let targets = self.visibility_targets();
+        for binding in targets {
+            if self.lifecycle.is_stopping() { break; }
+            let _dispatch = self.visibility_dispatch.lock().unwrap_or_else(|p| p.into_inner());
+            let css = self.children.lock().unwrap().get(&binding.index)
+                .filter(|child| Self::window_binding_matches(child, binding)
+                    && !child.hidden && !child.blur_hidden)
+                .and_then(|child| child.last_rect);
+            if let Some(rect) = css.and_then(|css| self.abs_rect(css)) {
                 self.send_window_bound(binding, GridCmd::UpdateRect {
                     id: crate::grid_ipc::renderer_label(binding.index), rect,
                 });
@@ -2475,6 +2527,7 @@ impl GridProcessManager {
             "tab-navigated" => {
                 let Some(revision) = child.navigation_revision.checked_add(1) else { return false; };
                 child.navigation_revision = revision;
+                comms.navigation_revision.store(revision, Ordering::SeqCst);
                 child.last_url = payload["url"].as_str().map(str::to_owned);
                 if child.last_url.as_deref() != Some("about:blank") {
                     comms.blank_reclaim_blocked.store(true, Ordering::SeqCst);

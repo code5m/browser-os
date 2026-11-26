@@ -323,7 +323,7 @@ impl ToolRegistry {
                 return Err(FoundationError::PermissionDenied);
             }
             tool.validate_binding(binding, &permit.operation.arguments)?;
-        } else if effectful {
+        } else if effectful || tool.requires_authorized_call() {
             return Err(FoundationError::PermissionDenied);
         }
 
@@ -377,6 +377,19 @@ impl ToolRegistry {
         }
         // Receipt creation is not permission to dispatch a stale generation.
         // A cancelled call remains conservatively unknown for reconciliation.
+        if !_lease.is_active() || *cancellation.borrow_and_update() {
+            return Err(FoundationError::Cancelled);
+        }
+        // Persistence or a resource-owner check may have consumed the approval
+        // lifetime. Recheck immediately before constructing the dispatch future.
+        if let Some(binding) = binding {
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                .map_err(|_| FoundationError::PermissionDenied)?.as_millis();
+            if now >= u128::from(binding.expires_at_unix_ms) {
+                return Err(FoundationError::PermissionDenied);
+            }
+            tool.validate_binding(binding, &permit.operation.arguments)?;
+        }
         if !_lease.is_active() || *cancellation.borrow_and_update() {
             return Err(FoundationError::Cancelled);
         }

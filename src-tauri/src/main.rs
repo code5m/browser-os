@@ -763,6 +763,20 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
         // 命令循环：Request → 本地执行 → Response。主进程断开（EOF/错误）→ 退出，
         // 避免主进程退出后残留置顶孤儿窗口。
         let mut reader = std::io::BufReader::new(stream);
+        let (native_read_replies, native_read_receive) =
+            std::sync::mpsc::sync_channel::<grid_ipc::Wire>(grid_ipc::MAX_PENDING_RENDERER_REQUESTS);
+        let native_read_writer = writer.clone();
+        if std::thread::Builder::new().name("renderer-read-replies".into()).spawn(move || {
+            while let Ok(response) = native_read_receive.recv() {
+                if grid_ipc::write_wire(&mut *native_read_writer.lock().unwrap(), &response).is_err() {
+                    // The owning renderer's transport cannot deliver receipts.
+                    // Exit this fault domain, not the main BrowserOS process.
+                    std::process::exit(1);
+                }
+            }
+        }).is_err() {
+            std::process::exit(1);
+        }
         let mut request_fence = grid_ipc::GridRequestFence::default();
         let mut renderer_capture = crate::renderer_services::CaptureBuffer::default();
         loop {
@@ -785,11 +799,15 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
                         continue;
                     }
                     if let grid_ipc::GridCmd::ReadReplies { ref id } = cmd {
-                        let reply_writer = writer.clone();
-                        let result = app
-                            .state::<tauri_plugin_browser_tabs::TabManagerState>()
-                            .eval_result(
-                                id,
+                        let manager = app.state::<tauri_plugin_browser_tabs::TabManagerState>();
+                        let Ok(document) = manager.capture_document(id) else {
+                            if grid_ipc::write_wire(&mut *writer.lock().unwrap(),
+                                &grid_ipc::Wire::err(seq, "GRID_DOCUMENT_STALE")).is_err() { break; }
+                            continue;
+                        };
+                        let reply_sender = native_read_replies.clone();
+                        let result = manager.eval_result_document(
+                                id, &document,
                                 include_str!("../injected/extract-replies.js").to_string(),
                                 move |value| {
                                     let response = match value {
@@ -801,10 +819,11 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
                                         },
                                         Err(e) => grid_ipc::Wire::err(seq, e),
                                     };
-                                    let _ = grid_ipc::write_wire(
-                                        &mut *reply_writer.lock().unwrap(),
-                                        &response,
-                                    );
+                                    if reply_sender.try_send(response).is_err() {
+                                        // Never block a native WebView callback;
+                                        // the original requester observes timeout.
+                                        eprintln!("[grid-child] read reply lane unavailable");
+                                    }
                                 },
                             );
                         if result.is_err() {
@@ -822,11 +841,16 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
                                 &grid_ipc::Wire::err(seq, "GRID_HIBERNATION_DOWNLOAD_HISTORY"));
                             continue;
                         }
+                        let Ok(document) = manager.capture_document(id) else {
+                            if grid_ipc::write_wire(&mut *writer.lock().unwrap(),
+                                &grid_ipc::Wire::err(seq, "GRID_DOCUMENT_STALE")).is_err() { break; }
+                            continue;
+                        };
                         let probe_manager = std::sync::Arc::clone(manager.inner());
                         let probe_id = id.clone();
-                        let reply_writer = writer.clone();
-                        let result = manager.eval_result(
-                                id,
+                        let reply_sender = native_read_replies.clone();
+                        let result = manager.eval_result_document(
+                                id, &document,
                                 if grid_ipc::is_tab_renderer(index) {
                                     include_str!("../injected/tab-hibernation-probe.js").to_string()
                                 } else {
@@ -844,10 +868,11 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
                                         },
                                         Err(e) => grid_ipc::Wire::err(seq, e),
                                     };
-                                    let _ = grid_ipc::write_wire(
-                                        &mut *reply_writer.lock().unwrap(),
-                                        &response,
-                                    );
+                                    if reply_sender.try_send(response).is_err() {
+                                        // Never block a native WebView callback;
+                                        // the original requester observes timeout.
+                                        eprintln!("[grid-child] read reply lane unavailable");
+                                    }
                                 },
                             );
                         if result.is_err() {

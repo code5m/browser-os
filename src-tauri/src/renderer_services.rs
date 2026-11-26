@@ -21,6 +21,10 @@ fn capture_start(app: &AppHandle, buffer: &mut CaptureBuffer, id: &String, ticke
     -> Result<Option<String>, String>
 {
     if !valid_ticket(ticket) { return Err("CAPTURE_INVALID_TICKET".into()); }
+    // The main capture owner serializes start requests. A lost release reply
+    // must not permanently strand a completed buffer on the same document.
+    // The synchronous capture reader still cannot enter a second Start while
+    // the first native capture is running.
     buffer.0 = None;
     let manager = app.state::<TabManagerState>();
     let document = manager.capture_document(id).map_err(|_| "CAPTURE_DOCUMENT_STALE")?;
@@ -73,7 +77,7 @@ fn fill(app: &AppHandle, id: &String, origin: &str, username: &str, password: &s
     let document = manager.capture_document(id).map_err(|_| "TAB_RENDERER_DOCUMENT_STALE")?;
     let js = crate::bridge::build_autofill_script(origin, username, password);
     let (send, receive) = std::sync::mpsc::sync_channel(1);
-    manager.eval_result(id, js, move |value| { let _ = send.send(value); })
+    manager.eval_result_document(id, &document, js, move |value| { let _ = send.send(value); })
         .map_err(|_| "CREDENTIAL_FILL_OUTCOME_UNKNOWN")?;
     let code = receive.recv()
         .map_err(|_| "CREDENTIAL_FILL_OUTCOME_UNKNOWN")?

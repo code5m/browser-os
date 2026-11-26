@@ -2514,6 +2514,14 @@ impl TabManager {
         if document.is_some_and(|expected| !expected.observed_generation_is_current()) {
             return Err(BrowserTabError::Platform("TAB_DOCUMENT_STALE".into()));
         }
+        let expected_document = document.cloned();
+        let callback = move |result: std::result::Result<String, String>| {
+            if expected_document.as_ref().is_some_and(|expected| !expected.observed_generation_is_current()) {
+                callback(Err("TAB_DOCUMENT_STALE".into()));
+            } else {
+                callback(result);
+            }
+        };
         let webview = tab.webview.clone();
         #[cfg(target_os = "linux")]
         webview.with_webview(move |native| {

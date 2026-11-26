@@ -38,6 +38,14 @@ pub fn current_public_api_catalog() -> Vec<PublicApiSpec> {
     use CapabilityOwner::*;
     [
         (Browser, "tab_list", ToolEffect::ReadOnly),
+        // Browser mutations may trigger network actions or discard unsaved
+        // page state. Catalog entries are not enabled adapters/permissions.
+        (Browser, "tab_new", ToolEffect::ExternalSideEffect),
+        (Browser, "tab_open", ToolEffect::ExternalSideEffect),
+        (Browser, "tab_close", ToolEffect::ExternalSideEffect),
+        (Browser, "tab_go_back", ToolEffect::ExternalSideEffect),
+        (Browser, "tab_go_forward", ToolEffect::ExternalSideEffect),
+        (Browser, "tab_reload", ToolEffect::ExternalSideEffect),
         (Coding, "coding_lsp_status", ToolEffect::ReadOnly),
         (Database, "db_list_connections", ToolEffect::ReadOnly),
         (Database, "db_query", ToolEffect::ExternalSideEffect),
@@ -81,7 +89,8 @@ pub struct PublicReadTool {
 }
 impl PublicReadTool {
     pub fn new(spec: PublicApiSpec, host: Arc<dyn PublicApiHost>) -> Result<Self> {
-        if spec.effect != ToolEffect::ReadOnly || !spec.requires_host_authorization {
+        if spec.effect != ToolEffect::ReadOnly || !spec.requires_host_authorization
+            || !current_public_api_catalog().contains(&spec) {
             return Err(FoundationError::PermissionDenied);
         }
         Ok(Self { spec, host })

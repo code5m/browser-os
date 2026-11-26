@@ -462,6 +462,30 @@ impl Wire {
 // refuse oversized frames before allocation or a synchronous pipe write.
 pub const MAX_GRID_WIRE_BYTES: usize = 1024 * 1024;
 
+// Bound admitted native requests independently of caller/worker counts.
+pub(crate) const MAX_PENDING_RENDERER_REQUESTS: usize = 32;
+
+/// The request deadline starts before acquiring its writer, not after I/O.
+/// Keep this a separate admission bound: OS write/cancellation and short
+/// metadata mutexes still have their own semantics.
+pub(crate) fn lock_renderer_writer<'a, T>(
+    writer: &'a std::sync::Mutex<T>, deadline: std::time::Instant,
+    mut check: impl FnMut() -> Result<(), String>,
+) -> Result<std::sync::MutexGuard<'a, T>, String> {
+    use std::sync::TryLockError;
+    loop {
+        check()?;
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() { return Err("GRID_WRITER_ADMISSION_TIMEOUT".into()); }
+        match writer.try_lock() {
+            Ok(guard) => return Ok(guard),
+            Err(TryLockError::Poisoned(_)) => return Err("GRID_WRITER_POISONED".into()),
+            Err(TryLockError::WouldBlock) => std::thread::sleep(
+                remaining.min(std::time::Duration::from_millis(10))),
+        }
+    }
+}
+
 /// 写一帧（JSON + '\n'）。
 pub fn write_wire<W: std::io::Write>(w: &mut W, msg: &Wire) -> std::io::Result<()> {
     let mut line = serde_json::to_vec(msg)

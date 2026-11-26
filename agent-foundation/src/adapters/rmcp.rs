@@ -2,7 +2,7 @@
 //! explicit host allowlist can expose remote tools and ONLY as read-only.
 use crate::{
     approval::ApprovalBinding,
-    tool::{AgentTool, ToolEffect, ToolFuture},
+    tool::{AgentTool, AuthorizedCall, ToolEffect, ToolFuture},
     FoundationError, Result,
 };
 use rmcp::{
@@ -26,7 +26,7 @@ impl HostMcpPolicy {
         args: Value,
     ) -> Result<CallToolRequestParams> {
         if !self.allowed_read_only.contains(name)
-            || !discovered.iter().any(|tool| tool.name == name)
+            || discovered.iter().filter(|tool| tool.name == name).count() != 1
         {
             return Err(FoundationError::PermissionDenied);
         }
@@ -69,11 +69,27 @@ impl AgentTool for RmcpReadOnlyTool {
     fn validate_binding(&self, binding: &ApprovalBinding, args: &Value) -> Result<()> {
         (self.verifier)(binding, args)
     }
-    fn call<'a>(&'a self, arguments: Value) -> ToolFuture<'a> {
+    fn requires_authorized_call(&self) -> bool { true }
+    fn call<'a>(&'a self, _arguments: Value) -> ToolFuture<'a> {
+        Box::pin(async { Err(FoundationError::PermissionDenied) })
+    }
+    fn call_authorized<'a>(&'a self, call: AuthorizedCall) -> ToolFuture<'a> {
         Box::pin(async move {
-            let Value::Object(map) = arguments else {
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                .map_err(|_| FoundationError::PermissionDenied)?.as_millis();
+            if now >= u128::from(call.binding.expires_at_unix_ms)
+                || call.binding.principal_id.is_nil() || call.binding.workspace_id.is_nil()
+                || call.binding.session_id.is_nil() {
+                return Err(FoundationError::PermissionDenied);
+            }
+            (self.verifier)(&call.binding, &call.arguments)?;
+            let Value::Object(map) = call.arguments else {
                 return Err(FoundationError::InvalidInput("mcp arguments"));
             };
+            if serde_json::to_vec(&map)
+                .map_err(|e| FoundationError::Serialization(e.to_string()))?.len() > 16_384 {
+                return Err(FoundationError::InvalidInput("mcp tool arguments too large"));
+            }
             let request = CallToolRequestParams::new(self.tool_name.clone()).with_arguments(map);
             let response = self
                 .client
@@ -105,7 +121,8 @@ pub fn strict_result(result: CallToolResult) -> Result<Value> {
 pub fn names_for_host(discovered: &[Tool], allowlist: &HashSet<String>) -> Vec<String> {
     discovered
         .iter()
-        .filter(|item| allowlist.contains(item.name.as_ref()))
+        .filter(|item| allowlist.contains(item.name.as_ref())
+            && discovered.iter().filter(|other| other.name == item.name).count() == 1)
         .map(|item| item.name.to_string())
         .collect()
 }
