@@ -68,11 +68,15 @@ fn release_pending_open_urls(app: &AppHandle) -> io::Result<()> {
 
 pub fn prepare_workspace(app: &AppHandle) -> io::Result<()> {
     crate::workspace::prepare_data_dir(app)?;
-    // Before TabManager profile preparation, native window creation or
-    // opening pending URLs, join the existing application profile epoch.
+    let tabs = app
+        .try_state::<tauri_plugin_browser_tabs::TabManagerState>()
+        .ok_or_else(|| io::Error::other("BROWSER_PROFILE_MANAGER_UNAVAILABLE"))?;
+    // Before native profile preparation, window creation or URL replay,
+    // join the existing application profile epoch and exact directory.
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     crate::browser_profile_owner::prepare(
         &crate::workspace::data_dir(app),
+        &tabs.expected_browser_profile().map_err(|error| io::Error::other(error.to_string()))?,
         crate::parse_grid_child_arg().is_some(),
     )?;
     #[cfg(not(target_os = "linux"))]
@@ -100,11 +104,13 @@ pub fn prepare_workspace(app: &AppHandle) -> io::Result<()> {
             eprintln!("[startup] native sandbox preparation: SANDBOX_RECOVERY_BLOCKED");
         }
     }
-    let tabs = app
-        .try_state::<tauri_plugin_browser_tabs::TabManagerState>()
-        .ok_or_else(|| io::Error::other("BROWSER_PROFILE_MANAGER_UNAVAILABLE"))?;
     tabs.prepare_storage()
         .map_err(|error| io::Error::other(error.to_string()))?;
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    crate::browser_profile_owner::bind_prepared(
+        &crate::workspace::data_dir(app),
+        &tabs.prepared_browser_profile().map_err(|error| io::Error::other(error.to_string()))?,
+    )?;
     release_pending_open_urls(app)
 }
 

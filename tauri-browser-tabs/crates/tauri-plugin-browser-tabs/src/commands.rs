@@ -5,7 +5,7 @@ use crate::platform;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 #[cfg(target_os = "linux")]
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -39,29 +39,77 @@ fn browser_profile_path(app_data_dir: &Path) -> PathBuf {
 }
 
 #[cfg(target_os = "linux")]
-fn ensure_private_browser_profile(base: &Path) -> Result<PathBuf> {
-    let profile = browser_profile_path(base);
-    if let Ok(meta) = std::fs::symlink_metadata(&profile) {
-        if !meta.file_type().is_dir() {
-            return Err(BrowserTabError::Platform(
-                "browser profile is not a directory".into(),
-            ));
+struct PreparedLinuxProfile {
+    path: PathBuf,
+    pin: std::fs::File,
+    device: u64,
+    inode: u64,
+    owner: u32,
+}
+
+#[cfg(target_os = "linux")]
+impl PreparedLinuxProfile {
+    fn check_root(&self) -> Result<()> {
+        let denied = || BrowserTabError::Platform("BROWSER_PROFILE_ROOT_IDENTITY_CHANGED".into());
+        let live = std::fs::symlink_metadata(&self.path).map_err(|_| denied())?;
+        let pinned = self.pin.metadata().map_err(|_| denied())?;
+        let matches = |meta: &std::fs::Metadata| {
+            meta.is_dir()
+                && meta.dev() == self.device
+                && meta.ino() == self.inode
+                && meta.uid() == self.owner
+                && meta.permissions().mode() & 0o7777 == 0o700
+        };
+        if !matches(&live) || !matches(&pinned)
+            || std::fs::canonicalize(&self.path).map_err(|_| denied())? != self.path
+        {
+            return Err(denied());
         }
+        Ok(())
     }
-    std::fs::create_dir_all(&profile)
-        .map_err(|_| BrowserTabError::Platform("cannot create browser profile".into()))?;
-    let canonical_base = std::fs::canonicalize(&base)
+}
+
+#[cfg(target_os = "linux")]
+fn ensure_private_browser_profile(base: &Path) -> Result<PreparedLinuxProfile> {
+    let canonical_base = std::fs::canonicalize(base)
         .map_err(|_| BrowserTabError::Platform("browser profile base unavailable".into()))?;
-    let canonical_profile = std::fs::canonicalize(&profile)
-        .map_err(|_| BrowserTabError::Platform("browser profile unavailable".into()))?;
-    if canonical_profile != canonical_base.join("browser-webview-profile") {
-        return Err(BrowserTabError::Platform(
-            "browser profile path invalid".into(),
-        ));
+    let profile = browser_profile_path(&canonical_base);
+    match std::fs::create_dir(&profile) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(_) => return Err(BrowserTabError::Platform("cannot create browser profile".into())),
     }
-    std::fs::set_permissions(&profile, std::fs::Permissions::from_mode(0o700))
+    let denied = || BrowserTabError::Platform("browser profile path invalid".into());
+    let before = std::fs::symlink_metadata(&profile).map_err(|_| denied())?;
+    if !before.file_type().is_dir() {
+        return Err(denied());
+    }
+    let canonical_profile = std::fs::canonicalize(&profile).map_err(|_| denied())?;
+    if canonical_profile != canonical_base.join("browser-webview-profile") {
+        return Err(denied());
+    }
+    // Pin the existing directory and compare the actual object, then apply
+    // privacy through the descriptor rather than a second path-based chmod.
+    // The engine still consumes a path; this is not hostile same-UID isolation.
+    let pin = std::fs::File::open(&canonical_profile).map_err(|_| denied())?;
+    let actual = pin.metadata().map_err(|_| denied())?;
+    let base_owner = std::fs::metadata(&canonical_base).map_err(|_| denied())?.uid();
+    if !actual.is_dir() || actual.dev() != before.dev() || actual.ino() != before.ino()
+        || actual.uid() != before.uid() || actual.uid() != base_owner
+    {
+        return Err(denied());
+    }
+    pin.set_permissions(std::fs::Permissions::from_mode(0o700))
         .map_err(|_| BrowserTabError::Platform("cannot secure browser profile".into()))?;
-    Ok(profile)
+    let prepared = PreparedLinuxProfile {
+        path: canonical_profile,
+        pin,
+        device: actual.dev(),
+        inode: actual.ino(),
+        owner: actual.uid(),
+    };
+    prepared.check_root()?;
+    Ok(prepared)
 }
 
 // Browser sub-WebViews use a single app-owned WebView2 directory. Native
@@ -130,6 +178,27 @@ mod browser_profile_tests {
         );
         assert_eq!(std::fs::read(dir.join("profile.dat")).unwrap(), b"fixture");
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_prepared_profile_refuses_a_replacement_directory() {
+        let base = std::env::temp_dir().join(format!(
+            "browseros-profile-pin-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        std::fs::create_dir(&base).unwrap();
+        let profile = ensure_private_browser_profile(&base).unwrap();
+        profile.check_root().unwrap();
+        let moved = base.join("original");
+        std::fs::rename(&profile.path, &moved).unwrap();
+        std::fs::create_dir(&profile.path).unwrap();
+        std::fs::set_permissions(&profile.path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(profile.check_root().is_err());
+        drop(profile);
+        std::fs::remove_dir_all(base).unwrap();
     }
 
     #[test]
@@ -844,6 +913,8 @@ pub struct TabManager {
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     isolated_profile: Option<PathBuf>,
     isolated_ready: Option<Arc<std::sync::atomic::AtomicBool>>,
+    #[cfg(target_os = "linux")]
+    profile: RwLock<Option<Arc<PreparedLinuxProfile>>>,
     #[cfg(target_os = "windows")]
     profile: RwLock<Option<Arc<browseros_platform_security::windows::PreparedPrivateDirectory>>>,
 }
@@ -858,7 +929,7 @@ impl TabManager {
             #[cfg(any(target_os = "linux", target_os = "windows"))]
             isolated_profile: None,
             isolated_ready: None,
-            #[cfg(target_os = "windows")]
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
             profile: RwLock::new(None),
         }
     }
@@ -897,6 +968,13 @@ impl TabManager {
     /// Full preparation never runs under the tab collection lock. Windows Grid
     /// children join the same native preparation epoch as the main process.
     pub fn prepare_storage(&self) -> Result<()> {
+        #[cfg(target_os = "linux")]
+        {
+            let mut slot = self.profile.write();
+            if slot.is_none() {
+                *slot = Some(Arc::new(ensure_private_browser_profile(&self.profile_base()?)?));
+            }
+        }
         #[cfg(target_os = "windows")]
         {
             let mut slot = self.profile.write();
@@ -931,8 +1009,25 @@ impl TabManager {
         Ok(())
     }
 
+    /// Native startup only: resolve the expected profile location without
+    /// creating it. The application binds Grid admission to its identity.
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    pub fn expected_browser_profile(&self) -> Result<PathBuf> {
+        let base = std::fs::canonicalize(self.profile_base()?)
+            .map_err(|_| BrowserTabError::Platform("BROWSER_PROFILE_LOCATION_UNAVAILABLE".into()))?;
+        Ok(browser_profile_path(&base))
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn prepared_browser_profile(&self) -> Result<PathBuf> {
+        let prepared = self.profile.read().as_ref().cloned()
+            .ok_or_else(|| BrowserTabError::Platform("BROWSER_PROFILE_NOT_PREPARED".into()))?;
+        prepared.check_root()?;
+        Ok(prepared.path.clone())
+    }
+
     #[cfg(target_os = "windows")]
-    fn prepared_browser_profile(&self) -> Result<PathBuf> {
+    pub fn prepared_browser_profile(&self) -> Result<PathBuf> {
         let prepared = self
             .profile
             .read()
@@ -980,10 +1075,8 @@ impl TabManager {
             .parse()
             .map_err(|_| BrowserTabError::InvalidUrl(options.url.clone()))?;
 
-        #[cfg(target_os = "windows")]
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         let profile = self.prepared_browser_profile()?;
-        #[cfg(target_os = "linux")]
-        let profile = ensure_private_browser_profile(&self.profile_base()?)?;
 
         let _reservation = self.reserve_lifecycle(&options.id)?;
         if self.tabs.read().contains_key(&options.id) {

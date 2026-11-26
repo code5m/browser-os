@@ -4,6 +4,7 @@
 //! sandbox. It prevents overlapping cooperating BrowserOS host epochs.
 //! Native renderer descendants that outlive every host remain the separate
 //! responsibility of the existing process-domain supervisor.
+use sha2::{Digest, Sha256};
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::Path;
@@ -17,6 +18,8 @@ const GATE: &str = "admission.lock";
 const LEADER: &str = "leader.lock";
 const MEMBERS: &str = "members.lock";
 const EPOCH_LEN: usize = 36;
+const PROFILE_DIGEST_LEN: usize = 32;
+const RECORD_LEN: usize = EPOCH_LEN + PROFILE_DIGEST_LEN;
 const GATE_TIMEOUT: Duration = Duration::from_secs(2);
 
 fn denied(code: &'static str) -> io::Error {
@@ -143,7 +146,7 @@ fn parse_epoch(raw: &str) -> io::Result<Uuid> {
 
 fn read_epoch(gate: &LockFile) -> io::Result<Uuid> {
     let mut file = gate.file();
-    if file.metadata()?.len() != EPOCH_LEN as u64 {
+    if file.metadata()?.len() != RECORD_LEN as u64 {
         return Err(denied("BROWSER_PROFILE_EPOCH_INVALID"));
     }
     let mut raw = [0u8; EPOCH_LEN];
@@ -157,12 +160,28 @@ fn publish_epoch(gate: &LockFile, epoch: Uuid) -> io::Result<()> {
     // A new leader may repair a short interrupted record only AFTER proving
     // there are no older host members. Never unlink or truncate the lock.
     let mut file = gate.file();
-    if file.metadata()?.len() > EPOCH_LEN as u64 {
+    if file.metadata()?.len() > RECORD_LEN as u64 {
         return Err(denied("BROWSER_PROFILE_EPOCH_INVALID"));
     }
+    let mut record = [0u8; RECORD_LEN];
+    record[..EPOCH_LEN].copy_from_slice(epoch.to_string().as_bytes());
     file.seek(SeekFrom::Start(0))?;
-    file.write_all(epoch.to_string().as_bytes())?;
+    file.write_all(&record)?;
     file.sync_data()
+}
+
+fn profile_digest(path: &Path) -> io::Result<[u8; PROFILE_DIGEST_LEN]> {
+    let identity = crate::capabilities::workspace::safe_paths::directory_identity(path)
+        .map_err(|_| denied("BROWSER_PROFILE_ROOT_IDENTITY_UNAVAILABLE"))?;
+    Ok(Sha256::digest(identity.as_bytes()).into())
+}
+
+fn read_profile_digest(gate: &LockFile) -> io::Result<[u8; PROFILE_DIGEST_LEN]> {
+    let mut file = gate.file();
+    let mut digest = [0u8; PROFILE_DIGEST_LEN];
+    file.seek(SeekFrom::Start(EPOCH_LEN as u64))?;
+    file.read_exact(&mut digest)?;
+    Ok(digest)
 }
 
 struct ProfileLease {
@@ -204,14 +223,36 @@ impl ProfileLease {
         }
         Ok(Self { epoch: expected, _member: member, leader: None })
     }
+
+    fn bind_or_verify_profile(&self, directory: &Path, path: &Path) -> io::Result<()> {
+        let gate = gate(directory)?;
+        if read_epoch(&gate)? != self.epoch {
+            return Err(denied("BROWSER_PROFILE_STALE_EPOCH"));
+        }
+        let actual = profile_digest(path)?;
+        let pinned = read_profile_digest(&gate)?;
+        if pinned == actual && pinned != [0; PROFILE_DIGEST_LEN] {
+            return Ok(());
+        }
+        // Only the leader can bind the first native directory. A Grid host
+        // cannot select a new root even if its epoch is valid.
+        if self.leader.is_none() || pinned != [0; PROFILE_DIGEST_LEN] {
+            return Err(denied("BROWSER_PROFILE_ROOT_IDENTITY_CHANGED"));
+        }
+        let mut file = gate.file();
+        file.seek(SeekFrom::Start(EPOCH_LEN as u64))?;
+        file.write_all(&actual)?;
+        file.sync_data()
+    }
 }
 
 // Never release the host membership at UI teardown or tab close. Static
 // ownership intentionally lasts until OS process termination, including
 // startup failure paths; the kernel closes the underlying handles.
 static HOST_PROFILE: OnceLock<ProfileLease> = OnceLock::new();
+static HOST_PROFILE_BOUND: OnceLock<()> = OnceLock::new();
 
-pub(crate) fn prepare(data_dir: &Path, grid: bool) -> io::Result<()> {
+pub(crate) fn prepare(data_dir: &Path, profile: &Path, grid: bool) -> io::Result<()> {
     if HOST_PROFILE.get().is_some() {
         return Err(denied("BROWSER_PROFILE_ALREADY_ADMITTED"));
     }
@@ -223,20 +264,33 @@ pub(crate) fn prepare(data_dir: &Path, grid: bool) -> io::Result<()> {
         // Remove inherited correlation from the subsequent WebView process
         // environment. It is not a secret or an IPC authorization token.
         std::env::remove_var(GRID_EPOCH_ENV);
-        ProfileLease::grid(&directory, parse_epoch(&raw)?)?
+        let lease = ProfileLease::grid(&directory, parse_epoch(&raw)?)?;
+        // A Grid process must prove that the actual native profile root is
+        // the leader's original one BEFORE calling native profile prepare.
+        lease.bind_or_verify_profile(&directory, profile)?;
+        lease
     } else {
         std::env::remove_var(GRID_EPOCH_ENV);
         ProfileLease::main(&directory)?
     };
     HOST_PROFILE.set(lease)
         .map_err(|_| denied("BROWSER_PROFILE_ALREADY_ADMITTED"))?;
-    eprintln!("BROWSER_PROFILE_HOST_READY role={}", if grid { "grid" } else { "main" });
+    Ok(())
+}
+
+pub(crate) fn bind_prepared(data_dir: &Path, profile: &Path) -> io::Result<()> {
+    let lease = HOST_PROFILE.get()
+        .ok_or_else(|| denied("BROWSER_PROFILE_OWNER_NOT_ADMITTED"))?;
+    lease.bind_or_verify_profile(&data_dir.join(DIRECTORY), profile)?;
+    HOST_PROFILE_BOUND.set(())
+        .map_err(|_| denied("BROWSER_PROFILE_ALREADY_BOUND"))?;
+    eprintln!("BROWSER_PROFILE_HOST_READY role={}", if lease.leader.is_some() { "main" } else { "grid" });
     Ok(())
 }
 
 pub(crate) fn grid_epoch() -> Result<String, String> {
     HOST_PROFILE.get()
-        .filter(|lease| lease.leader.is_some())
+        .filter(|lease| lease.leader.is_some() && HOST_PROFILE_BOUND.get().is_some())
         .map(|lease| lease.epoch.to_string())
         .ok_or_else(|| "BROWSER_PROFILE_LEADER_REQUIRED".into())
 }
@@ -247,6 +301,7 @@ mod tests {
 
     const CHILD_ROOT: &str = "BROWSEROS_PROFILE_TEST_ROOT";
     const CHILD_EPOCH: &str = "BROWSEROS_PROFILE_TEST_EPOCH";
+    const CHILD_EXPECT_STALE: &str = "BROWSEROS_PROFILE_TEST_STALE";
 
     fn fixture() -> std::path::PathBuf {
         let path = std::env::temp_dir().join(format!("browseros-profile-owner-{}", Uuid::new_v4()));
@@ -259,7 +314,16 @@ mod tests {
         let Some(root) = std::env::var_os(CHILD_ROOT) else { return };
         let root = std::path::PathBuf::from(root);
         let epoch = parse_epoch(&std::env::var(CHILD_EPOCH).unwrap()).unwrap();
-        let _lease = ProfileLease::grid(&root, epoch).unwrap();
+        let result = ProfileLease::grid(&root, epoch);
+        if std::env::var_os(CHILD_EXPECT_STALE).is_some() {
+            assert_eq!(
+                result.err().expect("stale membership must fail").to_string(),
+                "BROWSER_PROFILE_STALE_EPOCH"
+            );
+            return;
+        }
+        let lease = result.unwrap();
+        lease.bind_or_verify_profile(&root, &root.join("native-profile")).unwrap();
         std::fs::write(root.join("fixture-ready"), b"ready").unwrap();
         // Parent controls the lifetime; EOF ends the fixture.
         let mut byte = [0u8; 1];
@@ -279,6 +343,9 @@ mod tests {
         use std::process::{Command, Stdio};
         let root = fixture();
         let old = ProfileLease::main(&root).unwrap();
+        let profile = root.join("native-profile");
+        crate::capabilities::workspace::safe_paths::ensure_private_directory(&profile).unwrap();
+        old.bind_or_verify_profile(&root, &profile).unwrap();
         let epoch = old.epoch;
         let mut child = Child(Command::new(std::env::current_exe().unwrap())
             .args(["--exact", "browser_profile_owner::tests::profile_member_child_fixture", "--nocapture"])
@@ -309,7 +376,43 @@ mod tests {
         }
         let next = ProfileLease::main(&root).unwrap();
         assert_ne!(next.epoch, epoch);
+        next.bind_or_verify_profile(&root, &profile).unwrap();
+        let mut stale = Child(Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "browser_profile_owner::tests::profile_member_child_fixture", "--nocapture"])
+            .env(CHILD_ROOT, &root)
+            .env(CHILD_EPOCH, epoch.to_string())
+            .env(CHILD_EXPECT_STALE, "1")
+            .stdin(Stdio::null())
+            .spawn().unwrap());
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(status) = stale.0.try_wait().unwrap() {
+                assert!(status.success());
+                break;
+            }
+            assert!(Instant::now() < deadline, "stale fixture did not retire");
+            std::thread::sleep(Duration::from_millis(20));
+        }
         drop(next);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn bound_epoch_cannot_adopt_a_replacement_native_profile() {
+        let root = fixture();
+        let old = ProfileLease::main(&root).unwrap();
+        let profile = root.join("native-profile");
+        crate::capabilities::workspace::safe_paths::ensure_private_directory(&profile).unwrap();
+        old.bind_or_verify_profile(&root, &profile).unwrap();
+        let moved = root.join("original-profile");
+        std::fs::rename(&profile, &moved).unwrap();
+        crate::capabilities::workspace::safe_paths::ensure_private_directory(&profile).unwrap();
+        assert_eq!(
+            old.bind_or_verify_profile(&root, &profile).unwrap_err().to_string(),
+            "BROWSER_PROFILE_ROOT_IDENTITY_CHANGED"
+        );
+        old.bind_or_verify_profile(&root, &moved).unwrap();
+        drop(old);
         std::fs::remove_dir_all(root).unwrap();
     }
 
