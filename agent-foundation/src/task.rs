@@ -224,7 +224,11 @@ impl TaskRegistry {
         let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
         let task = tasks.get(&id).ok_or(FoundationError::NotFound)?;
         if !task.status.is_terminal()
-            || self.execution_leases.lock().unwrap_or_else(|e| e.into_inner()).contains(&id)
+            || self
+                .execution_leases
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .contains(&id)
         {
             return Err(FoundationError::InvalidTransition);
         }
@@ -247,22 +251,38 @@ impl TaskRegistry {
     /// way to import an approval or restore a live execution lease.
     pub fn restore_paused_record(&self, record: TaskRecord) -> Result<()> {
         #[cfg(feature = "durable-sqlite")]
-        if self.durable.is_some() { return Err(FoundationError::InvalidTransition); }
+        if self.durable.is_some() {
+            return Err(FoundationError::InvalidTransition);
+        }
         // Project-free text and offline Channel fixtures have no workspace
         // grant; only empty-context paused projections use this exception.
         let project_free_text = record.workspace_id.is_nil()
-            && matches!(record.goal.as_str(), "chat" | "legacy_agent" | "local_chat" | "agent_channel")
+            && matches!(
+                record.goal.as_str(),
+                "chat" | "legacy_agent" | "local_chat" | "agent_channel"
+            )
             && record.context.is_empty();
-        if record.id.is_nil() || record.session_id.is_nil() || (record.workspace_id.is_nil() && !project_free_text)
-            || record.status != TaskStatus::Paused || record.pending.is_some()
-            || record.goal.trim().is_empty() || record.goal.len() > 32_768
-        { return Err(FoundationError::InvalidInput("paused task checkpoint")); }
+        if record.id.is_nil()
+            || record.session_id.is_nil()
+            || (record.workspace_id.is_nil() && !project_free_text)
+            || record.status != TaskStatus::Paused
+            || record.pending.is_some()
+            || record.goal.trim().is_empty()
+            || record.goal.len() > 32_768
+        {
+            return Err(FoundationError::InvalidInput("paused task checkpoint"));
+        }
         validate_context_list(&record.context)?;
         let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
-        if tasks.contains_key(&record.id) { return Err(FoundationError::InvalidTransition); }
+        if tasks.contains_key(&record.id) {
+            return Err(FoundationError::InvalidTransition);
+        }
         let id = record.id;
         let (sender, _) = watch::channel(false);
-        self.signals.lock().unwrap_or_else(|e| e.into_inner()).insert(id, sender);
+        self.signals
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(id, sender);
         tasks.insert(id, record);
         self.journal.append(id, EventKind::Interrupted);
         Ok(())
@@ -272,14 +292,26 @@ impl TaskRegistry {
     /// checkpoint is authoritative. Never erase an active lease or SQLite row.
     pub fn detach_paused_record(&self, id: Uuid) -> Result<()> {
         #[cfg(feature = "durable-sqlite")]
-        if self.durable.is_some() { return Err(FoundationError::InvalidTransition); }
+        if self.durable.is_some() {
+            return Err(FoundationError::InvalidTransition);
+        }
         let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
         let task = tasks.get(&id).ok_or(FoundationError::NotFound)?;
-        if task.status != TaskStatus::Paused || task.pending.is_some()
-            || self.execution_leases.lock().unwrap_or_else(|e| e.into_inner()).contains(&id)
-        { return Err(FoundationError::InvalidTransition); }
+        if task.status != TaskStatus::Paused
+            || task.pending.is_some()
+            || self
+                .execution_leases
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .contains(&id)
+        {
+            return Err(FoundationError::InvalidTransition);
+        }
         tasks.remove(&id);
-        self.signals.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
+        self.signals
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&id);
         self.journal.retire_task(id);
         Ok(())
     }
@@ -328,13 +360,20 @@ impl TaskRegistry {
         let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
         let previous = tasks.get(&id).ok_or(FoundationError::NotFound)?.clone();
         if !matches!(previous.status, TaskStatus::Ready | TaskStatus::Paused)
-            || self.execution_leases.lock().unwrap_or_else(|e| e.into_inner()).contains(&id)
+            || self
+                .execution_leases
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .contains(&id)
         {
             return Err(FoundationError::InvalidTransition);
         }
         let mut next = previous.clone();
         next.status = TaskStatus::Running;
-        next.revision = next.revision.checked_add(1).ok_or(FoundationError::InvalidTransition)?;
+        next.revision = next
+            .revision
+            .checked_add(1)
+            .ok_or(FoundationError::InvalidTransition)?;
         let events = [EventKind::StateChanged {
             from: previous.status,
             to: next.status,
@@ -361,7 +400,10 @@ impl TaskRegistry {
         }
         let mut next = previous.clone();
         next.status = TaskStatus::Paused;
-        next.revision = next.revision.checked_add(1).ok_or(FoundationError::InvalidTransition)?;
+        next.revision = next
+            .revision
+            .checked_add(1)
+            .ok_or(FoundationError::InvalidTransition)?;
         let events = [EventKind::StateChanged {
             from: previous.status,
             to: next.status,
@@ -383,7 +425,10 @@ impl TaskRegistry {
         let mut next = previous.clone();
         next.status = TaskStatus::Cancelled;
         next.pending = None;
-        next.revision = next.revision.checked_add(1).ok_or(FoundationError::InvalidTransition)?;
+        next.revision = next
+            .revision
+            .checked_add(1)
+            .ok_or(FoundationError::InvalidTransition)?;
         let events = [EventKind::StateChanged {
             from: previous.status,
             to: next.status,
@@ -420,7 +465,10 @@ impl TaskRegistry {
         }
         let mut next = previous.clone();
         next.status = status;
-        next.revision = next.revision.checked_add(1).ok_or(FoundationError::InvalidTransition)?;
+        next.revision = next
+            .revision
+            .checked_add(1)
+            .ok_or(FoundationError::InvalidTransition)?;
         let events = [EventKind::StateChanged {
             from: previous.status,
             to: next.status,
@@ -494,7 +542,10 @@ impl TaskRegistry {
         let mut next = previous.clone();
         next.pending = Some(pending);
         next.status = TaskStatus::AwaitingApproval;
-        next.revision = next.revision.checked_add(1).ok_or(FoundationError::InvalidTransition)?;
+        next.revision = next
+            .revision
+            .checked_add(1)
+            .ok_or(FoundationError::InvalidTransition)?;
         let events = [
             EventKind::StateChanged {
                 from: previous.status,
@@ -535,7 +586,10 @@ impl TaskRegistry {
         let mut next = previous.clone();
         next.pending = None;
         next.status = TaskStatus::Running;
-        next.revision = next.revision.checked_add(1).ok_or(FoundationError::InvalidTransition)?;
+        next.revision = next
+            .revision
+            .checked_add(1)
+            .ok_or(FoundationError::InvalidTransition)?;
         let events = [
             EventKind::ApprovalResolved { call_id, accepted },
             EventKind::StateChanged {
@@ -659,7 +713,10 @@ impl TaskRegistry {
             );
             if interrupted {
                 task.status = TaskStatus::Paused;
-                task.revision = task.revision.checked_add(1).ok_or(FoundationError::InvalidTransition)?;
+                task.revision = task
+                    .revision
+                    .checked_add(1)
+                    .ok_or(FoundationError::InvalidTransition)?;
             }
             task.pending = None;
             if registry
@@ -692,7 +749,9 @@ mod tests {
     #[test]
     fn paused_checkpoint_restores_same_task_and_new_revision() {
         let registry = TaskRegistry::new(Arc::new(EventJournal::new(32)));
-        let task = registry.create_scoped(Uuid::new_v4(), Uuid::new_v4(), "coding", vec![]).unwrap();
+        let task = registry
+            .create_scoped(Uuid::new_v4(), Uuid::new_v4(), "coding", vec![])
+            .unwrap();
         registry.start(task.id).unwrap();
         assert!(registry.detach_paused_record(task.id).is_err());
         registry.pause(task.id).unwrap();
@@ -702,7 +761,10 @@ mod tests {
         registry.restore_paused_record(checkpoint.clone()).unwrap();
         assert!(registry.restore_paused_record(checkpoint.clone()).is_err());
         registry.start(task.id).unwrap();
-        assert_eq!(registry.get(task.id).unwrap().revision, checkpoint.revision + 1);
+        assert_eq!(
+            registry.get(task.id).unwrap().revision,
+            checkpoint.revision + 1
+        );
     }
 
     #[test]
@@ -857,15 +919,26 @@ mod tests {
     #[test]
     fn cancellation_and_pause_do_not_reclaim_live_execution_identity() {
         let registry = TaskRegistry::new(Arc::new(EventJournal::new(32)));
-        let task = registry.create_scoped(Uuid::new_v4(), Uuid::new_v4(), "coding", vec![]).unwrap();
+        let task = registry
+            .create_scoped(Uuid::new_v4(), Uuid::new_v4(), "coding", vec![])
+            .unwrap();
         registry.start(task.id).unwrap();
         let revision = registry.get(task.id).unwrap().revision;
         let lease = registry.acquire_execution(task.id, revision).unwrap();
         registry.pause(task.id).unwrap();
-        assert_eq!(registry.start(task.id), Err(FoundationError::InvalidTransition));
-        assert_eq!(registry.detach_paused_record(task.id), Err(FoundationError::InvalidTransition));
+        assert_eq!(
+            registry.start(task.id),
+            Err(FoundationError::InvalidTransition)
+        );
+        assert_eq!(
+            registry.detach_paused_record(task.id),
+            Err(FoundationError::InvalidTransition)
+        );
         registry.cancel(task.id).unwrap();
-        assert_eq!(registry.retire_terminal(task.id), Err(FoundationError::InvalidTransition));
+        assert_eq!(
+            registry.retire_terminal(task.id),
+            Err(FoundationError::InvalidTransition)
+        );
         assert_eq!(registry.get(task.id).unwrap().status, TaskStatus::Cancelled);
         drop(lease);
         registry.retire_terminal(task.id).unwrap();

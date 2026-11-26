@@ -77,10 +77,15 @@ impl<'a> ModelTurnGate<'a> {
         }
         Ok(())
     }
-    pub(crate) async fn receive<T>(&mut self, future: impl std::future::Future<Output = Result<T>>) -> Result<T> {
+    pub(crate) async fn receive<T>(
+        &mut self,
+        future: impl std::future::Future<Output = Result<T>>,
+    ) -> Result<T> {
         self.active()?;
         let deadline = self.deadline;
-        if tokio::time::Instant::now() >= deadline { return Err(FoundationError::Timeout); }
+        if tokio::time::Instant::now() >= deadline {
+            return Err(FoundationError::Timeout);
+        }
         let result = tokio::select! {
             biased;
             _ = self.cancellation.changed() => Err(FoundationError::Cancelled),
@@ -220,7 +225,10 @@ impl AgentEngine<'_> {
 /// capability authorization; this driver owns bounded round progression,
 /// cancellation boundaries and complete function-batch admission.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BatchFlow { Continue, Stop }
+pub enum BatchFlow {
+    Continue,
+    Stop,
+}
 
 pub trait FunctionBatchHost {
     type Error;
@@ -228,12 +236,18 @@ pub trait FunctionBatchHost {
     fn on_cancelled(&mut self) -> std::result::Result<(), Self::Error>;
     fn request(&mut self) -> std::result::Result<serde_json::Value, Self::Error>;
     fn provider_failure(&mut self, error: Self::Error) -> Self::Error;
-    fn validate_reply(&mut self, reply: &serde_json::Value) -> std::result::Result<(), Self::Error>;
+    fn validate_reply(&mut self, reply: &serde_json::Value)
+        -> std::result::Result<(), Self::Error>;
     fn invalid_batch(&mut self, error: FoundationError) -> Self::Error;
     /// An accepted batch must be paired completely before committing its
     /// transcript. Model-selected calls are not authorization for effects.
-    fn accept_batch(&mut self, round: usize, last: bool, reply: serde_json::Value,
-        calls: Vec<crate::model::FunctionCall>) -> std::result::Result<BatchFlow, Self::Error>;
+    fn accept_batch(
+        &mut self,
+        round: usize,
+        last: bool,
+        reply: serde_json::Value,
+        calls: Vec<crate::model::FunctionCall>,
+    ) -> std::result::Result<BatchFlow, Self::Error>;
 }
 
 pub fn drive_function_batches<H: FunctionBatchHost>(
@@ -280,7 +294,9 @@ fn drive_function_batches_checked<H: FunctionBatchHost>(
         match host.accept_batch(round, round + 1 == rounds, reply, calls)? {
             BatchFlow::Stop => return Ok(()),
             BatchFlow::Continue if round + 1 < rounds => {}
-            BatchFlow::Continue => return Err(host.invalid_batch(FoundationError::InvalidTransition)),
+            BatchFlow::Continue => {
+                return Err(host.invalid_batch(FoundationError::InvalidTransition))
+            }
         }
     }
     Ok(())
@@ -295,21 +311,47 @@ struct TextOnlyHost<P, C, M> {
     result: Option<String>,
 }
 impl<E, P, C, M> FunctionBatchHost for TextOnlyHost<P, C, M>
-where P: FnMut() -> std::result::Result<serde_json::Value, E>,
-    C: Fn() -> bool, M: Fn(FoundationError) -> E
+where
+    P: FnMut() -> std::result::Result<serde_json::Value, E>,
+    C: Fn() -> bool,
+    M: Fn(FoundationError) -> E,
 {
     type Error = E;
-    fn cancelled(&self) -> bool { (self.cancelled)() }
-    fn on_cancelled(&mut self) -> std::result::Result<(), E> { Err((self.error)(FoundationError::Cancelled)) }
-    fn request(&mut self) -> std::result::Result<serde_json::Value, E> { (self.request)() }
-    fn provider_failure(&mut self, error: E) -> E { error }
-    fn validate_reply(&mut self, _: &serde_json::Value) -> std::result::Result<(), E> { Ok(()) }
-    fn invalid_batch(&mut self, error: FoundationError) -> E { (self.error)(error) }
-    fn accept_batch(&mut self, _: usize, _: bool, reply: serde_json::Value,
-        calls: Vec<crate::model::FunctionCall>) -> std::result::Result<BatchFlow, E> {
-        if !calls.is_empty() { return Err((self.error)(FoundationError::PermissionDenied)); }
-        self.result = Some(reply["content"].as_str().filter(|text| !text.trim().is_empty())
-            .ok_or_else(|| (self.error)(FoundationError::Provider("MODEL_TEXT_EMPTY".into())))?.to_owned());
+    fn cancelled(&self) -> bool {
+        (self.cancelled)()
+    }
+    fn on_cancelled(&mut self) -> std::result::Result<(), E> {
+        Err((self.error)(FoundationError::Cancelled))
+    }
+    fn request(&mut self) -> std::result::Result<serde_json::Value, E> {
+        (self.request)()
+    }
+    fn provider_failure(&mut self, error: E) -> E {
+        error
+    }
+    fn validate_reply(&mut self, _: &serde_json::Value) -> std::result::Result<(), E> {
+        Ok(())
+    }
+    fn invalid_batch(&mut self, error: FoundationError) -> E {
+        (self.error)(error)
+    }
+    fn accept_batch(
+        &mut self,
+        _: usize,
+        _: bool,
+        reply: serde_json::Value,
+        calls: Vec<crate::model::FunctionCall>,
+    ) -> std::result::Result<BatchFlow, E> {
+        if !calls.is_empty() {
+            return Err((self.error)(FoundationError::PermissionDenied));
+        }
+        self.result = Some(
+            reply["content"]
+                .as_str()
+                .filter(|text| !text.trim().is_empty())
+                .ok_or_else(|| (self.error)(FoundationError::Provider("MODEL_TEXT_EMPTY".into())))?
+                .to_owned(),
+        );
         Ok(BatchFlow::Stop)
     }
 }
@@ -318,10 +360,18 @@ pub fn drive_text_turn<E>(
     cancelled: impl Fn() -> bool,
     error: impl Fn(FoundationError) -> E,
 ) -> std::result::Result<String, E> {
-    let mut host = TextOnlyHost { request, cancelled, error, result: None };
+    let mut host = TextOnlyHost {
+        request,
+        cancelled,
+        error,
+        result: None,
+    };
     drive_function_batches(&mut host, 1, 0)?;
-    if (host.cancelled)() { return Err((host.error)(FoundationError::Cancelled)); }
-    host.result.ok_or_else(|| (host.error)(FoundationError::Provider("MODEL_TEXT_EMPTY".into())))
+    if (host.cancelled)() {
+        return Err((host.error)(FoundationError::Cancelled));
+    }
+    host.result
+        .ok_or_else(|| (host.error)(FoundationError::Provider("MODEL_TEXT_EMPTY".into())))
 }
 
 #[cfg(test)]
@@ -336,32 +386,65 @@ mod tests {
     use std::sync::Arc;
     use tokio::sync::mpsc;
 
-    struct BatchFixture { cancelled: bool, replies: Vec<Value>, admitted: usize }
+    struct BatchFixture {
+        cancelled: bool,
+        replies: Vec<Value>,
+        admitted: usize,
+    }
     impl FunctionBatchHost for BatchFixture {
         type Error = FoundationError;
-        fn cancelled(&self) -> bool { self.cancelled }
-        fn on_cancelled(&mut self) -> Result<()> { Err(FoundationError::Cancelled) }
-        fn request(&mut self) -> Result<Value> { self.replies.pop().ok_or(FoundationError::InvalidTransition) }
-        fn provider_failure(&mut self, error: FoundationError) -> FoundationError { error }
-        fn validate_reply(&mut self, _: &Value) -> Result<()> { Ok(()) }
-        fn invalid_batch(&mut self, error: FoundationError) -> FoundationError { error }
-        fn accept_batch(&mut self, _: usize, last: bool, _: Value, calls: Vec<crate::model::FunctionCall>) -> Result<BatchFlow> {
+        fn cancelled(&self) -> bool {
+            self.cancelled
+        }
+        fn on_cancelled(&mut self) -> Result<()> {
+            Err(FoundationError::Cancelled)
+        }
+        fn request(&mut self) -> Result<Value> {
+            self.replies.pop().ok_or(FoundationError::InvalidTransition)
+        }
+        fn provider_failure(&mut self, error: FoundationError) -> FoundationError {
+            error
+        }
+        fn validate_reply(&mut self, _: &Value) -> Result<()> {
+            Ok(())
+        }
+        fn invalid_batch(&mut self, error: FoundationError) -> FoundationError {
+            error
+        }
+        fn accept_batch(
+            &mut self,
+            _: usize,
+            last: bool,
+            _: Value,
+            calls: Vec<crate::model::FunctionCall>,
+        ) -> Result<BatchFlow> {
             self.admitted += calls.len();
-            Ok(if last { BatchFlow::Stop } else { BatchFlow::Continue })
+            Ok(if last {
+                BatchFlow::Stop
+            } else {
+                BatchFlow::Continue
+            })
         }
     }
     #[test]
     fn complete_batch_driver_refuses_invalid_suffix_before_host_admission() {
-        let mut host = BatchFixture { cancelled: false, admitted: 0, replies: vec![json!({
-            "role":"assistant", "tool_calls":[
-                {"id":"one","function":{"name":"read_file","arguments":"{}"}},
-                {"id":"one","function":{"name":"write_file","arguments":"{}"}}
-            ]
-        })] };
+        let mut host = BatchFixture {
+            cancelled: false,
+            admitted: 0,
+            replies: vec![json!({
+                "role":"assistant", "tool_calls":[
+                    {"id":"one","function":{"name":"read_file","arguments":"{}"}},
+                    {"id":"one","function":{"name":"write_file","arguments":"{}"}}
+                ]
+            })],
+        };
         assert!(drive_function_batches(&mut host, 1, 8).is_err());
         assert_eq!(host.admitted, 0);
         host.cancelled = true;
-        assert_eq!(drive_function_batches(&mut host, 1, 8), Err(FoundationError::Cancelled));
+        assert_eq!(
+            drive_function_batches(&mut host, 1, 8),
+            Err(FoundationError::Cancelled)
+        );
     }
 
     #[test]
@@ -369,8 +452,11 @@ mod tests {
         let reply = json!({"role":"assistant","tool_calls":[
             {"id":"one","function":{"name":"read_file","arguments":"{}"}}
         ]});
-        let mut host = BatchFixture { cancelled: false, admitted: 0,
-            replies: vec![reply.clone(), reply] };
+        let mut host = BatchFixture {
+            cancelled: false,
+            admitted: 0,
+            replies: vec![reply.clone(), reply],
+        };
         assert!(drive_function_batches(&mut host, 2, 8).is_err());
         assert_eq!(host.admitted, 1);
     }

@@ -107,7 +107,12 @@ impl RigMultiTurnDriver {
                     if task.status != TaskStatus::Running || task.revision != revision {
                         return Err(FoundationError::Cancelled);
                     }
-                    let mut gate = crate::engine::ModelTurnGate::acquire(tasks, task_id, revision, Duration::from_secs(45))?;
+                    let mut gate = crate::engine::ModelTurnGate::acquire(
+                        tasks,
+                        task_id,
+                        revision,
+                        Duration::from_secs(45),
+                    )?;
                     let request = CompletionRequest::new(prompt)
                         .messages(history)
                         .model::<String>(Some(model_id.to_owned()))

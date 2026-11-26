@@ -450,12 +450,16 @@ pub fn run_command(
     expected_revision: String,
 ) -> Result<RunSnapshot, String> {
     check_invocation_source(&webview, "run_command", None, &app)?;
-    run_reviewed_command(app, id, values, expected_revision, None, || Ok(())).map(|started| started.snapshot())
+    run_reviewed_command(app, id, values, expected_revision, None, || Ok(()))
+        .map(|started| started.snapshot())
 }
 
 fn run_reviewed_command(
-    app: AppHandle, id: String, values: HashMap<String, String>,
-    expected_revision: String, owned_id: Option<uuid::Uuid>,
+    app: AppHandle,
+    id: String,
+    values: HashMap<String, String>,
+    expected_revision: String,
+    owned_id: Option<uuid::Uuid>,
     before_spawn: impl FnOnce() -> Result<(), String>,
 ) -> Result<crate::script_runner::StartedRun, String> {
     crate::images::check_id(&id, "命令片段 id")?;
@@ -503,7 +507,10 @@ fn run_reviewed_command(
         "cmd.run.start",
         format!(
             "id={} run_id={} count={} dangerous={}",
-            snippet.id, started.run_id(), count, snippet.dangerous
+            snippet.id,
+            started.run_id(),
+            count,
+            snippet.dangerous
         ),
     );
     Ok(started)
@@ -513,19 +520,34 @@ fn run_reviewed_command(
 /// its source/permission policy. Its session lock remains held until the
 /// supervisor returns, even when the initiating frontend disappears.
 pub(crate) fn run_command_for_coding(
-    app: &AppHandle, webview: &tauri::Webview, input: &serde_json::Value,
-    request: &serde_json::Value, cancellation: &AtomicBool,
+    app: &AppHandle,
+    webview: &tauri::Webview,
+    input: &serde_json::Value,
+    request: &serde_json::Value,
+    cancellation: &AtomicBool,
     before_spawn: impl FnOnce() -> Result<(), String>,
 ) -> Result<serde_json::Value, String> {
-    let id = input["snippet_id"].as_str().ok_or("SNIPPET_NOT_FOUND")?.to_owned();
-    let revision = request["expected_revision"].as_str().ok_or("SNIPPET_REVIEW_REQUIRED")?.to_owned();
-    let values: HashMap<String, String> = serde_json::from_value(request["values"].clone())
-        .map_err(|_| "SNIPPET_REVIEW_REQUIRED")?;
-    if cancellation.load(Ordering::Acquire) { return Err("AGENT_OPERATION_CANCELLED_BEFORE_DISPATCH".into()); }
+    let id = input["snippet_id"]
+        .as_str()
+        .ok_or("SNIPPET_NOT_FOUND")?
+        .to_owned();
+    let revision = request["expected_revision"]
+        .as_str()
+        .ok_or("SNIPPET_REVIEW_REQUIRED")?
+        .to_owned();
+    let values: HashMap<String, String> =
+        serde_json::from_value(request["values"].clone()).map_err(|_| "SNIPPET_REVIEW_REQUIRED")?;
+    if cancellation.load(Ordering::Acquire) {
+        return Err("AGENT_OPERATION_CANCELLED_BEFORE_DISPATCH".into());
+    }
     check_invocation_source(webview, "run_command", None, app)?;
-    let operation_id = request["operation_id"].as_str().ok_or("AGENT_OPERATION_REQUIRED")?;
+    let operation_id = request["operation_id"]
+        .as_str()
+        .ok_or("AGENT_OPERATION_REQUIRED")?;
     let owned_id = uuid::Uuid::parse_str(operation_id).map_err(|_| "AGENT_RUN_ID_INVALID")?;
-    if owned_id.get_version_num() != 4 { return Err("AGENT_RUN_ID_INVALID".into()); }
+    if owned_id.get_version_num() != 4 {
+        return Err("AGENT_RUN_ID_INVALID".into());
+    }
     let started = run_reviewed_command(app.clone(), id, values, revision, Some(owned_id), || {
         if cancellation.load(Ordering::Acquire) {
             return Err("AGENT_OPERATION_CANCELLED_BEFORE_DISPATCH".into());

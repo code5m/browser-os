@@ -51,11 +51,22 @@ pub(crate) fn tab_new_native(app: AppHandle, url: String) -> Result<TabInfo, Str
     Ok(tab)
 }
 #[tauri::command]
-pub async fn tab_new(webview: tauri::Webview, app: AppHandle, url: String) -> Result<TabInfo, String> {
-    super::tab_mutation::legacy(webview, "tab_new", move |webview| tab_new_impl(webview, app, url)).await
+pub async fn tab_new(
+    webview: tauri::Webview,
+    app: AppHandle,
+    url: String,
+) -> Result<TabInfo, String> {
+    super::tab_mutation::legacy(webview, "tab_new", move |webview| {
+        tab_new_impl(webview, app, url)
+    })
+    .await
 }
 
-pub(crate) fn tab_new_impl(webview: tauri::Webview, app: AppHandle, url: String) -> Result<TabInfo, String> {
+pub(crate) fn tab_new_impl(
+    webview: tauri::Webview,
+    app: AppHandle,
+    url: String,
+) -> Result<TabInfo, String> {
     crate::shared::native_legacy_policy::require_main(&webview, "tab_new")?;
     crate::shared::native_legacy_policy::bound_text("tab_new", "url", &url)?;
     create_tab_receipted(app, &url)
@@ -68,10 +79,17 @@ pub(crate) fn tab_close_native(app: AppHandle, id: String) -> Result<(), String>
 }
 #[tauri::command]
 pub async fn tab_close(webview: tauri::Webview, app: AppHandle, id: String) -> Result<(), String> {
-    super::tab_mutation::legacy(webview, "tab_close", move |webview| tab_close_impl(webview, app, id)).await
+    super::tab_mutation::legacy(webview, "tab_close", move |webview| {
+        tab_close_impl(webview, app, id)
+    })
+    .await
 }
 
-pub(crate) fn tab_close_impl(webview: tauri::Webview, app: AppHandle, id: String) -> Result<(), String> {
+pub(crate) fn tab_close_impl(
+    webview: tauri::Webview,
+    app: AppHandle,
+    id: String,
+) -> Result<(), String> {
     crate::shared::native_legacy_policy::require_main(&webview, "tab_close")?;
     crate::shared::native_legacy_policy::bound_text("tab_close", "id", &id)?;
     close_tab(&app, &id)
@@ -79,11 +97,24 @@ pub(crate) fn tab_close_impl(webview: tauri::Webview, app: AppHandle, id: String
 
 /// 在指定页签中打开网址（导航）。
 #[tauri::command]
-pub async fn tab_open(webview: tauri::Webview, app: AppHandle, id: String, url: String) -> Result<(), String> {
-    super::tab_mutation::legacy(webview, "tab_open", move |webview| tab_open_impl(webview, app, id, url)).await
+pub async fn tab_open(
+    webview: tauri::Webview,
+    app: AppHandle,
+    id: String,
+    url: String,
+) -> Result<(), String> {
+    super::tab_mutation::legacy(webview, "tab_open", move |webview| {
+        tab_open_impl(webview, app, id, url)
+    })
+    .await
 }
 
-pub(crate) fn tab_open_impl(webview: tauri::Webview, app: AppHandle, id: String, url: String) -> Result<(), String> {
+pub(crate) fn tab_open_impl(
+    webview: tauri::Webview,
+    app: AppHandle,
+    id: String,
+    url: String,
+) -> Result<(), String> {
     crate::shared::native_legacy_policy::require_main(&webview, "tab_open")?;
     crate::shared::native_legacy_policy::bound_text("tab_open", "id", &id)?;
     crate::shared::native_legacy_policy::bound_text("tab_open", "url", &url)?;
@@ -683,7 +714,9 @@ fn hibernate_tab(app: &AppHandle, id: &str, idle_window: std::time::Duration) ->
     };
     // Snapshotting runs on the WebView event loop and may take up to two
     // seconds. Recheck activation/idle state before destroying the native view.
-    let Ok(_owner) = super::tab_mutation::reserve_internal() else { return false; };
+    let Ok(_owner) = super::tab_mutation::reserve_internal() else {
+        return false;
+    };
     let Ok(_transition) = reserve_tab_transition(id) else {
         return false;
     };
@@ -866,11 +899,22 @@ pub fn tab_set_title(
 /// 在当前激活页签的 webview 内执行 history.back()（页面内后退）。
 /// 历史栈为空时由浏览器内核自动忽略，无副作用。
 #[tauri::command]
-pub async fn tab_go_back(webview: tauri::Webview, app: AppHandle, id: String) -> Result<(), String> {
-    super::tab_mutation::legacy(webview, "tab_go_back", move |webview| tab_go_back_impl(webview, app, id)).await
+pub async fn tab_go_back(
+    webview: tauri::Webview,
+    app: AppHandle,
+    id: String,
+) -> Result<(), String> {
+    super::tab_mutation::legacy(webview, "tab_go_back", move |webview| {
+        tab_go_back_impl(webview, app, id)
+    })
+    .await
 }
 
-pub(crate) fn tab_go_back_impl(webview: tauri::Webview, app: AppHandle, id: String) -> Result<(), String> {
+pub(crate) fn tab_go_back_impl(
+    webview: tauri::Webview,
+    app: AppHandle,
+    id: String,
+) -> Result<(), String> {
     crate::shared::native_legacy_policy::require_main(&webview, "tab_go_back")?;
     crate::shared::native_legacy_policy::bound_text("tab_go_back", "id", &id)?;
 
@@ -879,11 +923,22 @@ pub(crate) fn tab_go_back_impl(webview: tauri::Webview, app: AppHandle, id: Stri
 
 /// 在当前激活页签的 webview 内执行 history.forward()（页面内前进）。
 #[tauri::command]
-pub async fn tab_go_forward(webview: tauri::Webview, app: AppHandle, id: String) -> Result<(), String> {
-    super::tab_mutation::legacy(webview, "tab_go_forward", move |webview| tab_go_forward_impl(webview, app, id)).await
+pub async fn tab_go_forward(
+    webview: tauri::Webview,
+    app: AppHandle,
+    id: String,
+) -> Result<(), String> {
+    super::tab_mutation::legacy(webview, "tab_go_forward", move |webview| {
+        tab_go_forward_impl(webview, app, id)
+    })
+    .await
 }
 
-pub(crate) fn tab_go_forward_impl(webview: tauri::Webview, app: AppHandle, id: String) -> Result<(), String> {
+pub(crate) fn tab_go_forward_impl(
+    webview: tauri::Webview,
+    app: AppHandle,
+    id: String,
+) -> Result<(), String> {
     crate::shared::native_legacy_policy::require_main(&webview, "tab_go_forward")?;
     crate::shared::native_legacy_policy::bound_text("tab_go_forward", "id", &id)?;
 
@@ -893,10 +948,17 @@ pub(crate) fn tab_go_forward_impl(webview: tauri::Webview, app: AppHandle, id: S
 /// 刷新当前激活页签的 webview（location.reload）。
 #[tauri::command]
 pub async fn tab_reload(webview: tauri::Webview, app: AppHandle, id: String) -> Result<(), String> {
-    super::tab_mutation::legacy(webview, "tab_reload", move |webview| tab_reload_impl(webview, app, id)).await
+    super::tab_mutation::legacy(webview, "tab_reload", move |webview| {
+        tab_reload_impl(webview, app, id)
+    })
+    .await
 }
 
-pub(crate) fn tab_reload_impl(webview: tauri::Webview, app: AppHandle, id: String) -> Result<(), String> {
+pub(crate) fn tab_reload_impl(
+    webview: tauri::Webview,
+    app: AppHandle,
+    id: String,
+) -> Result<(), String> {
     crate::shared::native_legacy_policy::require_main(&webview, "tab_reload")?;
     crate::shared::native_legacy_policy::bound_text("tab_reload", "id", &id)?;
 
@@ -953,11 +1015,22 @@ fn eval_in_tab_blocking(app: AppHandle, id: String, js: String) -> Result<String
 /// 设置激活页签：只更新 active_tab，并把其它页签隐藏。
 /// 目标页签的精确位置由前端随后调用 tab_position 给出，避免后端与前端争夺坐标。
 #[tauri::command]
-pub async fn tab_activate(webview: tauri::Webview, app: AppHandle, id: String) -> Result<(), String> {
-    super::tab_mutation::legacy(webview, "tab_activate", move |webview| tab_activate_impl(webview, app, id)).await
+pub async fn tab_activate(
+    webview: tauri::Webview,
+    app: AppHandle,
+    id: String,
+) -> Result<(), String> {
+    super::tab_mutation::legacy(webview, "tab_activate", move |webview| {
+        tab_activate_impl(webview, app, id)
+    })
+    .await
 }
 
-pub(crate) fn tab_activate_impl(webview: tauri::Webview, app: AppHandle, id: String) -> Result<(), String> {
+pub(crate) fn tab_activate_impl(
+    webview: tauri::Webview,
+    app: AppHandle,
+    id: String,
+) -> Result<(), String> {
     crate::shared::native_legacy_policy::require_main(&webview, "tab_activate")?;
     crate::shared::native_legacy_policy::bound_text("tab_activate", "id", &id)?;
     use crate::shared::dispatch_receipt::{DispatchReceipt, WaitError};
@@ -1027,7 +1100,9 @@ pub(crate) fn tab_activate_impl(webview: tauri::Webview, app: AppHandle, id: Str
         let restore_id = id.clone();
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(900));
-            let Ok(_owner) = super::tab_mutation::reserve_internal() else { return; };
+            let Ok(_owner) = super::tab_mutation::reserve_internal() else {
+                return;
+            };
             let Ok(_transition) = reserve_tab_transition(&restore_id) else {
                 return;
             };
@@ -1081,71 +1156,77 @@ pub(crate) fn tab_activate_impl(webview: tauri::Webview, app: AppHandle, id: Str
     let dispatch = app.run_on_main_thread(move || {
         // The blocking owner keeps the existing transition reservation
         // until completion or proof this callback can never enter.
-        let Some(entered) = callback.enter() else { return; };
+        let Some(entered) = callback.enter() else {
+            return;
+        };
         let result: Result<(), String> = (|| {
-        if !app_act
-            .state::<TabManagerState>()
-            .is_current_instance(&active_id, &active_instance)
-        {
-            return Err("TAB_ACTIVATION_SUPERSEDED".into());
-        }
-        let st = app_act.state::<AppState>();
-        if st.shutdown_requested.load(Ordering::Acquire)
-            || st.active_tab.lock().unwrap().as_deref() != Some(active_id.as_str())
-        {
-            return Err("TAB_ACTIVATION_SUPERSEDED".into());
-        }
-        let ids: Vec<String> = st.tabs.lock().unwrap().keys().cloned().collect();
-        eprintln!(
-            "[tab_activate] active={} others={:?}",
-            active_id,
-            ids.iter().filter(|k| **k != active_id).collect::<Vec<_>>()
-        );
-        for k in ids {
+            if !app_act
+                .state::<TabManagerState>()
+                .is_current_instance(&active_id, &active_instance)
+            {
+                return Err("TAB_ACTIVATION_SUPERSEDED".into());
+            }
+            let st = app_act.state::<AppState>();
+            if st.shutdown_requested.load(Ordering::Acquire)
+                || st.active_tab.lock().unwrap().as_deref() != Some(active_id.as_str())
+            {
+                return Err("TAB_ACTIVATION_SUPERSEDED".into());
+            }
+            let ids: Vec<String> = st.tabs.lock().unwrap().keys().cloned().collect();
+            eprintln!(
+                "[tab_activate] active={} others={:?}",
+                active_id,
+                ids.iter().filter(|k| **k != active_id).collect::<Vec<_>>()
+            );
+            for k in ids {
+                if st.active_tab.lock().unwrap().as_deref() != Some(active_id.as_str()) {
+                    return Err("TAB_ACTIVATION_SUPERSEDED".into());
+                }
+                if k != active_id {
+                    hide_bounds(&app_act, &k);
+                }
+            }
             if st.active_tab.lock().unwrap().as_deref() != Some(active_id.as_str()) {
                 return Err("TAB_ACTIVATION_SUPERSEDED".into());
             }
-            if k != active_id {
-                hide_bounds(&app_act, &k);
+            let layout = st.child_layouts.lock().unwrap().get(&active_id).copied();
+            drop(st);
+            // 仅当记忆的布局是"显示态"时才立即恢复；隐藏态(-30000)时跳过，
+            // 等前端随后的 tab_position 给出精确坐标，避免把激活页签恢复到屏幕外。
+            if let Some(r) = layout {
+                if r.0 > -1000.0 {
+                    // 用无去重的 apply_bounds_inner：切页签是低频用户操作，
+                    // 去重可能把这次"恢复显示"整个丢掉（实测切回前页签仍显示后一个）。
+                    apply_bounds_inner(&app_act, &active_id, r.0, r.1, r.2, r.3)?;
+                } else {
+                    eprintln!(
+                        "[tab_activate] active={} 记忆布局为隐藏态，跳过立即恢复",
+                        active_id
+                    );
+                }
             }
-        }
-        if st.active_tab.lock().unwrap().as_deref() != Some(active_id.as_str()) {
-            return Err("TAB_ACTIVATION_SUPERSEDED".into());
-        }
-        let layout = st.child_layouts.lock().unwrap().get(&active_id).copied();
-        drop(st);
-        // 仅当记忆的布局是"显示态"时才立即恢复；隐藏态(-30000)时跳过，
-        // 等前端随后的 tab_position 给出精确坐标，避免把激活页签恢复到屏幕外。
-        if let Some(r) = layout {
-            if r.0 > -1000.0 {
-                // 用无去重的 apply_bounds_inner：切页签是低频用户操作，
-                // 去重可能把这次"恢复显示"整个丢掉（实测切回前页签仍显示后一个）。
-                apply_bounds_inner(&app_act, &active_id, r.0, r.1, r.2, r.3)?;
-            } else {
-                eprintln!(
-                    "[tab_activate] active={} 记忆布局为隐藏态，跳过立即恢复",
-                    active_id
-                );
-            }
-        }
-        // 清除激活页签的去重时间戳：保证前端随后的 tab_position 精确坐标
-        // 不会落在 apply_bounds 的 50ms 去重窗口内被丢弃。
-        app_act
-            .state::<AppState>()
-            .last_position_at
-            .lock()
-            .unwrap()
-            .remove(&active_id);
+            // 清除激活页签的去重时间戳：保证前端随后的 tab_position 精确坐标
+            // 不会落在 apply_bounds 的 50ms 去重窗口内被丢弃。
+            app_act
+                .state::<AppState>()
+                .last_position_at
+                .lock()
+                .unwrap()
+                .remove(&active_id);
 
             Ok(())
         })();
         entered.complete(result);
     });
-    if dispatch.is_err() { receipt.revoke_pending(); }
-    receipt.wait(std::time::Duration::from_secs(20)).map_err(|error| match error {
-        WaitError::Revoked => "TAB_ACTIVATION_LAYOUT_REVOKED",
-        WaitError::Lost => "TAB_ACTIVATION_CALLBACK_LOST",
-    })??;
+    if dispatch.is_err() {
+        receipt.revoke_pending();
+    }
+    receipt
+        .wait(std::time::Duration::from_secs(20))
+        .map_err(|error| match error {
+            WaitError::Revoked => "TAB_ACTIVATION_LAYOUT_REVOKED",
+            WaitError::Lost => "TAB_ACTIVATION_CALLBACK_LOST",
+        })??;
     Ok(())
 }
 

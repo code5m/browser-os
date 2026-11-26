@@ -120,7 +120,11 @@ fn argument_digest(op: &PendingOperation) -> Result<String> {
 
 /// Reconstruct the exact digest used at approval admission. This compares
 /// historical evidence only; it cannot issue or reconstruct a permit.
-pub fn approval_argument_digest(tool: &str, arguments: &serde_json::Value, effect: &ToolEffect) -> Result<String> {
+pub fn approval_argument_digest(
+    tool: &str,
+    arguments: &serde_json::Value,
+    effect: &ToolEffect,
+) -> Result<String> {
     let serialized = serde_json::to_vec(&(tool, arguments, effect))
         .map_err(|e| FoundationError::Serialization(e.to_string()))?;
     Ok(hex::encode(Sha256::digest(serialized)))
@@ -146,8 +150,13 @@ impl HostApprovalIssuer {
     /// The owner remains responsible for its own durable effect journal and
     /// exact resource/argument revalidation. This does not register a tool.
     pub fn propose_reviewed_native(
-        &self, tasks: &TaskRegistry, task_id: Uuid, revision: u64,
-        tool_name: &str, arguments: serde_json::Value, effect: ToolEffect,
+        &self,
+        tasks: &TaskRegistry,
+        task_id: Uuid,
+        revision: u64,
+        tool_name: &str,
+        arguments: serde_json::Value,
+        effect: ToolEffect,
     ) -> Result<Uuid> {
         tasks.propose_tool_at_revision(task_id, tool_name, arguments, effect, revision)
     }
@@ -155,7 +164,10 @@ impl HostApprovalIssuer {
     /// Common local approval path for registered and native-owner proposals.
     /// Return the actual signed claims for durable receipt publication.
     pub fn resolve_local_decision(
-        &self, tasks: &TaskRegistry, task_id: Uuid, call_id: Uuid,
+        &self,
+        tasks: &TaskRegistry,
+        task_id: Uuid,
+        call_id: Uuid,
         decision: HostApprovalDecision,
     ) -> Result<(SignedApproval, Option<ApprovedOperation>)> {
         let receipt = self.issue(tasks, task_id, call_id, decision)?;
@@ -295,14 +307,22 @@ impl ApprovalBroker {
 /// any operation or authorize a different set of arguments. In particular a
 /// SQLite-backed registry must use ToolRegistry's durable effect ledger.
 impl ApprovedOperation {
-    pub fn claim_native_owner<'a>(self, tasks: &'a TaskRegistry,
-        claim: &ApprovalClaims, expected_arguments: &serde_json::Value)
-        -> Result<crate::task::ExecutionLease<'a>>
-    {
-        let binding = self.binding.as_ref().ok_or(FoundationError::PermissionDenied)?;
+    pub fn claim_native_owner<'a>(
+        self,
+        tasks: &'a TaskRegistry,
+        claim: &ApprovalClaims,
+        expected_arguments: &serde_json::Value,
+    ) -> Result<crate::task::ExecutionLease<'a>> {
+        let binding = self
+            .binding
+            .as_ref()
+            .ok_or(FoundationError::PermissionDenied)?;
         #[cfg(feature = "durable-sqlite")]
-        if tasks.durable_store().is_some() { return Err(FoundationError::PermissionDenied); }
-        if !claim.accepted || claim.task_id != self.task_id
+        if tasks.durable_store().is_some() {
+            return Err(FoundationError::PermissionDenied);
+        }
+        if !claim.accepted
+            || claim.task_id != self.task_id
             || claim.task_revision.checked_add(1) != Some(self.revision)
             || claim.call_id != self.operation.call_id
             || claim.tool_name != self.operation.tool_name
@@ -315,7 +335,9 @@ impl ApprovedOperation {
             || claim.resource != binding.resource
             || claim.expires_at_unix_ms != binding.expires_at_unix_ms
             || now_ms()? >= binding.expires_at_unix_ms
-        { return Err(FoundationError::PermissionDenied); }
+        {
+            return Err(FoundationError::PermissionDenied);
+        }
         tasks.acquire_execution(self.task_id, self.revision)
     }
 }
