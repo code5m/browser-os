@@ -247,7 +247,7 @@ pub(crate) fn dispatch_coding_request(
         )?;
         execution.checkpoint_approval(claim.clone())?;
         let lease = execution.acquire_approved_native(permit, &claim, &arguments)?;
-        if cancellation.load(std::sync::atomic::Ordering::Acquire) {
+        if !lease.is_active() || cancellation.load(std::sync::atomic::Ordering::Acquire) {
             drop(lease);
             execution.cancel_manual_before_dispatch()?;
             return Ok(cancelled_receipt());
@@ -264,8 +264,15 @@ pub(crate) fn dispatch_coding_request(
             request,
             cancellation.clone(),
             |request| {
+                if !lease.is_active() || cancellation.load(std::sync::atomic::Ordering::Acquire) {
+                    return Err("AGENT_OPERATION_CANCELLED_BEFORE_DISPATCH".into());
+                }
                 attempted = true;
                 execution.checkpoint_manual_mcp(&canonical, revision, request)?;
+                // A successfully written effect fence is not a fresh grant.
+                if !lease.is_active() {
+                    return Err("AGENT_OPERATION_OWNER_STALE".into());
+                }
                 published = true;
                 Ok(())
             },

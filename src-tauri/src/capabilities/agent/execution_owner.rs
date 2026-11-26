@@ -819,6 +819,9 @@ impl ProductionExecution {
         if let Ok(value) = &response {
             execution.checkpoint_local_return(value, 512 * 1024)?;
         }
+        lease
+            .finish(response.is_ok())
+            .map_err(|_| "AGENT_TASK_FINISH_FAILED")?;
         drop(lease);
         // Complete the authenticated publication before handing the
         // successful answer back to the UI. A lost IPC response can

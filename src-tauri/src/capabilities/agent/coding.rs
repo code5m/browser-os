@@ -2904,14 +2904,14 @@ pub(crate) fn execute_with_admission_adapter(
                 execution.acquire_approved_native(permit, &approval, &approved_arguments)?;
             let mut attempted = false;
             let mut published = false;
-            let response = if signal.load(Ordering::SeqCst) {
+            let response = if !execution_lease.is_active() || signal.load(Ordering::SeqCst) {
                 Err("AGENT_OPERATION_CANCELLED_BEFORE_DISPATCH".into())
             } else {
                 adapter(&kind, &input, &request, &signal, &mut || {
                     if attempted {
                         return Err("AGENT_RUN_ALREADY_RECORDED".into());
                     }
-                    if signal.load(Ordering::SeqCst) {
+                    if !execution_lease.is_active() || signal.load(Ordering::SeqCst) {
                         return Err("AGENT_OPERATION_CANCELLED_BEFORE_DISPATCH".into());
                     }
                     attempted = true;
@@ -2921,6 +2921,11 @@ pub(crate) fn execute_with_admission_adapter(
                         .ok_or("AGENT_OPERATION_RECEIPT_MISSING")?
                         .phase = "dispatching".into();
                     save(storage, &session)?;
+                    // A durable fence is not permission to dispatch on an
+                    // invalidated lease. Keep the published fence unknown.
+                    if !execution_lease.is_active() {
+                        return Err("AGENT_OPERATION_OWNER_STALE".into());
+                    }
                     published = true;
                     Ok(())
                 })

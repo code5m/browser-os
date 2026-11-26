@@ -1,6 +1,7 @@
-//! Minimal single-turn Agent runtime. It can stream a model reply and prepare one
-//! tool proposal, but CANNOT execute a tool without a separate trusted host approval.
-//! This is NOT a complete planner, autonomous loop, ACP server or MCP client.
+//! Shared Foundation execution boundary for streaming model turns and
+//! bounded complete-message model/tool loops. Native adapters retain their
+//! existing capability ownership, durable receipts and approval authority.
+//! This module is not an autonomous planner, ACP server or MCP transport.
 use crate::{
     event::EventKind,
     model::{ModelEvent, ModelProvider, ModelRequest},

@@ -91,6 +91,13 @@ impl ExecutionLease<'_> {
         self.registry
             .active_at_revision(self.task_id, self.revision)
     }
+
+    /// Commit terminal state only for the exact generation this lease owns.
+    /// A stale caller must not finish a replacement Task generation.
+    pub fn finish(&self, success: bool) -> Result<()> {
+        self.registry
+            .finish_at_revision(self.task_id, success, self.revision)
+    }
 }
 impl Drop for ExecutionLease<'_> {
     fn drop(&mut self) {
