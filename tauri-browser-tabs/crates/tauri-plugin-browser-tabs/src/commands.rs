@@ -250,7 +250,11 @@ struct BoundedPngWriter(Vec<u8>, Option<CaptureCancellation>);
 #[cfg(target_os = "linux")]
 impl std::io::Write for BoundedPngWriter {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        if self.1.as_ref().is_some_and(CaptureCancellation::is_cancelled) {
+        if self
+            .1
+            .as_ref()
+            .is_some_and(CaptureCancellation::is_cancelled)
+        {
             return Err(std::io::Error::other("CAPTURE_CANCELLED"));
         }
         if bytes.len() > 32 * 1024 * 1024 - self.0.len() {
@@ -260,9 +264,11 @@ impl std::io::Write for BoundedPngWriter {
         if needed > self.0.capacity() {
             // Do not let geometric Vec growth request a capacity above the
             // logical PNG budget. Allocator rounding is not an RSS guarantee.
-            let target = needed.max(self.0.capacity().saturating_mul(2))
+            let target = needed
+                .max(self.0.capacity().saturating_mul(2))
                 .min(32 * 1024 * 1024);
-            self.0.try_reserve_exact(target - self.0.len())
+            self.0
+                .try_reserve_exact(target - self.0.len())
                 .map_err(|_| std::io::Error::other("CAPTURE_ALLOCATION_FAILED"))?;
         }
         self.0.extend_from_slice(bytes);
@@ -323,7 +329,10 @@ impl CaptureCancellation {
     /// work. A callback that has entered cannot be fenced or called done.
     pub fn revoke_pending_native(&self) -> bool {
         use std::sync::atomic::Ordering;
-        match self.dispatch.compare_exchange(0, 2, Ordering::AcqRel, Ordering::Acquire) {
+        match self
+            .dispatch
+            .compare_exchange(0, 2, Ordering::AcqRel, Ordering::Acquire)
+        {
             Ok(_) | Err(2) => true,
             _ => false,
         }
@@ -339,7 +348,9 @@ impl CaptureCancellation {
             self.revoke_pending_native();
             return false;
         }
-        self.dispatch.compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire).is_ok()
+        self.dispatch
+            .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
     }
 
     pub fn cancel(&self) {
@@ -370,8 +381,11 @@ struct CaptureDispatchPermit;
 impl CaptureDispatchPermit {
     fn acquire() -> Option<Self> {
         use std::sync::atomic::Ordering;
-        CAPTURE_DISPATCHES.fetch_update(Ordering::AcqRel, Ordering::Acquire,
-            |n| (n < 2).then_some(n + 1)).ok()?;
+        CAPTURE_DISPATCHES
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
+                (n < 2).then_some(n + 1)
+            })
+            .ok()?;
         Some(Self)
     }
 }
@@ -412,9 +426,10 @@ fn complete_capture<T>(pending: &parking_lot::Mutex<Option<impl FnOnce(T)>>, res
 /// CDP returns one JSON response, not a bounded renderer stream. Borrow
 /// the ordinary unescaped base64 string and decode in bounded chunks.
 #[cfg(any(target_os = "windows", test))]
-fn decode_capture_png(json: &str, cancelled: impl Fn() -> bool)
-    -> std::result::Result<Vec<u8>, String>
-{
+fn decode_capture_png(
+    json: &str,
+    cancelled: impl Fn() -> bool,
+) -> std::result::Result<Vec<u8>, String> {
     use base64::Engine;
     const LIMIT: usize = 32 * 1024 * 1024;
     const CHUNK: usize = 64 * 1024; // multiple of four base64 characters
@@ -423,10 +438,14 @@ fn decode_capture_png(json: &str, cancelled: impl Fn() -> bool)
         #[serde(borrow)]
         data: std::borrow::Cow<'a, str>,
     }
-    if cancelled() { return Err("CAPTURE_CANCELLED_OR_STALE".into()); }
-    if json.len() > 45 * 1024 * 1024 { return Err("CAPTURE_SIZE_LIMIT".into()); }
-    let payload: Payload<'_> = serde_json::from_str(json)
-        .map_err(|_| "CAPTURE_RESPONSE_INVALID".to_string())?;
+    if cancelled() {
+        return Err("CAPTURE_CANCELLED_OR_STALE".into());
+    }
+    if json.len() > 45 * 1024 * 1024 {
+        return Err("CAPTURE_SIZE_LIMIT".into());
+    }
+    let payload: Payload<'_> =
+        serde_json::from_str(json).map_err(|_| "CAPTURE_RESPONSE_INVALID".to_string())?;
     let encoded = payload.data.as_bytes();
     if encoded.len() > ((LIMIT + 2) / 3) * 4 {
         return Err("CAPTURE_SIZE_LIMIT".into());
@@ -434,15 +453,25 @@ fn decode_capture_png(json: &str, cancelled: impl Fn() -> bool)
     if encoded.is_empty() || encoded.len() % 4 != 0 {
         return Err("CAPTURE_PNG_DECODE_FAILED".into());
     }
-    let padding = if encoded.ends_with(b"==") { 2 }
-        else if encoded.ends_with(b"=") { 1 } else { 0 };
+    let padding = if encoded.ends_with(b"==") {
+        2
+    } else if encoded.ends_with(b"=") {
+        1
+    } else {
+        0
+    };
     let expected = encoded.len() / 4 * 3 - padding;
-    if expected > LIMIT { return Err("CAPTURE_SIZE_LIMIT".into()); }
+    if expected > LIMIT {
+        return Err("CAPTURE_SIZE_LIMIT".into());
+    }
     let mut data = Vec::new();
-    data.try_reserve_exact(expected).map_err(|_| "CAPTURE_ALLOCATION_FAILED".to_string())?;
+    data.try_reserve_exact(expected)
+        .map_err(|_| "CAPTURE_ALLOCATION_FAILED".to_string())?;
     let mut scratch = [0u8; CHUNK / 4 * 3 + 3];
     for (index, chunk) in encoded.chunks(CHUNK).enumerate() {
-        if cancelled() { return Err("CAPTURE_CANCELLED_OR_STALE".into()); }
+        if cancelled() {
+            return Err("CAPTURE_CANCELLED_OR_STALE".into());
+        }
         // Each chunk is a separate decoder input: padding is valid only
         // in the last chunk of the original response.
         if (index + 1) * CHUNK < encoded.len() && chunk.contains(&b'=') {
@@ -456,8 +485,12 @@ fn decode_capture_png(json: &str, cancelled: impl Fn() -> bool)
         }
         data.extend_from_slice(&scratch[..written]);
     }
-    if cancelled() { return Err("CAPTURE_CANCELLED_OR_STALE".into()); }
-    if data.len() != expected { return Err("CAPTURE_PNG_DECODE_FAILED".into()); }
+    if cancelled() {
+        return Err("CAPTURE_CANCELLED_OR_STALE".into());
+    }
+    if data.len() != expected {
+        return Err("CAPTURE_PNG_DECODE_FAILED".into());
+    }
     Ok(data)
 }
 
@@ -466,8 +499,12 @@ fn decode_capture_png(json: &str, cancelled: impl Fn() -> bool)
 fn bounded_capture_decode_rejects_interior_padding_and_cancellation() {
     use base64::Engine;
     let bytes = vec![7u8; 80 * 1024];
-    let valid = serde_json::json!({"data": base64::engine::general_purpose::STANDARD.encode(&bytes)});
-    assert_eq!(decode_capture_png(&valid.to_string(), || false).unwrap(), bytes);
+    let valid =
+        serde_json::json!({"data": base64::engine::general_purpose::STANDARD.encode(&bytes)});
+    assert_eq!(
+        decode_capture_png(&valid.to_string(), || false).unwrap(),
+        bytes
+    );
     let bad = serde_json::json!({"data": format!("{}YQ==YQ==", "YWFh".repeat(16_383))});
     assert!(decode_capture_png(&bad.to_string(), || false).is_err());
     assert!(decode_capture_png(&valid.to_string(), || true).is_err());
@@ -478,15 +515,18 @@ const MAX_CAPTURE_PIXELS: f64 = 16_000_000.0;
 
 #[cfg(any(target_os = "linux", target_os = "windows", test))]
 fn checked_capture_pixels(width: f64, height: f64, scale: f64) -> std::result::Result<(), String> {
-    if !width.is_finite() || !height.is_finite() || !scale.is_finite()
-        || width <= 0.0 || height <= 0.0 || scale <= 0.0
+    if !width.is_finite()
+        || !height.is_finite()
+        || !scale.is_finite()
+        || width <= 0.0
+        || height <= 0.0
+        || scale <= 0.0
     {
         return Err("CAPTURE_METRICS_INVALID".into());
     }
     let width = (width * scale).ceil();
     let height = (height * scale).ceil();
-    if width > MAX_CAPTURE_EDGE || height > MAX_CAPTURE_EDGE
-        || width * height > MAX_CAPTURE_PIXELS
+    if width > MAX_CAPTURE_EDGE || height > MAX_CAPTURE_EDGE || width * height > MAX_CAPTURE_PIXELS
     {
         return Err("CAPTURE_DIMENSION_LIMIT".into());
     }
@@ -494,14 +534,22 @@ fn checked_capture_pixels(width: f64, height: f64, scale: f64) -> std::result::R
 }
 
 #[cfg(any(target_os = "linux", test))]
-fn validate_linux_capture_metrics(json: &str, native_scale: f64, visible_only: bool) -> std::result::Result<(), String> {
+fn validate_linux_capture_metrics(
+    json: &str,
+    native_scale: f64,
+    visible_only: bool,
+) -> std::result::Result<(), String> {
     if json.len() > 1024 || !native_scale.is_finite() || native_scale <= 0.0 {
         return Err("CAPTURE_METRICS_INVALID".into());
     }
     let value: serde_json::Value =
         serde_json::from_str(json).map_err(|_| "CAPTURE_METRICS_INVALID".to_string())?;
-    let number = |key: &str| value.get(key).and_then(|v| v.as_f64())
-        .ok_or_else(|| "CAPTURE_METRICS_INVALID".to_string());
+    let number = |key: &str| {
+        value
+            .get(key)
+            .and_then(|v| v.as_f64())
+            .ok_or_else(|| "CAPTURE_METRICS_INVALID".to_string())
+    };
     let scale = number("scale")?;
     if !scale.is_finite() || scale <= 0.0 {
         return Err("CAPTURE_METRICS_INVALID".into());
@@ -511,38 +559,53 @@ fn validate_linux_capture_metrics(json: &str, native_scale: f64, visible_only: b
     let width = number("width")?;
     let height = number("height")?;
     checked_capture_pixels(width, height, effective_scale)?;
-    if visible_only && ((width * effective_scale).ceil() * (height * effective_scale).ceil()) > 1_000_000.0 {
+    if visible_only
+        && ((width * effective_scale).ceil() * (height * effective_scale).ceil()) > 1_000_000.0
+    {
         return Err("CAPTURE_BAND_LIMIT".into());
     }
     Ok(())
 }
 
 #[cfg(target_os = "linux")]
-fn copy_capture_pixels(surface: gtk::cairo::Surface, visible_only: bool)
-    -> std::result::Result<(Vec<u8>, gtk::cairo::Format, i32, i32, i32), String>
-{
+fn copy_capture_pixels(
+    surface: gtk::cairo::Surface,
+    visible_only: bool,
+) -> std::result::Result<(Vec<u8>, gtk::cairo::Format, i32, i32, i32), String> {
     let mut surface = gtk::cairo::ImageSurface::try_from(surface)
         .map_err(|_| "CAPTURE_SURFACE_INVALID".to_string())?;
-    let (width, height, stride, format) =
-        (surface.width(), surface.height(), surface.stride(), surface.format());
+    let (width, height, stride, format) = (
+        surface.width(),
+        surface.height(),
+        surface.stride(),
+        surface.format(),
+    );
     checked_capture_pixels(f64::from(width), f64::from(height), 1.0)?;
     if visible_only && i64::from(width) * i64::from(height) > 1_000_000 {
         return Err("CAPTURE_BAND_LIMIT".into());
     }
-    if !matches!(format, gtk::cairo::Format::ARgb32 | gtk::cairo::Format::Rgb24)
-        || stride <= 0 || i64::from(stride) < i64::from(width) * 4
+    if !matches!(
+        format,
+        gtk::cairo::Format::ARgb32 | gtk::cairo::Format::Rgb24
+    ) || stride <= 0
+        || i64::from(stride) < i64::from(width) * 4
     {
         return Err("CAPTURE_SURFACE_INVALID".into());
     }
-    let len = usize::try_from(stride).ok().and_then(|s|
-        usize::try_from(height).ok().and_then(|h| s.checked_mul(h)))
+    let len = usize::try_from(stride)
+        .ok()
+        .and_then(|s| usize::try_from(height).ok().and_then(|h| s.checked_mul(h)))
         .filter(|n| *n <= 64 * 1024 * 1024)
         .ok_or_else(|| "CAPTURE_DIMENSION_LIMIT".to_string())?;
     surface.flush();
-    let data = surface.data().map_err(|_| "CAPTURE_SURFACE_DATA_UNAVAILABLE".to_string())?;
+    let data = surface
+        .data()
+        .map_err(|_| "CAPTURE_SURFACE_DATA_UNAVAILABLE".to_string())?;
     let pixels = data.get(..len).ok_or("CAPTURE_SURFACE_INVALID")?;
     let mut bytes = Vec::new();
-    bytes.try_reserve_exact(len).map_err(|_| "CAPTURE_ALLOCATION_FAILED".to_string())?;
+    bytes
+        .try_reserve_exact(len)
+        .map_err(|_| "CAPTURE_ALLOCATION_FAILED".to_string())?;
     bytes.extend_from_slice(pixels);
     Ok((bytes, format, width, height, stride))
 }
@@ -557,7 +620,9 @@ fn capture_clip_from_metrics(json: &str) -> std::result::Result<serde_json::Valu
     }
     let metrics: serde_json::Value =
         serde_json::from_str(json).map_err(|_| "CAPTURE_METRICS_INVALID".to_string())?;
-    let rect = metrics.get("cssContentSize").ok_or("CAPTURE_METRICS_UNAVAILABLE")?;
+    let rect = metrics
+        .get("cssContentSize")
+        .ok_or("CAPTURE_METRICS_UNAVAILABLE")?;
     let field = |key: &str| {
         rect.get(key)
             .and_then(|value| value.as_f64())
@@ -575,9 +640,13 @@ fn capture_clip_from_metrics(json: &str) -> std::result::Result<serde_json::Valu
     // CDP also reports the legacy layout coordinate space. Refuse an
     // oversize or unavailable second measurement instead of relying solely
     // on CSS dimensions. Neither metric proves the engine's total allocations.
-    let legacy = metrics.get("contentSize").ok_or("CAPTURE_METRICS_UNAVAILABLE")?;
+    let legacy = metrics
+        .get("contentSize")
+        .ok_or("CAPTURE_METRICS_UNAVAILABLE")?;
     let legacy_dimension = |key: &str| {
-        legacy.get(key).and_then(|v| v.as_f64())
+        legacy
+            .get(key)
+            .and_then(|v| v.as_f64())
             .filter(|v| v.is_finite() && *v > 0.0 && v.ceil() <= 16_384.0)
             .ok_or_else(|| "CAPTURE_DIMENSION_LIMIT".to_string())
     };
@@ -612,26 +681,70 @@ mod capture_request_tests {
         assert!(capture_clip_from_metrics(
             r#"{"cssContentSize":{"x":0,"y":0,"width":1200,"height":4000},"contentSize":{"width":4800,"height":16000}}"#,
         ).is_err());
-        assert!(capture_clip_from_metrics(r#"{"contentSize":{"width":100,"height":100}}"#).is_err());
+        assert!(
+            capture_clip_from_metrics(r#"{"contentSize":{"width":100,"height":100}}"#).is_err()
+        );
         assert!(capture_clip_from_metrics(
             r#"{"cssContentSize":{"x":0,"y":0,"width":16000,"height":16000}}"#,
-        ).is_err());
+        )
+        .is_err());
         assert!(capture_clip_from_metrics(
             r#"{"cssContentSize":{"x":0,"y":0,"width":0,"height":100}}"#,
-        ).is_err());
+        )
+        .is_err());
     }
 
     #[test]
     fn linux_preflight_counts_physical_pixels_and_rejects_invalid_measurements() {
-        assert!(validate_linux_capture_metrics(r#"{"width":1200,"height":4000,"scale":1}"#, 1.0, false).is_ok());
-        assert!(validate_linux_capture_metrics(r#"{"width":1200,"height":4000,"scale":1}"#, 1.0, true).is_err());
-        assert!(validate_linux_capture_metrics(r#"{"width":1280,"height":720,"scale":1}"#, 1.0, true).is_ok());
-        assert!(validate_linux_capture_metrics(r#"{"width":1280,"height":720,"scale":1}"#, 2.0, true).is_err());
-        assert!(validate_linux_capture_metrics(r#"{"width":1200,"height":4000,"scale":2}"#, 1.0, false).is_err());
-        assert!(validate_linux_capture_metrics(r#"{"width":1200,"height":4000,"scale":1}"#, 2.0, false).is_err());
-        assert!(validate_linux_capture_metrics(r#"{"width":0,"height":100,"scale":1}"#, 1.0, false).is_err());
+        assert!(validate_linux_capture_metrics(
+            r#"{"width":1200,"height":4000,"scale":1}"#,
+            1.0,
+            false
+        )
+        .is_ok());
+        assert!(validate_linux_capture_metrics(
+            r#"{"width":1200,"height":4000,"scale":1}"#,
+            1.0,
+            true
+        )
+        .is_err());
+        assert!(validate_linux_capture_metrics(
+            r#"{"width":1280,"height":720,"scale":1}"#,
+            1.0,
+            true
+        )
+        .is_ok());
+        assert!(validate_linux_capture_metrics(
+            r#"{"width":1280,"height":720,"scale":1}"#,
+            2.0,
+            true
+        )
+        .is_err());
+        assert!(validate_linux_capture_metrics(
+            r#"{"width":1200,"height":4000,"scale":2}"#,
+            1.0,
+            false
+        )
+        .is_err());
+        assert!(validate_linux_capture_metrics(
+            r#"{"width":1200,"height":4000,"scale":1}"#,
+            2.0,
+            false
+        )
+        .is_err());
+        assert!(validate_linux_capture_metrics(
+            r#"{"width":0,"height":100,"scale":1}"#,
+            1.0,
+            false
+        )
+        .is_err());
         assert!(validate_linux_capture_metrics("null", 1.0, false).is_err());
-        assert!(validate_linux_capture_metrics(r#"{"width":100,"height":100,"scale":1}"#, f64::NAN, false).is_err());
+        assert!(validate_linux_capture_metrics(
+            r#"{"width":100,"height":100,"scale":1}"#,
+            f64::NAN,
+            false
+        )
+        .is_err());
     }
 
     #[test]
@@ -639,7 +752,10 @@ mod capture_request_tests {
         let generation = std::sync::atomic::AtomicU64::new(u64::MAX - 1);
         invalidate_capture_document(&generation);
         invalidate_capture_document(&generation);
-        assert_eq!(generation.load(std::sync::atomic::Ordering::Acquire), u64::MAX);
+        assert_eq!(
+            generation.load(std::sync::atomic::Ordering::Acquire),
+            u64::MAX
+        );
     }
 
     #[test]
@@ -661,8 +777,9 @@ mod capture_request_tests {
 // An exhausted revision never becomes a reusable generation.
 fn invalidate_capture_document(revision: &std::sync::atomic::AtomicU64) {
     use std::sync::atomic::Ordering;
-    let _ = revision.fetch_update(Ordering::AcqRel, Ordering::Acquire,
-        |old| old.checked_add(1));
+    let _ = revision.fetch_update(Ordering::AcqRel, Ordering::Acquire, |old| {
+        old.checked_add(1)
+    });
 }
 
 /// A capture is bound to both the native object and its observed document
@@ -677,14 +794,19 @@ impl CaptureDocument {
     fn from_tab(tab: &Arc<ManagedTab>) -> Self {
         Self {
             instance: TabInstance(Arc::downgrade(tab)),
-            revision: tab.document_revision.load(std::sync::atomic::Ordering::Acquire),
+            revision: tab
+                .document_revision
+                .load(std::sync::atomic::Ordering::Acquire),
         }
     }
 
     fn observed_generation_is_current(&self) -> bool {
-        self.revision != u64::MAX && self.instance.0.upgrade().is_some_and(|tab| {
-            tab.document_revision.load(std::sync::atomic::Ordering::Acquire) == self.revision
-        })
+        self.revision != u64::MAX
+            && self.instance.0.upgrade().is_some_and(|tab| {
+                tab.document_revision
+                    .load(std::sync::atomic::Ordering::Acquire)
+                    == self.revision
+            })
     }
 }
 
@@ -730,7 +852,9 @@ impl TabManager {
     /// browser and its shared persistent profile remain unchanged.
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     pub fn new_isolated_capture(
-        app: AppHandle<Wry>, host_label: impl Into<String>, root: PathBuf,
+        app: AppHandle<Wry>,
+        host_label: impl Into<String>,
+        root: PathBuf,
     ) -> Self {
         let mut manager = Self::new(app, host_label);
         manager.isolated_profile = Some(root);
@@ -749,8 +873,9 @@ impl TabManager {
     }
 
     pub fn isolated_document_ready(&self) -> bool {
-        self.isolated_ready.as_ref().is_some_and(|ready|
-            ready.load(std::sync::atomic::Ordering::Acquire))
+        self.isolated_ready
+            .as_ref()
+            .is_some_and(|ready| ready.load(std::sync::atomic::Ordering::Acquire))
     }
 
     /// Call in app setup before creating any WebView or accepting tab commands.
@@ -863,42 +988,50 @@ impl TabManager {
                 if let Some(ready) = &nav_ready {
                     ready.store(false, std::sync::atomic::Ordering::Release);
                     invalidate_capture_document(&nav_revision);
-                    url.scheme() == "https" && url.host_str().is_some()
-                        && url.username().is_empty() && url.password().is_none()
-                } else { true }
+                    url.scheme() == "https"
+                        && url.host_str().is_some()
+                        && url.username().is_empty()
+                        && url.password().is_none()
+                } else {
+                    true
+                }
             })
             .transparent(options.transparent);
 
         if let Some(ready) = isolated {
             let revision = document_revision.clone();
-            builder = builder.on_page_load(move |_webview, payload| {
-                invalidate_capture_document(&revision);
-                ready.store(matches!(payload.event(), PageLoadEvent::Finished)
-                    && payload.url().scheme() == "https",
-                    std::sync::atomic::Ordering::Release);
-            }).on_download(|_, _| false);
+            builder = builder
+                .on_page_load(move |_webview, payload| {
+                    invalidate_capture_document(&revision);
+                    ready.store(
+                        matches!(payload.event(), PageLoadEvent::Finished)
+                            && payload.url().scheme() == "https",
+                        std::sync::atomic::Ordering::Release,
+                    );
+                })
+                .on_download(|_, _| false);
         } else {
-        #[cfg(not(target_os = "linux"))]
-        {
-            let nav_id = options.id.clone();
-            let nav_app = self.app.clone();
-            let revision = document_revision.clone();
-            builder = builder.on_page_load(move |_webview, payload| {
-                invalidate_capture_document(&revision);
-                let url = payload.url().to_string();
-                let event = match payload.event() {
-                    PageLoadEvent::Started => BrowserTabEvent::NavigationStarted {
-                        id: nav_id.clone(),
-                        url,
-                    },
-                    PageLoadEvent::Finished => BrowserTabEvent::NavigationFinished {
-                        id: nav_id.clone(),
-                        url,
-                    },
-                };
-                let _ = nav_app.emit("browser-tabs://event", event);
-            });
-        }
+            #[cfg(not(target_os = "linux"))]
+            {
+                let nav_id = options.id.clone();
+                let nav_app = self.app.clone();
+                let revision = document_revision.clone();
+                builder = builder.on_page_load(move |_webview, payload| {
+                    invalidate_capture_document(&revision);
+                    let url = payload.url().to_string();
+                    let event = match payload.event() {
+                        PageLoadEvent::Started => BrowserTabEvent::NavigationStarted {
+                            id: nav_id.clone(),
+                            url,
+                        },
+                        PageLoadEvent::Finished => BrowserTabEvent::NavigationFinished {
+                            id: nav_id.clone(),
+                            url,
+                        },
+                    };
+                    let _ = nav_app.emit("browser-tabs://event", event);
+                });
+            }
         }
 
         // Linux and Windows browser tabs share one app-scoped persistent
@@ -1450,7 +1583,10 @@ impl TabManager {
     }
 
     pub fn capture_bound_document(
-        &self, id: &TabId, document: CaptureDocument, cancellation: CaptureCancellation,
+        &self,
+        id: &TabId,
+        document: CaptureDocument,
+        cancellation: CaptureCancellation,
         callback: impl FnOnce(std::result::Result<Vec<u8>, String>) + Send + 'static,
     ) -> Result<()> {
         self.capture_bound_region(id, document, cancellation, false, callback)
@@ -1458,7 +1594,10 @@ impl TabManager {
 
     #[cfg(target_os = "linux")]
     pub fn capture_isolated_visible(
-        &self, id: &TabId, document: CaptureDocument, cancellation: CaptureCancellation,
+        &self,
+        id: &TabId,
+        document: CaptureDocument,
+        cancellation: CaptureCancellation,
         callback: impl FnOnce(std::result::Result<Vec<u8>, String>) + Send + 'static,
     ) -> Result<()> {
         if self.isolated_profile.is_none() || !self.isolated_document_ready() {
@@ -1484,7 +1623,8 @@ impl TabManager {
             return Ok(());
         };
         if !std::sync::Weak::ptr_eq(&capture_document.instance.0, &Arc::downgrade(&tab))
-            || !capture_document.observed_generation_is_current() {
+            || !capture_document.observed_generation_is_current()
+        {
             callback(Err("CAPTURE_DOCUMENT_STALE".into()));
             return Ok(());
         }
@@ -1651,12 +1791,19 @@ impl TabManager {
                 }
                 let metrics_reply = pending.clone();
                 let capture_core = core.clone();
-                let metrics_method: Vec<u16> = "Page.getLayoutMetrics".encode_utf16().chain(std::iter::once(0)).collect();
-                let empty_params: Vec<u16> = "{}".encode_utf16().chain(std::iter::once(0)).collect();
-                let metrics_completion = CallDevToolsProtocolMethodCompletedHandler::create(Box::new(
-                    move |status, json| {
+                let metrics_method: Vec<u16> = "Page.getLayoutMetrics"
+                    .encode_utf16()
+                    .chain(std::iter::once(0))
+                    .collect();
+                let empty_params: Vec<u16> =
+                    "{}".encode_utf16().chain(std::iter::once(0)).collect();
+                let metrics_completion = CallDevToolsProtocolMethodCompletedHandler::create(
+                    Box::new(move |status, json| {
                         if cancellation.is_cancelled() {
-                            complete_capture(&metrics_reply, Err("CAPTURE_CANCELLED_AT_COMPLETION".into()));
+                            complete_capture(
+                                &metrics_reply,
+                                Err("CAPTURE_CANCELLED_AT_COMPLETION".into()),
+                            );
                             return Ok(());
                         }
                         let params = match status
@@ -1671,31 +1818,50 @@ impl TabManager {
                         };
                         // Layout metrics may arrive after a close/replacement.
                         // Never dispatch the second native operation in that case.
-                        if !capture_app.try_state::<TabManagerState>()
-                            .is_some_and(|manager| manager.is_current_capture_document(&capture_id, &capture_document))
+                        if !capture_app
+                            .try_state::<TabManagerState>()
+                            .is_some_and(|manager| {
+                                manager.is_current_capture_document(&capture_id, &capture_document)
+                            })
                         {
                             complete_capture(&metrics_reply, Err("CAPTURE_INSTANCE_STALE".into()));
                             return Ok(());
                         }
-                        let method: Vec<u16> = "Page.captureScreenshot".encode_utf16().chain(std::iter::once(0)).collect();
-                        let params: Vec<u16> = params.to_string().encode_utf16().chain(std::iter::once(0)).collect();
+                        let method: Vec<u16> = "Page.captureScreenshot"
+                            .encode_utf16()
+                            .chain(std::iter::once(0))
+                            .collect();
+                        let params: Vec<u16> = params
+                            .to_string()
+                            .encode_utf16()
+                            .chain(std::iter::once(0))
+                            .collect();
                         let image_reply = metrics_reply.clone();
                         let image_cancel = cancellation.clone();
                         let image_document = capture_document.clone();
-                        let completion = CallDevToolsProtocolMethodCompletedHandler::create(Box::new(
-                            move |status, json| {
+                        let completion = CallDevToolsProtocolMethodCompletedHandler::create(
+                            Box::new(move |status, json| {
                                 if image_cancel.is_cancelled()
                                     || !image_document.observed_generation_is_current()
                                 {
-                                    complete_capture(&image_reply, Err("CAPTURE_CANCELLED_OR_STALE".into()));
+                                    complete_capture(
+                                        &image_reply,
+                                        Err("CAPTURE_CANCELLED_OR_STALE".into()),
+                                    );
                                     return Ok(());
                                 }
                                 if status.is_err() {
-                                    complete_capture(&image_reply, Err("CAPTURE_ENGINE_FAILED".into()));
+                                    complete_capture(
+                                        &image_reply,
+                                        Err("CAPTURE_ENGINE_FAILED".into()),
+                                    );
                                     return Ok(());
                                 }
                                 if json.len() > 45 * 1024 * 1024 {
-                                    complete_capture(&image_reply, Err("CAPTURE_SIZE_LIMIT".into()));
+                                    complete_capture(
+                                        &image_reply,
+                                        Err("CAPTURE_SIZE_LIMIT".into()),
+                                    );
                                     return Ok(());
                                 }
                                 // Retain the receipt through bounded decoding, but do
@@ -1703,41 +1869,58 @@ impl TabManager {
                                 let worker = std::thread::Builder::new()
                                     .name("browseros-screenshot-decode".into())
                                     .spawn(move || {
-                                        decode_capture_png(&json, || image_cancel.is_cancelled()
-                                            || !image_document.observed_generation_is_current())
+                                        decode_capture_png(&json, || {
+                                            image_cancel.is_cancelled()
+                                                || !image_document.observed_generation_is_current()
+                                        })
                                     });
                                 match worker {
                                     Ok(worker) => {
                                         tauri::async_runtime::spawn_blocking(move || {
-                                            let result = worker.join()
-                                                .unwrap_or_else(|_| Err("CAPTURE_WORKER_FAILED".into()));
+                                            let result = worker.join().unwrap_or_else(|_| {
+                                                Err("CAPTURE_WORKER_FAILED".into())
+                                            });
                                             complete_capture(&image_reply, result);
                                         });
                                     }
-                                    Err(_) => complete_capture(&image_reply, Err("CAPTURE_WORKER_FAILED".into())),
+                                    Err(_) => complete_capture(
+                                        &image_reply,
+                                        Err("CAPTURE_WORKER_FAILED".into()),
+                                    ),
                                 }
                                 Ok(())
-                            },
-                        ));
+                            }),
+                        );
                         // Recheck before dispatch. Once admitted, only the CDP
                         // completion or a synchronous dispatch rejection ends it.
                         if cancellation.is_cancelled() {
-                            complete_capture(&metrics_reply, Err("CAPTURE_CANCELLED_BEFORE_DISPATCH".into()));
+                            complete_capture(
+                                &metrics_reply,
+                                Err("CAPTURE_CANCELLED_BEFORE_DISPATCH".into()),
+                            );
                         } else if unsafe {
                             capture_core.CallDevToolsProtocolMethod(
-                                PCWSTR(method.as_ptr()), PCWSTR(params.as_ptr()), &completion,
+                                PCWSTR(method.as_ptr()),
+                                PCWSTR(params.as_ptr()),
+                                &completion,
                             )
-                        }.is_err() {
+                        }
+                        .is_err()
+                        {
                             complete_capture(&metrics_reply, Err("CAPTURE_DISPATCH_FAILED".into()));
                         }
                         Ok(())
-                    },
-                ));
+                    }),
+                );
                 if unsafe {
                     core.CallDevToolsProtocolMethod(
-                        PCWSTR(metrics_method.as_ptr()), PCWSTR(empty_params.as_ptr()), &metrics_completion,
+                        PCWSTR(metrics_method.as_ptr()),
+                        PCWSTR(empty_params.as_ptr()),
+                        &metrics_completion,
                     )
-                }.is_err() {
+                }
+                .is_err()
+                {
                     complete_capture(&pending, Err("CAPTURE_METRICS_DISPATCH_FAILED".into()));
                 }
             })?;
@@ -1752,7 +1935,10 @@ impl TabManager {
     #[cfg(target_os = "linux")]
     #[allow(deprecated)]
     pub fn capture_isolated_linux_metrics(
-        &self, id: &TabId, document: CaptureDocument, cancellation: CaptureCancellation,
+        &self,
+        id: &TabId,
+        document: CaptureDocument,
+        cancellation: CaptureCancellation,
         target: Option<i32>,
         callback: impl FnOnce(std::result::Result<Vec<u8>, String>) + Send + 'static,
     ) -> Result<()> {
@@ -1769,7 +1955,8 @@ impl TabManager {
             return Ok(());
         };
         if !std::sync::Weak::ptr_eq(&document.instance.0, &Arc::downgrade(&tab))
-            || !document.observed_generation_is_current() {
+            || !document.observed_generation_is_current()
+        {
             callback(Err("CAPTURE_DOCUMENT_STALE".into()));
             return Ok(());
         }
@@ -1777,7 +1964,9 @@ impl TabManager {
             callback(Err("CAPTURE_NATIVE_DISPATCH_BUSY".into()));
             return Ok(());
         };
-        let js = format!("({})({})", r#"function(target) {
+        let js = format!(
+            "({})({})",
+            r#"function(target) {
             const root = document.scrollingElement;
             const vv = window.visualViewport;
             if (!root || !document.body || document.readyState !== 'complete' ||
@@ -1815,14 +2004,21 @@ impl TabManager {
                 client_width:root.clientWidth,client_height:root.clientHeight,
                 viewport_width:innerWidth,viewport_height:innerHeight,scale:devicePixelRatio,
                 visual_scale:vv?vv.scale:1,x:scrollX,y:scrollY,revision:state.revision});
-        }"#, target.map(|y| y.to_string()).unwrap_or_else(|| "null".into()));
+        }"#,
+            target
+                .map(|y| y.to_string())
+                .unwrap_or_else(|| "null".into())
+        );
         let webview = tab.webview.clone();
         webview.with_webview(move |native| {
             use gtk::prelude::WidgetExt;
             use java_script_core::ValueExt;
             use webkit2gtk::WebViewExt;
             let view = native.inner().clone();
-            if !cancellation.enter_native() || !document.observed_generation_is_current() || view.is_loading() {
+            if !cancellation.enter_native()
+                || !document.observed_generation_is_current()
+                || view.is_loading()
+            {
                 callback(Err("CAPTURE_CANCELLED_OR_STALE".into()));
                 return;
             }
@@ -1833,21 +2029,39 @@ impl TabManager {
             }
             let current = view.clone();
             let native_cancel = cancellation.native.clone();
-            view.run_javascript_in_world(&js, "browseros.capture.viewport.v1", Some(&native_cancel), move |result| {
-                let result = if cancellation.is_cancelled() || !document.observed_generation_is_current() || current.is_loading() {
-                    Err("CAPTURE_CANCELLED_OR_STALE".into())
-                } else {
-                    result.map_err(|_| "CAPTURE_METRICS_FAILED".to_string())
-                        .and_then(|value| value.js_value().map(|v| v.to_str().to_string())
-                            .ok_or_else(|| "CAPTURE_METRICS_UNAVAILABLE".to_string()))
-                        .and_then(|json| if json.len() <= 4096 { Ok(json.into_bytes()) }
-                            else { Err("CAPTURE_METRICS_INVALID".into()) })
-                };
-                // Native metrics have returned. Release admission before
-                // notifying the sequential Worker of this terminal result.
-                drop(permit);
-                callback(result);
-            });
+            view.run_javascript_in_world(
+                &js,
+                "browseros.capture.viewport.v1",
+                Some(&native_cancel),
+                move |result| {
+                    let result = if cancellation.is_cancelled()
+                        || !document.observed_generation_is_current()
+                        || current.is_loading()
+                    {
+                        Err("CAPTURE_CANCELLED_OR_STALE".into())
+                    } else {
+                        result
+                            .map_err(|_| "CAPTURE_METRICS_FAILED".to_string())
+                            .and_then(|value| {
+                                value
+                                    .js_value()
+                                    .map(|v| v.to_str().to_string())
+                                    .ok_or_else(|| "CAPTURE_METRICS_UNAVAILABLE".to_string())
+                            })
+                            .and_then(|json| {
+                                if json.len() <= 4096 {
+                                    Ok(json.into_bytes())
+                                } else {
+                                    Err("CAPTURE_METRICS_INVALID".into())
+                                }
+                            })
+                    };
+                    // Native metrics have returned. Release admission before
+                    // notifying the sequential Worker of this terminal result.
+                    drop(permit);
+                    callback(result);
+                },
+            );
         })?;
         Ok(())
     }
@@ -1857,8 +2071,11 @@ impl TabManager {
     /// The live-tab capture contract and GTK implementation are unchanged.
     #[cfg(target_os = "windows")]
     pub fn capture_isolated_band_request(
-        &self, id: &TabId, document: CaptureDocument,
-        cancellation: CaptureCancellation, band: Option<[i32; 4]>,
+        &self,
+        id: &TabId,
+        document: CaptureDocument,
+        cancellation: CaptureCancellation,
+        band: Option<[i32; 4]>,
         callback: impl FnOnce(std::result::Result<Vec<u8>, String>) + Send + 'static,
     ) -> Result<()> {
         if self.isolated_profile.is_none() || !self.isolated_document_ready() {
@@ -1868,16 +2085,22 @@ impl TabManager {
         let (method, params) = match band {
             None => ("Page.getLayoutMetrics", serde_json::json!({})),
             Some([x, y, width, height]) => {
-                if x.abs_diff(0) > 16_384 || y.abs_diff(0) > 32_768
-                    || !(1..=16_384).contains(&width) || !(1..=1024).contains(&height)
-                    || i64::from(width) * i64::from(height) > 1_000_000 {
+                if x.abs_diff(0) > 16_384
+                    || y.abs_diff(0) > 32_768
+                    || !(1..=16_384).contains(&width)
+                    || !(1..=1024).contains(&height)
+                    || i64::from(width) * i64::from(height) > 1_000_000
+                {
                     callback(Err("CAPTURE_BAND_LIMIT".into()));
                     return Ok(());
                 }
-                ("Page.captureScreenshot", serde_json::json!({
-                    "format":"png", "captureBeyondViewport":true, "fromSurface":true,
-                    "clip":{"x":x,"y":y,"width":width,"height":height,"scale":1}
-                }))
+                (
+                    "Page.captureScreenshot",
+                    serde_json::json!({
+                        "format":"png", "captureBeyondViewport":true, "fromSurface":true,
+                        "clip":{"x":x,"y":y,"width":width,"height":height,"scale":1}
+                    }),
+                )
             }
         };
         let Ok((_operation, tab)) = self.get_tab(id, TabAccessKind::Operation) else {
@@ -1885,7 +2108,8 @@ impl TabManager {
             return Ok(());
         };
         if !std::sync::Weak::ptr_eq(&document.instance.0, &Arc::downgrade(&tab))
-            || !document.observed_generation_is_current() {
+            || !document.observed_generation_is_current()
+        {
             callback(Err("CAPTURE_DOCUMENT_STALE".into()));
             return Ok(());
         }
@@ -1899,16 +2123,22 @@ impl TabManager {
         webview.with_webview(move |native| {
             use webview2_com::CallDevToolsProtocolMethodCompletedHandler;
             use windows::core::PCWSTR;
-            if !cancellation.enter_native() || !document.observed_generation_is_current()
-                || !app.try_state::<TabManagerState>().is_some_and(|manager|
-                    manager.isolated_document_ready() && manager.is_current_capture_document(&id, &document))
+            if !cancellation.enter_native()
+                || !document.observed_generation_is_current()
+                || !app.try_state::<TabManagerState>().is_some_and(|manager| {
+                    manager.isolated_document_ready()
+                        && manager.is_current_capture_document(&id, &document)
+                })
             {
                 callback(Err("CAPTURE_CANCELLED_OR_STALE".into()));
                 return;
             }
             let core = match unsafe { native.controller().CoreWebView2() } {
                 Ok(core) => core,
-                Err(_) => { callback(Err("CAPTURE_ENGINE_UNAVAILABLE".into())); return; }
+                Err(_) => {
+                    callback(Err("CAPTURE_ENGINE_UNAVAILABLE".into()));
+                    return;
+                }
             };
             let pending = Arc::new(parking_lot::Mutex::new(Some(callback)));
             let reply = pending.clone();
@@ -1930,15 +2160,20 @@ impl TabManager {
                         complete_capture(&reply, Err("CAPTURE_SIZE_LIMIT".into()));
                         return Ok(());
                     }
-                    let worker = std::thread::Builder::new().name("browseros-isolated-band-decode".into())
+                    let worker = std::thread::Builder::new()
+                        .name("browseros-isolated-band-decode".into())
                         .spawn(move || {
                             let _permit = permit;
-                            if cancellation.is_cancelled() || !document.observed_generation_is_current() {
+                            if cancellation.is_cancelled()
+                                || !document.observed_generation_is_current()
+                            {
                                 return Err("CAPTURE_CANCELLED_OR_STALE".into());
                             }
                             if image {
-                                decode_capture_png(&json, || cancellation.is_cancelled()
-                                    || !document.observed_generation_is_current())
+                                decode_capture_png(&json, || {
+                                    cancellation.is_cancelled()
+                                        || !document.observed_generation_is_current()
+                                })
                             } else {
                                 let clip = capture_clip_from_metrics(&json)?;
                                 let metrics: serde_json::Value = serde_json::from_str(&json)
@@ -1950,13 +2185,15 @@ impl TabManager {
                                     "contentSize":metrics["contentSize"],
                                     "cssLayoutViewport":metrics["cssLayoutViewport"],
                                     "cssVisualViewport":metrics["cssVisualViewport"]
-                                })).map_err(|_| "CAPTURE_METRICS_INVALID".into())
+                                }))
+                                .map_err(|_| "CAPTURE_METRICS_INVALID".into())
                             }
                         });
                     match worker {
                         Ok(worker) => {
                             tauri::async_runtime::spawn_blocking(move || {
-                                let result = worker.join()
+                                let result = worker
+                                    .join()
                                     .unwrap_or_else(|_| Err("CAPTURE_WORKER_FAILED".into()));
                                 complete_capture(&reply, result);
                             });
@@ -1967,10 +2204,20 @@ impl TabManager {
                 },
             ));
             let method: Vec<u16> = method.encode_utf16().chain(std::iter::once(0)).collect();
-            let params: Vec<u16> = params.to_string().encode_utf16().chain(std::iter::once(0)).collect();
-            if unsafe { core.CallDevToolsProtocolMethod(
-                PCWSTR(method.as_ptr()), PCWSTR(params.as_ptr()), &completion,
-            ) }.is_err() {
+            let params: Vec<u16> = params
+                .to_string()
+                .encode_utf16()
+                .chain(std::iter::once(0))
+                .collect();
+            if unsafe {
+                core.CallDevToolsProtocolMethod(
+                    PCWSTR(method.as_ptr()),
+                    PCWSTR(params.as_ptr()),
+                    &completion,
+                )
+            }
+            .is_err()
+            {
                 complete_capture(&pending, Err("CAPTURE_DISPATCH_FAILED".into()));
             }
         })?;

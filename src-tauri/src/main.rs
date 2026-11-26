@@ -55,17 +55,17 @@ mod framework {
     pub mod ai;
     pub mod commands;
 }
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+mod isolated_capture;
 mod mcp;
 #[cfg(not(test))]
 mod native_58_gui_review;
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+mod native_supervisor;
 mod security_policy;
 mod session;
 mod shutdown;
 mod startup;
-#[cfg(any(target_os = "linux", target_os = "windows"))]
-mod native_supervisor;
-#[cfg(any(target_os = "linux", target_os = "windows"))]
-mod isolated_capture;
 mod capabilities {
     pub mod agent;
     pub mod bfc;
