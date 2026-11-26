@@ -56,6 +56,7 @@ const resStats = ref<ResourceStats | null>(null);
 let resTimer: number | null = null;
 
 function setGridLayout(mode: (typeof gridLayouts)[number]["key"]) {
+  if (grid.gridBusy || grid.gridCleanupUnconfirmed) return;
   const countChanged = mode === "quad" && grid.gridCount !== 4;
   grid.gridLayout = mode;
   if (mode === "quad") grid.gridCount = 4;
@@ -63,7 +64,7 @@ function setGridLayout(mode: (typeof gridLayouts)[number]["key"]) {
   if (countChanged) void grid.rebuildGrid(); else grid.layoutGrid();
 }
 function setGridCount(n: number) {
-  if (grid.gridCount === n) return;
+  if (grid.gridBusy || grid.gridCleanupUnconfirmed || grid.gridCount === n) return;
   grid.gridCount = n;
   if (n !== 4 && grid.gridLayout === "quad") grid.gridLayout = "grid";
   if (grid.gridOpen) void grid.rebuildGrid();
@@ -101,14 +102,14 @@ onBeforeUnmount(() => {
   <div v-if="grid.gridOpen && layout.mainView === 'grid' && grid.gridMode === 'ai'" class="expand-row ai-send-row">
     <span class="er-label">🤖 群发</span>
     <input v-model="grid.gridAiInput" class="ai-send-input" placeholder="输入问题，同时发送给所有宫格中的 AI..." @keyup.enter="grid.gridSendAi" />
-    <button class="er-primary" @click="grid.gridSendAi">发送</button>
+    <button class="er-primary" :disabled="grid.gridBusy || grid.gridCleanupUnconfirmed" @click="grid.gridSendAi">{{grid.gridSending ? '调度中…' : '发送'}}</button>
   </div>
   <GridArchiveBar v-if="grid.gridOpen && layout.mainView === 'grid'" />
   <div v-if="layout.mainView === 'grid'" class="grid-context" aria-label="宫格控制">
     <strong>对比工作区</strong>
-    <label>AI 组合 <select aria-label="AI 组合模板" :value="grid.activeAiPreset" :disabled="grid.gridStarting" @change="grid.applyAiPreset(($event.target as HTMLSelectElement).value)"><option value="" disabled>自定义网址</option><option v-for="p in grid.aiPresets" :key="p.id" :value="p.id">{{p.name}} · {{p.urls.length}} 格</option></select></label>
+    <label>AI 组合 <select aria-label="AI 组合模板" :value="grid.activeAiPreset" :disabled="grid.gridBusy || grid.gridCleanupUnconfirmed" @change="grid.applyAiPreset(($event.target as HTMLSelectElement).value)"><option value="" disabled>自定义网址</option><option v-for="p in grid.aiPresets" :key="p.id" :value="p.id">{{p.name}} · {{p.urls.length}} 格</option></select></label>
     <div role="group" aria-label="模式"><button :class="{active:grid.gridMode==='browse'}" @click="grid.gridMode='browse'">浏览</button><button :class="{active:grid.gridMode==='ai'}" @click="grid.gridMode='ai'">AI</button></div>
-    <div role="group" aria-label="快捷布局"><button v-for="n in [2,4]" :key="n" :class="{active:grid.gridCount===n}" @click="setGridCount(n)">{{n}} 格</button></div>
+    <div role="group" aria-label="快捷布局"><button v-for="n in [2,4]" :key="n" :disabled="grid.gridBusy || grid.gridCleanupUnconfirmed" :class="{active:grid.gridCount===n}" @click="setGridCount(n)">{{n}} 格</button></div>
     <button class="grid-more" :aria-expanded="advancedOpen" aria-controls="grid-advanced" @click="advancedOpen=!advancedOpen">更多设置</button>
   </div>
   <div v-if="layout.mainView === 'grid' && !grid.gridOpen" class="expand-row" role="status">
@@ -117,15 +118,15 @@ onBeforeUnmount(() => {
   </div>
   <div v-if="grid.gridCleanupUnconfirmed" class="expand-row" role="status">
     <span class="er-warn">原生宫格状态待核对，不会自动重建。</span>
-    <button :disabled="grid.gridInspecting || grid.gridStarting" @click="grid.inspectGridRecovery()">核对原生状态</button>
+    <button :disabled="grid.gridInspecting || grid.gridBusy" @click="grid.inspectGridRecovery()">核对原生状态</button>
     <button :disabled="grid.gridStarting" class="grid-danger" @click="grid.closeGrid()">关闭残留宫格</button>
     <template v-if="grid.gridRecoveryStates">
       <span v-for="route in grid.gridRecoveryStates.filter(item => item.state !== 'absent')" :key="route.index" class="er-label">第 {{route.index + 1}} 格：{{ ({ready:'就绪',not_ready:'未就绪',cleanup_pending:'回收中',restart_pending:'等待重启',hibernated:'休眠'} as Record<string,string>)[route.state] || route.state }}</span>
     </template>
   </div>
   <div v-if="layout.mainView === 'grid' && advancedOpen" id="grid-advanced" class="grid-advanced">
-    <label>布局 <select aria-label="宫格布局" :value="grid.gridLayout" @change="setGridLayout(($event.target as HTMLSelectElement).value as (typeof gridLayouts)[number]['key'])"><option v-for="l in gridLayouts" :key="l.key" :value="l.key">{{l.title}}</option></select></label>
-    <label>格数 <select aria-label="格数" :value="grid.gridCount" @change="setGridCount(Number(($event.target as HTMLSelectElement).value))"><option v-for="n in gridCounts" :key="n" :value="n">{{n}}</option></select></label>
+    <label>布局 <select aria-label="宫格布局" :disabled="grid.gridBusy || grid.gridCleanupUnconfirmed" :value="grid.gridLayout" @change="setGridLayout(($event.target as HTMLSelectElement).value as (typeof gridLayouts)[number]['key'])"><option v-for="l in gridLayouts" :key="l.key" :value="l.key">{{l.title}}</option></select></label>
+    <label>格数 <select aria-label="格数" :disabled="grid.gridBusy || grid.gridCleanupUnconfirmed" :value="grid.gridCount" @change="setGridCount(Number(($event.target as HTMLSelectElement).value))"><option v-for="n in gridCounts" :key="n" :value="n">{{n}}</option></select></label>
     <button @click="grid.gridOpen ? grid.layoutGrid() : grid.activateGrid()">重排</button><button @click="urlsOpen=!urlsOpen">编辑网址</button>
     <button @click="toggleRes">资源详情</button><button class="grid-danger" @click="grid.closeGrid();advancedOpen=false">关闭宫格</button>
   </div>
@@ -140,7 +141,7 @@ onBeforeUnmount(() => {
     <span v-for="i in grid.gridCount" :key="i" class="er-url"><span class="er-gidx">{{i}}</span>
       <select :aria-label="'第 '+i+' 格 AI 服务'" :value="grid.gridUrls[i-1]" @change="grid.gridUrls[i-1]=($event.target as HTMLSelectElement).value;grid.activeAiPreset='' "><option :value="grid.gridUrls[i-1]">自定义 / 当前网址</option><option v-for="p in AI_PROVIDERS" :key="p.id" :value="p.url">{{p.name}}</option></select>
       <input v-model="grid.gridUrls[i-1]" :aria-label="'第 '+i+' 格网址'" placeholder="网址" @keyup.enter="grid.gridSetUrl(i-1)" />
-      <button @click="grid.gridSetUrl(i-1)">↺</button></span>
+      <button :disabled="grid.gridBusy || grid.gridCleanupUnconfirmed" @click="grid.gridSetUrl(i-1)">↺</button></span>
     <input v-model="presetName" aria-label="自定义 AI 模板名称" placeholder="组合名称" maxlength="60"/><button :disabled="!presetName.trim()||grid.gridStarting" @click="grid.saveAiPreset(presetName)&&(presetName='')">保存为新模板</button>
     <button :disabled="!grid.customAiPresets.some(p=>p.id===grid.activeAiPreset)" @click="grid.deleteAiPreset(grid.activeAiPreset)">删除当前自定义模板</button>
   </div>

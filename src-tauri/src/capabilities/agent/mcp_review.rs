@@ -21,10 +21,16 @@ fn canonical(value: &Value) -> Value {
     }
 }
 fn fingerprint(value: &Value) -> Result<String, String> {
-    let bytes = serde_json::to_vec(&canonical(value)).map_err(|_| "MCP_REVIEW_ENCODE_FAILED")?;
-    if bytes.len() > 1024 * 1024 {
-        return Err("MCP_REVIEW_LIMIT".into());
-    }
+    // Reject oversize before recursively cloning/sorting the descriptor,
+    // then enforce the same bound during canonical serialization.
+    let encode = |value: &Value| {
+        super::mcp_protocol::encode_bounded(value, 1024 * 1024).map_err(|error| {
+            if error == "MCP_REQUEST_LIMIT" { "MCP_REVIEW_LIMIT".to_string() }
+            else { "MCP_REVIEW_ENCODE_FAILED".to_string() }
+        })
+    };
+    encode(value)?;
+    let bytes = encode(&canonical(value))?;
     Ok(format!("{:x}", Sha256::digest(bytes)))
 }
 pub(crate) struct Prepared {

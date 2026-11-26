@@ -104,7 +104,21 @@ impl AgentTool for PublicReadTool {
         ToolEffect::ReadOnly
     }
     fn validate_binding(&self, binding: &ApprovalBinding, args: &Value) -> Result<()> {
-        self.host.validate(&self.spec, binding, args)
+        // A slow host validation must not extend a signed approval lifetime.
+        let check = || -> Result<()> {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|_| FoundationError::PermissionDenied)?.as_millis();
+            if now >= u128::from(binding.expires_at_unix_ms)
+                || binding.principal_id.is_nil() || binding.workspace_id.is_nil()
+                || binding.session_id.is_nil() {
+                return Err(FoundationError::PermissionDenied);
+            }
+            Ok(())
+        };
+        check()?;
+        self.host.validate(&self.spec, binding, args)?;
+        check()
     }
     fn requires_authorized_call(&self) -> bool {
         true
@@ -114,8 +128,7 @@ impl AgentTool for PublicReadTool {
     }
     fn call_authorized<'a>(&'a self, call: crate::tool::AuthorizedCall) -> ToolFuture<'a> {
         Box::pin(async move {
-            self.host
-                .validate(&self.spec, &call.binding, &call.arguments)?;
+            self.validate_binding(&call.binding, &call.arguments)?;
             self.host
                 .call(&self.spec, call.binding, call.arguments)
                 .await

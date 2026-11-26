@@ -45,7 +45,7 @@ export const useGridStore = defineStore("grid", () => {
     return true;
   }
   async function applyAiPreset(id:string) {
-    if(gridStarting.value)return;
+    if(gridBusy.value || gridCleanupUnconfirmed.value)return;
     const item=aiPresets.value.find(p=>p.id===id);if(!item)return;
     try {
       const next=validateAiPreset(item);
@@ -153,13 +153,17 @@ export const useGridStore = defineStore("grid", () => {
   let gridBuilding = false;
   let gridBuildSettlement: Promise<void> | null = null;
   let gridCloseTask: Promise<void> | null = null;
+  let gridCellTask: Promise<void> | null = null;
+  const gridCellBusy = ref(false);
+  const gridSending = ref(false);
+  const gridBusy = computed(() => gridStarting.value || gridCellBusy.value || gridSending.value);
   const gridCleanupUnconfirmed = ref(false);
   const gridInspecting = ref(false);
   const gridRecoveryStates = ref<Array<{index: number; state: string}> | null>(null);
   let rebuildRequested = false;
   let gridEpoch = 0;
   async function buildGrid() {
-    if (gridCloseTask || gridCleanupUnconfirmed.value) {
+    if (gridCloseTask || gridCellTask || gridSending.value || gridCleanupUnconfirmed.value) {
       layout.showToast("宫格关闭状态尚未核实，请先重新核对关闭结果");
       return;
     }
@@ -187,6 +191,7 @@ export const useGridStore = defineStore("grid", () => {
     let finishBuild!: () => void;
     gridBuildSettlement = new Promise<void>(resolve => { finishBuild = resolve; });
     const epoch = ++gridEpoch;
+    const previouslyOpen = gridOpen.value;
     gridStarting.value = true;
     gridRecoveryStates.value = null;
     gridStartupError.value = "";
@@ -207,7 +212,9 @@ export const useGridStore = defineStore("grid", () => {
     // must not submit a second close against a newly observed topology.
     const created = await bridge.createGrid(n, urls);
     if (epoch !== gridEpoch) return;
-    if (!Number.isInteger(created) || created < 2) throw new Error("GRID_NATIVE_CREATE_INCOMPLETE");
+    if (!Number.isInteger(created) || created < 2 || created > n || created > 12) {
+      throw new Error("GRID_NATIVE_CREATE_INCOMPLETE");
+    }
     // 降级提示存起来，最后用一条 toast 展示（showToast 单条覆盖，先发的会被吞掉）
     const degraded = created < n;
     if (degraded) gridCount.value = created;
@@ -226,7 +233,7 @@ export const useGridStore = defineStore("grid", () => {
     layoutGrid();
     // 保险：400ms 后再排一次（幂等），覆盖工具条展开/视图切换导致的首次布局时序窗口
     window.setTimeout(() => {
-      if (gridOpen.value) layoutGrid();
+      if (epoch === gridEpoch && gridOpen.value) layoutGrid();
     }, 400);
     // 宫格打开后激活页签被移出屏幕 → 冻结；格子可见 → 保持运行
     syncGridFreeze();
@@ -244,7 +251,9 @@ export const useGridStore = defineStore("grid", () => {
       // Never automatically replay the queued rebuild after such a result.
       rebuildRequested = false;
       const reason = String(error);
-      const partial = /GRID_BUILD_PARTIAL|GRID_REQUEST_OUTCOME_UNKNOWN|GRID_WORKER_FAILED/.test(reason);
+      // A failed rebuild of an already published grid cannot establish
+      // that the old native cells disappeared, even on a local rejection.
+      const partial = previouslyOpen || /GRID_BUILD_PARTIAL|GRID_REQUEST_OUTCOME_UNKNOWN|GRID_WORKER_FAILED|GRID_NATIVE_CREATE_INCOMPLETE/.test(reason);
       // Confirmed earlier cells may still be alive even though the layout is
       // no longer published. Keep the explicit close path available and do
       // not silently recreate that partial topology.
@@ -273,22 +282,59 @@ export const useGridStore = defineStore("grid", () => {
     scheduleGrid();
   }
   async function gridSetUrl(i: number) {
+    if (!Number.isInteger(i) || i < 0 || i >= gridCount.value || !gridOpen.value
+        || gridBusy.value || gridCloseTask || gridCleanupUnconfirmed.value || !isGridResourceAllowed()) return;
     const u = (gridUrls[i] || browser.url || "").trim() || "about:blank";
     gridUrls[i] = u;
-    await bridge.gridOpen(i, u);
-    layout.showToast(`宫格 ${i + 1} → ${u}`);
+    const epoch = gridEpoch;
+    gridCellBusy.value = true;
+    const task = (async () => {
+      try {
+        await bridge.gridOpen(i, u);
+        if (epoch === gridEpoch && gridOpen.value) layout.showToast(`宫格 ${i + 1} 已提交导航`);
+      } catch (error) {
+        if (epoch !== gridEpoch) return;
+        const reason = String(error);
+        if (/GRID_BUILD_PARTIAL|GRID_REQUEST_OUTCOME_UNKNOWN|GRID_WORKER_FAILED|GRID_OPEN_TARGET_CHANGED|GRID_RENDERER_READY_TIMEOUT/.test(reason)) {
+          gridCleanupUnconfirmed.value = true;
+          gridRecoveryStates.value = null;
+          gridStartupError.value = "单格导航结果待核对，不会自动重放；请核对原生状态。";
+          gridOpen.value = false;
+        }
+        layout.showToast(gridStartupError.value || "单格导航未确认，请检查原生状态后手动操作。");
+      }
+    })();
+    gridCellTask = task;
+    try { await task; }
+    finally {
+      if (gridCellTask === task) {
+        gridCellTask = null;
+        gridCellBusy.value = false;
+      }
+    }
   }
   // AI 模式：向所有宫格 webview 注入问题并提交
   // 按各格网址匹配站点适配 selector；注入脚本带重试（AI 页面输入框常懒加载），
   // textarea/input 用原生 value setter 触发 React 受控更新，contenteditable 用
   // execCommand('insertText')（ProseMirror/Lexical 均兼容）
   async function gridSendAi() {
+    if (!gridOpen.value || layout.mainView !== "grid" || gridMode.value !== "ai"
+        || gridBusy.value || gridCloseTask || gridCleanupUnconfirmed.value || !isGridResourceAllowed()) return;
     const q = gridAiInput.value.trim();
     if (!q) {
       layout.showToast("请输入问题");
       return;
     }
     const n = gridCount.value;
+    const epoch = gridEpoch;
+    const targets = gridUrls.slice(0, n);
+    const stillCurrent = () => epoch === gridEpoch && gridOpen.value && layout.mainView === "grid"
+      && gridMode.value === "ai" && !gridCleanupUnconfirmed.value && isGridResourceAllowed()
+      && gridCount.value === n && targets.every((url, i) => gridUrls[i] === url);
+    gridSending.value = true;
+    let dispatched = 0;
+    let stopped = false;
+    try {
     layout.showToast(`正在向 ${n} 个宫格注入…`);
     bridge.debugLog(`gridSendAi start n=${n}`);
     const fails: string[] = [];
@@ -296,12 +342,23 @@ export const useGridStore = defineStore("grid", () => {
     // 错峰启动，避免 4 个子 webview 同时进入高强度流式渲染导致 WebKitGTK 并发崩溃
     const GRID_STAGGER_MS = 1500;
     for (let i = 0; i < n; i++) {
+      if (!stillCurrent()) { stopped = true; break; }
       const label = `grid-${i}`;
-      const cfg = aiAdapterFor(gridUrls[i] || "");
-      const js = `(function(){try{var q=${JSON.stringify(q)},cfg=${JSON.stringify(cfg)},GI=['textarea','[contenteditable="true"]','input[type="text"]'],GS=['button[type="submit"]','button[class*="send"]','button[class*="Send"]','button[class*="submit"]','button[aria-label*="发送"]','button[aria-label*="Send"]'];function v(e){return e&&e.getClientRects().length>0}function f(a){for(var i=0;i<a.length;i++){var l=document.querySelectorAll(a[i]);for(var j=0;j<l.length;j++)if(v(l[j]))return l[j]}return null}function b(m,o){if(!document.body)return;var d=document.createElement('div');d.textContent=m;d.style.cssText='position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:2147483647;padding:6px 14px;border-radius:6px;font-size:13px;color:#fff;font-family:sans-serif;background:'+(o?'#2b8a3e':'#c0392b')+';box-shadow:0 2px 8px rgba(0,0,0,.3);pointer-events:none;';document.body.appendChild(d);setTimeout(function(){d.remove()},5000)}function sv(e,t){e.focus();if(e.tagName==='TEXTAREA'||e.tagName==='INPUT'){var p=e.tagName==='TEXTAREA'?window.HTMLTextAreaElement.prototype:window.HTMLInputElement.prototype,x=Object.getOwnPropertyDescriptor(p,'value');x&&x.set?x.set.call(e,t):e.value=t;e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}))}else{var s=window.getSelection(),r=document.createRange();r.selectNodeContents(e);s.removeAllRanges();s.addRange(r);document.execCommand('insertText',false,t)}}function sub(e){var x=f(cfg.sends.concat(GS));if(x&&!x.disabled){x.click();b('✓ 已点击发送',true);return}['keydown','keypress','keyup'].forEach(function(t){e.dispatchEvent(new KeyboardEvent(t,{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true,cancelable:true}))});b('✓ 已填入并回车',true)}var a=0;function go(){a++;if(!document.body){if(a<15)setTimeout(go,600);return}var e=f(cfg.inputs)||f(GI);if(!e){if(a<15){setTimeout(go,600);return}b('✗ 未找到输入框（需登录或站点改版）',false);return}try{sv(e,q);setTimeout(function(){try{sub(e)}catch(x){b('✗ 提交失败: '+x.message,false)}},200)}catch(x){b('✗ 填入失败: '+x.message,false)}}go()}catch(e){try{var d=document.createElement('div');d.textContent='✗ 脚本异常: '+e.message;d.style.cssText='position:fixed;top:8px;left:8px;z-index:2147483647;padding:6px 10px;background:#c0392b;color:#fff;font-size:12px;border-radius:6px;';(document.body||document.documentElement).appendChild(d);setTimeout(function(){d.remove()},8000)}catch(_){}}})();`;
+      let origin: string;
+      try {
+        const target = new URL(targets[i]);
+        if (!["https:", "http:"].includes(target.protocol) || target.username || target.password) throw new Error("unsupported");
+        origin = target.origin;
+      } catch {
+        fails.push(`${i + 1}格(目标地址不可核对)`);
+        continue;
+      }
+      const cfg = aiAdapterFor(targets[i]);
+      const js = `(function(){try{var origin=${JSON.stringify(origin)},doc=document;if(location.origin!==origin)return;var q=${JSON.stringify(q)},cfg=${JSON.stringify(cfg)},GI=['textarea','[contenteditable="true"]','input[type="text"]'],GS=['button[type="submit"]','button[class*="send"]','button[class*="Send"]','button[class*="submit"]','button[aria-label*="发送"]','button[aria-label*="Send"]'];function v(e){return e&&e.getClientRects().length>0}function f(a){for(var i=0;i<a.length;i++){var l=document.querySelectorAll(a[i]);for(var j=0;j<l.length;j++)if(v(l[j]))return l[j]}return null}function b(m,o){if(!document.body)return;var d=document.createElement('div');d.textContent=m;d.style.cssText='position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:2147483647;padding:6px 14px;border-radius:6px;font-size:13px;color:#fff;font-family:sans-serif;background:'+(o?'#2b8a3e':'#c0392b')+';box-shadow:0 2px 8px rgba(0,0,0,.3);pointer-events:none;';document.body.appendChild(d);setTimeout(function(){d.remove()},5000)}function sv(e,t){e.focus();if(e.tagName==='TEXTAREA'||e.tagName==='INPUT'){var p=e.tagName==='TEXTAREA'?window.HTMLTextAreaElement.prototype:window.HTMLInputElement.prototype,x=Object.getOwnPropertyDescriptor(p,'value');x&&x.set?x.set.call(e,t):e.value=t;e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}))}else{var s=window.getSelection(),r=document.createRange();r.selectNodeContents(e);s.removeAllRanges();s.addRange(r);document.execCommand('insertText',false,t)}}function sub(e){var x=f(cfg.sends.concat(GS));if(x&&!x.disabled){x.click();b('✓ 已点击发送',true);return}['keydown','keypress','keyup'].forEach(function(t){e.dispatchEvent(new KeyboardEvent(t,{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true,cancelable:true}))});b('✓ 已填入并回车',true)}var a=0;function go(){if(document!==doc||location.origin!==origin)return;a++;if(!document.body){if(a<15)setTimeout(go,600);return}var e=f(cfg.inputs)||f(GI);if(!e){if(a<15){setTimeout(go,600);return}b('✗ 未找到输入框（需登录或站点改版）',false);return}try{sv(e,q);setTimeout(function(){try{if(document!==doc||location.origin!==origin||!e.isConnected)return;sub(e)}catch(x){b('✗ 提交失败: '+x.message,false)}},200)}catch(x){b('✗ 填入失败: '+x.message,false)}}go()}catch(e){try{var d=document.createElement('div');d.textContent='✗ 脚本异常: '+e.message;d.style.cssText='position:fixed;top:8px;left:8px;z-index:2147483647;padding:6px 10px;background:#c0392b;color:#fff;font-size:12px;border-radius:6px;';(document.body||document.documentElement).appendChild(d);setTimeout(function(){d.remove()},8000)}catch(_){}}})();`;
       try {
         bridge.debugLog(`gridSendAi evalInTab[${label}] begin`);
         await bridge.evalInTab(label, js);
+        dispatched += 1;
         bridge.debugLog(`gridSendAi evalInTab[${label}] done`);
       } catch (e: any) {
         bridge.debugLog(`gridSendAi evalInTab[${label}] fail: ${String(e).slice(0, 60)}`);
@@ -314,12 +371,17 @@ export const useGridStore = defineStore("grid", () => {
       }
     }
     bridge.debugLog(`gridSendAi loop end fails=${fails.length}`);
-    if (fails.length) {
-      layout.showToast(`⚠️ ${fails.length}/${n} 格注入失败: ${fails[0]}`);
+    if (stopped || !stillCurrent()) {
+      layout.showToast(`群发已停止：${dispatched} 格收到脚本调度回执，实际发送结果需核对；不会自动重试。`);
+    } else if (fails.length) {
+      layout.showToast(`⚠️ ${fails.length}/${n} 格注入未确认: ${fails[0]}`);
     } else {
-      layout.showToast(`已注入 ${n} 格，看各格网页顶部的绿/红徽标`);
+      layout.showToast(`已调度 ${dispatched} 格脚本；仅在配置来源匹配时尝试发送，实际送达请看网页。`);
     }
-    gridAiInput.value = "";
+    if (!stopped && stillCurrent() && !fails.length && gridAiInput.value.trim() === q) gridAiInput.value = "";
+    } finally {
+      gridSending.value = false;
+    }
   }
   // Capability deactivation must receive the actual native close outcome.
   // Ordinary UI calls may display the error, but cannot mark it successful.
@@ -330,10 +392,12 @@ export const useGridStore = defineStore("grid", () => {
     // Stop positioning/freezing without asserting that processes are gone.
     gridOpen.value = false;
     const settling = gridBuildSettlement;
+    const settlingCell = gridCellTask;
     const task = (async () => {
       // The user's explicit close covers the earlier in-flight build.
       // Wait for its settlement, then take one native close snapshot.
       await settling;
+      await settlingCell;
       try {
         await bridge.closeGrid();
       } catch (error) {
@@ -369,7 +433,7 @@ export const useGridStore = defineStore("grid", () => {
   // This is an observation only; do not infer a close receipt from PID
   // absence. Native status includes cleanup, restart and saved-slot owners.
   async function inspectGridRecovery() {
-    if (gridInspecting.value || gridBuilding || gridCloseTask) return;
+    if (gridInspecting.value || gridBusy.value || gridBuilding || gridCloseTask || !gridCleanupUnconfirmed.value) return;
     const epoch = gridEpoch;
     gridInspecting.value = true;
     try {
@@ -377,7 +441,8 @@ export const useGridStore = defineStore("grid", () => {
       if (epoch !== gridEpoch || gridBuilding || gridCloseTask) return;
       const routes = sample.grid_routes;
       if (!routes || routes.length !== 12 || new Set(routes.map(route => route.index)).size !== 12
-          || routes.some(route => !Number.isInteger(route.index) || route.index < 0 || route.index >= 12)) {
+          || routes.some(route => !Number.isInteger(route.index) || route.index < 0 || route.index >= 12
+            || !["ready", "not_ready", "cleanup_pending", "restart_pending", "hibernated", "absent"].includes(route.state))) {
         gridRecoveryStates.value = null;
         layout.showToast("原生拓扑暂不可核实，请稍后手动查询");
         return;
@@ -402,7 +467,8 @@ export const useGridStore = defineStore("grid", () => {
   }
   // 关闭单个宫格：销毁对应子 webview，其余保留，并按剩余数量重排
   async function closeGridOne(i: number) {
-    if (gridBuilding || gridCloseTask || !gridOpen.value || i < 0 || i >= gridCount.value) return;
+    if (gridBuilding || gridBusy.value || gridCloseTask || gridCleanupUnconfirmed.value
+        || !gridOpen.value || !Number.isInteger(i) || i < 0 || i >= gridCount.value) return;
     if (gridCount.value <= 2) {
       await closeGridAll();
       return;
@@ -543,6 +609,8 @@ export const useGridStore = defineStore("grid", () => {
     aiPresets, customAiPresets, activeAiPreset, applyAiPreset, saveAiPreset, deleteAiPreset,
     gridOpen,
     gridStarting,
+    gridBusy,
+    gridSending,
     gridStartupError,
     gridCleanupUnconfirmed,
     gridInspecting,

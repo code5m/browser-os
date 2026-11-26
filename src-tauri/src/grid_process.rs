@@ -3178,7 +3178,9 @@ impl GridProcessManager {
                 "cleanup_pending"
             } else if let Some(child) = children.get(&index) {
                 if child.comms.is_connected() && child.document_ready
-                    && !child.comms.blank_reclaiming.load(Ordering::SeqCst) {
+                    && !child.comms.blank_reclaiming.load(Ordering::SeqCst)
+                    && child.comms.native_document.lock().ok()
+                        .is_some_and(|stamp| stamp.is_some_and(|value| value.usable())) {
                     "ready"
                 } else { "not_ready" }
             } else if restarting.contains_key(&index) {
@@ -3198,7 +3200,9 @@ impl GridProcessManager {
                 pid: child.child.id(),
                 spawn_epoch: child.comms.spawn_epoch.load(Ordering::SeqCst),
                 ready: child.comms.is_connected() && child.document_ready
-                    && !child.comms.blank_reclaiming.load(Ordering::SeqCst),
+                    && !child.comms.blank_reclaiming.load(Ordering::SeqCst)
+                    && child.comms.native_document.lock().ok()
+                        .is_some_and(|stamp| stamp.is_some_and(|value| value.usable())),
                 startup_reserved: child.spawned_at.elapsed() < crate::grid_ipc::RENDERER_STARTUP_RESERVE
                     || !child.document_ready,
             }

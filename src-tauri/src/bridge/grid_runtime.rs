@@ -213,6 +213,12 @@ fn create_grid_admitted(app: AppHandle, n: usize, urls: Vec<String>,
         None if (0..requested).all(|index| existing.contains(&(index as u32))) => requested,
         None => return Err("GRID_MEMORY_UNKNOWN: 无法测量可用内存，拒绝新建宫格".into()),
     };
+    // Validate all explicit target addresses before the first native mutation.
+    // Retained cells with no new target keep their existing document.
+    for raw in urls.iter().take(target).filter(|raw| !raw.trim().is_empty()) {
+        let address = initial_grid_url(raw.trim());
+        Url::parse(&address).map_err(|_| "GRID_BUILD_URL_INVALID")?;
+    }
     let mut prepared_stamps = Vec::with_capacity(target);
     // Keep confirmed cells on partial failure. Navigating them backward does
     // not restore the old DOM, can discard new user input, and is not safe
@@ -370,7 +376,10 @@ fn create_grid_cell(app: &AppHandle, stamp: crate::grid_ipc::GridRouteStamp, tar
             Err(rollback) => Err(format!("GRID_BUILD_PARTIAL:{error};rollback unconfirmed:{rollback}")),
         };
     }
+    // Creation is already acknowledged: a later binding failure cannot
+    // erase the surviving cell or authorize compensating navigation.
     mgr.grid_binding_for_stamp(prepared.stamp)
+        .map_err(|error| format!("GRID_BUILD_PARTIAL:created cell binding unavailable:{error}"))
 }
 
 /// 真正给宫格 webview 应用缩放（WebKitGTK 原生 zoom_level，经 UDS 到子进程）。

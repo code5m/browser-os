@@ -5,6 +5,7 @@ use serde_json::{json, Value};
 
 pub(super) const VERSION: &str = "2024-11-05";
 const ARGUMENT_LIMIT: usize = 128 * 1024;
+pub(super) const FRAME_LIMIT: usize = 128 * 1024;
 
 /// Bound the locally encoded JSON before writing to an external process.
 /// This does not cap the already decoded input Value or OS/SDK allocations.
@@ -94,6 +95,10 @@ pub(super) fn owned_tool_request(
         }
         params["_meta"] = json!({"browseros/effect/v1":binding.metadata()});
     }
+    // Reject the final call envelope before the caller publishes a durable
+    // external execution intent or starts the executable. ID 2 is the same
+    // ID used by both native sessions after initialize.
+    encode_bounded(&json!({"jsonrpc":"2.0","id":2,"method":method,"params":&params}), FRAME_LIMIT)?;
     Ok((method, params))
 }
 
@@ -105,7 +110,7 @@ pub(super) enum RpcFrame {
 
 /// JSON-RPC uses independent ID spaces in each direction. A server
 /// request whose ID equals the pending client request is NOT its reply.
-pub(super) fn classify_frame(value: Value, pending: u64) -> Result<RpcFrame, String> {
+pub(super) fn classify_frame(mut value: Value, pending: u64) -> Result<RpcFrame, String> {
     let object = value.as_object().ok_or("MCP_PROTOCOL_FRAME_INVALID")?;
     if value["jsonrpc"] != "2.0" {
         return Err("MCP_PROTOCOL_FRAME_INVALID".into());
@@ -132,10 +137,14 @@ pub(super) fn classify_frame(value: Value, pending: u64) -> Result<RpcFrame, Str
     if value["id"] != json!(pending) {
         return Ok(RpcFrame::Ignore);
     }
-    match (object.get("result"), object.get("error")) {
-        (Some(result), None) => Ok(RpcFrame::Reply(result.clone())),
-        (None, Some(error)) if error.is_object() => Err("MCP_REMOTE_ERROR".into()),
-        (None, None) => Err("MCP_RESULT_MISSING".into()),
+    let has_result = object.contains_key("result");
+    let has_error = object.contains_key("error");
+    match (has_result, has_error) {
+        (true, false) => Ok(RpcFrame::Reply(value.as_object_mut()
+            .and_then(|fields| fields.remove("result"))
+            .ok_or("MCP_RESULT_MISSING")?)),
+        (false, true) if value["error"].is_object() => Err("MCP_REMOTE_ERROR".into()),
+        (false, false) => Err("MCP_RESULT_MISSING".into()),
         _ => Err("MCP_PROTOCOL_FRAME_INVALID".into()),
     }
 }
