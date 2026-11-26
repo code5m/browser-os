@@ -628,6 +628,7 @@ pub(super) fn execute_cancelable_with_effect_admission(
     let credentials = crate::framework::ai::mcp_credential_snapshot(
         storage,
         prepared.config["env_refs"].as_object(),
+        &prepared.review["credentials"],
     )?;
     if cancellation.load(Ordering::Acquire) {
         return Err("MCP_CANCEL_REQUESTED".into());

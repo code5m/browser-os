@@ -382,27 +382,56 @@ fn mcp_profile_for_reference<'a>(
     }
     Ok(profile)
 }
-pub(crate) fn mcp_credential_info(storage: &Path, reference: &str) -> Result<Value, String> {
+// Read the native profile catalog once for the entire MCP review/capture.
+// No caller may grant itself a new file root via a resolved config parent.
+fn read_mcp_profiles(storage: &Path) -> Result<AiConfig, String> {
+    let path = storage.join("ai-profiles.json");
+    let snapshot = crate::capabilities::workspace::safe_paths::read_versioned(
+        &path, &[storage.to_path_buf()], MAX_BYTES as usize,
+    ).map_err(|_| "AI_CONFIG_UNSAFE")?;
+    match snapshot {
+        Some(snapshot) => decode_config(&snapshot.bytes),
+        None => Ok(AiConfig::default()),
+    }
+}
+fn mcp_credential_metadata(
+    config: &AiConfig,
+    refs: &serde_json::Map<String, Value>,
+) -> Result<Vec<Value>, String> {
+    if refs.len() > 64 { return Err("MCP_ENV_LIMIT".into()); }
+    refs.iter().map(|(name, reference)| {
+        let reference = reference.as_str().ok_or("MCP_CREDENTIAL_REF_INVALID")?;
+        let profile = mcp_profile_for_reference(config, reference)?;
+        Ok(json!({"reference":credential_reference(profile)?,"profile_id":profile.id,
+            "name":profile.name,"endpoint":profile.base_url,"environment":name}))
+    }).collect()
+}
+pub(crate) fn mcp_credential_infos(
+    storage: &Path, refs: &serde_json::Map<String, Value>,
+) -> Result<Vec<Value>, String> {
+    if refs.is_empty() { return Ok(Vec::new()); }
     let _guard = CONFIG_LOCK.lock().map_err(|_| "AI_CONFIG_BUSY")?;
-    let config = read(&storage.join("ai-profiles.json"))?;
-    let profile = mcp_profile_for_reference(&config, reference)?;
-    Ok(
-        json!({"reference":credential_reference(profile)?,"profile_id":profile.id,"name":profile.name,"endpoint":profile.base_url}),
-    )
+    mcp_credential_metadata(&read_mcp_profiles(storage)?, refs)
 }
 pub(crate) fn mcp_credential_snapshot(
     storage: &Path,
     refs: Option<&serde_json::Map<String, Value>>,
+    expected_metadata: &Value,
 ) -> Result<BTreeMap<String, String>, String> {
     let mut snapshot = BTreeMap::new();
+    let expected = expected_metadata.as_array().ok_or("MCP_CREDENTIAL_SCOPE_INVALID")?;
     let Some(refs) = refs.filter(|refs| !refs.is_empty()) else {
+        if !expected.is_empty() { return Err("MCP_CREDENTIAL_SCOPE_CHANGED".into()); }
         return Ok(snapshot);
     };
-    if refs.len() > 64 {
-        return Err("MCP_ENV_LIMIT".into());
-    }
+    if refs.len() > 64 { return Err("MCP_ENV_LIMIT".into()); }
     let _guard = CONFIG_LOCK.lock().map_err(|_| "AI_CONFIG_BUSY")?;
-    let config = read(&storage.join("ai-profiles.json"))?;
+    let config = read_mcp_profiles(storage)?;
+    // All reviewed environment mappings, profile identities, endpoint
+    // labels and exact references must still match before any keyring read.
+    if mcp_credential_metadata(&config, refs)?.as_slice() != expected.as_slice() {
+        return Err("MCP_CREDENTIAL_SCOPE_CHANGED".into());
+    }
     for (name, reference) in refs {
         let reference = reference.as_str().ok_or("MCP_CREDENTIAL_REF_INVALID")?;
         let profile = mcp_profile_for_reference(&config, reference)?;
@@ -428,9 +457,11 @@ fn read(path: &Path) -> Result<AiConfig, String> {
     if !m.is_file() || m.len() > MAX_BYTES {
         return Err("AI_CONFIG_UNSAFE".into());
     }
-    let config: AiConfig =
-        serde_json::from_slice(&fs::read(path).map_err(|_| "AI_CONFIG_READ_FAILED")?)
-            .map_err(|_| "AI_CONFIG_INVALID")?;
+    decode_config(&fs::read(path).map_err(|_| "AI_CONFIG_READ_FAILED")?)
+}
+fn decode_config(bytes: &[u8]) -> Result<AiConfig, String> {
+    if bytes.len() as u64 > MAX_BYTES { return Err("AI_CONFIG_LIMIT".into()); }
+    let config: AiConfig = serde_json::from_slice(bytes).map_err(|_| "AI_CONFIG_INVALID")?;
     if config.profiles.len() > 256 {
         return Err("AI_CONFIG_LIMIT".into());
     }

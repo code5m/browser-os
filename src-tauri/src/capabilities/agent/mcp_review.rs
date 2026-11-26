@@ -108,7 +108,8 @@ pub(crate) fn prepare(
         if refs.len() > 64 {
             return Err("MCP_ENV_LIMIT".into());
         }
-        for (name, reference) in refs {
+        for (name, reference) in refs.iter() {
+            if !reference.is_string() { return Err("MCP_CREDENTIAL_REF_INVALID".into()); }
             if name.is_empty()
                 || name.len() > 100
                 || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
@@ -118,16 +119,18 @@ pub(crate) fn prepare(
             if !environment_keys.insert(normalize_env(name)) {
                 return Err("MCP_ENV_DUPLICATE".into());
             }
-            let mut info = crate::framework::ai::mcp_credential_info(
-                storage,
-                reference.as_str().ok_or("MCP_CREDENTIAL_REF_INVALID")?,
-            )?;
+        }
+        // One catalog snapshot, not a sequence of independent profile reads.
+        let reviewed = crate::framework::ai::mcp_credential_infos(storage, refs)?;
+        for ((name, reference), info) in refs.iter_mut().zip(reviewed) {
+            if info["environment"].as_str() != Some(name.as_str()) {
+                return Err("MCP_CREDENTIAL_SCOPE_INVALID".into());
+            }
             let resolved = info["reference"]
                 .as_str()
                 .ok_or("MCP_CREDENTIAL_REF_INVALID")?
                 .to_owned();
             grants.insert(resolved.clone());
-            info["environment"] = json!(name);
             credentials.push(info);
             *reference = json!(resolved);
         }
