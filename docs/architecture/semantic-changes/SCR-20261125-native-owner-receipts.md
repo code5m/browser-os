@@ -336,3 +336,10 @@ Source-only scope; no compilation, tests, install/runtime validation, workflow d
 - Browser Owner rejects unknown fields on typed request/action envelopes, timestamps both prepared and legacy identity capture reservations for existing stalled-domain recovery, and revalidates logical membership and Owner snapshot before exposing renderer recovery identity.
 - The frontend classifies definite pre-admission unavailable/busy results without replaying prepare; unknown execution outcomes still require reconciliation. No Agent write grant or additional Tauri command is added.
 - No build, tests, workflow edits, master merge or installed acceptance.
+
+## 2026-11-26 — Agent read grants, cancellation fencing and Browser projection
+
+- New Agent Channel read grants bind the exact allowlisted command and serialized argument digest in the resource revision (v2), as well as the existing resource name, approval lifetime and host source. Historical v1 is accepted only while recovering authenticated records, never as live authority. Unknown input fields and mismatched durable claim identities/digests fail closed.
+- A native read waiter cancellation guard and monotonic 15-second deadline are checked before native dispatch and before returning the result. Dropping an async waiter cannot grant authority to queued work; already executing OS work is not claimed to have stopped. Existing blocking-lane capacity stays with its worker.
+- Browser Agent projection copies only logical IDs, active and sleeping flags, observes at most 100 matching independent routes twice using nonblocking metadata access, and rechecks logical state. Inconsistent routes become unknown; inconsistent logical state invalidates selection. No raw URL, title, native process identity, page content or new write privilege is exposed.
+- Browser mutation adapters remain disabled until durable effect admission and exact document/owner authorization can be integrated. Source-only candidate; no compilation, tests, CI workflow change or master merge.

@@ -63,6 +63,19 @@ pub fn current_public_api_catalog() -> Vec<PublicApiSpec> {
     .collect()
 }
 
+/// Bind a Channel read grant to the exact catalog command and arguments,
+/// not merely the resource name. Historical v1 receipts are not live grants.
+pub fn channel_read_revision(command: &str, args: &Value) -> Result<String> {
+    if !args.is_object() || !current_public_api_catalog().iter().any(|spec|
+        spec.command == command && spec.effect == ToolEffect::ReadOnly
+            && spec.requires_host_authorization)
+    {
+        return Err(FoundationError::PermissionDenied);
+    }
+    let digest = crate::approval::approval_argument_digest(command, args, &ToolEffect::ReadOnly)?;
+    Ok(format!("local-main-ui-v2:{digest}"))
+}
+
 /// Required host adapter. BrowserOS owns the actual Tauri command and its
 /// credential storage, permission check, IO scheduling and cancellation.
 pub trait PublicApiHost: Send + Sync {

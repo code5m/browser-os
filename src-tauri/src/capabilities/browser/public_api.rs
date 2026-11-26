@@ -24,48 +24,69 @@ fn tab_availability(
     }
 }
 
-pub(crate) fn agent_tab_summary(app: AppHandle) -> Value {
+/// Collect only logical IDs, selection and sleeping flags. No clone of URL,
+/// title or other page-controlled metadata is necessary for this projection.
+fn metadata_snapshot(state: &crate::bridge::AppState)
+    -> Result<(Vec<String>, Option<String>, std::collections::HashSet<String>), String>
+{
+    let mut ids: Vec<_> = state.tabs.try_lock().map_err(|_| "AGENT_BROWSER_SNAPSHOT_BUSY")?
+        .keys().cloned().collect();
+    ids.sort_unstable();
+    let active = state.active_tab.try_lock().map_err(|_| "AGENT_BROWSER_SNAPSHOT_BUSY")?.clone();
+    let sleeping = state.hibernated_tabs.try_lock().map_err(|_| "AGENT_BROWSER_SNAPSHOT_BUSY")?.clone();
+    Ok((ids, active, sleeping))
+}
+
+pub(crate) fn agent_tab_summary(app: AppHandle) -> Result<Value, String> {
     let state = app.state::<crate::bridge::AppState>();
-    // No lock is held while acquiring another owner's snapshot.
-    let owners = state.grid_manager.renderer_processes();
-    let mut tabs = crate::bridge::tab_list_native(app.clone());
-    let hibernated = state.hibernated_tabs.lock().unwrap().clone();
-    let active = state.active_tab.lock().unwrap().clone();
-    let consistent = state.grid_manager.renderer_processes() == owners;
-    tabs.sort_unstable_by(|a, b| a.id.cmp(&b.id));
-    let count = tabs.len();
-    json!({"count":count,"truncated":count > 100,"renderer_snapshot_consistent":consistent,
-        "items":tabs.into_iter().take(100).map(|tab| {
-            let route = crate::bridge::isolated_tabs::route(&tab.id);
-            let owner = route.and_then(|index| owners.iter().find(|process| process.index == index));
-            let availability = if let Some(index) = route {
-                // Share the same native observation as the trusted recovery UI.
-                // Do not expose PID/epoch or turn cleanup into execution authority.
-                match state.grid_manager.tab_renderer_observation(index) {
-                    Ok((observed, status)) if consistent
-                        && observed == owner.map(|p| (p.pid, p.spawn_epoch)) => {
-                        match status {
-                            "cleanup_pending" => "cleanup_pending",
-                            "ready" if owner.is_some_and(|p| p.ready) => "host_ready",
-                            "not_ready" => "host_not_ready",
-                            "absent" => tab_availability(true, hibernated.contains(&tab.id), None, true),
-                            _ => "unknown",
-                        }
-                    }
+    if state.shutdown_requested.load(std::sync::atomic::Ordering::Acquire) {
+        return Err("AGENT_BROWSER_SNAPSHOT_BUSY".into());
+    }
+    let metadata = metadata_snapshot(&state)?;
+    let (ids, active, hibernated) = &metadata;
+    let count = ids.len();
+    // Observe only the first 100 logical tabs, not unrelated Grid renderers.
+    // Keep native identities in host memory for comparison only.
+    let observations: Vec<_> = ids.iter().take(100).map(|id| {
+        crate::bridge::isolated_tabs::route(id).map(|index|
+            state.grid_manager.tab_renderer_observation(index).ok())
+    }).collect();
+    let mut stable = metadata_snapshot(&state).is_ok_and(|current| current == metadata);
+    let observed_again: Vec<_> = ids.iter().take(100).map(|id| {
+        crate::bridge::isolated_tabs::route(id).map(|index|
+            state.grid_manager.tab_renderer_observation(index).ok())
+    }).collect();
+    stable &= metadata_snapshot(&state).is_ok_and(|current| current == metadata)
+        && !state.shutdown_requested.load(std::sync::atomic::Ordering::Acquire);
+    let renderer_consistent = stable && observations.iter().zip(&observed_again).all(|(first, second)|
+        first == second && !matches!(first, Some(None)));
+    let items = ids.iter().take(100).enumerate().map(|(index, id)| {
+        let first = &observations[index];
+        let second = &observed_again[index];
+        let isolated = first.is_some();
+        let availability = if !stable || first != second {
+            "unknown"
+        } else {
+            match first {
+                Some(Some((owner, status))) => match *status {
+                    "cleanup_pending" => "cleanup_pending",
+                    "ready" if owner.is_some() => "host_ready",
+                    "not_ready" if owner.is_some() => "host_not_ready",
+                    "absent" if owner.is_none() => tab_availability(true, hibernated.contains(id), None, true),
                     _ => "unknown",
-                }
-            } else {
-                tab_availability(false, hibernated.contains(&tab.id), None, consistent)
-            };
-            let is_active = active.as_deref() == Some(tab.id.as_str());
-            // Native logical title can be a raw URL fallback or arbitrary
-            // page-supplied text. Keep the field as null in this restricted
-            // Agent projection instead of presenting it as redacted metadata.
-            json!({"id":tab.id,"title":null,"title_redacted":true,
-                "backend":if route.is_some() { "isolated" } else { "embedded" },
-                "availability":availability,
-                "active":is_active})
-        }).collect::<Vec<_>>()})
+                },
+                Some(None) => "unknown",
+                None => tab_availability(false, hibernated.contains(id), None, true),
+            }
+        };
+        json!({"id":id,"title":null,"title_redacted":true,
+            "backend":if isolated {"isolated"} else {"embedded"},
+            "availability":availability,
+            "active":stable && active.as_deref() == Some(id.as_str())})
+    }).collect::<Vec<_>>();
+    Ok(json!({"count":count,"truncated":count > 100,
+        "logical_snapshot_consistent":stable,"active_known":stable,
+        "renderer_snapshot_consistent":renderer_consistent,"items":items}))
 }
 
 #[cfg(test)]

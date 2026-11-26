@@ -9,7 +9,7 @@ use browseros_agent_foundation::{
 use serde_json::{json, Value};
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum ChannelInput {
     Fixture {
         fixture_id: String,
@@ -68,7 +68,25 @@ pub(super) fn checked_input(record: &NativeRunReceipt) -> Result<Option<ChannelI
                 return Err("AGENT_RUN_SCOPE_MISMATCH".into());
             }
         }
-        ChannelInput::Read { resource, .. } => {
+        ChannelInput::Read { command, args, resource } => {
+            // A recovered input must still be in the read-only contract.
+            // Checking historical approval evidence does not issue a permit.
+            let revision = browseros_agent_foundation::public_api::channel_read_revision(command, args)
+                .map_err(|_| "AGENT_RUN_SCOPE_MISMATCH")?;
+            if let Some(claim) = &record.approval {
+                if !claim.accepted || claim.task_id != record.task.id
+                    || claim.workspace_id != record.task.workspace_id
+                    || claim.session_id != record.task.session_id
+                    || claim.tool_name != *command
+                    || claim.resource.resource_id != *resource
+                    || (claim.resource.resource_revision != "local-main-ui-v1"
+                        && claim.resource.resource_revision != revision)
+                    || browseros_agent_foundation::approval::approval_argument_digest(command, args, &ToolEffect::ReadOnly)
+                        .ok().as_deref() != Some(claim.arguments_sha256.as_str())
+                {
+                    return Err("AGENT_RUN_SCOPE_MISMATCH".into());
+                }
+            }
             let ctx = ContextRef::checked(
                 ContextKind::Resource,
                 resource.clone(),

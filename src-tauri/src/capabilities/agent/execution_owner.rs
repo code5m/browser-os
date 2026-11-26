@@ -587,7 +587,11 @@ impl DurableRun {
                     || claim.tool_name != command
                     || claim.effect != ToolEffect::ReadOnly
                     || claim.resource.resource_id != resource
-                    || claim.resource.resource_revision != "local-main-ui-v1"
+                    // v1 is accepted solely to recover already authenticated
+                    // historical local returns. Every fresh grant is v2.
+                    || (claim.resource.resource_revision != "local-main-ui-v1"
+                        && browseros_agent_foundation::public_api::channel_read_revision(&command, &args)
+                            .ok().as_deref() != Some(claim.resource.resource_revision.as_str()))
                     || browseros_agent_foundation::approval::approval_argument_digest(
                         &command,
                         &args,

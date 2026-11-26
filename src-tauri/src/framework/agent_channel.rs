@@ -12,7 +12,7 @@ use foundation::{
         run_benchmark_suite, run_routed_fixture_owned, BenchmarkReport, RoutedFixtureResult,
     },
     experiment::{ExperimentConfig, ExperimentRouter},
-    public_api::{current_public_api_catalog, PublicApiHost, PublicApiRegistry, PublicApiSpec},
+    public_api::{channel_read_revision, current_public_api_catalog, PublicApiHost, PublicApiRegistry, PublicApiSpec},
     tool::{ToolEffect, ToolFuture, ToolRegistry},
 };
 use serde_json::Value;
@@ -20,8 +20,8 @@ use std::{
     fs::{self, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
-    time::Duration,
+    sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex},
+    time::{Duration, Instant},
 };
 use tauri::{AppHandle, Webview};
 
@@ -260,7 +260,7 @@ impl NativeRead {
 
     fn dispatch(self, app: AppHandle, webview: Webview) -> Result<Value, String> {
         match self {
-            Self::BrowserTabs => Ok(crate::capabilities::browser::public_api::agent_tab_summary(app)),
+            Self::BrowserTabs => crate::capabilities::browser::public_api::agent_tab_summary(app),
             Self::DatabaseProfiles =>
                 crate::capabilities::database::public_api::agent_connection_summary(app, webview),
             Self::GitStatus { repo_id } =>
@@ -291,13 +291,23 @@ fn validate_read_binding(spec: &PublicApiSpec, binding: &ApprovalBinding, args: 
         || binding.principal_id.is_nil()
         || binding.workspace_id.is_nil()
         || binding.session_id.is_nil()
-        || binding.resource.resource_revision != "local-main-ui-v1"
+        || channel_read_revision(&spec.command, args).ok().as_deref()
+            != Some(binding.resource.resource_revision.as_str())
         || now >= u128::from(binding.expires_at_unix_ms)
         || binding.resource.resource_id != read.resource()
     {
         return Err("AGENT_READ_APPROVAL_STALE_OR_DENIED".into());
     }
     Ok(read)
+}
+
+// The worker owns its capacity after the awaiting future is dropped.
+ // A queued read must not begin after that cancellation or timeout.
+struct ReadWaiter(Arc<AtomicBool>);
+impl Drop for ReadWaiter {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Release);
+    }
 }
 
 struct NativeOwnerHost {
@@ -329,15 +339,27 @@ impl PublicApiHost for NativeOwnerHost {
             let app = self.app.clone();
             let webview = self.webview.clone();
             let approved_spec = spec.clone();
+            let waiter = ReadWaiter(Arc::new(AtomicBool::new(false)));
+            let abandoned = Arc::clone(&waiter.0);
+            let deadline = Instant::now() + Duration::from_secs(15);
             let result = READ_LANE
                 .run(move || -> Result<Value, String> {
                     // Do not substitute a newer proof or tool after queueing.
                     // Recheck the exact approved catalog entry, resource,
                     // argument shape, deadline, source and enablement.
+                    let check_waiter = || {
+                        if abandoned.load(Ordering::Acquire) || Instant::now() >= deadline {
+                            Err("AGENT_READ_WAITER_EXPIRED".to_string())
+                        } else { Ok(()) }
+                    };
+                    check_waiter()?;
                     enabled_config(&app)?;
                     let read = validate_read_binding(&approved_spec, &proof, &args)?;
                     check_main(&app, &webview, &approved_spec.command)?;
-                    read.dispatch(app, webview)
+                    check_waiter()?;
+                    let result = read.dispatch(app, webview)?;
+                    check_waiter()?;
+                    Ok(result)
                 })
                 .await
                 .map_err(|_| {
@@ -352,6 +374,8 @@ impl PublicApiHost for NativeOwnerHost {
                     "OWNER_RESULT_LIMIT".into(),
                 ));
             }
+            // Keep the cancellation guard alive across the entire worker wait.
+            drop(waiter);
             Ok(result)
         })
     }
@@ -495,6 +519,8 @@ async fn execute_read(
         tools
             .register(Arc::new(tool))
             .map_err(|_| "AGENT_EXPERIMENT_REGISTRY_FAILED")?;
+        let resource_revision = channel_read_revision(&command, &args)
+            .map_err(|_| "AGENT_EXPERIMENT_APPROVAL_FAILED")?;
         let call = tools
             .propose(tasks, task_id, &command, args)
             .map_err(|_| "AGENT_EXPERIMENT_TOOL_DENIED")?;
@@ -513,7 +539,7 @@ async fn execute_read(
                     principal_id: uuid::Uuid::new_v4(),
                     resource: ResourceBinding {
                         resource_id: resource,
-                        resource_revision: "local-main-ui-v1".into(),
+                        resource_revision,
                     },
                     accepted: true,
                     ttl: Duration::from_secs(20),
