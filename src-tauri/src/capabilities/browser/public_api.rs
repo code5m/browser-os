@@ -38,9 +38,30 @@ pub(crate) fn agent_tab_summary(app: AppHandle) -> Value {
         "items":tabs.into_iter().take(100).map(|tab| {
             let route = crate::bridge::isolated_tabs::route(&tab.id);
             let owner = route.and_then(|index| owners.iter().find(|process| process.index == index));
-            let availability = tab_availability(route.is_some(), hibernated.contains(&tab.id), owner, consistent);
+            let availability = if let Some(index) = route {
+                // Share the same native observation as the trusted recovery UI.
+                // Do not expose PID/epoch or turn cleanup into execution authority.
+                match state.grid_manager.tab_renderer_observation(index) {
+                    Ok((observed, status)) if consistent
+                        && observed == owner.map(|p| (p.pid, p.spawn_epoch)) => {
+                        match status {
+                            "cleanup_pending" => "cleanup_pending",
+                            "ready" if owner.is_some_and(|p| p.ready) => "host_ready",
+                            "not_ready" => "host_not_ready",
+                            "absent" => tab_availability(true, hibernated.contains(&tab.id), None, true),
+                            _ => "unknown",
+                        }
+                    }
+                    _ => "unknown",
+                }
+            } else {
+                tab_availability(false, hibernated.contains(&tab.id), None, consistent)
+            };
             let is_active = active.as_deref() == Some(tab.id.as_str());
-            json!({"id":tab.id,"title":tab.title,
+            // Native logical title can be a raw URL fallback or arbitrary
+            // page-supplied text. Keep the field as null in this restricted
+            // Agent projection instead of presenting it as redacted metadata.
+            json!({"id":tab.id,"title":null,"title_redacted":true,
                 "backend":if route.is_some() { "isolated" } else { "embedded" },
                 "availability":availability,
                 "active":is_active})

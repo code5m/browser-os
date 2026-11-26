@@ -18,4 +18,5 @@ export function createTabCoordinator(owners: {
   activate(tab: TabResource): boolean | void | Promise<boolean | void>;
   close(tab: TabResource): boolean | void | Promise<boolean | void>;
   enabled?(): boolean;
+  needsReactivation?(tab: TabResource): boolean;
 }): TabCoordinator;
