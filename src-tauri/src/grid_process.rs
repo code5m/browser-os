@@ -1008,6 +1008,27 @@ impl GridProcessManager {
         children.get(&index).map(|child| child.comms.owner_snapshot()).transpose()
     }
 
+    /// Read-only UI observation, not authorization to retire or restore.
+    /// Removal from the live map precedes kernel-domain retirement.
+    pub(crate) fn tab_renderer_observation(&self, index: u32)
+        -> Result<(Option<(u32, u64)>, &'static str), String>
+    {
+        if !crate::grid_ipc::is_tab_renderer(index) {
+            return Err("TAB_RENDERER_ROUTE_INVALID".into());
+        }
+        let children = self.children.lock().unwrap();
+        if self.lifecycle.is_retiring(index) {
+            return Ok((None, "cleanup_pending"));
+        }
+        let Some(child) = children.get(&index) else {
+            return Ok((None, "absent"));
+        };
+        let owner = child.comms.owner_snapshot()?;
+        let ready = child.document_ready && child.comms.is_connected()
+            && !child.comms.blank_reclaiming.load(Ordering::SeqCst);
+        Ok((Some(owner), if ready { "ready" } else { "not_ready" }))
+    }
+
     pub(crate) fn renderer_binding(&self, index: u32) -> Result<crate::grid_ipc::RendererBinding, String> {
         if !crate::grid_ipc::is_tab_renderer(index) {
             return Err("TAB_RENDERER_ROUTE_INVALID".into());

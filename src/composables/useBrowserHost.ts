@@ -40,6 +40,10 @@ export function useBrowserHost() {
   const browserHost = ref<HTMLElement | null>(null);
   let ro: ResizeObserver | null = null;
   watch(() => layout.mainView, () => invalidation.invalidateAll());
+  watch(() => browser.rendererUnavailable(browser.activeTabId), blocked => {
+    deduper.reset();
+    if (!blocked) schedulePosition();
+  });
 
   function schedulePosition(retry = 0) {
     if (positionRaf) return; // 合并同一帧内多次请求
@@ -48,6 +52,10 @@ export function useBrowserHost() {
         positionRaf = null;
         if (layout.mainView !== "browser" || !browserHost.value || !browser.activeTabId)
           return;
+        if (browser.rendererUnavailable(browser.activeTabId)) {
+          deduper.reset();
+          return;
+        }
         const host = browserHost.value;
         const r = host.getBoundingClientRect();
         // 若 viewport 尚未完成布局（v-if 刚挂载 / v-show 切换中），rect 可能为 0。
@@ -72,7 +80,8 @@ export function useBrowserHost() {
         bridge.tabPosition(tabId, { x, y, width, height }).catch((error) => {
           // A failed native placement is NOT a successful sync. Reset the cache so
           // the same rect can be retried after WebView creation/activation settles.
-          if (layout.mainView !== "browser" || browser.activeTabId !== tabId) return;
+          if (layout.mainView !== "browser" || browser.activeTabId !== tabId
+              || browser.rendererUnavailable(tabId)) return;
           deduper.reset();
           bridge.debugLog(`tabPosition failed for ${tabId}: ${String(error)}`);
           if (retry < 3) {

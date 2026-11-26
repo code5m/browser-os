@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { ref, reactive, computed, nextTick, watch } from "vue";
-import { bridge, type RendererRecoveryTarget } from "../../../bridge";
+import { bridge, type RendererRecoveryTarget, type RendererState } from "../../../bridge";
 import { WEBVIEW_FREEZE_JS, WEBVIEW_UNFREEZE_JS } from "../../../utils/webviewFreeze";
 import { isBrowserResourceAllowed } from "../resource/guard";
 import { useLayoutStore } from "../../../stores/useLayoutStore";
@@ -22,6 +22,52 @@ export const useBrowserStore = defineStore("browser", () => {
   const tabs = reactive<TabInfo[]>([]);
   const activeTabId = ref("");
   const nativeTabFailures = new Map<string, NativeTabLoadFailureRecord>();
+  const isolatedRendererMode = ref(false);
+  const rendererStates = reactive(new Map<string, RendererState>());
+  const rendererObservations = new Map<string, symbol>();
+  function clearRendererState(id: string) {
+    rendererObservations.delete(id);
+    rendererStates.delete(id);
+  }
+  function rendererUnavailable(id: string): boolean {
+    const state = rendererStates.get(id);
+    return isolatedRendererMode.value && state !== undefined && state !== "ready";
+  }
+  function rendererStateLabel(id: string): string {
+    switch (rendererStates.get(id)) {
+      case "cleanup_pending": return "原进程域回收中";
+      case "absent": return "待重新激活";
+      case "not_ready": return "原生宿主未就绪";
+      case "hibernated": return "已休眠";
+      default: return "";
+    }
+  }
+  async function refreshRendererState(id: string) {
+    const tab = tabs.find(item => item.id === id);
+    if (!isolatedRendererMode.value || !tab) return null;
+    const observation = Symbol(id);
+    rendererObservations.set(id, observation);
+    try {
+      const view = await bridge.inspectRendererRecovery(id);
+      if (rendererObservations.get(id) !== observation || !tabs.some(item => item === tab)) return null;
+      if (!view.renderer_state) return null;
+      rendererStates.set(id, view.renderer_state);
+      return view;
+    } catch {
+      // An unreadable observation is not proof of absence or permission to recover.
+      return null;
+    }
+  }
+  async function refreshRendererStates() {
+    // The native control plane has bounded per-phase lanes; do not flood them
+    // with parallel read requests for every restored logical tab.
+    for (const id of tabs.map(tab => tab.id)) await refreshRendererState(id);
+  }
+  function rendererActivated(id: string) {
+    if (!isolatedRendererMode.value) return;
+    clearRendererState(id);
+    void refreshRendererState(id);
+  }
   function getRecentNativeTabFailure(id: string) {
     return recentNativeTabLoadFailure(nativeTabFailures.get(id));
   }
@@ -191,12 +237,17 @@ export const useBrowserStore = defineStore("browser", () => {
       const ordered = tabs.flatMap(tab => byId.has(tab.id) ? [byId.get(tab.id)!] : []);
       const seen = new Set(ordered.map(tab => tab.id));
       ordered.push(...actual.filter(tab => !seen.has(tab.id)));
+      rendererObservations.clear();
+      for (const id of rendererStates.keys()) if (!byId.has(id)) rendererStates.delete(id);
+      isolatedRendererMode.value = view.isolated_renderer_mode === true;
+      if (!isolatedRendererMode.value) rendererStates.clear();
       tabs.splice(0, tabs.length, ...ordered);
       activeTabId.value = view.active_tab_id && byId.has(view.active_tab_id) ? view.active_tab_id : "";
       url.value = byId.get(activeTabId.value)?.url ?? "";
       tabRecoveryRequired.value = false;
-      tabRecoveryMessage.value = "已按原生记录恢复页签；未重放旧操作。";
+      tabRecoveryMessage.value = "已核对逻辑页签记录；未重放旧操作。";
       tabNativeState.value = "ready";
+      if (isolatedRendererMode.value) void refreshRendererStates();
       nextTick(syncViewVisibility);
     } catch {
       tabRecoveryRequired.value = true;
@@ -366,10 +417,13 @@ export const useBrowserStore = defineStore("browser", () => {
     return mutateTabs(async () => {
       const t = tabs.find((x) => x.id === id);
       if (!t || !isBrowserResourceAllowed() || !publish.isCurrent()) return false;
+      rendererObservations.delete(id);
       try {
         await bridge.tabActivate(id);
+        rendererActivated(id);
       } catch (error) {
         // Native failure never publishes a new visible view or activeTabId.
+        if (isolatedRendererMode.value) void refreshRendererState(id);
         void syncViewVisibility();
         throw error;
       }
@@ -393,23 +447,30 @@ export const useBrowserStore = defineStore("browser", () => {
   // without closing its logical tab or restarting the application.
   async function inspectRendererRecovery(id: string): Promise<RendererRecoveryTarget | null> {
     if (!tabs.some(tab => tab.id === id) || !isBrowserResourceAllowed()) return null;
-    try {
-      const view = await bridge.inspectRendererRecovery(id);
-      if (view.renderer_recovery_target?.id === id) return view.renderer_recovery_target;
-      layout.showToast("该页签当前没有独立宿主，可尝试重新激活。");
-    } catch {
+    const view = await refreshRendererState(id);
+    if (!view) {
       layout.showToast("无法核实独立页签原生身份，未请求回收。");
+      return null;
     }
+    if (view.renderer_recovery_target?.id === id) return view.renderer_recovery_target;
+    layout.showToast(view.renderer_state === "cleanup_pending"
+      ? "原进程域尚在回收中，请等待并重新核对。"
+      : "该页签当前没有独立宿主，可尝试重新激活。");
     return null;
   }
   async function retireRenderer(target: RendererRecoveryTarget) {
     try {
       await mutateTabs(async () => {
         if (!isBrowserResourceAllowed() || !tabs.some(tab => tab.id === target.id)) return;
+        rendererObservations.delete(target.id);
         await bridge.retireRenderer(target);
+        clearRendererState(target.id);
+        rendererStates.set(target.id, "absent");
+        void refreshRendererState(target.id);
         layout.showToast("原生页签已回收；点击该页签重新打开记录的网址。");
       });
     } catch {
+      void refreshRendererState(target.id);
       layout.showToast("页签回收未确认或身份已变化，请核对状态，不要重复执行。");
     }
   }
@@ -428,6 +489,7 @@ export const useBrowserStore = defineStore("browser", () => {
       await closeNativeTab(id);
       recordClose(id);
       nativeTabFailures.delete(id);
+      clearRendererState(id);
       const idx = tabs.findIndex((t) => t.id === id);
       if (idx < 0) return true;
       tabs.splice(idx, 1);
@@ -443,7 +505,10 @@ export const useBrowserStore = defineStore("browser", () => {
       // Closing a background web tab (including the last one) never changes
       // the visible module. Ordinary close remains direct, with no save/prompt.
       try {
-        if (activateNext) await bridge.tabActivate(activateNext);
+        if (activateNext) {
+          await bridge.tabActivate(activateNext);
+          rendererActivated(activateNext);
+        }
       } finally {
         await nextTick();
         relocate();
@@ -564,15 +629,13 @@ export const useBrowserStore = defineStore("browser", () => {
   async function handleIsolatedRendererExited(event: { id: string; exit_code: number }) {
     const tab = tabs.find(item => item.id === event.id);
     if (!tab || !Number.isInteger(event.exit_code)) return;
-    try {
-      const view = await bridge.inspectRendererRecovery(event.id);
-      // Never treat a late native event as authority to close/reopen a new
-      // renderer. A failed observation cannot authorize an automatic retry.
-      if (view.renderer_recovery_target || !tabs.some(item => item === tab)) return;
-      layout.showToast("独立页签进程已退出：" + event.id + "。点击该页签可重新打开记录的网址，页内未保存状态可能丢失。");
-    } catch {
-      // Keep existing logical metadata. Normal user activation/recovery
-      // remains available; no automatic destructive action follows an event.
+    const view = await refreshRendererState(event.id);
+    // An exit event is a prompt to inspect, never an automatic replay.
+    if (!view || !tabs.some(item => item === tab)) return;
+    if (view.renderer_state === "cleanup_pending") {
+      layout.showToast("独立页签进程已退出，原进程域尚在回收中：" + event.id);
+    } else if (view.renderer_state === "absent") {
+      layout.showToast("独立页签进程已回收：" + event.id + "。点击该页签可重新打开记录的网址，页内未保存状态可能丢失。");
     }
   }
   function handleTabRecovery(event: TabRecoveryEvent) {
@@ -701,7 +764,7 @@ export const useBrowserStore = defineStore("browser", () => {
         for (const entry of entries) {
           if (revision !== freezeRevision || tabRecoveryRequired.value) break;
           if (!tabs.some(tab => tab === entry.tab) || entry.tab.url !== entry.address ||
-              entry.address === "about:blank") continue;
+              entry.address === "about:blank" || rendererUnavailable(entry.tab.id)) continue;
           // A rejection/unknown result is not automatically retried. A newer
           // visibility plan is a distinct advisory observation.
           await bridge.evalInTab(entry.tab.id,
@@ -774,6 +837,7 @@ export const useBrowserStore = defineStore("browser", () => {
           const row = tabs.findIndex(tab => tab.id === id);
           if (row >= 0) tabs.splice(row, 1);
           nativeTabFailures.delete(id);
+          clearRendererState(id);
           if (!tabs.some(tab => tab.id === activeTabId.value)) {
             activeTabId.value = tabs[0]?.id ?? "";
           }
@@ -783,6 +847,8 @@ export const useBrowserStore = defineStore("browser", () => {
           throw new Error(`BROWSER_CLEANUP_FAILED:${failed.join(",")}`);
         }
         nativeTabFailures.clear();
+        rendererStates.clear();
+        rendererObservations.clear();
         activeTabId.value = "";
         resources.value = null;
         url.value = "";
@@ -801,6 +867,9 @@ export const useBrowserStore = defineStore("browser", () => {
     activeTab,
     isBrowserVisible,
     tabNativeState,
+    isolatedRendererMode,
+    rendererUnavailable,
+    rendererStateLabel,
     tabRecoveryRequired,
     tabRecoveryBusy,
     tabRecoveryMessage,

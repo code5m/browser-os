@@ -40,6 +40,7 @@ type TabAction =
   | { kind: "close" | "activate" | "back" | "forward" | "reload"; id: string }
   | { kind: "retire_renderer"; id: string; pid: number; spawn_epoch: string; confirmed: true };
 export type RendererRecoveryTarget = { id: string; pid: number; spawn_epoch: string };
+export type RendererState = "ready" | "not_ready" | "cleanup_pending" | "absent" | "hibernated";
 type TabReceipt = {
   ticket: string; client_id: string; command: string;
   phase: "prepared" | "running" | "cancel_requested" | "succeeded" | "failed" | "cancelled" | "unknown";
@@ -51,6 +52,8 @@ type TabOwnerView = {
   domain_recovery_available: boolean;
   recovery_scope?: "renderer" | "application" | null;
   renderer_recovery_target?: RendererRecoveryTarget | null;
+  isolated_renderer_mode?: boolean;
+  renderer_state?: RendererState | null;
 };
 const terminalTabReceipt = (r: TabReceipt) => ["succeeded", "failed", "cancelled"].includes(r.phase);
 const receiptDelay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));

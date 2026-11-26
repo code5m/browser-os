@@ -153,11 +153,12 @@ async function newTab() {
       :class="['tab', {active:tab.active}]"
       @click="activateProjectedTab(tab)"
       @contextmenu.prevent="context = { id: tab.id, kind: tab.kind === 'web' ? 'web' : 'module' }"
-      :title="tab.path || tab.title"
+      :title="tab.kind === 'web' && browser.rendererStateLabel(tab.id) ? (tab.title + ' · ' + browser.rendererStateLabel(tab.id)) : (tab.path || tab.title)"
     >
       <Globe v-if="tab.kind === 'web'" class="tab-ic" :size="15"/>
       <span v-else class="tab-ic">{{ tab.icon }}</span>
       <span class="tab-title">{{ tab.title }}</span>
+      <span v-if="tab.kind === 'web' && browser.rendererStateLabel(tab.id)" class="renderer-state" role="status">{{ browser.rendererStateLabel(tab.id) }}</span>
       <button class="tab-close" @click.stop="closeProjectedTab(tab)" title="关闭"><X :size="14"/></button>
     </div>
     <button class="tab-new" @click="newTab" title="新建页签"><Plus :size="18"/></button>
@@ -185,7 +186,7 @@ async function newTab() {
   <div v-if="context" class="tab-actions" role="menu" @keydown.esc="context = null">
     <button role="menuitem" @click="closeContext()">关闭</button>
     <button role="menuitem" @click="closeContext(true)">关闭其他</button>
-    <button v-if="context.kind === 'web'" role="menuitem" @click="prepareRendererRetire">核对并恢复独立页签</button>
+    <button v-if="context.kind === 'web' && browser.isolatedRendererMode" role="menuitem" @click="prepareRendererRetire">核对并恢复独立页签</button>
     <template v-if="contextPath">
       <span class="tab-actions-sep" aria-hidden="true"></span>
       <button role="menuitem" @click="revealHere">在文件管理器中显示</button>
@@ -227,6 +228,7 @@ async function newTab() {
 .tab-strip{display:flex;align-items:flex-end;gap:3px;flex:0 1 auto;min-width:0;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
 .tab-strip::-webkit-scrollbar{display:none}
 .native-recovery{flex:none;margin:4px;padding:4px 8px;border:1px solid #a97927;border-radius:4px;background:transparent;color:var(--chrome-text,#3c4043);cursor:pointer}
+.renderer-state{flex:none;font-size:10px;color:#a97927;white-space:nowrap}
 .native-recovery-status{font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;align-self:center;color:var(--chrome-text,#3c4043)}
 .titlebar-drag { flex: 1; min-width: 24px; align-self: stretch; cursor: default; }
 .window-controls { display: flex; flex: none; align-items: stretch; align-self:stretch; margin: -3px -6px 0 0; }

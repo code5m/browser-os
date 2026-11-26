@@ -433,6 +433,8 @@ pub(crate) struct OwnerView {
     domain_recovery_available: bool,
     recovery_scope: Option<&'static str>,
     renderer_recovery_target: Option<RendererRecoveryTarget>,
+    isolated_renderer_mode: bool,
+    renderer_state: Option<&'static str>,
 }
 fn snapshot(app: &AppHandle) -> Result<OwnerView, String> {
     let mut view = {
@@ -452,6 +454,8 @@ fn snapshot(app: &AppHandle) -> Result<OwnerView, String> {
                 else if supervisor_ready() && state.recovery_target(Instant::now()).is_some() { Some("application") }
                 else { None },
             renderer_recovery_target: None,
+            isolated_renderer_mode: super::isolated_tabs::mode_enabled(),
+            renderer_state: None,
         }
     };
     // Do not hold the Owner mutex while observing app metadata.
@@ -818,7 +822,12 @@ pub(crate) fn tab_mutation(
                 return Err("TAB_NOT_FOUND".into());
             }
             let mut view = snapshot(&app)?;
-            if let Some((pid, epoch)) = state.grid_manager.tab_renderer_owner(index)? {
+            let (observed_owner, status) = state.grid_manager.tab_renderer_observation(index)?;
+            view.renderer_state = Some(if status == "absent"
+                && state.hibernated_tabs.lock().unwrap().contains(&id) {
+                "hibernated"
+            } else { status });
+            if let Some((pid, epoch)) = observed_owner {
                 view.renderer_recovery_target = Some(RendererRecoveryTarget {
                     id, pid, spawn_epoch: epoch.to_string(),
                 });
@@ -1059,6 +1068,8 @@ mod tests {
             domain_recovery_available: false,
             recovery_scope: None,
             renderer_recovery_target: None,
+            isolated_renderer_mode: false,
+            renderer_state: None,
         };
         assert!(state.matches_view(&view));
         state.admit_background().unwrap();
