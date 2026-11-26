@@ -88,7 +88,8 @@ impl ExecutionLease<'_> {
     /// A retained lease alone is not proof of a live generation. Every
     /// adapter must recheck its original Task revision at dispatch/return.
     pub fn is_active(&self) -> bool {
-        self.registry.active_at_revision(self.task_id, self.revision)
+        self.registry
+            .active_at_revision(self.task_id, self.revision)
     }
 }
 impl Drop for ExecutionLease<'_> {

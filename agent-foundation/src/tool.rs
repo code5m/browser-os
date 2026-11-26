@@ -184,13 +184,22 @@ impl ToolRegistry {
         if timeout.is_zero() || timeout > Duration::from_secs(120) {
             return Err(FoundationError::InvalidInput("reconciliation timeout"));
         }
-        let store = tasks.durable_store().ok_or(FoundationError::PermissionDenied)?;
+        let store = tasks
+            .durable_store()
+            .ok_or(FoundationError::PermissionDenied)?;
         let (name, key, authority) = store
             .provider_query(call_id)?
             .ok_or(FoundationError::PermissionDenied)?;
-        let tool = self.tools.read().unwrap_or_else(|e| e.into_inner())
-            .get(&name).cloned().ok_or(FoundationError::PermissionDenied)?;
-        let fingerprint = tool.reconciliation_authority().ok_or(FoundationError::PermissionDenied)?;
+        let tool = self
+            .tools
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&name)
+            .cloned()
+            .ok_or(FoundationError::PermissionDenied)?;
+        let fingerprint = tool
+            .reconciliation_authority()
+            .ok_or(FoundationError::PermissionDenied)?;
         if fingerprint == [0; 32]
             || hex::encode(fingerprint) != authority
             || tool.effect() != ToolEffect::ExternalSideEffect
@@ -201,7 +210,8 @@ impl ToolRegistry {
         let status = tokio::time::timeout(timeout, tool.query_effect_status(key.clone()))
             .await
             .map_err(|_| FoundationError::Timeout)??;
-        if status.idempotency_key != key || status.authority != fingerprint
+        if status.idempotency_key != key
+            || status.authority != fingerprint
             || tool.reconciliation_authority() != Some(fingerprint)
         {
             return Err(FoundationError::PermissionDenied);
@@ -210,7 +220,9 @@ impl ToolRegistry {
             return Ok(status.outcome);
         }
         if status.evidence_hash == [0; 32] {
-            return Err(FoundationError::InvalidInput("missing final provider evidence"));
+            return Err(FoundationError::InvalidInput(
+                "missing final provider evidence",
+            ));
         }
         store.reconcile_provider_effect(
             call_id,
@@ -293,10 +305,9 @@ impl ToolRegistry {
         // A process crash or a timeout leaves it unknown; never auto-retry.
         #[cfg(feature = "durable-sqlite")]
         if let Some(store) = effect_store {
-            if let Some(authority) = tool
-                .reconciliation_authority()
-                .filter(|digest| *digest != [0; 32] && permit.operation.effect == ToolEffect::ExternalSideEffect)
-            {
+            if let Some(authority) = tool.reconciliation_authority().filter(|digest| {
+                *digest != [0; 32] && permit.operation.effect == ToolEffect::ExternalSideEffect
+            }) {
                 store.begin_provider_effect_at_revision(
                     permit.task_id,
                     permit.operation.call_id,

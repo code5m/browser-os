@@ -10,8 +10,8 @@ use browseros_agent_foundation::{
     event::EventJournal,
     task::{TaskRegistry, TaskStatus},
     tool::{
-        AgentTool, AuthorizedCall, EffectStatusFuture, ProviderEffectOutcome,
-        ProviderEffectStatus, ToolEffect, ToolFuture, ToolRegistry,
+        AgentTool, AuthorizedCall, EffectStatusFuture, ProviderEffectOutcome, ProviderEffectStatus,
+        ToolEffect, ToolFuture, ToolRegistry,
     },
     FoundationError, Result,
 };
@@ -46,7 +46,11 @@ impl AgentTool for SideEffectMock {
         Box::pin(async move {
             Ok(ProviderEffectStatus {
                 idempotency_key,
-                authority: if self.stale_resource.load(Ordering::SeqCst) { [92; 32] } else { [91; 32] },
+                authority: if self.stale_resource.load(Ordering::SeqCst) {
+                    [92; 32]
+                } else {
+                    [91; 32]
+                },
                 outcome: ProviderEffectOutcome::AppliedFinal,
                 evidence_hash: [93; 32],
             })
@@ -186,23 +190,36 @@ async fn provider_reconciliation_is_bound_and_never_replays() {
     let f = fixture();
     let permit = approve(&f);
     assert_eq!(
-        f.tools.execute(permit, &f.tasks, Duration::from_millis(15)).await.err(),
+        f.tools
+            .execute(permit, &f.tasks, Duration::from_millis(15))
+            .await
+            .err(),
         Some(FoundationError::Timeout)
     );
     f.stale.store(true, Ordering::SeqCst);
     assert_eq!(
-        f.tools.reconcile_unknown_effect(&f.tasks, f.call_id, Duration::from_secs(1)).await.err(),
+        f.tools
+            .reconcile_unknown_effect(&f.tasks, f.call_id, Duration::from_secs(1))
+            .await
+            .err(),
         Some(FoundationError::PermissionDenied)
     );
     assert_eq!(f.db.unknown_effects().unwrap().len(), 1);
     f.stale.store(false, Ordering::SeqCst);
     assert_eq!(
-        f.tools.reconcile_unknown_effect(&f.tasks, f.call_id, Duration::from_secs(1)).await.unwrap(),
+        f.tools
+            .reconcile_unknown_effect(&f.tasks, f.call_id, Duration::from_secs(1))
+            .await
+            .unwrap(),
         ProviderEffectOutcome::AppliedFinal
     );
     assert!(f.db.unknown_effects().unwrap().is_empty());
     assert_eq!(f.attempted.load(Ordering::SeqCst), 1);
-    assert!(f.tools.reconcile_unknown_effect(&f.tasks, f.call_id, Duration::from_secs(1)).await.is_err());
+    assert!(f
+        .tools
+        .reconcile_unknown_effect(&f.tasks, f.call_id, Duration::from_secs(1))
+        .await
+        .is_err());
 }
 
 #[tokio::test]

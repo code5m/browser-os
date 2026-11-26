@@ -389,7 +389,15 @@ impl SqliteTaskStore {
         tool_name: &str,
         revision: u64,
     ) -> Result<()> {
-        self.begin_effect_checked(task_id, call_id, key, effect, tool_name, Some(revision), None)
+        self.begin_effect_checked(
+            task_id,
+            call_id,
+            key,
+            effect,
+            tool_name,
+            Some(revision),
+            None,
+        )
     }
 
     pub(crate) fn begin_provider_effect_at_revision(
@@ -528,19 +536,22 @@ impl SqliteTaskStore {
 
     /// Return only an originally bound, unresolved external operation whose
     /// execution lease has retired. An expired lease is not retirement.
-    pub(crate) fn provider_query(
-        &self,
-        call_id: Uuid,
-    ) -> Result<Option<(String, String, String)>> {
+    pub(crate) fn provider_query(&self, call_id: Uuid) -> Result<Option<(String, String, String)>> {
         let connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
-        connection.query_row(
-            "SELECT e.tool,e.effect_key,a.authority FROM foundation_effects e
+        connection
+            .query_row(
+                "SELECT e.tool,e.effect_key,a.authority FROM foundation_effects e
              JOIN foundation_effect_authorities a ON a.call_id=e.call_id
              WHERE e.call_id=?1 AND e.state='unknown' AND e.effect=?2
              AND NOT EXISTS(SELECT 1 FROM foundation_leases l WHERE l.task_id=e.task_id)",
-            params![call_id.to_string(), encode(&ToolEffect::ExternalSideEffect)?],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        ).optional().map_err(storage)
+                params![
+                    call_id.to_string(),
+                    encode(&ToolEffect::ExternalSideEffect)?
+                ],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()
+            .map_err(storage)
     }
 
     /// One compare-and-set across the original provider binding, exact
@@ -554,7 +565,11 @@ impl SqliteTaskStore {
         applied: bool,
         evidence_hash: [u8; 32],
     ) -> Result<()> {
-        let state = if applied { "reconciled_succeeded" } else { "reconciled_not_applied" };
+        let state = if applied {
+            "reconciled_succeeded"
+        } else {
+            "reconciled_not_applied"
+        };
         let evidence = format!("provider-sha256:{}", hex::encode(evidence_hash));
         let connection = self.connection.lock().unwrap_or_else(|e| e.into_inner());
         let changed = connection.execute(
