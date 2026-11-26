@@ -797,6 +797,7 @@ pub(crate) enum Request {
     Inspect,
     InspectRenderer { id: String },
     InspectDownloads,
+    SampleDownload { id: String, pid: u32, spawn_epoch: String },
     Fence {
         epoch: String,
         sequence: String,
@@ -810,8 +811,52 @@ pub(crate) enum Request {
         scope: Option<String>,
     },
 }
+static DOWNLOAD_SAMPLE_LANE: crate::shared::blocking::BlockingLane =
+    crate::shared::blocking::BlockingLane::new(2, "TAB_DOWNLOAD_SAMPLE_BUSY", "TAB_DOWNLOAD_SAMPLE_WORKER_FAILED");
+
 #[tauri::command]
-pub(crate) fn tab_mutation(
+pub(crate) async fn tab_mutation(
+    webview: Webview,
+    app: AppHandle,
+    request: Request,
+) -> Result<OwnerView, String> {
+    match request {
+        Request::SampleDownload { id, pid, spawn_epoch } => {
+            crate::shared::native_legacy_policy::require_main(&webview, "tab_list")?;
+            crate::shared::native_legacy_policy::bound_text("tab_list", "id", &id)?;
+            let index = super::isolated_tabs::route(&id).ok_or("TAB_RENDERER_ROUTE_INVALID")?;
+            let epoch = spawn_epoch.parse::<u64>().ok().filter(|v| *v > 0 && v.to_string() == spawn_epoch)
+                .ok_or("TAB_DOWNLOAD_SAMPLE_STALE")?;
+            if pid == 0 { return Err("TAB_DOWNLOAD_SAMPLE_STALE".into()); }
+            let binding = app.state::<crate::AppState>().grid_manager.renderer_binding(index)?;
+            if binding.owner != (pid, epoch) { return Err("TAB_DOWNLOAD_SAMPLE_STALE".into()); }
+            DOWNLOAD_SAMPLE_LANE.run(move || {
+                let state = app.state::<crate::AppState>();
+                if state.shutdown_requested.load(std::sync::atomic::Ordering::Acquire)
+                    || !state.tabs.try_lock().map_err(|_| "TAB_DOWNLOAD_SAMPLE_BUSY")?.contains_key(&id) {
+                    return Err("TAB_DOWNLOAD_SAMPLE_STALE".into());
+                }
+                if !state.grid_manager.sample_tab_downloads(binding, 800)? {
+                    return Err("TAB_DOWNLOAD_SAMPLE_UNCONFIRMED".into());
+                }
+                let inventory = state.grid_manager.tab_download_inventory()?;
+                let current = inventory["live"].as_array().is_some_and(|rows| rows.iter().any(|row|
+                    row["id"].as_str() == Some(id.as_str())
+                    && row["pid"].as_u64() == Some(u64::from(pid))
+                    && row["spawn_epoch"].as_str() == Some(spawn_epoch.as_str())
+                    && row["renderer_generation"].as_str() == Some(binding.generation.to_string().as_str())
+                    && row["connection_current"].as_bool() == Some(true)));
+                if !current { return Err("TAB_DOWNLOAD_SAMPLE_STALE".into()); }
+                let mut view = snapshot(&app)?;
+                view.download_inventory = Some(inventory);
+                Ok(view)
+            }).await
+        }
+        other => tab_mutation_control(webview, app, other),
+    }
+}
+
+fn tab_mutation_control(
     webview: Webview,
     app: AppHandle,
     request: Request,
@@ -981,6 +1026,7 @@ pub(crate) fn tab_mutation(
             }
         }
         Request::Inspect => {}
+        Request::SampleDownload { .. } => return Err("TAB_DOWNLOAD_SAMPLE_INVALID".into()),
         Request::InspectDownloads => {
             crate::shared::native_legacy_policy::require_main(&webview, "tab_list")?;
             if !super::isolated_tabs::mode_enabled() {

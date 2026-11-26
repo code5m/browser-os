@@ -198,7 +198,7 @@ function boundedReceiptControl<T>(
 const tabReceiptCall = (request: Record<string, unknown>, recovery = false) => {
   const phase = String(request.phase);
   return boundedReceiptControl<TabOwnerView>("tab-" + phase, JSON.stringify(request),
-    () => invoke<TabOwnerView>("tab_mutation", { request }), recovery, phase === "inspect" || phase === "inspect_renderer" || phase === "inspect_downloads" || phase === "poll");
+    () => invoke<TabOwnerView>("tab_mutation", { request }), recovery, phase === "inspect" || phase === "inspect_renderer" || phase === "inspect_downloads" || phase === "sample_download" || phase === "poll");
 };
 let terminalEvent: TabReceipt | null = null;
 let receiptListenerStarted = false;
@@ -1176,6 +1176,8 @@ export const bridge = {
 
   inspectRendererRecovery: (id: string) => tabReceiptCall({phase:"inspect_renderer",id}, true),
   inspectDownloadInventory: () => tabReceiptCall({phase:"inspect_downloads"}, true),
+  sampleDownload: (row: DownloadOwnerObservation) =>
+    tabReceiptCall({phase:"sample_download",id:row.id,pid:row.pid,spawn_epoch:row.spawn_epoch}, true),
   retireRenderer: (target: RendererRecoveryTarget) =>
     ownedTabMutation<void>({kind:"retire_renderer",...target,confirmed:true}),
   parkRenderer: (target: RendererParkTarget, url: string) =>

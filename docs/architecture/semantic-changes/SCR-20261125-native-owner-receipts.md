@@ -381,3 +381,10 @@ Source-only scope; no compilation, tests, install/runtime validation, workflow d
 - Both native backends take the writer nonblockingly before final suspension checks and hold it through original-owner revocation, excluding a host dispatch that had not yet populated the pending map. Refuse contention rather than waiting with the native registry locked.
 - This fences the host-observed document and dispatch race; it is not an engine transaction preventing arbitrary webpage scripts, unobserved navigation or new downloads from changing state. No automatic nonblank suspension is enabled.
 - Source-only implementation; compilation, tests, CI and master unchanged.
+
+## 2026-11-26 — Explicit native download snapshot for one live host
+
+- Distinguish metadata-cache inspection from actual authenticated Ping sampling. A main-window read request selects one observed PID/spawn epoch and binds the current native connection before the bounded worker starts. Linux and Windows share the strict monotonic snapshot acceptance path; unknown, regressive or unavailable counts are not reported as fresh.
+- Run sampling in its own two-permit blocking lane with a single 800 ms Ping budget. A timed-out client cannot release the worker's capacity. The existing synchronous receipt-control logic remains in a separate helper called by the asynchronous Tauri entrypoint.
+- Publish a sample only if the same owner and connection still appear in the returned inventory. The UI labels explicit sampling separately from cache queries, invalidates stale panel results and never automatically replays a failed sample.
+- This closes the selected-host fresh-observation gap; it does not add per-transfer identity, engine cancellation, persistence or a download-completion guarantee. Source only, no build/test/CI workflow change or master merge.

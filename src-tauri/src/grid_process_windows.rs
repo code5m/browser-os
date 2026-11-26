@@ -1077,7 +1077,7 @@ impl GridProcessManager {
     }
 
     // A missing optional payload cannot satisfy explicit suspension preflight.
-    fn sample_tab_downloads(&self, binding: crate::grid_ipc::RendererBinding, timeout_ms: u64)
+    pub(crate) fn sample_tab_downloads(&self, binding: crate::grid_ipc::RendererBinding, timeout_ms: u64)
         -> Result<bool, String>
     {
         if !crate::grid_ipc::is_tab_renderer(binding.index) { return Err("TAB_RENDERER_ROUTE_INVALID".into()); }

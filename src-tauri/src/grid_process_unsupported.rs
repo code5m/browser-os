@@ -52,6 +52,8 @@ impl GridProcessManager {
     pub(crate) fn tab_renderer_observation(&self, _index: u32) -> Result<(Option<(u32, u64)>, &'static str), String> { Err(unsupported()) }
     pub(crate) fn tab_renderer_inspection(&self, _index: u32) -> Result<(Option<(u32, u64)>, &'static str, Option<serde_json::Value>), String> { Err(unsupported()) }
     pub(crate) fn tab_download_inventory(&self) -> Result<serde_json::Value, String> { Err(unsupported()) }
+    pub(crate) fn sample_tab_downloads(&self, _binding: crate::grid_ipc::RendererBinding, _timeout_ms: u64)
+        -> Result<bool, String> { Err(unsupported()) }
     pub(crate) fn refresh_tab_downloads(&self, _binding: crate::grid_ipc::RendererBinding, _timeout_ms: u64)
         -> Result<(), String> { Err(unsupported()) }
     pub(crate) fn tab_renderer_download_observation(&self, _index: u32, _expected: (u32, u64))

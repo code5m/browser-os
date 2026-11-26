@@ -46,14 +46,16 @@ const downloadPanelBusy = ref(false);
 const downloadInventory = ref<DownloadInventory | null>(null);
 const downloadPanelError = ref("");
 let downloadPanelEpoch = 0;
-async function refreshDownloadInventory() {
+const downloadSampleLabel = ref("");
+async function refreshDownloadInventory(sample?: DownloadOwnerObservation) {
   if (downloadPanelBusy.value || !downloadPanelOpen.value) return;
   const epoch = ++downloadPanelEpoch;
   downloadPanelBusy.value = true;
   downloadInventory.value = null;
   downloadPanelError.value = "";
+  downloadSampleLabel.value = "";
   try {
-    const view = await bridge.inspectDownloadInventory();
+    const view = sample ? await bridge.sampleDownload(sample) : await bridge.inspectDownloadInventory();
     if (epoch !== downloadPanelEpoch || !downloadPanelOpen.value) return;
     const data = view.download_inventory;
     if (!data || !Array.isArray(data.live) || !Array.isArray(data.retired)
@@ -64,9 +66,16 @@ async function refreshDownloadInventory() {
         || new Set(data.retired.map(row => row.id + ":" + row.pid + ":" + row.spawn_epoch)).size !== data.retired.length) {
       throw new Error("invalid download inventory");
     }
+    if (sample && !data.live.some(row => row.id === sample.id && row.pid === sample.pid
+        && row.spawn_epoch === sample.spawn_epoch && row.connection_current && row.requested !== null)) {
+      throw new Error("sample owner changed");
+    }
     downloadInventory.value = data;
+    if (sample) downloadSampleLabel.value = sample.id + "：已主动采样本次宿主的累计下载回调；不代表最终下载状态。";
   } catch {
-    if (epoch === downloadPanelEpoch) downloadPanelError.value = "原生下载观察暂不可核实，请手动重新查询。";
+    if (epoch === downloadPanelEpoch) downloadPanelError.value = sample
+      ? "指定原生宿主采样未确认；可能已更换、忙碌或退出，请重新查询。"
+      : "原生下载观察暂不可核实，请手动重新查询。";
   } finally {
     downloadPanelBusy.value = false;
     if (epoch !== downloadPanelEpoch && downloadPanelOpen.value) void refreshDownloadInventory();
@@ -277,15 +286,17 @@ async function newTab() {
   <div v-if="browser.isolatedRendererMode" class="tab-actions" role="group" aria-label="独立宿主下载观察">
     <button :aria-expanded="downloadPanelOpen" @click="toggleDownloadInventory">下载观察记录</button>
     <template v-if="downloadPanelOpen">
-      <button :disabled="downloadPanelBusy" @click="refreshDownloadInventory">重新查询</button>
+      <button :disabled="downloadPanelBusy" @click="refreshDownloadInventory()">重新查询缓存及回收记录</button>
       <span v-if="downloadPanelBusy" role="status">正在核对原生记录…</span>
       <span v-else-if="downloadPanelError" role="status">{{downloadPanelError}}</span>
       <span v-else-if="downloadInventory">当前宿主 {{downloadInventory.live.length}} / 最近回收 {{downloadInventory.retired.length}}（最多 128）</span>
+      <span v-if="downloadSampleLabel" role="status">{{downloadSampleLabel}}</span>
       <div v-if="downloadInventory" class="download-owner-list">
         <div v-if="!downloadRows.length">暂无宿主观察</div>
         <div v-for="row in downloadRows" :key="row.phase + ':' + row.id + ':' + row.pid + ':' + row.spawn_epoch">
           <strong>{{row.id}} · {{row.phase === 'live' ? '当前宿主' : '已回收'}}</strong>
           <span>{{downloadLabel(row)}}</span>
+          <button v-if="row.phase === 'live'" :disabled="downloadPanelBusy" @click="refreshDownloadInventory(row)">主动采样</button>
         </div>
       </div>
       <span>仅本次应用会话内的宿主累计观察，不含下载地址、路径或文件操作。</span>
