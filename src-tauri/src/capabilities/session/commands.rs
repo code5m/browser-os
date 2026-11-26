@@ -4,8 +4,7 @@
 //! - 普通 Tab 关闭直接释放内存，不保存、不确认（PROJECT-RULES）。
 //! - 应用退出先完成可失败的自动保存预检，成功后才开始不可逆资源清理。
 //! - 内部逐项报告保留失败与并发更新；公共 Tauri DTO/参数保持兼容。
-//! - Session→Browser 仅经 create_tab 窄契约，不反向依赖 bridge。
-use crate::capabilities::browser::commands::create_tab;
+//! - Session→Browser 经已授权的 tab_new 原生操作所有权；不直接创建 WebView。
 use crate::domain::*;
 use crate::shared::invocation::{check_invocation_source, check_tab_id};
 use crate::workspace;
@@ -524,36 +523,35 @@ pub async fn session_restore(
 
     check_invocation_source(&webview, "session_restore", None, &app)?;
     crate::images::check_id(&id, "会话 id")?;
-    // Disk access and audit remain in the bounded owner. Native creation retains
-    // the original main-thread boundary; no session/tab mutex crosses the wait.
-    SESSION_IO
-        .run(move || {
-            let session = crate::session::load_session(&workspace::sessions_dir(&app), &id)?;
-            let url = session.url.clone();
-            let tab = if crate::bridge::isolated_tabs::mode_enabled() {
-                // SESSION_IO already owns a blocking worker; acquire the
-                // existing Browser mutation owner, not a GUI IPC wait.
-                crate::bridge::tab_new_native(app.clone(), url)?
-            } else {
-                let native_app = app.clone();
-                let (send, receive) = std::sync::mpsc::sync_channel(1);
-                app.run_on_main_thread(move || {
-                    let _ = send.send(create_tab(native_app, &url));
-                })
-                .map_err(|_| "SESSION_RESTORE_DISPATCH_FAILED")?;
-                receive.recv().map_err(|_| "SESSION_RESTORE_REPLY_LOST")??
-            };
-            workspace::log_audit(
-                &app,
-                "session_restore",
-                format!(
-                    "id={id} tab_id={} resources={}",
-                    tab.id, session.resource_count
-                ),
-            );
-            Ok(tab)
-        })
-        .await
+    // Read the archive in the bounded session lane, then release it before
+    // native creation. Use the existing authorized Browser mutation command
+    // in both modes (including its unknown-outcome receipt and layout fence).
+    let read_app = app.clone();
+    let read_id = id.clone();
+    let (url, resource_count) = SESSION_IO.run(move || {
+        let session = crate::session::load_session(&workspace::sessions_dir(&read_app), &read_id)?;
+        let url = session.url;
+        let parsed = url::Url::parse(&url).map_err(|_| "SESSION_RESTORE_URL_INVALID")?;
+        // Never reinterpret an archive address as a search query or execute a
+        // transient document scheme. Preserve normal HTTP(S), local files and
+        // the ordinary blank page already supported by Browser.
+        if url.trim() != url || !(matches!(parsed.scheme(), "http" | "https" | "file")
+            || url == "about:blank") {
+            return Err("SESSION_RESTORE_URL_UNSUPPORTED".into());
+        }
+        Ok((url, session.resource_count))
+    }).await?;
+    let tab = crate::bridge::tab_new(webview, app.clone(), url).await?;
+    let tab_id = tab.id.clone();
+    // Audit only after native acknowledgement. A lost audit worker is not a
+    // reason to report that an already created tab failed or replay creation.
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        workspace::log_audit(
+            &app, "session_restore",
+            format!("id={id} tab_id={tab_id} resources={resource_count}"),
+        );
+    }).await;
+    Ok(tab)
 }
 
 /// Explicit flush keeps the existing Tauri result shape. A partial save or a

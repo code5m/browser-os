@@ -110,13 +110,23 @@ export const useSessionStore = defineStore("session", () => {
   }
 
   // 恢复：用已脱敏 URL 新建页签（登录态/一次性 token 不会恢复，后端如实返回）
+  const restoring = new Set<string>();
   async function restoreSession(id: string) {
+    if (restoring.has(id)) return;
+    restoring.add(id);
     try {
       const tab = await bridge.sessionRestore(id);
       hostServices.require<BrowserContextPort>("browser-context").adoptRestoredTab(tab);
       layout.showToast("已恢复会话（部分页面可能需要重新登录）");
     } catch (e) {
-      layout.showToast("⚠️ 会话恢复失败");
+      const reason = String(e);
+      layout.showToast(/TAB_CREATE_|TAB_RENDERER_|TAB_MUTATION_|GRID_REQUEST_OUTCOME_UNKNOWN/.test(reason)
+        ? "会话恢复未确认，请先核对浏览器页签，不要直接重复恢复"
+        : /SESSION_RESTORE_URL_/.test(reason)
+          ? "存档地址不支持安全恢复"
+          : "⚠️ 会话恢复失败");
+    } finally {
+      restoring.delete(id);
     }
   }
 
