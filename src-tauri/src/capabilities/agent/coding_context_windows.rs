@@ -13,13 +13,10 @@ const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
 
 use super::mcp_protocol::{safe_text, sensitive};
 fn read(path: &Path, allowed: &Path) -> Result<String, String> {
-    let data = crate::capabilities::workspace::safe_paths::read_regular(
-        path,
-        &[allowed.to_path_buf()],
-        MAX_READ,
-    )
-    .map_err(|_| "CONTEXT_READ_DENIED")?;
-    let text = String::from_utf8(data).map_err(|_| "CONTEXT_NOT_TEXT")?;
+    let snapshot = crate::capabilities::workspace::safe_paths::read_versioned(
+        path, &[allowed.to_path_buf()], MAX_READ,
+    ).map_err(|_| "CONTEXT_READ_DENIED")?.ok_or("CONTEXT_READ_DENIED")?;
+    let text = String::from_utf8(snapshot.bytes).map_err(|_| "CONTEXT_NOT_TEXT")?;
     Ok(safe_text(&text))
 }
 fn no_reparse_path(path: &Path) -> bool {
@@ -127,11 +124,11 @@ fn scan(
     }
     limited
 }
-fn skill_files(root: &Path) -> Vec<PathBuf> {
+fn skill_files(allowed: &[PathBuf]) -> Vec<PathBuf> {
     let mut files = Vec::new();
     let mut budget = 4000;
-    for dir in roots(root) {
-        scan(&dir, &dir, 0, &mut budget, &mut files, true);
+    for dir in allowed {
+        scan(dir, dir, 0, &mut budget, &mut files, true);
     }
     files.sort();
     files.dedup();
@@ -181,22 +178,22 @@ pub(super) fn execute_cancelable_with_effect_admission(
     }
     match request["action"].as_str().unwrap_or("") {
         "skills_list" => {
-            let skills = skill_files(&root)
+            let allowed = roots(&root);
+            let skills = skill_files(&allowed)
                 .into_iter()
                 .take(256)
-                .map(|file| {
-                    let allowed = file.parent().and_then(Path::parent).unwrap_or(&root);
-                    let description = read(&file, allowed)
-                        .unwrap_or_default()
-                        .lines()
+                .filter_map(|file| {
+                    let base = allowed.iter().find(|base| file.starts_with(base))?;
+                    let text = read(&file, base).ok()?;
+                    let description = text.lines()
                         .find(|line| line.starts_with("description:"))
                         .unwrap_or("")
                         .chars()
                         .take(240)
                         .collect::<String>();
-                    json!({"path":file,"name":file.parent()
+                    Some(json!({"path":file,"name":file.parent()
                         .and_then(Path::file_name).map(|n|n.to_string_lossy()),
-                        "description":description})
+                        "description":description}))
                 })
                 .collect::<Vec<_>>();
             Ok(json!({"skills":skills,"platform":"windows","read_only":true}))
@@ -208,10 +205,11 @@ pub(super) fn execute_cancelable_with_effect_admission(
                 return Err("SKILL_OUTSIDE_ALLOWED_ROOTS".into());
             }
             let path = raw_path.canonicalize().map_err(|_| "SKILL_NOT_FOUND")?;
-            if !skill_files(&root).contains(&path) {
+            let candidates = roots(&root);
+            if !skill_files(&candidates).contains(&path) {
                 return Err("SKILL_OUTSIDE_ALLOWED_ROOTS".into());
             }
-            let allowed = roots(&root)
+            let allowed = candidates
                 .into_iter()
                 .find(|allowed| path.starts_with(allowed))
                 .ok_or("SKILL_OUTSIDE_ALLOWED_ROOTS")?;

@@ -470,3 +470,9 @@ Source-only scope; no compilation, tests, install/runtime validation, workflow d
 - An in-memory one-shot ApprovedOperation now retains a private shared registry identity, checked by both registered ToolRegistry execution and native-owner claim. Matching UUID/revision in another restored registry cannot transfer a live grant. Identity is not serialized and cannot be recreated from a checkpoint.
 - The signed approval path consumes the exact task revision under the TaskRegistry mutation lock, instead of relying on the earlier detached snapshot. Existing signed claim format and historical receipt evidence are unchanged; no new browser write capability or persistent approval reconstruction.
 - Source only; no build/test execution, workflow edits or master merge.
+
+## 2026-11-26 — Bound context and imported MCP config reads to fixed allowed roots
+
+- Linux context documents and imported configuration now use the existing bounded native versioned read, rather than checking metadata and then reopening a path as text. Skill root links and a linked docs directory no longer redefine the permitted root. Read candidates relative to the original allowed root list; Windows skill descriptions no longer authorize an arbitrary candidate parent. Both platforms obtain MCP config snapshots under the fixed workspace, native storage or home origin rather than the config's dynamically resolved parent.
+- Listing is advisory and unreadable skill candidates are omitted; explicit reads fail closed. Existing size limits, configured source paths and credential scrub behavior remain. No immutable multi-file workspace snapshot or arbitrary hostile same-user writer isolation is claimed.
+- Source-only implementation; no compilation, test execution, workflow edits or master merge.

@@ -27,41 +27,34 @@ fn admission_error(error: String) -> String {
 }
 
 use super::mcp_protocol::{self, safe_text, scrub, sensitive, RpcFrame};
-fn read_config(path: &Path) -> Result<String, String> {
-    // Config sources come from a fixed set of workspace/owner paths. Never
-    // follow a junction/symlink to a different file before authorizing it.
+fn read_config(path: &Path, allowed: &Path) -> Result<String, String> {
+    super::windows_sandbox::no_reparse_path(allowed).map_err(|_| "MCP_CONFIG_REPARSE_DENIED")?;
     super::windows_sandbox::no_reparse_path(path).map_err(|_| "MCP_CONFIG_REPARSE_DENIED")?;
-    let canonical = path.canonicalize().map_err(|_| "MCP_CONFIG_NOT_FOUND")?;
-    let parent = canonical.parent().ok_or("MCP_CONFIG_DENIED")?;
-    let allowed = parent.canonicalize().map_err(|_| "MCP_CONFIG_DENIED")?;
-    let bytes = crate::capabilities::workspace::safe_paths::read_regular(
-        &canonical,
-        &[allowed],
-        CONFIG_LIMIT,
-    )
-    .map_err(|_| "MCP_CONFIG_READ_DENIED")?;
-    String::from_utf8(bytes).map_err(|_| "MCP_CONFIG_NOT_TEXT".into())
+    let snapshot = crate::capabilities::workspace::safe_paths::read_versioned(
+        path, &[allowed.to_path_buf()], CONFIG_LIMIT,
+    ).map_err(|_| "MCP_CONFIG_READ_DENIED")?.ok_or("MCP_CONFIG_NOT_FOUND")?;
+    String::from_utf8(snapshot.bytes).map_err(|_| "MCP_CONFIG_NOT_TEXT".into())
 }
-fn sources(root: &Path, storage: &Path) -> Vec<PathBuf> {
+fn sources(root: &Path, storage: &Path) -> Vec<(PathBuf, PathBuf)> {
     let mut sources = vec![
-        storage.join("coding-mcp.json"),
-        root.join("opencode.json"),
-        root.join(".opencode/opencode.json"),
+        (storage.join("coding-mcp.json"), storage.to_path_buf()),
+        (root.join("opencode.json"), root.to_path_buf()),
+        (root.join(".opencode/opencode.json"), root.to_path_buf()),
     ];
     if let Some(home) = std::env::var_os("USERPROFILE") {
         let home = PathBuf::from(home);
         sources.extend([
-            home.join(".codebuddy/mcp.json"),
-            home.join(".workbuddy/mcp.json"),
-            home.join(".config/opencode/opencode.json"),
+            (home.join(".codebuddy/mcp.json"), home.clone()),
+            (home.join(".workbuddy/mcp.json"), home.clone()),
+            (home.join(".config/opencode/opencode.json"), home.clone()),
         ]);
     }
     sources
 }
 fn servers(root: &Path, storage: &Path) -> Vec<(String, String, PathBuf, Value)> {
     let mut output = Vec::new();
-    for source in sources(root, storage) {
-        let Ok(text) = read_config(&source) else {
+    for (source, allowed) in sources(root, storage) {
+        let Ok(text) = read_config(&source, &allowed) else {
             continue;
         };
         let Ok(config) = serde_json::from_str::<Value>(&text) else {

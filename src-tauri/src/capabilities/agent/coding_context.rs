@@ -17,12 +17,11 @@ use std::{
 };
 
 const LIMIT: u64 = 128 * 1024;
-fn read(path: &Path) -> Result<String, String> {
-    let meta = fs::symlink_metadata(path).map_err(|_| "CONTEXT_READ_FAILED")?;
-    if !meta.is_file() || meta.len() > LIMIT {
-        return Err("CONTEXT_FILE_LIMIT".into());
-    }
-    fs::read_to_string(path).map_err(|_| "CONTEXT_NOT_TEXT".into())
+fn read(path: &Path, allowed: &Path) -> Result<String, String> {
+    let snapshot = crate::capabilities::workspace::safe_paths::read_versioned(
+        path, &[allowed.to_path_buf()], LIMIT as usize,
+    ).map_err(|_| "CONTEXT_READ_DENIED")?.ok_or("CONTEXT_READ_FAILED")?;
+    String::from_utf8(snapshot.bytes).map_err(|_| "CONTEXT_NOT_TEXT".into())
 }
 use super::mcp_protocol::{self, safe_text, scrub, sensitive, RpcFrame};
 fn roots(root: &Path) -> Vec<PathBuf> {
@@ -39,7 +38,8 @@ fn roots(root: &Path) -> Vec<PathBuf> {
     }
     paths
         .into_iter()
-        .filter_map(|p| p.canonicalize().ok())
+        // Do not canonicalize an untrusted skill-root link into a new grant.
+        .filter(|p| crate::capabilities::workspace::safe_paths::directory_identity(p).is_ok())
         .collect()
 }
 fn scan(
@@ -93,11 +93,11 @@ fn scan(
     }
     incomplete
 }
-fn skills(root: &Path) -> Vec<PathBuf> {
+fn skills(allowed: &[PathBuf]) -> Vec<PathBuf> {
     let mut out = vec![];
     let mut budget = 4000;
-    for base in roots(root) {
-        let _ = scan(&base, &base, 0, &mut budget, &mut out, true);
+    for base in allowed {
+        let _ = scan(base, base, 0, &mut budget, &mut out, true);
     }
     out.sort();
     out.dedup();
@@ -105,33 +105,26 @@ fn skills(root: &Path) -> Vec<PathBuf> {
 }
 fn servers(root: &Path, storage: &Path) -> Vec<(String, String, PathBuf, Value)> {
     let mut sources = vec![
-        storage.join("coding-mcp.json"),
-        root.join("opencode.json"),
-        root.join(".opencode/opencode.json"),
+        (storage.join("coding-mcp.json"), storage.to_path_buf()),
+        (root.join("opencode.json"), root.to_path_buf()),
+        (root.join(".opencode/opencode.json"), root.to_path_buf()),
     ];
     if let Some(home) = std::env::var_os("HOME") {
         let h = PathBuf::from(home);
         sources.extend([
-            h.join(".codebuddy/mcp.json"),
-            h.join(".workbuddy/mcp.json"),
-            h.join(".config/opencode/opencode.json"),
+            (h.join(".codebuddy/mcp.json"), h.clone()),
+            (h.join(".workbuddy/mcp.json"), h.clone()),
+            (h.join(".config/opencode/opencode.json"), h.clone()),
         ]);
     }
     let mut out = vec![];
-    for source in sources {
-        // Native user configuration can pin an authority. Use the bounded
-        // no-link file read rather than a check followed by an ordinary open.
-        let content = if source == storage.join("coding-mcp.json") {
-            crate::capabilities::workspace::safe_paths::read_regular(
-                &source,
-                &[storage.to_path_buf()],
-                LIMIT as usize,
-            )
-            .map_err(|_| "MCP_CONFIG_READ_DENIED".to_owned())
-            .and_then(|bytes| String::from_utf8(bytes).map_err(|_| "MCP_CONFIG_NOT_TEXT".to_owned()))
-        } else {
-            read(&source)
-        };
+    for (source, allowed) in sources {
+        // Config origin is the fixed host/workspace/home root, not the
+        // current canonical parent of an attacker-controlled path.
+        if crate::capabilities::workspace::safe_paths::directory_identity(&allowed).is_err() {
+            continue;
+        }
+        let content = read(&source, &allowed);
         if let Ok(text) = content {
             if let Ok(config) = serde_json::from_str::<Value>(&text) {
                 let servers = config
@@ -595,17 +588,29 @@ pub(super) fn execute_cancelable_with_effect_admission(
 ) -> Result<Value, String> {
     let root = root.canonicalize().map_err(|_| "CONTEXT_ROOT_INVALID")?;
     match request["action"].as_str().unwrap_or("") {
-        "skills_list" => Ok(
-            json!({"skills":skills(&root).iter().take(256).map(|p|json!({"path":p,"name":p.parent().and_then(Path::file_name).map(|s|s.to_string_lossy()),"description":read(p).map(|t|safe_text(&t).lines().find(|s|s.starts_with("description:")).unwrap_or("").chars().take(240).collect::<String>()).unwrap_or_default()})).collect::<Vec<_>>()}),
-        ),
+        "skills_list" => {
+            let allowed = roots(&root);
+            let mut listed = Vec::new();
+            for path in skills(&allowed).into_iter().take(256) {
+                let Some(base) = allowed.iter().find(|base| path.starts_with(base)) else { continue; };
+                let Ok(text) = read(&path, base) else { continue; };
+                let description = safe_text(&text).lines()
+                    .find(|line| line.starts_with("description:")).unwrap_or("")
+                    .chars().take(240).collect::<String>();
+                listed.push(json!({"path":path,"name":path.parent().and_then(Path::file_name)
+                    .map(|name| name.to_string_lossy()),"description":description}));
+            }
+            Ok(json!({"skills":listed}))
+        }
         "skill_read" => {
-            let path = PathBuf::from(request["path"].as_str().ok_or("SKILL_PATH_REQUIRED")?)
-                .canonicalize()
-                .map_err(|_| "SKILL_NOT_FOUND")?;
-            if !skills(&root).contains(&path) {
+            let path = PathBuf::from(request["path"].as_str().ok_or("SKILL_PATH_REQUIRED")?);
+            let allowed = roots(&root);
+            if !skills(&allowed).contains(&path) {
                 return Err("SKILL_OUTSIDE_ALLOWED_ROOTS".into());
             }
-            Ok(json!({"path":path,"text":safe_text(&read(&path)?)}))
+            let base = allowed.iter().find(|base| path.starts_with(base))
+                .ok_or("SKILL_OUTSIDE_ALLOWED_ROOTS")?;
+            Ok(json!({"path":path,"text":safe_text(&read(&path, base)?)}))
         }
         "knowledge_search" => {
             let query = request["query"]
@@ -613,18 +618,14 @@ pub(super) fn execute_cancelable_with_effect_admission(
                 .filter(|q| q.len() >= 2 && q.len() <= 200)
                 .ok_or("KNOWLEDGE_QUERY_REQUIRED")?
                 .to_lowercase();
-            let base = root
-                .join("docs")
-                .canonicalize()
-                .map_err(|_| "KNOWLEDGE_ROOT_MISSING")?;
-            if !base.starts_with(&root) {
-                return Err("KNOWLEDGE_ROOT_UNSAFE".into());
-            }
+            let base = root.join("docs");
+            crate::capabilities::workspace::safe_paths::directory_identity(&base)
+                .map_err(|_| "KNOWLEDGE_ROOT_UNSAFE")?;
             let mut paths = vec![];
             let mut incomplete = scan(&base, &base, 0, &mut 3000, &mut paths, false);
             let mut hits = vec![];
             for p in paths {
-                if let Ok(text) = read(&p) {
+                if let Ok(text) = read(&p, &base) {
                     for (line, s) in text.lines().enumerate() {
                         if !sensitive(s) && s.to_lowercase().contains(&query) {
                             hits.push(json!({"path":p,"line":line+1,"text":s.chars().take(400).collect::<String>()}));
