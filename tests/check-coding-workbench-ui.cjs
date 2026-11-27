@@ -242,7 +242,7 @@ const base=process.env.CODING_UI_URL||'http://127.0.0.1:1433';
   await page.locator('.coding-code[data-editor-ready="true"]').filter({has:page.locator('.monaco-diff-editor')}).waitFor();
   await page.evaluate(()=>{const original=window.fixture.bridge.codingService;let applied=false,failRead=true;window.fixture.bridge.codingService=async request=>{if(request.action==='apply'){await new Promise(resolve=>setTimeout(resolve,250));const result=await original(request);applied=true;return result;}if(applied&&failRead&&request.action==='read'){failRead=false;throw Error('fixture read unavailable');}return original(request);};});
   const beforeApply=await page.evaluate(()=>window.fixture.calls.filter(request=>request.action==='apply').length);
-  await page.getByRole('button',{name:'应用本轮变更',exact:true}).evaluate(button=>{button.click();button.click();});
+  await page.getByRole('button',{name:'原地应用（共享文件）',exact:true}).evaluate(button=>{button.click();button.click();});
   await page.evaluate(async()=>{const url=performance.getEntriesByType('resource').map(item=>item.name).find(name=>/monaco-editor.*editor.*api/.test(name));const api=await import(url);const model=api.editor.getModels().find(item=>item.uri.scheme==='browseros-coding'&&item.getValue().includes('response lost'));if(!model)throw Error('editable model missing');model.setValue(model.getValue()+'\n// edit during apply');});
   await page.waitForFunction(()=>window.fixture.files['main.ts']==='const agent = 3;');
   assert.equal(await page.evaluate(()=>window.fixture.calls.filter(request=>request.action==='apply').length),beforeApply+1,'overlapping apply requests must not write twice');
@@ -254,7 +254,7 @@ const base=process.env.CODING_UI_URL||'http://127.0.0.1:1433';
   await page.screenshot({path:'/tmp/browseros-coding-workbench.png'});
   await page.evaluate(()=>{
     const original=window.fixture.bridge.codingService;
-    const state={session_id:'fixture-session',root:'/fixture',messages:[],changes:[],tool_events:[],status:'approval_required',operations:[{id:'operation-fixture',kind:'mcp',input:{server_id:'fixture-server',tool:'fixture-read',arguments:{query:'test'}},status:'pending'}]};let chats=0,failRecovery=true;
+    const state={session_id:'fixture-session',root:'/fixture',messages:[],changes:[],tool_events:[],status:'approval_required',operations:[{id:'11111111-1111-4111-8111-111111111111',kind:'mcp',input:{server_id:'fixture-server',tool:'fixture-read',arguments:{query:'test'}},status:'pending'}]};let chats=0,failRecovery=true;
     window.fixture.bridge.codingService=async request=>{
       request=JSON.parse(JSON.stringify(request));
       if(request.action==='chat'){window.fixture.calls.push(request);chats++;if(chats>1){state.status='complete';state.messages=[{role:'assistant',content:'Continued after reviewed operation'}];}return structuredClone(state);}
@@ -265,9 +265,34 @@ const base=process.env.CODING_UI_URL||'http://127.0.0.1:1433';
           tool:request.tool,arguments:request.arguments,timeout_seconds:20,revision:'f'.repeat(64)};
         window.fixture.operationReview=structuredClone(review);return review;
       }
-      if(request.action==='mcp_call'){window.fixture.calls.push(request);return {result:{content:[{type:'text',text:'fixture MCP result'}]}};}
-      if(request.action==='claim_operation'){window.fixture.calls.push(request);state.operations[0].status='executing';return structuredClone(state);}
-      if(request.action==='resolve_operation'){window.fixture.calls.push(request);state.operations[0].status=request.status;state.status='ready';throw Error('fixture response lost after saving');}
+      // The real native owner admits, executes and persists one receipt.
+      // The frontend must never claim and dispatch a second manual MCP call.
+      if(request.action==='mcp_call'||request.action==='claim_operation'){
+        window.fixture.calls.push(request);throw Error('unexpected frontend dispatch');
+      }
+      if(request.action==='execute_operation'){
+        window.fixture.calls.push(request);
+        const operation=state.operations[0],review=window.fixture.operationReview;
+        if(operation.status!=='pending'||request.operation_id!==operation.id||request.run_id!==operation.id||
+           request.session_id!==state.session_id||request.root!==state.root||request.approved!==true||
+           request.review_revision!==review.revision||
+           JSON.stringify(request.approved_credential_refs)!==JSON.stringify(review.credential_refs)||
+           JSON.stringify(request.approved_environment_names)!==JSON.stringify(review.environment_names))
+          throw Error('fixture native approval mismatch');
+        operation.status='result_ready';
+        operation.result=JSON.stringify({content:[{type:'text',text:'fixture MCP result'}]});
+        operation.execution={phase:'returned',run_id:operation.id};
+        state.status='operation_review';return structuredClone(state);
+      }
+      if(request.action==='resolve_operation'){
+        window.fixture.calls.push(request);
+        const operation=state.operations[0];
+        if(request.operation_id!==operation.id||request.session_id!==state.session_id||
+           request.root!==state.root||operation.status!=='result_ready'||request.status!=='accepted'||request.result!=='')
+          throw Error('fixture native receipt review mismatch');
+        operation.status='succeeded';operation.execution.phase='native_reviewed';state.status='ready';
+        throw Error('fixture response lost after saving');
+      }
       if(request.action==='session'&&request.session_id==='fixture-session'){if(failRecovery){failRecovery=false;throw Error('fixture recovery unavailable');}return structuredClone(state);}
       return original(request);
     };
@@ -287,23 +312,31 @@ const base=process.env.CODING_UI_URL||'http://127.0.0.1:1433';
   assert.equal(await review.getByRole('button',{name:'执行本次 MCP 请求',exact:true}).isDisabled(),true,'operation approval must not grant configured environment access');
   await review.getByRole('checkbox',{name:'我允许本次进程取得以上凭据和配置环境变量',exact:true}).check();
   await review.getByRole('button',{name:'执行本次 MCP 请求',exact:true}).click();
-  await review.getByLabel('待记录的操作结果',{exact:true}).waitFor();
-  const operationExecution=await page.evaluate(()=>({calls:window.fixture.calls.filter(request=>['mcp_review','claim_operation','mcp_call'].includes(request.action)),review:window.fixture.operationReview}));
-  assert.deepEqual(operationExecution.calls.map(request=>request.action),['mcp_review','claim_operation','mcp_call']);
-  assert.deepEqual(operationExecution.calls[2],{root:'/fixture',action:'mcp_call',approved:true,server_id:'fixture-server',
-    tool:'fixture-read',arguments:{query:'test'},review_revision:operationExecution.review.revision,
+  const acceptReceipt=review.getByRole('button',{name:'接受原生回执并记录结果',exact:true});
+  await acceptReceipt.waitFor();
+  assert.match(await review.innerText(),/fixture MCP result/,'review displays the persisted native result');
+  const operationExecution=await page.evaluate(()=>({calls:window.fixture.calls.filter(request=>['mcp_review','claim_operation','mcp_call','execute_operation'].includes(request.action)),review:window.fixture.operationReview}));
+  assert.deepEqual(operationExecution.calls.map(request=>request.action),['mcp_review','execute_operation']);
+  assert.deepEqual(operationExecution.calls[0],{root:'/fixture',action:'mcp_review',review_action:'mcp_call',
+    server_id:'fixture-server',tool:'fixture-read',arguments:{query:'test'}});
+  const ownedId='11111111-1111-4111-8111-111111111111';
+  assert.deepEqual(operationExecution.calls[1],{root:'/fixture',action:'execute_operation',session_id:'fixture-session',
+    operation_id:ownedId,run_id:ownedId,approved:true,review_revision:operationExecution.review.revision,
     approved_credential_refs:[],approved_environment_names:['FIXTURE_MODE']},
-    'Workbench operation review must bind execution to the reviewed saved server and exact environment scope');
-  assert.equal(await review.getByRole('button',{name:'执行本次 MCP 请求',exact:true}).isDisabled(),true);
+    'Workbench must execute exactly the admitted native operation with its own run and approved scopes');
+  assert.equal(await review.getByRole('button',{name:'执行本次 MCP 请求',exact:true}).count(),0,'a returned native receipt must not offer redispatch');
   assert.equal(await page.evaluate(()=>window.fixture.calls.filter(r=>r.action==='resolve_operation').length),0);
-  await review.getByRole('button',{name:'记录结果供智能体续跑',exact:true}).click();await review.waitFor({state:'detached'});
+  await acceptReceipt.click();await review.waitFor({state:'detached'});
   await page.getByText('会话状态未知，恢复并核对之前不能重新操作。',{exact:true}).waitFor();
   assert.equal(await page.getByRole('button',{name:'根据审批结果继续',exact:true}).count(),0);
   await page.getByRole('button',{name:'恢复当前会话并核对状态',exact:true}).click();
   await page.getByRole('status').filter({hasText:'已恢复当前会话'}).waitFor();
   assert.equal(await page.evaluate(()=>window.fixture.calls.filter(r=>r.action==='resolve_operation').length),1,'ambiguous result must not be resubmitted automatically');
-  assert.equal(await page.evaluate(()=>window.fixture.calls.filter(r=>r.action==='mcp_call').length),1);
-  const recorded=await page.evaluate(()=>window.fixture.calls.find(r=>r.action==='resolve_operation'));assert.equal(recorded.status,'succeeded');assert.ok(recorded.result.includes('fixture MCP result'));
+  assert.equal(await page.evaluate(()=>window.fixture.calls.filter(r=>r.action==='execute_operation').length),1,'native dispatch must not be replayed');
+  assert.equal(await page.evaluate(()=>window.fixture.calls.filter(r=>r.action==='mcp_call'||r.action==='claim_operation').length),0,'no legacy frontend dispatch');
+  const recorded=await page.evaluate(()=>window.fixture.calls.find(r=>r.action==='resolve_operation'));
+  assert.deepEqual(recorded,{root:'/fixture',action:'resolve_operation',session_id:'fixture-session',operation_id:ownedId,status:'accepted',result:''},
+    'receipt acceptance must not allow frontend output to replace native evidence');
   await page.getByRole('button',{name:'根据审批结果继续',exact:true}).click();await page.getByText('Continued after reviewed operation',{exact:true}).waitFor();
   await page.evaluate(()=>{
     const original=window.fixture.bridge.codingService;let finish;
@@ -337,7 +370,7 @@ const base=process.env.CODING_UI_URL||'http://127.0.0.1:1433';
   });
   await page.getByLabel('智能体指令',{exact:true}).fill('Read a large file');await page.getByRole('button',{name:'发送 ↑',exact:true}).click();
   await page.getByRole('status').filter({hasText:'已达到本轮工具步数上限'}).waitFor();assert.equal(await page.evaluate(()=>window.fixture.stepRequests),1,'tool limit must not implicitly send another model request');
-  await page.getByRole('button',{name:'继续本轮任务',exact:true}).click();await page.getByText('Continued after tool limit',{exact:true}).waitFor();
+  await page.getByRole('button',{name:'继续本轮任务（新指令）',exact:true}).click();await page.getByText('Continued after tool limit',{exact:true}).waitFor();
   // A slow read from the previous root must never populate the new project.
   await page.evaluate(()=>{
     const previous=window.fixture.bridge.codingService;
@@ -404,20 +437,20 @@ const base=process.env.CODING_UI_URL||'http://127.0.0.1:1433';
   await page.locator('.file-row').filter({hasText:'other.ts'}).click();await page.locator('.coding-code[data-editor-ready="true"]').waitFor();
   await page.evaluate(()=>{const original=window.fixture.bridge.codingService;window.fixture.bridge.codingService=async request=>{if(request.action==='read'&&request.path==='main.ts')await new Promise(resolve=>setTimeout(resolve,600));const result=await original(request);if(request.action==='chat')result.changes.push({path:'other.ts',content:'expected other',expected_hash:'hash:const other = 2;'});if(request.action==='apply')window.fixture.files['other.ts']='external other';return result;};});
   await page.getByLabel('智能体模式',{exact:true}).selectOption('build');await page.getByLabel('智能体指令',{exact:true}).fill('multi-file fixture');await page.getByRole('button',{name:'发送 ↑',exact:true}).click();await page.getByRole('heading',{name:'待审核变更 · 2',exact:true}).waitFor();
-  await page.locator('.changes').getByRole('button',{name:'main.ts',exact:true}).click();assert.equal(await page.getByRole('button',{name:'应用本轮变更',exact:true}).isDisabled(),true,'apply must be unavailable while preview loads');await page.locator('.editor-tab').getByRole('button',{name:'other.ts',exact:true}).click();await page.waitForTimeout(900);assert.equal(await page.getByText('变更预览 · main.ts',{exact:true}).count(),0,'switching to a file must cancel pending preview');
+  await page.locator('.changes').getByRole('button',{name:'main.ts',exact:true}).click();assert.equal(await page.getByRole('button',{name:'原地应用（共享文件）',exact:true}).isDisabled(),true,'apply must be unavailable while preview loads');await page.locator('.editor-tab').getByRole('button',{name:'other.ts',exact:true}).click();await page.waitForTimeout(900);assert.equal(await page.getByText('变更预览 · main.ts',{exact:true}).count(),0,'switching to a file must cancel pending preview');
   await page.locator('.changes').getByRole('button',{name:'main.ts',exact:true}).click();await page.locator('.changes').getByRole('button',{name:'other.ts',exact:true}).click();await page.getByText('变更预览 · other.ts',{exact:true}).waitFor();await page.waitForTimeout(900);assert.equal(await page.getByText('变更预览 · other.ts',{exact:true}).count(),1,'late response must not replace the latest preview');
   await page.evaluate(()=>{const original=window.fixture.bridge.codingService;let fail=true;window.fixture.bridge.codingService=async request=>{if(fail&&request.action==='read'&&request.path==='main.ts'){fail=false;throw Error('fixture preview failed');}return original(request);};});
   await page.locator('.changes').getByRole('button',{name:'main.ts',exact:true}).click();await page.getByRole('status').filter({hasText:'预览读取失败'}).waitFor();
-  assert.equal(await page.getByText('变更预览 · other.ts',{exact:true}).count(),0,'failed preview must not leave a different file displayed');assert.equal(await page.getByRole('button',{name:'应用本轮变更',exact:true}).isDisabled(),true);
+  assert.equal(await page.getByText('变更预览 · other.ts',{exact:true}).count(),0,'failed preview must not leave a different file displayed');assert.equal(await page.getByRole('button',{name:'原地应用（共享文件）',exact:true}).isDisabled(),true);
   await page.getByRole('button',{name:'取消预览',exact:true}).click();
-  await page.getByRole('button',{name:'应用本轮变更',exact:true}).click();await page.getByRole('status').filter({hasText:'磁盘内容已发生变化'}).waitFor();
+  await page.getByRole('button',{name:'原地应用（共享文件）',exact:true}).click();await page.getByRole('status').filter({hasText:'磁盘内容已发生变化'}).waitFor();
   assert.equal(await page.evaluate(()=>window.fixture.files['other.ts']),'external other','unopened file conflict must be reported');
   await page.goto(base+'/__coding_test');await page.getByLabel('项目目录',{exact:true}).fill('/fixture');await page.getByRole('button',{name:'打开项目',exact:true}).click();
   await page.locator('.file-row').filter({hasText:'main.ts'}).click();await page.locator('.coding-code[data-editor-ready="true"]').waitFor();
   await page.locator('.file-row').filter({hasText:'other.ts'}).click();await page.locator('.coding-code[data-editor-ready="true"]').waitFor();
   await page.evaluate(()=>{const original=window.fixture.bridge.codingService;let once=true;window.fixture.bridge.codingService=async request=>{const result=await original(request);if(request.action==='chat')result.changes.push({path:'other.ts',content:'updated other',expected_hash:'hash:const other = 2;'});if(once&&request.action==='apply'){once=false;window.fixture.files['other.ts']='updated other';await new Promise(resolve=>{window.fixture.finishBatchApply=resolve});}return result;};});
   await page.getByLabel('智能体模式',{exact:true}).selectOption('build');await page.getByLabel('智能体指令',{exact:true}).fill('batch interruption fixture');await page.getByRole('button',{name:'发送 ↑',exact:true}).click();await page.getByRole('heading',{name:'待审核变更 · 2',exact:true}).waitFor();
-  await page.getByRole('button',{name:'应用本轮变更',exact:true}).click();await page.waitForFunction(()=>typeof window.fixture.finishBatchApply==='function');
+  await page.getByRole('button',{name:'原地应用（共享文件）',exact:true}).click();await page.waitForFunction(()=>typeof window.fixture.finishBatchApply==='function');
   const batchWrites=await page.evaluate(()=>window.fixture.calls.filter(request=>request.action==='apply').length);
   await page.evaluate(()=>{window.fixture.show.value=false});await page.getByText('other view',{exact:true}).waitFor();await page.evaluate(()=>{window.fixture.finishBatchApply();window.fixture.show.value=true});
   await page.getByRole('button',{name:'恢复当前会话并核对状态',exact:true}).click();await page.getByRole('status').filter({hasText:'已恢复当前会话'}).waitFor();
@@ -429,7 +462,7 @@ const base=process.env.CODING_UI_URL||'http://127.0.0.1:1433';
   await page.evaluate(()=>{const original=window.fixture.bridge.codingService;let fail=true;window.fixture.bridge.codingService=async request=>{if(fail&&request.action==='read'&&request.path==='main.ts'){fail=false;throw Error('fixture preview failed');}return original(request);};});
   await page.getByLabel('智能体模式',{exact:true}).selectOption('build');await page.getByLabel('智能体指令',{exact:true}).fill('first proposal');await page.getByRole('button',{name:'发送 ↑',exact:true}).click();await page.getByRole('heading',{name:'待审核变更 · 1',exact:true}).waitFor();
   await page.locator('.changes').getByRole('button',{name:'main.ts',exact:true}).click();await page.getByRole('status').filter({hasText:'预览读取失败'}).waitFor();await page.getByRole('button',{name:'放弃本轮变更',exact:true}).click();
-  await page.getByLabel('智能体指令',{exact:true}).fill('next proposal');await page.getByRole('button',{name:'发送 ↑',exact:true}).click();await page.getByRole('heading',{name:'待审核变更 · 1',exact:true}).waitFor();assert.equal(await page.getByRole('button',{name:'应用本轮变更',exact:true}).isDisabled(),false,'discarding failed preview must not poison the next proposal');
+  await page.getByLabel('智能体指令',{exact:true}).fill('next proposal');await page.getByRole('button',{name:'发送 ↑',exact:true}).click();await page.getByRole('heading',{name:'待审核变更 · 1',exact:true}).waitFor();assert.equal(await page.getByRole('button',{name:'原地应用（共享文件）',exact:true}).isDisabled(),false,'discarding failed preview must not poison the next proposal');
   await page.goto(base+'/__coding_test');await page.getByLabel('项目目录',{exact:true}).fill('/fixture');await page.getByRole('button',{name:'打开项目',exact:true}).click();
   await page.evaluate(()=>{const original=window.fixture.bridge.codingService;window.fixture.bridge.codingService=async request=>{if(request.action==='read'&&request.path==='main.ts')await new Promise(resolve=>setTimeout(resolve,600));return original(request);};});
   await page.locator('.file-row').filter({hasText:'main.ts'}).click();await page.locator('.file-row').filter({hasText:'other.ts'}).click();await page.waitForTimeout(900);
