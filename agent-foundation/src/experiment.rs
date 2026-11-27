@@ -29,6 +29,10 @@ pub struct ExperimentConfig {
     pub canary_percent: u8,
     pub emergency_fallback_to_native: bool,
     pub benchmark_enabled: bool,
+    /// Separate consent for real text model requests; fixture-only legacy
+    /// configurations must not silently enable a production engine.
+    #[serde(default)]
+    pub production_text_enabled: bool,
     pub max_turns: u8,
 }
 impl Default for ExperimentConfig {
@@ -40,6 +44,7 @@ impl Default for ExperimentConfig {
             canary_percent: 0,
             emergency_fallback_to_native: true,
             benchmark_enabled: false,
+            production_text_enabled: false,
             max_turns: 1,
         }
     }
@@ -51,7 +56,7 @@ impl ExperimentConfig {
                 "runtime experiment configuration",
             ));
         }
-        if !self.enabled && self.mode != RoutingMode::Native {
+        if !self.enabled && (self.mode != RoutingMode::Native || self.production_text_enabled) {
             return Err(FoundationError::PermissionDenied);
         }
         Ok(())
@@ -257,6 +262,20 @@ mod tests {
             ..ExperimentConfig::default()
         };
         assert!(router.update(blocked, 0).is_err());
+    }
+    #[test]
+    fn legacy_fixture_configuration_does_not_enable_production_text() {
+        let config: ExperimentConfig = serde_json::from_value(serde_json::json!({
+            "revision":1,"enabled":true,"mode":"rig","canary_percent":0,
+            "emergency_fallback_to_native":true,"benchmark_enabled":false,"max_turns":3
+        })).unwrap();
+        assert!(!config.production_text_enabled);
+        assert!(config.validate().is_ok());
+        let invalid = ExperimentConfig {
+            production_text_enabled: true,
+            ..ExperimentConfig::default()
+        };
+        assert!(invalid.validate().is_err());
     }
     #[test]
     fn running_tasks_never_migrate_and_config_is_cas() {

@@ -17,6 +17,7 @@ const labEnabled = ref(false);
 const mode = ref<AgentRuntimeMode>("native");
 const canary = ref(10);
 const benchEnabled = ref(false);
+const productionTextEnabled = ref(false);
 const emergencyFallback = ref(true);
 const maxTurns = ref(3);
 const repeats = ref(3);
@@ -64,6 +65,7 @@ async function refresh() {
     mode.value = config.mode;
     canary.value = config.canary_percent;
     benchEnabled.value = config.benchmark_enabled;
+    productionTextEnabled.value = config.production_text_enabled ?? false;
     emergencyFallback.value = config.emergency_fallback_to_native;
     maxTurns.value = config.max_turns;
   } catch (reason) {
@@ -84,13 +86,15 @@ async function save() {
     canary_percent:Math.min(100,Math.max(0,Math.round(canary.value))),
     emergency_fallback_to_native:emergencyFallback.value,
     benchmark_enabled:benchEnabled.value,
+    production_text_enabled:labEnabled.value && productionTextEnabled.value,
     max_turns:Math.min(32,Math.max(1,Math.round(maxTurns.value)))
   };
   try {
     const updated = await bridge.agentRuntimeSetConfig(config,persisted.value.revision);
     persisted.value = updated;
     mode.value = updated.mode;
-    message.value = "已由原生 Host 原子保存（版本 " + updated.revision + "）。仅影响新实验任务。";
+    productionTextEnabled.value = updated.production_text_enabled ?? false;
+    message.value = "已由原生 Host 原子保存（版本 " + updated.revision + "）。仅影响新建任务；已记录的恢复链沿用原执行引擎。";
   } catch (reason) {
     error.value = "保存失败：" + String(reason);
     // Refresh on a stale revision instead of quietly overwriting another writer.
@@ -237,6 +241,10 @@ onMounted(refresh);
       <div class="field">
         <label for="runtime-turns">最大模型轮次</label>
         <input id="runtime-turns" v-model.number="maxTurns" type="number" min="1" max="32" :disabled="!supported || !labEnabled" />
+      </div>
+      <div class="field wide switch-field">
+        <div><b>真实 Chat / Legacy Agent 文本执行</b><small>默认关闭。开启后按上方策略选择 Rig 单轮状态机；使用已配置的真实模型和现有原生传输，不授予工具权限，不影响 Coding。</small></div>
+        <input v-model="productionTextEnabled" type="checkbox" :disabled="!supported || !labEnabled" aria-label="启用真实文本运行时实验" />
       </div>
       <div class="field check"><label><input v-model="benchEnabled" type="checkbox" :disabled="!supported || !labEnabled" /> 开启可重复基准测评</label></div>
       <div class="field check"><label><input v-model="emergencyFallback" type="checkbox" :disabled="!supported || !labEnabled" /> 应急回退策略（仅预留，尚未自动执行）</label></div>

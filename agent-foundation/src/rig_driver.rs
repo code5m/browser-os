@@ -379,6 +379,60 @@ impl RigMultiTurnDriver {
     }
 }
 
+/// Production text-only bridge. Rig owns the single model step and its
+/// terminal state; the native host supplies the exact existing messages,
+/// authenticated transport, execution lease and durable publication.
+/// This path grants no tools and never creates a second task or retries I/O.
+pub fn drive_owned_rig_text_turn<E>(
+    lease: &crate::task::ExecutionLease<'_>,
+    prompt: &str,
+    request: impl FnMut() -> std::result::Result<serde_json::Value, E>,
+    cancelled: impl Fn() -> bool,
+    error: impl Fn(FoundationError) -> E,
+) -> std::result::Result<String, E> {
+    let active = || lease.is_active() && !cancelled();
+    if !active() {
+        return Err(error(FoundationError::Cancelled));
+    }
+    let mut pilot = RigRunPilot::new(prompt, 1).map_err(&error)?;
+    let step = pilot.state().next_step()
+        .map_err(|_| error(FoundationError::Provider("RIG_NEXT_STEP".into())))?;
+    let AgentRunStep::CallModel { turn, .. } = step else {
+        return Err(error(FoundationError::InvalidTransition));
+    };
+    pilot.state().advertise_tools(turn, Vec::new());
+    // The existing complete-message boundary enforces the same limits,
+    // cancellation and no-tool policy before any response enters Rig.
+    let text = crate::engine::drive_owned_text_turn(lease, request, &cancelled, &error)?;
+    if !active() {
+        return Err(error(FoundationError::Cancelled));
+    }
+    let response = CompletionResponse::new(
+        vec![AssistantContent::text(text.clone())],
+        rig_core::completion::Usage::default(),
+        "browseros-native-text",
+        serde_json::json!({}),
+    );
+    let turn = ModelTurn::from_response_parts(&response, BTreeSet::new(), BTreeSet::new());
+    let outcome = pilot.state().model_response(turn)
+        .map_err(|_| error(FoundationError::Provider("RIG_MODEL_TURN_REJECTED".into())))?;
+    pilot.ensure_snapshot_budget().map_err(&error)?;
+    if !matches!(outcome, ModelTurnOutcome::Continue { .. }) {
+        return Err(error(FoundationError::PermissionDenied));
+    }
+    let step = pilot.state().next_step()
+        .map_err(|_| error(FoundationError::Provider("RIG_NEXT_STEP".into())))?;
+    if !active() {
+        return Err(error(FoundationError::Cancelled));
+    }
+    match step {
+        AgentRunStep::Done(response) if response.output == text => Ok(response.output),
+        // A second model step, unexpected tool grant or altered output is
+        // not authority to make another provider call or change the answer.
+        _ => Err(error(FoundationError::Provider("RIG_TEXT_TERMINAL_MISMATCH".into()))),
+    }
+}
+
 fn stale_transition(error: FoundationError) -> FoundationError {
     if error == FoundationError::InvalidTransition {
         FoundationError::Cancelled
@@ -470,6 +524,35 @@ mod tests {
             .execute_receipted(permit, tasks, Duration::from_secs(2))
             .await
             .unwrap()
+    }
+
+    #[test]
+    fn production_text_uses_existing_lease_and_never_replays_provider() {
+        let tasks = TaskRegistry::new(Arc::new(EventJournal::new(32)));
+        let task = tasks.create(Uuid::new_v4(), "text", vec![]).unwrap();
+        tasks.start(task.id).unwrap();
+        let lease = tasks.acquire_execution(task.id, tasks.get(task.id).unwrap().revision).unwrap();
+        let mut calls = 0;
+        let text = drive_owned_rig_text_turn(
+            &lease, "Review", || {
+                calls += 1;
+                Ok(json!({"role":"assistant","content":"All done"}))
+            }, || false, |error| error,
+        ).unwrap();
+        assert_eq!(text, "All done");
+        assert_eq!(calls, 1);
+        // Durable host, not Rig, remains responsible for final settlement.
+        assert_eq!(tasks.get(task.id).unwrap().status, TaskStatus::Running);
+        let denied = drive_owned_rig_text_turn(
+            &lease, "Review", || Ok(json!({"role":"assistant","tool_calls":[
+                {"id":"one","type":"function","function":{"name":"demo.inspect","arguments":"{}"}}
+            ]})), || false, |error| error,
+        );
+        assert!(denied.is_err());
+        tasks.pause(task.id).unwrap();
+        let denied = drive_owned_rig_text_turn(&lease, "Review",
+            || panic!("stale lease must not call provider"), || false, |error| error);
+        assert_eq!(denied, Err(FoundationError::Cancelled));
     }
 
     #[tokio::test]

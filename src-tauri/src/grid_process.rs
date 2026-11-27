@@ -3482,14 +3482,35 @@ impl GridProcessManager {
             // dispatch lock as ordinary positioning and focus changes.
             {
                 let _visibility = manager.visibility_dispatch.lock().unwrap_or_else(|p| p.into_inner());
+                // A crash/restart may miss the minimize event while it
+                // has no live window binding. Consult the current native
+                // main-window state before allowing replay to reveal it.
+                let main = app.get_window("main");
+                let may_show = main.as_ref()
+                    .and_then(|window| window.is_minimized().ok()) == Some(false);
+                let focused = may_show && (main.as_ref()
+                    .and_then(|window| window.is_focused().ok()) == Some(true)
+                    || manager.any_child_focused());
                 let css = {
-                    let children = manager.children.lock().unwrap();
-                    children.get(&index).filter(|child|
+                    let mut children = manager.children.lock().unwrap();
+                    children.get_mut(&index).filter(|child|
                         child.child.id() == binding.owner.0
                             && child.comms.spawn_epoch.load(Ordering::SeqCst) == binding.owner.1
                             && child.comms.is_current(binding.generation)
-                            && !child.hidden && !child.blur_hidden)
-                        .and_then(|child| child.last_rect)
+                            && !child.hidden)
+                        .and_then(|child| {
+                            if !may_show {
+                                child.blur_hidden = true;
+                                None
+                            } else if child.blur_hidden && !focused {
+                                None
+                            } else {
+                                // A restore/focus event can also be missed
+                                // while the renderer has no live binding.
+                                child.blur_hidden = false;
+                                child.last_rect
+                            }
+                        })
                 };
                 if let Some(rect) = css.and_then(|css| manager.abs_rect(css)) {
                     if let Err(error) = manager.request_window_bound(binding, GridCmd::UpdateRect {

@@ -920,21 +920,19 @@ fn build_chat_messages(
     Ok(messages)
 }
 
-// Chat and Legacy are deliberately text-only hosts of the same bounded
-// complete-message engine. They must not silently accept model tool calls.
+// Chat and Legacy are deliberately text-only hosts. The optional Rig
+// single-turn state machine retains the native transport and the same lease.
 fn text_model_turn(
     profile: &ProviderProfile,
     messages: &[Value],
+    rig_revision: Option<u64>,
     cancelled: &(dyn Fn() -> bool + Sync),
     lease: &browseros_agent_foundation::task::ExecutionLease<'_>,
 ) -> Result<String, String> {
-    use browseros_agent_foundation::{engine::drive_owned_text_turn, FoundationError};
+    use browseros_agent_foundation::{engine::drive_owned_text_turn, rig_driver::drive_owned_rig_text_turn, FoundationError};
     let inactive = || cancelled() || !lease.is_active();
-    drive_owned_text_turn(
-        lease,
-        || provider_turn_cancelable(profile, messages, &[], &inactive),
-        &inactive,
-        |error| match error {
+    let request = || provider_turn_cancelable(profile, messages, &[], &inactive);
+    let map_error = |error| -> String { match error {
             FoundationError::Cancelled => "AI_PROVIDER_CANCELLED".into(),
             FoundationError::Timeout => "AI_PROVIDER_TIMEOUT".into(),
             FoundationError::Provider(code) if matches!(code.as_str(), "MODEL_TEXT_LIMIT" | "MODEL_EVENT_LIMIT") => "AI_RESPONSE_LIMIT".into(),
@@ -942,8 +940,15 @@ fn text_model_turn(
                 "AI_RESPONSE_EMPTY".into()
             }
             _ => "AI_RESPONSE_INVALID".into(),
-        },
-    )
+        }
+    };
+    if rig_revision.is_some() {
+        let prompt = messages.last().and_then(|turn| turn["content"].as_str())
+            .ok_or("AI_MESSAGE_INVALID")?;
+        drive_owned_rig_text_turn(lease, prompt, request, &inactive, map_error)
+    } else {
+        drive_owned_text_turn(lease, request, &inactive, map_error)
+    }
 }
 
 // The credential snapshot is deliberately not serializable. Bind a retry
@@ -952,14 +957,19 @@ fn text_checkpoint_input(
     profile: &ProviderProfile,
     messages: &[Value],
     agent: Option<&str>,
+    rig_revision: Option<u64>,
 ) -> Result<Value, String> {
     validate(profile)?;
     if profile.kind != "chat" {
         return Err("AI_MODEL_NOT_CHAT".into());
     }
-    let input = json!({"profile_id":profile.id,"base_url":profile.base_url,
+    let mut input = json!({"profile_id":profile.id,"base_url":profile.base_url,
         "model":profile.model,"messages":messages,"agent_id":agent});
+    if let Some(revision) = rig_revision {
+        input["rig_text_config_revision"] = json!(revision);
+    }
     if profile.credential.is_empty()
+        || provider_value_contains_credential(&input, &profile.credential)
         || serde_json::to_string(&input)
             .map_err(|_| "AGENT_RUN_RECEIPT_INVALID")?
             .contains(&profile.credential)
@@ -1031,6 +1041,11 @@ fn prepare_restored_text_provider<'a>(
         .ok_or("AGENT_RUN_CONTEXT_INVALID")?
         .clone();
     let agent = input["agent_id"].as_str().map(str::to_owned);
+    // Missing field is the existing native receipt schema. Never select a
+    // new engine from current settings for an authenticated continuation.
+    let rig_revision = input.get("rig_text_config_revision")
+        .map(|value| value.as_u64().ok_or("AGENT_RUN_CONTEXT_INVALID"))
+        .transpose()?;
     if (kind == "chat" && agent.is_some()) || (kind == "legacy_agent" && agent.is_none()) {
         return Err("AGENT_RUN_SCOPE_MISMATCH".into());
     }
@@ -1050,12 +1065,12 @@ fn prepare_restored_text_provider<'a>(
                     || crate::security_policy::contains_credential_leak(content)
             }
         })
-        || text_checkpoint_input(&profile, &messages, agent.as_deref())? != *input
+        || text_checkpoint_input(&profile, &messages, agent.as_deref(), rig_revision)? != *input
     {
         return Err("AGENT_RUN_CONTEXT_INVALID".into());
     }
     Ok(Box::new(move |lease| {
-        let content = text_model_turn(&profile, &messages, cancelled, lease)?;
+        let content = text_model_turn(&profile, &messages, rig_revision, cancelled, lease)?;
         Ok(if let Some(agent) = agent {
             json!({"content":content,"model":profile.model,"agent_id":agent,"tools_executed":false})
         } else {
@@ -1075,7 +1090,7 @@ fn chat_with_history(
     let messages = build_chat_messages(message, scope, history)?;
     let execution = crate::capabilities::agent::public_api::ProductionExecution::begin("chat")?;
     let lease = execution.acquire_lease()?;
-    let result = text_model_turn(profile, &messages, cancelled, &lease);
+    let result = text_model_turn(profile, &messages, None, cancelled, &lease);
     drop(lease);
     execution.finish(result.is_ok())?;
     Ok(json!({"content":result?,"model":profile.model}))
@@ -1105,7 +1120,7 @@ fn provider_turn_cancelable(
     if body.len() > 512 * 1024 {
         return Err("AI_CONTEXT_LIMIT".into());
     }
-    if body.contains(&credential) {
+    if body.contains(&credential) || provider_value_contains_credential(&payload, &credential) {
         return Err("AI_CONTEXT_CREDENTIAL_DENIED".into());
     }
     let endpoint = format!(
@@ -1149,15 +1164,39 @@ fn provider_turn_cancelable(
     if !matches!(http, Some(200..=299)) {
         return Err("AI_PROVIDER_HTTP_ERROR".into());
     }
-    let clean = String::from_utf8(response)
-        .map_err(|_| "AI_RESPONSE_INVALID")?
-        .replace(&credential, "[REDACTED]");
-    let parsed: Value = serde_json::from_str(&clean).map_err(|_| "AI_RESPONSE_INVALID")?;
-    parsed
-        .pointer("/choices/0/message")
-        .filter(|v| v.is_object())
-        .cloned()
-        .ok_or_else(|| "AI_RESPONSE_EMPTY".into())
+    // Decode before credential handling: JSON escaping must not evade
+    // redaction, and replacing serialized bytes could change tool arguments.
+    let parsed: Value = serde_json::from_slice(&response).map_err(|_| "AI_RESPONSE_INVALID")?;
+    let choices = parsed["choices"].as_array().ok_or("AI_RESPONSE_INVALID")?;
+    if choices.len() != 1 {
+        return Err("AI_RESPONSE_INVALID".into());
+    }
+    let choice = &choices[0];
+    let mut reply = choice["message"].as_object().map(|_| choice["message"].clone())
+        .ok_or("AI_RESPONSE_EMPTY")?;
+    if reply["role"] != "assistant"
+        || reply.get("function_call").is_some_and(|value| !value.is_null()) {
+        return Err("AI_RESPONSE_INVALID".into());
+    }
+    if let Some(content) = reply.get("content").filter(|value| !value.is_null()) {
+        let text = content.as_str().ok_or("AI_RESPONSE_INVALID")?.replace(&credential, "[REDACTED]");
+        reply["content"] = json!(text);
+    }
+    let calls = browseros_agent_foundation::model::parse_function_batch(&reply,
+        if tools.is_empty() { 0 } else { 8 }).map_err(|_| "AI_RESPONSE_INVALID")?;
+    if choice.get("finish_reason").filter(|value| !value.is_null()).is_some_and(|reason|
+        !matches!(reason.as_str(), Some("stop" | "tool_calls"))
+            || (reason.as_str() == Some("tool_calls")) != !calls.is_empty()) {
+        return Err("AI_RESPONSE_INVALID".into());
+    }
+    if provider_value_contains_credential(&reply, &credential)
+        || calls.iter().any(|call| provider_value_contains_credential(&call.arguments, &credential)) {
+        return Err("AI_CONTEXT_CREDENTIAL_DENIED".into());
+    }
+    if cancelled() {
+        return Err("AI_PROVIDER_CANCELLED".into());
+    }
+    Ok(reply)
 }
 
 fn provider_turn_cancelable_stream(
@@ -1185,7 +1224,7 @@ fn provider_turn_cancelable_stream(
     if body.len() > 512 * 1024 {
         return Err("AI_CONTEXT_LIMIT".into());
     }
-    if body.contains(&credential) {
+    if body.contains(&credential) || provider_value_contains_credential(&payload, &credential) {
         return Err("AI_CONTEXT_CREDENTIAL_DENIED".into());
     }
     let endpoint = format!(
@@ -2115,7 +2154,8 @@ pub fn execute(path: &Path, request: AiRequest) -> Result<Value, String> {
             let signal = cancel_guard.as_ref().ok_or("AI_CHAT_REQUEST_UNAVAILABLE")?;
             let run = signal.id.unwrap_or_else(uuid::Uuid::new_v4);
             let cancelled = || signal.cancelled.load(Ordering::SeqCst);
-            let input = text_checkpoint_input(&profile, &messages, Some(&agent.id))?;
+            let rig_revision = super::agent_channel::production_text_revision(storage, run)?;
+            let input = text_checkpoint_input(&profile, &messages, Some(&agent.id), rig_revision)?;
             crate::capabilities::agent::public_api::ProductionExecution::run_checkpointed_text(
                 path.parent().ok_or("AGENT_STORAGE_UNAVAILABLE")?,
                 "legacy_agent",
@@ -2123,7 +2163,7 @@ pub fn execute(path: &Path, request: AiRequest) -> Result<Value, String> {
                 input,
                 cancelled,
                 |lease| {
-                    text_model_turn(&profile, &messages, &cancelled, lease)
+                    text_model_turn(&profile, &messages, rig_revision, &cancelled, lease)
                     .map(|content| json!({"content":content,"model":profile.model,"agent_id":agent.id,"tools_executed":false}))
                 },
             )
@@ -2149,7 +2189,8 @@ pub fn execute(path: &Path, request: AiRequest) -> Result<Value, String> {
             let signal = cancel_guard.as_ref().ok_or("AI_CHAT_REQUEST_UNAVAILABLE")?;
             let run = signal.id.unwrap_or_else(uuid::Uuid::new_v4);
             let messages = build_chat_messages(&request.message, &request.scope, &request.history)?;
-            let input = text_checkpoint_input(&profile, &messages, None)?;
+            let rig_revision = super::agent_channel::production_text_revision(storage, run)?;
+            let input = text_checkpoint_input(&profile, &messages, None, rig_revision)?;
             let cancelled = || signal.cancelled.load(Ordering::SeqCst);
             crate::capabilities::agent::public_api::ProductionExecution::run_checkpointed_text(
                 path.parent().ok_or("AGENT_STORAGE_UNAVAILABLE")?,
@@ -2158,7 +2199,7 @@ pub fn execute(path: &Path, request: AiRequest) -> Result<Value, String> {
                 input,
                 cancelled,
                 |lease| {
-                    text_model_turn(&profile, &messages, &cancelled, lease)
+                    text_model_turn(&profile, &messages, rig_revision, &cancelled, lease)
                         .map(|content| json!({"content":content,"model":profile.model}))
                 },
             )

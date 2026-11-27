@@ -814,7 +814,20 @@ impl ProductionExecution {
                 }
                 let previous = durable.recover_record(previous)?;
                 let text = previous.text.ok_or("AGENT_RUN_RECOVERY_REQUIRED")?;
-                if text.input != input {
+                // Runtime selection is native-owned admission metadata,
+                // not a caller-editable prompt field. A later configuration
+                // change cannot block recovery of an already committed answer
+                // or authorize a second provider attempt for this Run UUID.
+                let mut saved_input = text.input.clone();
+                let mut current_input = input.clone();
+                if matches!(kind, "chat" | "legacy_agent") {
+                    for value in [&mut saved_input, &mut current_input] {
+                        if let Some(object) = value.as_object_mut() {
+                            object.remove("rig_text_config_revision");
+                        }
+                    }
+                }
+                if saved_input != current_input {
                     return Err("AGENT_RUN_INPUT_MISMATCH".into());
                 }
                 if previous.phase == "completed" && previous.task.status == TaskStatus::Completed {
@@ -2273,6 +2286,14 @@ mod tests {
             .unwrap(),
             expected
         );
+        assert_eq!(ProductionExecution::run_checkpointed_text(
+            &storage,
+            "chat",
+            id,
+            serde_json::json!({"model":"fixture","messages":[{"role":"user","content":"hello"}],"rig_text_config_revision":2}),
+            || false,
+            |_| panic!("a runtime configuration change must not replay a committed Run")
+        ).unwrap(), expected);
         assert!(ProductionExecution::run_checkpointed_text(
             &storage,
             "chat",

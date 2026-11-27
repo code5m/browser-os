@@ -69,6 +69,23 @@ fn load(path: &Path) -> Result<ExperimentConfig, String> {
     config_snapshot(path).map(|(config, _)| config)
 }
 
+/// Select only a new text Run under the existing trusted configuration
+/// owner. Store the returned revision in the authenticated input so later
+/// continuation does not consult a mutable engine choice.
+pub(super) fn production_text_revision(storage: &Path, run: uuid::Uuid) -> Result<Option<u64>, String> {
+    let _guard = CONFIG_LOCK.try_lock().map_err(|_| "AGENT_EXPERIMENT_CONFIG_BUSY")?;
+    let config = load(&storage.join(CONFIG_FILE))?;
+    if !config.enabled || !config.production_text_enabled {
+        return Ok(None);
+    }
+    let router = ExperimentRouter::new(true);
+    router.restore_config_for_host(config)
+        .map_err(|_| "AGENT_EXPERIMENT_INVALID_CONFIG")?;
+    let assignment = router.assign(run).map_err(|_| "AGENT_EXPERIMENT_ASSIGNMENT_FAILED")?;
+    Ok((assignment.kind == foundation::experiment::EngineKind::RigAgentRun)
+        .then_some(assignment.configuration_revision))
+}
+
 fn persist(path: &Path, config: &ExperimentConfig, expected: Option<&safe_paths::FileSnapshot>,
     root_identity: &str) -> Result<(), String> {
     let root = path.parent().ok_or("AGENT_EXPERIMENT_PATH")?.to_path_buf();

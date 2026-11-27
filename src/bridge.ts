@@ -554,6 +554,7 @@ export interface AgentRuntimeExperimentConfig {
   canary_percent: number;
   emergency_fallback_to_native: boolean;
   benchmark_enabled: boolean;
+  production_text_enabled?: boolean;
   max_turns: number;
 }
 export interface AgentRuntimeBenchmarkSample {
