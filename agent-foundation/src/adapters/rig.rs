@@ -75,9 +75,17 @@ pub fn from_rig_response(response: CompletionResponse) -> Result<Vec<ModelEvent>
                         "RIG_MULTIPLE_TOOL_CALLS_UNSUPPORTED".into(),
                     ));
                 }
+                let id = tool.id.to_string();
+                let name = tool.function.name.to_string();
+                if id.is_empty() || id.len() > 256
+                    || id.chars().any(|c| c.is_control() || c.is_whitespace())
+                    || name.is_empty() || name.len() > 128
+                    || !name.bytes().all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c)) {
+                    return Err(FoundationError::InvalidInput("rig tool identity"));
+                }
                 let arguments_json = bounded_arguments(&tool.function.arguments)?;
                 proposal = Some(ModelEvent::ToolSuggestion {
-                    tool_name: tool.function.name.to_string(),
+                    tool_name: name,
                     arguments_json,
                 });
             }
@@ -175,6 +183,8 @@ impl ModelProvider for RigCompletionProvider {
                     }
                     let remainder = &final_text[streamed_text.len()..];
                     if !remainder.is_empty() {
+                        budget.admit_events(1)?;
+                        budget.admit_text(remainder.len())?;
                         sender
                             .send(ModelEvent::TextDelta {
                                 text: remainder.to_owned(),
@@ -184,6 +194,9 @@ impl ModelProvider for RigCompletionProvider {
                     }
                     for event in events {
                         if !matches!(event, ModelEvent::TextDelta { .. }) {
+                            // Final SDK projection shares the producer's raw
+                            // event budget; it does not get a second allowance.
+                            budget.admit_events(1)?;
                             sender
                                 .send(event)
                                 .await

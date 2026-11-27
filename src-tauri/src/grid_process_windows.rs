@@ -1817,11 +1817,16 @@ impl GridProcessManager {
         -> Result<(), String>
     {
         if let Some(binding) = target { return self.hide_window_bound(binding); }
-        self.lifecycle.wait_route_retired_until(
-            index, std::time::Instant::now() + std::time::Duration::from_secs(3),
-        )?;
-        // Absence was part of the admission. Never hide a later replacement.
-        if self.children.lock().unwrap().contains_key(&index) {
+        // This caller owns visibility_dispatch. Retirement may depend on
+        // lifecycle/native cleanup; do not wait under the visibility lock.
+        // Observe absence under lifecycle admission, without following a
+        // replacement host or mistaking retirement for confirmed hiding.
+        let _gate = self.lifecycle_lock.try_lock().map_err(|_| "GRID_LIFECYCLE_BUSY")?;
+        self.lifecycle.check()?;
+        if self.lifecycle.try_is_retiring(index)? {
+            return Err("GRID_HIDE_CLEANUP_PENDING".into());
+        }
+        if self.children.try_lock().map_err(|_| "GRID_WINDOW_OBSERVATION_BUSY")?.contains_key(&index) {
             return Err("TAB_RENDERER_LAYOUT_SUPERSEDED".into());
         }
         Ok(())
@@ -1917,7 +1922,8 @@ impl GridProcessManager {
     }
 
     pub(crate) fn select_tab_renderer(&self, index: u32, others: &[u32]) -> Result<(), String> {
-        self.select_tab_renderer_bound(self.renderer_binding(index)?, others)
+        let target = self.capture_window_route(index)?.ok_or("TAB_RENDERER_WINDOW_UNAVAILABLE")?;
+        self.select_tab_renderer_bound(target, others)
     }
 
     pub(crate) fn select_tab_renderer_bound(&self, target: crate::grid_ipc::RendererBinding, others: &[u32]) -> Result<(), String> {

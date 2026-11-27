@@ -1030,6 +1030,11 @@ fn dispatch_grid_cmd(
                 manager.update_rect(&id, LogicalRect::new(0.0, 0.0, lw, lh))
                     .map_err(|e| format!("GRID_NATIVE_LAYOUT_FAILED:{e}"))?;
                 win.show().map_err(|e| format!("show 失败: {e}"))?;
+                // Native toolkit visibility observation is stronger than a
+                // submitted show, but does not prove compositor paint.
+                if !win.is_visible().map_err(|e| format!("GRID_NATIVE_VISIBILITY_UNCONFIRMED:{e}"))? {
+                    return Err("GRID_NATIVE_SHOW_UNCONFIRMED".into());
+                }
                 app.state::<AppState>().child_layouts.lock().unwrap()
                     .insert(id.clone(), (0.0, 0.0, lw, lh));
                 Ok(())
@@ -1039,6 +1044,9 @@ fn dispatch_grid_cmd(
                 if let Err(error) = win.hide() {
                     return Err(format!("GRID_NATIVE_LAYOUT_HIDE_FAILED:{error}"));
                 }
+                if win.is_visible().map_err(|e| format!("GRID_NATIVE_VISIBILITY_UNCONFIRMED:{e}"))? {
+                    return Err("GRID_NATIVE_LAYOUT_HIDE_UNCONFIRMED".into());
+                }
             }
             result
         }
@@ -1047,6 +1055,9 @@ fn dispatch_grid_cmd(
                 .get_window(host_label)
                 .ok_or_else(|| "子进程壳窗口不存在".to_string())?;
             win.hide().map_err(|e| format!("hide 失败: {e}"))?;
+            if win.is_visible().map_err(|e| format!("GRID_NATIVE_VISIBILITY_UNCONFIRMED:{e}"))? {
+                return Err("GRID_NATIVE_HIDE_UNCONFIRMED".into());
+            }
             Ok(())
         }
         GridCmd::Eval { id, js } => {

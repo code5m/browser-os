@@ -177,7 +177,10 @@ impl ExperimentRouter {
         }
         // Keep lock ordering consistent with restore_config_for_host:
         // always acquire config BEFORE assignments, avoiding an ABBA deadlock.
-        let cfg = self.config();
+        // Hold the configuration read guard until assignment publication.
+        // A cloned snapshot would let restore_config_for_host/update race
+        // between reading configuration and inserting the first assignment.
+        let cfg = self.config.read().unwrap_or_else(|e| e.into_inner());
         let mut assigned = self.assignments.write().unwrap_or_else(|e| e.into_inner());
         if let Some(existing) = assigned.get(&task_id) {
             return Ok(existing.clone());
@@ -215,7 +218,7 @@ impl ExperimentRouter {
     }
     pub fn restore(&self, assignment: RuntimeAssignment) -> Result<()> {
         if assignment.task_id.is_nil()
-            || assignment.max_turns == 0
+            || !(1..=32).contains(&assignment.max_turns)
             || (assignment.kind == EngineKind::RigAgentRun && !self.rig_available)
         {
             return Err(FoundationError::PermissionDenied);

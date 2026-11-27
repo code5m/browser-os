@@ -19,7 +19,7 @@ pub struct RigRunPilot {
 }
 impl RigRunPilot {
     pub fn new(prompt: &str, max_turns: u8) -> Result<Self> {
-        if prompt.is_empty() || prompt.len() > 32_768 || !(1..=32).contains(&max_turns) {
+        if prompt.trim().is_empty() || prompt.len() > 32_768 || !(1..=32).contains(&max_turns) {
             return Err(FoundationError::InvalidInput("rig agent run configuration"));
         }
         Ok(Self {
@@ -41,9 +41,15 @@ impl RigRunPilot {
         &mut self.run
     }
 
+    // Use the same cap on live retained SDK state and diagnostic snapshots,
+    // not just when a caller elects to serialize a run.
+    pub(crate) fn ensure_snapshot_budget(&self) -> Result<()> {
+        crate::model::serialized_size(&self.run, 1_048_576)
+            .map(|_| ())
+            .map_err(|_| FoundationError::InvalidInput("rig run snapshot"))
+    }
     pub fn snapshot(&self) -> Result<String> {
-        crate::model::serialized_size(&self.run,1_048_576)
-            .map_err(|_|FoundationError::InvalidInput("rig run snapshot"))?;
+        self.ensure_snapshot_budget()?;
         serde_json::to_string(&self.run).map_err(|e| FoundationError::Serialization(e.to_string()))
     }
     pub fn restore(text: &str) -> Result<Self> {

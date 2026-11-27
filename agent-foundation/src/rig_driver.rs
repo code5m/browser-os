@@ -95,7 +95,7 @@ impl RigMultiTurnDriver {
         if self.pending.is_some() || self.finished || self.in_flight {
             return Err(FoundationError::InvalidTransition);
         }
-        if model_id.is_empty() || model_id.len() > 160 || definitions.len() > 32 {
+        if model_id.trim().is_empty() || model_id.len() > 160 || definitions.len() > 32 {
             return Err(FoundationError::InvalidInput(
                 "rig driver model or tool limit",
             ));
@@ -200,6 +200,7 @@ impl RigMultiTurnDriver {
                             self.pilot.state().model_response(turn).map_err(|_| {
                                 FoundationError::Provider("RIG_MODEL_TURN_REJECTED".into())
                             })?;
+                        self.pilot.ensure_snapshot_budget()?;
                         if !matches!(outcome, ModelTurnOutcome::Continue { .. }) {
                             return Err(FoundationError::Provider(
                                 "RIG_TOOL_REQUIRES_RESOLUTION".into(),
@@ -291,14 +292,20 @@ impl RigMultiTurnDriver {
             || !receipt.matches_approval(tasks, task_id, call_id, approved_revision) {
             return Err(FoundationError::ApprovalMismatch);
         }
-        // Bound each result and the entire run's retained tool context.
-        // The SDK history retains earlier results across approval pauses.
-        let bytes=crate::model::serialized_size(receipt.value(),
-            (64*1024).min((256*1024usize).saturating_sub(self.tool_result_bytes)))
-            .map_err(|_|FoundationError::InvalidInput("rig tool result"))?;
-        // Exclude a competing model or tool execution even during the SDK
-        // state transition. A rejected receipt leaves the pending call intact.
+        // A matching receipt proves execution already occurred. An oversized
+        // result cannot be re-executed to repair the SDK continuation.
+        // Acquire the same task revision before settling a terminal rejection.
         let _lease = tasks.acquire_execution(task_id, approved_revision)?;
+        let bytes = match crate::model::serialized_size(receipt.value(),
+            (64 * 1024).min((256 * 1024usize).saturating_sub(self.tool_result_bytes))) {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                self.finished = true;
+                self.pending = None;
+                let _ = tasks.finish_at_revision(task_id, false, approved_revision);
+                return Err(FoundationError::InvalidInput("rig tool result"));
+            }
+        };
         let mut entered=false;
         let accepted=tasks.with_active_revision(task_id, approved_revision, || {
             entered=true;
@@ -309,7 +316,8 @@ impl RigMultiTurnDriver {
                     name: call.function.name.clone(),
                     content: vec![ToolResultContent::json(receipt.value().clone())],
                 })])
-                .map_err(|_| FoundationError::Provider("RIG_TOOL_RESULTS".into()))
+                .map_err(|_| FoundationError::Provider("RIG_TOOL_RESULTS".into()))?;
+            self.pilot.ensure_snapshot_budget()
         });
         if let Err(error)=accepted {
             // A rejected SDK transition may already have changed SDK state.

@@ -614,3 +614,12 @@ Agent-owned Browser receipt slots explicitly reject the ordinary Start control, 
 - Ordinary tab selection includes native peers and pending retirement routes not present in the logical list; failure to hide them blocks active-tab publication. The backend remains opt-in.
 - UI distinguishes unsettled native hide from a settled failure; it keeps layout admission closed, reports prolonged waiting without releasing native ownership and provides a manual retry after settlement in both Browser and Grid. Browser capability resume no longer reports success after a failed visibility synchronization.
 - This is native dispatch and UI ordering, not compositor paint proof or atomic visibility across every OS callback. No compilation/tests/workflow edits/master merge.
+
+### Bound production transcripts and verify isolated native visibility
+
+- Serialize every admitted native production function argument against a shared 256 KiB loop budget before the host callback. Keep per-call 16 KiB and existing native approval/effect ownership.
+- Hold the experiment configuration read guard through assignment publication; reject restored turn limits outside 1..=32. This is sticky routing, not automatic migration of Coding to Rig.
+- Enforce the 1 MiB Rig serialized state cap after SDK model and tool transitions, not merely at diagnostic snapshot time. A matching already-executed oversized tool result seals the driver and fails the still-current task; it cannot grant replay. Bound final stream projection with the same raw producer event budget and reject invalid tool identities.
+- Recheck native Channel authority and current enablement after durable settlement and before releasing the live value, including recovered receipts. Do not rewrite completed durable evidence or rerun effects on revocation.
+- Both isolated native managers reject pending retirement while holding visibility dispatch instead of waiting; compatibility selection captures the native window binding rather than requiring a document. The child checks toolkit visibility after show/hide and failed-layout cleanup before acknowledging. This is a toolkit observation, not compositor-level paint proof.
+- Default isolated backend and production Coding routing remain unchanged pending installed-build acceptance. Source changes only; no compile/test execution, workflow edits or master merge.

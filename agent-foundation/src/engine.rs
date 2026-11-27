@@ -328,6 +328,9 @@ fn drive_function_batches_checked<H: FunctionBatchHost>(
     // IDs must remain unique throughout this bounded model/tool loop,
     // not only within a single assistant response.
     let mut admitted_ids = std::collections::HashSet::new();
+    // The native production host retains every accepted tool call in its
+    // transcript. Per-call limits alone allow an oversized aggregate.
+    let mut remaining_arguments = 256 * 1024usize;
     for round in 0..rounds {
         if !active() || host.cancelled() {
             return host.on_cancelled();
@@ -365,6 +368,11 @@ fn drive_function_batches_checked<H: FunctionBatchHost>(
             return host.on_cancelled();
         }
         budget.admit_events(calls.len()).map_err(|error| host.invalid_batch(error))?;
+        for call in &calls {
+            let bytes = crate::model::serialized_size(&call.arguments, remaining_arguments.min(16_384))
+                .map_err(|_| host.invalid_batch(FoundationError::InvalidInput("function transcript argument limit")))?;
+            remaining_arguments -= bytes;
+        }
         if std::time::Instant::now() >= deadline {
             return Err(host.invalid_batch(FoundationError::Timeout));
         }

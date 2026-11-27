@@ -422,7 +422,13 @@ async fn run_channel_owned(
             enabled_config(&owner_app)?;
             admit()
         }).await.map_err(|_| "AGENT_RUN_WORKER_FAILED".to_string())??;
-        run_admitted(app, webview, admission).await
+        let result = run_admitted(app.clone(), webview.clone(), admission).await?;
+        // Durable settlement is already owned by run_admitted. Revocation
+        // during execution (including recovered reads) blocks live result
+        // release, never rewrites a completed receipt or replays a tool.
+        check_main(&app, &webview, "ai_service")?;
+        enabled_config(&app)?;
+        Ok(result)
     }).await.map_err(|_| "AGENT_RUN_WORKER_FAILED".to_string())?
 }
 
