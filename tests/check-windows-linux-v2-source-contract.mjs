@@ -330,7 +330,19 @@ assert.match(gridRuntime, /pub\(crate\) fn mem_total_mb\(\)/);
 const resourceStats = read('../src-tauri/src/bridge/tab_runtime.rs');
 assert.match(resourceStats, /GetProcessMemoryInfo/);
 assert.match(resourceStats, /CreateToolhelp32Snapshot/);
-assert.match(resourceStats, /mem_total_mb: mem_total_mb\(\)/);
+// Require the actual shared, fallible native memory adapter and the explicit
+// unknown-sample contract; do not require the obsolete direct u64 expression.
+const ownerResourceStats = sourceRegion(resourceStats, 'fn resource_stats_for_owners(', '// ====== 页签休眠');
+assert.match(ownerResourceStats, /let total = super::grid_runtime::mem_total_mb\(\);/);
+assert.match(ownerResourceStats, /let available = mem_available_mb\(\);/);
+assert.match(ownerResourceStats, /mem_total_mb: total\.unwrap_or\(0\)/);
+assert.match(ownerResourceStats, /mem_available_mb: available\.unwrap_or\(0\)/);
+assert.match(ownerResourceStats, /memory_sample_known: total\.is_some\(\) && available\.is_some\(\)/);
+assert.match(gridRuntime, /#\[cfg\(target_os = "linux"\)\]\s*pub\(crate\) fn mem_total_mb\(\) -> Option<u64> \{\s*linux_meminfo_mb\("MemTotal:"\)/);
+assert.match(gridRuntime, /#\[cfg\(target_os = "windows"\)\]\s*pub\(crate\) fn mem_total_mb\(\) -> Option<u64> \{\s*windows_meminfo_mb\(\)\.map\(\|\(total, _\)\| total\)/);
+const windowsMemoryAdapter = sourceRegion(gridRuntime, 'fn windows_meminfo_mb(', '#[cfg(target_os = "windows")]\npub(crate) fn mem_available_mb');
+assert.match(windowsMemoryAdapter, /if unsafe \{ GlobalMemoryStatusEx\(&mut memory\) \} == 0 \{\s*return None;/);
+assert.match(windowsMemoryAdapter, /memory\.ullTotalPhys \/ \(1024 \* 1024\)/);
 const dbProfiles = read('../src-tauri/src/capabilities/database/profiles.rs');
 const agentChannel = read('../src-tauri/src/framework/agent_channel.rs');
 const gitStudio = read('../src-tauri/src/capabilities/git/studio.rs');
