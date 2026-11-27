@@ -61,8 +61,11 @@ impl ExperimentConfig {
                 "runtime experiment configuration",
             ));
         }
-        if !self.enabled && (self.mode != RoutingMode::Native
-            || self.production_text_enabled || self.production_coding_enabled) {
+        if !self.enabled
+            && (self.mode != RoutingMode::Native
+                || self.production_text_enabled
+                || self.production_coding_enabled)
+        {
             return Err(FoundationError::PermissionDenied);
         }
         Ok(())
@@ -169,7 +172,9 @@ impl ExperimentRouter {
     pub fn update(&self, next: ExperimentConfig, expected_revision: u64) -> Result<()> {
         next.validate()?;
         let mut config = self.config.write().unwrap_or_else(|e| e.into_inner());
-        if config.revision != expected_revision || expected_revision.checked_add(1) != Some(next.revision) {
+        if config.revision != expected_revision
+            || expected_revision.checked_add(1) != Some(next.revision)
+        {
             return Err(FoundationError::InvalidTransition);
         }
         if next.enabled
@@ -274,7 +279,8 @@ mod tests {
         let config: ExperimentConfig = serde_json::from_value(serde_json::json!({
             "revision":1,"enabled":true,"mode":"rig","canary_percent":0,
             "emergency_fallback_to_native":true,"benchmark_enabled":false,"max_turns":3
-        })).unwrap();
+        }))
+        .unwrap();
         assert!(!config.production_text_enabled);
         assert!(!config.production_coding_enabled);
         assert!(config.validate().is_ok());

@@ -11,7 +11,10 @@ use rig_agent::run::{AgentRun, AgentRunStep, ModelTurn, ModelTurnOutcome};
 use rig_core::{
     completion::{CompletionRequest, CompletionResponse, FinishReason, Message, ToolDefinition},
     driver::DynModel,
-    message::{AssistantContent, ToolCall, ToolFunction, ToolName, ToolResult, ToolResultContent, UserContent},
+    message::{
+        AssistantContent, ToolCall, ToolFunction, ToolName, ToolResult, ToolResultContent,
+        UserContent,
+    },
     operation::Completion,
 };
 use serde_json::{json, Value};
@@ -24,7 +27,9 @@ pub trait RigModelBackend: Send + Sync {
 
     /// The trusted host may supply a backend without a fixed SDK model ID.
     /// A configured SDK model must not accept a different requested label.
-    fn accepts_model(&self, _model_id: &str) -> bool { true }
+    fn accepts_model(&self, _model_id: &str) -> bool {
+        true
+    }
 }
 
 /// A genuine official Rig SDK transport for the multi-turn Driver.
@@ -60,7 +65,7 @@ pub enum RigDriverStep {
 struct DriverOwner {
     registry: Arc<()>,
     tools: Arc<()>,
-    definitions_digest: [u8;32],
+    definitions_digest: [u8; 32],
     task: Uuid,
     revision: u64,
     model: String,
@@ -78,7 +83,9 @@ struct AbandonedRigDrive<'a> {
 impl Drop for AbandonedRigDrive<'_> {
     fn drop(&mut self) {
         if self.armed && self.tasks.active_at_revision(self.task, self.revision) {
-            let _ = self.tasks.finish_at_revision(self.task, false, self.revision);
+            let _ = self
+                .tasks
+                .finish_at_revision(self.task, false, self.revision);
         }
     }
 }
@@ -100,7 +107,9 @@ impl RigMultiTurnDriver {
             pilot: RigRunPilot::new(prompt, max_turns)?,
             pending: None,
             owner: None,
-            budget: crate::engine::ModelAdmissionBudget::new(crate::engine::TurnLimits::complete_message())?,
+            budget: crate::engine::ModelAdmissionBudget::new(
+                crate::engine::TurnLimits::complete_message(),
+            )?,
             call_ids: BTreeSet::new(),
             tool_result_bytes: 0,
             in_flight: false,
@@ -130,11 +139,14 @@ impl RigMultiTurnDriver {
         }
         // Bound schema and description material before SDK copies. Exact
         // ordered definitions are part of this run, not a replaceable grant.
-        crate::model::serialized_size(definitions,64*1024)?;
-        use sha2::{Digest,Sha256};
-        let definitions_digest:[u8;32]=Sha256::digest(serde_json::to_vec(definitions)
-            .map_err(|_|FoundationError::InvalidInput("rig definitions"))?).into();
-        let tools_identity=registry.execution_identity();
+        crate::model::serialized_size(definitions, 64 * 1024)?;
+        use sha2::{Digest, Sha256};
+        let definitions_digest: [u8; 32] = Sha256::digest(
+            serde_json::to_vec(definitions)
+                .map_err(|_| FoundationError::InvalidInput("rig definitions"))?,
+        )
+        .into();
+        let tools_identity = registry.execution_identity();
         let mut names = BTreeSet::new();
         for def in definitions {
             if !registry.is_registered_read_only(&def.name) || !names.insert(def.name.clone()) {
@@ -147,12 +159,15 @@ impl RigMultiTurnDriver {
         }
         let revision = start.revision;
         let identity = tasks.execution_identity();
-        if self.owner.as_ref().is_some_and(|owner|
-            !Arc::ptr_eq(&owner.registry,&identity)
-                || !Arc::ptr_eq(&owner.tools,&tools_identity)
+        if self.owner.as_ref().is_some_and(|owner| {
+            !Arc::ptr_eq(&owner.registry, &identity)
+                || !Arc::ptr_eq(&owner.tools, &tools_identity)
                 || !Arc::ptr_eq(&owner.backend, &model)
-                || owner.definitions_digest!=definitions_digest || owner.task!=task_id
-                || owner.revision!=revision || owner.model!=model_id) {
+                || owner.definitions_digest != definitions_digest
+                || owner.task != task_id
+                || owner.revision != revision
+                || owner.model != model_id
+        }) {
             return Err(FoundationError::ApprovalMismatch);
         }
         // Keep the same owner across SDK state advancement, provider
@@ -164,13 +179,25 @@ impl RigMultiTurnDriver {
         let mut gate =
             crate::engine::ModelTurnGate::acquire(tasks, task_id, revision, limits.deadline)?;
         if self.owner.is_none() {
-            self.owner=Some(DriverOwner{registry:identity,tools:tools_identity,definitions_digest,
-                task:task_id,revision,model:model_id.to_owned(),backend:Arc::clone(&model)});
+            self.owner = Some(DriverOwner {
+                registry: identity,
+                tools: tools_identity,
+                definitions_digest,
+                task: task_id,
+                revision,
+                model: model_id.to_owned(),
+                backend: Arc::clone(&model),
+            });
         }
         // If the awaiting future is dropped, this flag remains set. The
         // partially advanced SDK state is not a resumable host receipt.
-        self.in_flight=true;
-        let mut abandoned = AbandonedRigDrive { tasks, task: task_id, revision, armed: true };
+        self.in_flight = true;
+        let mut abandoned = AbandonedRigDrive {
+            tasks,
+            task: task_id,
+            revision,
+            armed: true,
+        };
         let run = async {
             loop {
                 gate.active()?;
@@ -199,42 +226,54 @@ impl RigMultiTurnDriver {
                         // Budget belongs to the complete SDK run, not a
                         // single invocation between user approval pauses.
                         self.budget.admit_events(response.choice.len())?;
-                        let mut suggested=false;
-                        let mut has_text=false;
+                        let mut suggested = false;
+                        let mut has_text = false;
                         for content in response.choice.iter() {
                             match content {
                                 AssistantContent::Text(text) => {
                                     has_text |= !text.text.trim().is_empty();
-                                    self.budget.admit_text(text.text.len())
-                                        .map_err(|_| FoundationError::Provider("RIG_OUTPUT_LIMIT".into()))?;
+                                    self.budget.admit_text(text.text.len()).map_err(|_| {
+                                        FoundationError::Provider("RIG_OUTPUT_LIMIT".into())
+                                    })?;
                                 }
                                 AssistantContent::ToolCall(call) => {
                                     if suggested || !names.contains(call.function.name.as_ref()) {
                                         return Err(FoundationError::PermissionDenied);
                                     }
-                                    suggested=true;
-                                    let id=call.id.to_string();
-                                    if id.is_empty() || id.len()>256 || id.chars().any(|c| c.is_control() || c.is_whitespace())
-                                        || !self.call_ids.insert(id) {
-                                        return Err(FoundationError::InvalidInput("rig tool call id"));
+                                    suggested = true;
+                                    let id = call.id.to_string();
+                                    if id.is_empty()
+                                        || id.len() > 256
+                                        || id.chars().any(|c| c.is_control() || c.is_whitespace())
+                                        || !self.call_ids.insert(id)
+                                    {
+                                        return Err(FoundationError::InvalidInput(
+                                            "rig tool call id",
+                                        ));
                                     }
                                     if !call.function.arguments.is_object() {
-                                        return Err(FoundationError::InvalidInput("rig tool arguments"));
+                                        return Err(FoundationError::InvalidInput(
+                                            "rig tool arguments",
+                                        ));
                                     }
-                                    crate::model::validate_serialized_arguments(&call.function.arguments)?;
+                                    crate::model::validate_serialized_arguments(
+                                        &call.function.arguments,
+                                    )?;
                                 }
-                                AssistantContent::Reasoning(_) | AssistantContent::Image(_) =>
-                                    return Err(FoundationError::Provider("RIG_UNSUPPORTED_CONTENT".into())),
+                                AssistantContent::Reasoning(_) | AssistantContent::Image(_) => {
+                                    return Err(FoundationError::Provider(
+                                        "RIG_UNSUPPORTED_CONTENT".into(),
+                                    ))
+                                }
                             }
                         }
                         validate_terminal_metadata(&response, suggested, has_text)?;
                         gate.active()?;
                         let turn =
                             ModelTurn::from_response_parts(&response, names.clone(), names.clone());
-                        let outcome =
-                            self.pilot.state().model_response(turn).map_err(|_| {
-                                FoundationError::Provider("RIG_MODEL_TURN_REJECTED".into())
-                            })?;
+                        let outcome = self.pilot.state().model_response(turn).map_err(|_| {
+                            FoundationError::Provider("RIG_MODEL_TURN_REJECTED".into())
+                        })?;
                         self.pilot.ensure_snapshot_budget()?;
                         if !matches!(outcome, ModelTurnOutcome::Continue { .. }) {
                             return Err(FoundationError::Provider(
@@ -278,7 +317,7 @@ impl RigMultiTurnDriver {
                         // error as Completed. Fail closed and retain a Failed event.
                         // Raw admitted text is already counted cumulatively.
                         // Independently bound the SDK's assembled final text.
-                        if response.output.len()>limits.max_text_bytes {
+                        if response.output.len() > limits.max_text_bytes {
                             tasks
                                 .finish_at_revision(task_id, false, revision)
                                 .map_err(stale_transition)?;
@@ -298,14 +337,14 @@ impl RigMultiTurnDriver {
         };
         let result = run.await;
         abandoned.armed = false;
-        self.in_flight=false;
+        self.in_flight = false;
         if result.is_err() {
-            self.finished=true;
+            self.finished = true;
             if tasks.active_at_revision(task_id, revision) {
                 let _ = tasks.finish_at_revision(task_id, false, revision);
             }
         } else if matches!(&result, Ok(RigDriverStep::Completed { .. })) {
-            self.finished=true;
+            self.finished = true;
         }
         result
     }
@@ -321,19 +360,26 @@ impl RigMultiTurnDriver {
             return Err(FoundationError::ApprovalMismatch);
         };
         let (task_id, call_id, approved_revision) = (*task_id, *call_id, *approved_revision);
-        if self.finished || self.in_flight || !self.owner.as_ref().is_some_and(|owner|
-            Arc::ptr_eq(&owner.registry,&tasks.execution_identity()) && owner.task==task_id
-                && owner.revision.checked_add(2)==Some(approved_revision)
-                && receipt.belongs_to_tool_registry(&owner.tools))
-            || !receipt.matches_approval(tasks, task_id, call_id, approved_revision) {
+        if self.finished
+            || self.in_flight
+            || !self.owner.as_ref().is_some_and(|owner| {
+                Arc::ptr_eq(&owner.registry, &tasks.execution_identity())
+                    && owner.task == task_id
+                    && owner.revision.checked_add(2) == Some(approved_revision)
+                    && receipt.belongs_to_tool_registry(&owner.tools)
+            })
+            || !receipt.matches_approval(tasks, task_id, call_id, approved_revision)
+        {
             return Err(FoundationError::ApprovalMismatch);
         }
         // A matching receipt proves execution already occurred. An oversized
         // result cannot be re-executed to repair the SDK continuation.
         // Acquire the same task revision before settling a terminal rejection.
         let _lease = tasks.acquire_execution(task_id, approved_revision)?;
-        let bytes = match crate::model::serialized_size(receipt.value(),
-            (64 * 1024).min((256 * 1024usize).saturating_sub(self.tool_result_bytes))) {
+        let bytes = match crate::model::serialized_size(
+            receipt.value(),
+            (64 * 1024).min((256 * 1024usize).saturating_sub(self.tool_result_bytes)),
+        ) {
             Ok(bytes) => bytes,
             Err(_) => {
                 self.finished = true;
@@ -342,9 +388,9 @@ impl RigMultiTurnDriver {
                 return Err(FoundationError::InvalidInput("rig tool result"));
             }
         };
-        let mut entered=false;
-        let accepted=tasks.with_active_revision(task_id, approved_revision, || {
-            entered=true;
+        let mut entered = false;
+        let accepted = tasks.with_active_revision(task_id, approved_revision, || {
+            entered = true;
             self.pilot
                 .state()
                 .tool_results(vec![UserContent::ToolResult(ToolResult {
@@ -355,19 +401,22 @@ impl RigMultiTurnDriver {
                 .map_err(|_| FoundationError::Provider("RIG_TOOL_RESULTS".into()))?;
             self.pilot.ensure_snapshot_budget()
         });
-        if let Err(error)=accepted {
+        if let Err(error) = accepted {
             // A rejected SDK transition may already have changed SDK state.
             // A failure before entry still leaves the pending call untouched.
             if entered {
-                self.finished=true;
-                let _=tasks.finish_at_revision(task_id,false,approved_revision);
+                self.finished = true;
+                let _ = tasks.finish_at_revision(task_id, false, approved_revision);
             }
             return Err(error);
         }
-        self.tool_result_bytes+=bytes;
+        self.tool_result_bytes += bytes;
         // Only a consumed, matching tool receipt may advance the driver's
         // expected task revision. A pause/resume or restored task cannot.
-        self.owner.as_mut().ok_or(FoundationError::ApprovalMismatch)?.revision=approved_revision;
+        self.owner
+            .as_mut()
+            .ok_or(FoundationError::ApprovalMismatch)?
+            .revision = approved_revision;
         self.pending = None;
         Ok(())
     }
@@ -375,8 +424,7 @@ impl RigMultiTurnDriver {
     pub fn snapshot(&self) -> Result<String> {
         // Never checkpoint a run with a pending host approval: run state and
         // approval must commit atomically in the hosting durable store.
-        if self.pending.is_some() || self.in_flight
-            || (self.finished && self.owner.is_none()) {
+        if self.pending.is_some() || self.in_flight || (self.finished && self.owner.is_none()) {
             return Err(FoundationError::InvalidTransition);
         }
         self.pilot.snapshot()
@@ -387,17 +435,23 @@ impl RigMultiTurnDriver {
 /// batches, creates staged changes or approval proposals, and checkpoints
 /// their exact results. Rig never executes a host effect directly.
 pub trait RigFunctionBatchHost: crate::engine::FunctionBatchHost {
-    fn request_rig(&mut self, request: CompletionRequest)
-        -> std::result::Result<CompletionResponse, Self::Error>;
-    fn rig_tool_results(&mut self, calls: &[crate::model::FunctionCall])
-        -> std::result::Result<Vec<String>, Self::Error>;
+    fn request_rig(
+        &mut self,
+        request: CompletionRequest,
+    ) -> std::result::Result<CompletionResponse, Self::Error>;
+    fn rig_tool_results(
+        &mut self,
+        calls: &[crate::model::FunctionCall],
+    ) -> std::result::Result<Vec<String>, Self::Error>;
 }
 
 fn typed_call(call: &crate::model::FunctionCall) -> Result<ToolCall> {
     let name = ToolName::new(call.name.as_str())
         .map_err(|_| FoundationError::InvalidInput("rig tool name"))?;
-    Ok(ToolCall::from_wire(call.id.clone(),
-        ToolFunction::new(name, call.arguments.clone())))
+    Ok(ToolCall::from_wire(
+        call.id.clone(),
+        ToolFunction::new(name, call.arguments.clone()),
+    ))
 }
 
 /// Decode the native authenticated transcript without flattening roles,
@@ -411,28 +465,45 @@ fn typed_history(history: &[Value]) -> Result<(Vec<Message>, BTreeSet<String>)> 
         let item = &history[i];
         i += 1;
         match item["role"].as_str() {
-            Some("system") => out.push(Message::system(item["content"].as_str()
-                .ok_or(FoundationError::InvalidInput("rig system history"))?)),
-            Some("user") => out.push(Message::user(item["content"].as_str()
-                .ok_or(FoundationError::InvalidInput("rig user history"))?)),
+            Some("system") => out.push(Message::system(
+                item["content"]
+                    .as_str()
+                    .ok_or(FoundationError::InvalidInput("rig system history"))?,
+            )),
+            Some("user") => out.push(Message::user(
+                item["content"]
+                    .as_str()
+                    .ok_or(FoundationError::InvalidInput("rig user history"))?,
+            )),
             Some("assistant") => {
                 let calls = crate::model::parse_function_batch(item, 8)?;
                 let mut choice = Vec::new();
                 if let Some(content) = item.get("content").filter(|v| !v.is_null()) {
-                    let text = content.as_str().ok_or(FoundationError::InvalidInput("rig assistant history"))?;
-                    if !text.is_empty() { choice.push(AssistantContent::text(text)); }
+                    let text = content
+                        .as_str()
+                        .ok_or(FoundationError::InvalidInput("rig assistant history"))?;
+                    if !text.is_empty() {
+                        choice.push(AssistantContent::text(text));
+                    }
                 }
                 let mut results = Vec::new();
                 for call in &calls {
                     if !ids.insert(call.id.clone()) {
-                        return Err(FoundationError::InvalidInput("duplicate historical tool id"));
+                        return Err(FoundationError::InvalidInput(
+                            "duplicate historical tool id",
+                        ));
                     }
-                    let result = history.get(i).ok_or(FoundationError::InvalidInput("unpaired tool history"))?;
+                    let result = history
+                        .get(i)
+                        .ok_or(FoundationError::InvalidInput("unpaired tool history"))?;
                     i += 1;
-                    if result["role"] != "tool" || result["tool_call_id"].as_str() != Some(call.id.as_str()) {
+                    if result["role"] != "tool"
+                        || result["tool_call_id"].as_str() != Some(call.id.as_str())
+                    {
                         return Err(FoundationError::InvalidInput("unpaired tool history"));
                     }
-                    let content = result["content"].as_str()
+                    let content = result["content"]
+                        .as_str()
                         .ok_or(FoundationError::InvalidInput("rig tool history"))?;
                     let typed = typed_call(call)?;
                     results.push(typed.result(vec![ToolResultContent::text(content)]));
@@ -441,8 +512,13 @@ fn typed_history(history: &[Value]) -> Result<(Vec<Message>, BTreeSet<String>)> 
                 if choice.is_empty() {
                     return Err(FoundationError::InvalidInput("empty assistant history"));
                 }
-                out.push(Message::Assistant { id: None, content: choice });
-                if !results.is_empty() { out.push(Message::tool_results(results)); }
+                out.push(Message::Assistant {
+                    id: None,
+                    content: choice,
+                });
+                if !results.is_empty() {
+                    out.push(Message::tool_results(results));
+                }
             }
             _ => return Err(FoundationError::InvalidInput("rig history role")),
         }
@@ -452,36 +528,57 @@ fn typed_history(history: &[Value]) -> Result<(Vec<Message>, BTreeSet<String>)> 
 
 fn typed_definitions(tools: &[Value]) -> Result<Vec<ToolDefinition>> {
     crate::model::serialized_size(tools, 64 * 1024)?;
-    if tools.len() > 32 { return Err(FoundationError::InvalidInput("rig tool inventory")); }
+    if tools.len() > 32 {
+        return Err(FoundationError::InvalidInput("rig tool inventory"));
+    }
     let mut seen = BTreeSet::new();
-    tools.iter().map(|tool| {
-        let function = &tool["function"];
-        let name = function["name"].as_str()
-            .filter(|name| !name.is_empty() && name.len() <= 128
-                && name.bytes().all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c)))
-            .ok_or(FoundationError::InvalidInput("rig tool definition"))?;
-        if tool["type"] != "function" || !seen.insert(name)
-            || !function["parameters"].is_object() {
-            return Err(FoundationError::InvalidInput("rig tool definition"));
-        }
-        Ok(ToolDefinition::new(
-            ToolName::new(name).map_err(|_| FoundationError::InvalidInput("rig tool name"))?,
-            function["description"].as_str().ok_or(FoundationError::InvalidInput("rig tool description"))?,
-            function["parameters"].clone(),
-        ))
-    }).collect()
+    tools
+        .iter()
+        .map(|tool| {
+            let function = &tool["function"];
+            let name = function["name"]
+                .as_str()
+                .filter(|name| {
+                    !name.is_empty()
+                        && name.len() <= 128
+                        && name
+                            .bytes()
+                            .all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c))
+                })
+                .ok_or(FoundationError::InvalidInput("rig tool definition"))?;
+            if tool["type"] != "function"
+                || !seen.insert(name)
+                || !function["parameters"].is_object()
+            {
+                return Err(FoundationError::InvalidInput("rig tool definition"));
+            }
+            Ok(ToolDefinition::new(
+                ToolName::new(name).map_err(|_| FoundationError::InvalidInput("rig tool name"))?,
+                function["description"]
+                    .as_str()
+                    .ok_or(FoundationError::InvalidInput("rig tool description"))?,
+                function["parameters"].clone(),
+            ))
+        })
+        .collect()
 }
 
 // Both SDK drivers must apply the same terminal-envelope policy before
 // advancing their state machines. Typed fixture adapters may omit metadata,
 // but an explicit finish reason must agree with the admitted content.
-fn validate_terminal_metadata(response: &CompletionResponse, has_tools: bool, has_text: bool) -> Result<()> {
+fn validate_terminal_metadata(
+    response: &CompletionResponse,
+    has_tools: bool,
+    has_text: bool,
+) -> Result<()> {
     if response.finish_reason().is_some_and(|reason| match reason {
         FinishReason::Stop => has_tools,
         FinishReason::ToolCalls => !has_tools,
         _ => true,
     }) {
-        return Err(FoundationError::InvalidInput("rig response terminal mismatch"));
+        return Err(FoundationError::InvalidInput(
+            "rig response terminal mismatch",
+        ));
     }
     if !has_tools && !has_text {
         return Err(FoundationError::Provider("MODEL_TEXT_EMPTY".into()));
@@ -524,7 +621,9 @@ fn native_reply(response: &CompletionResponse) -> Result<Value> {
     }
     validate_terminal_metadata(response, !calls.is_empty(), !text.trim().is_empty())?;
     let mut reply = json!({"role":"assistant","content":if text.is_empty() { Value::Null } else { json!(text) }});
-    if !calls.is_empty() { reply["tool_calls"] = json!(calls); }
+    if !calls.is_empty() {
+        reply["tool_calls"] = json!(calls);
+    }
     Ok(reply)
 }
 
@@ -544,13 +643,19 @@ pub fn drive_owned_rig_function_batches<H: RigFunctionBatchHost>(
     if !(1..=8).contains(&rounds) || max_calls > 8 {
         return Err(host.invalid_batch(FoundationError::InvalidInput("rig function limits")));
     }
-    if !lease.is_active() || host.cancelled() { return host.on_cancelled(); }
+    if !lease.is_active() || host.cancelled() {
+        return host.on_cancelled();
+    }
     let (mut history, mut ids) = typed_history(history).map_err(|e| host.invalid_batch(e))?;
-    let prompt = history.pop().filter(|m| matches!(m, Message::User { .. }))
+    let prompt = history
+        .pop()
+        .filter(|m| matches!(m, Message::User { .. }))
         .ok_or_else(|| host.invalid_batch(FoundationError::InvalidInput("rig pending prompt")))?;
     let definitions = typed_definitions(tools).map_err(|e| host.invalid_batch(e))?;
     let names: BTreeSet<_> = definitions.iter().map(|d| d.name.clone()).collect();
-    let mut run = AgentRun::new(prompt).with_history(history).max_turns(rounds);
+    let mut run = AgentRun::new(prompt)
+        .with_history(history)
+        .max_turns(rounds);
     let limits = TurnLimits::complete_message();
     let mut budget = ModelAdmissionBudget::new(limits).map_err(|e| host.invalid_batch(e))?;
     let deadline = std::time::Instant::now() + limits.deadline;
@@ -559,72 +664,127 @@ pub fn drive_owned_rig_function_batches<H: RigFunctionBatchHost>(
     let mut remaining_arguments = 256 * 1024usize;
     let mut remaining_results = 512 * 1024usize;
     for round in 0..rounds {
-        if !lease.is_active() || host.cancelled() { return host.on_cancelled(); }
-        if std::time::Instant::now() >= deadline { return Err(host.invalid_batch(FoundationError::Timeout)); }
+        if !lease.is_active() || host.cancelled() {
+            return host.on_cancelled();
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(host.invalid_batch(FoundationError::Timeout));
+        }
         crate::model::serialized_size(&run, 1_048_576).map_err(|e| host.invalid_batch(e))?;
-        let step = run.next_step().map_err(|_| host.invalid_batch(FoundationError::InvalidTransition))?;
-        let AgentRunStep::CallModel { prompt, history, turn } = step else {
+        let step = run
+            .next_step()
+            .map_err(|_| host.invalid_batch(FoundationError::InvalidTransition))?;
+        let AgentRunStep::CallModel {
+            prompt,
+            history,
+            turn,
+        } = step
+        else {
             return Err(host.invalid_batch(FoundationError::InvalidTransition));
         };
         run.advertise_tools(turn, definitions.clone());
-        let request = CompletionRequest::new(prompt).messages(history)
-            .tools(definitions.clone()).max_tokens(4096u64);
+        let request = CompletionRequest::new(prompt)
+            .messages(history)
+            .tools(definitions.clone())
+            .max_tokens(4096u64);
         let response = match host.request_rig(request) {
             Ok(response) => response,
             Err(error) => {
-                if !lease.is_active() || host.cancelled() { return host.on_cancelled(); }
+                if !lease.is_active() || host.cancelled() {
+                    return host.on_cancelled();
+                }
                 return Err(host.provider_failure(error));
             }
         };
-        if !lease.is_active() || host.cancelled() { return host.on_cancelled(); }
-        if std::time::Instant::now() >= deadline { return Err(host.invalid_batch(FoundationError::Timeout)); }
+        if !lease.is_active() || host.cancelled() {
+            return host.on_cancelled();
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(host.invalid_batch(FoundationError::Timeout));
+        }
         let reply = native_reply(&response).map_err(|e| host.invalid_batch(e))?;
         host.validate_reply(&reply)?;
         let calls = crate::model::parse_function_batch(&reply, max_calls)
             .map_err(|e| host.invalid_batch(e))?;
-        budget.admit_events(1 + calls.len()).map_err(|e| host.invalid_batch(e))?;
-        budget.admit_text(reply["content"].as_str().unwrap_or("").len()).map_err(|e| host.invalid_batch(e))?;
+        budget
+            .admit_events(1 + calls.len())
+            .map_err(|e| host.invalid_batch(e))?;
+        budget
+            .admit_text(reply["content"].as_str().unwrap_or("").len())
+            .map_err(|e| host.invalid_batch(e))?;
         for call in &calls {
             if !names.contains(call.name.as_str()) || !ids.insert(call.id.clone()) {
                 return Err(host.invalid_batch(FoundationError::PermissionDenied));
             }
-            let bytes = crate::model::serialized_size(&call.arguments, remaining_arguments.min(16_384))
-                .map_err(|e| host.invalid_batch(e))?;
+            let bytes =
+                crate::model::serialized_size(&call.arguments, remaining_arguments.min(16_384))
+                    .map_err(|e| host.invalid_batch(e))?;
             remaining_arguments -= bytes;
         }
-        let outcome = run.model_response(ModelTurn::from_response_parts(&response, names.clone(), names.clone()))
+        let outcome = run
+            .model_response(ModelTurn::from_response_parts(
+                &response,
+                names.clone(),
+                names.clone(),
+            ))
             .map_err(|_| host.invalid_batch(FoundationError::InvalidTransition))?;
         if !matches!(outcome, ModelTurnOutcome::Continue { .. }) {
             return Err(host.invalid_batch(FoundationError::PermissionDenied));
         }
         crate::model::serialized_size(&run, 1_048_576).map_err(|e| host.invalid_batch(e))?;
-        let step = run.next_step().map_err(|_| host.invalid_batch(FoundationError::InvalidTransition))?;
-        if !lease.is_active() || host.cancelled() { return host.on_cancelled(); }
-        if std::time::Instant::now() >= deadline { return Err(host.invalid_batch(FoundationError::Timeout)); }
+        let step = run
+            .next_step()
+            .map_err(|_| host.invalid_batch(FoundationError::InvalidTransition))?;
+        if !lease.is_active() || host.cancelled() {
+            return host.on_cancelled();
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(host.invalid_batch(FoundationError::Timeout));
+        }
         match step {
-            AgentRunStep::Done(result) if calls.is_empty()
-                && reply["content"].as_str() == Some(result.output.as_str()) => {
+            AgentRunStep::Done(result)
+                if calls.is_empty()
+                    && reply["content"].as_str() == Some(result.output.as_str()) =>
+            {
                 let flow = host.accept_batch(round, round + 1 == rounds, reply, calls)?;
-                if !lease.is_active() || host.cancelled() { return host.on_cancelled(); }
-                if std::time::Instant::now() >= deadline { return Err(host.invalid_batch(FoundationError::Timeout)); }
-                return if matches!(flow, BatchFlow::Stop) { Ok(()) }
-                    else { Err(host.invalid_batch(FoundationError::InvalidTransition)) };
+                if !lease.is_active() || host.cancelled() {
+                    return host.on_cancelled();
+                }
+                if std::time::Instant::now() >= deadline {
+                    return Err(host.invalid_batch(FoundationError::Timeout));
+                }
+                return if matches!(flow, BatchFlow::Stop) {
+                    Ok(())
+                } else {
+                    Err(host.invalid_batch(FoundationError::InvalidTransition))
+                };
             }
-            AgentRunStep::CallTools { calls: pending } if !calls.is_empty() && pending.len() == calls.len() => {
-                if pending.iter().zip(&calls).any(|(p,c)| p.preresolved_result.is_some()
-                    || p.tool_call.id.to_string() != c.id
-                    || p.tool_call.function.name.as_ref() != c.name.as_str()
-                    || p.tool_call.function.arguments != c.arguments) {
+            AgentRunStep::CallTools { calls: pending }
+                if !calls.is_empty() && pending.len() == calls.len() =>
+            {
+                if pending.iter().zip(&calls).any(|(p, c)| {
+                    p.preresolved_result.is_some()
+                        || p.tool_call.id.to_string() != c.id
+                        || p.tool_call.function.name.as_ref() != c.name.as_str()
+                        || p.tool_call.function.arguments != c.arguments
+                }) {
                     return Err(host.invalid_batch(FoundationError::ApprovalMismatch));
                 }
                 // The host owns all proposed writes/effects and pairs the
                 // complete batch before returning. No SDK callback can bypass
                 // approval or invent a successful external operation.
-                let receipt_calls = calls.iter().map(|c| crate::model::FunctionCall {
-                    id:c.id.clone(), name:c.name.clone(), arguments:c.arguments.clone(),
-                }).collect::<Vec<_>>();
+                let receipt_calls = calls
+                    .iter()
+                    .map(|c| crate::model::FunctionCall {
+                        id: c.id.clone(),
+                        name: c.name.clone(),
+                        arguments: c.arguments.clone(),
+                    })
+                    .collect::<Vec<_>>();
                 let flow = host.accept_batch(round, round + 1 == rounds, reply, calls)?;
-                if !lease.is_active() || host.cancelled() { return host.on_cancelled(); }
+                if !lease.is_active() || host.cancelled() {
+                    return host.on_cancelled();
+                }
                 let results = host.rig_tool_results(&receipt_calls)?;
                 if results.len() != pending.len() {
                     return Err(host.invalid_batch(FoundationError::ApprovalMismatch));
@@ -632,16 +792,30 @@ pub fn drive_owned_rig_function_batches<H: RigFunctionBatchHost>(
                 let mut paired = Vec::with_capacity(results.len());
                 for (result, pending) in results.into_iter().zip(pending) {
                     if result.len() > remaining_results.min(40_000) {
-                        return Err(host.invalid_batch(FoundationError::InvalidInput("rig tool result limit")));
+                        return Err(host.invalid_batch(FoundationError::InvalidInput(
+                            "rig tool result limit",
+                        )));
                     }
                     remaining_results -= result.len();
-                    paired.push(UserContent::ToolResult(pending.tool_call.result(vec![ToolResultContent::text(result)])));
+                    paired.push(UserContent::ToolResult(
+                        pending
+                            .tool_call
+                            .result(vec![ToolResultContent::text(result)]),
+                    ));
                 }
-                run.tool_results(paired).map_err(|_| host.invalid_batch(FoundationError::ApprovalMismatch))?;
-                crate::model::serialized_size(&run, 1_048_576).map_err(|e| host.invalid_batch(e))?;
-                if !lease.is_active() || host.cancelled() { return host.on_cancelled(); }
-                if std::time::Instant::now() >= deadline { return Err(host.invalid_batch(FoundationError::Timeout)); }
-                if matches!(flow, BatchFlow::Stop) { return Ok(()); }
+                run.tool_results(paired)
+                    .map_err(|_| host.invalid_batch(FoundationError::ApprovalMismatch))?;
+                crate::model::serialized_size(&run, 1_048_576)
+                    .map_err(|e| host.invalid_batch(e))?;
+                if !lease.is_active() || host.cancelled() {
+                    return host.on_cancelled();
+                }
+                if std::time::Instant::now() >= deadline {
+                    return Err(host.invalid_batch(FoundationError::Timeout));
+                }
+                if matches!(flow, BatchFlow::Stop) {
+                    return Ok(());
+                }
             }
             _ => return Err(host.invalid_batch(FoundationError::InvalidTransition)),
         }
@@ -649,31 +823,67 @@ pub fn drive_owned_rig_function_batches<H: RigFunctionBatchHost>(
     Err(host.invalid_batch(FoundationError::InvalidTransition))
 }
 
-struct RigTextHost<P,C,M> {
-    request:P, cancelled:C, error:M, result:Option<String>,
+struct RigTextHost<P, C, M> {
+    request: P,
+    cancelled: C,
+    error: M,
+    result: Option<String>,
 }
-impl<E,P,C,M> crate::engine::FunctionBatchHost for RigTextHost<P,C,M>
-where P:FnMut(CompletionRequest)->std::result::Result<CompletionResponse,E>,
-      C:Fn()->bool, M:Fn(FoundationError)->E {
-    type Error=E;
-    fn cancelled(&self)->bool { (self.cancelled)() }
-    fn on_cancelled(&mut self)->std::result::Result<(),E> { Err((self.error)(FoundationError::Cancelled)) }
-    fn request(&mut self)->std::result::Result<Value,E> { Err((self.error)(FoundationError::InvalidTransition)) }
-    fn provider_failure(&mut self,error:E)->E {error}
-    fn validate_reply(&mut self,_:&Value)->std::result::Result<(),E>{Ok(())}
-    fn invalid_batch(&mut self,error:FoundationError)->E{(self.error)(error)}
-    fn accept_batch(&mut self,_:usize,_:bool,reply:Value,calls:Vec<crate::model::FunctionCall>)
-        ->std::result::Result<crate::engine::BatchFlow,E>{
-        if !calls.is_empty(){return Err((self.error)(FoundationError::PermissionDenied));}
-        self.result=reply["content"].as_str().map(str::to_owned);
+impl<E, P, C, M> crate::engine::FunctionBatchHost for RigTextHost<P, C, M>
+where
+    P: FnMut(CompletionRequest) -> std::result::Result<CompletionResponse, E>,
+    C: Fn() -> bool,
+    M: Fn(FoundationError) -> E,
+{
+    type Error = E;
+    fn cancelled(&self) -> bool {
+        (self.cancelled)()
+    }
+    fn on_cancelled(&mut self) -> std::result::Result<(), E> {
+        Err((self.error)(FoundationError::Cancelled))
+    }
+    fn request(&mut self) -> std::result::Result<Value, E> {
+        Err((self.error)(FoundationError::InvalidTransition))
+    }
+    fn provider_failure(&mut self, error: E) -> E {
+        error
+    }
+    fn validate_reply(&mut self, _: &Value) -> std::result::Result<(), E> {
+        Ok(())
+    }
+    fn invalid_batch(&mut self, error: FoundationError) -> E {
+        (self.error)(error)
+    }
+    fn accept_batch(
+        &mut self,
+        _: usize,
+        _: bool,
+        reply: Value,
+        calls: Vec<crate::model::FunctionCall>,
+    ) -> std::result::Result<crate::engine::BatchFlow, E> {
+        if !calls.is_empty() {
+            return Err((self.error)(FoundationError::PermissionDenied));
+        }
+        self.result = reply["content"].as_str().map(str::to_owned);
         Ok(crate::engine::BatchFlow::Stop)
     }
 }
-impl<E,P,C,M> RigFunctionBatchHost for RigTextHost<P,C,M>
-where P:FnMut(CompletionRequest)->std::result::Result<CompletionResponse,E>,
-      C:Fn()->bool, M:Fn(FoundationError)->E {
-    fn request_rig(&mut self,request:CompletionRequest)->std::result::Result<CompletionResponse,E>{(self.request)(request)}
-    fn rig_tool_results(&mut self,_:&[crate::model::FunctionCall])->std::result::Result<Vec<String>,E>{
+impl<E, P, C, M> RigFunctionBatchHost for RigTextHost<P, C, M>
+where
+    P: FnMut(CompletionRequest) -> std::result::Result<CompletionResponse, E>,
+    C: Fn() -> bool,
+    M: Fn(FoundationError) -> E,
+{
+    fn request_rig(
+        &mut self,
+        request: CompletionRequest,
+    ) -> std::result::Result<CompletionResponse, E> {
+        (self.request)(request)
+    }
+    fn rig_tool_results(
+        &mut self,
+        _: &[crate::model::FunctionCall],
+    ) -> std::result::Result<Vec<String>, E> {
         Err((self.error)(FoundationError::PermissionDenied))
     }
 }
@@ -681,13 +891,19 @@ where P:FnMut(CompletionRequest)->std::result::Result<CompletionResponse,E>,
 pub fn drive_owned_rig_text_turn<E>(
     lease: &crate::task::ExecutionLease<'_>,
     history: &[Value],
-    request: impl FnMut(CompletionRequest)->std::result::Result<CompletionResponse,E>,
-    cancelled: impl Fn()->bool,
-    error: impl Fn(FoundationError)->E,
-)->std::result::Result<String,E>{
-    let mut host=RigTextHost{request,cancelled,error,result:None};
-    drive_owned_rig_function_batches(&mut host,lease,history,&[],1,0)?;
-    host.result.ok_or_else(|| (host.error)(FoundationError::Provider("MODEL_TEXT_EMPTY".into())))
+    request: impl FnMut(CompletionRequest) -> std::result::Result<CompletionResponse, E>,
+    cancelled: impl Fn() -> bool,
+    error: impl Fn(FoundationError) -> E,
+) -> std::result::Result<String, E> {
+    let mut host = RigTextHost {
+        request,
+        cancelled,
+        error,
+        result: None,
+    };
+    drive_owned_rig_function_batches(&mut host, lease, history, &[], 1, 0)?;
+    host.result
+        .ok_or_else(|| (host.error)(FoundationError::Provider("MODEL_TEXT_EMPTY".into())))
 }
 
 fn stale_transition(error: FoundationError) -> FoundationError {
@@ -786,12 +1002,18 @@ mod tests {
     #[test]
     fn both_rig_drivers_require_terminal_text_or_tools() {
         let blank = CompletionResponse::new(
-            vec![AssistantContent::text("  ")], Usage::default(), "mock", json!({}),
+            vec![AssistantContent::text("  ")],
+            Usage::default(),
+            "mock",
+            json!({}),
         );
         assert!(validate_terminal_metadata(&blank, false, false).is_err());
         assert!(native_reply(&blank).is_err());
         let text = CompletionResponse::new(
-            vec![AssistantContent::text("done")], Usage::default(), "mock", json!({}),
+            vec![AssistantContent::text("done")],
+            Usage::default(),
+            "mock",
+            json!({}),
         );
         assert!(validate_terminal_metadata(&text, false, true).is_ok());
         assert!(native_reply(&text).is_ok());
@@ -814,29 +1036,61 @@ mod tests {
         let tasks = TaskRegistry::new(Arc::new(EventJournal::new(32)));
         let task = tasks.create(Uuid::new_v4(), "text", vec![]).unwrap();
         tasks.start(task.id).unwrap();
-        let lease = tasks.acquire_execution(task.id, tasks.get(task.id).unwrap().revision).unwrap();
-        let history = [json!({"role":"system","content":"Review source"}),json!({"role":"user","content":"Review"})];
+        let lease = tasks
+            .acquire_execution(task.id, tasks.get(task.id).unwrap().revision)
+            .unwrap();
+        let history = [
+            json!({"role":"system","content":"Review source"}),
+            json!({"role":"user","content":"Review"}),
+        ];
         let mut calls = 0;
         let text = drive_owned_rig_text_turn(
-            &lease, &history, |request| {
+            &lease,
+            &history,
+            |request| {
                 calls += 1;
                 assert_eq!(request.chat_history.len(), 2);
                 assert!(request.tools.is_empty());
-                Ok(CompletionResponse::new(vec![AssistantContent::text("All done")], Usage::default(), "mock", json!({})))
-            }, || false, |error| error,
-        ).unwrap();
+                Ok(CompletionResponse::new(
+                    vec![AssistantContent::text("All done")],
+                    Usage::default(),
+                    "mock",
+                    json!({}),
+                ))
+            },
+            || false,
+            |error| error,
+        )
+        .unwrap();
         assert_eq!(text, "All done");
         assert_eq!(calls, 1);
         assert_eq!(tasks.get(task.id).unwrap().status, TaskStatus::Running);
         let denied = drive_owned_rig_text_turn(
-            &lease, &history, |_| Ok(CompletionResponse::new(vec![AssistantContent::ToolCall(
-                ToolCall::from_wire("one",ToolFunction::new(ToolName::new("demo.inspect").unwrap(),json!({})))
-            )], Usage::default(), "mock", json!({}))), || false, |error| error,
+            &lease,
+            &history,
+            |_| {
+                Ok(CompletionResponse::new(
+                    vec![AssistantContent::ToolCall(ToolCall::from_wire(
+                        "one",
+                        ToolFunction::new(ToolName::new("demo.inspect").unwrap(), json!({})),
+                    ))],
+                    Usage::default(),
+                    "mock",
+                    json!({}),
+                ))
+            },
+            || false,
+            |error| error,
         );
         assert!(denied.is_err());
         tasks.pause(task.id).unwrap();
-        let denied = drive_owned_rig_text_turn(&lease, &history,
-            |_| panic!("stale lease must not call provider"), || false, |error| error);
+        let denied = drive_owned_rig_text_turn(
+            &lease,
+            &history,
+            |_| panic!("stale lease must not call provider"),
+            || false,
+            |error| error,
+        );
         assert_eq!(denied, Err(FoundationError::Cancelled));
     }
 
@@ -859,17 +1113,20 @@ mod tests {
             ToolFunction::new(ToolName::new("demo.inspect").unwrap(), json!({})),
         );
         let mut driver = RigMultiTurnDriver::new("Review", 2).unwrap();
-        driver.owner=Some(DriverOwner{registry:tasks.execution_identity(),tools:tools.execution_identity(),
-            definitions_digest:[0;32],task:task.id,
-            revision:revision.checked_sub(2).unwrap(),model:"model-mock".into(),
-            backend:Arc::new(FakeBackend(Mutex::new(vec![])))});
+        driver.owner = Some(DriverOwner {
+            registry: tasks.execution_identity(),
+            tools: tools.execution_identity(),
+            definitions_digest: [0; 32],
+            task: task.id,
+            revision: revision.checked_sub(2).unwrap(),
+            model: "model-mock".into(),
+            backend: Arc::new(FakeBackend(Mutex::new(vec![]))),
+        });
         driver.pending = Some((task.id, call_id, revision, call));
         tasks.pause(task.id).unwrap();
         tasks.start(task.id).unwrap();
         assert_eq!(
-            driver
-                .accept_host_tool_result(&receipt, &tasks)
-                .err(),
+            driver.accept_host_tool_result(&receipt, &tasks).err(),
             Some(FoundationError::InvalidTransition)
         );
         assert!(
@@ -880,12 +1137,13 @@ mod tests {
 
     #[tokio::test]
     async fn oversized_completion_cannot_commit_success() {
-        let backend: Arc<dyn RigModelBackend> = Arc::new(FakeBackend(Mutex::new(vec![CompletionResponse::new(
-            vec![AssistantContent::text("X".repeat(256 * 1024 + 2))],
-            Usage::default(),
-            "mock",
-            json!({}),
-        )])));
+        let backend: Arc<dyn RigModelBackend> =
+            Arc::new(FakeBackend(Mutex::new(vec![CompletionResponse::new(
+                vec![AssistantContent::text("X".repeat(256 * 1024 + 2))],
+                Usage::default(),
+                "mock",
+                json!({}),
+            )])));
         let tasks = TaskRegistry::new(Arc::new(EventJournal::new(16)));
         let task = tasks.create(Uuid::new_v4(), "oversized", vec![]).unwrap();
         tasks.start(task.id).unwrap();
@@ -898,7 +1156,14 @@ mod tests {
         )];
         let mut driver = RigMultiTurnDriver::new("Review", 2).unwrap();
         let outcome = driver
-            .drive(task.id, "model-mock", Arc::clone(&backend), &tasks, &tools, &defs)
+            .drive(
+                task.id,
+                "model-mock",
+                Arc::clone(&backend),
+                &tasks,
+                &tools,
+                &defs,
+            )
             .await;
         assert_eq!(
             outcome.err(),
@@ -945,7 +1210,14 @@ mod tests {
         )];
         let mut driver = RigMultiTurnDriver::new("Review", 3).unwrap();
         let first = driver
-            .drive(task.id, "model-mock", Arc::clone(&backend), &tasks, &tools, &defs)
+            .drive(
+                task.id,
+                "model-mock",
+                Arc::clone(&backend),
+                &tasks,
+                &tools,
+                &defs,
+            )
             .await
             .unwrap();
         let RigDriverStep::NeedsApproval { call_id, .. } = first else {
@@ -1008,7 +1280,14 @@ mod tests {
             Some(FoundationError::ApprovalMismatch)
         );
         let next = driver
-            .drive(task.id, "model-mock", Arc::clone(&backend), &tasks, &tools, &defs)
+            .drive(
+                task.id,
+                "model-mock",
+                Arc::clone(&backend),
+                &tasks,
+                &tools,
+                &defs,
+            )
             .await
             .unwrap();
         assert!(matches!(next,RigDriverStep::Completed{text,..} if text=="All done"));

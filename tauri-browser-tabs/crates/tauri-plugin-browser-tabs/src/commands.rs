@@ -60,7 +60,8 @@ impl PreparedLinuxProfile {
                 && meta.uid() == self.owner
                 && meta.permissions().mode() & 0o7777 == 0o700
         };
-        if !matches(&live) || !matches(&pinned)
+        if !matches(&live)
+            || !matches(&pinned)
             || std::fs::canonicalize(&self.path).map_err(|_| denied())? != self.path
         {
             return Err(denied());
@@ -77,7 +78,11 @@ fn ensure_private_browser_profile(base: &Path) -> Result<PreparedLinuxProfile> {
     match std::fs::create_dir(&profile) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-        Err(_) => return Err(BrowserTabError::Platform("cannot create browser profile".into())),
+        Err(_) => {
+            return Err(BrowserTabError::Platform(
+                "cannot create browser profile".into(),
+            ))
+        }
     }
     let denied = || BrowserTabError::Platform("browser profile path invalid".into());
     let before = std::fs::symlink_metadata(&profile).map_err(|_| denied())?;
@@ -93,9 +98,14 @@ fn ensure_private_browser_profile(base: &Path) -> Result<PreparedLinuxProfile> {
     // The engine still consumes a path; this is not hostile same-UID isolation.
     let pin = std::fs::File::open(&canonical_profile).map_err(|_| denied())?;
     let actual = pin.metadata().map_err(|_| denied())?;
-    let base_owner = std::fs::metadata(&canonical_base).map_err(|_| denied())?.uid();
-    if !actual.is_dir() || actual.dev() != before.dev() || actual.ino() != before.ino()
-        || actual.uid() != before.uid() || actual.uid() != base_owner
+    let base_owner = std::fs::metadata(&canonical_base)
+        .map_err(|_| denied())?
+        .uid();
+    if !actual.is_dir()
+        || actual.dev() != before.dev()
+        || actual.ino() != before.ino()
+        || actual.uid() != before.uid()
+        || actual.uid() != base_owner
     {
         return Err(denied());
     }
@@ -187,7 +197,9 @@ mod browser_profile_tests {
             "browseros-profile-pin-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         ));
         std::fs::create_dir(&base).unwrap();
         let profile = ensure_private_browser_profile(&base).unwrap();
@@ -307,11 +319,18 @@ type NativeDocumentSink = Arc<dyn Fn(&str, u64, u64) + Send + Sync>;
 static NEXT_NATIVE_DOCUMENT_INSTANCE: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(1);
 
-fn publish_native_document(sink: Option<&NativeDocumentSink>, id: &str,
-    instance: u64, revision: &std::sync::atomic::AtomicU64,
+fn publish_native_document(
+    sink: Option<&NativeDocumentSink>,
+    id: &str,
+    instance: u64,
+    revision: &std::sync::atomic::AtomicU64,
 ) {
     if let Some(sink) = sink {
-        sink(id, instance, revision.load(std::sync::atomic::Ordering::Acquire));
+        sink(
+            id,
+            instance,
+            revision.load(std::sync::atomic::Ordering::Acquire),
+        );
     }
 }
 
@@ -976,7 +995,8 @@ impl TabManager {
     /// This is not a Tauri command and does not add a remote event permission.
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     pub fn set_native_shell_shortcut_sink(
-        &self, sink: impl Fn(&str, &str) + Send + Sync + 'static,
+        &self,
+        sink: impl Fn(&str, &str) + Send + Sync + 'static,
     ) {
         *self.shell_shortcut_sink.write() = Some(Arc::new(sink));
     }
@@ -984,17 +1004,13 @@ impl TabManager {
     /// Native-only observation of the existing engine download lifecycle.
     /// Not an IPC command, destination override, or file access capability.
     #[cfg(any(target_os = "linux", target_os = "windows"))]
-    pub fn set_native_download_sink(
-        &self, sink: impl Fn(&str, &str) + Send + Sync + 'static,
-    ) {
+    pub fn set_native_download_sink(&self, sink: impl Fn(&str, &str) + Send + Sync + 'static) {
         *self.download_sink.write() = Some(Arc::new(sink));
     }
 
     /// Native host setup only. Do not use a remotely emit-able WebView event
     /// as the authority for this exact document identity.
-    pub fn set_native_document_sink(
-        &self, sink: impl Fn(&str, u64, u64) + Send + Sync + 'static,
-    ) {
+    pub fn set_native_document_sink(&self, sink: impl Fn(&str, u64, u64) + Send + Sync + 'static) {
         *self.document_sink.write() = Some(Arc::new(sink));
     }
 
@@ -1004,13 +1020,20 @@ impl TabManager {
         *tab.observed_url.write() = None;
         invalidate_capture_document(&tab.document_revision);
         let sink = self.document_sink.read().clone();
-        publish_native_document(sink.as_ref(), id, tab.native_instance, &tab.document_revision);
+        publish_native_document(
+            sink.as_ref(),
+            id,
+            tab.native_instance,
+            &tab.document_revision,
+        );
     }
 
     /// Missing native identity is not proof of a pristine download history.
     pub fn download_history_clear(&self, id: &TabId) -> bool {
-        self.tabs.read().get(id).is_some_and(|tab|
-            !tab.download_seen.load(std::sync::atomic::Ordering::Acquire))
+        self.tabs
+            .read()
+            .get(id)
+            .is_some_and(|tab| !tab.download_seen.load(std::sync::atomic::Ordering::Acquire))
     }
 
     /// Only for the separate, fresh-profile capture host. The ordinary
@@ -1051,7 +1074,9 @@ impl TabManager {
         {
             let mut slot = self.profile.write();
             if slot.is_none() {
-                *slot = Some(Arc::new(ensure_private_browser_profile(&self.profile_base()?)?));
+                *slot = Some(Arc::new(ensure_private_browser_profile(
+                    &self.profile_base()?,
+                )?));
             }
         }
         #[cfg(target_os = "windows")]
@@ -1092,14 +1117,19 @@ impl TabManager {
     /// creating it. The application binds Grid admission to its identity.
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     pub fn expected_browser_profile(&self) -> Result<PathBuf> {
-        let base = std::fs::canonicalize(self.profile_base()?)
-            .map_err(|_| BrowserTabError::Platform("BROWSER_PROFILE_LOCATION_UNAVAILABLE".into()))?;
+        let base = std::fs::canonicalize(self.profile_base()?).map_err(|_| {
+            BrowserTabError::Platform("BROWSER_PROFILE_LOCATION_UNAVAILABLE".into())
+        })?;
         Ok(browser_profile_path(&base))
     }
 
     #[cfg(target_os = "linux")]
     pub fn prepared_browser_profile(&self) -> Result<PathBuf> {
-        let prepared = self.profile.read().as_ref().cloned()
+        let prepared = self
+            .profile
+            .read()
+            .as_ref()
+            .cloned()
             .ok_or_else(|| BrowserTabError::Platform("BROWSER_PROFILE_NOT_PREPARED".into()))?;
         prepared.check_root()?;
         Ok(prepared.path.clone())
@@ -1167,8 +1197,11 @@ impl TabManager {
         // NavigationFinished before the document actually finishes loading.
         // Linux continues to use native WebKit main-frame URI observations.
         let native_instance = NEXT_NATIVE_DOCUMENT_INSTANCE
-            .fetch_update(std::sync::atomic::Ordering::AcqRel,
-                std::sync::atomic::Ordering::Acquire, |value| value.checked_add(1))
+            .fetch_update(
+                std::sync::atomic::Ordering::AcqRel,
+                std::sync::atomic::Ordering::Acquire,
+                |value| value.checked_add(1),
+            )
             .map_err(|_| BrowserTabError::Platform("TAB_NATIVE_INSTANCE_EXHAUSTED".into()))?;
         let document_sink = self.document_sink.read().clone();
         let document_revision = Arc::new(std::sync::atomic::AtomicU64::new(1));
@@ -1236,7 +1269,12 @@ impl TabManager {
                 let observed = observed_url.clone();
                 builder = builder.on_page_load(move |_webview, payload| {
                     invalidate_capture_document(&revision);
-                    publish_native_document(native_sink.as_ref(), &nav_id, native_instance, &revision);
+                    publish_native_document(
+                        native_sink.as_ref(),
+                        &nav_id,
+                        native_instance,
+                        &revision,
+                    );
                     let url = payload.url().to_string();
                     if matches!(payload.event(), PageLoadEvent::Finished) && !url.is_empty() {
                         *observed.write() = Some(url.clone());
@@ -1335,20 +1373,35 @@ impl TabManager {
                 // behavior. Same-URL reloads also invalidate the capture.
                 gtk_wv.connect_load_changed(move |_, _| {
                     invalidate_capture_document(&load_revision);
-                    publish_native_document(load_sink.as_ref(), &load_id, native_instance, &load_revision);
+                    publish_native_document(
+                        load_sink.as_ref(),
+                        &load_id,
+                        native_instance,
+                        &load_revision,
+                    );
                     // Internal invalidation only: do not change the existing
                     // navigationFinished/URI-notify address-bar contract.
-                    let _ = load_app.emit("browser-tabs://event", serde_json::json!({
-                        "type": "documentRevision", "id": load_id,
-                    }));
+                    let _ = load_app.emit(
+                        "browser-tabs://event",
+                        serde_json::json!({
+                            "type": "documentRevision", "id": load_id,
+                        }),
+                    );
                 });
                 let last_uri = std::cell::RefCell::new(String::new());
                 gtk_wv.connect_uri_notify(move |wv| {
                     invalidate_capture_document(&uri_revision);
-                    publish_native_document(uri_sink.as_ref(), &uri_id, native_instance, &uri_revision);
+                    publish_native_document(
+                        uri_sink.as_ref(),
+                        &uri_id,
+                        native_instance,
+                        &uri_revision,
+                    );
                     let Some(uri) = wv.uri() else { return };
                     let value = uri.as_str();
-                    if !value.is_empty() { *observed.write() = Some(value.to_owned()); }
+                    if !value.is_empty() {
+                        *observed.write() = Some(value.to_owned());
+                    }
                     let mut previous = last_uri.borrow_mut();
                     if value.is_empty() || value == previous.as_str() {
                         return;
@@ -1636,11 +1689,17 @@ impl TabManager {
             #[cfg(not(target_os = "linux"))]
             last_rect: RwLock::new(native_rect),
         });
-        self.tabs.write().insert(options.id.clone(), Arc::clone(&entry));
+        self.tabs
+            .write()
+            .insert(options.id.clone(), Arc::clone(&entry));
         // Publish the actual generation after insertion and before the
         // successful CreateTab receipt, even if no load event has fired.
-        publish_native_document(document_sink.as_ref(), &options.id,
-            native_instance, &entry.document_revision);
+        publish_native_document(
+            document_sink.as_ref(),
+            &options.id,
+            native_instance,
+            &entry.document_revision,
+        );
         Ok(())
     }
 
@@ -1761,7 +1820,9 @@ impl TabManager {
         let rect = {
             let current = *tab.last_rect.read();
             let rect = LogicalRect::new(-30000.0, current.y, current.width, current.height);
-            if rect.is_empty() { return Err(BrowserTabError::InvalidRect(rect)); }
+            if rect.is_empty() {
+                return Err(BrowserTabError::InvalidRect(rect));
+            }
             platform::apply_rect(&tab.webview, rect)?;
             *tab.last_rect.write() = rect;
             rect
@@ -1835,12 +1896,21 @@ impl TabManager {
 
     /// Explicit reviewed Agent close: retain the same native document check
     /// as hibernation, without changing explicit user-close download policy.
-    pub fn close_tab_reviewed_document(&self, id: &TabId, document: &CaptureDocument) -> Result<()> {
+    pub fn close_tab_reviewed_document(
+        &self,
+        id: &TabId,
+        document: &CaptureDocument,
+    ) -> Result<()> {
         self.close_tab_bound(id, Some(&document.instance), Some(document), false)
     }
 
-    fn close_tab_bound(&self, id: &TabId, instance: Option<&TabInstance>, document: Option<&CaptureDocument>,
-        protect_download_history: bool) -> Result<()> {
+    fn close_tab_bound(
+        &self,
+        id: &TabId,
+        instance: Option<&TabInstance>,
+        document: Option<&CaptureDocument>,
+        protect_download_history: bool,
+    ) -> Result<()> {
         let _reservation = self.reserve_lifecycle(id)?;
         // A successful native close may outlive its IPC reply. Retrying an
         // already-closed or hibernated tab is successful and creates no resource.
@@ -1848,9 +1918,13 @@ impl TabManager {
         let Some(tab) = tab else {
             return if instance.is_some() {
                 Err(BrowserTabError::Platform("TAB_INSTANCE_STALE".into()))
-            } else { Ok(()) };
+            } else {
+                Ok(())
+            };
         };
-        if instance.is_some_and(|expected| !std::sync::Weak::ptr_eq(&expected.0, &Arc::downgrade(&tab))) {
+        if instance
+            .is_some_and(|expected| !std::sync::Weak::ptr_eq(&expected.0, &Arc::downgrade(&tab)))
+        {
             return Err(BrowserTabError::Platform("TAB_INSTANCE_STALE".into()));
         }
         if document.is_some_and(|expected| !expected.observed_generation_is_current()) {
@@ -1858,8 +1932,11 @@ impl TabManager {
         }
         // Only automatic hibernation requires a pristine download history.
         // Explicit reviewed close still checks the original document.
-        if protect_download_history && tab.download_seen.load(std::sync::atomic::Ordering::Acquire) {
-            return Err(BrowserTabError::Platform("TAB_HIBERNATION_DOWNLOAD_HISTORY".into()));
+        if protect_download_history && tab.download_seen.load(std::sync::atomic::Ordering::Acquire)
+        {
+            return Err(BrowserTabError::Platform(
+                "TAB_HIBERNATION_DOWNLOAD_HISTORY".into(),
+            ));
         }
         // Keep ownership on failure. Admission excludes other synchronous
         // dispatches and duplicate lifecycle changes for this identity.
@@ -1867,8 +1944,10 @@ impl TabManager {
         tab.webview.close()?;
         #[cfg(any(target_os = "linux", target_os = "windows"))]
         {
-            let instance=tab.native_instance;
-            let _=self.app.run_on_main_thread(move || crate::native_downloads::detach(instance));
+            let instance = tab.native_instance;
+            let _ = self
+                .app
+                .run_on_main_thread(move || crate::native_downloads::detach(instance));
         }
         self.tabs.write().remove(id);
         platform::forget_native_layout(id);
@@ -1877,38 +1956,67 @@ impl TabManager {
 
     /// Native-only UI-thread command. A timeout revokes queued work, never
     /// grants a replacement attempt for already entered engine work.
-    pub fn native_download_tasks(&self, id: &TabId, control: Option<(String,String)>)
-        -> std::result::Result<serde_json::Value,String> {
+    pub fn native_download_tasks(
+        &self,
+        id: &TabId,
+        control: Option<(String, String)>,
+    ) -> std::result::Result<serde_json::Value, String> {
         #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-        { let _=(id,control);return Err("DOWNLOAD_PLATFORM_UNSUPPORTED".into()); }
+        {
+            let _ = (id, control);
+            return Err("DOWNLOAD_PLATFORM_UNSUPPORTED".into());
+        }
         #[cfg(any(target_os = "linux", target_os = "windows"))]
         {
             use std::sync::atomic::{AtomicU8, Ordering};
-            if !id.starts_with("tab-") {return Err("DOWNLOAD_TRANSFER_STALE".into());}
-            let instance={
-                let (_operation,tab)=self.get_tab(id,TabAccessKind::Operation).map_err(|e|e.to_string())?;
+            if !id.starts_with("tab-") {
+                return Err("DOWNLOAD_TRANSFER_STALE".into());
+            }
+            let instance = {
+                let (_operation, tab) = self
+                    .get_tab(id, TabAccessKind::Operation)
+                    .map_err(|e| e.to_string())?;
                 tab.native_instance
             };
-            let manager=Arc::clone(self.app.state::<TabManagerState>().inner());
-            let id=id.clone();
-            let gate=Arc::new(AtomicU8::new(0));
-            let admitted=Arc::clone(&gate);
-            let (tx,rx)=std::sync::mpsc::sync_channel(1);
-            self.app.run_on_main_thread(move || {
-                if admitted.compare_exchange(0,1,Ordering::AcqRel,Ordering::Acquire).is_err(){return;}
-                let result=(||{
-                    let (_operation,tab)=manager.get_tab(&id,TabAccessKind::Operation).map_err(|e|e.to_string())?;
-                    if tab.native_instance!=instance {return Err("DOWNLOAD_TRANSFER_STALE".into());}
-                    crate::native_downloads::request(instance,control.as_ref().map(|(id,op)|(id.as_str(),op.as_str())))
-                })();
-                let _=tx.send(result);
-            }).map_err(|_|"DOWNLOAD_NATIVE_DISPATCH_FAILED")?;
+            let manager = Arc::clone(self.app.state::<TabManagerState>().inner());
+            let id = id.clone();
+            let gate = Arc::new(AtomicU8::new(0));
+            let admitted = Arc::clone(&gate);
+            let (tx, rx) = std::sync::mpsc::sync_channel(1);
+            self.app
+                .run_on_main_thread(move || {
+                    if admitted
+                        .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
+                        .is_err()
+                    {
+                        return;
+                    }
+                    let result = (|| {
+                        let (_operation, tab) = manager
+                            .get_tab(&id, TabAccessKind::Operation)
+                            .map_err(|e| e.to_string())?;
+                        if tab.native_instance != instance {
+                            return Err("DOWNLOAD_TRANSFER_STALE".into());
+                        }
+                        crate::native_downloads::request(
+                            instance,
+                            control.as_ref().map(|(id, op)| (id.as_str(), op.as_str())),
+                        )
+                    })();
+                    let _ = tx.send(result);
+                })
+                .map_err(|_| "DOWNLOAD_NATIVE_DISPATCH_FAILED")?;
             match rx.recv_timeout(std::time::Duration::from_secs(3)) {
-                Ok(result)=>result,
-                Err(_)=>{
-                    if gate.compare_exchange(0,2,Ordering::AcqRel,Ordering::Acquire).is_ok(){
+                Ok(result) => result,
+                Err(_) => {
+                    if gate
+                        .compare_exchange(0, 2, Ordering::AcqRel, Ordering::Acquire)
+                        .is_ok()
+                    {
                         Err("DOWNLOAD_NATIVE_NOT_DISPATCHED".into())
-                    }else{Err("DOWNLOAD_NATIVE_OUTCOME_UNKNOWN".into())}
+                    } else {
+                        Err("DOWNLOAD_NATIVE_OUTCOME_UNKNOWN".into())
+                    }
                 }
             }
         }
@@ -1927,12 +2035,19 @@ impl TabManager {
 
     /// Prepared navigation cannot silently follow an instance or document
     /// that was replaced after the user admitted the operation.
-    pub fn navigate_document(&self, id: &TabId, document: &CaptureDocument, url: &str) -> Result<()> {
+    pub fn navigate_document(
+        &self,
+        id: &TabId,
+        document: &CaptureDocument,
+        url: &str,
+    ) -> Result<()> {
         let (_operation, tab) = self.get_tab(id, TabAccessKind::Operation)?;
-        let url: tauri::Url = url.parse()
+        let url: tauri::Url = url
+            .parse()
             .map_err(|_| BrowserTabError::InvalidUrl(url.to_string()))?;
         if !std::sync::Weak::ptr_eq(&document.instance.0, &Arc::downgrade(&tab))
-            || !document.observed_generation_is_current() {
+            || !document.observed_generation_is_current()
+        {
             return Err(BrowserTabError::Platform("TAB_DOCUMENT_STALE".into()));
         }
         self.invalidate_tab_document(id, &tab);
@@ -1942,10 +2057,16 @@ impl TabManager {
 
     /// History navigation invalidates prior document admission immediately,
     /// even before the native engine publishes its asynchronous load event.
-    pub fn eval_navigation_document(&self, id: &TabId, document: &CaptureDocument, js: &str) -> Result<()> {
+    pub fn eval_navigation_document(
+        &self,
+        id: &TabId,
+        document: &CaptureDocument,
+        js: &str,
+    ) -> Result<()> {
         let (_operation, tab) = self.get_tab(id, TabAccessKind::Operation)?;
         if !std::sync::Weak::ptr_eq(&document.instance.0, &Arc::downgrade(&tab))
-            || !document.observed_generation_is_current() {
+            || !document.observed_generation_is_current()
+        {
             return Err(BrowserTabError::Platform("TAB_DOCUMENT_STALE".into()));
         }
         self.invalidate_tab_document(id, &tab);
@@ -1960,12 +2081,27 @@ impl TabManager {
     /// Cached native observation only; no WebView/GTK/COM round trip.
     /// Hold the registry read guard while copying the current instance data.
     pub fn observed_navigation(&self, id: &TabId) -> Result<Option<(u64, u64, Option<String>)>> {
-        let tabs = self.tabs.try_read().ok_or_else(|| BrowserTabError::Platform("TAB_METADATA_BUSY".into()))?;
-        let Some(tab) = tabs.get(id) else { return Ok(None); };
-        let revision = tab.document_revision.load(std::sync::atomic::Ordering::Acquire);
-        let observed = tab.observed_url.try_read()
-            .ok_or_else(|| BrowserTabError::Platform("TAB_METADATA_BUSY".into()))?.clone();
-        if revision == u64::MAX || revision != tab.document_revision.load(std::sync::atomic::Ordering::Acquire) {
+        let tabs = self
+            .tabs
+            .try_read()
+            .ok_or_else(|| BrowserTabError::Platform("TAB_METADATA_BUSY".into()))?;
+        let Some(tab) = tabs.get(id) else {
+            return Ok(None);
+        };
+        let revision = tab
+            .document_revision
+            .load(std::sync::atomic::Ordering::Acquire);
+        let observed = tab
+            .observed_url
+            .try_read()
+            .ok_or_else(|| BrowserTabError::Platform("TAB_METADATA_BUSY".into()))?
+            .clone();
+        if revision == u64::MAX
+            || revision
+                != tab
+                    .document_revision
+                    .load(std::sync::atomic::Ordering::Acquire)
+        {
             return Err(BrowserTabError::Platform("TAB_METADATA_BUSY".into()));
         }
         Ok(Some((tab.native_instance, revision, observed)))
@@ -2011,7 +2147,8 @@ impl TabManager {
     pub fn eval_document(&self, id: &TabId, document: &CaptureDocument, js: &str) -> Result<()> {
         let (_operation, tab) = self.get_tab(id, TabAccessKind::Operation)?;
         if !std::sync::Weak::ptr_eq(&document.instance.0, &Arc::downgrade(&tab))
-            || !document.observed_generation_is_current() {
+            || !document.observed_generation_is_current()
+        {
             return Err(BrowserTabError::Platform("TAB_DOCUMENT_STALE".into()));
         }
         tab.webview.eval(js)?;
@@ -2707,14 +2844,20 @@ impl TabManager {
     }
 
     pub fn eval_result_instance(
-        &self, id: &TabId, instance: &TabInstance, js: String,
+        &self,
+        id: &TabId,
+        instance: &TabInstance,
+        js: String,
         callback: impl FnOnce(std::result::Result<String, String>) + Send + 'static,
     ) -> Result<()> {
         self.eval_result_bound(id, Some(instance), None, js, callback)
     }
 
     pub fn eval_result_document(
-        &self, id: &TabId, document: &CaptureDocument, js: String,
+        &self,
+        id: &TabId,
+        document: &CaptureDocument,
+        js: String,
         callback: impl FnOnce(std::result::Result<String, String>) + Send + 'static,
     ) -> Result<()> {
         self.eval_result_bound(id, Some(&document.instance), Some(document), js, callback)
@@ -2722,13 +2865,19 @@ impl TabManager {
 
     #[allow(deprecated)]
     fn eval_result_bound(
-        &self, id: &TabId, instance: Option<&TabInstance>, document: Option<&CaptureDocument>, js: String,
+        &self,
+        id: &TabId,
+        instance: Option<&TabInstance>,
+        document: Option<&CaptureDocument>,
+        js: String,
         callback: impl FnOnce(std::result::Result<String, String>) + Send + 'static,
     ) -> Result<()> {
         // Protect dispatch only, never keep a reservation across an
         // asynchronous WebKit/WebView2 completion callback.
         let (_operation, tab) = self.get_tab(id, TabAccessKind::Operation)?;
-        if instance.is_some_and(|expected| !std::sync::Weak::ptr_eq(&expected.0, &Arc::downgrade(&tab))) {
+        if instance
+            .is_some_and(|expected| !std::sync::Weak::ptr_eq(&expected.0, &Arc::downgrade(&tab)))
+        {
             return Err(BrowserTabError::Platform("TAB_INSTANCE_STALE".into()));
         }
         if document.is_some_and(|expected| !expected.observed_generation_is_current()) {
@@ -2736,7 +2885,10 @@ impl TabManager {
         }
         let expected_document = document.cloned();
         let callback = move |result: std::result::Result<String, String>| {
-            if expected_document.as_ref().is_some_and(|expected| !expected.observed_generation_is_current()) {
+            if expected_document
+                .as_ref()
+                .is_some_and(|expected| !expected.observed_generation_is_current())
+            {
                 callback(Err("TAB_DOCUMENT_STALE".into()));
             } else {
                 callback(result);

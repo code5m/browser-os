@@ -66,9 +66,12 @@ pub fn current_public_api_catalog() -> Vec<PublicApiSpec> {
 /// Bind a Channel read grant to the exact catalog command and arguments,
 /// not merely the resource name. Historical v1 receipts are not live grants.
 pub fn channel_read_revision(command: &str, args: &Value) -> Result<String> {
-    if !args.is_object() || !current_public_api_catalog().iter().any(|spec|
-        spec.command == command && spec.effect == ToolEffect::ReadOnly
-            && spec.requires_host_authorization)
+    if !args.is_object()
+        || !current_public_api_catalog().iter().any(|spec| {
+            spec.command == command
+                && spec.effect == ToolEffect::ReadOnly
+                && spec.requires_host_authorization
+        })
     {
         return Err(FoundationError::PermissionDenied);
     }
@@ -102,8 +105,10 @@ pub struct PublicReadTool {
 }
 impl PublicReadTool {
     pub fn new(spec: PublicApiSpec, host: Arc<dyn PublicApiHost>) -> Result<Self> {
-        if spec.effect != ToolEffect::ReadOnly || !spec.requires_host_authorization
-            || !current_public_api_catalog().contains(&spec) {
+        if spec.effect != ToolEffect::ReadOnly
+            || !spec.requires_host_authorization
+            || !current_public_api_catalog().contains(&spec)
+        {
             return Err(FoundationError::PermissionDenied);
         }
         Ok(Self { spec, host })
@@ -121,16 +126,21 @@ impl AgentTool for PublicReadTool {
         let check = || -> Result<()> {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map_err(|_| FoundationError::PermissionDenied)?.as_millis();
+                .map_err(|_| FoundationError::PermissionDenied)?
+                .as_millis();
             if now >= u128::from(binding.expires_at_unix_ms)
-                || binding.principal_id.is_nil() || binding.workspace_id.is_nil()
-                || binding.session_id.is_nil() {
+                || binding.principal_id.is_nil()
+                || binding.workspace_id.is_nil()
+                || binding.session_id.is_nil()
+            {
                 return Err(FoundationError::PermissionDenied);
             }
             Ok(())
         };
         check()?;
-        if !args.is_object(){return Err(FoundationError::InvalidInput("public read arguments"));}
+        if !args.is_object() {
+            return Err(FoundationError::InvalidInput("public read arguments"));
+        }
         crate::model::validate_serialized_arguments(args)?;
         self.host.validate(&self.spec, binding, args)?;
         check()
@@ -146,8 +156,11 @@ impl AgentTool for PublicReadTool {
             self.validate_binding(&call.binding, &call.arguments)?;
             // Bounded input was validated above. Retain the exact proof
             // and arguments for read-result release, never a new grant.
-            let result=self.host.call(&self.spec,call.binding.clone(),call.arguments.clone()).await?;
-            self.validate_binding(&call.binding,&call.arguments)?;
+            let result = self
+                .host
+                .call(&self.spec, call.binding.clone(), call.arguments.clone())
+                .await?;
+            self.validate_binding(&call.binding, &call.arguments)?;
             Ok(result)
         })
     }

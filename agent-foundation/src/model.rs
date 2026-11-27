@@ -59,25 +59,32 @@ pub trait ModelProvider: Send + Sync {
 }
 
 /// Count a serialized value without allocating another JSON buffer.
-pub(crate) fn serialized_size(value: &(impl serde::Serialize + ?Sized), limit:usize) -> Result<usize> {
+pub(crate) fn serialized_size(
+    value: &(impl serde::Serialize + ?Sized),
+    limit: usize,
+) -> Result<usize> {
     struct Budget(usize);
     impl std::io::Write for Budget {
-        fn write(&mut self, bytes:&[u8])->std::io::Result<usize>{
-            self.0=self.0.checked_sub(bytes.len()).ok_or_else(||
-                std::io::Error::new(std::io::ErrorKind::InvalidData,"tool arguments too large"))?;
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 = self.0.checked_sub(bytes.len()).ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, "tool arguments too large")
+            })?;
             Ok(bytes.len())
         }
-        fn flush(&mut self)->std::io::Result<()> {Ok(())}
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
     }
-    let mut budget=Budget(limit);
-    serde_json::to_writer(&mut budget,value)
-        .map_err(|_|FoundationError::InvalidInput("serialized value exceeds budget"))?;
-    Ok(limit-budget.0)
+    let mut budget = Budget(limit);
+    serde_json::to_writer(&mut budget, value)
+        .map_err(|_| FoundationError::InvalidInput("serialized value exceeds budget"))?;
+    Ok(limit - budget.0)
 }
 
 pub(crate) fn validate_serialized_arguments(value: &serde_json::Value) -> Result<()> {
-    serialized_size(value,16_384).map(|_|())
-        .map_err(|_|FoundationError::InvalidInput("tool arguments too large"))
+    serialized_size(value, 16_384)
+        .map(|_| ())
+        .map_err(|_| FoundationError::InvalidInput("tool arguments too large"))
 }
 
 /// Shared bounded argument parsing for streaming and batched model adapters.

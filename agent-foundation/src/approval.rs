@@ -297,7 +297,10 @@ impl ApprovalBroker {
         // Consume the exact signed revision under the task registry lock.
         // Checking a detached snapshot above is not atomic admission.
         let permit = tasks.resolve_approval_at_revision(
-            claim.task_id, claim.call_id, claim.accepted, claim.task_revision,
+            claim.task_id,
+            claim.call_id,
+            claim.accepted,
+            claim.task_revision,
         )?;
         Ok(permit.map(|mut permit| {
             permit.binding = Some(binding);

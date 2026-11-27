@@ -103,25 +103,64 @@ impl ExecutionLease<'_> {
     }
 
     #[cfg(feature = "durable-sqlite")]
-    pub(crate) fn begin_effect(&self, call_id: Uuid, key: &str, effect: ToolEffect,
-        tool_name: &str, authority: Option<&str>) -> Result<()> {
-        let store = self.registry.durable.as_ref().ok_or(FoundationError::PermissionDenied)?;
+    pub(crate) fn begin_effect(
+        &self,
+        call_id: Uuid,
+        key: &str,
+        effect: ToolEffect,
+        tool_name: &str,
+        authority: Option<&str>,
+    ) -> Result<()> {
+        let store = self
+            .registry
+            .durable
+            .as_ref()
+            .ok_or(FoundationError::PermissionDenied)?;
         let token = self.db_lease.ok_or(FoundationError::PermissionDenied)?;
-        store.begin_owned_effect(self.task_id, self.revision, token, call_id, key, effect, tool_name, authority)
+        store.begin_owned_effect(
+            self.task_id,
+            self.revision,
+            token,
+            call_id,
+            key,
+            effect,
+            tool_name,
+            authority,
+        )
     }
 
     /// A durable successful side effect must be confirmed by the same lease,
     /// not by a task-id-only UPDATE after a stale in-memory generation check.
     #[cfg(feature = "durable-sqlite")]
     pub(crate) fn confirm_effect(&self, call_id: Uuid, key: &str, tool_name: &str) -> Result<()> {
-        let store = self.registry.durable.as_ref().ok_or(FoundationError::PermissionDenied)?;
+        let store = self
+            .registry
+            .durable
+            .as_ref()
+            .ok_or(FoundationError::PermissionDenied)?;
         let token = self.db_lease.ok_or(FoundationError::PermissionDenied)?;
-        store.confirm_effect_at_revision(self.task_id, self.revision, token, call_id, key, tool_name)
+        store.confirm_effect_at_revision(
+            self.task_id,
+            self.revision,
+            token,
+            call_id,
+            key,
+            tool_name,
+        )
     }
 
     #[cfg(feature = "durable-sqlite")]
-    pub(crate) fn reject_before_dispatch(&self, call_id: Uuid, key: &str, tool_name: &str) -> Result<()> {
-        let store = self.registry.durable.as_ref().ok_or(FoundationError::PermissionDenied)?;
+    pub(crate) fn reject_before_dispatch(
+        &self,
+        call_id: Uuid,
+        key: &str,
+        tool_name: &str,
+    ) -> Result<()> {
+        let store = self
+            .registry
+            .durable
+            .as_ref()
+            .ok_or(FoundationError::PermissionDenied)?;
         let token = self.db_lease.ok_or(FoundationError::PermissionDenied)?;
         store.reject_before_dispatch(self.task_id, token, call_id, key, tool_name)
     }
@@ -621,18 +660,27 @@ impl TaskRegistry {
     }
 
     pub(crate) fn resolve_approval_at_revision(
-        &self, id: Uuid, call_id: Uuid, accepted: bool, revision: u64,
+        &self,
+        id: Uuid,
+        call_id: Uuid,
+        accepted: bool,
+        revision: u64,
     ) -> Result<Option<ApprovedOperation>> {
         self.resolve_approval_checked(id, call_id, accepted, Some(revision))
     }
 
     fn resolve_approval_checked(
-        &self, id: Uuid, call_id: Uuid, accepted: bool, revision: Option<u64>,
+        &self,
+        id: Uuid,
+        call_id: Uuid,
+        accepted: bool,
+        revision: Option<u64>,
     ) -> Result<Option<ApprovedOperation>> {
         let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
         let previous = tasks.get(&id).ok_or(FoundationError::NotFound)?.clone();
         if previous.status != TaskStatus::AwaitingApproval
-            || revision.is_some_and(|expected| previous.revision != expected) {
+            || revision.is_some_and(|expected| previous.revision != expected)
+        {
             return Err(FoundationError::InvalidTransition);
         }
         let pending = previous

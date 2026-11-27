@@ -32,7 +32,11 @@ impl TurnLimits {
     /// deadline. This is the shared overall admission window for all rounds,
     /// not permission to interrupt or replay an entered native effect.
     pub(crate) fn complete_message() -> Self {
-        Self { deadline: Duration::from_secs(120), max_model_events: 256, max_text_bytes: 256 * 1024 }
+        Self {
+            deadline: Duration::from_secs(120),
+            max_model_events: 256,
+            max_text_bytes: 256 * 1024,
+        }
     }
     pub(crate) fn validate(self) -> Result<()> {
         if self.deadline.is_zero()
@@ -56,7 +60,11 @@ pub(crate) struct ModelAdmissionBudget {
 impl ModelAdmissionBudget {
     pub(crate) fn new(limits: TurnLimits) -> Result<Self> {
         limits.validate()?;
-        Ok(Self { limits, events: 0, text_bytes: 0 })
+        Ok(Self {
+            limits,
+            events: 0,
+            text_bytes: 0,
+        })
     }
     pub(crate) fn admit_events(&mut self, count: usize) -> Result<()> {
         if count > self.limits.max_model_events.saturating_sub(self.events) {
@@ -323,7 +331,8 @@ fn drive_function_batches_checked<H: FunctionBatchHost>(
         return Err(host.invalid_batch(FoundationError::InvalidInput("function turn limits")));
     }
     let limits = TurnLimits::complete_message();
-    let mut budget = ModelAdmissionBudget::new(limits).map_err(|error| host.invalid_batch(error))?;
+    let mut budget =
+        ModelAdmissionBudget::new(limits).map_err(|error| host.invalid_batch(error))?;
     let deadline = std::time::Instant::now() + limits.deadline;
     // IDs must remain unique throughout this bounded model/tool loop,
     // not only within a single assistant response.
@@ -353,13 +362,18 @@ fn drive_function_batches_checked<H: FunctionBatchHost>(
         if std::time::Instant::now() >= deadline {
             return Err(host.invalid_batch(FoundationError::Timeout));
         }
-        budget.admit_events(1).map_err(|error| host.invalid_batch(error))?;
+        budget
+            .admit_events(1)
+            .map_err(|error| host.invalid_batch(error))?;
         // Count actual assistant text across every round, not just the last
         // response. Tool arguments retain their independent parser bounds.
         if let Some(content) = reply.get("content").filter(|value| !value.is_null()) {
-            let text = content.as_str().ok_or_else(|| host.invalid_batch(
-                FoundationError::InvalidInput("assistant text content")))?;
-            budget.admit_text(text.len()).map_err(|error| host.invalid_batch(error))?;
+            let text = content.as_str().ok_or_else(|| {
+                host.invalid_batch(FoundationError::InvalidInput("assistant text content"))
+            })?;
+            budget
+                .admit_text(text.len())
+                .map_err(|error| host.invalid_batch(error))?;
         }
         host.validate_reply(&reply)?;
         let calls = crate::model::parse_function_batch(&reply, max_calls)
@@ -367,10 +381,17 @@ fn drive_function_batches_checked<H: FunctionBatchHost>(
         if !active() || host.cancelled() {
             return host.on_cancelled();
         }
-        budget.admit_events(calls.len()).map_err(|error| host.invalid_batch(error))?;
+        budget
+            .admit_events(calls.len())
+            .map_err(|error| host.invalid_batch(error))?;
         for call in &calls {
-            let bytes = crate::model::serialized_size(&call.arguments, remaining_arguments.min(16_384))
-                .map_err(|_| host.invalid_batch(FoundationError::InvalidInput("function transcript argument limit")))?;
+            let bytes =
+                crate::model::serialized_size(&call.arguments, remaining_arguments.min(16_384))
+                    .map_err(|_| {
+                        host.invalid_batch(FoundationError::InvalidInput(
+                            "function transcript argument limit",
+                        ))
+                    })?;
             remaining_arguments -= bytes;
         }
         if std::time::Instant::now() >= deadline {

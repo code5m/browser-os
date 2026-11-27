@@ -35,8 +35,11 @@ impl HostMcpPolicy {
                 "mcp tool arguments must be object",
             ));
         };
-        bounded_json(&map, 16_384,
-            FoundationError::InvalidInput("mcp tool arguments too large"))?;
+        bounded_json(
+            &map,
+            16_384,
+            FoundationError::InvalidInput("mcp tool arguments too large"),
+        )?;
         Ok(CallToolRequestParams::new(name.to_owned()).with_arguments(map))
     }
 }
@@ -53,18 +56,27 @@ pub struct RmcpReadOnlyTool {
 }
 
 fn validate_mcp_binding(binding: &ApprovalBinding, args: &Value) -> Result<()> {
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
-        .map_err(|_| FoundationError::PermissionDenied)?.as_millis();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| FoundationError::PermissionDenied)?
+        .as_millis();
     if now >= u128::from(binding.expires_at_unix_ms)
-        || binding.principal_id.is_nil() || binding.workspace_id.is_nil()
-        || binding.session_id.is_nil() {
+        || binding.principal_id.is_nil()
+        || binding.workspace_id.is_nil()
+        || binding.session_id.is_nil()
+    {
         return Err(FoundationError::PermissionDenied);
     }
     if !args.is_object() {
-        return Err(FoundationError::InvalidInput("mcp tool arguments invalid or too large"));
+        return Err(FoundationError::InvalidInput(
+            "mcp tool arguments invalid or too large",
+        ));
     }
-    bounded_json(args, 16_384,
-        FoundationError::InvalidInput("mcp tool arguments invalid or too large"))?;
+    bounded_json(
+        args,
+        16_384,
+        FoundationError::InvalidInput("mcp tool arguments invalid or too large"),
+    )?;
     Ok(())
 }
 
@@ -80,15 +92,21 @@ impl AgentTool for RmcpReadOnlyTool {
         (self.verifier)(binding, args)?;
         validate_mcp_binding(binding, args)
     }
-    fn requires_authorized_call(&self) -> bool { true }
+    fn requires_authorized_call(&self) -> bool {
+        true
+    }
     fn call<'a>(&'a self, _arguments: Value) -> ToolFuture<'a> {
         Box::pin(async { Err(FoundationError::PermissionDenied) })
     }
     fn call_authorized<'a>(&'a self, call: AuthorizedCall) -> ToolFuture<'a> {
         Box::pin(async move {
             self.validate_binding(&call.binding, &call.arguments)?;
-            let map=call.arguments.as_object().ok_or(FoundationError::InvalidInput("mcp arguments"))?;
-            let request = CallToolRequestParams::new(self.tool_name.clone()).with_arguments(map.clone());
+            let map = call
+                .arguments
+                .as_object()
+                .ok_or(FoundationError::InvalidInput("mcp arguments"))?;
+            let request =
+                CallToolRequestParams::new(self.tool_name.clone()).with_arguments(map.clone());
             let response = self
                 .client
                 .call_tool(request)
@@ -96,9 +114,9 @@ impl AgentTool for RmcpReadOnlyTool {
                 .map_err(|_| FoundationError::Tool("MCP_REMOTE_CALL_FAILED".into()))?;
             // Resource authorization may expire or be revoked while the
             // server is reading. Never disclose a result on an old proof.
-            self.validate_binding(&call.binding,&call.arguments)?;
-            let result=strict_result(response)?;
-            self.validate_binding(&call.binding,&call.arguments)?;
+            self.validate_binding(&call.binding, &call.arguments)?;
+            let result = strict_result(response)?;
+            self.validate_binding(&call.binding, &call.arguments)?;
             Ok(result)
         })
     }
@@ -106,9 +124,17 @@ impl AgentTool for RmcpReadOnlyTool {
 
 /// Bound local serialization before allocating an oversized duplicate of
 /// SDK-decoded remote data. Transport-level limits remain provider/SDK-owned.
-fn bounded_json<T: serde::Serialize>(value: &T, limit: usize, too_large: FoundationError) -> Result<Vec<u8>> {
+fn bounded_json<T: serde::Serialize>(
+    value: &T,
+    limit: usize,
+    too_large: FoundationError,
+) -> Result<Vec<u8>> {
     use std::io::{Error, ErrorKind, Write};
-    struct Capped { bytes: Vec<u8>, limit: usize, overflow: bool }
+    struct Capped {
+        bytes: Vec<u8>,
+        limit: usize,
+        overflow: bool,
+    }
     impl Write for Capped {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
             if bytes.len() > self.limit.saturating_sub(self.bytes.len()) {
@@ -118,9 +144,15 @@ fn bounded_json<T: serde::Serialize>(value: &T, limit: usize, too_large: Foundat
             self.bytes.extend_from_slice(bytes);
             Ok(bytes.len())
         }
-        fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
     }
-    let mut sink = Capped { bytes: Vec::new(), limit, overflow: false };
+    let mut sink = Capped {
+        bytes: Vec::new(),
+        limit,
+        overflow: false,
+    };
     match serde_json::to_writer(&mut sink, value) {
         Ok(()) => Ok(sink.bytes),
         Err(_) if sink.overflow => Err(too_large),
@@ -134,8 +166,11 @@ pub fn strict_result(result: CallToolResult) -> Result<Value> {
     if result.is_error.unwrap_or(false) {
         return Err(FoundationError::Tool("MCP_TOOL_RETURNED_ERROR".into()));
     }
-    let bytes = bounded_json(&result, 64 * 1024,
-        FoundationError::Tool("MCP_TOOL_RESULT_TOO_LARGE".into()))?;
+    let bytes = bounded_json(
+        &result,
+        64 * 1024,
+        FoundationError::Tool("MCP_TOOL_RESULT_TOO_LARGE".into()),
+    )?;
     serde_json::from_slice(&bytes).map_err(|e| FoundationError::Serialization(e.to_string()))
 }
 
@@ -151,10 +186,14 @@ pub fn names_for_host(discovered: &[Tool], allowlist: &HashSet<String>) -> Vec<S
             ambiguous.insert(name);
         }
     }
-    discovered.iter().filter(|item| {
-        let name: &str = item.name.as_ref();
-        allowlist.contains(name) && !ambiguous.contains(name)
-    }).map(|item| item.name.to_string()).collect()
+    discovered
+        .iter()
+        .filter(|item| {
+            let name: &str = item.name.as_ref();
+            allowlist.contains(name) && !ambiguous.contains(name)
+        })
+        .map(|item| item.name.to_string())
+        .collect()
 }
 
 #[cfg(test)]

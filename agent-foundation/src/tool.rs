@@ -128,8 +128,8 @@ impl ToolExecutionReceipt<'_> {
             && self.revision == revision
     }
 
-    pub(crate) fn belongs_to_tool_registry(&self, identity:&Arc<()>) -> bool {
-        Arc::ptr_eq(&self.registry_identity,identity)
+    pub(crate) fn belongs_to_tool_registry(&self, identity: &Arc<()>) -> bool {
+        Arc::ptr_eq(&self.registry_identity, identity)
     }
 
     pub fn value(&self) -> &Value {
@@ -148,7 +148,9 @@ pub struct ToolRegistry {
 }
 
 impl ToolRegistry {
-    pub(crate) fn execution_identity(&self) -> Arc<()> { Arc::clone(&self.identity) }
+    pub(crate) fn execution_identity(&self) -> Arc<()> {
+        Arc::clone(&self.identity)
+    }
     pub fn register(&self, tool: Arc<dyn AgentTool>) -> Result<()> {
         let name = tool.name();
         if name.is_empty()
@@ -364,11 +366,19 @@ impl ToolRegistry {
         // A process crash or a timeout leaves it unknown; never auto-retry.
         #[cfg(feature = "durable-sqlite")]
         if effect_store.is_some() {
-            let authority = tool.reconciliation_authority().filter(|digest| {
-                *digest != [0; 32] && permit.operation.effect == ToolEffect::ExternalSideEffect
-            }).map(hex::encode);
-            _lease.begin_effect(permit.operation.call_id, &idempotency_key,
-                permit.operation.effect, &permit.operation.tool_name, authority.as_deref())?;
+            let authority = tool
+                .reconciliation_authority()
+                .filter(|digest| {
+                    *digest != [0; 32] && permit.operation.effect == ToolEffect::ExternalSideEffect
+                })
+                .map(hex::encode);
+            _lease.begin_effect(
+                permit.operation.call_id,
+                &idempotency_key,
+                permit.operation.effect,
+                &permit.operation.tool_name,
+                authority.as_deref(),
+            )?;
         }
         // Check again after journal admission, but before constructing the
         // adapter future (construction itself is not assumed side-effect-free).
@@ -377,14 +387,18 @@ impl ToolRegistry {
                 return Err(FoundationError::Cancelled);
             }
             if let Some(binding) = binding {
-                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
-                    .map_err(|_| FoundationError::PermissionDenied)?.as_millis();
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|_| FoundationError::PermissionDenied)?
+                    .as_millis();
                 if now >= u128::from(binding.expires_at_unix_ms) {
                     return Err(FoundationError::PermissionDenied);
                 }
                 tool.validate_binding(binding, &permit.operation.arguments)?;
-                let after_validation = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
-                    .map_err(|_| FoundationError::PermissionDenied)?.as_millis();
+                let after_validation = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|_| FoundationError::PermissionDenied)?
+                    .as_millis();
                 if after_validation >= u128::from(binding.expires_at_unix_ms) {
                     return Err(FoundationError::PermissionDenied);
                 }
@@ -400,8 +414,11 @@ impl ToolRegistry {
         if let Err(error) = admitted {
             #[cfg(feature = "durable-sqlite")]
             if effect_store.is_some() {
-                _lease.reject_before_dispatch(permit.operation.call_id, &idempotency_key,
-                    &permit.operation.tool_name)?;
+                _lease.reject_before_dispatch(
+                    permit.operation.call_id,
+                    &idempotency_key,
+                    &permit.operation.tool_name,
+                )?;
             }
             return Err(error);
         }
@@ -430,11 +447,16 @@ impl ToolRegistry {
         // the absolute deadline. For effects retain the UNKNOWN receipt.
         let result = if tokio::time::Instant::now() >= deadline {
             Err(FoundationError::Timeout)
-        } else { result };
+        } else {
+            result
+        };
         #[cfg(feature = "durable-sqlite")]
         if effect_store.is_some() && result.is_ok() {
-            _lease.confirm_effect(permit.operation.call_id, &idempotency_key,
-                &permit.operation.tool_name)?;
+            _lease.confirm_effect(
+                permit.operation.call_id,
+                &idempotency_key,
+                &permit.operation.tool_name,
+            )?;
         }
         if effectful && result.is_err() {
             tasks.record_event_at_revision(

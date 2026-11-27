@@ -38,12 +38,17 @@ fn bounded_arguments(value: &impl serde::Serialize) -> Result<String> {
     impl Write for Capped {
         fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
             if bytes.len() > 16_384usize.saturating_sub(self.0.len()) {
-                return Err(io::Error::new(io::ErrorKind::InvalidData, "RIG_ARGUMENT_LIMIT"));
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "RIG_ARGUMENT_LIMIT",
+                ));
             }
             self.0.extend_from_slice(bytes);
             Ok(bytes.len())
         }
-        fn flush(&mut self) -> io::Result<()> { Ok(()) }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
     }
     let mut out = Capped(Vec::new());
     serde_json::to_writer(&mut out, value)
@@ -77,10 +82,15 @@ pub fn from_rig_response(response: CompletionResponse) -> Result<Vec<ModelEvent>
                 }
                 let id = tool.id.to_string();
                 let name = tool.function.name.to_string();
-                if id.is_empty() || id.len() > 256
+                if id.is_empty()
+                    || id.len() > 256
                     || id.chars().any(|c| c.is_control() || c.is_whitespace())
-                    || name.is_empty() || name.len() > 128
-                    || !name.bytes().all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c)) {
+                    || name.is_empty()
+                    || name.len() > 128
+                    || !name
+                        .bytes()
+                        .all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c))
+                {
                     return Err(FoundationError::InvalidInput("rig tool identity"));
                 }
                 let arguments_json = bounded_arguments(&tool.function.arguments)?;
@@ -140,7 +150,9 @@ impl ModelProvider for RigCompletionProvider {
                         let item = streamed.next().await;
                         // Ignored SDK control/argument/reasoning frames are
                         // still transport work and consume the event budget.
-                        if item.is_some() { budget.admit_events(1)?; }
+                        if item.is_some() {
+                            budget.admit_events(1)?;
+                        }
                         match item {
                             None => break,
                             Some(Err(_)) => {
