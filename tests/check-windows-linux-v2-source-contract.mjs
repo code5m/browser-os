@@ -349,7 +349,18 @@ const gitStudio = read('../src-tauri/src/capabilities/git/studio.rs');
 const gitLocal = read('../src-tauri/src/capabilities/git/local_workbench.rs');
 const imageStore = read('../src-tauri/src/shared/images.rs');
 assert.match(dbProfiles, /session::atomic_replace_file/);
-assert.match(agentChannel, /session::atomic_replace_file/);
+// Config persistence now uses the shared native versioned publication
+// boundary, with a pinned parent, the reviewed prior snapshot and readback.
+const agentConfigRead = sourceRegion(agentChannel, 'fn config_snapshot(', 'fn load(');
+assert.match(agentConfigRead, /safe_paths::read_versioned\(path, &\[root\], MAX_CONFIG_BYTES as usize\)/);
+const agentConfigPersist = sourceRegion(agentChannel, 'fn persist(', '#[tauri::command]');
+assert.match(agentConfigPersist, /safe_paths::write_versioned_approved\(path, &\[root\.clone\(\)\], &root, root_identity,\s*expected, &bytes, MAX_CONFIG_BYTES as usize/);
+assert.match(agentConfigPersist, /let \(actual, snapshot\) = config_snapshot\(path\)\?;/);
+assert.match(agentConfigPersist, /if actual != \*config \|\| snapshot\.is_none\(\)/);
+const agentConfigSet = sourceRegion(agentChannel, 'pub fn agent_runtime_set_config(', '#[tauri::command]');
+assert.match(agentConfigSet, /safe_paths::directory_identity\(parent\)/);
+assert.match(agentConfigSet, /previous\.revision != expected_revision/);
+assert.match(agentConfigSet, /persist\(&path, &config, expected\.as_ref\(\), &root_identity\)\?/);
 assert.match(gitStudio, /safe_paths::save_if_unchanged/);
 assert.match(gitLocal, /safe_paths::save_if_unchanged/);
 assert.match(imageStore, /safe_paths::create_new_file/);
