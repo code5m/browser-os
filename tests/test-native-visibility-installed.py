@@ -33,6 +33,7 @@ def paint(frame, box, name, swap=False):
 class PixelRejection(unittest.TestCase):
     def test_wrong_quadrants_blank_frame_and_stale_marker_fail(self):
         base=Image.new("RGB",(1024,768),(36,36,36))
+        ImageDraw.Draw(base).rectangle((10,10,70,120), fill=(100,100,100))
         def score(image, markers, baseline):
             ok, _, ghosts, _ = observer.score_pixels(image,BOXES,markers,PALETTES,Image)
             return observer.frame_matches(ok,ghosts,baseline), ghosts
@@ -54,6 +55,15 @@ class PixelRejection(unittest.TestCase):
         paint(other,BOXES[1],"b")
         self.assertFalse(score(other,["a",None],baseline)[0])
         self.assertTrue(score(other,["a","b"],baseline)[0])
+
+    def test_uniform_desktop_and_contaminated_baseline_are_not_absence_passes(self):
+        for color in ((0,0,0),(36,36,36)):
+            frame=Image.new("RGB",(1024,768),color)
+            with self.assertRaisesRegex(RuntimeError, "uniform"):
+                observer.score_pixels(frame,BOXES,[None,None],PALETTES,Image)
+        ghosts={name:[0,0,0,0] for name in PALETTES}
+        ghosts["a"][0]=46
+        self.assertFalse(observer.frame_matches(True,ghosts,None))
 
     def test_out_of_screen_is_not_an_absence_pass(self):
         frame=Image.new("RGB",(1024,768),(0,0,0))

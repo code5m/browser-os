@@ -190,6 +190,12 @@ def score_pixels(image, boxes, markers, palettes, Image):
         # with substantial margin above the absence threshold.
         demand((x1-x0)*(y1-y0)*320*180/(4*width*height) >= 32,
                "desktop sampling density insufficient for this fixture")
+    # Absence alone must not accept a blank/failed desktop capture during
+    # baseline, hidden, or closed stages. This is a conservative fixture
+    # liveness floor, not a general compositor/scanout guarantee.
+    overview = image.resize((32, 24), Image.Resampling.NEAREST)
+    demand(any(hi-lo > 8 for lo, hi in overview.getextrema()),
+           "uniform or near-uniform desktop capture")
     crops = [image.crop(box) for box in boxes]
     metrics = []
     for crop, marker in zip(crops, markers):
@@ -233,7 +239,7 @@ def frame_matches(correct, ghosts, baseline):
     if not correct:
         return False
     if baseline is None:
-        return all(sorted(row)[1] <= 8 for row in ghosts.values())
+        return all(sorted(row)[1] <= 8 and max(row) <= 45 for row in ghosts.values())
     return all(
         sorted(max(0, v-b) for v, b in zip(row, baseline[name]))[1] <= 8
         and max(max(0, v-b) for v, b in zip(row, baseline[name])) <= 45
@@ -251,6 +257,7 @@ class Observer:
         self.owners = {}
         self.main = None
         self.boxes = None
+        self.screen_size = None
         self.baseline = None
         self.finished = None
         self.failure = None
@@ -271,6 +278,14 @@ class Observer:
             demand(digest(binary) == self.expected_hash, "running executable hash mismatch")
             self.identities[pid] = identity
         return identity
+
+    def original_process_retired(self, identity):
+        pid, created = identity
+        try:
+            p = self.psutil.Process(pid)
+            return p.create_time() != created or not p.is_running()
+        except self.psutil.NoSuchProcess:
+            return True
 
     def grab(self):
         if sys.platform == "linux":
@@ -325,7 +340,11 @@ class Observer:
         deadline = time.monotonic() + 22
         samples = []
         while time.monotonic() < deadline and len(samples) < 3:
-            ok, metrics, ghosts, crops = score_pixels(self.grab(), boxes, markers, self.palettes, self.Image)
+            image = self.grab()
+            if self.screen_size is None:
+                self.screen_size = image.size
+            demand(image.size == self.screen_size, "desktop capture geometry changed")
+            ok, metrics, ghosts, crops = score_pixels(image, boxes, markers, self.palettes, self.Image)
             if phase == "baseline":
                 # Reject an accidental matching palette in every baseline
                 # frame, not just relative to a possibly contaminated first.
@@ -340,6 +359,15 @@ class Observer:
             if len(samples) < 3:
                 time.sleep(.25)
         demand(len(samples) == 3, "desktop pixels did not match phase: " + phase)
+        # The actual OS process identities must survive the capture, not
+        # merely the parent manager's before/after cached renderer routes.
+        demand(self.verify_process(body["pid"]) == self.main, "main process changed during capture")
+        for item in receipts:
+            self.verify_process(item["pid"])
+        if phase == "closed":
+            for _, pid, _, _ in self.owners.values():
+                demand(self.original_process_retired(self.identities[pid]),
+                       "original renderer still exists at closed phase: %d" % pid)
         if phase == "baseline":
             # Keep the minimum observed baseline per color: incidental
             # transient colors cannot grant additional ghost tolerance.
@@ -356,6 +384,7 @@ class Observer:
                 files.append({"file": path.name, "sha256": digest(path)})
         self.records.append({"sequence": n+1, "phase": phase, "markers": markers,
                              "native": receipts, "screen_regions": boxes,
+                             "desktop_size": self.screen_size,
                              "samples": [{"quadrants": q, "outside_palette_pixels": g}
                                          for q, g, _ in samples], "crops": files})
 
@@ -495,13 +524,9 @@ def main():
         demand(observer.finished is not None and observer.finished.get("ok") is True
                and len(observer.records) == len(STAGES) and process.returncode == 0,
                "native driver did not finish all pixel stages and exit cleanly")
-        for pid, created in observer.identities.values():
-            try:
-                p = psutil.Process(pid)
-                demand(p.create_time() != created or not p.is_running(),
-                       "original native process still exists: %d" % pid)
-            except psutil.NoSuchProcess:
-                pass
+        for identity in observer.identities.values():
+            demand(observer.original_process_retired(identity),
+                   "original native process still exists: %d" % identity[0])
         demand(digest(exe) == observer.expected_hash, "installed executable changed during run")
         evidence["status"] = "DESKTOP_VISIBILITY_FIXTURE_PASS"
     except Exception as error:

@@ -42,11 +42,7 @@ impl BoundHttp {
         }
         if body.len() > REQUEST_LIMIT { return Err(denied("AI_CONTEXT_LIMIT")); }
         let payload: Value = serde_json::from_slice(&body).map_err(|_| denied("AI_CONTEXT_INVALID"))?;
-        if payload["model"].as_str() != Some(self.model.as_str())
-            || payload["stream"].as_bool() == Some(true)
-            || provider_value_contains_credential(&payload, &self.credential) {
-            return Err(denied("AI_CONTEXT_CREDENTIAL_DENIED"));
-        }
+        checked_wire_request(&payload, &self.model, &self.credential)?;
         if self.dispatched.swap(true, Ordering::AcqRel) {
             return Err(denied("AI_RIG_DUPLICATE_DISPATCH"));
         }
@@ -101,6 +97,30 @@ impl HttpClientExt for BoundHttp {
     where T: Into<Bytes> + WasmCompatSend {
         async { Err(denied("AI_RIG_STREAMING_NOT_ENABLED")) }
     }
+}
+
+// Function arguments are JSON encoded inside a JSON string. Inspect the
+// decoded value as well as the outer envelope before opening the transport.
+// The current tool inventory does not limit historical, already paired calls.
+fn checked_wire_request(payload: &Value, model: &str, credential: &str) -> http::Result<()> {
+    if payload["model"].as_str() != Some(model)
+        || payload.get("stream").is_some_and(|value| value.as_bool() != Some(false))
+        || !payload["messages"].is_array() {
+        return Err(denied("AI_CONTEXT_INVALID"));
+    }
+    if credential.is_empty() || provider_value_contains_credential(payload, credential) {
+        return Err(denied("AI_CONTEXT_CREDENTIAL_DENIED"));
+    }
+    for message in payload["messages"].as_array().ok_or_else(|| denied("AI_CONTEXT_INVALID"))? {
+        if message.get("tool_calls").is_some_and(|value| !value.is_null()) {
+            let calls = browseros_agent_foundation::model::parse_function_batch(message, 8)
+                .map_err(|_| denied("AI_CONTEXT_INVALID"))?;
+            if calls.iter().any(|call| provider_value_contains_credential(&call.arguments, credential)) {
+                return Err(denied("AI_CONTEXT_CREDENTIAL_DENIED"));
+            }
+        }
+    }
+    Ok(())
 }
 
 // Inspect the exact wire envelope BEFORE the SDK normalizes it (it may
@@ -219,7 +239,16 @@ mod tests {
         let duplicate = json!({"choices":[complete["choices"][0].clone(),complete["choices"][0].clone()]});
         assert!(checked_wire_reply(&serde_json::to_vec(&duplicate).unwrap(),"secret",0).is_err());
         let tool = json!({"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":null,
-            "tool_calls":[{"id":"x","type":"function","function":{"name":"read_file","arguments":"{\\\"path\\\":\\\"secr\\\\u0065t\\\"}"}}]}}]});
+            "tool_calls":[{"id":"x","type":"function","function":{"name":"read_file","arguments":r#"{"path":"secr\u0065t"}"#}}]}}]});
+        // Prove the inner JSON is valid and is rejected because of the decoded
+        // credential, not because a malformed test string happens to fail.
+        assert!(checked_wire_reply(&serde_json::to_vec(&tool).unwrap(),"different-key",8).is_ok());
         assert!(checked_wire_reply(&serde_json::to_vec(&tool).unwrap(),"secret",8).is_err());
+        let history = json!({"model":"fixture","messages":[tool["choices"][0]["message"].clone()]});
+        assert!(checked_wire_request(&history,"fixture","different-key").is_ok());
+        assert!(checked_wire_request(&history,"fixture","secret").is_err());
+        let mut invalid_stream = history;
+        invalid_stream["stream"] = json!("false");
+        assert!(checked_wire_request(&invalid_stream,"fixture","different-key").is_err());
     }
 }

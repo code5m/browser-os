@@ -24,6 +24,25 @@ fn observe_until(
 }
 
 #[cfg(target_os = "linux")]
+fn x11_visibility_for_request(state: x11rb::protocol::xproto::MapState, show: bool) -> bool {
+    use x11rb::protocol::xproto::MapState;
+    if show { state == MapState::VIEWABLE } else { state != MapState::UNMAPPED }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod x11_tests {
+    use super::*;
+    use x11rb::protocol::xproto::MapState;
+    #[test]
+    fn mapped_but_unviewable_is_not_an_explicit_hide() {
+        assert!(x11_visibility_for_request(MapState::UNVIEWABLE, false));
+        assert!(!x11_visibility_for_request(MapState::UNVIEWABLE, true));
+        assert!(!x11_visibility_for_request(MapState::UNMAPPED, false));
+        assert!(x11_visibility_for_request(MapState::VIEWABLE, true));
+    }
+}
+
+#[cfg(target_os = "linux")]
 pub(crate) fn confirm(window: &tauri::Window, expected: Option<IpcRect>)
     -> Result<NativeWindowReceipt, String>
 {
@@ -45,8 +64,13 @@ pub(crate) fn confirm(window: &tauri::Window, expected: Option<IpcRect>)
         let attrs = connection.get_window_attributes(xid)
             .map_err(|_| "GRID_X11_VISIBILITY_UNAVAILABLE")?.reply()
             .map_err(|_| "GRID_X11_VISIBILITY_UNAVAILABLE")?;
-        let visible = attrs.map_state == MapState::VIEWABLE;
-        let rect = if visible {
+        // UNVIEWABLE means this window is still mapped, but an ancestor
+        // is not viewable. A hide receipt requires our own window to be
+        // unmapped, not merely obscured by an ancestor's lifecycle.
+        // A mismatched observation is retried by observe_until and never
+        // published as a successful receipt.
+        let visible = x11_visibility_for_request(attrs.map_state, expected.is_some());
+        let rect = if attrs.map_state == MapState::VIEWABLE {
             let geometry = connection.get_geometry(xid)
                 .map_err(|_| "GRID_X11_GEOMETRY_UNAVAILABLE")?.reply()
                 .map_err(|_| "GRID_X11_GEOMETRY_UNAVAILABLE")?;

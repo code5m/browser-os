@@ -1118,6 +1118,16 @@ fn complete_resume_boundary(messages: &[Value]) -> bool {
                 else {
                     return false;
                 };
+                // Match the Rig transcript projection: a text-only assistant
+                // entry cannot be null/empty, and structured content is not
+                // supported even when function calls are also present.
+                let content = message.get("content").filter(|value| !value.is_null());
+                if content.is_some_and(|value| !value.is_string())
+                    || (calls.is_empty() && !content.and_then(Value::as_str)
+                        .is_some_and(|text| !text.is_empty()))
+                {
+                    return false;
+                }
                 for call in calls {
                     if !admitted_ids.insert(call.id.clone()) {
                         return false;
@@ -4159,6 +4169,21 @@ mod tests {
         assert_eq!(done["foundation_task"]["id"], paused["foundation_task"]["id"]);
         assert_eq!(done["foundation_task"]["status"], "completed");
         assert_eq!(done["messages"].as_array().unwrap().last().unwrap()["content"], "Reviewed");
+    }
+
+    #[test]
+    fn continuation_rejects_unprojectable_assistant_history() {
+        let user = json!({"role":"user","content":"inspect"});
+        for malformed in [
+            json!({"role":"assistant","content":null}),
+            json!({"role":"assistant","content":""}),
+            json!({"role":"assistant","content":{"text":"not a string"}}),
+        ] {
+            assert!(!complete_resume_boundary(&[user.clone(), malformed, user.clone()]));
+        }
+        assert!(complete_resume_boundary(&[
+            user.clone(), json!({"role":"assistant","content":"done"}), user,
+        ]));
     }
 
     #[test]

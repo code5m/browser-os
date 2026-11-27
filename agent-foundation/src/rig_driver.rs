@@ -397,7 +397,7 @@ fn typed_call(call: &crate::model::FunctionCall) -> Result<ToolCall> {
 
 /// Decode the native authenticated transcript without flattening roles,
 /// losing call IDs or treating tool output as a new user instruction.
-fn typed_history(history: &[Value]) -> Result<Vec<Message>> {
+fn typed_history(history: &[Value]) -> Result<(Vec<Message>, BTreeSet<String>)> {
     crate::model::serialized_size(history, 512 * 1024)?;
     let mut out = Vec::new();
     let mut ids = BTreeSet::new();
@@ -442,7 +442,7 @@ fn typed_history(history: &[Value]) -> Result<Vec<Message>> {
             _ => return Err(FoundationError::InvalidInput("rig history role")),
         }
     }
-    Ok(out)
+    Ok((out, ids))
 }
 
 fn typed_definitions(tools: &[Value]) -> Result<Vec<ToolDefinition>> {
@@ -501,6 +501,10 @@ fn native_reply(response: &CompletionResponse) -> Result<Value> {
             _ => return Err(FoundationError::Provider("RIG_UNSUPPORTED_CONTENT".into())),
         }
     }
+    if matches!(response.finish_reason(), Some(FinishReason::Stop)) && !calls.is_empty()
+        || matches!(response.finish_reason(), Some(FinishReason::ToolCalls)) && calls.is_empty() {
+        return Err(FoundationError::InvalidInput("rig response terminal mismatch"));
+    }
     if calls.is_empty() && text.trim().is_empty() {
         return Err(FoundationError::Provider("MODEL_TEXT_EMPTY".into()));
     }
@@ -526,7 +530,7 @@ pub fn drive_owned_rig_function_batches<H: RigFunctionBatchHost>(
         return Err(host.invalid_batch(FoundationError::InvalidInput("rig function limits")));
     }
     if !lease.is_active() || host.cancelled() { return host.on_cancelled(); }
-    let mut history = typed_history(history).map_err(|e| host.invalid_batch(e))?;
+    let (mut history, mut ids) = typed_history(history).map_err(|e| host.invalid_batch(e))?;
     let prompt = history.pop().filter(|m| matches!(m, Message::User { .. }))
         .ok_or_else(|| host.invalid_batch(FoundationError::InvalidInput("rig pending prompt")))?;
     let definitions = typed_definitions(tools).map_err(|e| host.invalid_batch(e))?;
@@ -535,7 +539,8 @@ pub fn drive_owned_rig_function_batches<H: RigFunctionBatchHost>(
     let limits = TurnLimits::complete_message();
     let mut budget = ModelAdmissionBudget::new(limits).map_err(|e| host.invalid_batch(e))?;
     let deadline = std::time::Instant::now() + limits.deadline;
-    let mut ids = BTreeSet::new();
+    // The ID namespace spans already paired history as well as this new
+    // invocation. A resumed SDK run cannot reuse an earlier tool ID.
     let mut remaining_arguments = 256 * 1024usize;
     let mut remaining_results = 512 * 1024usize;
     for round in 0..rounds {
@@ -761,6 +766,18 @@ mod tests {
             .execute_receipted(permit, tasks, Duration::from_secs(2))
             .await
             .unwrap()
+    }
+
+    #[test]
+    fn typed_history_retains_prior_call_ids_for_new_sdk_run() {
+        let call = json!({"role":"assistant","content":null,"tool_calls":[
+            {"id":"historic","type":"function","function":{"name":"read_file","arguments":"{}"}}]});
+        let result = json!({"role":"tool","tool_call_id":"historic","content":"{}"});
+        let user = json!({"role":"user","content":"inspect"});
+        let (_, mut ids) = typed_history(&[user.clone(), call.clone(), result.clone()]).unwrap();
+        assert!(!ids.insert("historic".into()));
+        assert!(ids.insert("fresh".into()));
+        assert!(typed_history(&[user, call.clone(), result.clone(), call, result]).is_err());
     }
 
     #[test]
