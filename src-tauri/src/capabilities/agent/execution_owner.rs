@@ -3005,33 +3005,51 @@ mod tests {
 
     #[test]
     fn production_agent_task_owner_lifecycle() {
+        use browseros_agent_foundation::FoundationError;
         assert!(ProductionExecution::begin("unknown").is_err());
-        ProductionExecution::begin("chat")
-            .unwrap()
-            .finish(true)
-            .unwrap();
-        ProductionExecution::begin("legacy_agent")
-            .unwrap()
-            .finish(true)
-            .unwrap();
-        ProductionExecution::begin("agent_channel")
-            .unwrap()
-            .finish(true)
-            .unwrap();
-        ProductionExecution::begin("coding")
-            .unwrap()
-            .finish(false)
-            .unwrap();
-        ProductionExecution::begin("legacy_agent")
-            .unwrap()
-            .cancel()
-            .unwrap();
-        ProductionExecution::begin("agent_channel")
-            .unwrap()
-            .cancel()
-            .unwrap();
+
+        // Other tests and real concurrent runs share this production registry.
+        // Assert retirement by exact owner identity, not global emptiness.
+        // Keep an unrelated live task to prove none of the paths clears it.
+        let unrelated = ProductionExecution::begin("chat").unwrap();
+        let unrelated_id = unrelated.id();
+        let assert_retired = |id| {
+            assert!(matches!(
+                task_owner().get(id),
+                Err(FoundationError::NotFound)
+            ));
+            assert_eq!(
+                task_owner().get(unrelated_id).unwrap().status,
+                TaskStatus::Running
+            );
+        };
+        for (kind, success) in [
+            ("chat", true),
+            ("legacy_agent", true),
+            ("agent_channel", true),
+            ("coding", false),
+        ] {
+            let execution = ProductionExecution::begin(kind).unwrap();
+            let id = execution.id();
+            assert_eq!(task_owner().get(id).unwrap().status, TaskStatus::Running);
+            execution.finish(success).unwrap();
+            assert_retired(id);
+        }
+        for kind in ["legacy_agent", "agent_channel"] {
+            let execution = ProductionExecution::begin(kind).unwrap();
+            let id = execution.id();
+            assert_eq!(task_owner().get(id).unwrap().status, TaskStatus::Running);
+            execution.cancel().unwrap();
+            assert_retired(id);
+        }
         let aborted = ProductionExecution::begin("chat").unwrap();
+        let aborted_id = aborted.id();
         drop(aborted);
-        assert_eq!(task_owner().export_snapshot().unwrap(), "[]");
+        assert_retired(aborted_id);
+        unrelated.finish(true).unwrap();
+        assert!(matches!(
+            task_owner().get(unrelated_id),
+            Err(FoundationError::NotFound)
+        ));
     }
 }

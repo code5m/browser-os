@@ -61,10 +61,9 @@ urlencoding = "2"
 base64 = "0.22"
 # Reuse the locked PNG decoder for bounded isolated-capture artifact validation.
 png = "=0.18.1"
-# M0-4.a：原 gtk/wry 直接依赖是为「方案 C3（gtk::Overlay + gtk::Fixed 承载内嵌子 webview）」
-# 准备的，实际实现走的是方案 D（Window::add_child），源码中零 `gtk::` / `wry::` 引用，
-# 属于会被误读为「已有原生内嵌层」的死亡依赖，已连同过时 C3 注释一并移除。
-# 若将来真的要上 C3，请重新引入并在代码里给出引用点，不要只加依赖。
+# Embedded WebViews still use Window::add_child. Linux uses the already
+# locked GTK toolkit below only to realize the hidden isolated shell on its
+# native UI thread, never to add another embedded WebView implementation.
 open = "5"
 arboard = "3"
 # Reviewed local 0.8.1 fork: atomic Job assignment, ConPTY ownership and bounded wait cleanup.
@@ -86,6 +85,9 @@ tokio = { version = "1.53.3", features = ["net", "io-util", "time", "rt", "sync"
 # is not exported on Windows; do not compile this Linux dependency there.
 [target.'cfg(target_os = "linux")'.dependencies]
 freedesktop-icons = "0.4"
+# Realize the existing GTK shell without mapping it before child IPC readiness.
+# This is the same GTK package already selected by Tauri/Tao in Cargo.lock.
+gtk = "=0.18.2"
 # Read-only window-server observations from the isolated host IPC worker.
 raw-window-handle = "=0.6.2"
 x11rb = "=0.13.2"

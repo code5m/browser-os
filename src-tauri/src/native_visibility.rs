@@ -1,5 +1,6 @@
-//! Read-only native window-system evidence, executed on the existing child
-//! IPC worker after layout/show/hide. No page JS, pixels or desktop capture.
+//! Hidden native host preparation on the GTK setup thread, plus read-only
+//! window-system evidence on the existing child IPC worker after layout/show/hide.
+//! No page JS, pixels or desktop capture.
 //! X11 viewability and a DWM barrier do not establish webpage paint or
 //! unobscured monitor scanout. Keep that final GUI acceptance separate.
 use crate::grid_ipc::{IpcRect, NativeWindowReceipt, NativeWindowSource};
@@ -47,12 +48,8 @@ mod x11_tests {
 }
 
 #[cfg(target_os = "linux")]
-pub(crate) fn confirm(
-    window: &tauri::Window,
-    expected: Option<IpcRect>,
-) -> Result<NativeWindowReceipt, String> {
-    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-    use x11rb::protocol::xproto::{ConnectionExt, MapState};
+fn x11_window_id(window: &impl raw_window_handle::HasWindowHandle) -> Result<u32, String> {
+    use raw_window_handle::RawWindowHandle;
     let handle = window
         .window_handle()
         .map_err(|_| "GRID_X11_HANDLE_UNAVAILABLE")?;
@@ -66,6 +63,40 @@ pub(crate) fn confirm(
     if xid == 0 {
         return Err("GRID_X11_HANDLE_INVALID".into());
     }
+    Ok(xid)
+}
+
+/// Call only from the existing Tauri child setup (GTK main) thread. A
+/// never-shown GtkWindow otherwise has no GdkWindow/XID, so a later
+/// HideWindow cannot prove that it is unmapped. Realize without show/map;
+/// do not briefly expose the blank shell or any page to the desktop.
+#[cfg(target_os = "linux")]
+pub(crate) fn prepare_hidden_x11_host(window: &tauri::WebviewWindow) -> Result<(), String> {
+    use gtk::prelude::WidgetExt;
+    let shell = window
+        .gtk_window()
+        .map_err(|_| "GRID_GTK_HOST_UNAVAILABLE")?;
+    if shell.is_visible() || shell.is_mapped() {
+        return Err("GRID_X11_INITIAL_HOST_VISIBLE".into());
+    }
+    shell.realize();
+    if !shell.is_realized() || shell.is_visible() || shell.is_mapped() {
+        return Err("GRID_X11_HIDDEN_HOST_UNCONFIRMED".into());
+    }
+    // Check the actual Tauri/Tao handle while still on the UI thread. Flush
+    // creation to X11; the worker later observes the current XID independently.
+    x11_window_id(window)?;
+    shell.display().flush();
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn confirm(
+    window: &tauri::Window,
+    expected: Option<IpcRect>,
+) -> Result<NativeWindowReceipt, String> {
+    use x11rb::protocol::xproto::{ConnectionExt, MapState};
+    let xid = x11_window_id(window)?;
     // The app forces GDK_BACKEND=x11 for both the main and child hosts.
     // Use an independent X connection to observe the server's actual state,
     // not GTK's requested visibility or a cached client property.

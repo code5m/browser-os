@@ -525,6 +525,10 @@ fn run_grid_child(index: u32) {
             .visible(false)
             .focused(false)
             .build()?;
+            // Tauri creates hidden GTK shells lazily. Prepare the native XID
+            // without mapping the window before advertising IPC readiness.
+            #[cfg(target_os = "linux")]
+            native_visibility::prepare_hidden_x11_host(&window).map_err(std::io::Error::other)?;
             eprintln!("[grid-child-{}] shell window created", index);
             // 子窗口获焦/失焦上报主进程（主进程据此区分"点宫格"与"切走应用"）
             window.on_window_event(move |event| {
@@ -1118,9 +1122,9 @@ fn dispatch_grid_cmd(
                     {
                         return Err("GRID_NATIVE_CREATE_HIDE_UNCONFIRMED".into());
                     }
-                    // Creation is not a window-system visibility receipt:
-                    // a hidden shell may not have materialized its native
-                    // surface yet. Explicit show/hide obtains that evidence.
+                    // Creation is not a window-system visibility receipt.
+                    // The Linux shell is realized without mapping in setup;
+                    // only explicit show/hide obtains server-side evidence.
                     eprintln!("[grid-child] CreateTab {} 完成", id);
                     Ok(())
                 }

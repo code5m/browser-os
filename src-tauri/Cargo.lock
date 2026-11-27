@@ -2917,6 +2917,7 @@ dependencies = [
  "chrono",
  "freedesktop-icons",
  "git2",
+ "gtk",
  "keyring",
  "libc",
  "mysql",

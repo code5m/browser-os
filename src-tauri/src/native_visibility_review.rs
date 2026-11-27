@@ -275,6 +275,15 @@ impl Review {
 
         let a = bridge::tab_new_native(app.clone(), self.fixture("a"))?;
         let ai = crate::grid_ipc::tab_renderer_index(&a.id).ok_or("VISIBILITY_REVIEW_TAB_ROUTE")?;
+        // Regression: an ordinary renderer that has NEVER been shown must
+        // return an actual native hide receipt before its first positioning.
+        let initial = mgr
+            .capture_window_route(ai)?
+            .ok_or("VISIBILITY_REVIEW_WINDOW_MISSING")?;
+        mgr.hide_tab_renderer_bound(ai, Some(initial))?;
+        mgr.last_window_receipt(ai, initial.owner)?
+            .ok_or("VISIBILITY_REVIEW_INITIAL_HIDE_RECEIPT_MISSING")?
+            .validate_for(None)?;
         crate::native_tab_position(app.clone(), a.id.clone(), LEFT.0, LEFT.1, LEFT.2, LEFT.3)?;
         stage("tab_a_show", [Some("a"), None], &[(ai, Some(left))])?;
 

@@ -48,7 +48,7 @@ const base=process.env.CODING_UI_URL||'http://127.0.0.1:1433';
   assert.equal(await page.getByText('stale knowledge',{exact:true}).count(),0,'late knowledge result must not replace the skills panel');
   await page.evaluate(()=>{
     const original=window.fixture.bridge.codingService;
-    window.fixture.mcpRuns=0;window.fixture.mcpReviews=[];window.fixture.mcpRequests=[];
+    window.fixture.mcpRuns=0;window.fixture.mcpReviews=[];window.fixture.mcpRequests=[];window.fixture.mcpCancels=[];
     window.fixture.bridge.codingService=async request=>{
       request=JSON.parse(JSON.stringify(request));
       if(request.action==='mcp_review'){
@@ -63,7 +63,10 @@ const base=process.env.CODING_UI_URL||'http://127.0.0.1:1433';
       }
       if(request.action==='mcp_tools'){
         window.fixture.mcpRequests.push(structuredClone(request));window.fixture.mcpRuns++;
-        return new Promise(resolve=>{window.fixture.finishMcp=()=>resolve({result:{tools:[]}})});
+        return new Promise(resolve=>{window.fixture.finishMcp=()=>resolve({run_id:request.run_id,receipt_phase:'completed',result:{tools:[]}})});
+      }
+      if(request.action==='cancel'&&request.run_id===window.fixture.mcpRequests[0]?.run_id){
+        window.fixture.mcpCancels.push(structuredClone(request));return {cancel_requested:true};
       }
       return original(request);
     };
@@ -91,7 +94,10 @@ const base=process.env.CODING_UI_URL||'http://127.0.0.1:1433';
   const mcpExecution=await page.evaluate(()=>({request:window.fixture.mcpRequests[0],review:window.fixture.latestMcpReview,reviews:window.fixture.mcpReviews}));
   assert.equal(mcpExecution.reviews.length,2);
   assert.equal(mcpExecution.reviews[1].review_action,'mcp_tools');
-  assert.deepEqual(mcpExecution.request,{root:'/fixture',action:'mcp_tools',server:{command:'/usr/bin/fixture',args:['--reviewed']},
+  const runId=mcpExecution.request.run_id;
+  assert.match(runId,/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,'each approved dispatch requires a canonical v4 run identity');
+  assert.ok(mcpExecution.reviews.every(review=>!Object.hasOwn(review,'run_id')),'inspection must not allocate or dispatch a run');
+  assert.deepEqual(mcpExecution.request,{root:'/fixture',action:'mcp_tools',run_id:runId,server:{command:'/usr/bin/fixture',args:['--reviewed']},
     tool:'',arguments:{},approved:true,review_revision:mcpExecution.review.revision,
     approved_credential_refs:mcpExecution.review.credential_refs,approved_environment_names:['FIXTURE_MODE']},
     'execution must carry the current native revision and exactly the separately approved scopes');
@@ -103,6 +109,11 @@ const base=process.env.CODING_UI_URL||'http://127.0.0.1:1433';
   assert.equal(await mcpLaunch.isDisabled(),true,'an in-flight MCP request must prevent a second launch');
   assert.equal(await mcpApproval.isDisabled(),true,'approval cannot be reused while a request is running');
   assert.equal(await mcpScopeApproval.isDisabled(),true,'credential scope cannot be changed while a request is running');
+  await page.getByRole('button',{name:'请求取消 MCP',exact:true}).click();
+  await page.getByRole('button',{name:'等待取消回执',exact:true}).waitFor();
+  assert.deepEqual(await page.evaluate(()=>window.fixture.mcpCancels),[{root:'/fixture',action:'cancel',run_id:runId}],
+    'cancel must refer to the original admitted run rather than a new identity');
+  assert.equal(await mcpLaunch.isDisabled(),true,'cancel request is not a terminal receipt');
   await page.evaluate(()=>{window.fixture.show.value=false});await page.getByText('other view',{exact:true}).waitFor();await page.evaluate(()=>{window.fixture.show.value=true});
   await page.getByRole('status').filter({hasText:'MCP 调用仍在执行'}).waitFor();await page.getByRole('button',{name:'MCP',exact:true}).click();
   assert.equal(await mcpApproval.isDisabled(),true,'remount must retain the in-flight lock');
