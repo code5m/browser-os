@@ -24,6 +24,64 @@ fn observe_until(
     }
 }
 
+/// Tao may enqueue a toolkit visibility change before the getter sees it.
+/// Observe the same window until the requested state is visible, without
+/// submitting another operation. The IPC owner still enforces its deadline.
+pub(crate) fn wait_toolkit_visibility(
+    window: &tauri::Window,
+    expected: bool,
+    timeout_code: &'static str,
+) -> Result<(), String> {
+    wait_visibility(expected, timeout_code, || {
+        window
+            .is_visible()
+            .map_err(|e| format!("GRID_NATIVE_VISIBILITY_UNCONFIRMED:{e}"))
+    })
+}
+
+fn wait_visibility(
+    expected: bool,
+    timeout_code: &'static str,
+    mut observe: impl FnMut() -> Result<bool, String>,
+) -> Result<(), String> {
+    let deadline = Instant::now() + Duration::from_millis(400);
+    loop {
+        if observe()? == expected {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(timeout_code.into());
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[cfg(test)]
+mod toolkit_visibility_tests {
+    use super::*;
+
+    #[test]
+    fn delayed_toolkit_visibility_does_not_require_replaying_a_native_effect() {
+        for expected in [false, true] {
+            let mut samples = 0;
+            wait_visibility(expected, "TIMEOUT", || {
+                samples += 1;
+                Ok(if samples == 1 { !expected } else { expected })
+            })
+            .unwrap();
+            assert_eq!(samples, 2);
+        }
+    }
+
+    #[test]
+    fn observation_errors_never_become_a_visibility_receipt() {
+        assert_eq!(
+            wait_visibility(false, "TIMEOUT", || Err("OBSERVATION_FAILED".into())),
+            Err("OBSERVATION_FAILED".into())
+        );
+    }
+}
+
 #[cfg(target_os = "linux")]
 fn x11_visibility_for_request(state: x11rb::protocol::xproto::MapState, show: bool) -> bool {
     use x11rb::protocol::xproto::MapState;

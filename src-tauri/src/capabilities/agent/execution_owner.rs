@@ -2929,7 +2929,11 @@ mod tests {
         // An older record without this admission marker is not silently
         // promoted to a no-dispatch/transport-return proof.
         let old = Uuid::new_v4();
-        let (workspace, session) = coding_scope(&root, Some(&old.to_string()))
+        // Legacy records also use the canonical workspace path. On Windows
+        // canonicalize adds the extended path prefix; hashing the raw temp
+        // directory would construct a different (unauthorized) workspace.
+        let canonical = root.canonicalize().unwrap();
+        let (workspace, session) = coding_scope(&canonical, Some(&old.to_string()))
             .unwrap()
             .unwrap();
         let execution = ProductionExecution::begin_durable(

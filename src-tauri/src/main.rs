@@ -1116,12 +1116,11 @@ fn dispatch_grid_cmd(
                         win.hide()
                             .map_err(|e| format!("GRID_NATIVE_CREATE_HIDE_FAILED:{e}"))?;
                     }
-                    if win
-                        .is_visible()
-                        .map_err(|e| format!("GRID_NATIVE_VISIBILITY_UNCONFIRMED:{e}"))?
-                    {
-                        return Err("GRID_NATIVE_CREATE_HIDE_UNCONFIRMED".into());
-                    }
+                    native_visibility::wait_toolkit_visibility(
+                        &win,
+                        false,
+                        "GRID_NATIVE_CREATE_HIDE_UNCONFIRMED",
+                    )?;
                     // Creation is not a window-system visibility receipt.
                     // The Linux shell is realized without mapping in setup;
                     // only explicit show/hide obtains server-side evidence.
@@ -1161,12 +1160,11 @@ fn dispatch_grid_cmd(
                 win.show().map_err(|e| format!("show 失败: {e}"))?;
                 // Native toolkit visibility observation is stronger than a
                 // submitted show, but does not prove compositor paint.
-                if !win
-                    .is_visible()
-                    .map_err(|e| format!("GRID_NATIVE_VISIBILITY_UNCONFIRMED:{e}"))?
-                {
-                    return Err("GRID_NATIVE_SHOW_UNCONFIRMED".into());
-                }
+                native_visibility::wait_toolkit_visibility(
+                    &win,
+                    true,
+                    "GRID_NATIVE_SHOW_UNCONFIRMED",
+                )?;
                 let receipt = native_visibility::confirm(&win, Some(rect))?;
                 app.state::<AppState>()
                     .child_layouts
@@ -1184,12 +1182,11 @@ fn dispatch_grid_cmd(
                 if let Err(error) = win.hide() {
                     return Err(format!("GRID_NATIVE_LAYOUT_HIDE_FAILED:{error}"));
                 }
-                if win
-                    .is_visible()
-                    .map_err(|e| format!("GRID_NATIVE_VISIBILITY_UNCONFIRMED:{e}"))?
-                {
-                    return Err("GRID_NATIVE_LAYOUT_HIDE_UNCONFIRMED".into());
-                }
+                native_visibility::wait_toolkit_visibility(
+                    &win,
+                    false,
+                    "GRID_NATIVE_LAYOUT_HIDE_UNCONFIRMED",
+                )?;
                 native_visibility::confirm(&win, None)
                     .map_err(|error| format!("GRID_NATIVE_LAYOUT_HIDE_UNCONFIRMED:{error}"))?;
             }
@@ -1200,12 +1197,11 @@ fn dispatch_grid_cmd(
                 .get_window(host_label)
                 .ok_or_else(|| "子进程壳窗口不存在".to_string())?;
             win.hide().map_err(|e| format!("hide 失败: {e}"))?;
-            if win
-                .is_visible()
-                .map_err(|e| format!("GRID_NATIVE_VISIBILITY_UNCONFIRMED:{e}"))?
-            {
-                return Err("GRID_NATIVE_HIDE_UNCONFIRMED".into());
-            }
+            native_visibility::wait_toolkit_visibility(
+                &win,
+                false,
+                "GRID_NATIVE_HIDE_UNCONFIRMED",
+            )?;
             return native_visibility::confirm(&win, None).map(Some);
         }
         GridCmd::Eval { id, js } => {

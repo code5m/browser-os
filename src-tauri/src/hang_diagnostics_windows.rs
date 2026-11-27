@@ -3,7 +3,7 @@
 use serde_json::{json, Value};
 use std::{
     fs::{File, OpenOptions},
-    io::{self, Write},
+    io::{self, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -19,7 +19,9 @@ const MAX_EVENT_BYTES: usize = 32768;
 
 fn create_log(path: &Path) -> io::Result<File> {
     let mut options = OpenOptions::new();
-    options.write(true).append(true).create_new(true);
+    // This private create-new file has exactly one writer. Windows append
+    // access alone cannot truncate a file (FILE_WRITE_DATA is required).
+    options.write(true).create_new(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
@@ -61,6 +63,7 @@ impl IncidentLog {
         let recent = self.recent.as_mut().expect("recent log initialized");
         if recent.metadata()?.len().saturating_add(length) > MAX_LOG_BYTES {
             recent.set_len(0)?;
+            recent.seek(SeekFrom::Start(0))?;
         }
         recent.write_all(&bytes)
     }
@@ -200,6 +203,7 @@ mod tests {
         let path = dir.join("incident.jsonl");
         let mut log = IncidentLog::new(&path).unwrap();
         let sample = json!({"event":"fixture","payload":"x".repeat(30_000)});
+        log.append(&json!({"event":"first_incident"})).unwrap();
         for _ in 0..100 {
             log.append(&sample).unwrap();
         }
@@ -208,9 +212,14 @@ mod tests {
         drop(log);
         assert!(std::fs::metadata(&path).unwrap().len() <= MAX_LOG_BYTES);
         assert!(std::fs::metadata(&recent).unwrap().len() <= MAX_LOG_BYTES);
-        assert!(std::fs::read_to_string(&recent)
-            .unwrap()
-            .contains("ui_responsive_again"));
+        let initial = std::fs::read_to_string(&path).unwrap();
+        let tail = std::fs::read_to_string(&recent).unwrap();
+        assert!(initial.contains("first_incident"));
+        assert!(tail.contains("ui_responsive_again"));
+        assert!(!tail.contains("first_incident"));
+        for line in initial.lines().chain(tail.lines()) {
+            serde_json::from_str::<Value>(line).unwrap();
+        }
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

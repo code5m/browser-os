@@ -375,6 +375,42 @@ mod tests {
         }
     }
 
+    // Child libtest output must not be mixed into the parent's per-test
+    // evidence stream. Capture these short, controlled fixture reports and
+    // still require their real exit status and exactly one successful test.
+    fn assert_fixture_exit(child: &mut Child, status: std::process::ExitStatus) {
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        child
+            .0
+            .stdout
+            .take()
+            .unwrap()
+            .take(65537)
+            .read_to_string(&mut stdout)
+            .unwrap();
+        child
+            .0
+            .stderr
+            .take()
+            .unwrap()
+            .take(65537)
+            .read_to_string(&mut stderr)
+            .unwrap();
+        assert!(
+            status.success()
+                && stdout.len() <= 65536
+                && stderr.len() <= 65536
+                && stdout
+                    .lines()
+                    .filter(|line| line.starts_with("test result:"))
+                    .count()
+                    == 1
+                && stdout.contains("test result: ok. 1 passed; 0 failed; 0 ignored;"),
+            "child fixture failed: status={status}, stdout={stdout:?}, stderr={stderr:?}"
+        );
+    }
+
     #[test]
     fn old_grid_process_fences_new_leader_until_member_exits() {
         use std::process::{Command, Stdio};
@@ -394,6 +430,8 @@ mod tests {
                 .env(CHILD_ROOT, &root)
                 .env(CHILD_EPOCH, epoch.to_string())
                 .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
                 .spawn()
                 .unwrap(),
         );
@@ -417,7 +455,7 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             if let Some(status) = child.0.try_wait().unwrap() {
-                assert!(status.success());
+                assert_fixture_exit(&mut child, status);
                 break;
             }
             assert!(Instant::now() < deadline, "fixture did not retire");
@@ -437,13 +475,15 @@ mod tests {
                 .env(CHILD_EPOCH, epoch.to_string())
                 .env(CHILD_EXPECT_STALE, "1")
                 .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
                 .spawn()
                 .unwrap(),
         );
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             if let Some(status) = stale.0.try_wait().unwrap() {
-                assert!(status.success());
+                assert_fixture_exit(&mut stale, status);
                 break;
             }
             assert!(Instant::now() < deadline, "stale fixture did not retire");
