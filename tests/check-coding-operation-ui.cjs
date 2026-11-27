@@ -1,100 +1,99 @@
-// Actual approval component; MCP native transport is deliberately simulated.
+// Coding Operation Review follows the native Coding Owner receipt contract.
+// MCP and proposed commands are never dispatched directly by this UI test.
 const assert=require('node:assert/strict');
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
 const base=process.env.CODING_UI_URL||'http://127.0.0.1:1433';
 (async()=>{
- const text=await(await fetch(base+'/src/capabilities/agent/ui/CodingOperationReview.vue')).text();const vue=text.match(/from ["']([^"']+\/vue\.js\?[^"']+)["']/)?.[1];assert.ok(vue);
+ const source=await(await fetch(base+'/src/capabilities/agent/ui/CodingOperationReview.vue')).text();
+ const vue=source.match(/from ["']([^"']+\/vue\.js\?[^"']+)["']/)?.[1];assert.ok(vue);
  const browser=await chromium.launch({executablePath:'/usr/bin/google-chrome',headless:true,args:['--no-sandbox']});
  try{
   const page=await browser.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.route('**/__operation_test',r=>r.fulfill({contentType:'text/html; charset=utf-8',body:`<div id="app"></div><script type="module">
-  import {createApp,h,ref} from '${vue}';import Review from '/src/capabilities/agent/ui/CodingOperationReview.vue';import {bridge} from '/src/bridge.ts';import {setCapabilityRuntime} from '/src/capability/runtimeSingleton.ts';
-  setCapabilityRuntime({get:id=>id==='script'?{state:'ACTIVE',enabled:true}:null});
-  let commandRevision='c'.repeat(64);const commandCalls=[];
-  bridge.snippetList=async()=>[{id:'fixture-command',name:'Fixture',enabled:true,revision:commandRevision,interpreter:'node',argv:['fixture'],params:[]}];
-  bridge.runCommand=async(id,values,expectedRevision)=>{commandCalls.push({id,values,expectedRevision});if(expectedRevision!==commandRevision)throw Error('SNIPPET_REVIEW_CHANGED');if(operation.value.id==='command-unknown')throw Error('transport failed');return {run_id:'fixture',script_id:'fixture-command',status:'succeeded',output_tail:'ok',exit_code:0,truncated:false};};
-  const operation=ref({id:'first',kind:'mcp',input:{server_id:'fixture',tool:'test',arguments:{}},status:'pending'}),calls=[],results=[];
-  const reviews=[],events=[];
-  // Match the native JSON boundary, including nested operation arguments and reviewed scopes.
-  bridge.codingService=async request=>{
-    request=JSON.parse(JSON.stringify(request));
-    calls.push(request);events.push(request.action);
-    if(request.action==='mcp_review'){
-      const reference='ai:1234567890abcdef12345678:11111111-1111-4111-8111-111111111111';
-      const review={action:'mcp_call',command:'/usr/bin/fixture',args:['--fixture'],workspace:request.root,cwd:request.root,
-        isolation:'user_process',source:'Fixture MCP settings',environment_names:['FIXTURE_MODE'],credential_refs:[reference],
-        credentials:[{environment:'FIXTURE_TOKEN',name:'Fixture model',endpoint:'https://fixture.invalid/v1',reference}],
-        tool:request.tool,arguments:request.arguments,timeout_seconds:20,revision:String(reviews.length+1).padStart(64,'0')};
-      reviews.push(structuredClone(review));return review;
-    }
-    if(request.action!=='mcp_call')throw Error('unexpected fixture action');
-    if(operation.value.id==='timeout')throw Error('MCP_TIMEOUT_OR_CLOSED private-token-value');
-    return {result:operation.value.id==='large'?{content:[{type:'text',text:'数据😀'.repeat(12000)}]}:{isError:true,content:[{type:'text',text:'fixture tool error'}]}};
-  };
-  const claims=[];window.fixture={operation,calls,results,claims,reviews,events,commandCalls,rotateDefinition:()=>commandRevision='d'.repeat(64)};createApp({setup:()=>()=>h(Review,{key:operation.value.id,operation:operation.value,root:'/fixture',claimOperation:async id=>{claims.push(id);events.push('claim:'+id);if(id==='claim-fails')throw Error('state unknown');},onResolve:r=>results.push(r)})}).mount('#app');</script>`}));
+   import {createApp,h,ref} from '${vue}';import Review from '/src/capabilities/agent/ui/CodingOperationReview.vue';
+   import {bridge} from '/src/bridge.ts';import {commandWorkbench} from '/src/script/public.ts';
+   const operation=ref({id:'mcp-first',kind:'mcp',input:{server_id:'fixture',tool:'write',arguments:{value:1}},status:'pending'});
+   const calls=[],reviews=[],resolutions=[],dispatches=[],claims=[];let revision='a'.repeat(64);
+   bridge.codingService=async request=>{calls.push(structuredClone(request));if(request.action!=='mcp_review')throw Error('direct MCP dispatch forbidden');
+    const review={action:'mcp_call',revision,credential_refs:['credential:fixture'],environment_names:['FIXTURE_MODE'],command:'/usr/bin/fixture',args:[],tool:request.tool,arguments:request.arguments};
+    reviews.push(review);return review;};
+   commandWorkbench.list=async()=>[{id:'fixture-command',name:'Fixture',enabled:true,revision,interpreter:'node',argv:['fixture'],params:[]}];
+   commandWorkbench.run=async()=>{throw Error('direct command dispatch forbidden');};
+   const executeOwned=async(id,grant)=>{
+    calls.push({action:'execute_operation',operation_id:id,...structuredClone(grant)});
+    if(id==='owner-fails')throw Error('AGENT_BUSY private-token-value');
+    if(id==='mcp-unknown'){operation.value={...operation.value,status:'unknown',review_revision:'receipt:'+id,can_reconcile:true,result:'外部效果未知',execution:{phase:'unknown'}};return;}
+    if(id==='mcp-legacy'){operation.value={...operation.value,status:'unknown',result:'旧记录缺少审批证据',execution:{phase:'unknown'}};return;}
+    if(id==='command-stale'&&grant.expected_revision!==revision){operation.value={...operation.value,status:'cancelled',result:'SNIPPET_REVIEW_CHANGED',execution:{phase:'not_dispatched'}};return;}
+    dispatches.push(id);operation.value={...operation.value,status:'result_ready',result:'原生持久化回执：fixture',execution:{phase:'returned'}};
+   };
+   const resolve=value=>{resolutions.push(structuredClone(value));};
+   const claimOperation=async id=>{claims.push(id);throw Error('claim failed');};
+   const runDiagnostics=async()=>{throw Error('must not run after failed claim');};
+   window.fixture={operation,calls,reviews,resolutions,dispatches,claims,rotate:()=>revision='b'.repeat(64)};
+   createApp({setup:()=>()=>['pending','executing','unknown','result_ready'].includes(operation.value.status)
+    ?h(Review,{key:operation.value.id,operation:operation.value,root:'/fixture',executeOwned,claimOperation,diagnosticsAvailable:true,runDiagnostics,onResolve:resolve})
+    :h('p',{role:'status'},operation.value.execution?.phase==='not_dispatched'?'已确认未派发，旧审批不会重放':'已处理')}).mount('#app');
+  </script>`}));
   await page.goto(base+'/__operation_test');
-  const operationApproval=page.getByRole('checkbox',{name:'我批准这一次工作区操作',exact:true});
-  const scopeApproval=page.getByRole('checkbox',{name:'我允许本次进程取得以上凭据和配置环境变量',exact:true});
-  const executeMcp=page.getByRole('button',{name:'执行本次 MCP 请求',exact:true});
-  const mcpCallCount=()=>page.evaluate(()=>window.fixture.calls.filter(request=>request.action==='mcp_call').length);
-  const reviewAndApproveMcp=async()=>{
-    await page.getByRole('button',{name:'读取本次执行范围',exact:true}).click();
-    await page.locator('.mcp-execution-review').waitFor();
-    assert.equal(await operationApproval.isChecked(),false,'reading a scope requires a fresh operation approval');
-    assert.equal(await scopeApproval.isChecked(),false,'credentials require separate explicit approval');
-    await operationApproval.check();
-    assert.equal(await executeMcp.isDisabled(),true,'operation approval cannot grant credential or environment access');
-    await scopeApproval.check();
+  const opApprove=page.getByRole('checkbox',{name:'我批准这一次工作区操作',exact:true});
+  const credentialApprove=page.getByRole('checkbox',{name:'我允许本次进程取得以上凭据和配置环境变量',exact:true});
+  const execute=page.getByRole('button',{name:'执行本次 MCP 请求',exact:true});
+  const accept=page.getByRole('button',{name:'接受原生回执并记录结果',exact:true});
+  const reviewAndApprove=async()=>{
+   await page.getByRole('button',{name:'读取本次执行范围',exact:true}).click();
+   await page.locator('.mcp-execution-review').waitFor();
+   assert.equal(await opApprove.isChecked(),false);assert.equal(await credentialApprove.isChecked(),false);
+   await opApprove.check();assert.equal(await execute.isDisabled(),true);
+   await credentialApprove.check();
   };
-  await operationApproval.check();assert.equal(await executeMcp.isDisabled(),true,'an unreviewed MCP operation cannot execute');
-  assert.equal(await mcpCallCount(),0);await reviewAndApproveMcp();
-  await executeMcp.click();await page.getByLabel('待记录的操作结果',{exact:true}).waitFor();
-  const first=await page.evaluate(()=>({request:window.fixture.calls.find(request=>request.action==='mcp_call'),review:window.fixture.reviews[0],events:window.fixture.events}));
-  assert.deepEqual(first.events,['mcp_review','claim:first','mcp_call'],'native review and persisted claim precede external execution');
-  assert.deepEqual(first.request,{root:'/fixture',action:'mcp_call',approved:true,server_id:'fixture',tool:'test',arguments:{},
-    review_revision:first.review.revision,approved_credential_refs:first.review.credential_refs,approved_environment_names:['FIXTURE_MODE']},
-    'the execution request must bind the native revision and exact approved scopes');
-  assert.deepEqual(await page.evaluate(()=>window.fixture.claims),['first'],'claim is persisted before executing');
-  assert.equal(await page.getByRole('button',{name:'拒绝此请求',exact:true}).isDisabled(),true,'an executed operation must not be recorded as never executed');
-  await page.getByRole('button',{name:'记录结果供智能体续跑',exact:true}).click();assert.equal(await page.evaluate(()=>window.fixture.results[0].status),'failed');
-  assert.equal(await page.getByRole('button',{name:'执行本次 MCP 请求',exact:true}).isDisabled(),true);assert.equal(await mcpCallCount(),1);
-  await page.evaluate(()=>window.fixture.operation.value={...window.fixture.operation.value,id:'second'});await page.getByRole('button',{name:'拒绝此请求',exact:true}).click();
-  assert.equal(await page.evaluate(()=>window.fixture.results.at(-1).status),'rejected');assert.equal(await mcpCallCount(),1);
-  await page.evaluate(()=>window.fixture.operation.value={...window.fixture.operation.value,id:'timeout'});await reviewAndApproveMcp();await executeMcp.click();
-  const status=page.getByRole('status');await status.filter({hasText:'MCP 服务超时或已关闭'}).waitFor();assert.ok(!(await status.innerText()).includes('private-token-value'));
-  await page.getByRole('button',{name:'记录结果供智能体续跑',exact:true}).click();assert.deepEqual(await page.evaluate(()=>window.fixture.results.at(-1)),{id:'timeout',status:'failed',result:'MCP_TIMEOUT_OR_CLOSED'});
-  await page.evaluate(()=>window.fixture.operation.value={...window.fixture.operation.value,id:'large'});await reviewAndApproveMcp();await executeMcp.click();
-  await page.getByLabel('待记录的操作结果').waitFor();await page.getByRole('button',{name:'记录结果供智能体续跑',exact:true}).click();
-  const large=await page.evaluate(()=>window.fixture.results.at(-1));
-  assert.equal(large.status,'succeeded');assert.ok(new TextEncoder().encode(large.result).length<=16000);assert.match(large.result,/输出已截断/);assert.ok(!large.result.includes('\uFFFD'));
-  await page.evaluate(()=>window.fixture.operation.value={id:'command',kind:'command',input:{snippet_id:'fixture-command',values:{}},status:'pending'});
-  await page.getByText('我已检查命令和参数', {exact:false}).waitFor();await page.getByRole('checkbox').check();await page.getByRole('button',{name:'执行已审核命令'}).click();
-  await page.getByRole('button',{name:'将此输出加入模型上下文'}).waitFor();assert.equal(await page.getByRole('button',{name:'拒绝此请求'}).isDisabled(),true);
-  await page.getByRole('button',{name:'将此输出加入模型上下文'}).click();assert.equal(await page.evaluate(()=>window.fixture.results.at(-1).status),'succeeded');
-  assert.deepEqual(await page.evaluate(()=>window.fixture.commandCalls[0]),{id:'fixture-command',values:{},expectedRevision:'c'.repeat(64)},
-    'proposed commands must carry the exact reviewed native definition revision');
-  await page.evaluate(()=>window.fixture.operation.value={id:'command-stale',kind:'command',input:{snippet_id:'fixture-command',values:{}},status:'pending'});
-  await page.getByText('我已检查命令和参数',{exact:false}).waitFor();
-  await page.evaluate(()=>window.fixture.rotateDefinition());
+  await opApprove.check();assert.equal(await execute.isDisabled(),true,'unreviewed MCP must not execute');
+  await reviewAndApprove();await execute.click();await accept.waitFor();
+  const first=await page.evaluate(()=>({calls:window.fixture.calls,reviews:window.fixture.reviews}));
+  assert.deepEqual(first.calls.map(x=>x.action),['mcp_review','execute_operation'],'native owner receives the only execution request');
+  assert.deepEqual(first.calls[1],{action:'execute_operation',operation_id:'mcp-first',review_revision:first.reviews[0].revision,
+   approved_credential_refs:['credential:fixture'],approved_environment_names:['FIXTURE_MODE']});
+  assert.equal(await page.getByRole('button',{name:'拒绝此请求',exact:true}).count(),0);
+  await accept.click();
+  assert.deepEqual(await page.evaluate(()=>window.fixture.resolutions.at(-1)),{id:'mcp-first',status:'accepted',result:''},
+   'accepting a native receipt must not fabricate result text');
+  assert.deepEqual(await page.evaluate(()=>window.fixture.dispatches),['mcp-first']);
+  await page.evaluate(()=>window.fixture.operation.value={id:'mcp-unknown',kind:'mcp',input:{server_id:'fixture',tool:'write',arguments:{}},status:'pending'});
+  await reviewAndApprove();await execute.click();await page.getByText('外部结果尚未确认。',{exact:false}).waitFor();
+  assert.equal(await execute.count(),0);assert.equal(await accept.count(),0);
+  assert.equal(await page.getByRole('button',{name:'拒绝此请求',exact:true}).count(),0);
+  const evidence=page.getByLabel('对账依据',{exact:true}),ended=page.getByRole('checkbox',{name:'已核实原执行者和外部任务均已终止，不存在迟到副作用',exact:true});
+  const reconcile=page.getByRole('button',{name:'确认并记录对账结果',exact:true});
+  await evidence.fill('外部系统已核实');assert.equal(await reconcile.isDisabled(),true,'evidence alone is insufficient');
+  await ended.check();await page.locator('.operation-review select').selectOption('not_applied');await reconcile.click();
+  assert.deepEqual(await page.evaluate(()=>window.fixture.resolutions.at(-1)),{id:'mcp-unknown',status:'reconciled_not_applied',result:'外部系统已核实',review_revision:'receipt:mcp-unknown'});
+  await page.evaluate(()=>window.fixture.operation.value={id:'mcp-legacy',kind:'mcp',input:{server_id:'fixture',tool:'write',arguments:{}},status:'pending'});
+  await reviewAndApprove();await execute.click();await page.getByText('原始审批或工作区证据不足',{exact:false}).waitFor();
+  assert.equal(await reconcile.isDisabled(),true,'legacy unknown without native proof cannot be settled');
+  await page.evaluate(()=>window.fixture.operation.value={id:'command-first',kind:'command',input:{snippet_id:'fixture-command',values:{}},status:'pending'});
   await page.getByRole('checkbox',{name:'我已检查命令和参数，批准本次执行',exact:true}).check();
-  await page.getByRole('button',{name:'执行已审核命令'}).click();
-  await page.getByRole('button',{name:'记录本次未执行',exact:true}).waitFor();
-  assert.equal(await page.getByRole('button',{name:'执行已审核命令'}).isDisabled(),true,'a claimed stale request cannot execute again');
-  assert.equal(await page.getByRole('button',{name:'将此输出加入模型上下文'}).count(),0);
-  assert.equal(await page.getByRole('button',{name:'记录启动失败或状态未知'}).count(),0,'native rejection is distinct from unknown transport state');
-  await page.getByRole('button',{name:'记录本次未执行',exact:true}).click();
-  assert.deepEqual(await page.evaluate(()=>window.fixture.results.at(-1)),{id:'command-stale',status:'failed',result:'SNIPPET_REVIEW_CHANGED'});
-  await page.evaluate(()=>window.fixture.operation.value={id:'command-unknown',kind:'command',input:{snippet_id:'fixture-command',values:{}},status:'pending'});
-  await page.getByText('我已检查命令和参数',{exact:false}).waitFor();await page.getByRole('checkbox').check();await page.getByRole('button',{name:'执行已审核命令'}).click();
-  await page.getByRole('button',{name:'记录启动失败或状态未知'}).waitFor();assert.equal(await page.getByRole('button',{name:'拒绝此请求'}).isDisabled(),true);assert.equal(await page.getByRole('button',{name:'执行已审核命令'}).isDisabled(),true);
-  await page.getByRole('button',{name:'记录启动失败或状态未知'}).click();assert.equal(await page.evaluate(()=>window.fixture.results.at(-1).result),'COMMAND_START_FAILED_OR_UNKNOWN');
-  await page.evaluate(()=>window.fixture.operation.value={id:'recovered',kind:'mcp',input:{server_id:'fixture',tool:'test',arguments:{}},status:'executing'});
-  await page.getByText('此操作的执行结果未知',{exact:false}).waitFor();assert.equal(await page.getByRole('button',{name:'执行本次 MCP 请求'}).count(),0);
-  await page.getByRole('button',{name:'已核对，记录结果未知'}).click();assert.equal(await page.evaluate(()=>window.fixture.results.at(-1).result),'OPERATION_RESULT_UNKNOWN_USER_REVIEW_REQUIRED');
-  const callsBeforeFailure=await mcpCallCount();
-  await page.evaluate(()=>window.fixture.operation.value={id:'claim-fails',kind:'mcp',input:{server_id:'fixture',tool:'test',arguments:{}},status:'pending'});
-  await reviewAndApproveMcp();await executeMcp.click();
-  await page.getByRole('status').filter({hasText:'请求未发出'}).waitFor();assert.equal(await mcpCallCount(),callsBeforeFailure,'claim failure must not invoke external tool');
-  assert.deepEqual(errors,[]);console.log('CODING_OPERATION_UI=PASS tool-error-not-success/one-shot-execution/reject-without-execution; simulated native transport');
+  await page.getByRole('button',{name:'执行已审核命令',exact:true}).click();await accept.waitFor();
+  assert.deepEqual(await page.evaluate(()=>window.fixture.calls.filter(x=>x.action==='execute_operation').at(-1)),
+   {action:'execute_operation',operation_id:'command-first',values:{},expected_revision:'a'.repeat(64)});
+  await accept.click();
+  await page.evaluate(()=>window.fixture.operation.value={id:'command-stale',kind:'command',input:{snippet_id:'fixture-command',values:{}},status:'pending'});
+  await page.evaluate(()=>window.fixture.rotate());
+  await page.getByRole('checkbox',{name:'我已检查命令和参数，批准本次执行',exact:true}).check();
+  await page.getByRole('button',{name:'执行已审核命令',exact:true}).click();
+  await page.getByText('已确认未派发',{exact:false}).waitFor();
+  assert.equal(await page.evaluate(()=>window.fixture.dispatches.includes('command-stale')),false,'stale native revision must not dispatch');
+  assert.deepEqual(await page.evaluate(()=>window.fixture.claims),[]);
+  await page.evaluate(()=>window.fixture.operation.value={id:'owner-fails',kind:'mcp',input:{server_id:'fixture',tool:'write',arguments:{}},status:'pending'});
+  await reviewAndApprove();await execute.click();
+  await page.getByRole('status').filter({hasText:'原生执行结果未确认'}).waitFor();
+  assert.equal(await execute.isDisabled(),true,'failed native owner admission cannot be retried');
+  assert.ok(!(await page.locator('body').innerText()).includes('private-token-value'));
+  await page.evaluate(()=>window.fixture.operation.value={id:'diagnostics-claim-fails',kind:'code_diagnostics',input:{path:'src/main.rs'},status:'pending'});
+  await page.getByRole('checkbox',{name:'我批准这一次工作区操作',exact:true}).check();
+  await page.getByRole('button',{name:'执行本次代码诊断',exact:true}).click();
+  await page.getByRole('status').filter({hasText:'请求未发出'}).waitFor();
+  assert.deepEqual(await page.evaluate(()=>window.fixture.claims),['diagnostics-claim-fails']);
+  assert.deepEqual(errors,[]);
+  console.log('CODING_OPERATION_UI=PASS native-owner-receipts/approval-scope/unknown-effect-reconciliation/one-shot-execution; simulated native owner');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});
