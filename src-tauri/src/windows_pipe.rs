@@ -496,7 +496,8 @@ mod tests {
                 received,
                 Wire::Request {
                     seq: 7,
-                    cmd: GridCmd::Ping
+                    cmd: GridCmd::Ping,
+                    native_document: None,
                 }
             ));
             write_wire(&mut connection, &Wire::ok(7)).expect("write response");
@@ -507,6 +508,7 @@ mod tests {
             &Wire::Request {
                 seq: 7,
                 cmd: GridCmd::Ping,
+                native_document: None,
             },
         )
         .expect("write request");
