@@ -97,9 +97,9 @@ impl Review {
             let result = match client {
                 Ok(client) => {
                     let result = self.run(&app, &client);
-                    let _ = self.post(&client, "finished", json!({"ok":result.is_ok(),
+                    let acknowledged = self.post(&client, "finished", json!({"ok":result.is_ok(),
                         "error":result.as_ref().err(), "pid":std::process::id()}));
-                    result
+                    result.and(acknowledged)
                 }
                 Err(_) => Err("VISIBILITY_REVIEW_HTTP_UNAVAILABLE".into()),
             };
@@ -215,6 +215,7 @@ struct ObservedWindow {
     pid:u32,
     spawn_epoch:u64,
     generation:u64,
+    navigation_revision:u64,
     receipt:NativeWindowReceipt,
 }
 
@@ -227,10 +228,10 @@ fn observe(app:&AppHandle, targets:&[(u32,Option<IpcRect>)]) -> Result<Vec<Obser
         let receipt=mgr.last_window_receipt(index,binding.owner)?.ok_or("VISIBILITY_REVIEW_RECEIPT_MISSING")?;
         receipt.validate_for(rect)?;
         let after=mgr.capture_window_route(index)?.ok_or("VISIBILITY_REVIEW_WINDOW_MISSING")?;
-        let same=|a:RendererBinding,b:RendererBinding| a.index==b.index && a.owner==b.owner && a.generation==b.generation;
+        let same=|a:RendererBinding,b:RendererBinding| a==b;
         if !same(binding,after) {return Err("VISIBILITY_REVIEW_WINDOW_REPLACED".into());}
         observations.push(ObservedWindow{index,pid:binding.owner.0,spawn_epoch:binding.owner.1,
-            generation:binding.generation,receipt});
+            generation:binding.generation,navigation_revision:binding.navigation_revision,receipt});
     }
     // No extra published native renderer may be ignored by the observer.
     let owners=mgr.renderer_processes();

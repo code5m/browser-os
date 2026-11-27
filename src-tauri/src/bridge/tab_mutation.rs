@@ -974,10 +974,13 @@ fn matching<'a>(state: &'a mut Owner, ticket: &str) -> Result<&'a mut Slot, Stri
         .ok_or_else(|| "TAB_MUTATION_STALE_TICKET".into())
 }
 fn completion_unknown(error: &str) -> bool {
-    error.contains("GRID_REQUEST_OUTCOME_UNKNOWN") || error.contains("TAB_RENDERER_CLEANUP_PENDING") || matches!(
-        error,
-        "TAB_CREATE_CALLBACK_LOST" | "TAB_ACTIVATION_CALLBACK_LOST"
-    )
+    // Both native managers can return cleanup-pending directly or inside a
+    // partial-operation diagnostic. These are not terminal failure receipts.
+    ["GRID_REQUEST_OUTCOME_UNKNOWN", "TAB_RENDERER_CLEANUP_PENDING",
+        "GRID_PROCESS_CLEANUP_PENDING", "GRID_CHILD_CLEANUP_PENDING",
+        "GRID_CLOSE_CLEANUP_PENDING", "GRID_ROLLBACK_CLEANUP_PENDING",
+        "GRID_HIDE_CLEANUP_PENDING"].iter().any(|code| error.contains(code))
+        || matches!(error, "TAB_CREATE_CALLBACK_LOST" | "TAB_ACTIVATION_CALLBACK_LOST")
 }
 fn finish(ticket: &str, result: Result<Value, String>) {
     if let Ok(mut state) = owner() {
@@ -1776,6 +1779,20 @@ mod tests {
         state.slot.as_mut().unwrap().receipt.phase = Phase::Unknown;
         state.slot.as_mut().unwrap().receipt.ticket = "new".into();
         assert!(!state.claim_recovery(&intent, stalled));
+    }
+
+    #[test]
+    fn native_cleanup_pending_is_not_a_terminal_failure_on_either_platform() {
+        for error in [
+            "GRID_PROCESS_CLEANUP_PENDING:operations=1",
+            "GRID_CHILD_CLEANUP_PENDING:2147483649",
+            "GRID_CLOSE_CLEANUP_PENDING:0",
+            "GRID_ROLLBACK_CLEANUP_PENDING:1",
+            "TAB_RENDERER_ACTIVATION_PARTIAL:1:GRID_HIDE_CLEANUP_PENDING",
+            "TAB_RENDERER_CLEANUP_PENDING:2147483649",
+        ] { assert!(completion_unknown(error)); }
+        assert!(!completion_unknown("TAB_RENDERER_ACTIVATION_STALE"));
+        assert!(!completion_unknown("TAB_NOT_FOUND"));
     }
 
     #[test]

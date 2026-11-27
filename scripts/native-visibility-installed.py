@@ -252,6 +252,7 @@ class Observer:
         self.exe, self.expected_hash = exe, expected_hash
         self.Image, self.ImageGrab, self.psutil = Image, ImageGrab, psutil
         self.lock = threading.Lock()
+        self.stop = threading.Event()
         self.launcher = None
         self.records, self.identities = [], {}
         self.owners = {}
@@ -293,10 +294,12 @@ class Observer:
         return self.ImageGrab.grab(all_screens=False, include_layered_windows=True).convert("RGB")
 
     def handle_stage(self, body):
+        demand(not self.stop.is_set() and self.finished is None, "observer already terminal")
         n = len(self.records)
         demand(n < len(STAGES), "unexpected extra stage")
         phase, markers, expected_names = STAGES[n]
-        demand(body.get("sequence") == n+1 and body.get("phase") == phase and body.get("markers") == markers
+        demand(type(body.get("sequence")) is int and body["sequence"] == n+1
+               and body.get("phase") == phase and body.get("markers") == markers
                and body.get("backend") == "default_isolated_kernel_ready", "wrong stage or backend")
         main = self.verify_process(body["pid"])
         demand(Path(body["executable"]).resolve() == self.exe, "native executable identity mismatch")
@@ -310,11 +313,16 @@ class Observer:
         demand(boxes == self.boxes, "main window moved during evidence capture")
         receipts = body["receipts"]
         demand(isinstance(receipts, list) and len(receipts) == len(expected_names), "native receipt count mismatch")
-        demand(len({r["pid"] for r in receipts}) == len(receipts), "renderer processes are not independent")
+        demand(len({r["pid"] for r in receipts}) == len(receipts)
+               and len({r["index"] for r in receipts}) == len(receipts),
+               "renderer routes or processes are not independent")
         for name, item in zip(expected_names, receipts):
             self.verify_process(item["pid"])
             key = (item["index"], item["pid"], item["spawn_epoch"], item["generation"])
-            demand(all(type(v) is int and v >= 0 for v in key) and all(v > 0 for v in key[1:]),
+            revision = item["navigation_revision"]
+            demand(all(type(v) is int and v >= 0 for v in key) and all(v > 0 for v in key[1:])
+                   and key[0] <= 0xffffffff and key[1] <= 0xffffffff
+                   and type(revision) is int and 0 <= revision <= 0xffffffffffffffff,
                    "invalid native owner tuple")
             demand(item["pid"] != self.main[0], "renderer shares main process")
             if name in "ab":
@@ -322,6 +330,8 @@ class Observer:
             else:
                 demand(item["index"] == ("cd".index(name)), "unexpected grid route")
             if name not in self.owners:
+                demand(all(other[0] != key[0] for other in self.owners.values()),
+                       "native route reused for another fixture")
                 self.owners[name] = key
             demand(self.owners[name] == key, "renderer replaced during fixture")
             receipt = item["receipt"]
@@ -340,7 +350,10 @@ class Observer:
         deadline = time.monotonic() + 22
         samples = []
         while time.monotonic() < deadline and len(samples) < 3:
+            demand(not self.stop.is_set(), "observer capture cancelled")
             image = self.grab()
+            demand(not self.stop.is_set() and time.monotonic() < deadline,
+                   "desktop capture exceeded observation deadline")
             if self.screen_size is None:
                 self.screen_size = image.size
             demand(image.size == self.screen_size, "desktop capture geometry changed")
@@ -358,7 +371,8 @@ class Observer:
                 samples.append((metrics, ghosts, crops))
             if len(samples) < 3:
                 time.sleep(.25)
-        demand(len(samples) == 3, "desktop pixels did not match phase: " + phase)
+        demand(len(samples) == 3 and not self.stop.is_set() and time.monotonic() < deadline,
+               "desktop pixels did not match phase: " + phase)
         # The actual OS process identities must survive the capture, not
         # merely the parent manager's before/after cached renderer routes.
         demand(self.verify_process(body["pid"]) == self.main, "main process changed during capture")
@@ -379,9 +393,11 @@ class Observer:
         for sample, (_, _, crops) in enumerate(samples, 1):
             for i, crop in enumerate(crops):
                 path = self.output / ("%02d-%s-%d-%d.png" % (n+1, phase, sample, i))
+                demand(not self.stop.is_set(), "observer capture cancelled")
                 with path.open("xb") as fh:
                     crop.save(fh, format="PNG")
                 files.append({"file": path.name, "sha256": digest(path)})
+        demand(not self.stop.is_set(), "observer capture cancelled")
         self.records.append({"sequence": n+1, "phase": phase, "markers": markers,
                              "native": receipts, "screen_regions": boxes,
                              "desktop_size": self.screen_size,
@@ -389,11 +405,26 @@ class Observer:
                                          for q, g, _ in samples], "crops": files})
 
     def handle_finished(self, body):
-        demand(self.finished is None, "duplicate terminal result")
-        self.finished = body
+        demand(not self.stop.is_set() and self.finished is None, "duplicate terminal result")
         demand(body.get("ok") is True and len(self.records) == len(STAGES)
-               and self.main is not None and body.get("pid") == self.main[0],
+               and self.main is not None and type(body.get("pid")) is int
+               and self.verify_process(body["pid"]) == self.main,
                "native fixture incomplete: " + str(body.get("error", ""))[:240])
+        self.finished = body
+
+    def freeze(self):
+        # Native capture APIs can stall. A bounded snapshot must not race a
+        # daemon handler or wait forever for its lock. Incomplete snapshots
+        # cannot be used to publish PASS.
+        self.stop.set()
+        if not self.lock.acquire(timeout=2):
+            return None
+        try:
+            return {"stages": list(self.records), "palette": self.palettes,
+                    "native_terminal": self.finished, "observer_error": self.failure,
+                    "identities": tuple(self.identities.values())}
+        finally:
+            self.lock.release()
 
 
 def serve(observer):
@@ -424,7 +455,8 @@ def serve(observer):
                 self.connection.settimeout(4)
                 body = json.loads(self.rfile.read(size))
                 with observer.lock:
-                    demand(observer.failure is None, "observer already failed")
+                    demand(not observer.stop.is_set() and observer.failure is None,
+                           "observer already closed or failed")
                     if self.path == "/stage":
                         observer.handle_stage(body)
                     elif self.path == "/finished":
@@ -435,7 +467,8 @@ def serve(observer):
                 self.end_headers()
             except Exception as error:
                 with observer.lock:
-                    observer.failure = str(error)[:500]
+                    if not observer.stop.is_set() and observer.failure is None:
+                        observer.failure = str(error)[:500]
                 self.send_error(409, "fixture rejected")
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     server.daemon_threads = True
@@ -501,7 +534,7 @@ def main():
     evidence = {"status": "GUI_PENDING", "platform": sys.platform, "stages": [],
                 "physical_scanout_verified": False, "full_gui_pass": False,
                 "disposable_profile_scratch": str(scratch)}
-    server = observer = process = server_thread = None
+    server = observer = process = server_thread = frozen = None
     try:
         evidence["install"] = verify_install(args, exe)
         env = environment(scratch)
@@ -520,11 +553,13 @@ def main():
                 evidence["launcher_exit_code"] = process.wait(timeout=360)
             except subprocess.TimeoutExpired:
                 raise RuntimeError("native launcher did not exit; close the disposable VM normally")
-        demand(observer.failure is None, observer.failure or "observer failed")
-        demand(observer.finished is not None and observer.finished.get("ok") is True
-               and len(observer.records) == len(STAGES) and process.returncode == 0,
+        frozen = observer.freeze()
+        demand(frozen is not None, "observer did not quiesce after native exit")
+        demand(frozen["observer_error"] is None, frozen["observer_error"] or "observer failed")
+        demand(frozen["native_terminal"] is not None and frozen["native_terminal"].get("ok") is True
+               and len(frozen["stages"]) == len(STAGES) and process.returncode == 0,
                "native driver did not finish all pixel stages and exit cleanly")
-        for identity in observer.identities.values():
+        for identity in frozen["identities"]:
             demand(observer.original_process_retired(identity),
                    "original native process still exists: %d" % identity[0])
         demand(digest(exe) == observer.expected_hash, "installed executable changed during run")
@@ -538,10 +573,13 @@ def main():
                 server.shutdown()
             server.server_close()
         if observer is not None:
-            evidence["stages"] = observer.records
-            evidence["palette"] = observer.palettes
-            evidence["native_terminal"] = observer.finished
-            evidence["observer_error"] = observer.failure
+            if frozen is None:
+                frozen = observer.freeze()
+            if frozen is None:
+                evidence["status"] = "GUI_PENDING"
+                evidence["observer_error"] = "observer snapshot unavailable; handler still active"
+            else:
+                evidence.update({key: value for key, value in frozen.items() if key != "identities"})
         if process is not None and process.poll() is None:
             evidence["cleanup_pending"] = True
         # Retain the disposable profile even on success. A separate manual

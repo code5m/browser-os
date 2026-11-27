@@ -15,6 +15,10 @@ use std::{
 
 const MAX_FILE: usize = 256 * 1024;
 const MAX_SESSION: usize = 4 * 1024 * 1024;
+const MAX_MODEL_MESSAGES: usize = 128;
+// Model admission leaves room for the existing durable Run/Task settlement,
+// review bookkeeping and failure receipt. The hard storage cap is unchanged.
+const MODEL_SETTLEMENT_RESERVE: usize = 64 * 1024;
 static WORKSPACE_LOCKS: OnceLock<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>> = OnceLock::new();
 type SessionKey = (PathBuf, String);
 static SESSION_LOCKS: OnceLock<Mutex<HashMap<SessionKey, Weak<Mutex<()>>>>> = OnceLock::new();
@@ -1179,6 +1183,9 @@ fn provider_failure(error: &str) -> String {
         "AI_RESPONSE_EMPTY",
         "AI_RIG_PROVIDER_FAILED",
         "AI_CONTEXT_INVALID",
+        "AI_RIG_TRANSPORT_SCOPE_DENIED",
+        "AI_RIG_DUPLICATE_DISPATCH",
+        "AGENT_SESSION_LIMIT",
         "AGENT_RIG_PROVIDER_UNAVAILABLE",
     ];
     if SAFE_CODES.contains(&error) {
@@ -1476,7 +1483,15 @@ fn apply_journal_restore(
 fn recover_pending_apply(root: &Path, storage: &Path, session: &mut Session) -> Result<(), String> {
     let path = apply_journal_path(storage, &session.session_id)?;
     match fs::symlink_metadata(&path) {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            // A crash before journal publication and a lost journal after
+            // target publication are not distinguishable here. Preserve
+            // the authenticated session; never admit another file effect.
+            if matches!(session.status.as_str(), "apply_prepared" | "recovery_conflict") {
+                return Err("AGENT_RECOVERY_JOURNAL_MISSING".into());
+            }
+            return Ok(());
+        }
         Ok(meta)
             if meta.is_file()
                 && !meta.file_type().is_symlink()
@@ -1632,6 +1647,10 @@ fn apply_changes_with_write_hook(
         result["applied"] = json!([]);
         return Ok(result);
     }
+    // Reserve durable prepare/settlement room before making any backup,
+    // journal or project file publication. Existing proposals remain intact
+    // if the session has exhausted this admission budget.
+    model_session_bytes(session)?;
     let storage_identity = crate::capabilities::workspace::safe_paths::directory_identity(storage)
         .map_err(|_| "AGENT_STORAGE_UNAVAILABLE")?;
     let mut originals = Vec::new();
@@ -2560,11 +2579,44 @@ fn load(root: &Path, storage: &Path, id: Option<&str>) -> Result<Session, String
     Ok(session)
 }
 
-fn save(storage: &Path, session: &Session) -> Result<Value, String> {
-    let bytes = serde_json::to_vec(session).map_err(|_| "AGENT_SESSION_WRITE_FAILED")?;
-    if bytes.len() > MAX_SESSION {
+// Stop serialization at the storage limit instead of allocating an
+// arbitrarily oversized JSON record and rejecting it only afterwards.
+fn session_bytes(session: &Session, limit: usize) -> Result<Vec<u8>, String> {
+    struct BoundedBytes { bytes: Vec<u8>, limit: usize }
+    impl Write for BoundedBytes {
+        fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+            if data.len() > self.limit.saturating_sub(self.bytes.len()) {
+                return Err(std::io::Error::other("session byte limit"));
+            }
+            self.bytes.extend_from_slice(data);
+            Ok(data.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+    }
+    let mut writer = BoundedBytes { bytes: Vec::new(), limit };
+    serde_json::to_writer(&mut writer, session).map_err(|error|
+        if error.is_io() { "AGENT_SESSION_LIMIT" } else { "AGENT_SESSION_WRITE_FAILED" })?;
+    Ok(writer.bytes)
+}
+
+fn model_message_slots(current: usize, additional: usize) -> Result<(), String> {
+    if current.checked_add(additional).is_none_or(|count| count > MAX_MODEL_MESSAGES) {
         return Err("AGENT_SESSION_LIMIT".into());
     }
+    Ok(())
+}
+
+fn model_session_bytes(session: &Session) -> Result<Vec<u8>, String> {
+    session_bytes(session, MAX_SESSION - MODEL_SETTLEMENT_RESERVE)
+}
+
+fn model_session_candidate(session: &Session) -> Result<Session, String> {
+    serde_json::from_slice(&model_session_bytes(session)?)
+        .map_err(|_| "AGENT_SESSION_INVALID".into())
+}
+
+fn save(storage: &Path, session: &Session) -> Result<Value, String> {
+    let bytes = session_bytes(session, MAX_SESSION)?;
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     super::coding_checkpoint::write(storage, &session.session_id, &bytes, MAX_SESSION)?;
     #[cfg(not(any(target_os = "linux", target_os = "windows")))]
@@ -2726,6 +2778,8 @@ impl<P: FnMut(&[Value], &[Value]) -> Result<Value, String>>
     }
     fn request(&mut self) -> Result<Value, String> {
         verify_workspace_binding(self.root, self.session.workspace_identity.as_deref())?;
+        model_message_slots(self.session.messages.len(), 1)?;
+        model_session_bytes(self.session)?;
         (self.provider)(self.messages, &tools(self.plan))
     }
     fn provider_failure(&mut self, error: String) -> String {
@@ -2785,30 +2839,38 @@ impl<P: FnMut(&[Value], &[Value]) -> Result<Value, String>>
     ) -> Result<browseros_agent_foundation::engine::BatchFlow, String> {
         let root = self.root;
         let storage = self.storage;
-        let session = &mut *self.session;
-        verify_workspace_binding(root, session.workspace_identity.as_deref())?;
-        let messages = &mut *self.messages;
+        verify_workspace_binding(root, self.session.workspace_identity.as_deref())?;
         let plan = self.plan;
         let lease = self.lease;
-        if !lease.is_active() || cancelled(root, &session.session_id) {
-            session.status = "cancelled".into();
+        if !lease.is_active() || cancelled(root, &self.session.session_id) {
+            self.session.status = "cancelled".into();
             return Ok(browseros_agent_foundation::engine::BatchFlow::Stop);
         }
+        // Admit a whole paired batch and retain one answer slot after tool
+        // calls. A failed capacity check cannot publish a partial transcript,
+        // staged file, or approval proposal. These callbacks only read or
+        // propose; approved external effects use the separate durable owner.
+        let additional = 1 + calls.len() + usize::from(!calls.is_empty());
+        model_message_slots(self.session.messages.len(), additional)?;
+        let mut candidate = model_session_candidate(self.session)?;
         if calls.is_empty() {
             if !reply["content"].as_str().is_some_and(|text| !text.trim().is_empty()) {
                 return Err("AGENT_REPLY_INVALID".into());
             }
-            self.pending_answer = Some(reply);
-            session.status = if session.changes.is_empty() {
+            candidate.messages.push(reply.clone());
+            candidate.status = if candidate.changes.is_empty() {
                 "complete"
             } else {
                 "review"
-            }
-            .into();
+            }.into();
+            model_session_bytes(&candidate)?;
+            self.pending_answer = Some(reply);
+            self.session.status = candidate.status;
             return Ok(browseros_agent_foundation::engine::BatchFlow::Stop);
         }
-        session.messages.push(reply.clone());
-        messages.push(reply);
+        let first = candidate.messages.len();
+        let session = &mut candidate;
+        session.messages.push(reply);
         for call in calls {
             let name = call.name.as_str();
             let arguments = call.arguments;
@@ -2851,26 +2913,27 @@ impl<P: FnMut(&[Value], &[Value]) -> Result<Value, String>>
                 content = json!({"error":"AGENT_TOOL_OUTPUT_LIMIT"}).to_string();
             }
             let message = json!({"role":"tool","tool_call_id":call.id,"content":content});
-            session.messages.push(message.clone());
-            messages.push(message);
+            session.messages.push(message);
         }
         if !lease.is_active() || cancelled(root, &session.session_id) {
             session.status = "cancelled".into();
-            return Ok(browseros_agent_foundation::engine::BatchFlow::Stop);
-        }
-        if last {
+        } else if session.operations.iter().any(|o| o.status == "pending") {
+            session.status = "approval_required".into();
+        } else if last {
             session.status = "step_limit".into();
         }
-        if session.operations.iter().any(|o| o.status == "pending") {
-            session.status = "approval_required".into();
-            return Ok(browseros_agent_foundation::engine::BatchFlow::Stop);
-        }
-        // Checkpoint complete tool batches, not partial transcripts.
-        if session.status == "running" {
+        model_session_bytes(session)?;
+        let flow = if session.status == "running" {
+            // Checkpoint the complete candidate before exposing it to
+            // either the Native transcript or the Rig tool-result adapter.
             save(storage, session)?;
-            return Ok(browseros_agent_foundation::engine::BatchFlow::Continue);
-        }
-        Ok(browseros_agent_foundation::engine::BatchFlow::Stop)
+            browseros_agent_foundation::engine::BatchFlow::Continue
+        } else {
+            browseros_agent_foundation::engine::BatchFlow::Stop
+        };
+        self.messages.extend_from_slice(&candidate.messages[first..]);
+        *self.session = candidate;
+        Ok(flow)
     }
 }
 
@@ -2880,6 +2943,8 @@ impl<P: FnMut(&[Value], &[Value]) -> Result<Value, String>>
     fn request_rig(&mut self, request: rig_core::completion::CompletionRequest)
         -> Result<rig_core::completion::CompletionResponse, String> {
         verify_workspace_binding(self.root, self.session.workspace_identity.as_deref())?;
+        model_message_slots(self.session.messages.len(), 1)?;
+        model_session_bytes(self.session)?;
         let root = self.root;
         let session_id = &self.session.session_id;
         let lease = self.lease;
@@ -3687,9 +3752,8 @@ pub(crate) fn execute_with_routed_effect_adapter(
                 }
                 None
             };
-            if session.messages.len() > 128 {
-                return Err("AGENT_SESSION_LIMIT".into());
-            }
+            model_message_slots(session.messages.len(), if resume { 1 } else { 2 })?;
+            model_session_bytes(&session)?;
             let signal = request_signal(&request)?;
             let current_run = request["run_id"]
                 .as_str()
@@ -3768,6 +3832,7 @@ pub(crate) fn execute_with_routed_effect_adapter(
             // Checkpoint the complete pre-dispatch transcript before opening
             // model transport. A crash leaves an interrupted record, not a
             // fabricated completion or a silently replayed provider call.
+            model_session_bytes(&session)?;
             save(storage, &session)?;
             running_map()
                 .lock()
@@ -4901,6 +4966,40 @@ mod tests {
         }
         assert!(session.operations.is_empty());
     }
+    #[test]
+    fn model_capacity_rejects_a_whole_candidate_without_mutating_previous_session() {
+        let f = Fixture::new();
+        let mut session = load(&f.0, &f.0.join("state"), None).unwrap();
+        session.messages.push(json!({"role":"user","content":"inspect"}));
+        let bytes = session_bytes(&session, MAX_SESSION).unwrap();
+        assert_eq!(session_bytes(&session, bytes.len()).unwrap(), bytes);
+        assert_eq!(session_bytes(&session, bytes.len()-1).unwrap_err(), "AGENT_SESSION_LIMIT");
+        assert!(model_message_slots(126, 2).is_ok());
+        assert!(model_message_slots(126, 3).is_err());
+        assert!(model_message_slots(usize::MAX, 1).is_err());
+        let mut candidate = model_session_candidate(&session).unwrap();
+        candidate.messages.push(json!({"role":"assistant","content":"x".repeat(MAX_SESSION)}));
+        assert!(model_session_bytes(&candidate).is_err());
+        assert_eq!(session.messages.len(), 1);
+        assert!(session.changes.is_empty());
+    }
+
+    #[test]
+    fn missing_prepared_apply_journal_never_admits_a_replacement_transaction() {
+        let f = Fixture::new();
+        let storage = f.0.join("state");
+        let mut session = load(&f.0, &storage, None).unwrap();
+        session.status = "apply_prepared".into();
+        session.apply_operation_id = Some(uuid::Uuid::new_v4().to_string());
+        save(&storage, &session).unwrap();
+        let id = session.session_id.clone();
+        assert!(matches!(load(&f.0, &storage, Some(&id)),
+            Err(error) if error == "AGENT_RECOVERY_JOURNAL_MISSING"));
+        let retained = load_without_recovery(&f.0, &storage, Some(&id)).unwrap();
+        assert_eq!(retained.status, "apply_prepared");
+        assert_eq!(retained.apply_operation_id, session.apply_operation_id);
+    }
+
     #[test]
     fn provisional_final_answer_is_not_a_resumable_history_entry_after_rejection() {
         let f = Fixture::new();

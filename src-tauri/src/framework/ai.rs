@@ -184,6 +184,14 @@ fn acquire_provider_permit_timeout(
             return Err("AI_PROVIDER_BUSY".into());
         }
     }
+    // A wakeup or newly available slot is not admission after the
+    // cancellation signal/deadline. Recheck while still owning the counter.
+    if cancelled() {
+        return Err("AI_PROVIDER_CANCELLED".into());
+    }
+    if std::time::Instant::now() >= deadline {
+        return Err("AI_PROVIDER_BUSY".into());
+    }
     *active += 1;
     drop(active);
     Ok(ProviderPermit { semaphore })
@@ -2655,6 +2663,23 @@ mod tests {
         }];
         assert!(build_chat_messages("test", "default", &empty).is_err());
     }
+    #[test]
+    fn provider_admission_rechecks_cancellation_and_expired_deadline_before_increment() {
+        let profile = format!("fixture-{}", uuid::Uuid::new_v4());
+        let checks = std::sync::atomic::AtomicUsize::new(0);
+        assert!(matches!(super::acquire_provider_permit_timeout(&profile,
+            &|| checks.fetch_add(1, std::sync::atomic::Ordering::SeqCst) > 0,
+            std::time::Duration::from_secs(1)),
+            Err(error) if error == "AI_PROVIDER_CANCELLED"));
+        assert!(matches!(super::acquire_provider_permit_timeout(&profile, &|| false,
+            std::time::Duration::ZERO), Err(error) if error == "AI_PROVIDER_BUSY"));
+        let first = super::acquire_provider_permit_timeout(&profile, &|| false,
+            std::time::Duration::from_secs(1)).unwrap();
+        let second = super::acquire_provider_permit_timeout(&profile, &|| false,
+            std::time::Duration::from_secs(1)).unwrap();
+        drop((first, second));
+    }
+
     #[test]
     fn provider_limits_are_bounded_and_isolated_by_profile() {
         let profile = format!("fixture-{}", uuid::Uuid::new_v4());

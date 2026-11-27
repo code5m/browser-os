@@ -11,7 +11,7 @@ use rig_core::{
     wasm_compat::WasmCompatSend,
 };
 use serde_json::{json, Value};
-use std::{future::Future, sync::{Arc, atomic::{AtomicBool, Ordering}}, time::Duration};
+use std::{future::Future, sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}}, time::Duration};
 
 const REQUEST_LIMIT: usize = 512 * 1024;
 const RESPONSE_LIMIT: usize = 256 * 1024;
@@ -28,23 +28,42 @@ struct BoundHttp {
     model: String,
     max_calls: usize,
     dispatched: Arc<AtomicBool>,
+    // Only local, fixed error codes cross the SDK boundary. Never parse or
+    // expose provider-controlled error strings to classify the failure.
+    failure: Arc<Mutex<Option<&'static str>>>,
+}
+
+fn status_code(status: u16) -> &'static str {
+    match status {
+        401 | 403 => "AI_PROVIDER_AUTH_FAILED",
+        404 => "AI_PROVIDER_ENDPOINT_NOT_FOUND",
+        408 | 504 => "AI_PROVIDER_TIMEOUT",
+        429 => "AI_PROVIDER_RATE_LIMITED",
+        500..=599 => "AI_PROVIDER_SERVER_ERROR",
+        _ => "AI_PROVIDER_HTTP_ERROR",
+    }
 }
 
 impl BoundHttp {
+    fn reject(&self, code: &'static str) -> http::Error {
+        let mut failure = self.failure.lock().unwrap_or_else(|p| p.into_inner());
+        if failure.is_none() { *failure = Some(code); }
+        denied(code)
+    }
     async fn unary<U>(&self, request: Request<Bytes>) -> http::Result<Response<LazyBody<U>>>
     where U: From<Bytes> + WasmCompatSend + 'static {
         let (parts, body) = request.into_parts();
-        let endpoint = reqwest::Url::parse(&parts.uri.to_string()).map_err(|_| denied("AI_ENDPOINT_INVALID"))?;
+        let endpoint = reqwest::Url::parse(&parts.uri.to_string()).map_err(|_| self.reject("AI_ENDPOINT_INVALID"))?;
         let auth = format!("Bearer {}", self.credential);
         if parts.method != http::Method::POST || endpoint != self.endpoint
             || parts.headers.get("authorization").and_then(|value| value.to_str().ok()) != Some(auth.as_str()) {
-            return Err(denied("AI_RIG_TRANSPORT_SCOPE_DENIED"));
+            return Err(self.reject("AI_RIG_TRANSPORT_SCOPE_DENIED"));
         }
-        if body.len() > REQUEST_LIMIT { return Err(denied("AI_CONTEXT_LIMIT")); }
-        let payload: Value = serde_json::from_slice(&body).map_err(|_| denied("AI_CONTEXT_INVALID"))?;
-        checked_wire_request(&payload, &self.model, &self.credential)?;
+        if body.len() > REQUEST_LIMIT { return Err(self.reject("AI_CONTEXT_LIMIT")); }
+        let payload: Value = serde_json::from_slice(&body).map_err(|_| self.reject("AI_CONTEXT_INVALID"))?;
+        checked_wire_request(&payload, &self.model, &self.credential).map_err(|code| self.reject(code))?;
         if self.dispatched.swap(true, Ordering::AcqRel) {
-            return Err(denied("AI_RIG_DUPLICATE_DISPATCH"));
+            return Err(self.reject("AI_RIG_DUPLICATE_DISPATCH"));
         }
         // Only the reviewed endpoint and auth are forwarded; SDK-provided
         // incidental headers cannot redirect or expand native authority.
@@ -52,24 +71,24 @@ impl BoundHttp {
             .bearer_auth(&self.credential)
             .header("content-type", "application/json")
             .body(body).send().await.map_err(|error| {
-                denied(if error.is_timeout() { "AI_PROVIDER_TIMEOUT" } else { "AI_PROVIDER_REQUEST_FAILED" })
+                self.reject(if error.is_timeout() { "AI_PROVIDER_TIMEOUT" } else { "AI_PROVIDER_REQUEST_FAILED" })
             })?;
         let status = response.status();
         if !status.is_success() {
             // Never pass provider-controlled error bodies/headers to logs.
-            return Err(http::Error::non_success_with_details(status, http::HeaderMap::new(), String::new()));
+            return Err(self.reject(status_code(status.as_u16())));
         }
         if response.content_length().is_some_and(|length| length > RESPONSE_LIMIT as u64) {
-            return Err(denied("AI_RESPONSE_LIMIT"));
+            return Err(self.reject("AI_RESPONSE_LIMIT"));
         }
         let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(|_| denied("AI_HTTP_IO"))? {
+        while let Some(chunk) = response.chunk().await.map_err(|error| self.reject(if error.is_timeout() { "AI_PROVIDER_TIMEOUT" } else { "AI_HTTP_IO" }))? {
             if chunk.len() > RESPONSE_LIMIT.saturating_sub(bytes.len()) {
-                return Err(denied("AI_RESPONSE_LIMIT"));
+                return Err(self.reject("AI_RESPONSE_LIMIT"));
             }
             bytes.extend_from_slice(&chunk);
         }
-        let safe = checked_wire_reply(&bytes, &self.credential, self.max_calls)?;
+        let safe = checked_wire_reply(&bytes, &self.credential, self.max_calls).map_err(|code| self.reject(code))?;
         let body: LazyBody<U> = Box::pin(async move { Ok(U::from(Bytes::from(safe))) });
         Response::builder().status(status).header("content-type", "application/json")
             .body(body).map_err(http::Error::Protocol)
@@ -102,21 +121,21 @@ impl HttpClientExt for BoundHttp {
 // Function arguments are JSON encoded inside a JSON string. Inspect the
 // decoded value as well as the outer envelope before opening the transport.
 // The current tool inventory does not limit historical, already paired calls.
-fn checked_wire_request(payload: &Value, model: &str, credential: &str) -> http::Result<()> {
+fn checked_wire_request(payload: &Value, model: &str, credential: &str) -> Result<(), &'static str> {
     if payload["model"].as_str() != Some(model)
         || payload.get("stream").is_some_and(|value| value.as_bool() != Some(false))
         || !payload["messages"].is_array() {
-        return Err(denied("AI_CONTEXT_INVALID"));
+        return Err("AI_CONTEXT_INVALID");
     }
     if credential.is_empty() || provider_value_contains_credential(payload, credential) {
-        return Err(denied("AI_CONTEXT_CREDENTIAL_DENIED"));
+        return Err("AI_CONTEXT_CREDENTIAL_DENIED");
     }
-    for message in payload["messages"].as_array().ok_or_else(|| denied("AI_CONTEXT_INVALID"))? {
+    for message in payload["messages"].as_array().ok_or_else(|| "AI_CONTEXT_INVALID")? {
         if message.get("tool_calls").is_some_and(|value| !value.is_null()) {
             let calls = browseros_agent_foundation::model::parse_function_batch(message, 8)
-                .map_err(|_| denied("AI_CONTEXT_INVALID"))?;
+                .map_err(|_| "AI_CONTEXT_INVALID")?;
             if calls.iter().any(|call| provider_value_contains_credential(&call.arguments, credential)) {
-                return Err(denied("AI_CONTEXT_CREDENTIAL_DENIED"));
+                return Err("AI_CONTEXT_CREDENTIAL_DENIED");
             }
         }
     }
@@ -126,42 +145,42 @@ fn checked_wire_request(payload: &Value, model: &str, credential: &str) -> http:
 // Inspect the exact wire envelope BEFORE the SDK normalizes it (it may
 // otherwise select only choice zero or synthesize missing provider call IDs).
 // Redact text only; never change an executable argument into another value.
-fn checked_wire_reply(bytes: &[u8], credential: &str, max_calls: usize) -> http::Result<Vec<u8>> {
+fn checked_wire_reply(bytes: &[u8], credential: &str, max_calls: usize) -> Result<Vec<u8>, &'static str> {
     if bytes.len() > RESPONSE_LIMIT || credential.is_empty() {
-        return Err(denied("AI_RESPONSE_LIMIT"));
+        return Err("AI_RESPONSE_LIMIT");
     }
-    let mut body: Value = serde_json::from_slice(bytes).map_err(|_| denied("AI_RESPONSE_INVALID"))?;
-    let choices = body["choices"].as_array_mut().ok_or_else(|| denied("AI_RESPONSE_INVALID"))?;
-    if choices.len() != 1 { return Err(denied("AI_RESPONSE_INVALID")); }
+    let mut body: Value = serde_json::from_slice(bytes).map_err(|_| "AI_RESPONSE_INVALID")?;
+    let choices = body["choices"].as_array_mut().ok_or_else(|| "AI_RESPONSE_INVALID")?;
+    if choices.len() != 1 { return Err("AI_RESPONSE_INVALID"); }
     let choice = &mut choices[0];
     if choice.get("index").is_some_and(|index| index.as_u64() != Some(0)) {
-        return Err(denied("AI_RESPONSE_INVALID"));
+        return Err("AI_RESPONSE_INVALID");
     }
     let finish = choice["finish_reason"].as_str().map(str::to_owned);
     let message = choice.get_mut("message").filter(|value| value.is_object())
-        .ok_or_else(|| denied("AI_RESPONSE_INVALID"))?;
+        .ok_or_else(|| "AI_RESPONSE_INVALID")?;
     if message["role"] != "assistant"
         || message.get("function_call").is_some_and(|value| !value.is_null()) {
-        return Err(denied("AI_RESPONSE_INVALID"));
+        return Err("AI_RESPONSE_INVALID");
     }
     if let Some(content) = message.get("content").filter(|value| !value.is_null()) {
-        let text = content.as_str().ok_or_else(|| denied("AI_RESPONSE_INVALID"))?;
+        let text = content.as_str().ok_or_else(|| "AI_RESPONSE_INVALID")?;
         message["content"] = json!(text.replace(credential, "[REDACTED]"));
     }
     let calls = browseros_agent_foundation::model::parse_function_batch(message, max_calls)
-        .map_err(|_| denied("AI_RESPONSE_INVALID"))?;
+        .map_err(|_| "AI_RESPONSE_INVALID")?;
     if !matches!((finish.as_deref(), calls.is_empty()), (Some("stop"), true) | (Some("tool_calls"), false)) {
-        return Err(denied("AI_RESPONSE_INVALID"));
+        return Err("AI_RESPONSE_INVALID");
     }
     if calls.is_empty() && !message["content"].as_str().is_some_and(|text| !text.trim().is_empty()) {
-        return Err(denied("AI_RESPONSE_EMPTY"));
+        return Err("AI_RESPONSE_EMPTY");
     }
     if calls.iter().any(|call| provider_value_contains_credential(&call.arguments, credential))
         || provider_value_contains_credential(&body, credential) {
-        return Err(denied("AI_CONTEXT_CREDENTIAL_DENIED"));
+        return Err("AI_CONTEXT_CREDENTIAL_DENIED");
     }
-    let safe = serde_json::to_vec(&body).map_err(|_| denied("AI_RESPONSE_INVALID"))?;
-    if safe.len() > RESPONSE_LIMIT { return Err(denied("AI_RESPONSE_LIMIT")); }
+    let safe = serde_json::to_vec(&body).map_err(|_| "AI_RESPONSE_INVALID")?;
+    if safe.len() > RESPONSE_LIMIT { return Err("AI_RESPONSE_LIMIT"); }
     Ok(safe)
 }
 
@@ -191,8 +210,10 @@ pub(super) fn turn(
             .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(45))
             .build().map_err(|_| "AI_HTTP_CLIENT_UNAVAILABLE")?;
+        let failure = Arc::new(Mutex::new(None));
         let transport = BoundHttp { client, endpoint, credential: profile.credential.clone(),
-            model: profile.model.clone(), max_calls, dispatched: Arc::new(AtomicBool::new(false)) };
+            model: profile.model.clone(), max_calls, dispatched: Arc::new(AtomicBool::new(false)),
+            failure: Arc::clone(&failure) };
         let sdk = OpenAIConfig::new(profile.credential.clone())
             .with_base_url(profile.base_url.trim_end_matches('/'))
             .with_system_instructions_as_messages()
@@ -212,7 +233,16 @@ pub(super) fn turn(
                 Err(_) => continue,
                 Ok(result) => {
                     if cancelled() { return Err("AI_PROVIDER_CANCELLED".into()); }
-                    let mut result = result.map_err(|_| "AI_RIG_PROVIDER_FAILED")?;
+                    // A completed poll can race the absolute deadline.
+                    // Dropping this future releases only local transport
+                    // resources; it does not prove provider-side cancellation.
+                    if tokio::time::Instant::now() >= deadline {
+                        return Err("AI_PROVIDER_TIMEOUT".into());
+                    }
+                    let mut result = result.map_err(|_| {
+                        let code = *failure.lock().unwrap_or_else(|p| p.into_inner());
+                        code.unwrap_or("AI_RIG_PROVIDER_FAILED")
+                    })?;
                     // No raw provider diagnostics or headers in durable state.
                     result.raw = Value::Null;
                     // OpenAI Chat replay correlates only by function call ID.
@@ -230,6 +260,15 @@ pub(super) fn turn(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn provider_status_classification_uses_only_fixed_codes() {
+        assert_eq!(status_code(401), "AI_PROVIDER_AUTH_FAILED");
+        assert_eq!(status_code(404), "AI_PROVIDER_ENDPOINT_NOT_FOUND");
+        assert_eq!(status_code(429), "AI_PROVIDER_RATE_LIMITED");
+        assert_eq!(status_code(504), "AI_PROVIDER_TIMEOUT");
+        assert_eq!(status_code(503), "AI_PROVIDER_SERVER_ERROR");
+        assert_eq!(status_code(302), "AI_PROVIDER_HTTP_ERROR");
+    }
     #[test]
     fn wire_gate_denies_truncation_duplicate_choices_and_encoded_credentials() {
         let complete = json!({"choices":[{"index":0,"finish_reason":"stop",

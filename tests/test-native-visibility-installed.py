@@ -65,6 +65,17 @@ class PixelRejection(unittest.TestCase):
         ghosts["a"][0]=46
         self.assertFalse(observer.frame_matches(True,ghosts,None))
 
+    def test_terminal_observer_snapshot_blocks_late_stage(self):
+        fixture = observer.Observer("nonce", PALETTES, None, None, None, Image, None, None)
+        frozen = fixture.freeze()
+        self.assertIsNotNone(frozen)
+        self.assertEqual(frozen["stages"], [])
+        with self.assertRaisesRegex(RuntimeError, "already terminal"):
+            fixture.handle_stage({})
+        with self.assertRaisesRegex(RuntimeError, "duplicate terminal"):
+            fixture.handle_finished({})
+        self.assertEqual(frozen["stages"], [])
+
     def test_out_of_screen_is_not_an_absence_pass(self):
         frame=Image.new("RGB",(1024,768),(0,0,0))
         with self.assertRaises(RuntimeError):
