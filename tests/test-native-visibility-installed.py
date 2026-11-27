@@ -55,6 +55,14 @@ class PixelRejection(unittest.TestCase):
         self.assertFalse(score(other,["a",None],baseline)[0])
         self.assertTrue(score(other,["a","b"],baseline)[0])
 
+    def test_single_broad_baseline_color_cannot_mask_later_ghost(self):
+        base=Image.new("RGB",(1024,768),(36,36,36))
+        ImageDraw.Draw(base).rectangle((680,470,1000,710), fill=PALETTES["a"][0])
+        ok, _, ghosts, _ = observer.score_pixels(base,BOXES,[None,None],PALETTES,Image)
+        self.assertTrue(ok)
+        self.assertGreater(max(ghosts["a"]),45)
+        self.assertFalse(observer.frame_matches(ok,ghosts,None))
+
     def test_out_of_screen_is_not_an_absence_pass(self):
         frame=Image.new("RGB",(1024,768),(0,0,0))
         with self.assertRaises(RuntimeError):

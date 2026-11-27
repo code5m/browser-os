@@ -1118,6 +1118,14 @@ fn complete_resume_boundary(messages: &[Value]) -> bool {
                 else {
                     return false;
                 };
+                // Match Rig's typed transcript admission: an assistant turn
+                // must have text or a complete batch, never an empty/invalid
+                // placeholder that would fail only after the Run is started.
+                let content = message.get("content").filter(|value| !value.is_null());
+                if content.is_some_and(|value| !value.is_string())
+                    || (calls.is_empty() && content.and_then(Value::as_str).is_none_or(|text| text.is_empty())) {
+                    return false;
+                }
                 for call in calls {
                     if !admitted_ids.insert(call.id.clone()) {
                         return false;
@@ -1168,6 +1176,10 @@ fn provider_failure(error: &str) -> String {
         "AI_RESPONSE_INVALID",
         "AI_RESPONSE_EMPTY",
         "AI_RIG_PROVIDER_FAILED",
+        "AI_RIG_TRANSPORT_SCOPE_DENIED",
+        "AI_RIG_DUPLICATE_DISPATCH",
+        "AI_RIG_MULTIPART_DENIED",
+        "AI_RIG_STREAMING_NOT_ENABLED",
         "AI_CONTEXT_INVALID",
         "AGENT_RIG_PROVIDER_UNAVAILABLE",
     ];
@@ -4164,6 +4176,12 @@ mod tests {
     #[test]
     fn continuation_rejects_unpaired_tool_calls() {
         let user = json!({"role":"user","content":"inspect"});
+        assert!(!complete_resume_boundary(&[
+            user.clone(), json!({"role":"assistant","content":null}), user.clone()
+        ]));
+        assert!(!complete_resume_boundary(&[
+            user.clone(), json!({"role":"assistant","content":{"unexpected":true}}), user.clone()
+        ]));
         let assistant = json!({"role":"assistant","tool_calls":[{"id":"one","function":{"name":"read_file","arguments":"{}"}}]});
         assert!(!complete_resume_boundary(&[
             user.clone(),

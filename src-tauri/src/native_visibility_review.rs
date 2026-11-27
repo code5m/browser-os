@@ -1,7 +1,7 @@
 //! Explicit, disposable-profile installed GUI fixture. No public IPC command,
 //! no production screenshot API, no page-supplied proof. A separate desktop
 //! observer must acknowledge each physical screen sample before the next step.
-use crate::{bridge, grid_ipc::{IpcRect, NativeWindowReceipt, RendererBinding}, AppState};
+use crate::{bridge, grid_ipc::{IpcRect, NativeWindowReceipt}, AppState};
 use serde::Serialize;
 use serde_json::json;
 use std::{path::{Path, PathBuf}, time::Duration};
@@ -147,7 +147,8 @@ impl Review {
         let mut sequence=0u32;
         let mut stage = |phase:&str, markers:[Option<&str>;2], targets:&[(u32,Option<IpcRect>)]| -> Result<(),String> {
             sequence+=1;
-            if mgr.abs_rect(LEFT)!=Some(left) || mgr.abs_rect(RIGHT)!=Some(right) {
+            if !window.is_visible().unwrap_or(false)
+                || mgr.abs_rect(LEFT)!=Some(left) || mgr.abs_rect(RIGHT)!=Some(right) {
                 return Err("VISIBILITY_REVIEW_MAIN_GEOMETRY_CHANGED".into());
             }
             let before=observe(app,targets)?;
@@ -157,7 +158,8 @@ impl Review {
                 "executable":actual,"backend":bridge::isolated_tabs::mode_reason(),
                 "regions":regions,"markers":markers,"receipts":before,
             }))?;
-            if observe(app,targets)?!=before || mgr.abs_rect(LEFT)!=Some(left) || mgr.abs_rect(RIGHT)!=Some(right) {
+            if !window.is_visible().unwrap_or(false) || observe(app,targets)?!=before
+                || mgr.abs_rect(LEFT)!=Some(left) || mgr.abs_rect(RIGHT)!=Some(right) {
                 return Err("VISIBILITY_REVIEW_OWNER_OR_GEOMETRY_CHANGED".into());
             }
             Ok(())
@@ -215,6 +217,7 @@ struct ObservedWindow {
     pid:u32,
     spawn_epoch:u64,
     generation:u64,
+    navigation_revision:u64,
     receipt:NativeWindowReceipt,
 }
 
@@ -227,10 +230,11 @@ fn observe(app:&AppHandle, targets:&[(u32,Option<IpcRect>)]) -> Result<Vec<Obser
         let receipt=mgr.last_window_receipt(index,binding.owner)?.ok_or("VISIBILITY_REVIEW_RECEIPT_MISSING")?;
         receipt.validate_for(rect)?;
         let after=mgr.capture_window_route(index)?.ok_or("VISIBILITY_REVIEW_WINDOW_MISSING")?;
-        let same=|a:RendererBinding,b:RendererBinding| a.index==b.index && a.owner==b.owner && a.generation==b.generation;
-        if !same(binding,after) {return Err("VISIBILITY_REVIEW_WINDOW_REPLACED".into());}
+        // A visual fixture also owns its document: unlike normal window
+        // activation, a navigation during pixel observation invalidates proof.
+        if binding!=after {return Err("VISIBILITY_REVIEW_WINDOW_OR_DOCUMENT_REPLACED".into());}
         observations.push(ObservedWindow{index,pid:binding.owner.0,spawn_epoch:binding.owner.1,
-            generation:binding.generation,receipt});
+            generation:binding.generation,navigation_revision:binding.navigation_revision,receipt});
     }
     // No extra published native renderer may be ignored by the observer.
     let owners=mgr.renderer_processes();

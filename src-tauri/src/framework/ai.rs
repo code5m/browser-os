@@ -1662,15 +1662,20 @@ fn curl_failure(status: std::process::ExitStatus) -> &'static str {
         _ => "AI_PROVIDER_REQUEST_FAILED",
     }
 }
+// Shared status classification for legacy curl and the bounded Rig transport.
+fn provider_http_error(http: Option<u16>) -> &'static str {
+    match http {
+        Some(401 | 403) => "AI_PROVIDER_AUTH_FAILED",
+        Some(404) => "AI_PROVIDER_ENDPOINT_NOT_FOUND",
+        Some(429) => "AI_PROVIDER_RATE_LIMITED",
+        Some(500..=599) => "AI_PROVIDER_SERVER_ERROR",
+        _ => "AI_PROVIDER_HTTP_ERROR",
+    }
+}
+
 fn provider_error(status: std::process::ExitStatus, http: Option<u16>) -> &'static str {
     if status.code() == Some(22) {
-        return match http {
-            Some(401 | 403) => "AI_PROVIDER_AUTH_FAILED",
-            Some(404) => "AI_PROVIDER_ENDPOINT_NOT_FOUND",
-            Some(429) => "AI_PROVIDER_RATE_LIMITED",
-            Some(500..=599) => "AI_PROVIDER_SERVER_ERROR",
-            _ => "AI_PROVIDER_HTTP_ERROR",
-        };
+        return provider_http_error(http);
     }
     curl_failure(status)
 }

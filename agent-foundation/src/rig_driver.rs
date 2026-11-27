@@ -397,7 +397,7 @@ fn typed_call(call: &crate::model::FunctionCall) -> Result<ToolCall> {
 
 /// Decode the native authenticated transcript without flattening roles,
 /// losing call IDs or treating tool output as a new user instruction.
-fn typed_history(history: &[Value]) -> Result<Vec<Message>> {
+fn typed_history(history: &[Value]) -> Result<(Vec<Message>, BTreeSet<String>)> {
     crate::model::serialized_size(history, 512 * 1024)?;
     let mut out = Vec::new();
     let mut ids = BTreeSet::new();
@@ -442,7 +442,7 @@ fn typed_history(history: &[Value]) -> Result<Vec<Message>> {
             _ => return Err(FoundationError::InvalidInput("rig history role")),
         }
     }
-    Ok(out)
+    Ok((out, ids))
 }
 
 fn typed_definitions(tools: &[Value]) -> Result<Vec<ToolDefinition>> {
@@ -526,7 +526,9 @@ pub fn drive_owned_rig_function_batches<H: RigFunctionBatchHost>(
         return Err(host.invalid_batch(FoundationError::InvalidInput("rig function limits")));
     }
     if !lease.is_active() || host.cancelled() { return host.on_cancelled(); }
-    let mut history = typed_history(history).map_err(|e| host.invalid_batch(e))?;
+    // Carry the authenticated transcript's call IDs into the same admission
+    // set used for every new SDK turn, including a resumed tool-result prompt.
+    let (mut history, mut ids) = typed_history(history).map_err(|e| host.invalid_batch(e))?;
     let prompt = history.pop().filter(|m| matches!(m, Message::User { .. }))
         .ok_or_else(|| host.invalid_batch(FoundationError::InvalidInput("rig pending prompt")))?;
     let definitions = typed_definitions(tools).map_err(|e| host.invalid_batch(e))?;
@@ -535,7 +537,6 @@ pub fn drive_owned_rig_function_batches<H: RigFunctionBatchHost>(
     let limits = TurnLimits::complete_message();
     let mut budget = ModelAdmissionBudget::new(limits).map_err(|e| host.invalid_batch(e))?;
     let deadline = std::time::Instant::now() + limits.deadline;
-    let mut ids = BTreeSet::new();
     let mut remaining_arguments = 256 * 1024usize;
     let mut remaining_results = 512 * 1024usize;
     for round in 0..rounds {
@@ -761,6 +762,23 @@ mod tests {
             .execute_receipted(permit, tasks, Duration::from_secs(2))
             .await
             .unwrap()
+    }
+
+    #[test]
+    fn historical_tool_ids_are_carried_into_new_turn_admission() {
+        let transcript = [
+            json!({"role":"user","content":"inspect"}),
+            json!({"role":"assistant","content":null,"tool_calls":[{"id":"old-call","type":"function",
+                "function":{"name":"demo.inspect","arguments":"{}"}}]}),
+            json!({"role":"tool","tool_call_id":"old-call","content":"{}"}),
+        ];
+        let (messages, mut ids) = typed_history(&transcript).unwrap();
+        assert!(matches!(messages.last(), Some(Message::User { .. })));
+        assert!(!ids.insert("old-call".to_owned()));
+        assert!(ids.insert("new-call".to_owned()));
+        let mut repeated = transcript.to_vec();
+        repeated.extend_from_slice(&transcript);
+        assert!(typed_history(&repeated).is_err());
     }
 
     #[test]

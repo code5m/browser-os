@@ -487,3 +487,7 @@ Reject repeated tool-call IDs in the Foundation bounded function loop, and in Co
 ## 2026-11-27 — Installed native visibility evidence fixture
 
 The fourth core target now has an executable acceptance mechanism, not actual acceptance evidence: a manual default-isolated release driver and external desktop sampler on Linux X11 and Windows. Nine ordered phases bind native owner and geometry observations to three consecutive expected pixel samples and ghost-marker rejection; package/source/running-process evidence and clean exit are required. Existing profiles are rejected, and no full desktop capture is persisted. See `docs/operations/native-visibility-installed-review.md` and the associated SCR. Source integration only; NOT_RUN, GUI_PENDING, no builds/tests/CI/Actions or master merge.
+
+## 2026-11-27 — Rig/Coding and installed visibility integration hardening
+
+Carry historical tool IDs into the production Rig admission set, reject invalid/empty assistant resume boundaries, preserve the shared native HTTP failure vocabulary through SDK error normalization, and bind desktop evidence to the complete native route including navigation revision and main-window visibility. Recheck process identities after pixel capture and deny broad baseline color contamination. Added source-only regressions for historical call IDs, malformed resume, HTTP classification and single-color ghosts. Existing shutdown publication checks and compatibility fallback remain authoritative; no new runtime or gate. NOT_RUN / GUI_PENDING.

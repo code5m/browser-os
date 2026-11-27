@@ -233,7 +233,9 @@ def frame_matches(correct, ghosts, baseline):
     if not correct:
         return False
     if baseline is None:
-        return all(sorted(row)[1] <= 8 for row in ghosts.values())
+        # A pre-existing single broad marker-colored patch must not be
+        # subtracted from every later stage as harmless background.
+        return all(sorted(row)[1] <= 8 and max(row) <= 45 for row in ghosts.values())
     return all(
         sorted(max(0, v-b) for v, b in zip(row, baseline[name]))[1] <= 8
         and max(max(0, v-b) for v, b in zip(row, baseline[name])) <= 45
@@ -296,11 +298,14 @@ class Observer:
         receipts = body["receipts"]
         demand(isinstance(receipts, list) and len(receipts) == len(expected_names), "native receipt count mismatch")
         demand(len({r["pid"] for r in receipts}) == len(receipts), "renderer processes are not independent")
+        stage_identities = {main}
         for name, item in zip(expected_names, receipts):
-            self.verify_process(item["pid"])
+            stage_identities.add(self.verify_process(item["pid"]))
             key = (item["index"], item["pid"], item["spawn_epoch"], item["generation"])
             demand(all(type(v) is int and v >= 0 for v in key) and all(v > 0 for v in key[1:]),
                    "invalid native owner tuple")
+            revision = item.get("navigation_revision")
+            demand(type(revision) is int and revision >= 0, "missing native navigation revision")
             demand(item["pid"] != self.main[0], "renderer shares main process")
             if name in "ab":
                 demand(item["index"] & (1 << 31), "ordinary tab is not an isolated renderer")
@@ -340,6 +345,11 @@ class Observer:
             if len(samples) < 3:
                 time.sleep(.25)
         demand(len(samples) == 3, "desktop pixels did not match phase: " + phase)
+        # The capture can take seconds. Recheck live image/ancestry and the
+        # exact PID birth time before publishing an acknowledgement.
+        for pid, created in stage_identities:
+            demand(self.verify_process(pid) == (pid, created),
+                   "native process identity changed during pixel capture")
         if phase == "baseline":
             # Keep the minimum observed baseline per color: incidental
             # transient colors cannot grant additional ghost tolerance.
