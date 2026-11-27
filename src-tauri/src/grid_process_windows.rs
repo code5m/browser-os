@@ -83,14 +83,24 @@ impl ChildComms {
     /// launched. Do not recycle request identities across process generations.
     fn prepare_spawn(&self) -> Result<(), String> {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        let check = || if self.closing.load(Ordering::SeqCst) {
-            Err("GRID_CONNECTION_CLOSING".to_string())
-        } else { Ok(()) };
+        let check = || {
+            if self.closing.load(Ordering::SeqCst) {
+                Err("GRID_CONNECTION_CLOSING".to_string())
+            } else {
+                Ok(())
+            }
+        };
         let mut writer = crate::grid_ipc::lock_renderer_writer(&self.writer, deadline, check)?;
         let _owner = crate::grid_ipc::lock_renderer_writer(&self.owner_gate, deadline, check)?;
-        let generation = self.generation.load(Ordering::SeqCst).checked_add(1)
+        let generation = self
+            .generation
+            .load(Ordering::SeqCst)
+            .checked_add(1)
             .ok_or("GRID_CONNECTION_GENERATION_EXHAUSTED")?;
-        let epoch = self.spawn_epoch.load(Ordering::SeqCst).checked_add(1)
+        let epoch = self
+            .spawn_epoch
+            .load(Ordering::SeqCst)
+            .checked_add(1)
             .ok_or("GRID_SPAWN_EPOCH_EXHAUSTED")?;
         self.navigation_revision.store(0, Ordering::SeqCst);
         *self.native_document.lock().unwrap() = None;
@@ -111,8 +121,13 @@ impl ChildComms {
     }
 
     fn download_retirement(&self, index: u32, pid: u32) -> Option<serde_json::Value> {
-        if !crate::grid_ipc::is_tab_renderer(index) { return None; }
-        let observed = *self.download_observation.lock().unwrap_or_else(|p| p.into_inner());
+        if !crate::grid_ipc::is_tab_renderer(index) {
+            return None;
+        }
+        let observed = *self
+            .download_observation
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         Some(serde_json::json!({
             "id": crate::grid_ipc::renderer_label(index), "phase": "owner_retired",
             "pid": pid, "spawn_epoch": self.spawn_epoch.load(Ordering::SeqCst).to_string(),
@@ -146,7 +161,10 @@ impl ChildComms {
             return None;
         }
         self.blank_reclaiming.store(true, Ordering::SeqCst);
-        Some(BlankReclaimGuard { comms: Arc::clone(self), generation })
+        Some(BlankReclaimGuard {
+            comms: Arc::clone(self),
+            generation,
+        })
     }
 
     fn publish_owner(&self, pid: u32) {
@@ -184,12 +202,16 @@ impl ChildComms {
         if !self.accepts_peer(expected.0) || self.spawn_epoch.load(Ordering::SeqCst) != expected.1 {
             return Err("GRID_RENDERER_OWNER_CHANGED".into());
         }
-        Ok(self.is_connected().then(|| self.generation.load(Ordering::SeqCst)))
+        Ok(self
+            .is_connected()
+            .then(|| self.generation.load(Ordering::SeqCst)))
     }
 
     fn mark_ready(&self, generation: u64) -> bool {
         let _owner = self.owner_gate.lock().unwrap();
-        if !self.is_transport_current(generation) || self.ready_generation.load(Ordering::SeqCst) != 0 {
+        if !self.is_transport_current(generation)
+            || self.ready_generation.load(Ordering::SeqCst) != 0
+        {
             return false;
         }
         self.ready_generation.store(generation, Ordering::SeqCst);
@@ -206,22 +228,31 @@ impl ChildComms {
     }
 
     fn accepts_peer(&self, pid: u32) -> bool {
-        pid != 0 && self.expected_pid.load(Ordering::SeqCst) == pid
+        pid != 0
+            && self.expected_pid.load(Ordering::SeqCst) == pid
             && !self.closing.load(Ordering::SeqCst)
     }
 
     fn attach(&self, stream: UnixStream, peer_pid: u32) -> Result<u64, String> {
         let control = stream.try_clone().map_err(|error| error.to_string())?;
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        let check = || if self.accepts_peer(peer_pid) { Ok(()) }
-            else { Err("GRID_PEER_NOT_OWNED".to_string()) };
+        let check = || {
+            if self.accepts_peer(peer_pid) {
+                Ok(())
+            } else {
+                Err("GRID_PEER_NOT_OWNED".to_string())
+            }
+        };
         let mut writer = crate::grid_ipc::lock_renderer_writer(&self.writer, deadline, check)?;
         let _owner = crate::grid_ipc::lock_renderer_writer(&self.owner_gate, deadline, check)?;
         if !self.accepts_peer(peer_pid) {
             let _ = control.cancel_io();
             return Err("GRID_PEER_NOT_OWNED".into());
         }
-        let generation = self.generation.load(Ordering::SeqCst).checked_add(1)
+        let generation = self
+            .generation
+            .load(Ordering::SeqCst)
+            .checked_add(1)
             .ok_or("GRID_CONNECTION_GENERATION_EXHAUSTED")?;
         if let Some(previous) = self.cancellation.lock().unwrap().replace(control) {
             let _ = previous.cancel_io();
@@ -251,7 +282,9 @@ impl ChildComms {
         }
         if let Ok(mut pending) = self.pending.try_lock() {
             for (_, tx) in pending.drain() {
-                let _ = tx.send(Err("GRID_REQUEST_OUTCOME_UNKNOWN: connection shutdown after admission".into()));
+                let _ = tx.send(Err(
+                    "GRID_REQUEST_OUTCOME_UNKNOWN: connection shutdown after admission".into(),
+                ));
             }
         }
         if let Ok(mut writer) = self.writer.try_lock() {
@@ -271,7 +304,9 @@ impl ChildComms {
         // Do not wait for a writer that may itself need this cancellation.
         {
             let _owner = self.owner_gate.lock().unwrap();
-            if self.generation.load(Ordering::SeqCst) != generation { return; }
+            if self.generation.load(Ordering::SeqCst) != generation {
+                return;
+            }
             self.ready_generation.store(0, Ordering::SeqCst);
             self.connected.store(false, Ordering::SeqCst);
             if let Some(control) = self.cancellation.lock().unwrap().take() {
@@ -462,7 +497,10 @@ impl GridProcessManager {
             return Ok(c.clone());
         }
         if crate::grid_ipc::is_tab_renderer(index)
-            && listeners.keys().filter(|id| crate::grid_ipc::is_tab_renderer(**id)).count()
+            && listeners
+                .keys()
+                .filter(|id| crate::grid_ipc::is_tab_renderer(**id))
+                .count()
                 >= crate::grid_ipc::MAX_ISOLATED_TAB_RENDERERS
         {
             return Err("TAB_RENDERER_LIMIT".into());
@@ -488,7 +526,8 @@ impl GridProcessManager {
             }
             match listener.accept() {
                 Ok((stream, _)) => {
-                    if accept_lifecycle.is_stopping() || comms_accept.closing.load(Ordering::SeqCst) {
+                    if accept_lifecycle.is_stopping() || comms_accept.closing.load(Ordering::SeqCst)
+                    {
                         let _ = stream.cancel_io();
                         break;
                     }
@@ -548,51 +587,104 @@ impl GridProcessManager {
                                     comms_reader.complete_response(
                                         generation,
                                         seq,
-                                        if ok { Ok(data) } else { Err(err.unwrap_or_else(|| "子进程执行失败".into())) },
+                                        if ok {
+                                            Ok(data)
+                                        } else {
+                                            Err(err.unwrap_or_else(|| "子进程执行失败".into()))
+                                        },
                                     );
                                 }
                                 Ok(Some(Wire::Event { name, mut payload })) => {
                                     if let Some(app) = &app_reader {
                                         let state = app.state::<crate::bridge::AppState>();
-                                        if !state.grid_manager.accept_renderer_event(index, &comms_reader, generation, &name, &mut payload) {
+                                        if !state.grid_manager.accept_renderer_event(
+                                            index,
+                                            &comms_reader,
+                                            generation,
+                                            &name,
+                                            &mut payload,
+                                        ) {
                                             break;
                                         }
                                         match name.as_str() {
                                             "grid-child-focus" => {}
-                                            "grid-child-blur" => state.grid_manager.request_hide_for_blur_async(),
-                                                "renderer-resource" | "tab-document-changed" | "native-document-revision" => {}
-                                                "renderer-download" => {
-                                                    if payload["renderer_drop"] != true && comms_reader.is_current(generation) {
-                                                        let _ = app.emit_to("main", "isolated-renderer-download", payload);
-                                                    }
-                                                }
-                                                "browser-tabs://shell-shortcut" => {
-                                                    if payload["renderer_drop"] != true && comms_reader.is_current(generation) {
-                                                        let _ = app.emit_to("main", "browser-tabs://shell-shortcut", payload);
-                                                    }
-                                                }
-                                                "new-tab-request" => {
-                                                    if payload["renderer_drop"] != true && comms_reader.is_current(generation) {
-                                                        let _ = app.emit_to("main", "new-tab-request", payload);
-                                                    }
-                                                }
-                                                "tab-title" | "browser-resources" if payload["renderer_drop"] == true => {}
-                                                "tab-title" | "browser-resources" => {
-                                                    if comms_reader.is_current(generation) {
-                                                        let _ = app.emit(&name, payload);
-                                                    }
-                                                }
-                                            "grid-load-failed" if crate::grid_ipc::is_tab_renderer(index) => {
-                                                let id = crate::grid_ipc::renderer_label(index);
-                                                let url = payload["url"].as_str().unwrap_or_default();
-                                                let error = payload["error"].as_str().unwrap_or("renderer load failed");
-                                                crate::bridge::report_tab_load_failed(app, &id, url, if error.is_empty() { "renderer load failed" } else { "native renderer load failed" });
+                                            "grid-child-blur" => {
+                                                state.grid_manager.request_hide_for_blur_async()
                                             }
-                                            "grid-load-failed" if comms_reader.is_current(generation) => {
-                                                    crate::bridge::schedule_grid_load_retry(app, &payload);
+                                            "renderer-resource"
+                                            | "tab-document-changed"
+                                            | "native-document-revision" => {}
+                                            "renderer-download" => {
+                                                if payload["renderer_drop"] != true
+                                                    && comms_reader.is_current(generation)
+                                                {
+                                                    let _ = app.emit_to(
+                                                        "main",
+                                                        "isolated-renderer-download",
+                                                        payload,
+                                                    );
+                                                }
+                                            }
+                                            "browser-tabs://shell-shortcut" => {
+                                                if payload["renderer_drop"] != true
+                                                    && comms_reader.is_current(generation)
+                                                {
+                                                    let _ = app.emit_to(
+                                                        "main",
+                                                        "browser-tabs://shell-shortcut",
+                                                        payload,
+                                                    );
+                                                }
+                                            }
+                                            "new-tab-request" => {
+                                                if payload["renderer_drop"] != true
+                                                    && comms_reader.is_current(generation)
+                                                {
+                                                    let _ = app.emit_to(
+                                                        "main",
+                                                        "new-tab-request",
+                                                        payload,
+                                                    );
+                                                }
+                                            }
+                                            "tab-title" | "browser-resources"
+                                                if payload["renderer_drop"] == true => {}
+                                            "tab-title" | "browser-resources" => {
+                                                if comms_reader.is_current(generation) {
                                                     let _ = app.emit(&name, payload);
                                                 }
-                                                _ if comms_reader.is_current(generation) => { let _ = app.emit(&name, payload); }
+                                            }
+                                            "grid-load-failed"
+                                                if crate::grid_ipc::is_tab_renderer(index) =>
+                                            {
+                                                let id = crate::grid_ipc::renderer_label(index);
+                                                let url =
+                                                    payload["url"].as_str().unwrap_or_default();
+                                                let error = payload["error"]
+                                                    .as_str()
+                                                    .unwrap_or("renderer load failed");
+                                                crate::bridge::report_tab_load_failed(
+                                                    app,
+                                                    &id,
+                                                    url,
+                                                    if error.is_empty() {
+                                                        "renderer load failed"
+                                                    } else {
+                                                        "native renderer load failed"
+                                                    },
+                                                );
+                                            }
+                                            "grid-load-failed"
+                                                if comms_reader.is_current(generation) =>
+                                            {
+                                                crate::bridge::schedule_grid_load_retry(
+                                                    app, &payload,
+                                                );
+                                                let _ = app.emit(&name, payload);
+                                            }
+                                            _ if comms_reader.is_current(generation) => {
+                                                let _ = app.emit(&name, payload);
+                                            }
                                             _ => break,
                                         }
                                     }
@@ -666,8 +758,11 @@ impl GridProcessManager {
         // This is the actual serialized native spawn admission, including
         // explicit restores; a UI capacity estimate cannot bypass it.
         if crate::grid_ipc::is_tab_renderer(index) {
-            let recent = self.renderer_processes().iter()
-                .filter(|owner| owner.startup_reserved).count();
+            let recent = self
+                .renderer_processes()
+                .iter()
+                .filter(|owner| owner.startup_reserved)
+                .count();
             let available = crate::bridge::mem_available_mb()
                 .ok_or("TAB_RENDERER_MEMORY_SAMPLE_UNAVAILABLE")?;
             if crate::bridge::renderer_start_budget(Some(available), recent) == 0 {
@@ -788,59 +883,84 @@ impl GridProcessManager {
 
     /// Caller holds the native lifecycle gate. Grid listeners persist across
     /// normal retirement, so an absent route also has a reuse fence.
-    fn grid_route_stamps_locked(&self, indices: &[u32])
-        -> Vec<crate::grid_ipc::GridRouteStamp>
-    {
+    fn grid_route_stamps_locked(&self, indices: &[u32]) -> Vec<crate::grid_ipc::GridRouteStamp> {
         let children = self.children.lock().unwrap();
         let listeners = self.listeners.lock().unwrap();
         let revisions = self.grid_route_revisions.lock().unwrap();
-        indices.iter().map(|&index| {
-            let child = children.get(&index);
-            let comms = child.map(|c| &c.comms).or_else(|| listeners.get(&index));
-            crate::grid_ipc::GridRouteStamp {
-                index, pid: child.map(|c| c.child.id()),
-                epoch: comms.map(|c| c.spawn_epoch.load(Ordering::SeqCst)),
-                revision: revisions[index as usize],
-            }
-        }).collect()
+        indices
+            .iter()
+            .map(|&index| {
+                let child = children.get(&index);
+                let comms = child.map(|c| &c.comms).or_else(|| listeners.get(&index));
+                crate::grid_ipc::GridRouteStamp {
+                    index,
+                    pid: child.map(|c| c.child.id()),
+                    epoch: comms.map(|c| c.spawn_epoch.load(Ordering::SeqCst)),
+                    revision: revisions[index as usize],
+                }
+            })
+            .collect()
     }
 
-    pub(crate) fn grid_route_stamps(&self, indices: &[u32])
-        -> Result<Vec<crate::grid_ipc::GridRouteStamp>, String>
-    {
-        if indices.iter().any(|&i| i as usize >= crate::bridge::MAX_GRID) {
+    pub(crate) fn grid_route_stamps(
+        &self,
+        indices: &[u32],
+    ) -> Result<Vec<crate::grid_ipc::GridRouteStamp>, String> {
+        if indices
+            .iter()
+            .any(|&i| i as usize >= crate::bridge::MAX_GRID)
+        {
             return Err("GRID_INDEX_INVALID".into());
         }
         self.lifecycle.check()?;
         // Admission is performed on the IPC caller, never wait on a
         // potentially long native spawn or retirement from that thread.
-        let _gate = self.lifecycle_lock.try_lock().map_err(|_| "GRID_LIFECYCLE_BUSY")?;
-        let children = self.children.try_lock().map_err(|_| "GRID_LIFECYCLE_BUSY")?;
-        let listeners = self.listeners.try_lock().map_err(|_| "GRID_LIFECYCLE_BUSY")?;
-        let revisions = self.grid_route_revisions.try_lock().map_err(|_| "GRID_LIFECYCLE_BUSY")?;
-        Ok(indices.iter().map(|&index| {
-            let child = children.get(&index);
-            let comms = child.map(|c| &c.comms).or_else(|| listeners.get(&index));
-            crate::grid_ipc::GridRouteStamp {
-                index, pid: child.map(|c| c.child.id()),
-                epoch: comms.map(|c| c.spawn_epoch.load(Ordering::SeqCst)),
-                revision: revisions[index as usize],
-            }
-        }).collect())
+        let _gate = self
+            .lifecycle_lock
+            .try_lock()
+            .map_err(|_| "GRID_LIFECYCLE_BUSY")?;
+        let children = self
+            .children
+            .try_lock()
+            .map_err(|_| "GRID_LIFECYCLE_BUSY")?;
+        let listeners = self
+            .listeners
+            .try_lock()
+            .map_err(|_| "GRID_LIFECYCLE_BUSY")?;
+        let revisions = self
+            .grid_route_revisions
+            .try_lock()
+            .map_err(|_| "GRID_LIFECYCLE_BUSY")?;
+        Ok(indices
+            .iter()
+            .map(|&index| {
+                let child = children.get(&index);
+                let comms = child.map(|c| &c.comms).or_else(|| listeners.get(&index));
+                crate::grid_ipc::GridRouteStamp {
+                    index,
+                    pid: child.map(|c| c.child.id()),
+                    epoch: comms.map(|c| c.spawn_epoch.load(Ordering::SeqCst)),
+                    revision: revisions[index as usize],
+                }
+            })
+            .collect())
     }
 
     /// Validate every selected route before mutating any, then transfer only
     /// the captured owners to the existing kernel-domain cleanup service.
     /// This does not depend on HideWindow/CloseTab acknowledgements.
-    pub(crate) fn close_grid_targets(&self, targets: &[crate::grid_ipc::GridRouteStamp])
-        -> Result<(), String>
-    {
+    pub(crate) fn close_grid_targets(
+        &self,
+        targets: &[crate::grid_ipc::GridRouteStamp],
+    ) -> Result<(), String> {
         self.close_grid_targets_checked(targets, &[])
     }
 
-    pub(crate) fn close_grid_targets_checked(&self, targets: &[crate::grid_ipc::GridRouteStamp],
-        retained: &[crate::grid_ipc::GridRouteStamp]) -> Result<(), String>
-    {
+    pub(crate) fn close_grid_targets_checked(
+        &self,
+        targets: &[crate::grid_ipc::GridRouteStamp],
+        retained: &[crate::grid_ipc::GridRouteStamp],
+    ) -> Result<(), String> {
         let _operation = self.lifecycle.enter()?;
         self.ensure_cleanup()?;
         let _gate = self.lifecycle_lock.lock().unwrap();
@@ -861,10 +981,15 @@ impl GridProcessManager {
         let state = app.state::<crate::bridge::AppState>();
         {
             let mut revisions = self.grid_route_revisions.lock().unwrap();
-            if indices.iter().any(|&index| revisions[index as usize] == u64::MAX) {
+            if indices
+                .iter()
+                .any(|&index| revisions[index as usize] == u64::MAX)
+            {
                 return Err("GRID_ROUTE_REVISION_EXHAUSTED".into());
             }
-            for &index in &indices { revisions[index as usize] += 1; }
+            for &index in &indices {
+                revisions[index as usize] += 1;
+            }
         }
         // Remove restart intent before releasing the process map. No new
         // owner can be spawned under this gate until cleanup is admitted.
@@ -890,7 +1015,8 @@ impl GridProcessManager {
         }
         let deadline = std::time::Instant::now() + std::time::Duration::from_millis(750);
         for index in indices {
-            self.lifecycle.wait_route_retired_until(index, deadline)
+            self.lifecycle
+                .wait_route_retired_until(index, deadline)
                 .map_err(|_| format!("GRID_CLOSE_CLEANUP_PENDING:{index}"))?;
         }
         Ok(())
@@ -898,9 +1024,10 @@ impl GridProcessManager {
 
     /// Rebuild or cold start may adopt only a slot captured at submission.
     /// Capture the newly created owner before releasing the spawn gate.
-    pub(crate) fn prepare_grid_slot(&self, target: crate::grid_ipc::GridRouteStamp)
-        -> Result<crate::grid_ipc::GridPreparedSlot, String>
-    {
+    pub(crate) fn prepare_grid_slot(
+        &self,
+        target: crate::grid_ipc::GridRouteStamp,
+    ) -> Result<crate::grid_ipc::GridPreparedSlot, String> {
         let _operation = self.lifecycle.enter()?;
         self.ensure_cleanup()?;
         let _gate = self.lifecycle_lock.lock().unwrap();
@@ -911,36 +1038,60 @@ impl GridProcessManager {
         {
             return Err("GRID_BUILD_TARGET_STALE".into());
         }
-        if target.pid.is_some() && !self.children.lock().unwrap().get(&index)
-            .is_some_and(|child| child.document_ready)
+        if target.pid.is_some()
+            && !self
+                .children
+                .lock()
+                .unwrap()
+                .get(&index)
+                .is_some_and(|child| child.document_ready)
         {
             return Err("GRID_BUILD_TARGET_NOT_READY".into());
         }
         let saved = if target.pid.is_none() {
-            self.hibernated.lock().unwrap().get(&index).cloned().or_else(|| {
-                self.pending_restarts.lock().unwrap().get(&index).map(|(_, state)| state.clone())
-            })
-        } else { None };
+            self.hibernated
+                .lock()
+                .unwrap()
+                .get(&index)
+                .cloned()
+                .or_else(|| {
+                    self.pending_restarts
+                        .lock()
+                        .unwrap()
+                        .get(&index)
+                        .map(|(_, state)| state.clone())
+                })
+        } else {
+            None
+        };
         let created = self.get_or_spawn_locked(index)?;
         let stamp = self.grid_route_stamps_locked(&[index])[0];
         if stamp.pid.is_none() {
             return Err("GRID_BUILD_TARGET_UNAVAILABLE".into());
         }
         Ok(crate::grid_ipc::GridPreparedSlot {
-            stamp, created, previous_url: self.last_url(index), saved,
+            stamp,
+            created,
+            previous_url: self.last_url(index),
+            saved,
         })
     }
 
     /// Wait only for the process admitted above, not whatever owns its route
     /// when the connection eventually becomes ready.
-    pub(crate) fn grid_binding_for_stamp(&self, stamp: crate::grid_ipc::GridRouteStamp)
-        -> Result<crate::grid_ipc::RendererBinding, String>
-    {
-        let expected = (stamp.pid.ok_or("GRID_BUILD_TARGET_UNAVAILABLE")?,
-            stamp.epoch.ok_or("GRID_BUILD_TARGET_UNAVAILABLE")?);
+    pub(crate) fn grid_binding_for_stamp(
+        &self,
+        stamp: crate::grid_ipc::GridRouteStamp,
+    ) -> Result<crate::grid_ipc::RendererBinding, String> {
+        let expected = (
+            stamp.pid.ok_or("GRID_BUILD_TARGET_UNAVAILABLE")?,
+            stamp.epoch.ok_or("GRID_BUILD_TARGET_UNAVAILABLE")?,
+        );
         let comms = {
             let children = self.children.lock().unwrap();
-            let child = children.get(&stamp.index).ok_or("GRID_BUILD_TARGET_STALE")?;
+            let child = children
+                .get(&stamp.index)
+                .ok_or("GRID_BUILD_TARGET_STALE")?;
             if child.comms.owner_snapshot()? != expected {
                 return Err("GRID_BUILD_TARGET_STALE".into());
             }
@@ -959,7 +1110,10 @@ impl GridProcessManager {
             if std::time::Instant::now() >= deadline {
                 return Err("GRID_RENDERER_READY_TIMEOUT".into());
             }
-            if self.lifecycle.wait_or_stop(std::time::Duration::from_millis(50)) {
+            if self
+                .lifecycle
+                .wait_or_stop(std::time::Duration::from_millis(50))
+            {
                 return Err("GRID_SHUTDOWN_IN_PROGRESS".into());
             }
         }
@@ -968,10 +1122,13 @@ impl GridProcessManager {
     /// Compensate only an unacknowledged newly created slot. Restore the
     /// pre-spawn saved metadata (if any), never navigate retained pages back
     /// or select a replacement process. Confirmed earlier cells stay intact.
-    pub(crate) fn rollback_grid_creation(&self, prepared: &crate::grid_ipc::GridPreparedSlot)
-        -> Result<(), String>
-    {
-        if !prepared.created { return Err("GRID_ROLLBACK_NOT_CREATED".into()); }
+    pub(crate) fn rollback_grid_creation(
+        &self,
+        prepared: &crate::grid_ipc::GridPreparedSlot,
+    ) -> Result<(), String> {
+        if !prepared.created {
+            return Err("GRID_ROLLBACK_NOT_CREATED".into());
+        }
         let _operation = self.lifecycle.enter()?;
         self.ensure_cleanup()?;
         let _gate = self.lifecycle_lock.lock().unwrap();
@@ -985,7 +1142,9 @@ impl GridProcessManager {
         self.pending_restarts.lock().unwrap().remove(&index);
         {
             let mut children = self.children.lock().unwrap();
-            let child = children.remove(&index).ok_or("GRID_ROLLBACK_TARGET_STALE")?;
+            let child = children
+                .remove(&index)
+                .ok_or("GRID_ROLLBACK_TARGET_STALE")?;
             if let Some(mut saved) = prepared.saved.clone() {
                 // Creation may have waited while a newer hide/layout intent
                 // was recorded against the replacement child. Roll back the
@@ -999,8 +1158,11 @@ impl GridProcessManager {
             // between removing it and registering the cleanup owner.
             self.lifecycle.retire(index, child);
         }
-        self.lifecycle.wait_route_retired_until(index,
-            std::time::Instant::now() + std::time::Duration::from_millis(750))
+        self.lifecycle
+            .wait_route_retired_until(
+                index,
+                std::time::Instant::now() + std::time::Duration::from_millis(750),
+            )
             .map_err(|_| format!("GRID_ROLLBACK_CLEANUP_PENDING:{index}"))
     }
 
@@ -1010,86 +1172,150 @@ impl GridProcessManager {
         if !crate::grid_ipc::is_tab_renderer(index) {
             return Err("TAB_RENDERER_ROUTE_INVALID".into());
         }
-        let children = self.children.try_lock().map_err(|_| "TAB_MUTATION_INSTANCE_UNAVAILABLE")?;
-        children.get(&index).map(|child| {
-            let comms = &child.comms;
-            let _owner = comms.owner_gate.try_lock().map_err(|_| "TAB_MUTATION_INSTANCE_UNAVAILABLE")?;
-            let pid = child.child.id();
-            let epoch = comms.spawn_epoch.load(Ordering::SeqCst);
-            if pid == 0 || epoch == 0 || !comms.accepts_peer(pid) {
-                return Err("TAB_MUTATION_INSTANCE_UNAVAILABLE".to_owned());
-            }
-            Ok((pid, epoch))
-        }).transpose()
+        let children = self
+            .children
+            .try_lock()
+            .map_err(|_| "TAB_MUTATION_INSTANCE_UNAVAILABLE")?;
+        children
+            .get(&index)
+            .map(|child| {
+                let comms = &child.comms;
+                let _owner = comms
+                    .owner_gate
+                    .try_lock()
+                    .map_err(|_| "TAB_MUTATION_INSTANCE_UNAVAILABLE")?;
+                let pid = child.child.id();
+                let epoch = comms.spawn_epoch.load(Ordering::SeqCst);
+                if pid == 0 || epoch == 0 || !comms.accepts_peer(pid) {
+                    return Err("TAB_MUTATION_INSTANCE_UNAVAILABLE".to_owned());
+                }
+                Ok((pid, epoch))
+            })
+            .transpose()
     }
 
     /// Read-only UI observation, not authorization to retire or restore.
     /// Removal from the live map precedes kernel-domain retirement.
     /// Advisory last receipt only. It cannot authorize layout, close or
     /// replace a document, and a replacement connection never inherits it.
-    pub(crate) fn last_window_receipt(&self, index: u32, expected: (u32, u64))
-        -> Result<Option<crate::grid_ipc::NativeWindowReceipt>, String>
-    {
-        let children = self.children.try_lock().map_err(|_| "GRID_WINDOW_OBSERVATION_BUSY")?;
+    pub(crate) fn last_window_receipt(
+        &self,
+        index: u32,
+        expected: (u32, u64),
+    ) -> Result<Option<crate::grid_ipc::NativeWindowReceipt>, String> {
+        let children = self
+            .children
+            .try_lock()
+            .map_err(|_| "GRID_WINDOW_OBSERVATION_BUSY")?;
         let child = children.get(&index).ok_or("GRID_WINDOW_TARGET_STALE")?;
-        let _owner = child.comms.owner_gate.try_lock().map_err(|_| "GRID_WINDOW_OBSERVATION_BUSY")?;
+        let _owner = child
+            .comms
+            .owner_gate
+            .try_lock()
+            .map_err(|_| "GRID_WINDOW_OBSERVATION_BUSY")?;
         if child.child.id() != expected.0
             || child.comms.expected_pid.load(Ordering::SeqCst) != expected.0
-            || child.comms.spawn_epoch.load(Ordering::SeqCst) != expected.1 {
+            || child.comms.spawn_epoch.load(Ordering::SeqCst) != expected.1
+        {
             return Err("GRID_WINDOW_TARGET_STALE".into());
         }
-        Ok(child.native_window_visibility
+        Ok(child
+            .native_window_visibility
             .filter(|(generation, _)| child.comms.is_current(*generation))
             .map(|(_, receipt)| receipt))
     }
 
-    pub(crate) fn tab_renderer_inspection(&self, index: u32)
-        -> Result<(Option<(u32, u64)>, &'static str, Option<serde_json::Value>), String>
-    {
+    pub(crate) fn tab_renderer_inspection(
+        &self,
+        index: u32,
+    ) -> Result<(Option<(u32, u64)>, &'static str, Option<serde_json::Value>), String> {
         if !crate::grid_ipc::is_tab_renderer(index) {
             return Err("TAB_RENDERER_ROUTE_INVALID".into());
         }
-        let children = self.children.try_lock().map_err(|_| "TAB_RENDERER_OBSERVATION_BUSY")?;
-        if self.lifecycle.try_is_retiring(index)? { return Ok((None, "cleanup_pending", None)); }
-        let Some(child) = children.get(&index) else { return Ok((None, "absent", None)); };
+        let children = self
+            .children
+            .try_lock()
+            .map_err(|_| "TAB_RENDERER_OBSERVATION_BUSY")?;
+        if self.lifecycle.try_is_retiring(index)? {
+            return Ok((None, "cleanup_pending", None));
+        }
+        let Some(child) = children.get(&index) else {
+            return Ok((None, "absent", None));
+        };
         let comms = &child.comms;
-        let _owner = comms.owner_gate.try_lock().map_err(|_| "TAB_RENDERER_OBSERVATION_BUSY")?;
+        let _owner = comms
+            .owner_gate
+            .try_lock()
+            .map_err(|_| "TAB_RENDERER_OBSERVATION_BUSY")?;
         let pid = child.child.id();
         let epoch = comms.spawn_epoch.load(Ordering::SeqCst);
         if pid == 0 || epoch == 0 || comms.expected_pid.load(Ordering::SeqCst) != pid {
             return Err("TAB_RENDERER_OBSERVATION_STALE".into());
         }
-        let window_ready = child.document_ready && comms.is_connected()
+        let window_ready = child.document_ready
+            && comms.is_connected()
             && !comms.blank_reclaiming.load(Ordering::SeqCst);
         let ready = window_ready
-            && comms.native_document.try_lock().map_err(|_| "TAB_RENDERER_OBSERVATION_BUSY")?.is_some_and(|stamp| stamp.usable());
-        let observed = *comms.download_observation.try_lock().map_err(|_| "TAB_RENDERER_OBSERVATION_BUSY")?;
-        let download = observed.map(|(generation, counts)| serde_json::json!({
-            "pid": pid, "spawn_epoch": epoch.to_string(),
-            "renderer_generation": generation.to_string(),
-            "connection_current": comms.is_current(generation),
-            "requested": counts.requested, "succeeded": counts.succeeded,
-            "failed": counts.failed, "observed_unfinished": counts.observed_unfinished(),
-        }));
-        Ok((Some((pid, epoch)), if ready { "ready" } else if window_ready { "loading" } else { "not_ready" }, download))
+            && comms
+                .native_document
+                .try_lock()
+                .map_err(|_| "TAB_RENDERER_OBSERVATION_BUSY")?
+                .is_some_and(|stamp| stamp.usable());
+        let observed = *comms
+            .download_observation
+            .try_lock()
+            .map_err(|_| "TAB_RENDERER_OBSERVATION_BUSY")?;
+        let download = observed.map(|(generation, counts)| {
+            serde_json::json!({
+                "pid": pid, "spawn_epoch": epoch.to_string(),
+                "renderer_generation": generation.to_string(),
+                "connection_current": comms.is_current(generation),
+                "requested": counts.requested, "succeeded": counts.succeeded,
+                "failed": counts.failed, "observed_unfinished": counts.observed_unfinished(),
+            })
+        });
+        Ok((
+            Some((pid, epoch)),
+            if ready {
+                "ready"
+            } else if window_ready {
+                "loading"
+            } else {
+                "not_ready"
+            },
+            download,
+        ))
     }
 
-    pub(crate) fn tab_renderer_observation(&self, index: u32)
-        -> Result<(Option<(u32, u64)>, &'static str), String>
-    {
-        self.tab_renderer_inspection(index).map(|(owner, state, _)| (owner, state))
+    pub(crate) fn tab_renderer_observation(
+        &self,
+        index: u32,
+    ) -> Result<(Option<(u32, u64)>, &'static str), String> {
+        self.tab_renderer_inspection(index)
+            .map(|(owner, state, _)| (owner, state))
     }
 
     /// Main-only advisory inventory. No IPC or OS wait on the UI thread.
     /// Live snapshots and bounded retired observations are not effect receipts.
     pub(crate) fn tab_download_inventory(&self) -> Result<serde_json::Value, String> {
-        let children = self.children.try_lock().map_err(|_| "TAB_DOWNLOAD_HISTORY_BUSY")?;
+        let children = self
+            .children
+            .try_lock()
+            .map_err(|_| "TAB_DOWNLOAD_HISTORY_BUSY")?;
         let mut live = Vec::new();
         for (&index, child) in children.iter() {
-            if !crate::grid_ipc::is_tab_renderer(index) { continue; }
+            if !crate::grid_ipc::is_tab_renderer(index) {
+                continue;
+            }
             let comms = &child.comms;
-            let _owner = comms.owner_gate.try_lock().map_err(|_| "TAB_DOWNLOAD_HISTORY_BUSY")?;
-            let observed = *comms.download_observation.try_lock().map_err(|_| "TAB_DOWNLOAD_HISTORY_BUSY")?;
+            let _owner = comms
+                .owner_gate
+                .try_lock()
+                .map_err(|_| "TAB_DOWNLOAD_HISTORY_BUSY")?;
+            let observed = *comms
+                .download_observation
+                .try_lock()
+                .map_err(|_| "TAB_DOWNLOAD_HISTORY_BUSY")?;
             live.push(serde_json::json!({
                 "id":crate::grid_ipc::renderer_label(index), "phase":"live",
                 "pid":child.child.id(),
@@ -1107,19 +1333,29 @@ impl GridProcessManager {
         // Observe retirement ownership before releasing the live map. A
         // pending retirement must not look like a completed/absent transfer.
         let (retiring, retired) = self.lifecycle.download_history()?;
-        if live.iter().any(|row| retiring.iter().chain(&retired).any(|old|
-            row["id"] == old["id"] && row["pid"] == old["pid"] && row["spawn_epoch"] == old["spawn_epoch"])) {
+        if live.iter().any(|row| {
+            retiring.iter().chain(&retired).any(|old| {
+                row["id"] == old["id"]
+                    && row["pid"] == old["pid"]
+                    && row["spawn_epoch"] == old["spawn_epoch"]
+            })
+        }) {
             return Err("TAB_DOWNLOAD_HISTORY_BUSY".into());
         }
         drop(children);
-        Ok(serde_json::json!({"live":live,"retiring":retiring,"retired":retired,"retired_limit":128}))
+        Ok(
+            serde_json::json!({"live":live,"retiring":retiring,"retired":retired,"retired_limit":128}),
+        )
     }
 
     /// Optional counters carried by the original authenticated Ping. Late or
     /// coalesced replies cannot replace a newer cumulative observation.
     // Download objects belong to the native host, not the current webpage.
     // Navigation may invalidate a document without replacing that host.
-    fn download_binding_matches(child: &GridChildHandle, binding: crate::grid_ipc::RendererBinding) -> bool {
+    fn download_binding_matches(
+        child: &GridChildHandle,
+        binding: crate::grid_ipc::RendererBinding,
+    ) -> bool {
         child.child.id() == binding.owner.0
             && child.comms.expected_pid.load(Ordering::SeqCst) == binding.owner.0
             && child.comms.spawn_epoch.load(Ordering::SeqCst) == binding.owner.1
@@ -1127,24 +1363,47 @@ impl GridProcessManager {
             && !child.comms.blank_reclaiming.load(Ordering::SeqCst)
     }
 
-    pub(crate) fn download_binding(&self, index: u32) -> Result<crate::grid_ipc::RendererBinding, String> {
-        if !crate::grid_ipc::is_tab_renderer(index) { return Err("TAB_RENDERER_ROUTE_INVALID".into()); }
-        let children = self.children.try_lock().map_err(|_| "TAB_DOWNLOAD_SAMPLE_BUSY")?;
+    pub(crate) fn download_binding(
+        &self,
+        index: u32,
+    ) -> Result<crate::grid_ipc::RendererBinding, String> {
+        if !crate::grid_ipc::is_tab_renderer(index) {
+            return Err("TAB_RENDERER_ROUTE_INVALID".into());
+        }
+        let children = self
+            .children
+            .try_lock()
+            .map_err(|_| "TAB_DOWNLOAD_SAMPLE_BUSY")?;
         let child = children.get(&index).ok_or("DOWNLOAD_OWNER_STALE")?;
-        let _owner = child.comms.owner_gate.try_lock().map_err(|_| "TAB_DOWNLOAD_SAMPLE_BUSY")?;
+        let _owner = child
+            .comms
+            .owner_gate
+            .try_lock()
+            .map_err(|_| "TAB_DOWNLOAD_SAMPLE_BUSY")?;
         let binding = crate::grid_ipc::RendererBinding {
-            index, owner: (child.child.id(), child.comms.spawn_epoch.load(Ordering::SeqCst)),
+            index,
+            owner: (
+                child.child.id(),
+                child.comms.spawn_epoch.load(Ordering::SeqCst),
+            ),
             generation: child.comms.generation.load(Ordering::SeqCst),
             navigation_revision: child.navigation_revision,
         };
-        if binding.owner.0 == 0 || binding.owner.1 == 0 || !Self::download_binding_matches(child, binding) {
+        if binding.owner.0 == 0
+            || binding.owner.1 == 0
+            || !Self::download_binding_matches(child, binding)
+        {
             return Err("DOWNLOAD_OWNER_STALE".into());
         }
         Ok(binding)
     }
 
-    pub(crate) fn download_tasks_bound(&self, binding: crate::grid_ipc::RendererBinding, cmd: GridCmd,
-        timeout_ms: u64) -> Result<Option<String>, String> {
+    pub(crate) fn download_tasks_bound(
+        &self,
+        binding: crate::grid_ipc::RendererBinding,
+        cmd: GridCmd,
+        timeout_ms: u64,
+    ) -> Result<Option<String>, String> {
         if !matches!(&cmd, GridCmd::DownloadTasks { .. }) || !cmd.targets(binding.index) {
             return Err("DOWNLOAD_CONTROL_INVALID".into());
         }
@@ -1153,12 +1412,15 @@ impl GridProcessManager {
             let children = self.children.lock().unwrap();
             let child = children.get(&binding.index).ok_or("DOWNLOAD_OWNER_STALE")?;
             let _owner = child.comms.owner_gate.lock().unwrap();
-            if !Self::download_binding_matches(child, binding) { return Err("DOWNLOAD_OWNER_STALE".into()); }
+            if !Self::download_binding_matches(child, binding) {
+                return Err("DOWNLOAD_OWNER_STALE".into());
+            }
             Arc::clone(&child.comms)
         };
         // Keep exact process + transport generation fencing, but never
         // demand a current document stamp for a per-transfer operation.
-        let data = self.request_once_with(binding.index, comms, binding.generation, &cmd, timeout_ms)?;
+        let data =
+            self.request_once_with(binding.index, comms, binding.generation, &cmd, timeout_ms)?;
         let current = self.download_binding(binding.index)?;
         if current.owner != binding.owner || current.generation != binding.generation {
             return Err("DOWNLOAD_NATIVE_OUTCOME_UNKNOWN".into());
@@ -1166,45 +1428,67 @@ impl GridProcessManager {
         Ok(data)
     }
 
-    pub(crate) fn refresh_tab_downloads(&self, binding: crate::grid_ipc::RendererBinding, timeout_ms: u64)
-        -> Result<(), String>
-    {
+    pub(crate) fn refresh_tab_downloads(
+        &self,
+        binding: crate::grid_ipc::RendererBinding,
+        timeout_ms: u64,
+    ) -> Result<(), String> {
         self.sample_tab_downloads(binding, timeout_ms).map(|_| ())
     }
 
     // A missing optional payload cannot satisfy explicit suspension preflight.
-    pub(crate) fn sample_tab_downloads(&self, binding: crate::grid_ipc::RendererBinding, timeout_ms: u64)
-        -> Result<bool, String>
-    {
-        if !crate::grid_ipc::is_tab_renderer(binding.index) { return Err("TAB_RENDERER_ROUTE_INVALID".into()); }
+    pub(crate) fn sample_tab_downloads(
+        &self,
+        binding: crate::grid_ipc::RendererBinding,
+        timeout_ms: u64,
+    ) -> Result<bool, String> {
+        if !crate::grid_ipc::is_tab_renderer(binding.index) {
+            return Err("TAB_RENDERER_ROUTE_INVALID".into());
+        }
         // Ping is process scoped. A navigation inside this exact host does
         // not invalidate a download count or a liveness acknowledgement.
         let _operation = self.lifecycle.enter()?;
         let comms = {
             let children = self.children.lock().unwrap();
-            let child = children.get(&binding.index).ok_or("TAB_RENDERER_DOCUMENT_STALE")?;
+            let child = children
+                .get(&binding.index)
+                .ok_or("TAB_RENDERER_DOCUMENT_STALE")?;
             let _owner = child.comms.owner_gate.lock().unwrap();
             if !Self::download_binding_matches(child, binding) {
                 return Err("TAB_RENDERER_DOCUMENT_STALE".into());
             }
             Arc::clone(&child.comms)
         };
-        let data = self.request_once_with(binding.index, comms, binding.generation, &GridCmd::Ping, timeout_ms)?;
+        let data = self.request_once_with(
+            binding.index,
+            comms,
+            binding.generation,
+            &GridCmd::Ping,
+            timeout_ms,
+        )?;
         // An older peer or malformed optional advisory data is not a health
         // failure. Retain the prior counts; never replace unknown with zero.
-        let observation = data.as_deref().filter(|data| data.len() <= 256)
+        let observation = data
+            .as_deref()
+            .filter(|data| data.len() <= 256)
             .and_then(|data| serde_json::from_str::<serde_json::Value>(data).ok())
             .filter(|value| value.as_object().is_some_and(|fields| fields.len() == 3))
             .and_then(|value| crate::grid_ipc::DownloadObservation::from_counts(&value));
         let children = self.children.lock().unwrap();
-        let child = children.get(&binding.index).ok_or("TAB_RENDERER_DOCUMENT_STALE")?;
+        let child = children
+            .get(&binding.index)
+            .ok_or("TAB_RENDERER_DOCUMENT_STALE")?;
         let _owner = child.comms.owner_gate.lock().unwrap();
         if !Self::download_binding_matches(child, binding) {
             return Err("TAB_RENDERER_DOCUMENT_STALE".into());
         }
-        let Some(observation) = observation else { return Ok(false); };
+        let Some(observation) = observation else {
+            return Ok(false);
+        };
         let mut last = child.comms.download_observation.lock().unwrap();
-        if last.as_ref().is_some_and(|(_, previous)| observation != *previous && !observation.advances(*previous)) {
+        if last.as_ref().is_some_and(|(_, previous)| {
+            observation != *previous && !observation.advances(*previous)
+        }) {
             // A concurrent newer report (or inconsistent peer) means this
             // Ping did not establish a fresh monotonic snapshot. A strict
             // discard preflight cannot use the old reply as evidence.
@@ -1212,26 +1496,45 @@ impl GridProcessManager {
         }
         *last = Some((binding.generation, observation));
         if observation.requested > 0 || observation.succeeded > 0 || observation.failed > 0 {
-            child.comms.blank_reclaim_blocked.store(true, Ordering::SeqCst);
+            child
+                .comms
+                .blank_reclaim_blocked
+                .store(true, Ordering::SeqCst);
         }
         Ok(true)
     }
 
-    pub(crate) fn tab_renderer_download_observation(&self, index: u32, expected: (u32, u64))
-        -> Result<Option<serde_json::Value>, String>
-    {
+    pub(crate) fn tab_renderer_download_observation(
+        &self,
+        index: u32,
+        expected: (u32, u64),
+    ) -> Result<Option<serde_json::Value>, String> {
         let (owner, _, download) = self.tab_renderer_inspection(index)?;
-        if owner != Some(expected) { return Err("TAB_RENDERER_OBSERVATION_STALE".into()); }
+        if owner != Some(expected) {
+            return Err("TAB_RENDERER_OBSERVATION_STALE".into());
+        }
         Ok(download)
     }
 
-    pub(crate) fn renderer_binding(&self, index: u32) -> Result<crate::grid_ipc::RendererBinding, String> {
+    pub(crate) fn renderer_binding(
+        &self,
+        index: u32,
+    ) -> Result<crate::grid_ipc::RendererBinding, String> {
         if !crate::grid_ipc::is_tab_renderer(index) {
             return Err("TAB_RENDERER_ROUTE_INVALID".into());
         }
-        let children = self.children.try_lock().map_err(|_| "TAB_MUTATION_INSTANCE_UNAVAILABLE")?;
-        let child = children.get(&index).ok_or("TAB_RENDERER_DOCUMENT_UNAVAILABLE")?;
-        let _owner = child.comms.owner_gate.try_lock().map_err(|_| "TAB_MUTATION_INSTANCE_UNAVAILABLE")?;
+        let children = self
+            .children
+            .try_lock()
+            .map_err(|_| "TAB_MUTATION_INSTANCE_UNAVAILABLE")?;
+        let child = children
+            .get(&index)
+            .ok_or("TAB_RENDERER_DOCUMENT_UNAVAILABLE")?;
+        let _owner = child
+            .comms
+            .owner_gate
+            .try_lock()
+            .map_err(|_| "TAB_MUTATION_INSTANCE_UNAVAILABLE")?;
         let pid = child.child.id();
         let epoch = child.comms.spawn_epoch.load(Ordering::SeqCst);
         if pid == 0 || epoch == 0 || !child.comms.accepts_peer(pid) {
@@ -1239,33 +1542,56 @@ impl GridProcessManager {
         }
         let owner = (pid, epoch);
         let generation = child.comms.generation.load(Ordering::SeqCst);
-        if !child.document_ready || !child.comms.is_current(generation)
-            || !child.comms.native_document.try_lock().map_err(|_| "TAB_MUTATION_INSTANCE_UNAVAILABLE")?
-                .is_some_and(|stamp| stamp.usable()) {
+        if !child.document_ready
+            || !child.comms.is_current(generation)
+            || !child
+                .comms
+                .native_document
+                .try_lock()
+                .map_err(|_| "TAB_MUTATION_INSTANCE_UNAVAILABLE")?
+                .is_some_and(|stamp| stamp.usable())
+        {
             return Err("TAB_RENDERER_DOCUMENT_UNAVAILABLE".into());
         }
         Ok(crate::grid_ipc::RendererBinding {
-            index, owner, generation, navigation_revision: child.navigation_revision,
+            index,
+            owner,
+            generation,
+            navigation_revision: child.navigation_revision,
         })
     }
 
     /// Grid Eval is admitted against the currently connected host, before the
     /// caller enters a blocking lane. Grid host readiness is not a paint or
     /// document-creation receipt (the ordinary-tab flag has different semantics).
-    pub(crate) fn grid_eval_binding(&self, index: u32) -> Result<crate::grid_ipc::RendererBinding, String> {
-        self.grid_live_binding(index)?.ok_or_else(|| "GRID_EVAL_HOST_UNAVAILABLE".into())
+    pub(crate) fn grid_eval_binding(
+        &self,
+        index: u32,
+    ) -> Result<crate::grid_ipc::RendererBinding, String> {
+        self.grid_live_binding(index)?
+            .ok_or_else(|| "GRID_EVAL_HOST_UNAVAILABLE".into())
     }
 
-    pub(crate) fn grid_live_binding(&self, index: u32)
-        -> Result<Option<crate::grid_ipc::RendererBinding>, String>
-    {
+    pub(crate) fn grid_live_binding(
+        &self,
+        index: u32,
+    ) -> Result<Option<crate::grid_ipc::RendererBinding>, String> {
         if (index as usize) >= crate::bridge::MAX_GRID {
             return Err("GRID_INDEX_INVALID".into());
         }
         self.lifecycle.check()?;
-        let children = self.children.try_lock().map_err(|_| "GRID_LIFECYCLE_BUSY")?;
-        let Some(child) = children.get(&index) else { return Ok(None); };
-        let _owner = child.comms.owner_gate.try_lock().map_err(|_| "GRID_LIFECYCLE_BUSY")?;
+        let children = self
+            .children
+            .try_lock()
+            .map_err(|_| "GRID_LIFECYCLE_BUSY")?;
+        let Some(child) = children.get(&index) else {
+            return Ok(None);
+        };
+        let _owner = child
+            .comms
+            .owner_gate
+            .try_lock()
+            .map_err(|_| "GRID_LIFECYCLE_BUSY")?;
         let pid = child.child.id();
         let epoch = child.comms.spawn_epoch.load(Ordering::SeqCst);
         if pid == 0 || epoch == 0 || !child.comms.accepts_peer(pid) {
@@ -1273,20 +1599,30 @@ impl GridProcessManager {
         }
         let owner = (pid, epoch);
         let generation = child.comms.generation.load(Ordering::SeqCst);
-        if !child.comms.is_current(generation) || child.comms.blank_reclaiming.load(Ordering::SeqCst) {
+        if !child.comms.is_current(generation)
+            || child.comms.blank_reclaiming.load(Ordering::SeqCst)
+        {
             return Err("GRID_EVAL_HOST_UNAVAILABLE".into());
         }
         Ok(Some(crate::grid_ipc::RendererBinding {
-            index, owner, generation, navigation_revision: child.navigation_revision,
+            index,
+            owner,
+            generation,
+            navigation_revision: child.navigation_revision,
         }))
     }
 
     /// Only this exact original Grid host/connection may accept the queued
     /// Eval. No wait_connected, spawn, retry or arbitrary command substitution.
     pub(crate) fn grid_eval_bound(
-        &self, binding: crate::grid_ipc::RendererBinding, js: String,
+        &self,
+        binding: crate::grid_ipc::RendererBinding,
+        js: String,
     ) -> Result<(), String> {
-        let cmd = GridCmd::Eval { id: crate::grid_ipc::renderer_label(binding.index), js };
+        let cmd = GridCmd::Eval {
+            id: crate::grid_ipc::renderer_label(binding.index),
+            js,
+        };
         self.grid_bound_request(binding, cmd, 10000).map(|_| ())
     }
 
@@ -1294,13 +1630,22 @@ impl GridProcessManager {
     /// preferences and geometry survive same-host navigation; data and a
     /// queued navigation intent are fenced by the observed document revision.
     fn grid_bound_request(
-        &self, binding: crate::grid_ipc::RendererBinding, cmd: GridCmd, timeout_ms: u64,
+        &self,
+        binding: crate::grid_ipc::RendererBinding,
+        cmd: GridCmd,
+        timeout_ms: u64,
     ) -> Result<Option<String>, String> {
         let _operation = self.lifecycle.enter()?;
-        if (binding.index as usize) >= crate::bridge::MAX_GRID || !cmd.targets(binding.index)
-            || !matches!(&cmd, GridCmd::Eval { .. } | GridCmd::ReadReplies { .. }
-                | GridCmd::SetZoom { .. } | GridCmd::Navigate { .. }
-                | GridCmd::CreateTab { .. })
+        if (binding.index as usize) >= crate::bridge::MAX_GRID
+            || !cmd.targets(binding.index)
+            || !matches!(
+                &cmd,
+                GridCmd::Eval { .. }
+                    | GridCmd::ReadReplies { .. }
+                    | GridCmd::SetZoom { .. }
+                    | GridCmd::Navigate { .. }
+                    | GridCmd::CreateTab { .. }
+            )
         {
             return Err("GRID_REQUEST_TARGET_REJECTED".into());
         }
@@ -1309,7 +1654,9 @@ impl GridProcessManager {
         let document_bound = !matches!(&cmd, GridCmd::SetZoom { .. });
         let comms = {
             let children = self.children.lock().unwrap();
-            let child = children.get(&binding.index).ok_or("GRID_EVAL_TARGET_STALE")?;
+            let child = children
+                .get(&binding.index)
+                .ok_or("GRID_EVAL_TARGET_STALE")?;
             let creating = matches!(&cmd, GridCmd::CreateTab { .. });
             if creating == child.document_ready {
                 return Err("GRID_DOCUMENT_NOT_READY_OR_ALREADY_CREATED".into());
@@ -1323,33 +1670,54 @@ impl GridProcessManager {
             }
             Arc::clone(&child.comms)
         };
-        self.request_once_fenced(binding.index, comms, binding.generation,
-            document_bound.then_some(binding.navigation_revision), &cmd, timeout_ms)
+        self.request_once_fenced(
+            binding.index,
+            comms,
+            binding.generation,
+            document_bound.then_some(binding.navigation_revision),
+            &cmd,
+            timeout_ms,
+        )
     }
 
     /// A late acknowledgement must not rewrite the URL of a replacement
     /// host, nor overwrite a newer native navigation observation.
-    pub(crate) fn grid_navigate_bound(&self, binding: crate::grid_ipc::RendererBinding, url: &str)
-        -> Result<(), String>
-    {
-        let cmd = GridCmd::Navigate { id: crate::grid_ipc::renderer_label(binding.index), url: url.to_owned() };
+    pub(crate) fn grid_navigate_bound(
+        &self,
+        binding: crate::grid_ipc::RendererBinding,
+        url: &str,
+    ) -> Result<(), String> {
+        let cmd = GridCmd::Navigate {
+            id: crate::grid_ipc::renderer_label(binding.index),
+            url: url.to_owned(),
+        };
         self.grid_bound_request(binding, cmd, 10000)?;
         self.grid_publish_address(binding, url, false)
     }
 
-    pub(crate) fn grid_create_bound(&self, binding: crate::grid_ipc::RendererBinding, url: &str)
-        -> Result<(), String>
-    {
-        let cmd = GridCmd::CreateTab { id: crate::grid_ipc::renderer_label(binding.index), url: url.to_owned() };
+    pub(crate) fn grid_create_bound(
+        &self,
+        binding: crate::grid_ipc::RendererBinding,
+        url: &str,
+    ) -> Result<(), String> {
+        let cmd = GridCmd::CreateTab {
+            id: crate::grid_ipc::renderer_label(binding.index),
+            url: url.to_owned(),
+        };
         self.grid_bound_request(binding, cmd, 20000)?;
         self.grid_publish_address(binding, url, true)
     }
 
-    fn grid_publish_address(&self, binding: crate::grid_ipc::RendererBinding, url: &str, created: bool)
-        -> Result<(), String>
-    {
+    fn grid_publish_address(
+        &self,
+        binding: crate::grid_ipc::RendererBinding,
+        url: &str,
+        created: bool,
+    ) -> Result<(), String> {
         let mut children = self.children.lock().unwrap();
-        let child = children.get_mut(&binding.index).ok_or("GRID_REQUEST_OUTCOME_UNKNOWN: navigation host retired")?;
+        let child = children
+            .get_mut(&binding.index)
+            .ok_or("GRID_REQUEST_OUTCOME_UNKNOWN: navigation host retired")?;
         let _owner = child.comms.owner_gate.lock().unwrap();
         if child.child.id() != binding.owner.0
             || child.comms.spawn_epoch.load(Ordering::SeqCst) != binding.owner.1
@@ -1360,56 +1728,81 @@ impl GridProcessManager {
         if child.navigation_revision == binding.navigation_revision {
             child.last_url = Some(url.to_owned());
         }
-        if created { child.document_ready = true; }
+        if created {
+            child.document_ready = true;
+        }
         Ok(())
     }
 
     /// Serialize the existing geometry path with focus/visibility changes.
     /// Do not publish layout intent against a replacement route.
-    pub(crate) fn grid_position_bound(&self, binding: crate::grid_ipc::RendererBinding,
-        css: (f64, f64, f64, f64), rect: crate::grid_ipc::IpcRect,
+    pub(crate) fn grid_position_bound(
+        &self,
+        binding: crate::grid_ipc::RendererBinding,
+        css: (f64, f64, f64, f64),
+        rect: crate::grid_ipc::IpcRect,
     ) -> Result<(), String> {
         if binding.index as usize >= crate::bridge::MAX_GRID {
             return Err("GRID_INDEX_INVALID".into());
         }
-        let _dispatch = self.visibility_dispatch.lock().unwrap_or_else(|p| p.into_inner());
+        let _dispatch = self
+            .visibility_dispatch
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         self.position_window_bound(binding, css, rect)
     }
 
-    pub(crate) fn publish_grid_zoom(&self, stamp: crate::grid_ipc::GridRouteStamp, zoom: f64)
-        -> Result<(), String>
-    {
+    pub(crate) fn publish_grid_zoom(
+        &self,
+        stamp: crate::grid_ipc::GridRouteStamp,
+        zoom: f64,
+    ) -> Result<(), String> {
         if stamp.index as usize >= crate::bridge::MAX_GRID || !zoom.is_finite() || zoom <= 0.1 {
             return Err("GRID_ZOOM_INVALID".into());
         }
         self.lifecycle.check()?;
-        let _gate = self.lifecycle_lock.try_lock().map_err(|_| "GRID_LIFECYCLE_BUSY")?;
+        let _gate = self
+            .lifecycle_lock
+            .try_lock()
+            .map_err(|_| "GRID_LIFECYCLE_BUSY")?;
         if self.grid_route_stamps_locked(&[stamp.index]).first() != Some(&stamp)
             || (stamp.pid.is_none() && !self.is_hibernated(stamp.index))
         {
             return Err("GRID_ZOOM_TARGET_STALE".into());
         }
         let app = self.app().ok_or("GRID_HOST_UNAVAILABLE")?;
-        app.state::<crate::bridge::AppState>().grid_zooms.lock().unwrap()
+        app.state::<crate::bridge::AppState>()
+            .grid_zooms
+            .lock()
+            .unwrap()
             .insert(crate::grid_ipc::renderer_label(stamp.index), zoom);
         Ok(())
     }
 
-    pub(crate) fn grid_zoom_bound(&self, binding: crate::grid_ipc::RendererBinding, zoom: f64)
-        -> Result<(), String>
-    {
+    pub(crate) fn grid_zoom_bound(
+        &self,
+        binding: crate::grid_ipc::RendererBinding,
+        zoom: f64,
+    ) -> Result<(), String> {
         if !zoom.is_finite() || zoom <= 0.1 {
             return Err("GRID_ZOOM_INVALID".into());
         }
-        let cmd = GridCmd::SetZoom { id: crate::grid_ipc::renderer_label(binding.index), zoom };
+        let cmd = GridCmd::SetZoom {
+            id: crate::grid_ipc::renderer_label(binding.index),
+            zoom,
+        };
         self.grid_bound_request(binding, cmd, 3000).map(|_| ())
     }
 
-    pub(crate) fn grid_read_replies_bound(&self, binding: crate::grid_ipc::RendererBinding)
-        -> Result<String, String>
-    {
-        let cmd = GridCmd::ReadReplies { id: crate::grid_ipc::renderer_label(binding.index) };
-        let result = self.grid_bound_request(binding, cmd, 5000)?
+    pub(crate) fn grid_read_replies_bound(
+        &self,
+        binding: crate::grid_ipc::RendererBinding,
+    ) -> Result<String, String> {
+        let cmd = GridCmd::ReadReplies {
+            id: crate::grid_ipc::renderer_label(binding.index),
+        };
+        let result = self
+            .grid_bound_request(binding, cmd, 5000)?
             .ok_or("GRID_NO_RESULT")?;
         // An old document's late reply is not the current cell's content.
         if self.grid_eval_binding(binding.index)? != binding {
@@ -1420,7 +1813,10 @@ impl GridProcessManager {
 
     /// No data service may reconnect or replay on a replacement child.
     pub(crate) fn renderer_request_data(
-        &self, binding: crate::grid_ipc::RendererBinding, cmd: GridCmd, timeout_ms: u64,
+        &self,
+        binding: crate::grid_ipc::RendererBinding,
+        cmd: GridCmd,
+        timeout_ms: u64,
     ) -> Result<Option<String>, String> {
         let _operation = self.lifecycle.enter()?;
         if !cmd.targets(binding.index) || self.renderer_binding(binding.index)? != binding {
@@ -1428,20 +1824,32 @@ impl GridProcessManager {
         }
         let comms = {
             let children = self.children.lock().unwrap();
-            let child = children.get(&binding.index).ok_or("TAB_RENDERER_DOCUMENT_UNAVAILABLE")?;
-            if child.comms.owner_snapshot()? != binding.owner || child.navigation_revision != binding.navigation_revision {
+            let child = children
+                .get(&binding.index)
+                .ok_or("TAB_RENDERER_DOCUMENT_UNAVAILABLE")?;
+            if child.comms.owner_snapshot()? != binding.owner
+                || child.navigation_revision != binding.navigation_revision
+            {
                 return Err("TAB_RENDERER_DOCUMENT_STALE".into());
             }
             Arc::clone(&child.comms)
         };
-        self.request_once_fenced(binding.index, comms, binding.generation,
-            Some(binding.navigation_revision), &cmd, timeout_ms)
+        self.request_once_fenced(
+            binding.index,
+            comms,
+            binding.generation,
+            Some(binding.navigation_revision),
+            &cmd,
+            timeout_ms,
+        )
     }
 
     /// Recover only the exact original Child/Job, without the potentially
     /// blocked visibility or writer locks. Keep the listener across recovery.
     pub(crate) fn retire_bound_tab_renderer(
-        &self, index: u32, expected: (u32, u64),
+        &self,
+        index: u32,
+        expected: (u32, u64),
     ) -> Result<(), String> {
         if !crate::grid_ipc::is_tab_renderer(index) || expected.0 == 0 {
             return Err("TAB_RENDERER_ROUTE_INVALID".into());
@@ -1458,10 +1866,17 @@ impl GridProcessManager {
                 {
                     return Err("TAB_RENDERER_RECOVERY_STALE".into());
                 }
-                let child = children.remove(&index).ok_or("TAB_RENDERER_RECOVERY_STALE")?;
+                let child = children
+                    .remove(&index)
+                    .ok_or("TAB_RENDERER_RECOVERY_STALE")?;
                 self.lifecycle.retire(index, child);
-            } else if self.listeners.lock().unwrap().get(&index).is_some_and(|comms|
-                comms.spawn_epoch.load(Ordering::SeqCst) != expected.1) {
+            } else if self
+                .listeners
+                .lock()
+                .unwrap()
+                .get(&index)
+                .is_some_and(|comms| comms.spawn_epoch.load(Ordering::SeqCst) != expected.1)
+            {
                 return Err("TAB_RENDERER_RECOVERY_STALE".into());
             }
         }
@@ -1470,13 +1885,17 @@ impl GridProcessManager {
         // receipt. The UI must re-inspect and never replay an old operation.
         let notify = || {
             if let Some(app) = self.app() {
-                let _ = app.emit_to("main", "isolated-tab-renderer-recovery-changed",
-                    serde_json::json!({"id": crate::grid_ipc::renderer_label(index)}));
+                let _ = app.emit_to(
+                    "main",
+                    "isolated-tab-renderer-recovery-changed",
+                    serde_json::json!({"id": crate::grid_ipc::renderer_label(index)}),
+                );
             }
         };
         notify();
         let result = self.lifecycle.wait_route_retired_until(
-            index, std::time::Instant::now() + std::time::Duration::from_secs(5),
+            index,
+            std::time::Instant::now() + std::time::Duration::from_secs(5),
         );
         drop(_gate);
         notify();
@@ -1485,15 +1904,21 @@ impl GridProcessManager {
 
     /// User-confirmed suspension of an inactive tab. This discards the
     /// document; it does not serialize its DOM, history or form state.
-    pub(crate) fn park_tab_renderer(&self, binding: crate::grid_ipc::RendererBinding, address: &str)
-        -> Result<(f64, f64), String>
-    {
+    pub(crate) fn park_tab_renderer(
+        &self,
+        binding: crate::grid_ipc::RendererBinding,
+        address: &str,
+    ) -> Result<(f64, f64), String> {
         if !crate::grid_ipc::is_tab_renderer(binding.index)
-            || !crate::grid_ipc::restorable_address(address) {
+            || !crate::grid_ipc::restorable_address(address)
+        {
             return Err("TAB_RENDERER_PARK_INVALID".into());
         }
         let _operation = self.lifecycle.enter()?;
-        let _visibility = self.visibility_dispatch.try_lock().map_err(|_| "TAB_RENDERER_PARK_BUSY")?;
+        let _visibility = self
+            .visibility_dispatch
+            .try_lock()
+            .map_err(|_| "TAB_RENDERER_PARK_BUSY")?;
         let app = self.app().ok_or("TAB_RENDERER_HOST_UNAVAILABLE")?;
         let state = app.state::<crate::bridge::AppState>();
         let id = crate::grid_ipc::renderer_label(binding.index);
@@ -1501,123 +1926,230 @@ impl GridProcessManager {
             Self::window_binding_matches(child, binding)
                 && child.navigation_revision == binding.navigation_revision
                 && child.last_url.as_deref() == Some(address)
-                && child.hidden && !child.blur_hidden && !child.focused
-                && child.native_window_visibility.is_some_and(|(generation, receipt)| generation == binding.generation && !receipt.visible)
+                && child.hidden
+                && !child.blur_hidden
+                && !child.focused
+                && child
+                    .native_window_visibility
+                    .is_some_and(|(generation, receipt)| {
+                        generation == binding.generation && !receipt.visible
+                    })
                 && !state.shutdown_requested.load(Ordering::Acquire)
                 && state.active_tab.lock().unwrap().as_deref() != Some(id.as_str())
-                && state.tabs.lock().unwrap().get(&id).is_some_and(|tab| tab.url == address)
+                && state
+                    .tabs
+                    .lock()
+                    .unwrap()
+                    .get(&id)
+                    .is_some_and(|tab| tab.url == address)
         };
         {
             let children = self.children.lock().unwrap();
-            let child = children.get(&binding.index).ok_or("TAB_RENDERER_PARK_STALE")?;
-            if !eligible(child) { return Err("TAB_RENDERER_PARK_STALE".into()); }
+            let child = children
+                .get(&binding.index)
+                .ok_or("TAB_RENDERER_PARK_STALE")?;
+            if !eligible(child) {
+                return Err("TAB_RENDERER_PARK_STALE".into());
+            }
         }
         if !self.sample_tab_downloads(binding, 1000)? {
             return Err("TAB_RENDERER_PARK_DOWNLOAD_UNKNOWN".into());
         }
         let stamp = {
             let children = self.children.lock().unwrap();
-            let child = children.get(&binding.index).ok_or("TAB_RENDERER_PARK_STALE")?;
-            if !eligible(child) { return Err("TAB_RENDERER_PARK_STALE".into()); }
-            let stamp = *child.comms.native_document.try_lock().map_err(|_| "TAB_RENDERER_PARK_BUSY")?;
-            stamp.filter(|stamp| stamp.usable()).ok_or("TAB_RENDERER_PARK_STALE")?
+            let child = children
+                .get(&binding.index)
+                .ok_or("TAB_RENDERER_PARK_STALE")?;
+            if !eligible(child) {
+                return Err("TAB_RENDERER_PARK_STALE".into());
+            }
+            let stamp = *child
+                .comms
+                .native_document
+                .try_lock()
+                .map_err(|_| "TAB_RENDERER_PARK_BUSY")?;
+            stamp
+                .filter(|stamp| stamp.usable())
+                .ok_or("TAB_RENDERER_PARK_STALE")?
         };
-        let encoded = self.renderer_request_data(binding, GridCmd::ViewportSnapshot { id: id.clone() }, 2000)?
+        let encoded = self
+            .renderer_request_data(binding, GridCmd::ViewportSnapshot { id: id.clone() }, 2000)?
             .ok_or("TAB_VIEWPORT_INVALID")?;
-        let viewport = crate::grid_ipc::checked_viewport(&encoded,address)?;
+        let viewport = crate::grid_ipc::checked_viewport(&encoded, address)?;
         self.ensure_cleanup()?;
-        let _gate = self.lifecycle_lock.try_lock().map_err(|_| "TAB_RENDERER_PARK_BUSY")?;
+        let _gate = self
+            .lifecycle_lock
+            .try_lock()
+            .map_err(|_| "TAB_RENDERER_PARK_BUSY")?;
         self.lifecycle.check()?;
         {
             let mut children = self.children.lock().unwrap();
-            let child = children.get(&binding.index).ok_or("TAB_RENDERER_PARK_STALE")?;
+            let child = children
+                .get(&binding.index)
+                .ok_or("TAB_RENDERER_PARK_STALE")?;
             let comms = Arc::clone(&child.comms);
             // Exclude an admitted writer that has not yet populated pending.
             // Keep the writer locked through native owner revocation. Never
             // block waiting on a stuck pipe with the children map held.
-            let _writer = comms.writer.try_lock().map_err(|_| "TAB_RENDERER_PARK_BUSY")?;
+            let _writer = comms
+                .writer
+                .try_lock()
+                .map_err(|_| "TAB_RENDERER_PARK_BUSY")?;
             {
-                let _owner = child.comms.owner_gate.try_lock().map_err(|_| "TAB_RENDERER_PARK_BUSY")?;
+                let _owner = child
+                    .comms
+                    .owner_gate
+                    .try_lock()
+                    .map_err(|_| "TAB_RENDERER_PARK_BUSY")?;
                 if !eligible(child)
-                    || *child.comms.native_document.try_lock().map_err(|_| "TAB_RENDERER_PARK_BUSY")? != Some(stamp) {
+                    || *child
+                        .comms
+                        .native_document
+                        .try_lock()
+                        .map_err(|_| "TAB_RENDERER_PARK_BUSY")?
+                        != Some(stamp)
+                {
                     return Err("TAB_RENDERER_PARK_STALE".into());
                 }
-                if !child.comms.pending.try_lock().map_err(|_| "TAB_RENDERER_PARK_BUSY")?.is_empty() {
+                if !child
+                    .comms
+                    .pending
+                    .try_lock()
+                    .map_err(|_| "TAB_RENDERER_PARK_BUSY")?
+                    .is_empty()
+                {
                     return Err("TAB_RENDERER_PARK_BUSY".into());
                 }
-                let counts = *child.comms.download_observation.try_lock().map_err(|_| "TAB_RENDERER_PARK_BUSY")?;
-                if !counts.is_some_and(|(generation, observation)| generation == binding.generation
-                    && observation.observed_unfinished() == Some(0)) {
+                let counts = *child
+                    .comms
+                    .download_observation
+                    .try_lock()
+                    .map_err(|_| "TAB_RENDERER_PARK_BUSY")?;
+                if !counts.is_some_and(|(generation, observation)| {
+                    generation == binding.generation && observation.observed_unfinished() == Some(0)
+                }) {
                     return Err("TAB_RENDERER_PARK_DOWNLOAD_UNKNOWN".into());
                 }
             }
-            let child = children.remove(&binding.index).ok_or("TAB_RENDERER_PARK_STALE")?;
+            let child = children
+                .remove(&binding.index)
+                .ok_or("TAB_RENDERER_PARK_STALE")?;
             self.lifecycle.retire(binding.index, child);
         }
-        self.lifecycle.wait_route_retired_until(
-            binding.index, std::time::Instant::now() + std::time::Duration::from_secs(5),
-        ).map_err(|error| format!("GRID_REQUEST_OUTCOME_UNKNOWN: park retirement:{error}"))?;
+        self.lifecycle
+            .wait_route_retired_until(
+                binding.index,
+                std::time::Instant::now() + std::time::Duration::from_secs(5),
+            )
+            .map_err(|error| format!("GRID_REQUEST_OUTCOME_UNKNOWN: park retirement:{error}"))?;
         Ok(viewport)
     }
 
     /// Background reclaim is intentionally limited to pristine blank ordinary
     /// pages. The caller owns the Browser mutation and tab-transition guards.
-    pub(crate) fn hibernate_blank_tab_renderer(&self, index: u32, idle_for: std::time::Duration)
-        -> Result<bool, String>
-    {
+    pub(crate) fn hibernate_blank_tab_renderer(
+        &self,
+        index: u32,
+        idle_for: std::time::Duration,
+    ) -> Result<bool, String> {
         if !crate::grid_ipc::is_tab_renderer(index) {
             return Err("TAB_RENDERER_ROUTE_INVALID".into());
         }
         let _operation = self.lifecycle.enter()?;
-        let Ok(_visibility) = self.visibility_dispatch.try_lock() else { return Ok(false); };
+        let Ok(_visibility) = self.visibility_dispatch.try_lock() else {
+            return Ok(false);
+        };
         let app = self.app().ok_or("TAB_RENDERER_HOST_UNAVAILABLE")?;
-        let Some(policy_revision) = crate::bridge::hibernation_policy_revision(&app) else { return Ok(false); };
+        let Some(policy_revision) = crate::bridge::hibernation_policy_revision(&app) else {
+            return Ok(false);
+        };
         let state = app.state::<crate::bridge::AppState>();
         let id = crate::grid_ipc::renderer_label(index);
         let eligible = |child: &GridChildHandle| {
             child.document_ready
                 && child.last_url.as_deref() == Some("about:blank")
                 && !child.comms.blank_reclaim_blocked.load(Ordering::SeqCst)
-                && grid_child_is_hibernatable(child.hidden, child.blur_hidden, child.focused,
-                    child.hidden_since, std::time::Instant::now(), idle_for)
+                && grid_child_is_hibernatable(
+                    child.hidden,
+                    child.blur_hidden,
+                    child.focused,
+                    child.hidden_since,
+                    std::time::Instant::now(),
+                    idle_for,
+                )
                 && state.hibernation_enabled.load(Ordering::Acquire)
                 && !state.shutdown_requested.load(Ordering::Acquire)
                 && state.active_tab.lock().unwrap().as_deref() != Some(id.as_str())
         };
         let (comms, binding) = {
             let children = self.children.lock().unwrap();
-            let Some(child) = children.get(&index) else { return Ok(false); };
-            if !eligible(child) { return Ok(false); }
+            let Some(child) = children.get(&index) else {
+                return Ok(false);
+            };
+            if !eligible(child) {
+                return Ok(false);
+            }
             let owner = child.comms.owner_snapshot()?;
             let generation = child.comms.generation.load(Ordering::SeqCst);
-            (Arc::clone(&child.comms), crate::grid_ipc::RendererBinding {
-                index, owner, generation, navigation_revision: child.navigation_revision,
-            })
+            (
+                Arc::clone(&child.comms),
+                crate::grid_ipc::RendererBinding {
+                    index,
+                    owner,
+                    generation,
+                    navigation_revision: child.navigation_revision,
+                },
+            )
         };
-        let Some(_claim) = comms.try_claim_blank_reclaim(binding.generation) else { return Ok(false); };
+        let Some(_claim) = comms.try_claim_blank_reclaim(binding.generation) else {
+            return Ok(false);
+        };
         // A hidden intent alone is insufficient. Confirm native hide before
         // probing; any layout or page mutation is excluded until retirement.
         self.renderer_request_data(binding, GridCmd::HideWindow { id: id.clone() }, 1500)?;
-        let probe = self.renderer_request_data(binding, GridCmd::HibernationProbe { id: id.clone() }, 1500)?;
-        if !probe.as_deref().is_some_and(grid_hibernation_probe_safe) { return Ok(false); }
+        let probe = self.renderer_request_data(
+            binding,
+            GridCmd::HibernationProbe { id: id.clone() },
+            1500,
+        )?;
+        if !probe.as_deref().is_some_and(grid_hibernation_probe_safe) {
+            return Ok(false);
+        }
         self.ensure_cleanup()?;
-        let Ok(_gate) = self.lifecycle_lock.try_lock() else { return Ok(false); };
+        let Ok(_gate) = self.lifecycle_lock.try_lock() else {
+            return Ok(false);
+        };
         self.lifecycle.check()?;
         {
-            let Some(_policy) = crate::bridge::claim_hibernation_policy(&app, policy_revision) else { return Ok(false); };
+            let Some(_policy) = crate::bridge::claim_hibernation_policy(&app, policy_revision)
+            else {
+                return Ok(false);
+            };
             let mut children = self.children.lock().unwrap();
-            let Some(child) = children.get(&index) else { return Ok(false); };
-            if !Arc::ptr_eq(&child.comms, &comms) || !comms.is_current(binding.generation)
-                || child.navigation_revision != binding.navigation_revision || !eligible(child)
-                || !state.tabs.lock().unwrap().get(&id).is_some_and(|tab| tab.url == "about:blank")
+            let Some(child) = children.get(&index) else {
+                return Ok(false);
+            };
+            if !Arc::ptr_eq(&child.comms, &comms)
+                || !comms.is_current(binding.generation)
+                || child.navigation_revision != binding.navigation_revision
+                || !eligible(child)
+                || !state
+                    .tabs
+                    .lock()
+                    .unwrap()
+                    .get(&id)
+                    .is_some_and(|tab| tab.url == "about:blank")
             {
                 return Ok(false);
             }
-            let owner = children.remove(&index).ok_or("TAB_RENDERER_RECOVERY_STALE")?;
+            let owner = children
+                .remove(&index)
+                .ok_or("TAB_RENDERER_RECOVERY_STALE")?;
             self.lifecycle.retire(index, owner);
         }
         self.lifecycle.wait_route_retired_until(
-            index, std::time::Instant::now() + std::time::Duration::from_secs(3),
+            index,
+            std::time::Instant::now() + std::time::Duration::from_secs(3),
         )?;
         Ok(true)
     }
@@ -1628,38 +2160,69 @@ impl GridProcessManager {
         if !crate::grid_ipc::is_tab_renderer(index) {
             return Err("TAB_RENDERER_ROUTE_INVALID".into());
         }
-        let children = self.children.try_lock().map_err(|_| "TAB_RENDERER_OBSERVATION_BUSY")?;
+        let children = self
+            .children
+            .try_lock()
+            .map_err(|_| "TAB_RENDERER_OBSERVATION_BUSY")?;
         if children.contains_key(&index) || self.lifecycle.try_is_retiring(index)? {
             return Err("TAB_RENDERER_REOPEN_STALE".into());
         }
-        let listeners = self.listeners.try_lock().map_err(|_| "TAB_RENDERER_OBSERVATION_BUSY")?;
-        Ok(listeners.get(&index).map_or(0, |comms| comms.spawn_epoch.load(Ordering::SeqCst)))
+        let listeners = self
+            .listeners
+            .try_lock()
+            .map_err(|_| "TAB_RENDERER_OBSERVATION_BUSY")?;
+        Ok(listeners
+            .get(&index)
+            .map_or(0, |comms| comms.spawn_epoch.load(Ordering::SeqCst)))
     }
 
     pub(crate) fn tab_renderer_absence_epoch(&self, index: u32) -> Result<u64, String> {
         self.lifecycle.check()?;
-        let _gate = self.lifecycle_lock.try_lock().map_err(|_| "TAB_RENDERER_OBSERVATION_BUSY")?;
+        let _gate = self
+            .lifecycle_lock
+            .try_lock()
+            .map_err(|_| "TAB_RENDERER_OBSERVATION_BUSY")?;
         self.tab_renderer_absence_epoch_locked(index)
     }
 
-    pub(crate) fn start_tab_renderer(&self, index: u32, url: &str) -> Result<crate::grid_ipc::RendererBinding, String> {
+    pub(crate) fn start_tab_renderer(
+        &self,
+        index: u32,
+        url: &str,
+    ) -> Result<crate::grid_ipc::RendererBinding, String> {
         self.start_tab_renderer_admitted(index, url, None)
     }
 
-    pub(crate) fn start_tab_renderer_at_absence(&self, index: u32, url: &str, expected: u64) -> Result<crate::grid_ipc::RendererBinding, String> {
+    pub(crate) fn start_tab_renderer_at_absence(
+        &self,
+        index: u32,
+        url: &str,
+        expected: u64,
+    ) -> Result<crate::grid_ipc::RendererBinding, String> {
         self.start_tab_renderer_admitted(index, url, Some(expected))
     }
 
-    fn start_tab_renderer_admitted(&self, index: u32, url: &str, absence: Option<u64>) -> Result<crate::grid_ipc::RendererBinding, String> {
+    fn start_tab_renderer_admitted(
+        &self,
+        index: u32,
+        url: &str,
+        absence: Option<u64>,
+    ) -> Result<crate::grid_ipc::RendererBinding, String> {
         if !crate::grid_ipc::is_tab_renderer(index) {
             return Err("TAB_RENDERER_ROUTE_INVALID".into());
         }
         let _operation = self.lifecycle.enter()?;
         self.ensure_cleanup()?;
         let (expected, result) = {
-            let _dispatch = self.visibility_dispatch.lock().unwrap_or_else(|p| p.into_inner());
+            let _dispatch = self
+                .visibility_dispatch
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
             {
-                let _gate = self.lifecycle_lock.lock().unwrap_or_else(|p| p.into_inner());
+                let _gate = self
+                    .lifecycle_lock
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner());
                 if let Some(epoch) = absence {
                     if self.tab_renderer_absence_epoch_locked(index)? != epoch {
                         return Err("TAB_RENDERER_REOPEN_STALE".into());
@@ -1671,33 +2234,55 @@ impl GridProcessManager {
             }
             let (expected, original) = {
                 let mut children = self.children.lock().unwrap();
-                let child = children.get_mut(&index).ok_or("TAB_RENDERER_EXITED_BEFORE_CREATE_RECEIPT")?;
+                let child = children
+                    .get_mut(&index)
+                    .ok_or("TAB_RENDERER_EXITED_BEFORE_CREATE_RECEIPT")?;
                 child.hidden = true;
-                child.hidden_since.get_or_insert_with(std::time::Instant::now);
+                child
+                    .hidden_since
+                    .get_or_insert_with(std::time::Instant::now);
                 child.last_url = Some(url.to_owned());
-                ((child.child.id(), child.comms.spawn_epoch.load(Ordering::SeqCst)), Arc::clone(&child.comms))
+                (
+                    (
+                        child.child.id(),
+                        child.comms.spawn_epoch.load(Ordering::SeqCst),
+                    ),
+                    Arc::clone(&child.comms),
+                )
             };
             let result = (|| -> Result<crate::grid_ipc::RendererBinding, String> {
                 let (comms, generation) = self.wait_connected(index, 15000)?;
                 if !Arc::ptr_eq(&original, &comms) || comms.owner_snapshot()? != expected {
                     return Err("TAB_RENDERER_CREATE_TARGET_STALE".into());
                 }
-                let command = GridCmd::CreateTab { id: crate::grid_ipc::renderer_label(index), url: url.to_owned() };
+                let command = GridCmd::CreateTab {
+                    id: crate::grid_ipc::renderer_label(index),
+                    url: url.to_owned(),
+                };
                 self.request_once_with(index, Arc::clone(&comms), generation, &command, 20000)?;
                 let mut children = self.children.lock().unwrap();
-                let child = children.get_mut(&index).ok_or("GRID_REQUEST_OUTCOME_UNKNOWN: renderer retired during create")?;
+                let child = children
+                    .get_mut(&index)
+                    .ok_or("GRID_REQUEST_OUTCOME_UNKNOWN: renderer retired during create")?;
                 let _owner = comms.owner_gate.lock().unwrap();
-                if !Arc::ptr_eq(&child.comms, &comms) || child.child.id() != expected.0
+                if !Arc::ptr_eq(&child.comms, &comms)
+                    || child.child.id() != expected.0
                     || comms.expected_pid.load(Ordering::SeqCst) != expected.0
                     || comms.spawn_epoch.load(Ordering::SeqCst) != expected.1
-                    || !comms.is_current(generation) || child.document_ready {
-                    return Err("GRID_REQUEST_OUTCOME_UNKNOWN: renderer create owner changed".into());
+                    || !comms.is_current(generation)
+                    || child.document_ready
+                {
+                    return Err(
+                        "GRID_REQUEST_OUTCOME_UNKNOWN: renderer create owner changed".into(),
+                    );
                 }
                 child.document_ready = true;
                 // Return the exact create acknowledgement owner, not a
                 // second lookup that could adopt a replacement connection.
                 Ok(crate::grid_ipc::RendererBinding {
-                    index, owner: expected, generation,
+                    index,
+                    owner: expected,
+                    generation,
                     navigation_revision: child.navigation_revision,
                 })
             })();
@@ -1717,24 +2302,44 @@ impl GridProcessManager {
 
     /// Retire only this route. Retain the same listener across an explicit
     /// recovery so process/connection generations cannot reset.
-    pub(crate) fn close_tab_renderer(&self, index: u32, release_listener: bool) -> Result<(), String> {
+    pub(crate) fn close_tab_renderer(
+        &self,
+        index: u32,
+        release_listener: bool,
+    ) -> Result<(), String> {
         self.close_tab_renderer_admitted(index, release_listener, None, None)
     }
 
-    pub(crate) fn close_tab_renderer_bound(&self, index: u32, release_listener: bool,
+    pub(crate) fn close_tab_renderer_bound(
+        &self,
+        index: u32,
+        release_listener: bool,
         expected: Option<(u32, u64)>,
     ) -> Result<(), String> {
         self.close_tab_renderer_admitted(index, release_listener, Some(expected), None)
     }
 
-    pub(crate) fn close_tab_renderer_document(&self, index: u32, release_listener: bool,
+    pub(crate) fn close_tab_renderer_document(
+        &self,
+        index: u32,
+        release_listener: bool,
         document: crate::grid_ipc::RendererBinding,
     ) -> Result<(), String> {
-        if document.index != index { return Err("TAB_RENDERER_CLOSE_TARGET_STALE".into()); }
-        self.close_tab_renderer_admitted(index, release_listener, Some(Some(document.owner)), Some(document))
+        if document.index != index {
+            return Err("TAB_RENDERER_CLOSE_TARGET_STALE".into());
+        }
+        self.close_tab_renderer_admitted(
+            index,
+            release_listener,
+            Some(Some(document.owner)),
+            Some(document),
+        )
     }
 
-    fn close_tab_renderer_admitted(&self, index: u32, release_listener: bool,
+    fn close_tab_renderer_admitted(
+        &self,
+        index: u32,
+        release_listener: bool,
         expected: Option<Option<(u32, u64)>>,
         document: Option<crate::grid_ipc::RendererBinding>,
     ) -> Result<(), String> {
@@ -1749,15 +2354,22 @@ impl GridProcessManager {
                 let _ = self.refresh_tab_downloads(binding, 600);
             }
         }
-        let _dispatch = self.visibility_dispatch.lock().unwrap_or_else(|p| p.into_inner());
+        let _dispatch = self
+            .visibility_dispatch
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         self.ensure_cleanup()?;
         let _gate = self.lifecycle_lock.lock().unwrap();
         self.lifecycle.check()?;
         {
             let mut children = self.children.lock().unwrap();
             if let Some(expected) = expected {
-                let actual = children.get(&index).map(|child|
-                    (child.child.id(), child.comms.spawn_epoch.load(Ordering::SeqCst)));
+                let actual = children.get(&index).map(|child| {
+                    (
+                        child.child.id(),
+                        child.comms.spawn_epoch.load(Ordering::SeqCst),
+                    )
+                });
                 if actual != expected {
                     return Err("TAB_RENDERER_CLOSE_TARGET_STALE".into());
                 }
@@ -1766,12 +2378,23 @@ impl GridProcessManager {
             // document revision at native retirement, not only at UI review.
             // The live-map guard excludes parent-side navigation reports.
             if let Some(document) = document {
-                let child = children.get(&index).ok_or("TAB_RENDERER_CLOSE_TARGET_STALE")?;
-                let _owner = child.comms.owner_gate.try_lock().map_err(|_| "TAB_RENDERER_CLOSE_TARGET_BUSY")?;
+                let child = children
+                    .get(&index)
+                    .ok_or("TAB_RENDERER_CLOSE_TARGET_STALE")?;
+                let _owner = child
+                    .comms
+                    .owner_gate
+                    .try_lock()
+                    .map_err(|_| "TAB_RENDERER_CLOSE_TARGET_BUSY")?;
                 if !Self::window_binding_matches(child, document)
                     || child.navigation_revision != document.navigation_revision
-                    || !child.comms.native_document.try_lock().map_err(|_| "TAB_RENDERER_CLOSE_TARGET_BUSY")?
-                        .is_some_and(|stamp| stamp.usable()) {
+                    || !child
+                        .comms
+                        .native_document
+                        .try_lock()
+                        .map_err(|_| "TAB_RENDERER_CLOSE_TARGET_BUSY")?
+                        .is_some_and(|stamp| stamp.usable())
+                {
                     return Err("TAB_RENDERER_CLOSE_TARGET_STALE".into());
                 }
             }
@@ -1785,7 +2408,8 @@ impl GridProcessManager {
         self.hibernated.lock().unwrap().remove(&index);
         self.pending_restarts.lock().unwrap().remove(&index);
         self.lifecycle.wait_route_retired_until(
-            index, std::time::Instant::now() + std::time::Duration::from_secs(3),
+            index,
+            std::time::Instant::now() + std::time::Duration::from_secs(3),
         )?;
         if release_listener {
             if let Some(comms) = self.listeners.lock().unwrap().remove(&index) {
@@ -1798,31 +2422,51 @@ impl GridProcessManager {
     /// Serialize normal-tab visibility with the native move/focus workers.
     /// This is a blocking-worker API; never call it on the GUI event loop.
     pub(crate) fn position_tab_renderer(
-        &self, index: u32, css: (f64, f64, f64, f64),
+        &self,
+        index: u32,
+        css: (f64, f64, f64, f64),
     ) -> Result<(), String> {
         let target = self.capture_window_route(index)?;
         self.position_tab_renderer_bound(index, target, css)
     }
 
-    pub(crate) fn position_tab_renderer_bound(&self, index: u32,
-        target: Option<crate::grid_ipc::RendererBinding>, css: (f64, f64, f64, f64),
+    pub(crate) fn position_tab_renderer_bound(
+        &self,
+        index: u32,
+        target: Option<crate::grid_ipc::RendererBinding>,
+        css: (f64, f64, f64, f64),
     ) -> Result<(), String> {
         if !crate::grid_ipc::is_tab_renderer(index)
-            || target.is_some_and(|binding| binding.index != index) {
+            || target.is_some_and(|binding| binding.index != index)
+        {
             return Err("TAB_RENDERER_ROUTE_INVALID".into());
         }
-        if ![css.0, css.1, css.2, css.3].iter().all(|value| value.is_finite())
-            || css.2 < 0.0 || css.3 < 0.0 {
+        if ![css.0, css.1, css.2, css.3]
+            .iter()
+            .all(|value| value.is_finite())
+            || css.2 < 0.0
+            || css.3 < 0.0
+        {
             return Err("GRID_NATIVE_RECT_INVALID".into());
         }
-        let _dispatch = self.visibility_dispatch.lock().unwrap_or_else(|p| p.into_inner());
+        let _dispatch = self
+            .visibility_dispatch
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         if css.0 <= -20000.0 {
             return self.hide_tab_renderer_locked(index, target);
         }
         let binding = target.ok_or("TAB_RENDERER_DOCUMENT_UNAVAILABLE")?;
         let app = self.app().ok_or("TAB_RENDERER_HOST_UNAVAILABLE")?;
         let label = crate::grid_ipc::renderer_label(index);
-        if app.state::<crate::bridge::AppState>().active_tab.lock().unwrap().as_deref() != Some(label.as_str()) {
+        if app
+            .state::<crate::bridge::AppState>()
+            .active_tab
+            .lock()
+            .unwrap()
+            .as_deref()
+            != Some(label.as_str())
+        {
             return Err("TAB_RENDERER_LAYOUT_SUPERSEDED".into());
         }
         let rect = self.abs_rect(css).ok_or("TAB_RENDERER_HOST_UNAVAILABLE")?;
@@ -1834,42 +2478,71 @@ impl GridProcessManager {
         self.hide_tab_renderer_bound(index, target)
     }
 
-    pub(crate) fn hide_tab_renderer_bound(&self, index: u32,
+    pub(crate) fn hide_tab_renderer_bound(
+        &self,
+        index: u32,
         target: Option<crate::grid_ipc::RendererBinding>,
     ) -> Result<(), String> {
         if !crate::grid_ipc::is_tab_renderer(index)
-            || target.is_some_and(|binding| binding.index != index) {
+            || target.is_some_and(|binding| binding.index != index)
+        {
             return Err("TAB_RENDERER_ROUTE_INVALID".into());
         }
-        let _dispatch = self.visibility_dispatch.lock().unwrap_or_else(|p| p.into_inner());
+        let _dispatch = self
+            .visibility_dispatch
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         self.hide_tab_renderer_locked(index, target)
     }
 
-    fn hide_tab_renderer_locked(&self, index: u32, target: Option<crate::grid_ipc::RendererBinding>)
-        -> Result<(), String>
-    {
-        if let Some(binding) = target { return self.hide_window_bound(binding); }
+    fn hide_tab_renderer_locked(
+        &self,
+        index: u32,
+        target: Option<crate::grid_ipc::RendererBinding>,
+    ) -> Result<(), String> {
+        if let Some(binding) = target {
+            return self.hide_window_bound(binding);
+        }
         // This caller owns visibility_dispatch. Retirement may depend on
         // lifecycle/native cleanup; do not wait under the visibility lock.
         // Observe absence under lifecycle admission, without following a
         // replacement host or mistaking retirement for confirmed hiding.
-        let _gate = self.lifecycle_lock.try_lock().map_err(|_| "GRID_LIFECYCLE_BUSY")?;
+        let _gate = self
+            .lifecycle_lock
+            .try_lock()
+            .map_err(|_| "GRID_LIFECYCLE_BUSY")?;
         self.lifecycle.check()?;
         if self.lifecycle.try_is_retiring(index)? {
             return Err("GRID_HIDE_CLEANUP_PENDING".into());
         }
-        if self.children.try_lock().map_err(|_| "GRID_WINDOW_OBSERVATION_BUSY")?.contains_key(&index) {
+        if self
+            .children
+            .try_lock()
+            .map_err(|_| "GRID_WINDOW_OBSERVATION_BUSY")?
+            .contains_key(&index)
+        {
             return Err("TAB_RENDERER_LAYOUT_SUPERSEDED".into());
         }
         Ok(())
     }
 
-    pub(crate) fn hide_grid_route(&self, stamp: crate::grid_ipc::GridRouteStamp) -> Result<(), String> {
+    pub(crate) fn hide_grid_route(
+        &self,
+        stamp: crate::grid_ipc::GridRouteStamp,
+    ) -> Result<(), String> {
         let index = stamp.index;
-        if index as usize >= crate::bridge::MAX_GRID { return Err("GRID_INDEX_INVALID".into()); }
-        let _dispatch = self.visibility_dispatch.lock().unwrap_or_else(|p| p.into_inner());
+        if index as usize >= crate::bridge::MAX_GRID {
+            return Err("GRID_INDEX_INVALID".into());
+        }
+        let _dispatch = self
+            .visibility_dispatch
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         let target = {
-            let _gate = self.lifecycle_lock.try_lock().map_err(|_| "GRID_LIFECYCLE_BUSY")?;
+            let _gate = self
+                .lifecycle_lock
+                .try_lock()
+                .map_err(|_| "GRID_LIFECYCLE_BUSY")?;
             self.lifecycle.check()?;
             if self.grid_route_stamps_locked(&[index]).first() != Some(&stamp) {
                 return Err("GRID_WINDOW_TARGET_STALE".into());
@@ -1886,14 +2559,22 @@ impl GridProcessManager {
             if let Some(child) = children.get_mut(&index) {
                 child.hidden = true;
                 child.blur_hidden = false;
-                child.hidden_since.get_or_insert_with(std::time::Instant::now);
+                child
+                    .hidden_since
+                    .get_or_insert_with(std::time::Instant::now);
                 Some(Self::window_binding(index, child).ok_or("GRID_WINDOW_TARGET_UNAVAILABLE")?)
             } else {
-                if self.lifecycle.is_retiring(index) { return Err("GRID_HIDE_CLEANUP_PENDING".into()); }
+                if self.lifecycle.is_retiring(index) {
+                    return Err("GRID_HIDE_CLEANUP_PENDING".into());
+                }
                 None
             }
         };
-        if let Some(binding) = target { self.hide_window_bound(binding) } else { Ok(()) }
+        if let Some(binding) = target {
+            self.hide_window_bound(binding)
+        } else {
+            Ok(())
+        }
     }
 
     // View switches hide the captured Grid topology, including saved
@@ -1902,17 +2583,23 @@ impl GridProcessManager {
         self.hide_native_surfaces(false)
     }
 
-    pub(crate) fn hide_all_renderer_surfaces(&self) -> Result<(),String> {
+    pub(crate) fn hide_all_renderer_surfaces(&self) -> Result<(), String> {
         self.hide_native_surfaces(true)
     }
 
-    fn hide_native_surfaces(&self, include_tabs:bool) -> Result<(),String> {
-        let _operation=self.lifecycle.enter()?;
-        let _dispatch = self.visibility_dispatch.lock().unwrap_or_else(|p| p.into_inner());
+    fn hide_native_surfaces(&self, include_tabs: bool) -> Result<(), String> {
+        let _operation = self.lifecycle.enter()?;
+        let _dispatch = self
+            .visibility_dispatch
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         let targets = {
             // Windows reclaim holds lifecycle_lock before trying visibility;
             // never wait on that lock while holding visibility_dispatch.
-            let _gate = self.lifecycle_lock.try_lock().map_err(|_| "GRID_LIFECYCLE_BUSY")?;
+            let _gate = self
+                .lifecycle_lock
+                .try_lock()
+                .map_err(|_| "GRID_LIFECYCLE_BUSY")?;
             self.lifecycle.check()?;
             for saved in self.hibernated.lock().unwrap().values_mut() {
                 saved.hidden = true;
@@ -1923,76 +2610,121 @@ impl GridProcessManager {
                 saved.blur_hidden = false;
             }
             let mut children = self.children.lock().unwrap();
-            children.iter_mut().filter(|(index, _)| include_tabs || !crate::grid_ipc::is_tab_renderer(**index))
+            children
+                .iter_mut()
+                .filter(|(index, _)| include_tabs || !crate::grid_ipc::is_tab_renderer(**index))
                 .map(|(&index, child)| {
                     // Also fence a not-yet-ready replay; lack of a native
                     // acknowledgement is still reported as partial failure.
                     child.hidden = true;
                     child.blur_hidden = false;
-                    child.hidden_since.get_or_insert_with(std::time::Instant::now);
+                    child
+                        .hidden_since
+                        .get_or_insert_with(std::time::Instant::now);
                     (index, Self::window_binding(index, child))
-                }).collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
         };
         let mut failures = Vec::new();
         for (index, target) in targets {
-            let result = target.ok_or_else(|| "GRID_WINDOW_TARGET_UNAVAILABLE".to_string())
+            let result = target
+                .ok_or_else(|| "GRID_WINDOW_TARGET_UNAVAILABLE".to_string())
                 .and_then(|binding| self.hide_window_bound(binding));
-            if let Err(error) = result { failures.push(format!("{index}:{error}")); }
+            if let Err(error) = result {
+                failures.push(format!("{index}:{error}"));
+            }
         }
         // A retirement may still own a visible window. Do not wait for
         // cleanup while holding the dispatch lock or call it a hide success.
         match self.lifecycle.retiring_routes() {
-            Ok(routes)=>for route in routes {
-                if include_tabs || !crate::grid_ipc::is_tab_renderer(route) {
-                    failures.push(format!("{route}:GRID_HIDE_CLEANUP_PENDING"));
+            Ok(routes) => {
+                for route in routes {
+                    if include_tabs || !crate::grid_ipc::is_tab_renderer(route) {
+                        failures.push(format!("{route}:GRID_HIDE_CLEANUP_PENDING"));
+                    }
                 }
-            },
-            Err(error)=>failures.push(error),
+            }
+            Err(error) => failures.push(error),
         }
-        if failures.is_empty() { Ok(()) }
-        else { Err(format!("GRID_HIDE_PARTIAL:{}", failures.join("; "))) }
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(format!("GRID_HIDE_PARTIAL:{}", failures.join("; ")))
+        }
     }
 
     pub(crate) fn select_tab_renderer(&self, index: u32, others: &[u32]) -> Result<(), String> {
-        let target = self.capture_window_route(index)?.ok_or("TAB_RENDERER_WINDOW_UNAVAILABLE")?;
+        let target = self
+            .capture_window_route(index)?
+            .ok_or("TAB_RENDERER_WINDOW_UNAVAILABLE")?;
         self.select_tab_renderer_bound(target, others)
     }
 
-    pub(crate) fn select_tab_renderer_bound(&self, target: crate::grid_ipc::RendererBinding, others: &[u32]) -> Result<(), String> {
+    pub(crate) fn select_tab_renderer_bound(
+        &self,
+        target: crate::grid_ipc::RendererBinding,
+        others: &[u32],
+    ) -> Result<(), String> {
         let index = target.index;
         if !crate::grid_ipc::is_tab_renderer(index)
-            || others.iter().any(|id| *id == index || !crate::grid_ipc::is_tab_renderer(*id))
+            || others
+                .iter()
+                .any(|id| *id == index || !crate::grid_ipc::is_tab_renderer(*id))
         {
             return Err("TAB_RENDERER_ROUTE_INVALID".into());
         }
-        let _dispatch = self.visibility_dispatch.lock().unwrap_or_else(|p| p.into_inner());
+        let _dispatch = self
+            .visibility_dispatch
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         let app = self.app().ok_or("TAB_RENDERER_HOST_UNAVAILABLE")?;
         let state = app.state::<crate::bridge::AppState>();
-        let current = self.capture_window_route(index)?.ok_or("TAB_RENDERER_WINDOW_UNAVAILABLE")?;
+        let current = self
+            .capture_window_route(index)?
+            .ok_or("TAB_RENDERER_WINDOW_UNAVAILABLE")?;
         if current.owner != target.owner || current.generation != target.generation {
             return Err("TAB_RENDERER_ACTIVATION_STALE".into());
         }
         // Include unpublished or failed logical registrations. Selection
         // must account for actual native peers, not only the UI tab list.
-        let mut peer_ids=others.to_vec();
+        let mut peer_ids = others.to_vec();
         {
-            let children=self.children.try_lock().map_err(|_|"GRID_WINDOW_OBSERVATION_BUSY")?;
-            peer_ids.extend(children.keys().copied().filter(|other|
-                *other!=index && crate::grid_ipc::is_tab_renderer(*other)));
+            let children = self
+                .children
+                .try_lock()
+                .map_err(|_| "GRID_WINDOW_OBSERVATION_BUSY")?;
+            peer_ids.extend(
+                children
+                    .keys()
+                    .copied()
+                    .filter(|other| *other != index && crate::grid_ipc::is_tab_renderer(*other)),
+            );
         }
-        peer_ids.extend(self.lifecycle.retiring_routes()?.into_iter().filter(|other|
-            *other!=index && crate::grid_ipc::is_tab_renderer(*other)));
+        peer_ids.extend(
+            self.lifecycle
+                .retiring_routes()?
+                .into_iter()
+                .filter(|other| *other != index && crate::grid_ipc::is_tab_renderer(*other)),
+        );
         peer_ids.sort_unstable();
         peer_ids.dedup();
-        let peers: Vec<_> = peer_ids.iter().map(|&other| (other, self.capture_window_route(other))).collect();
+        let peers: Vec<_> = peer_ids
+            .iter()
+            .map(|&other| (other, self.capture_window_route(other)))
+            .collect();
         let mut failures = Vec::new();
         for (other, target) in peers {
-            if let Err(error) = target.and_then(|binding| self.hide_tab_renderer_locked(other, binding)) {
+            if let Err(error) =
+                target.and_then(|binding| self.hide_tab_renderer_locked(other, binding))
+            {
                 failures.push(format!("{other}:{error}"));
             }
         }
         if !failures.is_empty() {
-            return Err(format!("TAB_RENDERER_ACTIVATION_PARTIAL:{}", failures.join("; ")));
+            return Err(format!(
+                "TAB_RENDERER_ACTIVATION_PARTIAL:{}",
+                failures.join("; ")
+            ));
         }
         // Peers may already be hidden. A later rejection is a partial
         // activation, not a no-effect failure that may be silently retired.
@@ -2009,9 +2741,11 @@ impl GridProcessManager {
         // Hiding peers may wait on native IPC. Revalidate the original
         // process/transport under the native owner gates before publication.
         let children = self.children.lock().unwrap();
-        let child = children.get(&index).ok_or_else(|| post_hide_error("TAB_RENDERER_ACTIVATION_STALE"))?;
+        let child = children
+            .get(&index)
+            .ok_or_else(|| post_hide_error("TAB_RENDERER_ACTIVATION_STALE"))?;
         let _owner = child.comms.owner_gate.lock().unwrap();
-        if !Self::window_binding_matches(child,target)
+        if !Self::window_binding_matches(child, target)
             || child.comms.expected_pid.load(Ordering::SeqCst) != target.owner.0
         {
             return Err(post_hide_error("TAB_RENDERER_ACTIVATION_STALE"));
@@ -2025,16 +2759,22 @@ impl GridProcessManager {
     }
 
     pub(crate) fn publish_tab_renderer_info(
-        &self, binding: crate::grid_ipc::RendererBinding, mut info: crate::domain::TabInfo,
+        &self,
+        binding: crate::grid_ipc::RendererBinding,
+        mut info: crate::domain::TabInfo,
     ) -> Result<crate::domain::TabInfo, String> {
         let index = binding.index;
-        if !crate::grid_ipc::is_tab_renderer(index) || info.id != crate::grid_ipc::renderer_label(index) {
+        if !crate::grid_ipc::is_tab_renderer(index)
+            || info.id != crate::grid_ipc::renderer_label(index)
+        {
             return Err("TAB_RENDERER_ROUTE_INVALID".into());
         }
         let app = self.app().ok_or("TAB_RENDERER_HOST_UNAVAILABLE")?;
         let state = app.state::<crate::bridge::AppState>();
         let children = self.children.lock().unwrap();
-        let child = children.get(&index).ok_or("TAB_RENDERER_DOCUMENT_UNAVAILABLE")?;
+        let child = children
+            .get(&index)
+            .ok_or("TAB_RENDERER_DOCUMENT_UNAVAILABLE")?;
         let _owner = child.comms.owner_gate.lock().unwrap();
         if !Self::window_binding_matches(child, binding)
             || child.comms.expected_pid.load(Ordering::SeqCst) != binding.owner.0
@@ -2057,31 +2797,41 @@ impl GridProcessManager {
 
     /// Publish only the original recovered native owner and its latest
     /// observed navigation. Never overwrite a newer redirect with input URL.
-    pub(crate) fn publish_reopened_tab(&self, binding: crate::grid_ipc::RendererBinding)
-        -> Result<crate::domain::TabInfo, String>
-    {
+    pub(crate) fn publish_reopened_tab(
+        &self,
+        binding: crate::grid_ipc::RendererBinding,
+    ) -> Result<crate::domain::TabInfo, String> {
         if !crate::grid_ipc::is_tab_renderer(binding.index) {
             return Err("TAB_RENDERER_ROUTE_INVALID".into());
         }
         let app = self.app().ok_or("TAB_RENDERER_HOST_UNAVAILABLE")?;
         let state = app.state::<crate::bridge::AppState>();
         let children = self.children.lock().unwrap();
-        let child = children.get(&binding.index).ok_or("TAB_RENDERER_REOPEN_STALE")?;
+        let child = children
+            .get(&binding.index)
+            .ok_or("TAB_RENDERER_REOPEN_STALE")?;
         let _owner = child.comms.owner_gate.lock().unwrap();
         if !Self::window_binding_matches(child, binding)
             || child.comms.expected_pid.load(Ordering::SeqCst) != binding.owner.0
         {
             return Err("TAB_RENDERER_REOPEN_STALE".into());
         }
-        let address = child.last_url.as_ref().ok_or("TAB_RENDERER_REOPEN_ADDRESS_UNKNOWN")?;
+        let address = child
+            .last_url
+            .as_ref()
+            .ok_or("TAB_RENDERER_REOPEN_ADDRESS_UNKNOWN")?;
         let mut tabs = state.tabs.lock().unwrap();
         if state.shutdown_requested.load(Ordering::Acquire) {
             return Err("TAB_APPLICATION_SHUTTING_DOWN".into());
         }
-        let tab = tabs.get_mut(&crate::grid_ipc::renderer_label(binding.index)).ok_or("TAB_NOT_FOUND")?;
+        let tab = tabs
+            .get_mut(&crate::grid_ipc::renderer_label(binding.index))
+            .ok_or("TAB_NOT_FOUND")?;
         tab.url = address.clone();
-        tab.title = url::Url::parse(address).ok()
-            .and_then(|value| value.host_str().map(str::to_owned)).unwrap_or_else(|| "Recovered tab".to_owned());
+        tab.title = url::Url::parse(address)
+            .ok()
+            .and_then(|value| value.host_str().map(str::to_owned))
+            .unwrap_or_else(|| "Recovered tab".to_owned());
         Ok(tab.clone())
     }
 
@@ -2093,15 +2843,28 @@ impl GridProcessManager {
         self.navigate_tab_renderer_bound(binding, url)
     }
 
-    pub(crate) fn navigate_tab_renderer_bound(&self, binding: crate::grid_ipc::RendererBinding, url: &str) -> Result<(), String> {
+    pub(crate) fn navigate_tab_renderer_bound(
+        &self,
+        binding: crate::grid_ipc::RendererBinding,
+        url: &str,
+    ) -> Result<(), String> {
         let index = binding.index;
-        if !crate::grid_ipc::is_tab_renderer(index) { return Err("TAB_RENDERER_ROUTE_INVALID".into()); }
-        let command = GridCmd::Navigate { id: crate::grid_ipc::renderer_label(index), url: url.to_owned() };
+        if !crate::grid_ipc::is_tab_renderer(index) {
+            return Err("TAB_RENDERER_ROUTE_INVALID".into());
+        }
+        let command = GridCmd::Navigate {
+            id: crate::grid_ipc::renderer_label(index),
+            url: url.to_owned(),
+        };
         self.renderer_request_data(binding, command, 10000)?;
-        let app = self.app().ok_or("GRID_REQUEST_OUTCOME_UNKNOWN: renderer host unavailable")?;
+        let app = self
+            .app()
+            .ok_or("GRID_REQUEST_OUTCOME_UNKNOWN: renderer host unavailable")?;
         let state = app.state::<crate::bridge::AppState>();
         let mut children = self.children.lock().unwrap();
-        let child = children.get_mut(&index).ok_or("GRID_REQUEST_OUTCOME_UNKNOWN: renderer retired after navigation")?;
+        let child = children
+            .get_mut(&index)
+            .ok_or("GRID_REQUEST_OUTCOME_UNKNOWN: renderer retired after navigation")?;
         let _owner = child.comms.owner_gate.lock().unwrap();
         if !Self::window_binding_matches(child, binding) {
             return Err("GRID_REQUEST_OUTCOME_UNKNOWN: renderer retired after navigation".into());
@@ -2115,7 +2878,9 @@ impl GridProcessManager {
         }
         if let Some(tab) = tabs.get_mut(&crate::grid_ipc::renderer_label(index)) {
             if let Some(current_url) = &child.last_url {
-                if tab.url != *current_url { tab.title = current_url.clone(); }
+                if tab.url != *current_url {
+                    tab.title = current_url.clone();
+                }
                 tab.url = current_url.clone();
             }
         }
@@ -2123,7 +2888,11 @@ impl GridProcessManager {
     }
 
     pub(crate) fn try_grid_is_hibernated(&self, index: u32) -> Result<bool, String> {
-        Ok(self.hibernated.try_lock().map_err(|_| "GRID_LIFECYCLE_BUSY")?.contains_key(&index))
+        Ok(self
+            .hibernated
+            .try_lock()
+            .map_err(|_| "GRID_LIFECYCLE_BUSY")?
+            .contains_key(&index))
     }
 
     pub fn is_hibernated(&self, index: u32) -> bool {
@@ -2165,9 +2934,18 @@ impl GridProcessManager {
     }
 
     /// 等待该 index 的 UDS 连接就绪（子进程冷启动需 1~3 秒）。
-    fn wait_connected(&self, index: u32, timeout_ms: u64) -> Result<(Arc<ChildComms>, u64), String> {
+    fn wait_connected(
+        &self,
+        index: u32,
+        timeout_ms: u64,
+    ) -> Result<(Arc<ChildComms>, u64), String> {
         self.lifecycle.check()?;
-        let comms = self.listeners.lock().unwrap().get(&index).cloned()
+        let comms = self
+            .listeners
+            .lock()
+            .unwrap()
+            .get(&index)
+            .cloned()
             .ok_or_else(|| format!("grid-{index} has no renderer listener"))?;
         let expected = comms.owner_snapshot()?;
         let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
@@ -2179,7 +2957,10 @@ impl GridProcessManager {
             if std::time::Instant::now() >= deadline {
                 return Err(format!("GRID_RENDERER_READY_TIMEOUT:{index}"));
             }
-            if self.lifecycle.wait_or_stop(std::time::Duration::from_millis(50)) {
+            if self
+                .lifecycle
+                .wait_or_stop(std::time::Duration::from_millis(50))
+            {
                 return Err("GRID_SHUTDOWN_IN_PROGRESS".into());
             }
         }
@@ -2195,36 +2976,58 @@ impl GridProcessManager {
         let (comms, generation) = self.wait_connected(index, 15000)?;
         if crate::grid_ipc::is_tab_renderer(index) {
             let children = self.children.lock().unwrap();
-            let child = children.get(&index).ok_or("TAB_RENDERER_DOCUMENT_UNAVAILABLE")?;
+            let child = children
+                .get(&index)
+                .ok_or("TAB_RENDERER_DOCUMENT_UNAVAILABLE")?;
             let creating = matches!(&cmd, GridCmd::CreateTab { .. });
             if !Arc::ptr_eq(&child.comms, &comms) || creating == child.document_ready {
                 return Err("TAB_RENDERER_DOCUMENT_UNAVAILABLE".into());
             }
         }
-        self.request_once_with(index, comms, generation, &cmd, timeout_ms).map(|_| ())
+        self.request_once_with(index, comms, generation, &cmd, timeout_ms)
+            .map(|_| ())
     }
 
     /// A delayed load retry retains the native failure's complete identity.
-    pub(crate) fn retry_failed_navigation(&self, binding: crate::grid_ipc::RendererBinding, url: &str) -> Result<(), String> {
+    pub(crate) fn retry_failed_navigation(
+        &self,
+        binding: crate::grid_ipc::RendererBinding,
+        url: &str,
+    ) -> Result<(), String> {
         let index = binding.index;
         let _operation = self.lifecycle.enter()?;
-        if index as usize >= crate::bridge::MAX_GRID || !crate::grid_ipc::restorable_address(url)
-            || !url::Url::parse(url).is_ok_and(|value| matches!(value.scheme(), "http" | "https")) {
+        if index as usize >= crate::bridge::MAX_GRID
+            || !crate::grid_ipc::restorable_address(url)
+            || !url::Url::parse(url).is_ok_and(|value| matches!(value.scheme(), "http" | "https"))
+        {
             return Err("GRID_RETRY_ADDRESS_REJECTED".into());
         }
         let comms = {
             let children = self.children.lock().unwrap();
             let child = children.get(&index).ok_or("GRID_RENDERER_NOT_OWNED")?;
-            if !child.document_ready || child.comms.owner_snapshot()? != binding.owner
+            if !child.document_ready
+                || child.comms.owner_snapshot()? != binding.owner
                 || !child.comms.is_current(binding.generation)
                 || child.navigation_revision != binding.navigation_revision
-                || child.last_url.as_deref() != Some(url) {
+                || child.last_url.as_deref() != Some(url)
+            {
                 return Err("GRID_RETRY_SUPERSEDED".into());
             }
             Arc::clone(&child.comms)
         };
-        let cmd = GridCmd::Navigate { id: crate::grid_ipc::renderer_label(index), url: url.to_string() };
-        self.request_once_fenced(index, comms, binding.generation, Some(binding.navigation_revision), &cmd, 10000).map(|_| ())
+        let cmd = GridCmd::Navigate {
+            id: crate::grid_ipc::renderer_label(index),
+            url: url.to_string(),
+        };
+        self.request_once_fenced(
+            index,
+            comms,
+            binding.generation,
+            Some(binding.navigation_revision),
+            &cmd,
+            10000,
+        )
+        .map(|_| ())
     }
 
     /// Fail-closed native probe of the actual Grid page. Stored last_url is
@@ -2270,38 +3073,59 @@ impl GridProcessManager {
             if !comms.is_current(generation) {
                 return Err("GRID_CONNECTION_GENERATION_CHANGED".into());
             }
-            if comms.blank_reclaiming.load(Ordering::SeqCst) && !cmd.allowed_during_blank_reclaim() {
+            if comms.blank_reclaiming.load(Ordering::SeqCst) && !cmd.allowed_during_blank_reclaim()
+            {
                 return Err("TAB_RENDERER_RECLAIM_IN_PROGRESS".into());
             }
             // Allocate in writer order, not caller/thread order. The worker
             // rejects replays and the counter must never wrap.
             seq = crate::grid_ipc::next_request_sequence(&comms.seq)?;
             let native_document = if cmd.document_id().is_some() {
-                let observed = crate::grid_ipc::lock_renderer_writer(&comms.native_document, deadline, || {
-                    self.lifecycle.check()?;
-                    if !comms.is_current(generation) { return Err("GRID_CONNECTION_GENERATION_CHANGED".into()); }
-                    Ok(())
-                })?;
-                let stamp = (*observed).filter(|stamp| stamp.usable())
+                let observed = crate::grid_ipc::lock_renderer_writer(
+                    &comms.native_document,
+                    deadline,
+                    || {
+                        self.lifecycle.check()?;
+                        if !comms.is_current(generation) {
+                            return Err("GRID_CONNECTION_GENERATION_CHANGED".into());
+                        }
+                        Ok(())
+                    },
+                )?;
+                let stamp = (*observed)
+                    .filter(|stamp| stamp.usable())
                     .ok_or("GRID_NATIVE_DOCUMENT_UNAVAILABLE")?;
                 Some(stamp)
-            } else { None };
-            let frame = crate::grid_ipc::encode_wire(&Wire::Request { seq, cmd: cmd.clone(), native_document })
-                .map_err(|_| "GRID_REQUEST_FRAME_REJECTED")?;
+            } else {
+                None
+            };
+            let frame = crate::grid_ipc::encode_wire(&Wire::Request {
+                seq,
+                cmd: cmd.clone(),
+                native_document,
+            })
+            .map_err(|_| "GRID_REQUEST_FRAME_REJECTED")?;
             peer_pid = comms.expected_pid.load(Ordering::SeqCst);
             let result = match guard.as_mut() {
                 Some(w) => {
                     {
-                        let _owner = crate::grid_ipc::lock_renderer_writer(&comms.owner_gate, deadline, || {
-                            self.lifecycle.check()?;
-                            if !comms.is_current(generation) { return Err("GRID_CONNECTION_GENERATION_CHANGED".into()); }
-                            Ok(())
-                        })?;
+                        let _owner = crate::grid_ipc::lock_renderer_writer(
+                            &comms.owner_gate,
+                            deadline,
+                            || {
+                                self.lifecycle.check()?;
+                                if !comms.is_current(generation) {
+                                    return Err("GRID_CONNECTION_GENERATION_CHANGED".into());
+                                }
+                                Ok(())
+                            },
+                        )?;
                         if !comms.is_current(generation) {
                             return Err("GRID_CONNECTION_GENERATION_CHANGED".into());
                         }
-                        if native_document.is_some_and(|stamp|
-                            *comms.native_document.lock().unwrap() != Some(stamp)) {
+                        if native_document.is_some_and(|stamp| {
+                            *comms.native_document.lock().unwrap() != Some(stamp)
+                        }) {
                             return Err("GRID_NATIVE_DOCUMENT_STALE".into());
                         }
                         if document_revision.is_some_and(|revision| {
@@ -2312,11 +3136,17 @@ impl GridProcessManager {
                         if std::time::Instant::now() >= deadline {
                             return Err("GRID_WRITER_ADMISSION_TIMEOUT".into());
                         }
-                        let mut pending = crate::grid_ipc::lock_renderer_writer(&comms.pending, deadline, || {
-                            self.lifecycle.check()?;
-                            if !comms.is_current(generation) { return Err("GRID_CONNECTION_GENERATION_CHANGED".into()); }
-                            Ok(())
-                        })?;
+                        let mut pending = crate::grid_ipc::lock_renderer_writer(
+                            &comms.pending,
+                            deadline,
+                            || {
+                                self.lifecycle.check()?;
+                                if !comms.is_current(generation) {
+                                    return Err("GRID_CONNECTION_GENERATION_CHANGED".into());
+                                }
+                                Ok(())
+                            },
+                        )?;
                         if std::time::Instant::now() >= deadline {
                             return Err("GRID_WRITER_ADMISSION_TIMEOUT".into());
                         }
@@ -2347,7 +3177,9 @@ impl GridProcessManager {
             comms.pending.lock().unwrap().remove(&seq);
             comms.detach_if_current(generation);
             self.terminate_child_job(index, &comms, generation, peer_pid);
-            return Err(format!("GRID_REQUEST_OUTCOME_UNKNOWN: NamedPipe write failed: {e}"));
+            return Err(format!(
+                "GRID_REQUEST_OUTCOME_UNKNOWN: NamedPipe write failed: {e}"
+            ));
         }
         loop {
             if let Err(error) = self.lifecycle.check() {
@@ -2360,7 +3192,10 @@ impl GridProcessManager {
             if !comms.is_current(generation) {
                 comms.block_blank_reclaim_for(generation);
                 comms.pending.lock().unwrap().remove(&seq);
-                return Err("GRID_REQUEST_OUTCOME_UNKNOWN: original connection changed after dispatch".into());
+                return Err(
+                    "GRID_REQUEST_OUTCOME_UNKNOWN: original connection changed after dispatch"
+                        .into(),
+                );
             }
             let remaining = deadline.saturating_duration_since(std::time::Instant::now());
             if remaining.is_zero() {
@@ -2375,13 +3210,15 @@ impl GridProcessManager {
                         return Err("GRID_REQUEST_OUTCOME_UNKNOWN: original connection changed before receipt".into());
                     }
                     if matches!(cmd, GridCmd::UpdateRect { .. } | GridCmd::HideWindow { .. }) {
-                        if let Err(error) = crate::grid_ipc::NativeWindowReceipt::decode_for(cmd, data.clone()) {
+                        if let Err(error) =
+                            crate::grid_ipc::NativeWindowReceipt::decode_for(cmd, data.clone())
+                        {
                             comms.block_blank_reclaim_for(generation);
                             return Err(error);
                         }
                     }
                     return Ok(data);
-                },
+                }
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
                     comms.block_blank_reclaim_for(generation);
@@ -2393,56 +3230,91 @@ impl GridProcessManager {
     }
 
     /// Capture the original native window identity for queued operations.
-    fn window_binding(index: u32, child: &GridChildHandle) -> Option<crate::grid_ipc::RendererBinding> {
+    fn window_binding(
+        index: u32,
+        child: &GridChildHandle,
+    ) -> Option<crate::grid_ipc::RendererBinding> {
         let owner = child.comms.owner_snapshot().ok()?;
         let generation = child.comms.generation.load(Ordering::SeqCst);
-        if !child.document_ready || !child.comms.is_current(generation)
-            || child.comms.blank_reclaiming.load(Ordering::SeqCst) {
+        if !child.document_ready
+            || !child.comms.is_current(generation)
+            || child.comms.blank_reclaiming.load(Ordering::SeqCst)
+        {
             return None;
         }
         Some(crate::grid_ipc::RendererBinding {
-            index, owner, generation, navigation_revision: child.navigation_revision,
+            index,
+            owner,
+            generation,
+            navigation_revision: child.navigation_revision,
         })
     }
 
-    fn window_binding_matches(child: &GridChildHandle, binding: crate::grid_ipc::RendererBinding) -> bool {
+    fn window_binding_matches(
+        child: &GridChildHandle,
+        binding: crate::grid_ipc::RendererBinding,
+    ) -> bool {
         // Window geometry/visibility survives navigation within the SAME host.
-        child.document_ready && child.child.id() == binding.owner.0
+        child.document_ready
+            && child.child.id() == binding.owner.0
             && child.comms.spawn_epoch.load(Ordering::SeqCst) == binding.owner.1
             && child.comms.is_current(binding.generation)
             && !child.comms.blank_reclaiming.load(Ordering::SeqCst)
     }
 
     fn visibility_targets(&self) -> Vec<crate::grid_ipc::RendererBinding> {
-        self.children.lock().unwrap().iter()
-            .filter_map(|(&index, child)| Self::window_binding(index, child)).collect()
+        self.children
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|(&index, child)| Self::window_binding(index, child))
+            .collect()
     }
 
     pub fn send(&self, index: u32, cmd: GridCmd) {
-        let binding = self.children.lock().unwrap().get(&index)
+        let binding = self
+            .children
+            .lock()
+            .unwrap()
+            .get(&index)
             .and_then(|child| Self::window_binding(index, child));
-        if let Some(binding) = binding { self.send_window_bound(binding, cmd); }
+        if let Some(binding) = binding {
+            self.send_window_bound(binding, cmd);
+        }
     }
 
     // Background callers already hold visibility_dispatch; a receipt is
     // checked against the same process and connection after native execution.
     fn send_window_bound(&self, binding: crate::grid_ipc::RendererBinding, cmd: GridCmd) {
         if let Err(error) = self.request_window_bound(binding, cmd, 1500) {
-            eprintln!("[grid-manager] window receipt unconfirmed index={}: {error}", binding.index);
+            eprintln!(
+                "[grid-manager] window receipt unconfirmed index={}: {error}",
+                binding.index
+            );
         }
     }
 
-    fn request_window_bound(&self, binding: crate::grid_ipc::RendererBinding,
-        cmd: GridCmd, timeout_ms: u64,
+    fn request_window_bound(
+        &self,
+        binding: crate::grid_ipc::RendererBinding,
+        cmd: GridCmd,
+        timeout_ms: u64,
     ) -> Result<(), String> {
         let _operation = self.lifecycle.enter()?;
-        if !cmd.targets(binding.index) { return Err("GRID_REQUEST_TARGET_REJECTED".into()); }
-        if !matches!(&cmd, GridCmd::UpdateRect { .. } | GridCmd::HideWindow { .. }) {
+        if !cmd.targets(binding.index) {
+            return Err("GRID_REQUEST_TARGET_REJECTED".into());
+        }
+        if !matches!(
+            &cmd,
+            GridCmd::UpdateRect { .. } | GridCmd::HideWindow { .. }
+        ) {
             return Err("GRID_WINDOW_COMMAND_INVALID".into());
         }
         let comms = {
             let mut children = self.children.lock().unwrap();
-            let child = children.get_mut(&binding.index).ok_or("GRID_WINDOW_TARGET_STALE")?;
+            let child = children
+                .get_mut(&binding.index)
+                .ok_or("GRID_WINDOW_TARGET_STALE")?;
             let _owner = child.comms.owner_gate.lock().unwrap();
             if !Self::window_binding_matches(child, binding) {
                 return Err("GRID_WINDOW_TARGET_STALE".into());
@@ -2452,32 +3324,54 @@ impl GridProcessManager {
             child.native_window_visibility = None;
             Arc::clone(&child.comms)
         };
-        let result = self.request_once_with(binding.index, comms, binding.generation, &cmd, timeout_ms).and_then(|data| crate::grid_ipc::NativeWindowReceipt::decode_for(&cmd, data));
+        let result = self
+            .request_once_with(binding.index, comms, binding.generation, &cmd, timeout_ms)
+            .and_then(|data| crate::grid_ipc::NativeWindowReceipt::decode_for(&cmd, data));
         let mut children = self.children.lock().unwrap();
-        let child = children.get_mut(&binding.index)
+        let child = children
+            .get_mut(&binding.index)
             .ok_or("GRID_REQUEST_OUTCOME_UNKNOWN: window host retired")?;
         let _owner = child.comms.owner_gate.lock().unwrap();
         if !Self::window_binding_matches(child, binding) {
             return Err("GRID_REQUEST_OUTCOME_UNKNOWN: window host changed".into());
         }
-        child.native_window_visibility = result.as_ref().ok().map(|receipt| (binding.generation, *receipt));
+        child.native_window_visibility = result
+            .as_ref()
+            .ok()
+            .map(|receipt| (binding.generation, *receipt));
         result.map(|_| ())
     }
 
-    pub(crate) fn capture_window_route(&self, index: u32)
-        -> Result<Option<crate::grid_ipc::RendererBinding>, String>
-    {
-        let children=self.children.try_lock().map_err(|_|"GRID_WINDOW_OBSERVATION_BUSY")?;
-        let Some(child)=children.get(&index) else {return Ok(None);};
-        let _owner=child.comms.owner_gate.try_lock().map_err(|_|"GRID_WINDOW_OBSERVATION_BUSY")?;
-        let binding=crate::grid_ipc::RendererBinding{
-            index,owner:(child.child.id(),child.comms.spawn_epoch.load(Ordering::SeqCst)),
-            generation:child.comms.generation.load(Ordering::SeqCst),
-            navigation_revision:child.navigation_revision,
+    pub(crate) fn capture_window_route(
+        &self,
+        index: u32,
+    ) -> Result<Option<crate::grid_ipc::RendererBinding>, String> {
+        let children = self
+            .children
+            .try_lock()
+            .map_err(|_| "GRID_WINDOW_OBSERVATION_BUSY")?;
+        let Some(child) = children.get(&index) else {
+            return Ok(None);
         };
-        if binding.owner.0==0 || binding.owner.1==0
-            || child.comms.expected_pid.load(Ordering::SeqCst)!=binding.owner.0
-            || !Self::window_binding_matches(child,binding) {
+        let _owner = child
+            .comms
+            .owner_gate
+            .try_lock()
+            .map_err(|_| "GRID_WINDOW_OBSERVATION_BUSY")?;
+        let binding = crate::grid_ipc::RendererBinding {
+            index,
+            owner: (
+                child.child.id(),
+                child.comms.spawn_epoch.load(Ordering::SeqCst),
+            ),
+            generation: child.comms.generation.load(Ordering::SeqCst),
+            navigation_revision: child.navigation_revision,
+        };
+        if binding.owner.0 == 0
+            || binding.owner.1 == 0
+            || child.comms.expected_pid.load(Ordering::SeqCst) != binding.owner.0
+            || !Self::window_binding_matches(child, binding)
+        {
             return Err("GRID_WINDOW_TARGET_UNAVAILABLE".into());
         }
         Ok(Some(binding))
@@ -2488,28 +3382,43 @@ impl GridProcessManager {
     fn hide_window_bound(&self, binding: crate::grid_ipc::RendererBinding) -> Result<(), String> {
         {
             let mut children = self.children.lock().unwrap();
-            let child = children.get_mut(&binding.index).ok_or("GRID_WINDOW_TARGET_STALE")?;
+            let child = children
+                .get_mut(&binding.index)
+                .ok_or("GRID_WINDOW_TARGET_STALE")?;
             let _owner = child.comms.owner_gate.lock().unwrap();
             if !Self::window_binding_matches(child, binding) {
                 return Err("GRID_WINDOW_TARGET_STALE".into());
             }
             child.hidden = true;
             child.blur_hidden = false;
-            child.hidden_since.get_or_insert_with(std::time::Instant::now);
+            child
+                .hidden_since
+                .get_or_insert_with(std::time::Instant::now);
         }
-        self.request_window_bound(binding, GridCmd::HideWindow {
-            id: crate::grid_ipc::renderer_label(binding.index),
-        }, 3000)
+        self.request_window_bound(
+            binding,
+            GridCmd::HideWindow {
+                id: crate::grid_ipc::renderer_label(binding.index),
+            },
+            3000,
+        )
     }
 
-    fn position_window_bound(&self, binding: crate::grid_ipc::RendererBinding,
-        css: (f64, f64, f64, f64), rect: crate::grid_ipc::IpcRect,
+    fn position_window_bound(
+        &self,
+        binding: crate::grid_ipc::RendererBinding,
+        css: (f64, f64, f64, f64),
+        rect: crate::grid_ipc::IpcRect,
     ) -> Result<(), String> {
-        if css.0 <= -20000.0 { return self.hide_window_bound(binding); }
+        if css.0 <= -20000.0 {
+            return self.hide_window_bound(binding);
+        }
         rect.validate()?;
         {
             let mut children = self.children.lock().unwrap();
-            let child = children.get_mut(&binding.index).ok_or("GRID_WINDOW_TARGET_STALE")?;
+            let child = children
+                .get_mut(&binding.index)
+                .ok_or("GRID_WINDOW_TARGET_STALE")?;
             let _owner = child.comms.owner_gate.lock().unwrap();
             if !Self::window_binding_matches(child, binding) {
                 return Err("GRID_WINDOW_TARGET_STALE".into());
@@ -2521,9 +3430,14 @@ impl GridProcessManager {
             child.blur_hidden = false;
             child.hidden_since = None;
         }
-        self.request_window_bound(binding, GridCmd::UpdateRect {
-            id: crate::grid_ipc::renderer_label(binding.index), rect,
-        }, 3000)
+        self.request_window_bound(
+            binding,
+            GridCmd::UpdateRect {
+                id: crate::grid_ipc::renderer_label(binding.index),
+                rect,
+            },
+            3000,
+        )
     }
 
     // ===== 状态记录（崩溃重放/主窗移动跟随用，由 bridge 宫格命令维护） =====
@@ -2574,15 +3488,21 @@ impl GridProcessManager {
         let Ok(_operation) = self.lifecycle.enter() else {
             return Vec::new();
         };
-        if self.ensure_cleanup().is_err() { return Vec::new(); }
+        if self.ensure_cleanup().is_err() {
+            return Vec::new();
+        }
         if self.lifecycle.is_stopping() {
             return Vec::new();
         }
         if max_children == 0 {
             return Vec::new();
         }
-        let Some(app) = self.app() else { return Vec::new(); };
-        let Some(policy_revision) = crate::bridge::hibernation_policy_revision(&app) else { return Vec::new(); };
+        let Some(app) = self.app() else {
+            return Vec::new();
+        };
+        let Some(policy_revision) = crate::bridge::hibernation_policy_revision(&app) else {
+            return Vec::new();
+        };
         let now = std::time::Instant::now();
         let mut candidates: Vec<(std::time::Instant, u32)> = self
             .children
@@ -2613,50 +3533,103 @@ impl GridProcessManager {
         candidates.sort_unstable();
         let mut hibernated = Vec::new();
         for (hidden_since, index) in candidates.into_iter().take(max_children) {
-            let Ok(_visibility) = self.visibility_dispatch.try_lock() else { continue; };
+            let Ok(_visibility) = self.visibility_dispatch.try_lock() else {
+                continue;
+            };
             let eligible = |child: &GridChildHandle| {
-                child.document_ready && child.hidden_since == Some(hidden_since)
+                child.document_ready
+                    && child.hidden_since == Some(hidden_since)
                     && !child.comms.blank_reclaim_blocked.load(Ordering::SeqCst)
                     && grid_content_reclaimable(child.last_url.as_deref())
-                    && grid_child_is_hibernatable(child.hidden, child.blur_hidden, child.focused,
-                        child.hidden_since, std::time::Instant::now(), idle_for)
+                    && grid_child_is_hibernatable(
+                        child.hidden,
+                        child.blur_hidden,
+                        child.focused,
+                        child.hidden_since,
+                        std::time::Instant::now(),
+                        idle_for,
+                    )
             };
             let (comms, binding) = {
                 let children = self.children.lock().unwrap();
-                let Some(child) = children.get(&index) else { continue; };
-                if !eligible(child) { continue; }
-                let Ok(owner) = child.comms.owner_snapshot() else { continue; };
-                (Arc::clone(&child.comms), crate::grid_ipc::RendererBinding {
-                    index, owner, generation: child.comms.generation.load(Ordering::SeqCst),
-                    navigation_revision: child.navigation_revision,
-                })
+                let Some(child) = children.get(&index) else {
+                    continue;
+                };
+                if !eligible(child) {
+                    continue;
+                }
+                let Ok(owner) = child.comms.owner_snapshot() else {
+                    continue;
+                };
+                (
+                    Arc::clone(&child.comms),
+                    crate::grid_ipc::RendererBinding {
+                        index,
+                        owner,
+                        generation: child.comms.generation.load(Ordering::SeqCst),
+                        navigation_revision: child.navigation_revision,
+                    },
+                )
             };
-            let Some(_claim) = comms.try_claim_blank_reclaim(binding.generation) else { continue; };
-            let command = GridCmd::HideWindow { id: crate::grid_ipc::renderer_label(index) };
-            if self.request_once_with(index, Arc::clone(&comms), binding.generation, &command, 1500).is_err() { continue; }
-            let command = GridCmd::HibernationProbe { id: crate::grid_ipc::renderer_label(index) };
+            let Some(_claim) = comms.try_claim_blank_reclaim(binding.generation) else {
+                continue;
+            };
+            let command = GridCmd::HideWindow {
+                id: crate::grid_ipc::renderer_label(index),
+            };
+            if self
+                .request_once_with(
+                    index,
+                    Arc::clone(&comms),
+                    binding.generation,
+                    &command,
+                    1500,
+                )
+                .is_err()
+            {
+                continue;
+            }
+            let command = GridCmd::HibernationProbe {
+                id: crate::grid_ipc::renderer_label(index),
+            };
             if !matches!(self.request_once_fenced(index, Arc::clone(&comms), binding.generation,
-                Some(binding.navigation_revision), &command, 1500), Ok(Some(encoded)) if grid_hibernation_probe_safe(&encoded)) {
+                Some(binding.navigation_revision), &command, 1500), Ok(Some(encoded)) if grid_hibernation_probe_safe(&encoded))
+            {
                 continue;
             }
             // Like Linux, do not hold the lifecycle lock over IPC probes.
-            let Ok(_gate) = self.lifecycle_lock.try_lock() else { continue; };
-            if self.lifecycle.is_stopping() { break; }
-            let Some(_policy) = crate::bridge::claim_hibernation_policy(&app, policy_revision) else { break; };
+            let Ok(_gate) = self.lifecycle_lock.try_lock() else {
+                continue;
+            };
+            if self.lifecycle.is_stopping() {
+                break;
+            }
+            let Some(_policy) = crate::bridge::claim_hibernation_policy(&app, policy_revision)
+            else {
+                break;
+            };
             let mut children = self.children.lock().unwrap();
-            let still_eligible = children.get(&index).is_some_and(|child|
+            let still_eligible = children.get(&index).is_some_and(|child| {
                 Arc::ptr_eq(&child.comms, &comms)
                     && child.child.id() == binding.owner.0
                     && comms.spawn_epoch.load(Ordering::SeqCst) == binding.owner.1
                     && comms.is_current(binding.generation)
                     && child.navigation_revision == binding.navigation_revision
-                    && eligible(child));
-            if !still_eligible { continue; }
+                    && eligible(child)
+            });
+            if !still_eligible {
+                continue;
+            }
             if let Some(child) = children.remove(&index) {
-                self.hibernated.lock().unwrap().insert(index, SavedChildState {
-                    last_url: child.last_url.clone(), last_rect: child.last_rect,
-                    hidden: true, blur_hidden: false,
-                });
+                self.hibernated.lock().unwrap().insert(
+                    index,
+                    SavedChildState {
+                        last_url: child.last_url.clone(),
+                        last_rect: child.last_rect,
+                        hidden: true,
+                        blur_hidden: false,
+                    },
+                );
                 self.pending_restarts.lock().unwrap().remove(&index);
                 self.lifecycle.retire(index, child);
                 hibernated.push(index);
@@ -2671,8 +3644,13 @@ impl GridProcessManager {
 
     /// 当前存活子进程 index 列表。
     pub fn indices(&self) -> Vec<u32> {
-        self.children.lock().unwrap().keys().copied()
-            .filter(|index| !crate::grid_ipc::is_tab_renderer(*index)).collect()
+        self.children
+            .lock()
+            .unwrap()
+            .keys()
+            .copied()
+            .filter(|index| !crate::grid_ipc::is_tab_renderer(*index))
+            .collect()
     }
 
     pub(crate) fn all_renderer_indices(&self) -> Vec<u32> {
@@ -2738,7 +3716,9 @@ impl GridProcessManager {
                     if manager.visibility.is_latest(intent.revision) {
                         match intent.mode {
                             VisibilityMode::Show => manager.apply_show_for_focus(&intent),
-                            VisibilityMode::Blur => manager.apply_hide_for_blur_if_no_child_focus(&intent),
+                            VisibilityMode::Blur => {
+                                manager.apply_hide_for_blur_if_no_child_focus(&intent)
+                            }
                             VisibilityMode::Minimized => manager.apply_hide_for_blur(&intent),
                         }
                     }
@@ -2823,28 +3803,52 @@ impl GridProcessManager {
     pub fn reposition_visible(&self) {
         let targets = self.visibility_targets();
         for binding in targets {
-            if self.lifecycle.is_stopping() { break; }
-            let _dispatch = self.visibility_dispatch.lock().unwrap_or_else(|p| p.into_inner());
-            let css = self.children.lock().unwrap().get(&binding.index)
-                .filter(|child| Self::window_binding_matches(child, binding)
-                    && !child.hidden && !child.blur_hidden)
+            if self.lifecycle.is_stopping() {
+                break;
+            }
+            let _dispatch = self
+                .visibility_dispatch
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
+            let css = self
+                .children
+                .lock()
+                .unwrap()
+                .get(&binding.index)
+                .filter(|child| {
+                    Self::window_binding_matches(child, binding)
+                        && !child.hidden
+                        && !child.blur_hidden
+                })
                 .and_then(|child| child.last_rect);
             if let Some(rect) = css.and_then(|css| self.abs_rect(css)) {
-                self.send_window_bound(binding, GridCmd::UpdateRect {
-                    id: crate::grid_ipc::renderer_label(binding.index), rect,
-                });
+                self.send_window_bound(
+                    binding,
+                    GridCmd::UpdateRect {
+                        id: crate::grid_ipc::renderer_label(binding.index),
+                        rect,
+                    },
+                );
             }
         }
     }
 
     /// Publish renderer metadata only for the live child and connection.
-    fn accept_renderer_event(&self, index: u32, comms: &Arc<ChildComms>, generation: u64,
-        name: &str, payload: &mut serde_json::Value) -> bool {
+    fn accept_renderer_event(
+        &self,
+        index: u32,
+        comms: &Arc<ChildComms>,
+        generation: u64,
+        name: &str,
+        payload: &mut serde_json::Value,
+    ) -> bool {
         if !crate::grid_ipc::valid_renderer_event(index, name, payload) {
             return false;
         }
         let mut children = self.children.lock().unwrap();
-        let Some(child) = children.get_mut(&index) else { return false };
+        let Some(child) = children.get_mut(&index) else {
+            return false;
+        };
         let _owner = comms.owner_gate.lock().unwrap();
         if !Arc::ptr_eq(&child.comms, comms) || !comms.is_current(generation) {
             return false;
@@ -2853,12 +3857,18 @@ impl GridProcessManager {
             "grid-child-focus" => child.focused = true,
             "grid-child-blur" => child.focused = false,
             "native-document-revision" => {
-                let Some(stamp) = crate::grid_ipc::NativeDocumentStamp::from_report(payload) else { return false; };
+                let Some(stamp) = crate::grid_ipc::NativeDocumentStamp::from_report(payload) else {
+                    return false;
+                };
                 let mut current = comms.native_document.lock().unwrap();
                 // Native callbacks may be delivered out of order. A stale
                 // instance/revision can never replace a newer observation.
-                if current.is_some_and(|previous| stamp <= previous) { return true; }
-                let Some(revision) = child.navigation_revision.checked_add(1) else { return false; };
+                if current.is_some_and(|previous| stamp <= previous) {
+                    return true;
+                }
+                let Some(revision) = child.navigation_revision.checked_add(1) else {
+                    return false;
+                };
                 *current = Some(stamp);
                 child.navigation_revision = revision;
                 comms.navigation_revision.store(revision, Ordering::SeqCst);
@@ -2867,7 +3877,9 @@ impl GridProcessManager {
                 }
             }
             "tab-document-changed" => {
-                let Some(revision) = child.navigation_revision.checked_add(1) else { return false; };
+                let Some(revision) = child.navigation_revision.checked_add(1) else {
+                    return false;
+                };
                 child.navigation_revision = revision;
                 comms.navigation_revision.store(revision, Ordering::SeqCst);
                 // Invalidate an in-flight reclaim. Initial load completion
@@ -2879,7 +3891,9 @@ impl GridProcessManager {
                 }
             }
             "tab-navigated" => {
-                let Some(revision) = child.navigation_revision.checked_add(1) else { return false; };
+                let Some(revision) = child.navigation_revision.checked_add(1) else {
+                    return false;
+                };
                 child.navigation_revision = revision;
                 comms.navigation_revision.store(revision, Ordering::SeqCst);
                 child.last_url = payload["url"].as_str().map(str::to_owned);
@@ -2891,21 +3905,26 @@ impl GridProcessManager {
                         let state = app.state::<crate::bridge::AppState>();
                         let mut tabs = state.tabs.lock().unwrap();
                         if !state.shutdown_requested.load(Ordering::Acquire) {
-                            if let Some(tab) = tabs.get_mut(&crate::grid_ipc::renderer_label(index)) {
-                                if tab.url != *url { tab.title = url.clone(); }
+                            if let Some(tab) = tabs.get_mut(&crate::grid_ipc::renderer_label(index))
+                            {
+                                if tab.url != *url {
+                                    tab.title = url.clone();
+                                }
                                 tab.url = url.clone();
                             }
                         }
                     }
                 }
-            },
+            }
             "renderer-resource" => {
                 if let Some(app) = self.app() {
                     let state = app.state::<crate::bridge::AppState>();
                     let id = crate::grid_ipc::renderer_label(index);
                     let live = state.tabs.lock().unwrap().contains_key(&id);
                     if live && !state.shutdown_requested.load(Ordering::Acquire) {
-                        if let Ok(raw) = serde_json::from_value::<crate::bridge::RawResourceEvent>(payload["resource"].clone()) {
+                        if let Ok(raw) = serde_json::from_value::<crate::bridge::RawResourceEvent>(
+                            payload["resource"].clone(),
+                        ) {
                             if raw.url.len() <= 8192
                                 && raw.method.as_ref().is_none_or(|v| v.len() <= 32)
                                 && raw.mime.as_ref().is_none_or(|v| v.len() <= 256)
@@ -2917,19 +3936,26 @@ impl GridProcessManager {
                 }
             }
             "tab-title" | "browser-resources" => {
-                if name == "tab-title" && *comms.native_document.lock().unwrap()
-                    != crate::grid_ipc::NativeDocumentStamp::from_report(payload) {
+                if name == "tab-title"
+                    && *comms.native_document.lock().unwrap()
+                        != crate::grid_ipc::NativeDocumentStamp::from_report(payload)
+                {
                     // Optional old-document report; discard rather than
                     // disconnecting the current host or changing its title.
                     payload["renderer_drop"] = serde_json::json!(true);
                     return true;
                 }
                 let id = crate::grid_ipc::renderer_label(index);
-                let url = if name == "tab-title" { payload["url"].as_str() } else { payload["page_url"].as_str() };
+                let url = if name == "tab-title" {
+                    payload["url"].as_str()
+                } else {
+                    payload["page_url"].as_str()
+                };
                 let mut drop_event = true;
                 if let Some(app) = self.app() {
                     let state = app.state::<crate::bridge::AppState>();
-                    let is_active = state.active_tab.lock().unwrap().as_deref() == Some(id.as_str());
+                    let is_active =
+                        state.active_tab.lock().unwrap().as_deref() == Some(id.as_str());
                     let mut tabs = state.tabs.lock().unwrap();
                     if let Some(tab) = tabs.get_mut(&id) {
                         if !state.shutdown_requested.load(Ordering::Acquire)
@@ -2951,14 +3977,20 @@ impl GridProcessManager {
                 let allowed = self.app().is_some_and(|app| {
                     let state = app.state::<crate::bridge::AppState>();
                     let logical_live = if crate::grid_ipc::is_tab_renderer(index) {
-                        child.document_ready && state.tabs.lock().unwrap()
-                            .contains_key(&crate::grid_ipc::renderer_label(index))
+                        child.document_ready
+                            && state
+                                .tabs
+                                .lock()
+                                .unwrap()
+                                .contains_key(&crate::grid_ipc::renderer_label(index))
                     } else {
                         (index as usize) < crate::bridge::MAX_GRID
                     };
-                    logical_live && !state.shutdown_requested.load(Ordering::Acquire)
-                        && payload["url"].as_str().is_some_and(|url|
-                            crate::grid_ipc::popup_address_supported(url, child.last_url.as_deref()))
+                    logical_live
+                        && !state.shutdown_requested.load(Ordering::Acquire)
+                        && payload["url"].as_str().is_some_and(|url| {
+                            crate::grid_ipc::popup_address_supported(url, child.last_url.as_deref())
+                        })
                 });
                 // Background pages retain the existing popup policy; stale,
                 // unpublished, shutdown and unsupported sources cannot open.
@@ -2968,15 +4000,22 @@ impl GridProcessManager {
                 // Even an early native observation disqualifies blank
                 // reclaim. Notification is advisory and only for a live tab.
                 comms.blank_reclaim_blocked.store(true, Ordering::SeqCst);
-                let Some(observation) = crate::grid_ipc::DownloadObservation::from_report(payload) else {
+                let Some(observation) = crate::grid_ipc::DownloadObservation::from_report(payload)
+                else {
                     return false;
                 };
                 {
                     let mut last = comms.download_observation.lock().unwrap();
-                    if last.as_ref().is_some_and(|(previous_generation, previous)| {
-                        if observation == *previous { *previous_generation == generation }
-                        else { !observation.advances(*previous) }
-                    }) {
+                    if last
+                        .as_ref()
+                        .is_some_and(|(previous_generation, previous)| {
+                            if observation == *previous {
+                                *previous_generation == generation
+                            } else {
+                                !observation.advances(*previous)
+                            }
+                        })
+                    {
                         payload["renderer_drop"] = serde_json::json!(true);
                         return true;
                     }
@@ -2990,16 +4029,22 @@ impl GridProcessManager {
                 });
                 payload["renderer_drop"] = serde_json::json!(!live);
                 payload["pid"] = serde_json::json!(child.child.id());
-                payload["spawn_epoch"] = serde_json::json!(comms.spawn_epoch.load(Ordering::SeqCst).to_string());
+                payload["spawn_epoch"] =
+                    serde_json::json!(comms.spawn_epoch.load(Ordering::SeqCst).to_string());
                 payload["renderer_generation"] = serde_json::json!(generation.to_string());
-                payload["observed_unfinished"] = serde_json::json!(observation.observed_unfinished());
+                payload["observed_unfinished"] =
+                    serde_json::json!(observation.observed_unfinished());
             }
             "browser-tabs://shell-shortcut" => {
                 let id = crate::grid_ipc::renderer_label(index);
-                let allowed = child.document_ready && child.focused && !child.hidden
-                    && !child.blur_hidden && self.app().is_some_and(|app| {
+                let allowed = child.document_ready
+                    && child.focused
+                    && !child.hidden
+                    && !child.blur_hidden
+                    && self.app().is_some_and(|app| {
                         let state = app.state::<crate::bridge::AppState>();
-                        let active = state.active_tab.lock().unwrap().as_deref() == Some(id.as_str());
+                        let active =
+                            state.active_tab.lock().unwrap().as_deref() == Some(id.as_str());
                         let live = state.tabs.lock().unwrap().contains_key(&id);
                         active && live && !state.shutdown_requested.load(Ordering::Acquire)
                     });
@@ -3010,8 +4055,10 @@ impl GridProcessManager {
             "grid-load-failed" => {
                 payload["renderer_generation"] = serde_json::json!(generation.to_string());
                 payload["renderer_pid"] = serde_json::json!(child.child.id());
-                payload["renderer_epoch"] = serde_json::json!(comms.spawn_epoch.load(Ordering::SeqCst).to_string());
-                payload["renderer_navigation_revision"] = serde_json::json!(child.navigation_revision.to_string());
+                payload["renderer_epoch"] =
+                    serde_json::json!(comms.spawn_epoch.load(Ordering::SeqCst).to_string());
+                payload["renderer_navigation_revision"] =
+                    serde_json::json!(child.navigation_revision.to_string());
             }
             _ => {}
         }
@@ -3019,7 +4066,11 @@ impl GridProcessManager {
     }
 
     fn any_child_focused(&self) -> bool {
-        self.children.lock().unwrap().values().any(|child| child.focused && child.comms.is_connected())
+        self.children
+            .lock()
+            .unwrap()
+            .values()
+            .any(|child| child.focused && child.comms.is_connected())
     }
 
     /// 主窗失焦（或子窗口失焦）后的统一入口：若焦点在任一宫格子窗口内则不动，
@@ -3050,20 +4101,38 @@ impl GridProcessManager {
 
     fn apply_hide_for_blur(&self, intent: &lifecycle::VisibilityIntent) {
         for &binding in &intent.targets {
-            let _dispatch = self.visibility_dispatch.lock().unwrap_or_else(|p| p.into_inner());
-            if !self.visibility.is_latest(intent.revision) { break; }
+            let _dispatch = self
+                .visibility_dispatch
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
+            if !self.visibility.is_latest(intent.revision) {
+                break;
+            }
             // Focus can return while an earlier renderer was awaiting a receipt.
-            if intent.mode == VisibilityMode::Blur && (self.any_child_focused()
-                || self.app().and_then(|app| app.get_window("main"))
-                    .and_then(|window| window.is_focused().ok()).unwrap_or(true)) {
+            if intent.mode == VisibilityMode::Blur
+                && (self.any_child_focused()
+                    || self
+                        .app()
+                        .and_then(|app| app.get_window("main"))
+                        .and_then(|window| window.is_focused().ok())
+                        .unwrap_or(true))
+            {
                 break;
             }
             let need = {
                 let mut children = self.children.lock().unwrap();
                 match children.get_mut(&binding.index) {
-                    Some(h) if Self::window_binding_matches(h, binding)
-                        && !h.hidden && h.last_rect.is_some()
-                        && (!h.blur_hidden || !h.native_window_visibility.is_some_and(|(generation, receipt)| generation == binding.generation && !receipt.visible)) => {
+                    Some(h)
+                        if Self::window_binding_matches(h, binding)
+                            && !h.hidden
+                            && h.last_rect.is_some()
+                            && (!h.blur_hidden
+                                || !h.native_window_visibility.is_some_and(
+                                    |(generation, receipt)| {
+                                        generation == binding.generation && !receipt.visible
+                                    },
+                                )) =>
+                    {
                         // Desired state, not a native receipt. A newer show can
                         // compensate even if the hide's outcome is unknown.
                         h.blur_hidden = true;
@@ -3073,22 +4142,32 @@ impl GridProcessManager {
                 }
             };
             if need {
-                let command = GridCmd::HideWindow { id: crate::grid_ipc::renderer_label(binding.index) };
+                let command = GridCmd::HideWindow {
+                    id: crate::grid_ipc::renderer_label(binding.index),
+                };
                 let result = self.request_window_bound(binding, command.clone(), 1500);
                 if let Err(error) = result {
                     // Hide is idempotent on this exact native host. Do not
                     // retry a superseded focus intent, or replay any page action.
                     let focus_still_allows_hide = intent.mode == VisibilityMode::Minimized
-                        || (!self.any_child_focused() && !self.app()
-                            .and_then(|app| app.get_window("main"))
-                            .and_then(|window| window.is_focused().ok()).unwrap_or(true));
+                        || (!self.any_child_focused()
+                            && !self
+                                .app()
+                                .and_then(|app| app.get_window("main"))
+                                .and_then(|window| window.is_focused().ok())
+                                .unwrap_or(true));
                     if error.starts_with("GRID_REQUEST_OUTCOME_UNKNOWN")
-                        && self.visibility.is_latest(intent.revision) && focus_still_allows_hide {
+                        && self.visibility.is_latest(intent.revision)
+                        && focus_still_allows_hide
+                    {
                         if let Err(retry) = self.request_window_bound(binding, command, 750) {
                             eprintln!("[grid-manager] bounded hide reconciliation unconfirmed index={}: {retry}", binding.index);
                         }
                     } else {
-                        eprintln!("[grid-manager] hide unconfirmed index={}: {error}", binding.index);
+                        eprintln!(
+                            "[grid-manager] hide unconfirmed index={}: {error}",
+                            binding.index
+                        );
                     }
                 }
             }
@@ -3102,28 +4181,57 @@ impl GridProcessManager {
 
     fn apply_show_for_focus(&self, intent: &lifecycle::VisibilityIntent) {
         for &binding in &intent.targets {
-            let _dispatch = self.visibility_dispatch.lock().unwrap_or_else(|p| p.into_inner());
-            if !self.visibility.is_latest(intent.revision) { break; }
+            let _dispatch = self
+                .visibility_dispatch
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
+            if !self.visibility.is_latest(intent.revision) {
+                break;
+            }
             let css = {
                 let children = self.children.lock().unwrap();
-                children.get(&binding.index).filter(|child|
-                    Self::window_binding_matches(child, binding) && !child.hidden
-                        && (child.blur_hidden || !child.native_window_visibility.is_some_and(|(generation, receipt)| generation == binding.generation && receipt.visible)))
+                children
+                    .get(&binding.index)
+                    .filter(|child| {
+                        Self::window_binding_matches(child, binding)
+                            && !child.hidden
+                            && (child.blur_hidden
+                                || !child.native_window_visibility.is_some_and(
+                                    |(generation, receipt)| {
+                                        generation == binding.generation && receipt.visible
+                                    },
+                                ))
+                    })
                     .and_then(|child| child.last_rect)
             };
-            let Some(rect) = css.and_then(|css| self.abs_rect(css)) else { continue; };
+            let Some(rect) = css.and_then(|css| self.abs_rect(css)) else {
+                continue;
+            };
             {
                 let mut children = self.children.lock().unwrap();
-                let Some(child) = children.get_mut(&binding.index) else { continue; };
-                if !Self::window_binding_matches(child, binding) || child.hidden
-                    || (!child.blur_hidden && child.native_window_visibility.is_some_and(|(generation, receipt)| generation == binding.generation && receipt.visible)) {
+                let Some(child) = children.get_mut(&binding.index) else {
+                    continue;
+                };
+                if !Self::window_binding_matches(child, binding)
+                    || child.hidden
+                    || (!child.blur_hidden
+                        && child
+                            .native_window_visibility
+                            .is_some_and(|(generation, receipt)| {
+                                generation == binding.generation && receipt.visible
+                            }))
+                {
                     continue;
                 }
                 child.blur_hidden = false;
             }
-            self.send_window_bound(binding, GridCmd::UpdateRect {
-                id: crate::grid_ipc::renderer_label(binding.index), rect,
-            });
+            self.send_window_bound(
+                binding,
+                GridCmd::UpdateRect {
+                    id: crate::grid_ipc::renderer_label(binding.index),
+                    rect,
+                },
+            );
         }
     }
 
@@ -3259,17 +4367,28 @@ impl GridProcessManager {
     /// may look up a later owner by Grid index or claim that its DOM survived.
     fn replay(&self, stamp: crate::grid_ipc::GridRouteStamp, saved: SavedChildState) {
         let index = stamp.index;
-        if crate::grid_ipc::is_tab_renderer(index) { return; }
-        let Some(app) = self.app() else { return; };
+        if crate::grid_ipc::is_tab_renderer(index) {
+            return;
+        }
+        let Some(app) = self.app() else {
+            return;
+        };
         let started = self.spawn_worker("grid-replay", move || {
             let state = app.state::<crate::bridge::AppState>();
             let manager = &state.grid_manager;
-            let url = saved.last_url.as_deref().filter(|url| crate::grid_ipc::restorable_address(url))
+            let url = saved
+                .last_url
+                .as_deref()
+                .filter(|url| crate::grid_ipc::restorable_address(url))
                 .unwrap_or("about:blank");
             let prepared = crate::grid_ipc::GridPreparedSlot {
-                stamp, created: true, previous_url: saved.last_url.clone(), saved: Some(saved.clone()),
+                stamp,
+                created: true,
+                previous_url: saved.last_url.clone(),
+                saved: Some(saved.clone()),
             };
-            let creation = manager.grid_binding_for_stamp(stamp)
+            let creation = manager
+                .grid_binding_for_stamp(stamp)
                 .and_then(|binding| manager.grid_create_bound(binding, url).map(|_| binding));
             let binding = match creation {
                 Ok(binding) => binding,
@@ -3282,23 +4401,29 @@ impl GridProcessManager {
             // Re-read visibility/geometry after taking the same native
             // dispatch lock as ordinary positioning and focus changes.
             {
-                let _visibility = manager.visibility_dispatch.lock().unwrap_or_else(|p| p.into_inner());
+                let _visibility = manager
+                    .visibility_dispatch
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner());
                 // A crash/restart may miss the minimize event while it
                 // has no live window binding. Consult the current native
                 // main-window state before allowing replay to reveal it.
                 let main = app.get_window("main");
-                let may_show = main.as_ref()
-                    .and_then(|window| window.is_minimized().ok()) == Some(false);
-                let focused = may_show && (main.as_ref()
-                    .and_then(|window| window.is_focused().ok()) == Some(true)
-                    || manager.any_child_focused());
+                let may_show =
+                    main.as_ref().and_then(|window| window.is_minimized().ok()) == Some(false);
+                let focused = may_show
+                    && (main.as_ref().and_then(|window| window.is_focused().ok()) == Some(true)
+                        || manager.any_child_focused());
                 let css = {
                     let mut children = manager.children.lock().unwrap();
-                    children.get_mut(&index).filter(|child|
-                        child.child.id() == binding.owner.0
-                            && child.comms.spawn_epoch.load(Ordering::SeqCst) == binding.owner.1
-                            && child.comms.is_current(binding.generation)
-                            && !child.hidden)
+                    children
+                        .get_mut(&index)
+                        .filter(|child| {
+                            child.child.id() == binding.owner.0
+                                && child.comms.spawn_epoch.load(Ordering::SeqCst) == binding.owner.1
+                                && child.comms.is_current(binding.generation)
+                                && !child.hidden
+                        })
                         .and_then(|child| {
                             if !may_show {
                                 child.blur_hidden = true;
@@ -3314,10 +4439,17 @@ impl GridProcessManager {
                         })
                 };
                 if let Some(rect) = css.and_then(|css| manager.abs_rect(css)) {
-                    if let Err(error) = manager.request_window_bound(binding, GridCmd::UpdateRect {
-                        id: crate::grid_ipc::renderer_label(index), rect,
-                    }, 3000) {
-                        eprintln!("[grid-manager] replay layout unconfirmed index={index}: {error}");
+                    if let Err(error) = manager.request_window_bound(
+                        binding,
+                        GridCmd::UpdateRect {
+                            id: crate::grid_ipc::renderer_label(index),
+                            rect,
+                        },
+                        3000,
+                    ) {
+                        eprintln!(
+                            "[grid-manager] replay layout unconfirmed index={index}: {error}"
+                        );
                     }
                 }
             }
@@ -3342,7 +4474,10 @@ impl GridProcessManager {
         {
             return;
         }
-        if let Some(child) = children.get(&index).filter(|child| child.child.id() == peer_pid) {
+        if let Some(child) = children
+            .get(&index)
+            .filter(|child| child.child.id() == peer_pid)
+        {
             // Do not remove the map entry here: the monitor owns crash/restart
             // bookkeeping. Closing the Job immediately prevents partial IPC
             // frames from being reused while the monitor observes exit.
@@ -3443,47 +4578,75 @@ impl GridProcessManager {
         let children = self.children.lock().ok()?;
         let sleeping = self.hibernated.lock().ok()?;
         let restarting = self.pending_restarts.lock().ok()?;
-        Some((0..crate::bridge::MAX_GRID as u32).map(|index| {
-            let state = if self.lifecycle.is_retiring(index) {
-                "cleanup_pending"
-            } else if let Some(child) = children.get(&index) {
-                if child.comms.is_connected() && child.document_ready
-                    && !child.comms.blank_reclaiming.load(Ordering::SeqCst)
-                    && child.comms.native_document.lock().ok()
-                        .is_some_and(|stamp| stamp.is_some_and(|value| value.usable())) {
-                    "ready"
-                } else { "not_ready" }
-            } else if restarting.contains_key(&index) {
-                "restart_pending"
-            } else if sleeping.contains_key(&index) {
-                "hibernated"
-            } else { "absent" };
-            let last_visibility_receipt = children.get(&index).and_then(|child| {
-                let _owner = child.comms.owner_gate.try_lock().ok()?;
-                if self.lifecycle.is_retiring(index) { return None; }
-                child.native_window_visibility
-                    .filter(|(generation, _)| child.comms.is_current(*generation))
-                    .map(|(_, receipt)| receipt)
-            });
-            crate::grid_ipc::GridRouteStatus { index, state, last_visibility_receipt }
-        }).collect())
+        Some(
+            (0..crate::bridge::MAX_GRID as u32)
+                .map(|index| {
+                    let state = if self.lifecycle.is_retiring(index) {
+                        "cleanup_pending"
+                    } else if let Some(child) = children.get(&index) {
+                        if child.comms.is_connected()
+                            && child.document_ready
+                            && !child.comms.blank_reclaiming.load(Ordering::SeqCst)
+                            && child
+                                .comms
+                                .native_document
+                                .lock()
+                                .ok()
+                                .is_some_and(|stamp| stamp.is_some_and(|value| value.usable()))
+                        {
+                            "ready"
+                        } else {
+                            "not_ready"
+                        }
+                    } else if restarting.contains_key(&index) {
+                        "restart_pending"
+                    } else if sleeping.contains_key(&index) {
+                        "hibernated"
+                    } else {
+                        "absent"
+                    };
+                    let last_visibility_receipt = children.get(&index).and_then(|child| {
+                        let _owner = child.comms.owner_gate.try_lock().ok()?;
+                        if self.lifecycle.is_retiring(index) {
+                            return None;
+                        }
+                        child
+                            .native_window_visibility
+                            .filter(|(generation, _)| child.comms.is_current(*generation))
+                            .map(|(_, receipt)| receipt)
+                    });
+                    crate::grid_ipc::GridRouteStatus {
+                        index,
+                        state,
+                        last_visibility_receipt,
+                    }
+                })
+                .collect(),
+        )
     }
 
     pub(crate) fn renderer_processes(&self) -> Vec<crate::grid_ipc::RendererProcess> {
         let children = self.children.lock().unwrap();
-        let mut result: Vec<_> = children.iter().map(|(&index, child)| {
-            crate::grid_ipc::RendererProcess {
+        let mut result: Vec<_> = children
+            .iter()
+            .map(|(&index, child)| crate::grid_ipc::RendererProcess {
                 index,
                 pid: child.child.id(),
                 spawn_epoch: child.comms.spawn_epoch.load(Ordering::SeqCst),
-                ready: child.comms.is_connected() && child.document_ready
+                ready: child.comms.is_connected()
+                    && child.document_ready
                     && !child.comms.blank_reclaiming.load(Ordering::SeqCst)
-                    && child.comms.native_document.lock().ok()
+                    && child
+                        .comms
+                        .native_document
+                        .lock()
+                        .ok()
                         .is_some_and(|stamp| stamp.is_some_and(|value| value.usable())),
-                startup_reserved: child.spawned_at.elapsed() < crate::grid_ipc::RENDERER_STARTUP_RESERVE
+                startup_reserved: child.spawned_at.elapsed()
+                    < crate::grid_ipc::RENDERER_STARTUP_RESERVE
                     || !child.document_ready,
-            }
-        }).collect();
+            })
+            .collect();
         result.sort_unstable_by_key(|owner| owner.index);
         result
     }
@@ -3507,12 +4670,24 @@ impl GridProcessManager {
         {
             let _lifecycle = self.lifecycle_lock.lock().unwrap();
             self.lifecycle.check()?;
-            self.crash_history.lock().unwrap().retain(|id, _| crate::grid_ipc::is_tab_renderer(*id));
-            self.hibernated.lock().unwrap().retain(|id, _| crate::grid_ipc::is_tab_renderer(*id));
-            self.pending_restarts.lock().unwrap().retain(|id, _| crate::grid_ipc::is_tab_renderer(*id));
+            self.crash_history
+                .lock()
+                .unwrap()
+                .retain(|id, _| crate::grid_ipc::is_tab_renderer(*id));
+            self.hibernated
+                .lock()
+                .unwrap()
+                .retain(|id, _| crate::grid_ipc::is_tab_renderer(*id));
+            self.pending_restarts
+                .lock()
+                .unwrap()
+                .retain(|id, _| crate::grid_ipc::is_tab_renderer(*id));
             let mut children = self.children.lock().unwrap();
-            let indices: Vec<_> = children.keys().copied()
-                .filter(|id| !crate::grid_ipc::is_tab_renderer(*id)).collect();
+            let indices: Vec<_> = children
+                .keys()
+                .copied()
+                .filter(|id| !crate::grid_ipc::is_tab_renderer(*id))
+                .collect();
             for index in indices {
                 if let Some(owner) = children.remove(&index) {
                     self.lifecycle.retire(index, owner);

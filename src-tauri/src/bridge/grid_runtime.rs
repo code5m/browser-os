@@ -15,7 +15,11 @@ static GRID_BUILD_WORKERS: crate::shared::blocking::BlockingLane =
 static GRID_CLOSE_WORKERS: crate::shared::blocking::BlockingLane =
     crate::shared::blocking::BlockingLane::new(2, "GRID_CLOSE_BUSY", "GRID_WORKER_FAILED");
 static GRID_LAYOUT_WORKERS: crate::shared::blocking::BlockingLane =
-    crate::shared::blocking::BlockingLane::new(MAX_GRID, "GRID_POSITION_BUSY", "GRID_POSITION_WORKER_FAILED");
+    crate::shared::blocking::BlockingLane::new(
+        MAX_GRID,
+        "GRID_POSITION_BUSY",
+        "GRID_POSITION_WORKER_FAILED",
+    );
 
 static GRID_ZOOM_WORKERS: crate::shared::blocking::BlockingLane =
     crate::shared::blocking::BlockingLane::new(24, "GRID_ZOOM_BUSY", "GRID_ZOOM_WORKER_FAILED");
@@ -97,9 +101,13 @@ fn require_grid_platform() -> Result<(), String> {
 /// desktop reserve. Charge recently admitted starts conservatively because
 /// the OS memory sample may not yet contain their eventual working sets.
 pub(crate) fn renderer_start_budget(available_mb: Option<u64>, starting: usize) -> usize {
-    let Some(available) = available_mb else { return 0; };
+    let Some(available) = available_mb else {
+        return 0;
+    };
     let committed = (starting as u64).saturating_mul(GRID_MEM_MB);
-    let remaining = available.saturating_sub(CORE_MEMORY_RESERVE_MB).saturating_sub(committed);
+    let remaining = available
+        .saturating_sub(CORE_MEMORY_RESERVE_MB)
+        .saturating_sub(committed);
     usize::try_from(remaining / GRID_MEM_MB).unwrap_or(usize::MAX)
 }
 
@@ -128,15 +136,29 @@ pub(crate) fn affordable_grid_count(
 
 #[cfg(test)]
 mod grid_memory_budget_tests {
-    use super::{affordable_grid_count, renderer_start_budget, CORE_MEMORY_RESERVE_MB, GRID_MEM_MB};
+    use super::{
+        affordable_grid_count, renderer_start_budget, CORE_MEMORY_RESERVE_MB, GRID_MEM_MB,
+    };
 
     #[test]
     fn renderer_start_budget_accounts_for_unmaterialized_starts_and_unknown_samples() {
         assert_eq!(renderer_start_budget(None, 0), 0);
-        assert_eq!(renderer_start_budget(Some(CORE_MEMORY_RESERVE_MB - 1), 0), 0);
-        assert_eq!(renderer_start_budget(Some(CORE_MEMORY_RESERVE_MB + GRID_MEM_MB), 0), 1);
-        assert_eq!(renderer_start_budget(Some(CORE_MEMORY_RESERVE_MB + GRID_MEM_MB), 1), 0);
-        assert_eq!(renderer_start_budget(Some(CORE_MEMORY_RESERVE_MB + 3 * GRID_MEM_MB), 2), 1);
+        assert_eq!(
+            renderer_start_budget(Some(CORE_MEMORY_RESERVE_MB - 1), 0),
+            0
+        );
+        assert_eq!(
+            renderer_start_budget(Some(CORE_MEMORY_RESERVE_MB + GRID_MEM_MB), 0),
+            1
+        );
+        assert_eq!(
+            renderer_start_budget(Some(CORE_MEMORY_RESERVE_MB + GRID_MEM_MB), 1),
+            0
+        );
+        assert_eq!(
+            renderer_start_budget(Some(CORE_MEMORY_RESERVE_MB + 3 * GRID_MEM_MB), 2),
+            1
+        );
         assert_eq!(renderer_start_budget(Some(1), usize::MAX), 0);
     }
 
@@ -169,7 +191,9 @@ pub async fn create_grid(app: AppHandle, n: usize, urls: Vec<String>) -> Result<
     require_grid_platform()?;
     let permit = GRID_BUILD_WORKERS.reserve()?;
     let targets = capture_all_grid_routes(&app)?;
-    permit.run(move || create_grid_admitted(app, n, urls, targets)).await
+    permit
+        .run(move || create_grid_admitted(app, n, urls, targets))
+        .await
 }
 
 pub(crate) fn requested_grid_url(
@@ -194,14 +218,23 @@ pub fn create_grid_blocking(app: AppHandle, n: usize, urls: Vec<String>) -> Resu
     create_grid_admitted(app, n, urls, targets)
 }
 
-fn create_grid_admitted(app: AppHandle, n: usize, urls: Vec<String>,
+fn create_grid_admitted(
+    app: AppHandle,
+    n: usize,
+    urls: Vec<String>,
     targets: Vec<crate::grid_ipc::GridRouteStamp>,
 ) -> Result<usize, String> {
-    if targets.len() != MAX_GRID { return Err("GRID_BUILD_TOPOLOGY_INVALID".into()); }
+    if targets.len() != MAX_GRID {
+        return Err("GRID_BUILD_TOPOLOGY_INVALID".into());
+    }
     let requested = n.clamp(2, MAX_GRID);
     let state = app.state::<AppState>();
     let manager = &state.grid_manager;
-    let existing: Vec<u32> = targets.iter().filter(|stamp| stamp.pid.is_some()).map(|stamp| stamp.index).collect();
+    let existing: Vec<u32> = targets
+        .iter()
+        .filter(|stamp| stamp.pid.is_some())
+        .map(|stamp| stamp.index)
+        .collect();
     let target = match mem_available_mb() {
         Some(avail) => {
             let affordable = affordable_grid_count(avail, &existing, requested);
@@ -224,7 +257,11 @@ fn create_grid_admitted(app: AppHandle, n: usize, urls: Vec<String>,
     };
     // Validate all explicit target addresses before the first native mutation.
     // Retained cells with no new target keep their existing document.
-    for raw in urls.iter().take(target).filter(|raw| !raw.trim().is_empty()) {
+    for raw in urls
+        .iter()
+        .take(target)
+        .filter(|raw| !raw.trim().is_empty())
+    {
         let address = initial_grid_url(raw.trim());
         Url::parse(&address).map_err(|_| "GRID_BUILD_URL_INVALID")?;
     }
@@ -233,7 +270,8 @@ fn create_grid_admitted(app: AppHandle, n: usize, urls: Vec<String>,
     // not restore the old DOM, can discard new user input, and is not safe
     // compensation. Only an unconfirmed newly spawned cell is rolled back.
     for i in 0..target {
-        let prepared = manager.prepare_grid_slot(targets[i])
+        let prepared = manager
+            .prepare_grid_slot(targets[i])
             .map_err(|error| format!("GRID_BUILD_PARTIAL:{i}:{error}"))?;
         let previous_url = prepared.previous_url.as_deref();
         let requested_url = urls.get(i).map(String::as_str);
@@ -243,7 +281,10 @@ fn create_grid_admitted(app: AppHandle, n: usize, urls: Vec<String>,
             let binding = manager.grid_binding_for_stamp(prepared.stamp)?;
             if prepared.created {
                 manager.grid_create_bound(binding, &target_url)?;
-            } else if grid_url_needs_navigation(previous_url, requested_grid_url(requested_url, None).as_deref()) {
+            } else if grid_url_needs_navigation(
+                previous_url,
+                requested_grid_url(requested_url, None).as_deref(),
+            ) {
                 manager.grid_navigate_bound(binding, &target_url)?;
             }
             Ok(binding)
@@ -251,12 +292,15 @@ fn create_grid_admitted(app: AppHandle, n: usize, urls: Vec<String>,
         let binding = match operation {
             Ok(binding) => binding,
             Err(error) => {
-            let compensation = if prepared.created {
-                manager.rollback_grid_creation(&prepared)
-                    .map(|_| "original new cell retired".to_string())
-                    .unwrap_or_else(|e| format!("rollback unconfirmed:{e}"))
-            } else { "retained cell not replayed".to_string() };
-            return Err(format!("GRID_BUILD_PARTIAL:{i}:{error};{compensation}"));
+                let compensation = if prepared.created {
+                    manager
+                        .rollback_grid_creation(&prepared)
+                        .map(|_| "original new cell retired".to_string())
+                        .unwrap_or_else(|e| format!("rollback unconfirmed:{e}"))
+                } else {
+                    "retained cell not replayed".to_string()
+                };
+                return Err(format!("GRID_BUILD_PARTIAL:{i}:{error};{compensation}"));
             }
         };
         prepared_stamps.push(prepared.stamp);
@@ -270,7 +314,8 @@ fn create_grid_admitted(app: AppHandle, n: usize, urls: Vec<String>,
 
     // Validate the prepared cells before closing surplus routes. No
     // re-enumeration of surplus owners after a long-running rebuild.
-    manager.close_grid_targets_checked(&targets[target..], &prepared_stamps)
+    manager
+        .close_grid_targets_checked(&targets[target..], &prepared_stamps)
         .map_err(|error| format!("GRID_BUILD_PARTIAL:surplus close:{error}"))?;
     Ok(target)
 }
@@ -284,15 +329,22 @@ pub async fn close_grid(app: AppHandle) -> Result<(), String> {
     permit.run(move || close_grid_admitted(app, targets)).await
 }
 
-fn capture_all_grid_routes(app: &AppHandle) -> Result<Vec<crate::grid_ipc::GridRouteStamp>, String> {
+fn capture_all_grid_routes(
+    app: &AppHandle,
+) -> Result<Vec<crate::grid_ipc::GridRouteStamp>, String> {
     let indices: Vec<_> = (0..MAX_GRID as u32).collect();
-    app.state::<AppState>().grid_manager.grid_route_stamps(&indices)
+    app.state::<AppState>()
+        .grid_manager
+        .grid_route_stamps(&indices)
 }
 
-fn close_grid_admitted(app: AppHandle, targets: Vec<crate::grid_ipc::GridRouteStamp>)
-    -> Result<(), String>
-{
-    app.state::<AppState>().grid_manager.close_grid_targets(&targets)
+fn close_grid_admitted(
+    app: AppHandle,
+    targets: Vec<crate::grid_ipc::GridRouteStamp>,
+) -> Result<(), String> {
+    app.state::<AppState>()
+        .grid_manager
+        .close_grid_targets(&targets)
 }
 
 pub fn close_grid_blocking(app: AppHandle) -> Result<(), String> {
@@ -311,15 +363,20 @@ struct GridCellAdmission {
 
 fn capture_grid_cell(app: &AppHandle, index: usize) -> Result<GridCellAdmission, String> {
     require_grid_platform()?;
-    if index >= MAX_GRID { return Err("GRID_INDEX_INVALID".into()); }
+    if index >= MAX_GRID {
+        return Err("GRID_INDEX_INVALID".into());
+    }
     let state = app.state::<AppState>();
     let mgr = &state.grid_manager;
-    let stamp = mgr.grid_route_stamps(&[index as u32])?
-        .into_iter().next().ok_or("GRID_INDEX_INVALID")?;
+    let stamp = mgr
+        .grid_route_stamps(&[index as u32])?
+        .into_iter()
+        .next()
+        .ok_or("GRID_INDEX_INVALID")?;
     let binding = mgr.grid_live_binding(index as u32)?;
     match binding {
-        Some(binding) if stamp.pid == Some(binding.owner.0)
-            && stamp.epoch == Some(binding.owner.1) => {}
+        Some(binding)
+            if stamp.pid == Some(binding.owner.0) && stamp.epoch == Some(binding.owner.1) => {}
         None if stamp.pid.is_none() => {}
         _ => return Err("GRID_OPEN_TARGET_CHANGED".into()),
     }
@@ -329,14 +386,20 @@ fn capture_grid_cell(app: &AppHandle, index: usize) -> Result<GridCellAdmission,
     if mgr.grid_route_stamps(&[index as u32])?.first() != Some(&stamp) {
         return Err("GRID_OPEN_TARGET_CHANGED".into());
     }
-    Ok(GridCellAdmission { stamp, binding, sleeping })
+    Ok(GridCellAdmission {
+        stamp,
+        binding,
+        sleeping,
+    })
 }
 
 #[tauri::command]
 pub async fn grid_open(app: AppHandle, index: usize, url: String) -> Result<(), String> {
     let permit = GRID_BUILD_WORKERS.reserve()?;
     let admitted = capture_grid_cell(&app, index)?;
-    permit.run(move || grid_open_admitted(app, url, admitted)).await
+    permit
+        .run(move || grid_open_admitted(app, url, admitted))
+        .await
 }
 
 pub fn grid_open_blocking(app: AppHandle, index: usize, url: String) -> Result<(), String> {
@@ -345,9 +408,11 @@ pub fn grid_open_blocking(app: AppHandle, index: usize, url: String) -> Result<(
     grid_open_admitted(app, url, admitted)
 }
 
-fn grid_open_admitted(app: AppHandle, url: String, admitted: GridCellAdmission)
-    -> Result<(), String>
-{
+fn grid_open_admitted(
+    app: AppHandle,
+    url: String,
+    admitted: GridCellAdmission,
+) -> Result<(), String> {
     let target = initial_grid_url(&url);
     if target != "about:blank" {
         let _ = Url::parse(&target).map_err(|e| format!("无效网址: {e}"))?;
@@ -368,21 +433,32 @@ fn grid_open_admitted(app: AppHandle, url: String, admitted: GridCellAdmission)
 
 /// Cold open and hibernation resume use the same bound creation and
 /// original-owner compensation as the explicit rebuild transaction.
-fn create_grid_cell(app: &AppHandle, stamp: crate::grid_ipc::GridRouteStamp, target: Option<&str>)
-    -> Result<crate::grid_ipc::RendererBinding, String>
-{
-    if stamp.pid.is_some() { return Err("GRID_OPEN_TARGET_CHANGED".into()); }
+fn create_grid_cell(
+    app: &AppHandle,
+    stamp: crate::grid_ipc::GridRouteStamp,
+    target: Option<&str>,
+) -> Result<crate::grid_ipc::RendererBinding, String> {
+    if stamp.pid.is_some() {
+        return Err("GRID_OPEN_TARGET_CHANGED".into());
+    }
     let state = app.state::<AppState>();
     let mgr = &state.grid_manager;
     let prepared = mgr.prepare_grid_slot(stamp)?;
-    if !prepared.created { return Err("GRID_OPEN_TARGET_CHANGED".into()); }
-    let url = target.or(prepared.previous_url.as_deref()).unwrap_or("about:blank");
-    let creation = mgr.grid_binding_for_stamp(prepared.stamp)
+    if !prepared.created {
+        return Err("GRID_OPEN_TARGET_CHANGED".into());
+    }
+    let url = target
+        .or(prepared.previous_url.as_deref())
+        .unwrap_or("about:blank");
+    let creation = mgr
+        .grid_binding_for_stamp(prepared.stamp)
         .and_then(|binding| mgr.grid_create_bound(binding, url));
     if let Err(error) = creation {
         return match mgr.rollback_grid_creation(&prepared) {
             Ok(()) => Err(error),
-            Err(rollback) => Err(format!("GRID_BUILD_PARTIAL:{error};rollback unconfirmed:{rollback}")),
+            Err(rollback) => Err(format!(
+                "GRID_BUILD_PARTIAL:{error};rollback unconfirmed:{rollback}"
+            )),
         };
     }
     // Creation is already acknowledged: a later binding failure cannot
@@ -394,32 +470,51 @@ fn create_grid_cell(app: &AppHandle, stamp: crate::grid_ipc::GridRouteStamp, tar
 /// 真正给宫格 webview 应用缩放（WebKitGTK 原生 zoom_level，经 UDS 到子进程）。
 /// 仅在页面加载完成后调用，避免加载中设置被重置导致卡顿。
 fn schedule_grid_zoom(app: &AppHandle, binding: crate::grid_ipc::RendererBinding) {
-    if binding.index as usize >= MAX_GRID { return; }
+    if binding.index as usize >= MAX_GRID {
+        return;
+    }
     let state = app.state::<AppState>();
     let label = crate::grid_ipc::renderer_label(binding.index);
-    if !state.grid_zooms.lock().unwrap().contains_key(&label) { return; }
-    let Ok(permit) = GRID_ZOOM_WORKERS.reserve() else { return; };
+    if !state.grid_zooms.lock().unwrap().contains_key(&label) {
+        return;
+    }
+    let Ok(permit) = GRID_ZOOM_WORKERS.reserve() else {
+        return;
+    };
     let app = app.clone();
     // Never resolve the index again after navigation/creation admission.
     tauri::async_runtime::spawn(async move {
-        let _ = permit.run(move || {
-            std::thread::sleep(std::time::Duration::from_millis(900));
-            apply_grid_zoom(&app, binding)
-        }).await;
+        let _ = permit
+            .run(move || {
+                std::thread::sleep(std::time::Duration::from_millis(900));
+                apply_grid_zoom(&app, binding)
+            })
+            .await;
     });
 }
 
 /// The same writer is used by explicit zoom, delayed navigation replay and
 /// automatic process restart. Re-read the latest intent inside the lock.
-pub(crate) fn apply_grid_zoom(app: &AppHandle, binding: crate::grid_ipc::RendererBinding) -> Result<(), String> {
+pub(crate) fn apply_grid_zoom(
+    app: &AppHandle,
+    binding: crate::grid_ipc::RendererBinding,
+) -> Result<(), String> {
     let index = binding.index as usize;
-    if index >= MAX_GRID { return Err("GRID_INDEX_INVALID".into()); }
+    if index >= MAX_GRID {
+        return Err("GRID_INDEX_INVALID".into());
+    }
     let _send = GRID_ZOOM_WRITERS[index]
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     let state = app.state::<AppState>();
     let label = crate::grid_ipc::renderer_label(binding.index);
-    let zoom = state.grid_zooms.lock().unwrap().get(&label).copied().unwrap_or(1.0);
+    let zoom = state
+        .grid_zooms
+        .lock()
+        .unwrap()
+        .get(&label)
+        .copied()
+        .unwrap_or(1.0);
     state.grid_manager.grid_zoom_bound(binding, zoom)
 }
 
@@ -436,8 +531,12 @@ pub async fn grid_set_zoom(app: AppHandle, index: usize, zoom: f64) -> Result<()
     if admitted.binding.is_none() && !admitted.sleeping {
         return Err("GRID_ZOOM_TARGET_UNAVAILABLE".into());
     }
-    app.state::<AppState>().grid_manager.publish_grid_zoom(admitted.stamp, zoom)?;
-    let Some(binding) = admitted.binding else { return Ok(()); };
+    app.state::<AppState>()
+        .grid_manager
+        .publish_grid_zoom(admitted.stamp, zoom)?;
+    let Some(binding) = admitted.binding else {
+        return Ok(());
+    };
     permit.run(move || apply_grid_zoom(&app, binding)).await
 }
 
@@ -460,11 +559,18 @@ pub async fn grid_position(
     }
     let permit = GRID_LAYOUT_WORKERS.reserve()?;
     if x <= -20000.0 {
-        let stamp = capture_one_grid_route(&app, index)?.into_iter().next().ok_or("GRID_INDEX_INVALID")?;
-        return permit.run(move || app.state::<AppState>().grid_manager.hide_grid_route(stamp)).await;
+        let stamp = capture_one_grid_route(&app, index)?
+            .into_iter()
+            .next()
+            .ok_or("GRID_INDEX_INVALID")?;
+        return permit
+            .run(move || app.state::<AppState>().grid_manager.hide_grid_route(stamp))
+            .await;
     }
     let admitted = capture_grid_cell(&app, index)?;
-    permit.run(move || grid_position_admitted(app, (x, y, width, height), admitted)).await
+    permit
+        .run(move || grid_position_admitted(app, (x, y, width, height), admitted))
+        .await
 }
 
 pub fn grid_position_blocking(
@@ -480,27 +586,37 @@ pub fn grid_position_blocking(
     }
     let _permit = GRID_LAYOUT_WORKERS.reserve()?;
     if x <= -20000.0 {
-        let stamp = capture_one_grid_route(&app, index)?.into_iter().next().ok_or("GRID_INDEX_INVALID")?;
+        let stamp = capture_one_grid_route(&app, index)?
+            .into_iter()
+            .next()
+            .ok_or("GRID_INDEX_INVALID")?;
         return app.state::<AppState>().grid_manager.hide_grid_route(stamp);
     }
     let admitted = capture_grid_cell(&app, index)?;
     grid_position_admitted(app, (x, y, width, height), admitted)
 }
 
-fn grid_position_admitted(app: AppHandle, css: (f64, f64, f64, f64),
+fn grid_position_admitted(
+    app: AppHandle,
+    css: (f64, f64, f64, f64),
     admitted: GridCellAdmission,
 ) -> Result<(), String> {
     let index = admitted.stamp.index as usize;
     let (x, y, width, height) = css;
-    if index >= MAX_GRID || ![x, y, width, height].iter().all(|value| value.is_finite())
-        || width < 0.0 || height < 0.0
+    if index >= MAX_GRID
+        || ![x, y, width, height].iter().all(|value| value.is_finite())
+        || width < 0.0
+        || height < 0.0
     {
         return Err("GRID_NATIVE_RECT_INVALID".into());
     }
     let state = app.state::<AppState>();
     let mgr = &state.grid_manager;
-    if admitted.binding.is_none() && x <= -20000.0 { return Ok(()); }
-    let rect = mgr.abs_rect(css)
+    if admitted.binding.is_none() && x <= -20000.0 {
+        return Ok(());
+    }
+    let rect = mgr
+        .abs_rect(css)
         .ok_or_else(|| "主窗不可用，无法换算屏幕坐标".to_string())?;
     rect.validate()?;
     let binding = match admitted.binding {
@@ -526,12 +642,17 @@ pub async fn grid_close_one(app: AppHandle, index: usize) -> Result<(), String> 
     permit.run(move || close_grid_admitted(app, targets)).await
 }
 
-fn capture_one_grid_route(app: &AppHandle, index: usize)
-    -> Result<Vec<crate::grid_ipc::GridRouteStamp>, String>
-{
+fn capture_one_grid_route(
+    app: &AppHandle,
+    index: usize,
+) -> Result<Vec<crate::grid_ipc::GridRouteStamp>, String> {
     require_grid_platform()?;
-    if index >= MAX_GRID { return Err("GRID_INDEX_INVALID".into()); }
-    app.state::<AppState>().grid_manager.grid_route_stamps(&[index as u32])
+    if index >= MAX_GRID {
+        return Err("GRID_INDEX_INVALID".into());
+    }
+    app.state::<AppState>()
+        .grid_manager
+        .grid_route_stamps(&[index as u32])
 }
 
 pub fn grid_close_one_blocking(app: AppHandle, index: usize) -> Result<(), String> {

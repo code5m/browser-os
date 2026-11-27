@@ -13,18 +13,51 @@ use tauri_plugin_browser_tabs::{CaptureDocument, TabInstance, TabManagerState};
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum Action {
-    New { url: String },
-    Close { id: String },
-    Activate { id: String },
-    Open { id: String, url: String },
-    Back { id: String },
-    Forward { id: String },
-    Reload { id: String },
-    RetireRenderer { id: String, pid: u32, spawn_epoch: String, confirmed: bool },
-    ReopenRenderer { id: String, url: String, confirmed: bool,
-        review_owner_epoch: String, review_owner_sequence: String, absence_epoch: String },
-    ParkRenderer { id: String, url: String, pid: u32, spawn_epoch: String,
-        renderer_generation: String, navigation_revision: String, confirmed: bool },
+    New {
+        url: String,
+    },
+    Close {
+        id: String,
+    },
+    Activate {
+        id: String,
+    },
+    Open {
+        id: String,
+        url: String,
+    },
+    Back {
+        id: String,
+    },
+    Forward {
+        id: String,
+    },
+    Reload {
+        id: String,
+    },
+    RetireRenderer {
+        id: String,
+        pid: u32,
+        spawn_epoch: String,
+        confirmed: bool,
+    },
+    ReopenRenderer {
+        id: String,
+        url: String,
+        confirmed: bool,
+        review_owner_epoch: String,
+        review_owner_sequence: String,
+        absence_epoch: String,
+    },
+    ParkRenderer {
+        id: String,
+        url: String,
+        pid: u32,
+        spawn_epoch: String,
+        renderer_generation: String,
+        navigation_revision: String,
+        confirmed: bool,
+    },
 }
 impl Action {
     fn command(&self) -> &'static str {
@@ -59,7 +92,14 @@ impl Action {
         use crate::shared::native_legacy_policy::{bound_text, require_main};
         // Retiring one native renderer is the same destructive privilege
         // as closing it, but retains the logical tab. No new IPC permission.
-        let cmd = if matches!(self, Self::RetireRenderer { .. } | Self::ParkRenderer { .. }) { "tab_close" } else { self.command() };
+        let cmd = if matches!(
+            self,
+            Self::RetireRenderer { .. } | Self::ParkRenderer { .. }
+        ) {
+            "tab_close"
+        } else {
+            self.command()
+        };
         require_main(webview, cmd)?;
         match self {
             Self::New { url } => bound_text(cmd, "url", url),
@@ -72,39 +112,83 @@ impl Action {
             | Self::Back { id }
             | Self::Forward { id }
             | Self::Reload { id } => bound_text(cmd, "id", id),
-            Self::ReopenRenderer { id, url, confirmed, review_owner_epoch, review_owner_sequence, absence_epoch } => {
+            Self::ReopenRenderer {
+                id,
+                url,
+                confirmed,
+                review_owner_epoch,
+                review_owner_sequence,
+                absence_epoch,
+            } => {
                 bound_text(cmd, "id", id)?;
                 bound_text(cmd, "url", url)?;
-                if !confirmed || super::isolated_tabs::route(id).is_none()
+                if !confirmed
+                    || super::isolated_tabs::route(id).is_none()
                     || !crate::grid_ipc::explicit_reopen_address(url)
                     || review_owner_epoch.len() != 36
                     || uuid::Uuid::parse_str(review_owner_epoch).is_err()
-                    || review_owner_sequence.parse::<u64>().ok().filter(|n| *n > 0)
+                    || review_owner_sequence
+                        .parse::<u64>()
+                        .ok()
+                        .filter(|n| *n > 0)
                         .is_none_or(|n| n.to_string() != *review_owner_sequence)
-                    || absence_epoch.parse::<u64>().ok()
-                        .is_none_or(|n| n.to_string() != *absence_epoch) {
+                    || absence_epoch
+                        .parse::<u64>()
+                        .ok()
+                        .is_none_or(|n| n.to_string() != *absence_epoch)
+                {
                     return Err("TAB_RENDERER_REOPEN_INVALID".into());
                 }
                 Ok(())
             }
-            Self::ParkRenderer { id, url, pid, spawn_epoch, renderer_generation, navigation_revision, confirmed } => {
+            Self::ParkRenderer {
+                id,
+                url,
+                pid,
+                spawn_epoch,
+                renderer_generation,
+                navigation_revision,
+                confirmed,
+            } => {
                 bound_text(cmd, "id", id)?;
                 bound_text(cmd, "url", url)?;
-                if !confirmed || *pid == 0 || !crate::grid_ipc::restorable_address(url)
-                    || spawn_epoch.parse::<u64>().ok().filter(|n| *n > 0)
+                if !confirmed
+                    || *pid == 0
+                    || !crate::grid_ipc::restorable_address(url)
+                    || spawn_epoch
+                        .parse::<u64>()
+                        .ok()
+                        .filter(|n| *n > 0)
                         .is_none_or(|n| n.to_string() != *spawn_epoch)
-                    || [renderer_generation, navigation_revision].iter().any(|value|
-                        value.parse::<u64>().ok().filter(|n| *n > 0)
-                            .is_none_or(|n| n.to_string().as_str() != value.as_str()))
-                    || super::isolated_tabs::route(id).is_none() {
+                    || [renderer_generation, navigation_revision]
+                        .iter()
+                        .any(|value| {
+                            value
+                                .parse::<u64>()
+                                .ok()
+                                .filter(|n| *n > 0)
+                                .is_none_or(|n| n.to_string().as_str() != value.as_str())
+                        })
+                    || super::isolated_tabs::route(id).is_none()
+                {
                     return Err("TAB_RENDERER_PARK_INVALID".into());
                 }
                 Ok(())
             }
-            Self::RetireRenderer { id, pid, spawn_epoch, confirmed } => {
+            Self::RetireRenderer {
+                id,
+                pid,
+                spawn_epoch,
+                confirmed,
+            } => {
                 bound_text(cmd, "id", id)?;
-                if !confirmed || *pid == 0 || spawn_epoch.parse::<u64>().ok().filter(|n| *n > 0)
-                    .is_none_or(|n| n.to_string() != *spawn_epoch)
+                if !confirmed
+                    || *pid == 0
+                    || spawn_epoch
+                        .parse::<u64>()
+                        .ok()
+                        .filter(|n| *n > 0)
+                        .is_none_or(|n| n.to_string() != *spawn_epoch)
                     || super::isolated_tabs::route(id).is_none()
                 {
                     return Err("TAB_RENDERER_RECOVERY_INVALID_TARGET".into());
@@ -114,21 +198,35 @@ impl Action {
         }
     }
     fn is_document_mutation(&self) -> bool {
-        matches!(self, Self::Open { .. } | Self::Back { .. } | Self::Forward { .. } | Self::Reload { .. } | Self::ParkRenderer { .. })
+        matches!(
+            self,
+            Self::Open { .. }
+                | Self::Back { .. }
+                | Self::Forward { .. }
+                | Self::Reload { .. }
+                | Self::ParkRenderer { .. }
+        )
     }
 
     fn execute(self, webview: Webview, app: AppHandle, binding: &Binding) -> Result<Value, String> {
         self.authorize(&webview)?;
         let state = app.state::<crate::AppState>();
-        if state.shutdown_requested.load(std::sync::atomic::Ordering::Acquire) {
+        if state
+            .shutdown_requested
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
             return Err("TAB_APPLICATION_SHUTTING_DOWN".into());
         }
         if let Self::Close { ref id } = self {
             let admitted = match binding {
                 Binding::Live(instance) => super::TabCloseAdmission::Embedded(instance),
-                Binding::LiveDocument(document) => super::TabCloseAdmission::EmbeddedDocument(document),
+                Binding::LiveDocument(document) => {
+                    super::TabCloseAdmission::EmbeddedDocument(document)
+                }
                 Binding::Isolated(owner) => super::TabCloseAdmission::Isolated(*owner),
-                Binding::IsolatedDocument(document) => super::TabCloseAdmission::IsolatedDocument(*document),
+                Binding::IsolatedDocument(document) => {
+                    super::TabCloseAdmission::IsolatedDocument(*document)
+                }
                 Binding::Hibernated => super::TabCloseAdmission::Hibernated,
                 _ => return Err("TAB_MUTATION_INSTANCE_STALE".into()),
             };
@@ -136,32 +234,52 @@ impl Action {
         }
         if let Binding::LiveDocument(document) = binding {
             let (id, js) = match self {
-                Self::Open { id, url } => return tab_open_document(&app, &id, &url, document).map(|_| Value::Null),
+                Self::Open { id, url } => {
+                    return tab_open_document(&app, &id, &url, document).map(|_| Value::Null)
+                }
                 Self::Back { id } => (id, "if (history.length > 1) { history.back(); }"),
                 Self::Forward { id } => (id, "history.forward();"),
                 Self::Reload { id } => (id, "location.reload();"),
                 _ => return Err("TAB_MUTATION_INSTANCE_STALE".into()),
             };
-            app.state::<TabManagerState>().eval_navigation_document(&id, document, js)
+            app.state::<TabManagerState>()
+                .eval_navigation_document(&id, document, js)
                 .map_err(|error| error.to_string())?;
             state.hibernated_scroll.lock().unwrap().remove(&id);
             return Ok(Value::Null);
         }
         if let Binding::IsolatedActivation(expected) = binding {
             if let Self::Activate { ref id } = self {
-                return tab_activate_admitted(webview, app.clone(), id.clone(), Some(*expected)).map(|_| Value::Null);
+                return tab_activate_admitted(webview, app.clone(), id.clone(), Some(*expected))
+                    .map(|_| Value::Null);
             }
             return Err("TAB_RENDERER_ACTIVATION_STALE".into());
         }
         if let Binding::IsolatedDocument(document) = binding {
             return match self {
-                Self::Open { id, url } => tab_open_admitted(webview, app.clone(), id, url, Some(*document)).map(|_| Value::Null),
-                Self::Back { id } => super::isolated_tabs::eval_bound(&app, &id, "if (history.length > 1) { history.back(); }", *document).map(|_| Value::Null),
-                Self::Forward { id } => super::isolated_tabs::eval_bound(&app, &id, "history.forward();", *document).map(|_| Value::Null),
-                Self::Reload { id } => super::isolated_tabs::eval_bound(&app, &id, "location.reload();", *document).map(|_| Value::Null),
+                Self::Open { id, url } => {
+                    tab_open_admitted(webview, app.clone(), id, url, Some(*document))
+                        .map(|_| Value::Null)
+                }
+                Self::Back { id } => super::isolated_tabs::eval_bound(
+                    &app,
+                    &id,
+                    "if (history.length > 1) { history.back(); }",
+                    *document,
+                )
+                .map(|_| Value::Null),
+                Self::Forward { id } => {
+                    super::isolated_tabs::eval_bound(&app, &id, "history.forward();", *document)
+                        .map(|_| Value::Null)
+                }
+                Self::Reload { id } => {
+                    super::isolated_tabs::eval_bound(&app, &id, "location.reload();", *document)
+                        .map(|_| Value::Null)
+                }
                 Self::ParkRenderer { id, url, .. } => {
                     let _transition = reserve_tab_transition(&id)?;
-                    super::isolated_tabs::park_admitted(&app, &id, &url, *document).map(|_| Value::Null)
+                    super::isolated_tabs::park_admitted(&app, &id, &url, *document)
+                        .map(|_| Value::Null)
                 }
                 _ => Err("TAB_MUTATION_INSTANCE_STALE".into()),
             };
@@ -182,18 +300,33 @@ impl Action {
                     return Err("TAB_RENDERER_REOPEN_STALE".into());
                 };
                 let _transition = reserve_tab_transition(&id)?;
-                serde_json::to_value(super::isolated_tabs::reopen_absent(&app, &id, &url, *epoch)?)
-                    .map_err(|_| "TAB_RENDERER_REOPEN_PARTIAL: receipt serialization".into())
+                serde_json::to_value(super::isolated_tabs::reopen_absent(
+                    &app, &id, &url, *epoch,
+                )?)
+                .map_err(|_| "TAB_RENDERER_REOPEN_PARTIAL: receipt serialization".into())
             }
-            Self::RetireRenderer { id, pid, spawn_epoch, .. } => {
+            Self::RetireRenderer {
+                id,
+                pid,
+                spawn_epoch,
+                ..
+            } => {
                 let index = super::isolated_tabs::route(&id).ok_or("TAB_RENDERER_ROUTE_INVALID")?;
-                let epoch = spawn_epoch.parse::<u64>().map_err(|_| "TAB_RENDERER_RECOVERY_INVALID_TARGET")?;
+                let epoch = spawn_epoch
+                    .parse::<u64>()
+                    .map_err(|_| "TAB_RENDERER_RECOVERY_INVALID_TARGET")?;
                 let _transition = reserve_tab_transition(&id)?;
                 let state = app.state::<crate::AppState>();
-                state.grid_manager.retire_bound_tab_renderer(index, (pid, epoch))
-                    .map_err(|error| if error.contains("CLEANUP_PENDING") {
-                        format!("GRID_REQUEST_OUTCOME_UNKNOWN: {error}")
-                    } else { error })?;
+                state
+                    .grid_manager
+                    .retire_bound_tab_renderer(index, (pid, epoch))
+                    .map_err(|error| {
+                        if error.contains("CLEANUP_PENDING") {
+                            format!("GRID_REQUEST_OUTCOME_UNKNOWN: {error}")
+                        } else {
+                            error
+                        }
+                    })?;
                 state.hibernated_tabs.lock().unwrap().remove(&id);
                 state.hibernated_scroll.lock().unwrap().remove(&id);
                 Ok(Value::Null)
@@ -205,18 +338,25 @@ impl Action {
 // A model may propose only these typed operations. No script, DOM write,
 // arbitrary native command, recovery permission or hidden file navigation.
 fn agent_action(input: &Value) -> Result<Action, String> {
-    let action: Action = serde_json::from_value(input.clone())
-        .map_err(|_| "AGENT_BROWSER_ARGUMENT_INVALID")?;
+    let action: Action =
+        serde_json::from_value(input.clone()).map_err(|_| "AGENT_BROWSER_ARGUMENT_INVALID")?;
     match &action {
         Action::New { url } | Action::Open { url, .. } => {
             let parsed = url::Url::parse(url).map_err(|_| "AGENT_BROWSER_ADDRESS_DENIED")?;
-            if url.len() > 8192 || !matches!(parsed.scheme(), "http" | "https")
-                || parsed.host().is_none() || !parsed.username().is_empty() || parsed.password().is_some()
-                || url.chars().any(char::is_control) {
+            if url.len() > 8192
+                || !matches!(parsed.scheme(), "http" | "https")
+                || parsed.host().is_none()
+                || !parsed.username().is_empty()
+                || parsed.password().is_some()
+                || url.chars().any(char::is_control)
+            {
                 return Err("AGENT_BROWSER_ADDRESS_DENIED".into());
             }
         }
-        Action::Close { .. } | Action::Back { .. } | Action::Forward { .. } | Action::Reload { .. } => {}
+        Action::Close { .. }
+        | Action::Back { .. }
+        | Action::Forward { .. }
+        | Action::Reload { .. } => {}
         _ => return Err("AGENT_BROWSER_ACTION_DENIED".into()),
     }
     if action.target().is_some_and(|id| !super::is_tab_label(id)) {
@@ -279,51 +419,94 @@ impl Binding {
             return Err("TAB_NOT_FOUND".into());
         }
         if let Some(index) = super::isolated_tabs::route(id) {
-            if matches!(action,Action::Activate{..}) {
-                return super::isolated_tabs::capture_activation(app,id).map(Self::IsolatedActivation);
+            if matches!(action, Action::Activate { .. }) {
+                return super::isolated_tabs::capture_activation(app, id)
+                    .map(Self::IsolatedActivation);
             }
             let owner = state.grid_manager.tab_renderer_owner(index)?;
-            if let Action::RetireRenderer { pid, spawn_epoch, .. } = action {
-                let expected = spawn_epoch.parse::<u64>().map_err(|_| "TAB_RENDERER_RECOVERY_INVALID_TARGET")?;
+            if let Action::RetireRenderer {
+                pid, spawn_epoch, ..
+            } = action
+            {
+                let expected = spawn_epoch
+                    .parse::<u64>()
+                    .map_err(|_| "TAB_RENDERER_RECOVERY_INVALID_TARGET")?;
                 if owner != Some((*pid, expected)) {
                     return Err("TAB_RENDERER_RECOVERY_STALE".into());
                 }
             }
-            if let Action::ParkRenderer { pid, spawn_epoch, url, renderer_generation, navigation_revision, .. } = action {
-                let epoch = spawn_epoch.parse::<u64>().map_err(|_| "TAB_RENDERER_PARK_INVALID")?;
+            if let Action::ParkRenderer {
+                pid,
+                spawn_epoch,
+                url,
+                renderer_generation,
+                navigation_revision,
+                ..
+            } = action
+            {
+                let epoch = spawn_epoch
+                    .parse::<u64>()
+                    .map_err(|_| "TAB_RENDERER_PARK_INVALID")?;
                 if owner != Some((*pid, epoch))
-                    || state.active_tab.try_lock().map_err(|_| "TAB_MUTATION_INSTANCE_UNAVAILABLE")?.as_deref() == Some(id)
-                    || !state.tabs.try_lock().map_err(|_| "TAB_MUTATION_INSTANCE_UNAVAILABLE")?
-                        .get(id).is_some_and(|tab| tab.url == *url) {
+                    || state
+                        .active_tab
+                        .try_lock()
+                        .map_err(|_| "TAB_MUTATION_INSTANCE_UNAVAILABLE")?
+                        .as_deref()
+                        == Some(id)
+                    || !state
+                        .tabs
+                        .try_lock()
+                        .map_err(|_| "TAB_MUTATION_INSTANCE_UNAVAILABLE")?
+                        .get(id)
+                        .is_some_and(|tab| tab.url == *url)
+                {
                     return Err("TAB_RENDERER_PARK_STALE".into());
                 }
                 let binding = state.grid_manager.renderer_binding(index)?;
                 if binding.owner != (*pid, epoch)
                     || binding.generation.to_string() != *renderer_generation
-                    || binding.navigation_revision.to_string() != *navigation_revision {
+                    || binding.navigation_revision.to_string() != *navigation_revision
+                {
                     return Err("TAB_RENDERER_PARK_STALE".into());
                 }
                 // Never take a second binding after checking the reviewed one.
                 return Ok(Self::IsolatedDocument(binding));
             }
-            if let Action::ReopenRenderer { review_owner_epoch, review_owner_sequence, absence_epoch, .. } = action {
-                let epoch = absence_epoch.parse::<u64>().map_err(|_| "TAB_RENDERER_REOPEN_INVALID")?;
+            if let Action::ReopenRenderer {
+                review_owner_epoch,
+                review_owner_sequence,
+                absence_epoch,
+                ..
+            } = action
+            {
+                let epoch = absence_epoch
+                    .parse::<u64>()
+                    .map_err(|_| "TAB_RENDERER_REOPEN_INVALID")?;
                 // The original user-visible absence review, not a fresh
                 // inspect issued by the mutation transport, grants admission.
                 {
                     let control = self::owner()?;
-                    if control.epoch != *review_owner_epoch || control.next_sequence.to_string() != *review_owner_sequence {
+                    if control.epoch != *review_owner_epoch
+                        || control.next_sequence.to_string() != *review_owner_sequence
+                    {
                         return Err("TAB_RENDERER_REOPEN_STALE".into());
                     }
                 }
                 if owner.is_some()
                     || state.grid_manager.tab_renderer_absence_epoch(index)? != epoch
-                    || state.hibernated_tabs.try_lock().map_err(|_| "TAB_MUTATION_INSTANCE_UNAVAILABLE")?.contains(id) {
+                    || state
+                        .hibernated_tabs
+                        .try_lock()
+                        .map_err(|_| "TAB_MUTATION_INSTANCE_UNAVAILABLE")?
+                        .contains(id)
+                {
                     return Err("TAB_RENDERER_REOPEN_STALE".into());
                 }
                 return Ok(Self::IsolatedAbsent(epoch));
             }
-            if owner.is_none() && !matches!(action, Action::Activate { .. } | Action::Close { .. }) {
+            if owner.is_none() && !matches!(action, Action::Activate { .. } | Action::Close { .. })
+            {
                 return Err("TAB_RENDERER_RECOVERY_REQUIRED".into());
             }
             if action.is_document_mutation() {
@@ -347,7 +530,9 @@ impl Binding {
             return Ok(Self::Hibernated);
         }
         if action.is_document_mutation() {
-            return app.state::<TabManagerState>().capture_document(&id.to_owned())
+            return app
+                .state::<TabManagerState>()
+                .capture_document(&id.to_owned())
                 .map(Self::LiveDocument)
                 .map_err(|_| "TAB_MUTATION_INSTANCE_UNAVAILABLE".into());
         }
@@ -369,26 +554,38 @@ impl Binding {
                 super::isolated_tabs::route(id).is_some_and(|index| {
                     let state = app.state::<crate::AppState>();
                     let exists = state.tabs.lock().unwrap().contains_key(id);
-                    exists && state.grid_manager.tab_renderer_owner(index).is_ok_and(|owner| owner == *expected)
+                    exists
+                        && state
+                            .grid_manager
+                            .tab_renderer_owner(index)
+                            .is_ok_and(|owner| owner == *expected)
                 })
             }
-            (Self::IsolatedActivation(expected), Some(id)) =>
-                super::isolated_tabs::activation_current(app,id,*expected),
+            (Self::IsolatedActivation(expected), Some(id)) => {
+                super::isolated_tabs::activation_current(app, id, *expected)
+            }
             (Self::IsolatedAbsent(epoch), Some(id)) => {
                 super::isolated_tabs::route(id).is_some_and(|index| {
                     let state = app.state::<crate::AppState>();
                     let exists = state.tabs.lock().unwrap().contains_key(id);
-                    exists && !state.hibernated_tabs.lock().unwrap().contains(id)
-                        && state.grid_manager.tab_renderer_absence_epoch(index).is_ok_and(|current| current == *epoch)
+                    exists
+                        && !state.hibernated_tabs.lock().unwrap().contains(id)
+                        && state
+                            .grid_manager
+                            .tab_renderer_absence_epoch(index)
+                            .is_ok_and(|current| current == *epoch)
                 })
             }
-            (Self::IsolatedDocument(binding), Some(id)) => {
-                super::isolated_tabs::route(id).is_some_and(|index| {
+            (Self::IsolatedDocument(binding), Some(id)) => super::isolated_tabs::route(id)
+                .is_some_and(|index| {
                     let state = app.state::<crate::AppState>();
                     let exists = state.tabs.lock().unwrap().contains_key(id);
-                    exists && state.grid_manager.renderer_binding(index).is_ok_and(|current| current == *binding)
-                })
-            }
+                    exists
+                        && state
+                            .grid_manager
+                            .renderer_binding(index)
+                            .is_ok_and(|current| current == *binding)
+                }),
             (Self::Hibernated, Some(id)) => app
                 .state::<crate::AppState>()
                 .hibernated_tabs
@@ -505,7 +702,10 @@ impl Owner {
             Some(slot)
                 if slot.receipt.phase == Phase::Unknown
                     || (slot.entered
-                        && matches!(slot.receipt.phase, Phase::Running | Phase::CancelRequested)
+                        && matches!(
+                            slot.receipt.phase,
+                            Phase::Running | Phase::CancelRequested
+                        )
                         && now.saturating_duration_since(slot.since) >= DOMAIN_STALL) =>
             {
                 Some(slot.receipt.ticket.clone())
@@ -689,9 +889,13 @@ fn snapshot(app: &AppHandle) -> Result<OwnerView, String> {
             active_tab_id: None,
             domain_recovery_available: state.local_renderer_recovery().is_some()
                 || (supervisor_ready() && state.recovery_target(Instant::now()).is_some()),
-            recovery_scope: if state.local_renderer_recovery().is_some() { Some("renderer") }
-                else if supervisor_ready() && state.recovery_target(Instant::now()).is_some() { Some("application") }
-                else { None },
+            recovery_scope: if state.local_renderer_recovery().is_some() {
+                Some("renderer")
+            } else if supervisor_ready() && state.recovery_target(Instant::now()).is_some() {
+                Some("application")
+            } else {
+                None
+            },
             renderer_recovery_target: None,
             renderer_park_target: None,
             renderer_reopen_target: None,
@@ -750,7 +954,12 @@ fn owner() -> Result<std::sync::MutexGuard<'static, Owner>, String> {
 fn recovery_scope_matches(requested: Option<&str>, renderer_only: bool) -> bool {
     // Historical clients only offered a whole-app confirmation. Require a
     // fresh explicit scope for a newly available renderer-only recovery.
-    requested.unwrap_or("application") == if renderer_only { "renderer" } else { "application" }
+    requested.unwrap_or("application")
+        == if renderer_only {
+            "renderer"
+        } else {
+            "application"
+        }
 }
 
 fn supervisor_ready() -> bool {
@@ -813,7 +1022,10 @@ struct AgentBrowserReview {
 static AGENT_BROWSER_REVIEW: Mutex<Option<AgentBrowserReview>> = Mutex::new(None);
 
 pub(crate) fn review_agent_browser_action(
-    app: &AppHandle, webview: &Webview, workspace: String, operation: uuid::Uuid,
+    app: &AppHandle,
+    webview: &Webview,
+    workspace: String,
+    operation: uuid::Uuid,
     input: &Value,
 ) -> Result<Value, String> {
     let action = agent_action(input)?;
@@ -845,65 +1057,116 @@ pub(crate) fn review_agent_browser_action(
     }
     {
         let state = owner()?;
-        if state.epoch != epoch || state.next_sequence != sequence
-            || state.slot.is_some() || state.internal_active || state.recovery_claimed {
+        if state.epoch != epoch
+            || state.next_sequence != sequence
+            || state.slot.is_some()
+            || state.internal_active
+            || state.recovery_claimed
+        {
             return Err("AGENT_BROWSER_REVIEW_STALE".into());
         }
     }
     let token = uuid::Uuid::new_v4();
     let command = action.command();
-    *AGENT_BROWSER_REVIEW.lock().map_err(|_| "AGENT_BROWSER_REVIEW_BUSY")? =
-        Some(AgentBrowserReview {
-            token, operation, workspace, action, binding, epoch, sequence,
-            expires: Instant::now() + Duration::from_secs(90),
-        });
-    Ok(serde_json::json!({"token":token,"operation_id":operation,"command":command,
+    *AGENT_BROWSER_REVIEW
+        .lock()
+        .map_err(|_| "AGENT_BROWSER_REVIEW_BUSY")? = Some(AgentBrowserReview {
+        token,
+        operation,
+        workspace,
+        action,
+        binding,
+        epoch,
+        sequence,
+        expires: Instant::now() + Duration::from_secs(90),
+    });
+    Ok(
+        serde_json::json!({"token":token,"operation_id":operation,"command":command,
         "input":input,"observed_origin":origin,"expires_seconds":90,
-        "scope":"native_host_dispatch_only"}))
+        "scope":"native_host_dispatch_only"}),
+    )
 }
 
 fn cancel_agent_prepared(webview: &Webview, app: &AppHandle, ticket: &str) {
     // No native operation entered. Only a terminal cancelled slot may be
     // acknowledged; an unexpected phase remains for normal recovery.
-    let _ = tab_mutation_control(webview.clone(), app.clone(), Request::Cancel { ticket: ticket.into() });
-    let _ = tab_mutation_control(webview.clone(), app.clone(), Request::Ack { ticket: ticket.into() });
+    let _ = tab_mutation_control(
+        webview.clone(),
+        app.clone(),
+        Request::Cancel {
+            ticket: ticket.into(),
+        },
+    );
+    let _ = tab_mutation_control(
+        webview.clone(),
+        app.clone(),
+        Request::Ack {
+            ticket: ticket.into(),
+        },
+    );
 }
 
 /// Called only by the durable Coding execution adapter, on its owned worker.
 /// Browser Owner and Coding Owner both retain the effect until settlement.
 pub(crate) fn execute_agent_browser_action(
-    app: &AppHandle, webview: &Webview, workspace: &str, operation: uuid::Uuid,
-    input: &Value, review_token: &str, cancelled: &dyn Fn() -> bool,
+    app: &AppHandle,
+    webview: &Webview,
+    workspace: &str,
+    operation: uuid::Uuid,
+    input: &Value,
+    review_token: &str,
+    cancelled: &dyn Fn() -> bool,
     admit: impl FnOnce() -> Result<(), String>,
 ) -> Result<Value, String> {
     let action = agent_action(input)?;
     action.authorize(webview)?;
     let token = uuid::Uuid::parse_str(review_token).map_err(|_| "AGENT_BROWSER_REVIEW_REQUIRED")?;
     let review = {
-        let mut slot = AGENT_BROWSER_REVIEW.lock().map_err(|_| "AGENT_BROWSER_REVIEW_BUSY")?;
-        if !slot.as_ref().is_some_and(|r| r.token == token && r.operation == operation
-            && r.workspace == workspace && r.action == action && Instant::now() < r.expires) {
+        let mut slot = AGENT_BROWSER_REVIEW
+            .lock()
+            .map_err(|_| "AGENT_BROWSER_REVIEW_BUSY")?;
+        if !slot.as_ref().is_some_and(|r| {
+            r.token == token
+                && r.operation == operation
+                && r.workspace == workspace
+                && r.action == action
+                && Instant::now() < r.expires
+        }) {
             return Err("AGENT_BROWSER_REVIEW_STALE".into());
         }
         slot.take().ok_or("AGENT_BROWSER_REVIEW_STALE")?
     };
-    let current = || !cancelled() && Instant::now() < review.expires
-        && review.binding.current(app, &action);
-    if !current() { return Err("AGENT_BROWSER_REVIEW_STALE".into()); }
+    let current =
+        || !cancelled() && Instant::now() < review.expires && review.binding.current(app, &action);
+    if !current() {
+        return Err("AGENT_BROWSER_REVIEW_STALE".into());
+    }
     let ticket = uuid::Uuid::new_v4().to_string();
     {
         let mut state = owner()?;
         state.expire_prepared();
-        if state.epoch != review.epoch || state.next_sequence != review.sequence
-            || state.slot.is_some() || state.internal_active || state.recovery_claimed {
+        if state.epoch != review.epoch
+            || state.next_sequence != review.sequence
+            || state.slot.is_some()
+            || state.internal_active
+            || state.recovery_claimed
+        {
             return Err("AGENT_BROWSER_REVIEW_STALE".into());
         }
         state.advance_sequence()?;
         state.slot = Some(Slot {
-            receipt: Receipt { ticket: ticket.clone(), client_id: operation.to_string(),
-                command: action.command(), phase: Phase::Prepared, value: None, error: None },
-            action: Some(action.clone()), binding: Some(review.binding.clone()),
-            since: Instant::now(), entered: false,
+            receipt: Receipt {
+                ticket: ticket.clone(),
+                client_id: operation.to_string(),
+                command: action.command(),
+                phase: Phase::Prepared,
+                value: None,
+                error: None,
+            },
+            action: Some(action.clone()),
+            binding: Some(review.binding.clone()),
+            since: Instant::now(),
+            entered: false,
             agent_owned: true,
         });
     }
@@ -923,9 +1186,13 @@ pub(crate) fn execute_agent_browser_action(
     let entered = {
         let mut state = owner()?;
         state.expire_prepared();
-        if state.recovery_claimed { false } else {
+        if state.recovery_claimed {
+            false
+        } else {
             let slot = matching(&mut state, &ticket)?;
-            if slot.receipt.phase != Phase::Prepared { false } else {
+            if slot.receipt.phase != Phase::Prepared {
+                false
+            } else {
                 slot.receipt.phase = Phase::Running;
                 slot.enter()
             }
@@ -935,7 +1202,10 @@ pub(crate) fn execute_agent_browser_action(
         cancel_agent_prepared(webview, app, &ticket);
         return Err("AGENT_BROWSER_REVIEW_STALE".into());
     }
-    let mut guard = WorkerGuard { ticket: ticket.clone(), completed: false };
+    let mut guard = WorkerGuard {
+        ticket: ticket.clone(),
+        completed: false,
+    };
     let command = action.command();
     let id = action.target().map(str::to_owned);
     let result = if current() {
@@ -976,11 +1246,21 @@ fn matching<'a>(state: &'a mut Owner, ticket: &str) -> Result<&'a mut Slot, Stri
 fn completion_unknown(error: &str) -> bool {
     // Both native managers can return cleanup-pending directly or inside a
     // partial-operation diagnostic. These are not terminal failure receipts.
-    ["GRID_REQUEST_OUTCOME_UNKNOWN", "TAB_RENDERER_CLEANUP_PENDING",
-        "GRID_PROCESS_CLEANUP_PENDING", "GRID_CHILD_CLEANUP_PENDING",
-        "GRID_CLOSE_CLEANUP_PENDING", "GRID_ROLLBACK_CLEANUP_PENDING",
-        "GRID_HIDE_CLEANUP_PENDING"].iter().any(|code| error.contains(code))
-        || matches!(error, "TAB_CREATE_CALLBACK_LOST" | "TAB_ACTIVATION_CALLBACK_LOST")
+    [
+        "GRID_REQUEST_OUTCOME_UNKNOWN",
+        "TAB_RENDERER_CLEANUP_PENDING",
+        "GRID_PROCESS_CLEANUP_PENDING",
+        "GRID_CHILD_CLEANUP_PENDING",
+        "GRID_CLOSE_CLEANUP_PENDING",
+        "GRID_ROLLBACK_CLEANUP_PENDING",
+        "GRID_HIDE_CLEANUP_PENDING",
+    ]
+    .iter()
+    .any(|code| error.contains(code))
+        || matches!(
+            error,
+            "TAB_CREATE_CALLBACK_LOST" | "TAB_ACTIVATION_CALLBACK_LOST"
+        )
 }
 fn finish(ticket: &str, result: Result<Value, String>) {
     if let Ok(mut state) = owner() {
@@ -1048,14 +1328,29 @@ pub(crate) enum Request {
         ticket: String,
     },
     Inspect,
-    InspectRenderer { id: String },
+    InspectRenderer {
+        id: String,
+    },
     InspectDownloads,
-    SampleDownload { id: String, pid: u32, spawn_epoch: String },
-    DownloadTasks { id:String, pid:Option<u32>, spawn_epoch:Option<String>,
-        transfer_id:Option<String>, operation:Option<String>, confirmed:Option<bool>,
-        #[serde(default)] remember: bool },
+    SampleDownload {
+        id: String,
+        pid: u32,
+        spawn_epoch: String,
+    },
+    DownloadTasks {
+        id: String,
+        pid: Option<u32>,
+        spawn_epoch: Option<String>,
+        transfer_id: Option<String>,
+        operation: Option<String>,
+        confirmed: Option<bool>,
+        #[serde(default)]
+        remember: bool,
+    },
     InspectDownloadHistory,
-    ClearDownloadHistory { confirmed: bool },
+    ClearDownloadHistory {
+        confirmed: bool,
+    },
     Fence {
         epoch: String,
         sequence: String,
@@ -1070,9 +1365,17 @@ pub(crate) enum Request {
     },
 }
 static DOWNLOAD_HISTORY_LANE: crate::shared::blocking::BlockingLane =
-    crate::shared::blocking::BlockingLane::new(1, "DOWNLOAD_HISTORY_BUSY", "DOWNLOAD_HISTORY_WORKER_FAILED");
+    crate::shared::blocking::BlockingLane::new(
+        1,
+        "DOWNLOAD_HISTORY_BUSY",
+        "DOWNLOAD_HISTORY_WORKER_FAILED",
+    );
 static DOWNLOAD_SAMPLE_LANE: crate::shared::blocking::BlockingLane =
-    crate::shared::blocking::BlockingLane::new(2, "TAB_DOWNLOAD_SAMPLE_BUSY", "TAB_DOWNLOAD_SAMPLE_WORKER_FAILED");
+    crate::shared::blocking::BlockingLane::new(
+        2,
+        "TAB_DOWNLOAD_SAMPLE_BUSY",
+        "TAB_DOWNLOAD_SAMPLE_WORKER_FAILED",
+    );
 
 #[tauri::command]
 pub(crate) async fn tab_mutation(
@@ -1082,48 +1385,88 @@ pub(crate) async fn tab_mutation(
 ) -> Result<OwnerView, String> {
     match request {
         Request::InspectDownloadHistory => {
-            crate::shared::native_legacy_policy::require_main(&webview,"tab_list")?;
-            DOWNLOAD_HISTORY_LANE.run(move || {
-                let guard=super::download_history::claim()?;
-                let mut view=snapshot(&app)?;
-                view.download_history=Some(super::download_history::inspect(&crate::workspace::data_dir(&app),&guard)?);
-                Ok(view)
-            }).await
+            crate::shared::native_legacy_policy::require_main(&webview, "tab_list")?;
+            DOWNLOAD_HISTORY_LANE
+                .run(move || {
+                    let guard = super::download_history::claim()?;
+                    let mut view = snapshot(&app)?;
+                    view.download_history = Some(super::download_history::inspect(
+                        &crate::workspace::data_dir(&app),
+                        &guard,
+                    )?);
+                    Ok(view)
+                })
+                .await
         }
         Request::ClearDownloadHistory { confirmed } => {
-            crate::shared::native_legacy_policy::require_main(&webview,"tab_list")?;
-            if !confirmed { return Err("DOWNLOAD_HISTORY_CONFIRM_REQUIRED".into()); }
-            DOWNLOAD_HISTORY_LANE.run(move || {
-                let guard=super::download_history::claim()?;
-                let mut view=snapshot(&app)?;
-                view.download_history=Some(super::download_history::clear(&crate::workspace::data_dir(&app),&guard)?);
-                Ok(view)
-            }).await
+            crate::shared::native_legacy_policy::require_main(&webview, "tab_list")?;
+            if !confirmed {
+                return Err("DOWNLOAD_HISTORY_CONFIRM_REQUIRED".into());
+            }
+            DOWNLOAD_HISTORY_LANE
+                .run(move || {
+                    let guard = super::download_history::claim()?;
+                    let mut view = snapshot(&app)?;
+                    view.download_history = Some(super::download_history::clear(
+                        &crate::workspace::data_dir(&app),
+                        &guard,
+                    )?);
+                    Ok(view)
+                })
+                .await
         }
-        Request::DownloadTasks { id,pid,spawn_epoch,transfer_id,operation,confirmed,remember } => {
-            crate::shared::native_legacy_policy::require_main(&webview,"tab_list")?;
-            crate::shared::native_legacy_policy::bound_text("tab_list","id",&id)?;
-            if !super::is_tab_label(&id){return Err("DOWNLOAD_TRANSFER_STALE".into());}
-            let control=match (transfer_id,operation,confirmed) {
-                (None,None,None)=>None,
-                (Some(transfer),Some(operation),Some(true)) if transfer.len()<=41
-                    && transfer.split_once(':').is_some_and(|(a,b)| [a,b].into_iter().all(|part|
-                        part.parse::<u64>().is_ok_and(|v|v>0 && v.to_string()==part)))
-                    && matches!(operation.as_str(),"pause"|"resume"|"cancel")=>{
-                    Some((transfer,operation))
+        Request::DownloadTasks {
+            id,
+            pid,
+            spawn_epoch,
+            transfer_id,
+            operation,
+            confirmed,
+            remember,
+        } => {
+            crate::shared::native_legacy_policy::require_main(&webview, "tab_list")?;
+            crate::shared::native_legacy_policy::bound_text("tab_list", "id", &id)?;
+            if !super::is_tab_label(&id) {
+                return Err("DOWNLOAD_TRANSFER_STALE".into());
+            }
+            let control = match (transfer_id, operation, confirmed) {
+                (None, None, None) => None,
+                (Some(transfer), Some(operation), Some(true))
+                    if transfer.len() <= 41
+                        && transfer.split_once(':').is_some_and(|(a, b)| {
+                            [a, b].into_iter().all(|part| {
+                                part.parse::<u64>()
+                                    .is_ok_and(|v| v > 0 && v.to_string() == part)
+                            })
+                        })
+                        && matches!(operation.as_str(), "pause" | "resume" | "cancel") =>
+                {
+                    Some((transfer, operation))
                 }
-                _=>return Err("DOWNLOAD_CONTROL_INVALID".into()),
+                _ => return Err("DOWNLOAD_CONTROL_INVALID".into()),
             };
-            if remember && control.is_some() { return Err("DOWNLOAD_HISTORY_READ_ONLY".into()); }
-            let binding=if let Some(index)=super::isolated_tabs::route(&id){
-                let pid=pid.filter(|v|*v>0).ok_or("DOWNLOAD_OWNER_STALE")?;
-                let epoch=spawn_epoch.as_deref().and_then(|v|v.parse::<u64>().ok())
-                    .filter(|v|*v>0).ok_or("DOWNLOAD_OWNER_STALE")?;
-                let binding=app.state::<crate::AppState>().grid_manager.download_binding(index)?;
-                if binding.owner!=(pid,epoch){return Err("DOWNLOAD_OWNER_STALE".into());}
+            if remember && control.is_some() {
+                return Err("DOWNLOAD_HISTORY_READ_ONLY".into());
+            }
+            let binding = if let Some(index) = super::isolated_tabs::route(&id) {
+                let pid = pid.filter(|v| *v > 0).ok_or("DOWNLOAD_OWNER_STALE")?;
+                let epoch = spawn_epoch
+                    .as_deref()
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .filter(|v| *v > 0)
+                    .ok_or("DOWNLOAD_OWNER_STALE")?;
+                let binding = app
+                    .state::<crate::AppState>()
+                    .grid_manager
+                    .download_binding(index)?;
+                if binding.owner != (pid, epoch) {
+                    return Err("DOWNLOAD_OWNER_STALE".into());
+                }
                 Some(binding)
-            }else{
-                if pid.is_some()||spawn_epoch.is_some(){return Err("DOWNLOAD_OWNER_STALE".into());}
+            } else {
+                if pid.is_some() || spawn_epoch.is_some() {
+                    return Err("DOWNLOAD_OWNER_STALE".into());
+                }
                 None
             };
             DOWNLOAD_SAMPLE_LANE.run(move || {
@@ -1161,36 +1504,65 @@ pub(crate) async fn tab_mutation(
                 Ok(view)
             }).await
         }
-        Request::SampleDownload { id, pid, spawn_epoch } => {
+        Request::SampleDownload {
+            id,
+            pid,
+            spawn_epoch,
+        } => {
             crate::shared::native_legacy_policy::require_main(&webview, "tab_list")?;
             crate::shared::native_legacy_policy::bound_text("tab_list", "id", &id)?;
             let index = super::isolated_tabs::route(&id).ok_or("TAB_RENDERER_ROUTE_INVALID")?;
-            let epoch = spawn_epoch.parse::<u64>().ok().filter(|v| *v > 0 && v.to_string() == spawn_epoch)
+            let epoch = spawn_epoch
+                .parse::<u64>()
+                .ok()
+                .filter(|v| *v > 0 && v.to_string() == spawn_epoch)
                 .ok_or("TAB_DOWNLOAD_SAMPLE_STALE")?;
-            if pid == 0 { return Err("TAB_DOWNLOAD_SAMPLE_STALE".into()); }
-            let binding = app.state::<crate::AppState>().grid_manager.download_binding(index)?;
-            if binding.owner != (pid, epoch) { return Err("TAB_DOWNLOAD_SAMPLE_STALE".into()); }
-            DOWNLOAD_SAMPLE_LANE.run(move || {
-                let state = app.state::<crate::AppState>();
-                if state.shutdown_requested.load(std::sync::atomic::Ordering::Acquire)
-                    || !state.tabs.try_lock().map_err(|_| "TAB_DOWNLOAD_SAMPLE_BUSY")?.contains_key(&id) {
-                    return Err("TAB_DOWNLOAD_SAMPLE_STALE".into());
-                }
-                if !state.grid_manager.sample_tab_downloads(binding, 800)? {
-                    return Err("TAB_DOWNLOAD_SAMPLE_UNCONFIRMED".into());
-                }
-                let inventory = state.grid_manager.tab_download_inventory()?;
-                let current = inventory["live"].as_array().is_some_and(|rows| rows.iter().any(|row|
-                    row["id"].as_str() == Some(id.as_str())
-                    && row["pid"].as_u64() == Some(u64::from(pid))
-                    && row["spawn_epoch"].as_str() == Some(spawn_epoch.as_str())
-                    && row["renderer_generation"].as_str() == Some(binding.generation.to_string().as_str())
-                    && row["connection_current"].as_bool() == Some(true)));
-                if !current { return Err("TAB_DOWNLOAD_SAMPLE_STALE".into()); }
-                let mut view = snapshot(&app)?;
-                view.download_inventory = Some(inventory);
-                Ok(view)
-            }).await
+            if pid == 0 {
+                return Err("TAB_DOWNLOAD_SAMPLE_STALE".into());
+            }
+            let binding = app
+                .state::<crate::AppState>()
+                .grid_manager
+                .download_binding(index)?;
+            if binding.owner != (pid, epoch) {
+                return Err("TAB_DOWNLOAD_SAMPLE_STALE".into());
+            }
+            DOWNLOAD_SAMPLE_LANE
+                .run(move || {
+                    let state = app.state::<crate::AppState>();
+                    if state
+                        .shutdown_requested
+                        .load(std::sync::atomic::Ordering::Acquire)
+                        || !state
+                            .tabs
+                            .try_lock()
+                            .map_err(|_| "TAB_DOWNLOAD_SAMPLE_BUSY")?
+                            .contains_key(&id)
+                    {
+                        return Err("TAB_DOWNLOAD_SAMPLE_STALE".into());
+                    }
+                    if !state.grid_manager.sample_tab_downloads(binding, 800)? {
+                        return Err("TAB_DOWNLOAD_SAMPLE_UNCONFIRMED".into());
+                    }
+                    let inventory = state.grid_manager.tab_download_inventory()?;
+                    let current = inventory["live"].as_array().is_some_and(|rows| {
+                        rows.iter().any(|row| {
+                            row["id"].as_str() == Some(id.as_str())
+                                && row["pid"].as_u64() == Some(u64::from(pid))
+                                && row["spawn_epoch"].as_str() == Some(spawn_epoch.as_str())
+                                && row["renderer_generation"].as_str()
+                                    == Some(binding.generation.to_string().as_str())
+                                && row["connection_current"].as_bool() == Some(true)
+                        })
+                    });
+                    if !current {
+                        return Err("TAB_DOWNLOAD_SAMPLE_STALE".into());
+                    }
+                    let mut view = snapshot(&app)?;
+                    view.download_inventory = Some(inventory);
+                    Ok(view)
+                })
+                .await
         }
         other => tab_mutation_control(webview, app, other),
     }
@@ -1271,7 +1643,7 @@ fn tab_mutation_control(
                         binding: Some(binding),
                         since: std::time::Instant::now(),
                         entered: false,
-            agent_owned: false,
+                        agent_owned: false,
                     });
                 }
                 drop(reservation);
@@ -1370,17 +1742,21 @@ fn tab_mutation_control(
             }
         }
         Request::Inspect => {}
-        Request::SampleDownload { .. } | Request::DownloadTasks { .. }
-        | Request::InspectDownloadHistory | Request::ClearDownloadHistory { .. } =>
-            return Err("TAB_DOWNLOAD_SAMPLE_INVALID".into()),
+        Request::SampleDownload { .. }
+        | Request::DownloadTasks { .. }
+        | Request::InspectDownloadHistory
+        | Request::ClearDownloadHistory { .. } => return Err("TAB_DOWNLOAD_SAMPLE_INVALID".into()),
         Request::InspectDownloads => {
             crate::shared::native_legacy_policy::require_main(&webview, "tab_list")?;
             if !super::isolated_tabs::mode_enabled() {
                 return Err("TAB_RENDERER_ROUTE_INVALID".into());
             }
             let mut view = snapshot(&app)?;
-            view.download_inventory = Some(app.state::<crate::AppState>()
-                .grid_manager.tab_download_inventory()?);
+            view.download_inventory = Some(
+                app.state::<crate::AppState>()
+                    .grid_manager
+                    .tab_download_inventory()?,
+            );
             return Ok(view);
         }
         Request::InspectRenderer { id } => {
@@ -1388,43 +1764,70 @@ fn tab_mutation_control(
             crate::shared::native_legacy_policy::bound_text("tab_close", "id", &id)?;
             let index = super::isolated_tabs::route(&id).ok_or("TAB_RENDERER_ROUTE_INVALID")?;
             let state = app.state::<crate::AppState>();
-            if !state.tabs.try_lock().map_err(|_| "TAB_RENDERER_OBSERVATION_BUSY")?.contains_key(&id) {
+            if !state
+                .tabs
+                .try_lock()
+                .map_err(|_| "TAB_RENDERER_OBSERVATION_BUSY")?
+                .contains_key(&id)
+            {
                 return Err("TAB_NOT_FOUND".into());
             }
             let mut view = snapshot(&app)?;
-            let (observed_owner, status, download) = state.grid_manager.tab_renderer_inspection(index)?;
-            let hibernated = state.hibernated_tabs.try_lock()
-                .map_err(|_| "TAB_RENDERER_OBSERVATION_BUSY")?.contains(&id);
+            let (observed_owner, status, download) =
+                state.grid_manager.tab_renderer_inspection(index)?;
+            let hibernated = state
+                .hibernated_tabs
+                .try_lock()
+                .map_err(|_| "TAB_RENDERER_OBSERVATION_BUSY")?
+                .contains(&id);
             // A logical close or a competing Owner admission can cross the
             // split observation. Return busy rather than an actionable target.
-            if !state.tabs.try_lock().map_err(|_| "TAB_RENDERER_OBSERVATION_BUSY")?.contains_key(&id)
-                || !owner()?.matches_view(&view) {
+            if !state
+                .tabs
+                .try_lock()
+                .map_err(|_| "TAB_RENDERER_OBSERVATION_BUSY")?
+                .contains_key(&id)
+                || !owner()?.matches_view(&view)
+            {
                 return Err("TAB_RENDERER_OBSERVATION_BUSY".into());
             }
             view.renderer_state = Some(if status == "absent" && hibernated {
                 "hibernated"
-            } else { status });
-            if status == "absent" && observed_owner.is_none() && !hibernated
-                && view.receipt.is_none() && !view.internal_active {
+            } else {
+                status
+            });
+            if status == "absent"
+                && observed_owner.is_none()
+                && !hibernated
+                && view.receipt.is_none()
+                && !view.internal_active
+            {
                 if let Ok(epoch) = state.grid_manager.tab_renderer_absence_epoch(index) {
                     if owner()?.matches_view(&view) {
                         view.renderer_reopen_target = Some(RendererReopenTarget {
-                            id: id.clone(), review_owner_epoch: view.epoch.clone(),
-                            review_owner_sequence: view.next_sequence.clone(), absence_epoch: epoch.to_string(),
+                            id: id.clone(),
+                            review_owner_epoch: view.epoch.clone(),
+                            review_owner_sequence: view.next_sequence.clone(),
+                            absence_epoch: epoch.to_string(),
                         });
                     }
                 }
             }
             if let Some((pid, epoch)) = observed_owner {
-                view.renderer_last_visibility_receipt =
-                    state.grid_manager.last_window_receipt(index, (pid, epoch))?;
+                view.renderer_last_visibility_receipt = state
+                    .grid_manager
+                    .last_window_receipt(index, (pid, epoch))?;
                 view.renderer_download = download;
-                if status == "ready" && view.active_known
-                    && view.active_tab_id.as_deref() != Some(id.as_str()) {
+                if status == "ready"
+                    && view.active_known
+                    && view.active_tab_id.as_deref() != Some(id.as_str())
+                {
                     if let Ok(binding) = state.grid_manager.renderer_binding(index) {
                         if binding.owner == (pid, epoch) {
                             view.renderer_park_target = Some(RendererParkTarget {
-                                id: id.clone(), pid, spawn_epoch: epoch.to_string(),
+                                id: id.clone(),
+                                pid,
+                                spawn_epoch: epoch.to_string(),
                                 renderer_generation: binding.generation.to_string(),
                                 navigation_revision: binding.navigation_revision.to_string(),
                             });
@@ -1432,7 +1835,9 @@ fn tab_mutation_control(
                     }
                 }
                 view.renderer_recovery_target = Some(RendererRecoveryTarget {
-                    id, pid, spawn_epoch: epoch.to_string(),
+                    id,
+                    pid,
+                    spawn_epoch: epoch.to_string(),
                 });
             }
             return Ok(view);
@@ -1447,8 +1852,14 @@ fn tab_mutation_control(
             if !confirmed {
                 return Err("TAB_DOMAIN_RECOVERY_CONFIRMATION_REQUIRED".into());
             }
-            let sequence = sequence.parse::<u64>().map_err(|_| "TAB_MUTATION_STALE_SEQUENCE")?;
-            let target = RecoveryTarget { epoch, sequence, ticket };
+            let sequence = sequence
+                .parse::<u64>()
+                .map_err(|_| "TAB_MUTATION_STALE_SEQUENCE")?;
+            let target = RecoveryTarget {
+                epoch,
+                sequence,
+                ticket,
+            };
             let local = {
                 let mut state = owner()?;
                 if state.recovery_target(Instant::now()).as_ref() != Some(&target) {
@@ -1521,7 +1932,9 @@ fn tab_mutation_control(
 // Keep the old trusted command contract for compatibility without giving it
 // a second admission lane. A legacy command does not expose replayable results.
 pub(super) async fn legacy_action<T: serde::de::DeserializeOwned + Send + 'static>(
-    webview: Webview, app: AppHandle, action: Action,
+    webview: Webview,
+    app: AppHandle,
+    action: Action,
 ) -> Result<T, String> {
     action.authorize(&webview)?;
     let ticket = uuid::Uuid::new_v4().to_string();
@@ -1577,16 +1990,22 @@ pub(super) async fn legacy_action<T: serde::de::DeserializeOwned + Send + 'stati
             return Err("TAB_MUTATION_CANCELLED_BEFORE_EXECUTION".into());
         }
         let result = if binding.current(&app, &action) {
-            action.execute(webview, app.clone(), &binding)
-                .and_then(|value| serde_json::from_value::<T>(value)
-                    .map_err(|_| "GRID_REQUEST_OUTCOME_UNKNOWN: legacy receipt decoding rejected".into()))
+            action
+                .execute(webview, app.clone(), &binding)
+                .and_then(|value| {
+                    serde_json::from_value::<T>(value).map_err(|_| {
+                        "GRID_REQUEST_OUTCOME_UNKNOWN: legacy receipt decoding rejected".into()
+                    })
+                })
         } else {
             Err("TAB_MUTATION_INSTANCE_STALE".into())
         };
         if let Err(error) = &result {
-            if completion_unknown(error) || error.contains("TAB_CREATED_ACTIVATION_PARTIAL")
+            if completion_unknown(error)
+                || error.contains("TAB_CREATED_ACTIVATION_PARTIAL")
                 || error.contains("TAB_RENDERER_ACTIVATION_PARTIAL")
-                || error.contains("TAB_RENDERER_REOPEN_PARTIAL") {
+                || error.contains("TAB_RENDERER_REOPEN_PARTIAL")
+            {
                 finish(&ticket, Err(error.clone()));
                 notify(&app, &ticket);
                 guard.completed = true;
@@ -1594,11 +2013,15 @@ pub(super) async fn legacy_action<T: serde::de::DeserializeOwned + Send + 'stati
             }
         }
         if let Ok(mut state) = owner() {
-            if matching(&mut state, &ticket).is_ok() { state.slot = None; }
+            if matching(&mut state, &ticket).is_ok() {
+                state.slot = None;
+            }
         }
         guard.completed = true;
         result
-    }).await.map_err(|_| "TAB_MUTATION_WORKER_UNKNOWN".to_string())?
+    })
+    .await
+    .map_err(|_| "TAB_MUTATION_WORKER_UNKNOWN".to_string())?
 }
 
 pub(crate) fn tab_mutation_diagnostic() -> Value {
@@ -1790,7 +2213,9 @@ mod tests {
             "GRID_ROLLBACK_CLEANUP_PENDING:1",
             "TAB_RENDERER_ACTIVATION_PARTIAL:1:GRID_HIDE_CLEANUP_PENDING",
             "TAB_RENDERER_CLEANUP_PENDING:2147483649",
-        ] { assert!(completion_unknown(error)); }
+        ] {
+            assert!(completion_unknown(error));
+        }
         assert!(!completion_unknown("TAB_RENDERER_ACTIVATION_STALE"));
         assert!(!completion_unknown("TAB_NOT_FOUND"));
     }

@@ -44,7 +44,8 @@ pub(crate) fn verify_current_render_budget(bytes: usize) -> Result<(), String> {
             || actual.BasicLimitInformation.LimitFlags & JOB_OBJECT_LIMIT_JOB_MEMORY == 0
             || actual.BasicLimitInformation.LimitFlags & JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE == 0
             || actual.BasicLimitInformation.LimitFlags
-                & (JOB_OBJECT_LIMIT_BREAKAWAY_OK | JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK) != 0
+                & (JOB_OBJECT_LIMIT_BREAKAWAY_OK | JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK)
+                != 0
             || actual.JobMemoryLimit != bytes
         {
             return Err("CAPTURE_WORKER_MEMORY_OWNER_UNCONFIRMED".into());

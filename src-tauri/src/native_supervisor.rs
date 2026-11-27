@@ -170,12 +170,20 @@ impl OwnedHost {
 
     /// Transfer the exact owned child's write endpoint, not a reconnectable
     /// address. The interactive renderer accepts one further capture byte.
-    pub(crate) fn open_start_pipe(&mut self, magic: &[u8]) -> Result<std::process::ChildStdin, String> {
+    pub(crate) fn open_start_pipe(
+        &mut self,
+        magic: &[u8],
+    ) -> Result<std::process::ChildStdin, String> {
         if magic.is_empty() || magic.len() > 64 {
             return Err("SUPERVISOR_START_MESSAGE_INVALID".into());
         }
-        let mut pipe = self.child.stdin.take().ok_or("SUPERVISOR_START_PIPE_REQUIRED")?;
-        pipe.write_all(magic).map_err(|_| "SUPERVISOR_START_PIPE_FAILED")?;
+        let mut pipe = self
+            .child
+            .stdin
+            .take()
+            .ok_or("SUPERVISOR_START_PIPE_REQUIRED")?;
+        pipe.write_all(magic)
+            .map_err(|_| "SUPERVISOR_START_PIPE_FAILED")?;
         Ok(pipe)
     }
 
@@ -377,21 +385,30 @@ enum ManualRecoveryIntent {
     Capture(crate::capabilities::browser::public_api::CaptureDomainRecoveryIntent),
 }
 enum ManualDomainClaim {
-    Tab { _guard: crate::bridge::DomainRecoveryClaim },
-    Capture { _guard: crate::capabilities::browser::public_api::CaptureDomainRecoveryClaim },
+    Tab {
+        _guard: crate::bridge::DomainRecoveryClaim,
+    },
+    Capture {
+        _guard: crate::capabilities::browser::public_api::CaptureDomainRecoveryClaim,
+    },
 }
 impl ManualRecoveryIntent {
     fn pending() -> Option<Self> {
-        crate::bridge::pending_domain_recovery().map(Self::Tab).or_else(|| {
-            crate::capabilities::browser::public_api::pending_capture_domain_recovery().map(Self::Capture)
-        })
+        crate::bridge::pending_domain_recovery()
+            .map(Self::Tab)
+            .or_else(|| {
+                crate::capabilities::browser::public_api::pending_capture_domain_recovery()
+                    .map(Self::Capture)
+            })
     }
     fn claim(&self) -> Option<ManualDomainClaim> {
         match self {
             Self::Tab(intent) => crate::bridge::claim_domain_recovery(intent)
                 .map(|guard| ManualDomainClaim::Tab { _guard: guard }),
-            Self::Capture(intent) => crate::capabilities::browser::public_api::claim_capture_domain_recovery(intent)
-                .map(|guard| ManualDomainClaim::Capture { _guard: guard }),
+            Self::Capture(intent) => {
+                crate::capabilities::browser::public_api::claim_capture_domain_recovery(intent)
+                    .map(|guard| ManualDomainClaim::Capture { _guard: guard })
+            }
         }
     }
 }
@@ -874,7 +891,7 @@ pub(crate) fn start_child_probe(app: tauri::AppHandle, endpoint: ChildEndpoint) 
             let mut pending: Option<mpsc::Receiver<()>> = None;
             let mut discard_ack = false;
             let mut last_pending_reply = false;
-            let mut last_manual_intent = None;
+            let mut last_manual_intent: Option<ManualRecoveryIntent> = None;
             let _connection = ProbeConnection;
             let exiting = || {
                 app.try_state::<crate::ExitLifecycleState>()

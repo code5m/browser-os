@@ -528,26 +528,31 @@ pub async fn session_restore(
     // in both modes (including its unknown-outcome receipt and layout fence).
     let read_app = app.clone();
     let read_id = id.clone();
-    let (url, resource_count) = SESSION_IO.run(move || {
-        let session = crate::session::load_session(&workspace::sessions_dir(&read_app), &read_id)?;
-        let url = session.url;
-        // The same recovery policy is used by native host recreation. It
-        // rejects transient documents, embedded credentials and remote files.
-        if !crate::grid_ipc::restorable_address(&url) {
-            return Err("SESSION_RESTORE_URL_UNSUPPORTED".into());
-        }
-        Ok((url, session.resource_count))
-    }).await?;
+    let (url, resource_count) = SESSION_IO
+        .run(move || {
+            let session =
+                crate::session::load_session(&workspace::sessions_dir(&read_app), &read_id)?;
+            let url = session.url;
+            // The same recovery policy is used by native host recreation. It
+            // rejects transient documents, embedded credentials and remote files.
+            if !crate::grid_ipc::restorable_address(&url) {
+                return Err("SESSION_RESTORE_URL_UNSUPPORTED".into());
+            }
+            Ok((url, session.resource_count))
+        })
+        .await?;
     let tab = crate::bridge::tab_new(webview, app.clone(), url).await?;
     let tab_id = tab.id.clone();
     // Audit only after native acknowledgement. A lost audit worker is not a
     // reason to report that an already created tab failed or replay creation.
     let _ = tauri::async_runtime::spawn_blocking(move || {
         workspace::log_audit(
-            &app, "session_restore",
+            &app,
+            "session_restore",
             format!("id={id} tab_id={tab_id} resources={resource_count}"),
         );
-    }).await;
+    })
+    .await;
     Ok(tab)
 }
 

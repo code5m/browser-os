@@ -353,27 +353,35 @@ fn verify_workspace_binding(root: &Path, expected: Option<&str>) -> Result<(), S
     Ok(())
 }
 fn provider_terminal_outcome(operation: &Operation) -> Option<bool> {
-    let receipt=operation.execution.as_ref()?;
-    if let Some(proof)=&receipt.provider_proof { return Some(proof.outcome.applied()); }
+    let receipt = operation.execution.as_ref()?;
+    if let Some(proof) = &receipt.provider_proof {
+        return Some(proof.outcome.applied());
+    }
     if operation.reconciliation.is_some() {
         return match operation.status.as_str() {
-            "reconciled_succeeded"=>Some(true),
-            "reconciled_not_applied"=>Some(false),
-            _=>None,
+            "reconciled_succeeded" => Some(true),
+            "reconciled_not_applied" => Some(false),
+            _ => None,
         };
     }
     None
 }
 fn provider_conflict(operation: &Operation) -> bool {
-    provider_terminal_outcome(operation).is_some_and(|applied|
-        operation.execution.as_ref().is_some_and(|receipt|
-            receipt.provider_evidence.iter().any(|proof| proof.outcome.applied()!=applied)))
+    provider_terminal_outcome(operation).is_some_and(|applied| {
+        operation.execution.as_ref().is_some_and(|receipt| {
+            receipt
+                .provider_evidence
+                .iter()
+                .any(|proof| proof.outcome.applied() != applied)
+        })
+    })
 }
 fn unresolved_operation(operation: &Operation) -> bool {
-    provider_conflict(operation) || matches!(
-        operation.status.as_str(),
-        "pending" | "executing" | "unknown" | "result_ready"
-    )
+    provider_conflict(operation)
+        || matches!(
+            operation.status.as_str(),
+            "pending" | "executing" | "unknown" | "result_ready"
+        )
 }
 fn session_after_review(session: &Session) -> &'static str {
     if session.operations.iter().any(provider_conflict) {
@@ -1127,8 +1135,10 @@ fn complete_resume_boundary(messages: &[Value]) -> bool {
                 // supported even when function calls are also present.
                 let content = message.get("content").filter(|value| !value.is_null());
                 if content.is_some_and(|value| !value.is_string())
-                    || (calls.is_empty() && !content.and_then(Value::as_str)
-                        .is_some_and(|text| !text.is_empty()))
+                    || (calls.is_empty()
+                        && !content
+                            .and_then(Value::as_str)
+                            .is_some_and(|text| !text.is_empty()))
                 {
                     return false;
                 }
@@ -1487,7 +1497,10 @@ fn recover_pending_apply(root: &Path, storage: &Path, session: &mut Session) -> 
             // A crash before journal publication and a lost journal after
             // target publication are not distinguishable here. Preserve
             // the authenticated session; never admit another file effect.
-            if matches!(session.status.as_str(), "apply_prepared" | "recovery_conflict") {
+            if matches!(
+                session.status.as_str(),
+                "apply_prepared" | "recovery_conflict"
+            ) {
                 return Err("AGENT_RECOVERY_JOURNAL_MISSING".into());
             }
             return Ok(());
@@ -2185,7 +2198,8 @@ fn checkpoint_native_return(
         .is_some_and(|receipt| receipt.authority.is_some());
     match response {
         Ok(value)
-            if !provider_bound && value["status"] == "succeeded"
+            if !provider_bound
+                && value["status"] == "succeeded"
                 && value.get("result").is_some_and(|r| !r.is_null()) =>
         {
             let text = value["result"]
@@ -2238,8 +2252,10 @@ fn reconcile_provider_operations(
             continue;
         };
         let Some(binding) = receipt.authority.as_ref() else {
-            if receipt.provider_proof.is_some() || receipt.phase == "provider_reconciled"
-                || !receipt.provider_evidence.is_empty() {
+            if receipt.provider_proof.is_some()
+                || receipt.phase == "provider_reconciled"
+                || !receipt.provider_evidence.is_empty()
+            {
                 return Err("AGENT_OPERATION_RECEIPT_INVALID".into());
             }
             continue;
@@ -2253,9 +2269,10 @@ fn reconcile_provider_operations(
                 claim.accepted
                     && claim.session_id.to_string() == session.session_id
                     && native_approval_matches_input(operation, claim)
-                    && session.runs.iter().any(|run| {
-                        run.id == receipt.run_id && run.task_id == claim.task_id
-                    })
+                    && session
+                        .runs
+                        .iter()
+                        .any(|run| run.id == receipt.run_id && run.task_id == claim.task_id)
             })
         {
             return Err("AGENT_OPERATION_RECEIPT_INVALID".into());
@@ -2278,20 +2295,43 @@ fn reconcile_provider_operations(
         }
         // Historical evidence must retain the original authority and exact
         // operation scope, even after the primary record has been settled.
-        if receipt.provider_evidence.len()>3 || receipt.provider_evidence.iter().enumerate().any(|(i,proof)|
-            !proof.verify(binding) || receipt.provider_evidence[..i].iter().any(|old| old.outcome==proof.outcome)) {
+        if receipt.provider_evidence.len() > 3
+            || receipt
+                .provider_evidence
+                .iter()
+                .enumerate()
+                .any(|(i, proof)| {
+                    !proof.verify(binding)
+                        || receipt.provider_evidence[..i]
+                            .iter()
+                            .any(|old| old.outcome == proof.outcome)
+                })
+        {
             return Err("MCP_EFFECT_HISTORY_INVALID".into());
         }
         if provider_terminal_outcome(operation).is_some() {
-            let latest=super::mcp_authority::lookup(storage,binding).ok().flatten();
-            if let Some(latest)=latest {
-                let exists=receipt.provider_proof.as_ref().is_some_and(|primary| primary.outcome==latest.outcome)
-                    || receipt.provider_evidence.iter().any(|proof| proof.outcome==latest.outcome);
+            let latest = super::mcp_authority::lookup(storage, binding)
+                .ok()
+                .flatten();
+            if let Some(latest) = latest {
+                let exists = receipt
+                    .provider_proof
+                    .as_ref()
+                    .is_some_and(|primary| primary.outcome == latest.outcome)
+                    || receipt
+                        .provider_evidence
+                        .iter()
+                        .any(|proof| proof.outcome == latest.outcome);
                 if !exists {
-                    let receipt=session.operations[index].execution.as_mut().ok_or("AGENT_OPERATION_RECEIPT_MISSING")?;
-                    if receipt.provider_evidence.len()>=3 { return Err("MCP_EFFECT_HISTORY_INVALID".into()); }
+                    let receipt = session.operations[index]
+                        .execution
+                        .as_mut()
+                        .ok_or("AGENT_OPERATION_RECEIPT_MISSING")?;
+                    if receipt.provider_evidence.len() >= 3 {
+                        return Err("MCP_EFFECT_HISTORY_INVALID".into());
+                    }
                     receipt.provider_evidence.push(latest);
-                    changed=true;
+                    changed = true;
                 }
             }
             continue;
@@ -2308,7 +2348,10 @@ fn reconcile_provider_operations(
         ) {
             continue;
         }
-        let Some(proof) = super::mcp_authority::lookup(storage, binding).ok().flatten() else {
+        let Some(proof) = super::mcp_authority::lookup(storage, binding)
+            .ok()
+            .flatten()
+        else {
             continue;
         };
         let next = if proof.outcome.applied() {
@@ -2348,9 +2391,9 @@ fn reconcile_provider_operations(
         changed = true;
     }
     if session.operations.iter().any(provider_conflict) {
-        if session.status!="provider_conflict" {
-            session.status="provider_conflict".into();
-            changed=true;
+        if session.status != "provider_conflict" {
+            session.status = "provider_conflict".into();
+            changed = true;
         }
     } else if changed && session.status != "recovery_conflict" {
         session.status = session_after_review(session).into();
@@ -2582,7 +2625,10 @@ fn load(root: &Path, storage: &Path, id: Option<&str>) -> Result<Session, String
 // Stop serialization at the storage limit instead of allocating an
 // arbitrarily oversized JSON record and rejecting it only afterwards.
 fn session_bytes(session: &Session, limit: usize) -> Result<Vec<u8>, String> {
-    struct BoundedBytes { bytes: Vec<u8>, limit: usize }
+    struct BoundedBytes {
+        bytes: Vec<u8>,
+        limit: usize,
+    }
     impl Write for BoundedBytes {
         fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
             if data.len() > self.limit.saturating_sub(self.bytes.len()) {
@@ -2591,16 +2637,29 @@ fn session_bytes(session: &Session, limit: usize) -> Result<Vec<u8>, String> {
             self.bytes.extend_from_slice(data);
             Ok(data.len())
         }
-        fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
     }
-    let mut writer = BoundedBytes { bytes: Vec::new(), limit };
-    serde_json::to_writer(&mut writer, session).map_err(|error|
-        if error.is_io() { "AGENT_SESSION_LIMIT" } else { "AGENT_SESSION_WRITE_FAILED" })?;
+    let mut writer = BoundedBytes {
+        bytes: Vec::new(),
+        limit,
+    };
+    serde_json::to_writer(&mut writer, session).map_err(|error| {
+        if error.is_io() {
+            "AGENT_SESSION_LIMIT"
+        } else {
+            "AGENT_SESSION_WRITE_FAILED"
+        }
+    })?;
     Ok(writer.bytes)
 }
 
 fn model_message_slots(current: usize, additional: usize) -> Result<(), String> {
-    if current.checked_add(additional).is_none_or(|count| count > MAX_MODEL_MESSAGES) {
+    if current
+        .checked_add(additional)
+        .is_none_or(|count| count > MAX_MODEL_MESSAGES)
+    {
         return Err("AGENT_SESSION_LIMIT".into());
     }
     Ok(())
@@ -2736,9 +2795,10 @@ fn recent_sessions(root: &Path, storage: &Path, archived: bool) -> Result<Value,
 /// It cannot execute an effectful model proposal: request_operation creates
 /// a pending host approval, consumed later by execute_operation.
 pub(crate) type CodingRigProvider<'a> = dyn FnMut(
-    rig_core::completion::CompletionRequest,
-    &(dyn Fn() -> bool + Sync),
-) -> Result<rig_core::completion::CompletionResponse, String> + 'a;
+        rig_core::completion::CompletionRequest,
+        &(dyn Fn() -> bool + Sync),
+    ) -> Result<rig_core::completion::CompletionResponse, String>
+    + 'a;
 
 struct CodingBatchHost<'a, 'p, P> {
     root: &'a Path,
@@ -2823,7 +2883,9 @@ impl<P: FnMut(&[Value], &[Value]) -> Result<Value, String>>
                 self.session.status = "provider_error".into();
                 provider_failure("AI_PROVIDER_TIMEOUT")
             }
-            FoundationError::Provider(code) if matches!(code.as_str(), "MODEL_TEXT_LIMIT" | "MODEL_EVENT_LIMIT") => {
+            FoundationError::Provider(code)
+                if matches!(code.as_str(), "MODEL_TEXT_LIMIT" | "MODEL_EVENT_LIMIT") =>
+            {
                 self.session.status = "response_denied".into();
                 "AGENT_RESPONSE_DENIED".into()
             }
@@ -2854,7 +2916,10 @@ impl<P: FnMut(&[Value], &[Value]) -> Result<Value, String>>
         model_message_slots(self.session.messages.len(), additional)?;
         let mut candidate = model_session_candidate(self.session)?;
         if calls.is_empty() {
-            if !reply["content"].as_str().is_some_and(|text| !text.trim().is_empty()) {
+            if !reply["content"]
+                .as_str()
+                .is_some_and(|text| !text.trim().is_empty())
+            {
                 return Err("AGENT_REPLY_INVALID".into());
             }
             candidate.messages.push(reply.clone());
@@ -2862,7 +2927,8 @@ impl<P: FnMut(&[Value], &[Value]) -> Result<Value, String>>
                 "complete"
             } else {
                 "review"
-            }.into();
+            }
+            .into();
             model_session_bytes(&candidate)?;
             self.pending_answer = Some(reply);
             self.session.status = candidate.status;
@@ -2931,7 +2997,8 @@ impl<P: FnMut(&[Value], &[Value]) -> Result<Value, String>>
         } else {
             browseros_agent_foundation::engine::BatchFlow::Stop
         };
-        self.messages.extend_from_slice(&candidate.messages[first..]);
+        self.messages
+            .extend_from_slice(&candidate.messages[first..]);
         *self.session = candidate;
         Ok(flow)
     }
@@ -2940,8 +3007,10 @@ impl<P: FnMut(&[Value], &[Value]) -> Result<Value, String>>
 impl<P: FnMut(&[Value], &[Value]) -> Result<Value, String>>
     browseros_agent_foundation::rig_driver::RigFunctionBatchHost for CodingBatchHost<'_, '_, P>
 {
-    fn request_rig(&mut self, request: rig_core::completion::CompletionRequest)
-        -> Result<rig_core::completion::CompletionResponse, String> {
+    fn request_rig(
+        &mut self,
+        request: rig_core::completion::CompletionRequest,
+    ) -> Result<rig_core::completion::CompletionResponse, String> {
         verify_workspace_binding(self.root, self.session.workspace_identity.as_deref())?;
         model_message_slots(self.session.messages.len(), 1)?;
         model_session_bytes(self.session)?;
@@ -2949,22 +3018,39 @@ impl<P: FnMut(&[Value], &[Value]) -> Result<Value, String>>
         let session_id = &self.session.session_id;
         let lease = self.lease;
         let inactive = || !lease.is_active() || cancelled(root, session_id);
-        let provider = self.rig_provider.as_deref_mut().ok_or("AGENT_RIG_PROVIDER_UNAVAILABLE")?;
+        let provider = self
+            .rig_provider
+            .as_deref_mut()
+            .ok_or("AGENT_RIG_PROVIDER_UNAVAILABLE")?;
         provider(request, &inactive)
     }
 
-    fn rig_tool_results(&mut self, calls: &[browseros_agent_foundation::model::FunctionCall])
-        -> Result<Vec<String>, String> {
-        let start = self.session.messages.len().checked_sub(calls.len())
+    fn rig_tool_results(
+        &mut self,
+        calls: &[browseros_agent_foundation::model::FunctionCall],
+    ) -> Result<Vec<String>, String> {
+        let start = self
+            .session
+            .messages
+            .len()
+            .checked_sub(calls.len())
             .ok_or("AGENT_REPLY_INVALID")?;
         let results = &self.session.messages[start..];
-        results.iter().zip(calls).map(|(message,call)| {
-            if message["role"] != "tool" || message["tool_call_id"].as_str() != Some(call.id.as_str()) {
-                return Err("AGENT_REPLY_INVALID".into());
-            }
-            message["content"].as_str().map(str::to_owned)
-                .ok_or_else(|| "AGENT_REPLY_INVALID".into())
-        }).collect()
+        results
+            .iter()
+            .zip(calls)
+            .map(|(message, call)| {
+                if message["role"] != "tool"
+                    || message["tool_call_id"].as_str() != Some(call.id.as_str())
+                {
+                    return Err("AGENT_REPLY_INVALID".into());
+                }
+                message["content"]
+                    .as_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| "AGENT_REPLY_INVALID".into())
+            })
+            .collect()
     }
 }
 
@@ -3050,8 +3136,16 @@ pub(crate) fn execute_with_effect_adapter(
         &mut dyn FnMut(Option<&super::mcp_authority::Binding>) -> Result<(), String>,
     ) -> Result<Value, String>,
 ) -> Result<Value, String> {
-    execute_with_routed_effect_adapter(root, storage, request, provider_binding,
-        provider, None, None, adapter)
+    execute_with_routed_effect_adapter(
+        root,
+        storage,
+        request,
+        provider_binding,
+        provider,
+        None,
+        None,
+        adapter,
+    )
 }
 
 pub(crate) fn execute_with_routed_effect_adapter(
@@ -3073,7 +3167,14 @@ pub(crate) fn execute_with_routed_effect_adapter(
 ) -> Result<Value, String> {
     #[cfg(all(not(unix), not(windows)))]
     {
-        let _ = (root, storage, &request, &mut provider, new_rig_revision, rig_provider);
+        let _ = (
+            root,
+            storage,
+            &request,
+            &mut provider,
+            new_rig_revision,
+            rig_provider,
+        );
         return Err("AGENT_CODING_PLATFORM_UNSUPPORTED".into());
     }
     let root = root.canonicalize().map_err(|_| "AGENT_ROOT_INVALID")?;
@@ -3172,7 +3273,7 @@ pub(crate) fn execute_with_routed_effect_adapter(
     }
     // A signed contradiction is not another model prompt or an opportunity
     // to repeat a remote effect. Preserve the authenticated session for review.
-    if session.operations.iter().any(provider_conflict) && action!="session" {
+    if session.operations.iter().any(provider_conflict) && action != "session" {
         return Err("MCP_EFFECT_STATUS_CONFLICT".into());
     }
     if ["chat", "resume_turn", "propose", "discard", "apply"].contains(&action)
@@ -3299,37 +3400,45 @@ pub(crate) fn execute_with_routed_effect_adapter(
             let response = if !execution_lease.is_active() || signal.load(Ordering::SeqCst) {
                 Err("AGENT_OPERATION_CANCELLED_BEFORE_DISPATCH".into())
             } else {
-                adapter(&kind, &input, &request, &signal, operation_uuid, &mut |authority| {
-                    if attempted {
-                        return Err("AGENT_RUN_ALREADY_RECORDED".into());
-                    }
-                    if !execution_lease.is_active() || signal.load(Ordering::SeqCst) {
-                        return Err("AGENT_OPERATION_CANCELLED_BEFORE_DISPATCH".into());
-                    }
-                    if authority.is_some_and(|binding| {
-                        kind != "mcp"
-                            || !binding.valid()
-                            || binding.run_id != operation_uuid
-                            || request["review_revision"].as_str() != Some(binding.review_revision.as_str())
-                    }) {
-                        return Err("MCP_EFFECT_AUTHORITY_INVALID".into());
-                    }
-                    attempted = true;
-                    let receipt = session.operations[index]
-                        .execution
-                        .as_mut()
-                        .ok_or("AGENT_OPERATION_RECEIPT_MISSING")?;
-                    receipt.phase = "dispatching".into();
-                    receipt.authority = authority.cloned();
-                    save(storage, &session)?;
-                    // A durable fence is not permission to dispatch on an
-                    // invalidated lease. Keep the published fence unknown.
-                    if !execution_lease.is_active() {
-                        return Err("AGENT_OPERATION_OWNER_STALE".into());
-                    }
-                    published = true;
-                    Ok(())
-                })
+                adapter(
+                    &kind,
+                    &input,
+                    &request,
+                    &signal,
+                    operation_uuid,
+                    &mut |authority| {
+                        if attempted {
+                            return Err("AGENT_RUN_ALREADY_RECORDED".into());
+                        }
+                        if !execution_lease.is_active() || signal.load(Ordering::SeqCst) {
+                            return Err("AGENT_OPERATION_CANCELLED_BEFORE_DISPATCH".into());
+                        }
+                        if authority.is_some_and(|binding| {
+                            kind != "mcp"
+                                || !binding.valid()
+                                || binding.run_id != operation_uuid
+                                || request["review_revision"].as_str()
+                                    != Some(binding.review_revision.as_str())
+                        }) {
+                            return Err("MCP_EFFECT_AUTHORITY_INVALID".into());
+                        }
+                        attempted = true;
+                        let receipt = session.operations[index]
+                            .execution
+                            .as_mut()
+                            .ok_or("AGENT_OPERATION_RECEIPT_MISSING")?;
+                        receipt.phase = "dispatching".into();
+                        receipt.authority = authority.cloned();
+                        save(storage, &session)?;
+                        // A durable fence is not permission to dispatch on an
+                        // invalidated lease. Keep the published fence unknown.
+                        if !execution_lease.is_active() {
+                            return Err("AGENT_OPERATION_OWNER_STALE".into());
+                        }
+                        published = true;
+                        Ok(())
+                    },
+                )
             };
             if !attempted {
                 // Native validation rejected the proposal before admission.
@@ -3773,8 +3882,9 @@ pub(crate) fn execute_with_routed_effect_adapter(
             // The selected route belongs to the original paused Task.
             // Explicitly starting a new user message while it still owns
             // approvals/changes cannot silently change engines either.
-            let task_paused = session.foundation_task.as_ref().is_some_and(|task|
-                task.status == browseros_agent_foundation::task::TaskStatus::Paused);
+            let task_paused = session.foundation_task.as_ref().is_some_and(|task| {
+                task.status == browseros_agent_foundation::task::TaskStatus::Paused
+            });
             // A new prompt on an unfinished Task is not permission to
             // disclose its retained context to a different provider or to
             // change the reviewed tool inventory/mode. Finish or discard the
@@ -3790,7 +3900,10 @@ pub(crate) fn execute_with_routed_effect_adapter(
                 }
             }
             let rig_revision = if resume || task_paused {
-                session.continuation.as_ref().and_then(|checkpoint| checkpoint.rig_revision)
+                session
+                    .continuation
+                    .as_ref()
+                    .and_then(|checkpoint| checkpoint.rig_revision)
             } else {
                 new_rig_revision
             };
@@ -3865,11 +3978,19 @@ pub(crate) fn execute_with_routed_effect_adapter(
             };
             let mut turn_result = if let Some(history) = rig_history.as_ref() {
                 browseros_agent_foundation::rig_driver::drive_owned_rig_function_batches(
-                    &mut host, &execution_lease, history, &tools(plan), 8, 8,
+                    &mut host,
+                    &execution_lease,
+                    history,
+                    &tools(plan),
+                    8,
+                    8,
                 )
             } else {
                 browseros_agent_foundation::engine::drive_owned_function_batches(
-                    &mut host, &execution_lease, 8, 8,
+                    &mut host,
+                    &execution_lease,
+                    8,
+                    8,
                 )
             };
             let answer = host.pending_answer.take();
@@ -4183,14 +4304,32 @@ mod tests {
         changed.fingerprint = "another-provider".into();
         let fresh = json!({"action":"chat","session_id":id,"run_id":second,
             "mode":"plan","message":"new prompt on same task"});
-        assert_eq!(execute_with_bound_adapter(&f.0, &storage, fresh.clone(),
-            Some(changed), |_,_| panic!("changed provider must not dispatch"),
-            |_,_,_,_| unreachable!()).unwrap_err(), "AGENT_CONTINUATION_MODEL_CHANGED");
+        assert_eq!(
+            execute_with_bound_adapter(
+                &f.0,
+                &storage,
+                fresh.clone(),
+                Some(changed),
+                |_, _| panic!("changed provider must not dispatch"),
+                |_, _, _, _| unreachable!()
+            )
+            .unwrap_err(),
+            "AGENT_CONTINUATION_MODEL_CHANGED"
+        );
         let mut changed_mode = fresh;
         changed_mode["mode"] = json!("build");
-        assert_eq!(execute_with_bound_adapter(&f.0, &storage, changed_mode,
-            Some(binding.clone()), |_,_| panic!("changed mode must not dispatch"),
-            |_,_,_,_| unreachable!()).unwrap_err(), "AGENT_CONTINUATION_MODEL_CHANGED");
+        assert_eq!(
+            execute_with_bound_adapter(
+                &f.0,
+                &storage,
+                changed_mode,
+                Some(binding.clone()),
+                |_, _| panic!("changed mode must not dispatch"),
+                |_, _, _, _| unreachable!()
+            )
+            .unwrap_err(),
+            "AGENT_CONTINUATION_MODEL_CHANGED"
+        );
         let result = execute_with_bound_adapter(
             &f.0,
             &storage,
@@ -4247,19 +4386,35 @@ mod tests {
                     let history = serde_json::to_string(&request.chat_history).unwrap();
                     assert!(history.contains("fixture-data"));
                     assert!(history.contains("read-1"));
-                    ("review-1", "request_operation", json!({"kind":"git_context","input":{}}))
+                    (
+                        "review-1",
+                        "request_operation",
+                        json!({"kind":"git_context","input":{}}),
+                    )
                 }
                 _ => panic!("must pause before another provider call"),
             };
-            Ok(CompletionResponse::new(vec![AssistantContent::ToolCall(
-                ToolCall::from_wire(id, ToolFunction::new(ToolName::new(name).unwrap(), arguments))
-            )], Usage::default(), "mock", json!({})))
+            Ok(CompletionResponse::new(
+                vec![AssistantContent::ToolCall(ToolCall::from_wire(
+                    id,
+                    ToolFunction::new(ToolName::new(name).unwrap(), arguments),
+                ))],
+                Usage::default(),
+                "mock",
+                json!({}),
+            ))
         };
-        let paused = execute_with_routed_effect_adapter(&f.0, &storage,
+        let paused = execute_with_routed_effect_adapter(
+            &f.0,
+            &storage,
             json!({"action":"chat","message":"inspect","run_id":first}),
-            Some(binding.clone()), |_,_| panic!("Rig cannot call the Native model adapter"),
-            Some(7), Some(&mut rig), |_,_,_,_,_,_| panic!("model cannot execute an external effect"),
-        ).unwrap();
+            Some(binding.clone()),
+            |_, _| panic!("Rig cannot call the Native model adapter"),
+            Some(7),
+            Some(&mut rig),
+            |_, _, _, _, _, _| panic!("model cannot execute an external effect"),
+        )
+        .unwrap();
         assert_eq!(count, 2);
         assert_eq!(paused["status"], "approval_required");
         assert_eq!(paused["foundation_task"]["status"], "paused");
@@ -4268,8 +4423,12 @@ mod tests {
         let saved = load_without_recovery(&f.0, &storage, Some(id)).unwrap();
         assert_eq!(saved.continuation.as_ref().unwrap().rig_revision, Some(7));
         let operation = paused["operations"][0]["id"].as_str().unwrap();
-        let reviewed = run(&f, json!({"action":"resolve_operation","session_id":id,
-            "operation_id":operation,"status":"rejected","result":"not approved"})).unwrap();
+        let reviewed = run(
+            &f,
+            json!({"action":"resolve_operation","session_id":id,
+            "operation_id":operation,"status":"rejected","result":"not approved"}),
+        )
+        .unwrap();
         assert_eq!(reviewed["operations"][0]["status"], "rejected");
         let second = uuid::Uuid::new_v4().to_string();
         let _guard2 = register_run_request(&second).unwrap();
@@ -4278,18 +4437,34 @@ mod tests {
             assert!(history.contains("read-1"));
             assert!(history.contains("review-1"));
             assert!(history.contains("rejected"));
-            Ok(CompletionResponse::new(vec![AssistantContent::text("Reviewed")],
-                Usage::default(), "mock", json!({})))
+            Ok(CompletionResponse::new(
+                vec![AssistantContent::text("Reviewed")],
+                Usage::default(),
+                "mock",
+                json!({}),
+            ))
         };
-        let done = execute_with_routed_effect_adapter(&f.0, &storage,
+        let done = execute_with_routed_effect_adapter(
+            &f.0,
+            &storage,
             json!({"action":"resume_turn","session_id":id,"run_id":second,
                 "previous_run_id":first,"confirmed":true}),
-            Some(binding), |_,_| panic!("settings changed; persisted Rig route must survive"),
-            None, Some(&mut resumed_rig), |_,_,_,_,_,_| panic!("reviewed result cannot replay effect"),
-        ).unwrap();
-        assert_eq!(done["foundation_task"]["id"], paused["foundation_task"]["id"]);
+            Some(binding),
+            |_, _| panic!("settings changed; persisted Rig route must survive"),
+            None,
+            Some(&mut resumed_rig),
+            |_, _, _, _, _, _| panic!("reviewed result cannot replay effect"),
+        )
+        .unwrap();
+        assert_eq!(
+            done["foundation_task"]["id"],
+            paused["foundation_task"]["id"]
+        );
         assert_eq!(done["foundation_task"]["status"], "completed");
-        assert_eq!(done["messages"].as_array().unwrap().last().unwrap()["content"], "Reviewed");
+        assert_eq!(
+            done["messages"].as_array().unwrap().last().unwrap()["content"],
+            "Reviewed"
+        );
     }
 
     #[test]
@@ -4300,10 +4475,16 @@ mod tests {
             json!({"role":"assistant","content":""}),
             json!({"role":"assistant","content":{"text":"not a string"}}),
         ] {
-            assert!(!complete_resume_boundary(&[user.clone(), malformed, user.clone()]));
+            assert!(!complete_resume_boundary(&[
+                user.clone(),
+                malformed,
+                user.clone()
+            ]));
         }
         assert!(complete_resume_boundary(&[
-            user.clone(), json!({"role":"assistant","content":"done"}), user,
+            user.clone(),
+            json!({"role":"assistant","content":"done"}),
+            user,
         ]));
     }
 
@@ -4560,12 +4741,20 @@ mod tests {
         use super::super::mcp_authority::{fixture_binding, fixture_proof, FinalOutcome};
         let f = Fixture::new();
         let storage = f.0.join("state");
-        let proposed = execute(&f.0, &storage, json!({"action":"chat","message":"propose"}), |_, _| {
-            Ok(json!({"role":"assistant","tool_calls":[{"id":"t1","function":{
-                "name":"request_operation","arguments":json!({"kind":"mcp",
-                "input":{"server_id":"fixture","tool":"echo","arguments":{}}}).to_string()
-            }}]}))
-        }).unwrap();
+        let proposed = execute(
+            &f.0,
+            &storage,
+            json!({"action":"chat","message":"propose"}),
+            |_, _| {
+                Ok(
+                    json!({"role":"assistant","tool_calls":[{"id":"t1","function":{
+                        "name":"request_operation","arguments":json!({"kind":"mcp",
+                        "input":{"server_id":"fixture","tool":"echo","arguments":{}}}).to_string()
+                    }}]}),
+                )
+            },
+        )
+        .unwrap();
         let session_id = &proposed["session_id"];
         let operation = &proposed["operations"][0]["id"];
         let (mut binding, key) = fixture_binding();
@@ -4573,14 +4762,19 @@ mod tests {
         let request = json!({"action":"execute_operation","session_id":session_id,
             "operation_id":operation,"approved":true,"review_revision":binding.review_revision});
         let unknown = execute_with_effect_adapter(
-            &f.0, &storage, request.clone(), None, |_, _| unreachable!(),
+            &f.0,
+            &storage,
+            request.clone(),
+            None,
+            |_, _| unreachable!(),
             |kind, _, _, _, run, admit| {
                 assert_eq!(kind, "mcp");
                 assert_eq!(run, binding.run_id);
                 admit(Some(&binding))?;
                 Ok(json!({"status":"succeeded","result":{"content":[]}}))
             },
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(unknown["operations"][0]["status"], "unknown");
         let directory = storage.join("mcp-effect-status");
         crate::capabilities::workspace::safe_paths::ensure_private_directory(&directory).unwrap();
@@ -4588,20 +4782,40 @@ mod tests {
         let mut wrong = fixture_proof(&binding, &key, FinalOutcome::AppliedFinal);
         wrong.run_id = uuid::Uuid::new_v4();
         fs::write(&path, serde_json::to_vec(&wrong).unwrap()).unwrap();
-        let read = || execute(&f.0, &storage, json!({"action":"session","session_id":session_id}), |_, _| unreachable!());
+        let read = || {
+            execute(
+                &f.0,
+                &storage,
+                json!({"action":"session","session_id":session_id}),
+                |_, _| unreachable!(),
+            )
+        };
         assert_eq!(read().unwrap()["operations"][0]["status"], "unknown");
         let proof = fixture_proof(&binding, &key, FinalOutcome::AppliedFinal);
         fs::write(&path, serde_json::to_vec(&proof).unwrap()).unwrap();
         let resolved = read().unwrap();
         assert_eq!(resolved["operations"][0]["status"], "reconciled_succeeded");
-        assert_eq!(resolved["operations"][0]["execution"]["phase"], "provider_reconciled");
-        assert_eq!(resolved["operations"][0]["execution"]["provider_proof"], json!(proof));
+        assert_eq!(
+            resolved["operations"][0]["execution"]["phase"],
+            "provider_reconciled"
+        );
+        assert_eq!(
+            resolved["operations"][0]["execution"]["provider_proof"],
+            json!(proof)
+        );
         fs::remove_file(&path).unwrap();
         let restored = read().unwrap();
         assert_eq!(restored["foundation_task"], resolved["foundation_task"]);
         assert_eq!(restored["messages"], resolved["messages"]);
-        assert!(execute_with_effect_adapter(&f.0, &storage, request, None,
-            |_, _| unreachable!(), |_, _, _, _, _, _| panic!("old approval must never replay")).is_err());
+        assert!(execute_with_effect_adapter(
+            &f.0,
+            &storage,
+            request,
+            None,
+            |_, _| unreachable!(),
+            |_, _, _, _, _, _| panic!("old approval must never replay")
+        )
+        .is_err());
     }
 
     #[test]
@@ -4970,15 +5184,22 @@ mod tests {
     fn model_capacity_rejects_a_whole_candidate_without_mutating_previous_session() {
         let f = Fixture::new();
         let mut session = load(&f.0, &f.0.join("state"), None).unwrap();
-        session.messages.push(json!({"role":"user","content":"inspect"}));
+        session
+            .messages
+            .push(json!({"role":"user","content":"inspect"}));
         let bytes = session_bytes(&session, MAX_SESSION).unwrap();
         assert_eq!(session_bytes(&session, bytes.len()).unwrap(), bytes);
-        assert_eq!(session_bytes(&session, bytes.len()-1).unwrap_err(), "AGENT_SESSION_LIMIT");
+        assert_eq!(
+            session_bytes(&session, bytes.len() - 1).unwrap_err(),
+            "AGENT_SESSION_LIMIT"
+        );
         assert!(model_message_slots(126, 2).is_ok());
         assert!(model_message_slots(126, 3).is_err());
         assert!(model_message_slots(usize::MAX, 1).is_err());
         let mut candidate = model_session_candidate(&session).unwrap();
-        candidate.messages.push(json!({"role":"assistant","content":"x".repeat(MAX_SESSION)}));
+        candidate
+            .messages
+            .push(json!({"role":"assistant","content":"x".repeat(MAX_SESSION)}));
         assert!(model_session_bytes(&candidate).is_err());
         assert_eq!(session.messages.len(), 1);
         assert!(session.changes.is_empty());
@@ -5005,13 +5226,23 @@ mod tests {
         let f = Fixture::new();
         let storage = f.0.join("state");
         let mut session = load(&f.0, &storage, None).unwrap();
-        session.messages.push(json!({"role":"user","content":"inspect"}));
+        session
+            .messages
+            .push(json!({"role":"user","content":"inspect"}));
         let answer = json!({"role":"assistant","content":"uncommitted answer"});
         session.status = "complete".into();
-        assert!(!commit_model_answer(&mut session, Some(answer.clone()), false));
+        assert!(!commit_model_answer(
+            &mut session,
+            Some(answer.clone()),
+            false
+        ));
         assert!(complete_resume_boundary(&session.messages));
         session.status = "cancelled".into();
-        assert!(!commit_model_answer(&mut session, Some(answer.clone()), true));
+        assert!(!commit_model_answer(
+            &mut session,
+            Some(answer.clone()),
+            true
+        ));
         assert_eq!(session.messages.len(), 1);
         session.status = "complete".into();
         assert!(commit_model_answer(&mut session, Some(answer), true));

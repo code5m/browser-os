@@ -180,7 +180,11 @@ fn render_owned_job(
         let exe = std::env::current_exe().map_err(|_| "CAPTURE_EXECUTABLE_UNAVAILABLE")?;
         let mut command = Command::new(exe);
         command
-            .arg(if interactive.is_some() { INTERACTIVE_CHILD_FLAG } else { CHILD_FLAG })
+            .arg(if interactive.is_some() {
+                INTERACTIVE_CHILD_FLAG
+            } else {
+                CHILD_FLAG
+            })
             .env(URL_ENV, url)
             .env(ROOT_ENV, &root)
             .stdin(Stdio::piped())
@@ -213,7 +217,8 @@ fn render_owned_job(
                 "CAPTURE_ISOLATED_CANCELLED"
             } else {
                 "CAPTURE_DEADLINE_EXCEEDED"
-            }.into());
+            }
+            .into());
         }
         // All fallible work after spawn stays inside this boundary.
         // In particular, readiness or pipe errors cannot return past retirement.
@@ -250,7 +255,8 @@ fn render_owned_job(
                         if let Some(marker) = marker {
                             if marker.bytes.as_slice() != READY_MAGIC
                                 || safe_paths::directory_identity(&root)
-                                    .map_err(|_| "CAPTURE_TEMP_IDENTITY_FAILED")? != identity
+                                    .map_err(|_| "CAPTURE_TEMP_IDENTITY_FAILED")?
+                                    != identity
                             {
                                 return Err("CAPTURE_WORKER_READY_INVALID".into());
                             }
@@ -264,7 +270,9 @@ fn render_owned_job(
                             return Err("CAPTURE_ISOLATED_CANCELLED".into());
                         }
                         let mut endpoint = pipe.take().ok_or("CAPTURE_WORKER_ADMISSION_FAILED")?;
-                        endpoint.write_all(&[CAPTURE_BYTE]).map_err(|_| "CAPTURE_WORKER_TRIGGER_FAILED")?;
+                        endpoint
+                            .write_all(&[CAPTURE_BYTE])
+                            .map_err(|_| "CAPTURE_WORKER_TRIGGER_FAILED")?;
                         // EOF proves the one-shot command is complete.
                         drop(endpoint);
                         triggered = true;
@@ -853,7 +861,9 @@ fn run_render(
 }
 fn validate_worker_prefix(mut input: impl Read) -> Result<(), String> {
     let mut magic = [0u8; START_MAGIC.len()];
-    input.read_exact(&mut magic).map_err(|_| "CAPTURE_WORKER_ADMISSION_FAILED")?;
+    input
+        .read_exact(&mut magic)
+        .map_err(|_| "CAPTURE_WORKER_ADMISSION_FAILED")?;
     if magic.as_slice() != START_MAGIC {
         return Err("CAPTURE_WORKER_ADMISSION_FAILED".into());
     }
@@ -863,7 +873,11 @@ fn validate_worker_prefix(mut input: impl Read) -> Result<(), String> {
 fn validate_worker_admission(mut input: impl Read) -> Result<(), String> {
     validate_worker_prefix(&mut input)?;
     let mut extra = [0u8; 1];
-    if input.read(&mut extra).map_err(|_| "CAPTURE_WORKER_ADMISSION_FAILED")? != 0 {
+    if input
+        .read(&mut extra)
+        .map_err(|_| "CAPTURE_WORKER_ADMISSION_FAILED")?
+        != 0
+    {
         return Err("CAPTURE_WORKER_ADMISSION_FAILED".into());
     }
     Ok(())
@@ -871,9 +885,14 @@ fn validate_worker_admission(mut input: impl Read) -> Result<(), String> {
 
 fn validate_capture_command(mut input: impl Read) -> Result<(), String> {
     let mut byte = [0u8; 1];
-    input.read_exact(&mut byte).map_err(|_| "CAPTURE_WORKER_TRIGGER_FAILED")?;
+    input
+        .read_exact(&mut byte)
+        .map_err(|_| "CAPTURE_WORKER_TRIGGER_FAILED")?;
     if byte[0] != CAPTURE_BYTE
-        || input.read(&mut byte).map_err(|_| "CAPTURE_WORKER_TRIGGER_FAILED")? != 0
+        || input
+            .read(&mut byte)
+            .map_err(|_| "CAPTURE_WORKER_TRIGGER_FAILED")?
+            != 0
     {
         return Err("CAPTURE_WORKER_TRIGGER_FAILED".into());
     }

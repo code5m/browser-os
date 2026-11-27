@@ -14,13 +14,13 @@ mod crashlog;
 mod crashlog;
 mod domain;
 mod grid_ipc;
+mod gui_regression_receipt;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 mod native_visibility;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 mod native_visibility_review;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 mod renderer_services;
-mod gui_regression_receipt;
 #[cfg(target_os = "windows")]
 mod windows_apps;
 #[cfg(target_os = "windows")]
@@ -414,9 +414,14 @@ fn run_grid_child(index: u32) {
     // if this process cannot observe the exact enforced domain limit.
     if grid_ipc::is_tab_renderer(index) {
         #[cfg(target_os = "linux")]
-        let verified = shared::process_scope::verify_current_render_budget(grid_ipc::TAB_RENDERER_MEMORY_LIMIT).is_ok();
+        let verified = shared::process_scope::verify_current_render_budget(
+            grid_ipc::TAB_RENDERER_MEMORY_LIMIT,
+        )
+        .is_ok();
         #[cfg(target_os = "windows")]
-        let verified = windows_process::verify_current_render_budget(grid_ipc::TAB_RENDERER_MEMORY_LIMIT).is_ok();
+        let verified =
+            windows_process::verify_current_render_budget(grid_ipc::TAB_RENDERER_MEMORY_LIMIT)
+                .is_ok();
         if !verified {
             eprintln!("[tab-renderer] TAB_RENDERER_KERNEL_MEMORY_OWNER_UNCONFIRMED");
             std::process::exit(1);
@@ -567,13 +572,18 @@ static RENDERER_REPORTS: std::sync::OnceLock<std::sync::mpsc::SyncSender<grid_ip
     std::sync::OnceLock::new();
 
 #[cfg(any(target_os = "linux", target_os = "windows"))]
-static LATEST_DOWNLOAD_REPORT: std::sync::Mutex<Option<grid_ipc::Wire>> = std::sync::Mutex::new(None);
+static LATEST_DOWNLOAD_REPORT: std::sync::Mutex<Option<grid_ipc::Wire>> =
+    std::sync::Mutex::new(None);
 
 // Native callback owner; Ping can observe this even when an advisory event
 // was coalesced or has not yet reached the parent.
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 static CHILD_DOWNLOAD_COUNTS: std::sync::Mutex<grid_ipc::DownloadObservation> =
-    std::sync::Mutex::new(grid_ipc::DownloadObservation { requested: 0, succeeded: 0, failed: 0 });
+    std::sync::Mutex::new(grid_ipc::DownloadObservation {
+        requested: 0,
+        succeeded: 0,
+        failed: 0,
+    });
 
 /// Resource and title notifications never synchronously write on the native
 /// WebView event thread. Download observations have a separate one-item
@@ -581,18 +591,27 @@ static CHILD_DOWNLOAD_COUNTS: std::sync::Mutex<grid_ipc::DownloadObservation> =
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 pub(crate) fn enqueue_renderer_report(name: &str, payload: serde_json::Value) {
     if name == "renderer-download" {
-        *LATEST_DOWNLOAD_REPORT.lock().unwrap_or_else(|p| p.into_inner()) =
-            Some(grid_ipc::Wire::Event { name: name.to_owned(), payload });
+        *LATEST_DOWNLOAD_REPORT
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = Some(grid_ipc::Wire::Event {
+            name: name.to_owned(),
+            payload,
+        });
         return;
     }
     if let Some(sender) = RENDERER_REPORTS.get() {
-        let _ = sender.try_send(grid_ipc::Wire::Event { name: name.to_owned(), payload });
+        let _ = sender.try_send(grid_ipc::Wire::Event {
+            name: name.to_owned(),
+            payload,
+        });
     }
 }
 
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 fn enqueue_child_critical(message: grid_ipc::Wire) {
-    let Some(sender) = CHILD_CRITICAL.get() else { return; };
+    let Some(sender) = CHILD_CRITICAL.get() else {
+        return;
+    };
     if sender.try_send(message).is_err() {
         // Losing an ordered navigation event or response would leave a
         // seemingly healthy parent with stale authority. Retire this child
@@ -604,14 +623,18 @@ fn enqueue_child_critical(message: grid_ipc::Wire) {
 
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 fn grid_child_send_event(name: &str, payload: serde_json::Value) {
-    enqueue_child_critical(grid_ipc::Wire::Event { name: name.to_owned(), payload });
+    enqueue_child_critical(grid_ipc::Wire::Event {
+        name: name.to_owned(),
+        payload,
+    });
 }
 
 /// Use the same remaining-budget writer for child reports and receipts.
 #[cfg(any(target_os = "linux", target_os = "windows"))]
-fn write_child_frame(writer: &std::sync::Mutex<GridStream>, message: &grid_ipc::Wire)
-    -> Result<(), String>
-{
+fn write_child_frame(
+    writer: &std::sync::Mutex<GridStream>,
+    message: &grid_ipc::Wire,
+) -> Result<(), String> {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
     let frame = grid_ipc::encode_wire(message).map_err(|_| "GRID_CHILD_FRAME_REJECTED")?;
     let mut stream = grid_ipc::lock_renderer_writer(writer, deadline, || Ok(()))?;
@@ -619,9 +642,11 @@ fn write_child_frame(writer: &std::sync::Mutex<GridStream>, message: &grid_ipc::
 }
 
 #[cfg(any(target_os = "linux", target_os = "windows"))]
-fn write_child_stream(stream: &mut GridStream, frame: &[u8], deadline: std::time::Instant)
-    -> Result<(), String>
-{
+fn write_child_stream(
+    stream: &mut GridStream,
+    frame: &[u8],
+    deadline: std::time::Instant,
+) -> Result<(), String> {
     grid_ipc::write_frame_until(frame, deadline, |bytes, remaining| {
         #[cfg(target_os = "linux")]
         {
@@ -632,7 +657,8 @@ fn write_child_stream(stream: &mut GridStream, frame: &[u8], deadline: std::time
         {
             stream.write_with_timeout(bytes, remaining)
         }
-    }).map_err(|_| "GRID_CHILD_WRITE_FAILED".into())
+    })
+    .map_err(|_| "GRID_CHILD_WRITE_FAILED".into())
 }
 
 /// 子进程 UDS client：连接主进程 socket（重试至 15s）→ 注册事件转发 → 命令循环。
@@ -703,26 +729,37 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
             // Grid and ordinary renderers both emit advisory bridge events.
             let (send, recv) = std::sync::mpsc::sync_channel::<grid_ipc::Wire>(32);
             let report_writer = writer.clone();
-            if std::thread::Builder::new().name("renderer-advisory-reports".into()).spawn(move || {
-                loop {
-                    // Never hold the callback's coalescing lock during IPC.
-                    let latest = LATEST_DOWNLOAD_REPORT.lock().unwrap_or_else(|p| p.into_inner()).take();
-                    if let Some(report) = latest {
-                        if let Err(error) = write_child_frame(&report_writer, &report) {
-                            if error != "GRID_CHILD_FRAME_REJECTED" { std::process::exit(1); }
-                        }
-                    }
-                    match recv.recv_timeout(std::time::Duration::from_millis(100)) {
-                        Ok(report) => {
+            if std::thread::Builder::new()
+                .name("renderer-advisory-reports".into())
+                .spawn(move || {
+                    loop {
+                        // Never hold the callback's coalescing lock during IPC.
+                        let latest = LATEST_DOWNLOAD_REPORT
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .take();
+                        if let Some(report) = latest {
                             if let Err(error) = write_child_frame(&report_writer, &report) {
-                                if error != "GRID_CHILD_FRAME_REJECTED" { std::process::exit(1); }
+                                if error != "GRID_CHILD_FRAME_REJECTED" {
+                                    std::process::exit(1);
+                                }
                             }
                         }
-                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                        match recv.recv_timeout(std::time::Duration::from_millis(100)) {
+                            Ok(report) => {
+                                if let Err(error) = write_child_frame(&report_writer, &report) {
+                                    if error != "GRID_CHILD_FRAME_REJECTED" {
+                                        std::process::exit(1);
+                                    }
+                                }
+                            }
+                            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                        }
                     }
-                }
-            }).is_err() {
+                })
+                .is_err()
+            {
                 std::process::exit(1);
             }
             let _ = RENDERER_REPORTS.set(send);
@@ -812,7 +849,9 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
             app.listen(name, move |event| {
                 // Reject oversized/invalid advisory payloads locally; they
                 // cannot become an authenticated renderer lifecycle event.
-                if event.payload().len() >= grid_ipc::MAX_GRID_WIRE_BYTES { return; }
+                if event.payload().len() >= grid_ipc::MAX_GRID_WIRE_BYTES {
+                    return;
+                }
                 let payload: serde_json::Value =
                     serde_json::from_str(event.payload()).unwrap_or(serde_json::Value::Null);
                 if grid_ipc::valid_renderer_event(index, &name_owned, &payload) {
@@ -849,7 +888,11 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
         let mut renderer_capture = crate::renderer_services::CaptureBuffer::default();
         loop {
             match grid_ipc::read_wire(&mut reader) {
-                Ok(Some(grid_ipc::Wire::Request { seq, cmd, native_document })) => {
+                Ok(Some(grid_ipc::Wire::Request {
+                    seq,
+                    cmd,
+                    native_document,
+                })) => {
                     if let Err(code) = request_fence.admit(index, seq, &cmd) {
                         eprintln!("[grid-child-{index}] {code}");
                         // Do not acknowledge a duplicate sequence or execute a
@@ -858,31 +901,63 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
                     }
                     let document = if let Some(id) = cmd.document_id() {
                         let manager = app.state::<tauri_plugin_browser_tabs::TabManagerState>();
-                        let admitted = native_document.filter(|stamp| stamp.usable())
-                            .and_then(|stamp| manager.capture_document(&id.to_owned()).ok()
-                                .filter(|document| document.native_identity() == (stamp.instance, stamp.revision)));
+                        let admitted =
+                            native_document
+                                .filter(|stamp| stamp.usable())
+                                .and_then(|stamp| {
+                                    manager.capture_document(&id.to_owned()).ok().filter(
+                                        |document| {
+                                            document.native_identity()
+                                                == (stamp.instance, stamp.revision)
+                                        },
+                                    )
+                                });
                         let Some(document) = admitted else {
-                            enqueue_child_critical(grid_ipc::Wire::err(seq, "GRID_NATIVE_DOCUMENT_STALE"));
+                            enqueue_child_critical(grid_ipc::Wire::err(
+                                seq,
+                                "GRID_NATIVE_DOCUMENT_STALE",
+                            ));
                             continue;
                         };
                         Some(document)
                     } else {
                         if native_document.is_some() {
-                            enqueue_child_critical(grid_ipc::Wire::err(seq, "GRID_NATIVE_DOCUMENT_UNEXPECTED"));
+                            enqueue_child_critical(grid_ipc::Wire::err(
+                                seq,
+                                "GRID_NATIVE_DOCUMENT_UNEXPECTED",
+                            ));
                             continue;
                         }
                         None
                     };
                     if matches!(&cmd, grid_ipc::GridCmd::Ping) && grid_ipc::is_tab_renderer(index) {
-                        let counts = *CHILD_DOWNLOAD_COUNTS.lock().unwrap_or_else(|p| p.into_inner());
+                        let counts = *CHILD_DOWNLOAD_COUNTS
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner());
                         let data = serde_json::json!({"requested":counts.requested,
-                            "succeeded":counts.succeeded,"failed":counts.failed}).to_string();
-                        enqueue_child_critical(grid_ipc::Wire::Response { seq, ok: true, err: None, data: Some(data) });
+                            "succeeded":counts.succeeded,"failed":counts.failed})
+                        .to_string();
+                        enqueue_child_critical(grid_ipc::Wire::Response {
+                            seq,
+                            ok: true,
+                            err: None,
+                            data: Some(data),
+                        });
                         continue;
                     }
-                    if let Some(result) = crate::renderer_services::dispatch(&app, &mut renderer_capture, &cmd, document.as_ref()) {
+                    if let Some(result) = crate::renderer_services::dispatch(
+                        &app,
+                        &mut renderer_capture,
+                        &cmd,
+                        document.as_ref(),
+                    ) {
                         let response = match result {
-                            Ok(data) => grid_ipc::Wire::Response { seq, ok: true, err: None, data },
+                            Ok(data) => grid_ipc::Wire::Response {
+                                seq,
+                                ok: true,
+                                err: None,
+                                data,
+                            },
                             Err(error) => grid_ipc::Wire::err(seq, error),
                         };
                         enqueue_child_critical(response);
@@ -895,21 +970,22 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
                             continue;
                         };
                         let result = manager.eval_result_document(
-                                id, document,
-                                include_str!("../injected/extract-replies.js").to_string(),
-                                move |value| {
-                                    let response = match value {
-                                        Ok(data) => grid_ipc::Wire::Response {
-                                            seq,
-                                            ok: true,
-                                            err: None,
-                                            data: Some(data),
-                                        },
-                                        Err(e) => grid_ipc::Wire::err(seq, e),
-                                    };
-                                    enqueue_child_critical(response);
-                                },
-                            );
+                            id,
+                            document,
+                            include_str!("../injected/extract-replies.js").to_string(),
+                            move |value| {
+                                let response = match value {
+                                    Ok(data) => grid_ipc::Wire::Response {
+                                        seq,
+                                        ok: true,
+                                        err: None,
+                                        data: Some(data),
+                                    },
+                                    Err(e) => grid_ipc::Wire::err(seq, e),
+                                };
+                                enqueue_child_critical(response);
+                            },
+                        );
                         if result.is_err() {
                             enqueue_child_critical(grid_ipc::Wire::err(seq, "GRID_NOT_OPEN"));
                         }
@@ -918,7 +994,10 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
                     if let grid_ipc::GridCmd::HibernationProbe { ref id } = cmd {
                         let manager = app.state::<tauri_plugin_browser_tabs::TabManagerState>();
                         if !manager.download_history_clear(id) {
-                            enqueue_child_critical(grid_ipc::Wire::err(seq, "GRID_HIBERNATION_DOWNLOAD_HISTORY"));
+                            enqueue_child_critical(grid_ipc::Wire::err(
+                                seq,
+                                "GRID_HIBERNATION_DOWNLOAD_HISTORY",
+                            ));
                             continue;
                         }
                         let Some(document) = document.as_ref() else {
@@ -928,37 +1007,51 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
                         let probe_manager = std::sync::Arc::clone(manager.inner());
                         let probe_id = id.clone();
                         let result = manager.eval_result_document(
-                                id, document,
-                                if grid_ipc::is_tab_renderer(index) {
-                                    include_str!("../injected/tab-hibernation-probe.js").to_string()
+                            id,
+                            document,
+                            if grid_ipc::is_tab_renderer(index) {
+                                include_str!("../injected/tab-hibernation-probe.js").to_string()
+                            } else {
+                                include_str!("../injected/grid-hibernation-probe.js").to_string()
+                            },
+                            move |value| {
+                                let value = if probe_manager.download_history_clear(&probe_id) {
+                                    value
                                 } else {
-                                    include_str!("../injected/grid-hibernation-probe.js").to_string()
-                                },
-                                move |value| {
-                                    let value = if probe_manager.download_history_clear(&probe_id) { value }
-                                        else { Err("GRID_HIBERNATION_DOWNLOAD_HISTORY".into()) };
-                                    let response = match value {
-                                        Ok(data) => grid_ipc::Wire::Response {
-                                            seq,
-                                            ok: true,
-                                            err: None,
-                                            data: Some(data),
-                                        },
-                                        Err(e) => grid_ipc::Wire::err(seq, e),
-                                    };
-                                    enqueue_child_critical(response);
-                                },
-                            );
+                                    Err("GRID_HIBERNATION_DOWNLOAD_HISTORY".into())
+                                };
+                                let response = match value {
+                                    Ok(data) => grid_ipc::Wire::Response {
+                                        seq,
+                                        ok: true,
+                                        err: None,
+                                        data: Some(data),
+                                    },
+                                    Err(e) => grid_ipc::Wire::err(seq, e),
+                                };
+                                enqueue_child_critical(response);
+                            },
+                        );
                         if result.is_err() {
-                            enqueue_child_critical(grid_ipc::Wire::err(seq, "GRID_HIBERNATION_PROBE_FAILED"));
+                            enqueue_child_critical(grid_ipc::Wire::err(
+                                seq,
+                                "GRID_HIBERNATION_PROBE_FAILED",
+                            ));
                         }
                         continue;
                     }
                     let resp = match dispatch_grid_cmd(&app, &host_label, cmd, document.as_ref()) {
                         Ok(None) => grid_ipc::Wire::ok(seq),
                         Ok(Some(receipt)) => match serde_json::to_string(&receipt) {
-                            Ok(data) => grid_ipc::Wire::Response { seq, ok: true, err: None, data: Some(data) },
-                            Err(_) => grid_ipc::Wire::err(seq, "GRID_NATIVE_VISIBILITY_RECEIPT_INVALID"),
+                            Ok(data) => grid_ipc::Wire::Response {
+                                seq,
+                                ok: true,
+                                err: None,
+                                data: Some(data),
+                            },
+                            Err(_) => {
+                                grid_ipc::Wire::err(seq, "GRID_NATIVE_VISIBILITY_RECEIPT_INVALID")
+                            }
                         },
                         Err(e) => grid_ipc::Wire::err(seq, e),
                     };
@@ -1009,11 +1102,20 @@ fn dispatch_grid_cmd(
                 Ok(()) => {
                     // The ordinary/Grid host starts hidden; creation must not
                     // accidentally reveal it before the owner's layout intent.
-                    let win = app.get_window(host_label).ok_or("GRID_NATIVE_HOST_UNAVAILABLE")?;
-                    if win.is_visible().map_err(|e| format!("GRID_NATIVE_VISIBILITY_UNCONFIRMED:{e}"))? {
-                        win.hide().map_err(|e| format!("GRID_NATIVE_CREATE_HIDE_FAILED:{e}"))?;
+                    let win = app
+                        .get_window(host_label)
+                        .ok_or("GRID_NATIVE_HOST_UNAVAILABLE")?;
+                    if win
+                        .is_visible()
+                        .map_err(|e| format!("GRID_NATIVE_VISIBILITY_UNCONFIRMED:{e}"))?
+                    {
+                        win.hide()
+                            .map_err(|e| format!("GRID_NATIVE_CREATE_HIDE_FAILED:{e}"))?;
                     }
-                    if win.is_visible().map_err(|e| format!("GRID_NATIVE_VISIBILITY_UNCONFIRMED:{e}"))? {
+                    if win
+                        .is_visible()
+                        .map_err(|e| format!("GRID_NATIVE_VISIBILITY_UNCONFIRMED:{e}"))?
+                    {
                         return Err("GRID_NATIVE_CREATE_HIDE_UNCONFIRMED".into());
                     }
                     // Creation is not a window-system visibility receipt:
@@ -1040,32 +1142,48 @@ fn dispatch_grid_cmd(
                     .map_err(|e| format!("set_position 失败: {e}"))?;
                 win.set_size(tauri::PhysicalSize::new(rect.w as u32, rect.h as u32))
                     .map_err(|e| format!("set_size 失败: {e}"))?;
-                let scale = win.scale_factor().map_err(|e| format!("scale_factor 失败: {e}"))?;
+                let scale = win
+                    .scale_factor()
+                    .map_err(|e| format!("scale_factor 失败: {e}"))?;
                 if !scale.is_finite() || scale <= 0.0 {
                     return Err("GRID_NATIVE_SCALE_INVALID".into());
                 }
                 let lw = (rect.w / scale).max(1.0);
                 let lh = (rect.h / scale).max(1.0);
                 let manager = app.state::<TabManagerState>();
-                manager.update_rect(&id, LogicalRect::new(0.0, 0.0, lw, lh))
+                manager
+                    .update_rect(&id, LogicalRect::new(0.0, 0.0, lw, lh))
                     .map_err(|e| format!("GRID_NATIVE_LAYOUT_FAILED:{e}"))?;
                 win.show().map_err(|e| format!("show 失败: {e}"))?;
                 // Native toolkit visibility observation is stronger than a
                 // submitted show, but does not prove compositor paint.
-                if !win.is_visible().map_err(|e| format!("GRID_NATIVE_VISIBILITY_UNCONFIRMED:{e}"))? {
+                if !win
+                    .is_visible()
+                    .map_err(|e| format!("GRID_NATIVE_VISIBILITY_UNCONFIRMED:{e}"))?
+                {
                     return Err("GRID_NATIVE_SHOW_UNCONFIRMED".into());
                 }
                 let receipt = native_visibility::confirm(&win, Some(rect))?;
-                app.state::<AppState>().child_layouts.lock().unwrap()
+                app.state::<AppState>()
+                    .child_layouts
+                    .lock()
+                    .unwrap()
                     .insert(id.clone(), (0.0, 0.0, lw, lh));
                 Ok(receipt)
             })();
             if result.is_err() {
-                app.state::<AppState>().child_layouts.lock().unwrap().remove(&id);
+                app.state::<AppState>()
+                    .child_layouts
+                    .lock()
+                    .unwrap()
+                    .remove(&id);
                 if let Err(error) = win.hide() {
                     return Err(format!("GRID_NATIVE_LAYOUT_HIDE_FAILED:{error}"));
                 }
-                if win.is_visible().map_err(|e| format!("GRID_NATIVE_VISIBILITY_UNCONFIRMED:{e}"))? {
+                if win
+                    .is_visible()
+                    .map_err(|e| format!("GRID_NATIVE_VISIBILITY_UNCONFIRMED:{e}"))?
+                {
                     return Err("GRID_NATIVE_LAYOUT_HIDE_UNCONFIRMED".into());
                 }
                 native_visibility::confirm(&win, None)
@@ -1078,7 +1196,10 @@ fn dispatch_grid_cmd(
                 .get_window(host_label)
                 .ok_or_else(|| "子进程壳窗口不存在".to_string())?;
             win.hide().map_err(|e| format!("hide 失败: {e}"))?;
-            if win.is_visible().map_err(|e| format!("GRID_NATIVE_VISIBILITY_UNCONFIRMED:{e}"))? {
+            if win
+                .is_visible()
+                .map_err(|e| format!("GRID_NATIVE_VISIBILITY_UNCONFIRMED:{e}"))?
+            {
                 return Err("GRID_NATIVE_HIDE_UNCONFIRMED".into());
             }
             return native_visibility::confirm(&win, None).map(Some);
@@ -1105,19 +1226,26 @@ fn dispatch_grid_cmd(
             let manager = app.state::<TabManagerState>();
             match manager.close_tab(&id) {
                 Ok(()) | Err(tauri_plugin_browser_tabs::BrowserTabError::TabNotFound(_)) => {
-                    app.state::<AppState>().child_layouts.lock().unwrap().remove(&id);
+                    app.state::<AppState>()
+                        .child_layouts
+                        .lock()
+                        .unwrap()
+                        .remove(&id);
                     Ok(())
                 }
                 Err(e) => Err(format!("close_tab {id} 失败: {e}")),
             }
         }
         GridCmd::Ping => Ok(()),
-        GridCmd::FillCredential { .. } | GridCmd::CaptureStart { .. }
-        | GridCmd::CaptureRead { .. } | GridCmd::CaptureRelease { .. }
-        | GridCmd::ReadReplies { .. } | GridCmd::DownloadTasks { .. } | GridCmd::HibernationProbe { .. }
-        | GridCmd::ViewportSnapshot { .. } | GridCmd::ViewportRestore { .. } => {
-            Err("GRID_ASYNC_ONLY".into())
-        }
+        GridCmd::FillCredential { .. }
+        | GridCmd::CaptureStart { .. }
+        | GridCmd::CaptureRead { .. }
+        | GridCmd::CaptureRelease { .. }
+        | GridCmd::ReadReplies { .. }
+        | GridCmd::DownloadTasks { .. }
+        | GridCmd::HibernationProbe { .. }
+        | GridCmd::ViewportSnapshot { .. }
+        | GridCmd::ViewportRestore { .. } => Err("GRID_ASYNC_ONLY".into()),
     };
     result.map(|_| None)
 }

@@ -26,12 +26,15 @@ pub(super) struct Authority {
 fn label(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128
-        && value.bytes().all(|b| {
-            b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-' | b':')
-        })
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-' | b':'))
 }
 fn digest(value: &str) -> bool {
-    value.len() == 64 && value.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 fn canonical_bytes(value: &str, len: usize) -> Option<Vec<u8>> {
     if value.len() > 128 {
@@ -163,7 +166,11 @@ impl FinalOutcome {
             Self::CancelledFinal => TaskStatus::Cancelled,
         }
     }
-    pub(super) const ALL: [Self; 3] = [Self::NotAppliedFinal, Self::AppliedFinal, Self::CancelledFinal];
+    pub(super) const ALL: [Self; 3] = [
+        Self::NotAppliedFinal,
+        Self::AppliedFinal,
+        Self::CancelledFinal,
+    ];
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -229,7 +236,8 @@ pub(super) fn lookup(storage: &Path, binding: &Binding) -> Result<Option<SignedS
         &path,
         &[directory.clone()],
         MAX_PROOF,
-    )? else {
+    )?
+    else {
         return Ok(None);
     };
     let proof: SignedStatus =
@@ -272,9 +280,16 @@ pub(super) fn observe(storage: &Path, binding: &Binding) -> InboxObservation {
     match lookup(storage, binding) {
         Ok(None) => InboxObservation::Missing,
         Ok(Some(proof)) => InboxObservation::Verified(proof),
-        Err(error) if matches!(error.as_str(),
-            "MCP_EFFECT_STATUS_INVALID" | "MCP_EFFECT_STATUS_UNVERIFIED" |
-            "MCP_EFFECT_AUTHORITY_INVALID") => InboxObservation::Unverified,
+        Err(error)
+            if matches!(
+                error.as_str(),
+                "MCP_EFFECT_STATUS_INVALID"
+                    | "MCP_EFFECT_STATUS_UNVERIFIED"
+                    | "MCP_EFFECT_AUTHORITY_INVALID"
+            ) =>
+        {
+            InboxObservation::Unverified
+        }
         Err(_) => InboxObservation::Unavailable,
     }
 }

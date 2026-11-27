@@ -14,8 +14,12 @@ const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
 use super::mcp_protocol::{safe_text, sensitive};
 fn read(path: &Path, allowed: &Path) -> Result<String, String> {
     let snapshot = crate::capabilities::workspace::safe_paths::read_versioned(
-        path, &[allowed.to_path_buf()], MAX_READ,
-    ).map_err(|_| "CONTEXT_READ_DENIED")?.ok_or("CONTEXT_READ_DENIED")?;
+        path,
+        &[allowed.to_path_buf()],
+        MAX_READ,
+    )
+    .map_err(|_| "CONTEXT_READ_DENIED")?
+    .ok_or("CONTEXT_READ_DENIED")?;
     let text = String::from_utf8(snapshot.bytes).map_err(|_| "CONTEXT_NOT_TEXT")?;
     Ok(safe_text(&text))
 }
@@ -70,7 +74,11 @@ fn roots(workspace: &Path) -> Vec<PathBuf> {
         .collect()
 }
 fn context_check(cancelled: &dyn Fn() -> bool) -> Result<(), String> {
-    if cancelled() { Err("AGENT_CANCELLED".into()) } else { Ok(()) }
+    if cancelled() {
+        Err("AGENT_CANCELLED".into())
+    } else {
+        Ok(())
+    }
 }
 
 fn scan(
@@ -119,7 +127,15 @@ fn scan(
             continue;
         }
         if meta.is_dir() {
-            limited |= scan(&path, base, depth + 1, budget, files, only_skills, cancelled)?;
+            limited |= scan(
+                &path,
+                base,
+                depth + 1,
+                budget,
+                files,
+                only_skills,
+                cancelled,
+            )?;
         } else if meta.is_file()
             && path.starts_with(base)
             && ((only_skills && name == "SKILL.md")
@@ -167,14 +183,21 @@ pub(super) fn execute_cancelable_with_admission(
     before_spawn: impl FnOnce(&Value) -> Result<(), String>,
 ) -> Result<Value, String> {
     execute_cancelable_with_effect_admission(
-        root, storage, request, cancellation, None, |request, _| before_spawn(request),
+        root,
+        storage,
+        request,
+        cancellation,
+        None,
+        |request, _| before_spawn(request),
     )
 }
 
 /// The model loop supplies the live Task/session cancellation check. The
 /// request facade can use its registered run signal. No new effect admission.
 pub(crate) fn execute_read_context(
-    root: &Path, request: &Value, cancelled: &dyn Fn() -> bool,
+    root: &Path,
+    request: &Value,
+    cancelled: &dyn Fn() -> bool,
 ) -> Result<Value, String> {
     context_check(cancelled)?;
     if !no_reparse_path(root) {
@@ -190,12 +213,21 @@ pub(crate) fn execute_read_context(
             let mut skills = Vec::new();
             for file in skill_files(&allowed, cancelled)?.into_iter().take(256) {
                 context_check(cancelled)?;
-                let Some(base) = allowed.iter().find(|base| file.starts_with(base)) else { continue; };
+                let Some(base) = allowed.iter().find(|base| file.starts_with(base)) else {
+                    continue;
+                };
                 let result = read(&file, base);
                 context_check(cancelled)?;
-                let Ok(text) = result else { continue; };
-                let description = text.lines().find(|line| line.starts_with("description:"))
-                    .unwrap_or("").chars().take(240).collect::<String>();
+                let Ok(text) = result else {
+                    continue;
+                };
+                let description = text
+                    .lines()
+                    .find(|line| line.starts_with("description:"))
+                    .unwrap_or("")
+                    .chars()
+                    .take(240)
+                    .collect::<String>();
                 skills.push(json!({"path":file,"name":file.parent()
                     .and_then(Path::file_name).map(|n|n.to_string_lossy()),"description":description}));
             }
@@ -248,7 +280,9 @@ pub(crate) fn execute_read_context(
                 match result {
                     Ok(text) => {
                         for (line, content) in text.lines().enumerate() {
-                            if line % 64 == 0 { context_check(cancelled)?; }
+                            if line % 64 == 0 {
+                                context_check(cancelled)?;
+                            }
                             if !sensitive(content) && content.to_lowercase().contains(&query) {
                                 hits.push(json!({"path":file,"line":line+1,
                                 "text":content.chars().take(400).collect::<String>()}));
@@ -282,8 +316,13 @@ pub(super) fn execute_cancelable_with_effect_admission(
     run: Option<uuid::Uuid>,
     before_spawn: impl FnOnce(&Value, Option<&super::mcp_authority::Binding>) -> Result<(), String>,
 ) -> Result<Value, String> {
-    if matches!(request["action"].as_str(), Some("skills_list" | "skill_read" | "knowledge_search")) {
-        return execute_read_context(root, &request, &|| cancellation.load(std::sync::atomic::Ordering::Acquire));
+    if matches!(
+        request["action"].as_str(),
+        Some("skills_list" | "skill_read" | "knowledge_search")
+    ) {
+        return execute_read_context(root, &request, &|| {
+            cancellation.load(std::sync::atomic::Ordering::Acquire)
+        });
     }
     if !no_reparse_path(root) {
         return Err("CONTEXT_ROOT_INVALID".into());

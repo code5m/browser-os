@@ -25,8 +25,11 @@ fn fingerprint(value: &Value) -> Result<String, String> {
     // then enforce the same bound during canonical serialization.
     let encode = |value: &Value| {
         super::mcp_protocol::encode_bounded(value, 1024 * 1024).map_err(|error| {
-            if error == "MCP_REQUEST_LIMIT" { "MCP_REVIEW_LIMIT".to_string() }
-            else { "MCP_REVIEW_ENCODE_FAILED".to_string() }
+            if error == "MCP_REQUEST_LIMIT" {
+                "MCP_REVIEW_LIMIT".to_string()
+            } else {
+                "MCP_REVIEW_ENCODE_FAILED".to_string()
+            }
         })
     };
     encode(value)?;
@@ -99,7 +102,11 @@ pub(crate) fn prepare(
     let args = args.to_vec();
     let mut environment_keys = BTreeSet::new();
     let normalize_env = |name: &str| {
-        if cfg!(windows) { name.to_ascii_uppercase() } else { name.to_owned() }
+        if cfg!(windows) {
+            name.to_ascii_uppercase()
+        } else {
+            name.to_owned()
+        }
     };
     let mut grants = BTreeSet::new();
     let mut credentials = Vec::new();
@@ -109,7 +116,9 @@ pub(crate) fn prepare(
             return Err("MCP_ENV_LIMIT".into());
         }
         for (name, reference) in refs.iter() {
-            if !reference.is_string() { return Err("MCP_CREDENTIAL_REF_INVALID".into()); }
+            if !reference.is_string() {
+                return Err("MCP_CREDENTIAL_REF_INVALID".into());
+            }
             if name.is_empty()
                 || name.len() > 100
                 || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
@@ -139,9 +148,12 @@ pub(crate) fn prepare(
         None => Vec::new(),
         Some(Value::Object(env)) if env.len() <= 64 => {
             for (name, value) in env {
-                if name.is_empty() || name.len() > 100
+                if name.is_empty()
+                    || name.len() > 100
                     || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
-                    || value.as_str().is_none_or(|value| value.len() > 16384 || value.contains('\0'))
+                    || value
+                        .as_str()
+                        .is_none_or(|value| value.len() > 16384 || value.contains('\0'))
                 {
                     return Err("MCP_ENV_INVALID".into());
                 }
@@ -150,7 +162,7 @@ pub(crate) fn prepare(
                 }
             }
             env.keys().cloned().collect::<Vec<_>>()
-        },
+        }
         _ => return Err("MCP_ENV_INVALID".into()),
     };
     let arguments = if action == "mcp_call" {

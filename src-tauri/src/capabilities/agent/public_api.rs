@@ -16,10 +16,13 @@ pub(crate) use super::local_provider::{
 /// Reuse the bounded native JSON writer for Agent Channel admission and
 /// results. This bounds encoded copies, not a provider's decoded Value.
 pub(crate) fn bounded_channel_json(value: &Value, limit: usize) -> Result<Vec<u8>, String> {
-    super::mcp_protocol::encode_bounded(value, limit)
-        .map_err(|error| if error == "MCP_REQUEST_LIMIT" {
+    super::mcp_protocol::encode_bounded(value, limit).map_err(|error| {
+        if error == "MCP_REQUEST_LIMIT" {
             "AGENT_CHANNEL_JSON_LIMIT".into()
-        } else { "AGENT_CHANNEL_JSON_INVALID".into() })
+        } else {
+            "AGENT_CHANNEL_JSON_INVALID".into()
+        }
+    })
 }
 
 pub(crate) fn register_coding_run(id: &str) -> Result<super::coding::RunRequestGuard, String> {
@@ -146,10 +149,20 @@ pub(crate) fn dispatch_coding_request(
     };
     match action {
         "browser_operation_review" => {
-            let operation = parse_run_id(request["operation_id"].as_str().ok_or("AGENT_OPERATION_REQUIRED")?)?;
+            let operation = parse_run_id(
+                request["operation_id"]
+                    .as_str()
+                    .ok_or("AGENT_OPERATION_REQUIRED")?,
+            )?;
             let canonical = root.canonicalize().map_err(|_| "AGENT_ROOT_INVALID")?;
             let workspace = super::execution_owner::workspace_identity(&canonical)?;
-            return crate::bridge::review_agent_browser_action(app, webview, workspace, operation, &request["input"]);
+            return crate::bridge::review_agent_browser_action(
+                app,
+                webview,
+                workspace,
+                operation,
+                &request["input"],
+            );
         }
         "manual_mcp_history" => {
             return ProductionExecution::manual_mcp_catalog(
@@ -327,7 +340,9 @@ pub(crate) fn dispatch_coding_request(
         // Keep the generic MCP return path unchanged. Only an opted-in
         // effect needs a second receipt lookup after its owner has retired.
         let summary = if provider_bound {
-            Some(ProductionExecution::read_manual_mcp(storage, &canonical, run)?)
+            Some(ProductionExecution::read_manual_mcp(
+                storage, &canonical, run,
+            )?)
         } else {
             None
         };
@@ -372,8 +387,14 @@ pub(crate) fn dispatch_coding_request(
                 let canonical = root.canonicalize().map_err(|_| "AGENT_ROOT_INVALID")?;
                 let workspace = super::execution_owner::workspace_identity(&canonical)?;
                 crate::bridge::execute_agent_browser_action(
-                    app, webview, &workspace, run, input,
-                    approved["browser_review_token"].as_str().ok_or("AGENT_BROWSER_REVIEW_REQUIRED")?,
+                    app,
+                    webview,
+                    &workspace,
+                    run,
+                    input,
+                    approved["browser_review_token"]
+                        .as_str()
+                        .ok_or("AGENT_BROWSER_REVIEW_REQUIRED")?,
                     &|| cancel.load(std::sync::atomic::Ordering::Acquire),
                     || admit(None),
                 )

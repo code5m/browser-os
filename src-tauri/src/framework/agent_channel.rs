@@ -4,10 +4,8 @@
 use crate::capabilities::agent::public_api::{
     bounded_channel_json, ChannelAdmission, ChannelInput, ChannelStart, ProductionExecution,
 };
-use crate::shared::blocking::BlockingLane;
 use crate::capabilities::workspace::safe_paths;
-#[cfg(test)]
-use std::fs;
+use crate::shared::blocking::BlockingLane;
 use browseros_agent_foundation as foundation;
 use foundation::{
     approval::{ApprovalBinding, HostApprovalDecision, HostApprovalIssuer, ResourceBinding},
@@ -15,13 +13,21 @@ use foundation::{
         run_benchmark_suite, run_routed_fixture_owned, BenchmarkReport, RoutedFixtureResult,
     },
     experiment::{ExperimentConfig, ExperimentRouter},
-    public_api::{channel_read_revision, current_public_api_catalog, PublicApiHost, PublicApiRegistry, PublicApiSpec},
+    public_api::{
+        channel_read_revision, current_public_api_catalog, PublicApiHost, PublicApiRegistry,
+        PublicApiSpec,
+    },
     tool::{ToolEffect, ToolFuture, ToolRegistry},
 };
 use serde_json::Value;
+#[cfg(test)]
+use std::fs;
 use std::{
     path::{Path, PathBuf},
-    sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     time::{Duration, Instant},
 };
 use tauri::{AppHandle, Webview};
@@ -32,9 +38,12 @@ const MAX_CONFIG_BYTES: u64 = 16_384;
 const MAX_RESULT_BYTES: usize = 64 * 1024;
 // Run ownership includes durable admission, execution and publication.
 // A separate history lane remains available while a Run is executing.
-static CHANNEL_RUN_LANE: BlockingLane = BlockingLane::new(2, "AGENT_CHANNEL_RUN_BUSY", "AGENT_RUN_WORKER_FAILED");
-static CHANNEL_HISTORY_LANE: BlockingLane = BlockingLane::new(2, "AGENT_CHANNEL_HISTORY_BUSY", "AGENT_RUN_WORKER_FAILED");
-static CHANNEL_BENCHMARK_LANE: BlockingLane = BlockingLane::new(1, "AGENT_CHANNEL_BENCHMARK_BUSY", "AGENT_RUN_WORKER_FAILED");
+static CHANNEL_RUN_LANE: BlockingLane =
+    BlockingLane::new(2, "AGENT_CHANNEL_RUN_BUSY", "AGENT_RUN_WORKER_FAILED");
+static CHANNEL_HISTORY_LANE: BlockingLane =
+    BlockingLane::new(2, "AGENT_CHANNEL_HISTORY_BUSY", "AGENT_RUN_WORKER_FAILED");
+static CHANNEL_BENCHMARK_LANE: BlockingLane =
+    BlockingLane::new(1, "AGENT_CHANNEL_BENCHMARK_BUSY", "AGENT_RUN_WORKER_FAILED");
 static READ_LANE: BlockingLane = BlockingLane::new(
     1,
     "AGENT_CHANNEL_READ_BUSY",
@@ -52,16 +61,20 @@ fn config_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(crate::workspace::data_dir(app).join(CONFIG_FILE))
 }
 
-fn config_snapshot(path: &Path) -> Result<(ExperimentConfig, Option<safe_paths::FileSnapshot>), String> {
+fn config_snapshot(
+    path: &Path,
+) -> Result<(ExperimentConfig, Option<safe_paths::FileSnapshot>), String> {
     let root = path.parent().ok_or("AGENT_EXPERIMENT_PATH")?.to_path_buf();
     let snapshot = safe_paths::read_versioned(path, &[root], MAX_CONFIG_BYTES as usize)
         .map_err(|_| "AGENT_EXPERIMENT_UNSAFE_CONFIG")?;
     let Some(saved) = snapshot.as_ref() else {
         return Ok((ExperimentConfig::default(), None));
     };
-    let config: ExperimentConfig = serde_json::from_slice(&saved.bytes)
-        .map_err(|_| "AGENT_EXPERIMENT_CORRUPT_CONFIG")?;
-    config.validate().map_err(|_| "AGENT_EXPERIMENT_INVALID_CONFIG")?;
+    let config: ExperimentConfig =
+        serde_json::from_slice(&saved.bytes).map_err(|_| "AGENT_EXPERIMENT_CORRUPT_CONFIG")?;
+    config
+        .validate()
+        .map_err(|_| "AGENT_EXPERIMENT_INVALID_CONFIG")?;
     Ok((config, snapshot))
 }
 
@@ -72,31 +85,56 @@ fn load(path: &Path) -> Result<ExperimentConfig, String> {
 /// Select only a new text Run under the existing trusted configuration
 /// owner. Store the returned revision in the authenticated input so later
 /// continuation does not consult a mutable engine choice.
-pub(super) fn production_text_revision(storage: &Path, run: uuid::Uuid) -> Result<Option<u64>, String> {
+pub(super) fn production_text_revision(
+    storage: &Path,
+    run: uuid::Uuid,
+) -> Result<Option<u64>, String> {
     production_revision(storage, run, false)
 }
 
-pub(super) fn production_coding_revision(storage: &Path, run: uuid::Uuid) -> Result<Option<u64>, String> {
+pub(super) fn production_coding_revision(
+    storage: &Path,
+    run: uuid::Uuid,
+) -> Result<Option<u64>, String> {
     production_revision(storage, run, true)
 }
 
-fn production_revision(storage: &Path, run: uuid::Uuid, coding: bool) -> Result<Option<u64>, String> {
-    let _guard = CONFIG_LOCK.try_lock().map_err(|_| "AGENT_EXPERIMENT_CONFIG_BUSY")?;
+fn production_revision(
+    storage: &Path,
+    run: uuid::Uuid,
+    coding: bool,
+) -> Result<Option<u64>, String> {
+    let _guard = CONFIG_LOCK
+        .try_lock()
+        .map_err(|_| "AGENT_EXPERIMENT_CONFIG_BUSY")?;
     let config = load(&storage.join(CONFIG_FILE))?;
-    let enabled = if coding { config.production_coding_enabled } else { config.production_text_enabled };
+    let enabled = if coding {
+        config.production_coding_enabled
+    } else {
+        config.production_text_enabled
+    };
     if !config.enabled || !enabled {
         return Ok(None);
     }
     let router = ExperimentRouter::new(true);
-    router.restore_config_for_host(config)
+    router
+        .restore_config_for_host(config)
         .map_err(|_| "AGENT_EXPERIMENT_INVALID_CONFIG")?;
-    let assignment = router.assign(run).map_err(|_| "AGENT_EXPERIMENT_ASSIGNMENT_FAILED")?;
-    Ok((assignment.kind == foundation::experiment::EngineKind::RigAgentRun)
-        .then_some(assignment.configuration_revision))
+    let assignment = router
+        .assign(run)
+        .map_err(|_| "AGENT_EXPERIMENT_ASSIGNMENT_FAILED")?;
+    Ok(
+        (assignment.kind == foundation::experiment::EngineKind::RigAgentRun)
+            .then_some(assignment.configuration_revision),
+    )
 }
 
-fn persist(path: &Path, config: &ExperimentConfig, expected: Option<&safe_paths::FileSnapshot>,
-    root_identity: &str) -> Result<(), String> {
+fn persist(
+    path: &Path,
+    config: &ExperimentConfig,
+    expected: Option<&safe_paths::FileSnapshot>,
+    root_identity: &str,
+) -> Result<(), String> {
     let root = path.parent().ok_or("AGENT_EXPERIMENT_PATH")?.to_path_buf();
     let bytes = serde_json::to_vec_pretty(config).map_err(|_| "AGENT_EXPERIMENT_SERIALIZE")?;
     if bytes.len() > MAX_CONFIG_BYTES as usize {
@@ -104,9 +142,17 @@ fn persist(path: &Path, config: &ExperimentConfig, expected: Option<&safe_paths:
     }
     // Recheck the exact approved directory and original file snapshot
     // through the shared native CAS owner, not an unchecked path rename.
-    safe_paths::write_versioned_approved(path, &[root.clone()], &root, root_identity,
-        expected, &bytes, MAX_CONFIG_BYTES as usize, |_, _| Ok(()))
-        .map_err(|error| format!("AGENT_EXPERIMENT_PUBLICATION_UNCONFIRMED:{error}"))?;
+    safe_paths::write_versioned_approved(
+        path,
+        &[root.clone()],
+        &root,
+        root_identity,
+        expected,
+        &bytes,
+        MAX_CONFIG_BYTES as usize,
+        |_, _| Ok(()),
+    )
+    .map_err(|error| format!("AGENT_EXPERIMENT_PUBLICATION_UNCONFIRMED:{error}"))?;
     let (actual, snapshot) = config_snapshot(path)?;
     if actual != *config || snapshot.is_none() {
         return Err("AGENT_EXPERIMENT_PUBLICATION_UNCONFIRMED".into());
@@ -120,7 +166,9 @@ pub fn agent_runtime_get_config(
     webview: Webview,
 ) -> Result<ExperimentConfig, String> {
     check_main(&app, &webview, "agent_runtime_get_config")?;
-    let _lock = CONFIG_LOCK.try_lock().map_err(|_| "AGENT_EXPERIMENT_CONFIG_BUSY")?;
+    let _lock = CONFIG_LOCK
+        .try_lock()
+        .map_err(|_| "AGENT_EXPERIMENT_CONFIG_BUSY")?;
     load(&config_path(&app)?)
 }
 
@@ -136,11 +184,13 @@ pub fn agent_runtime_set_config(
     if !confirmed {
         return Err("AGENT_EXPERIMENT_CONFIRM_REQUIRED".into());
     }
-    let _lock = CONFIG_LOCK.try_lock().map_err(|_| "AGENT_EXPERIMENT_CONFIG_BUSY")?;
+    let _lock = CONFIG_LOCK
+        .try_lock()
+        .map_err(|_| "AGENT_EXPERIMENT_CONFIG_BUSY")?;
     let path = config_path(&app)?;
     let parent = path.parent().ok_or("AGENT_EXPERIMENT_PATH")?;
-    let root_identity = safe_paths::directory_identity(parent)
-        .map_err(|_| "AGENT_EXPERIMENT_UNSAFE_DIR")?;
+    let root_identity =
+        safe_paths::directory_identity(parent).map_err(|_| "AGENT_EXPERIMENT_UNSAFE_DIR")?;
     let (previous, expected) = config_snapshot(&path)?;
     if previous.revision != expected_revision {
         return Err("AGENT_EXPERIMENT_STALE_REVISION".into());
@@ -165,7 +215,9 @@ pub async fn agent_runtime_benchmark(
 ) -> Result<BenchmarkReport, String> {
     check_main(&app, &webview, "agent_runtime_benchmark")?;
     let config = {
-        let _guard = CONFIG_LOCK.try_lock().map_err(|_| "AGENT_EXPERIMENT_CONFIG_BUSY")?;
+        let _guard = CONFIG_LOCK
+            .try_lock()
+            .map_err(|_| "AGENT_EXPERIMENT_CONFIG_BUSY")?;
         load(&config_path(&app)?)?
     };
     if !config.enabled || !config.benchmark_enabled {
@@ -176,9 +228,12 @@ pub async fn agent_runtime_benchmark(
     // the main window disappears while awaiting the result.
     tauri::async_runtime::spawn(async move {
         let _permit = permit;
-        run_benchmark_suite(repeats).await
+        run_benchmark_suite(repeats)
+            .await
             .map_err(|_| "AGENT_EXPERIMENT_BENCHMARK_FAILED".to_string())
-    }).await.map_err(|_| "AGENT_RUN_WORKER_FAILED".to_string())?
+    })
+    .await
+    .map_err(|_| "AGENT_RUN_WORKER_FAILED".to_string())?
 }
 
 /// One newly allocated task driven by the CURRENT persisted routing policy.
@@ -195,11 +250,13 @@ pub async fn agent_runtime_run_fixture(
     let storage = crate::workspace::data_dir(&app);
     let result = run_channel_owned(app, webview, move || {
         ProductionExecution::begin_channel(
-            &storage, uuid::Uuid::new_v4(), ChannelStart::Fixture { fixture_id, config },
+            &storage,
+            uuid::Uuid::new_v4(),
+            ChannelStart::Fixture { fixture_id, config },
         )
-    }).await?;
-    serde_json::from_value(result)
-        .map_err(|_| "AGENT_RUN_RECEIPT_INVALID".into())
+    })
+    .await?;
+    serde_json::from_value(result).map_err(|_| "AGENT_RUN_RECEIPT_INVALID".into())
 }
 
 fn as_text<'a>(value: &'a Value, name: &str, max: usize) -> Result<&'a str, String> {
@@ -218,17 +275,25 @@ fn as_text<'a>(value: &'a Value, name: &str, max: usize) -> Result<&'a str, Stri
 enum NativeRead {
     BrowserTabs,
     DatabaseProfiles,
-    GitStatus { repo_id: String },
-    GitDiff { repo_id: String, path: Option<String> },
-    CodingLsp { root: String },
+    GitStatus {
+        repo_id: String,
+    },
+    GitDiff {
+        repo_id: String,
+        path: Option<String>,
+    },
+    CodingLsp {
+        root: String,
+    },
 }
 
 impl NativeRead {
     fn parse(command: &str, args: &Value) -> Result<Self, String> {
-        let fields = args.as_object().ok_or("AGENT_EXPERIMENT_ARGUMENT_INVALID")?;
-        let exact_keys = |allowed: &[&str]| {
-            fields.keys().all(|key| allowed.contains(&key.as_str()))
-        };
+        let fields = args
+            .as_object()
+            .ok_or("AGENT_EXPERIMENT_ARGUMENT_INVALID")?;
+        let exact_keys =
+            |allowed: &[&str]| fields.keys().all(|key| allowed.contains(&key.as_str()));
         match command {
             "tab_list" if fields.is_empty() => Ok(Self::BrowserTabs),
             "tab_list" => Err("AGENT_BROWSER_READ_ARGUMENT_INVALID".into()),
@@ -241,13 +306,17 @@ impl NativeRead {
                     None | Some(Value::Null) => None,
                     Some(_) => Some(as_text(args, "path", 1024)?.to_owned()),
                 };
-                Ok(Self::GitDiff { repo_id: as_text(args, "repo_id", 100)?.to_owned(), path })
+                Ok(Self::GitDiff {
+                    repo_id: as_text(args, "repo_id", 100)?.to_owned(),
+                    path,
+                })
             }
             "coding_lsp_status" if exact_keys(&["root"]) => Ok(Self::CodingLsp {
                 root: as_text(args, "root", 4096)?.to_owned(),
             }),
-            "db_list_connections" | "git_status" | "git_diff" | "coding_lsp_status" =>
-                Err("AGENT_EXPERIMENT_ARGUMENT_INVALID".into()),
+            "db_list_connections" | "git_status" | "git_diff" | "coding_lsp_status" => {
+                Err("AGENT_EXPERIMENT_ARGUMENT_INVALID".into())
+            }
             _ => Err("AGENT_EXPERIMENT_TOOL_DENIED".into()),
         }
     }
@@ -264,14 +333,18 @@ impl NativeRead {
     fn dispatch(self, app: AppHandle, webview: Webview) -> Result<Value, String> {
         match self {
             Self::BrowserTabs => crate::capabilities::browser::public_api::agent_tab_summary(app),
-            Self::DatabaseProfiles =>
-                crate::capabilities::database::public_api::agent_connection_summary(app, webview),
-            Self::GitStatus { repo_id } =>
-                crate::capabilities::git::public_api::agent_status(app, webview, repo_id),
-            Self::GitDiff { repo_id, path } =>
-                crate::capabilities::git::public_api::agent_diff(app, webview, repo_id, path),
-            Self::CodingLsp { root } =>
-                crate::capabilities::agent::public_api::coding_lsp_summary(app, webview, &root),
+            Self::DatabaseProfiles => {
+                crate::capabilities::database::public_api::agent_connection_summary(app, webview)
+            }
+            Self::GitStatus { repo_id } => {
+                crate::capabilities::git::public_api::agent_status(app, webview, repo_id)
+            }
+            Self::GitDiff { repo_id, path } => {
+                crate::capabilities::git::public_api::agent_diff(app, webview, repo_id, path)
+            }
+            Self::CodingLsp { root } => {
+                crate::capabilities::agent::public_api::coding_lsp_summary(app, webview, &root)
+            }
         }
     }
 }
@@ -282,12 +355,16 @@ fn resource_for(command: &str, args: &Value) -> Result<String, String> {
 
 // Both the initial host validation and worker admission enforce the same
 // approval binding. A valid proposal is not an evergreen read capability.
-fn validate_read_binding(spec: &PublicApiSpec, binding: &ApprovalBinding, args: &Value)
-    -> Result<NativeRead, String>
-{
+fn validate_read_binding(
+    spec: &PublicApiSpec,
+    binding: &ApprovalBinding,
+    args: &Value,
+) -> Result<NativeRead, String> {
     let read = NativeRead::parse(&spec.command, args)?;
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
-        .map_err(|_| "AGENT_APPROVAL_CLOCK_INVALID")?.as_millis();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| "AGENT_APPROVAL_CLOCK_INVALID")?
+        .as_millis();
     if !current_public_api_catalog().contains(spec)
         || spec.effect != ToolEffect::ReadOnly
         || !spec.requires_host_authorization
@@ -305,7 +382,7 @@ fn validate_read_binding(spec: &PublicApiSpec, binding: &ApprovalBinding, args: 
 }
 
 // The worker owns its capacity after the awaiting future is dropped.
- // A queued read must not begin after that cancellation or timeout.
+// A queued read must not begin after that cancellation or timeout.
 struct ReadWaiter(Arc<AtomicBool>);
 impl Drop for ReadWaiter {
     fn drop(&mut self) {
@@ -324,7 +401,7 @@ impl PublicApiHost for NativeOwnerHost {
         binding: &'a ApprovalBinding,
         args: &'a Value,
     ) -> foundation::Result<()> {
-        enabled_config(&self.app).map_err(|_|foundation::FoundationError::PermissionDenied)?;
+        enabled_config(&self.app).map_err(|_| foundation::FoundationError::PermissionDenied)?;
         validate_read_binding(spec, binding, args)
             .map_err(|_| foundation::FoundationError::PermissionDenied)?;
         check_main(&self.app, &self.webview, &spec.command)
@@ -354,7 +431,9 @@ impl PublicApiHost for NativeOwnerHost {
                     let check_waiter = || {
                         if abandoned.load(Ordering::Acquire) || Instant::now() >= deadline {
                             Err("AGENT_READ_WAITER_EXPIRED".to_string())
-                        } else { Ok(()) }
+                        } else {
+                            Ok(())
+                        }
                     };
                     check_waiter()?;
                     enabled_config(&app)?;
@@ -366,8 +445,8 @@ impl PublicApiHost for NativeOwnerHost {
                     // Native worker must not publish a read after the
                     // feature or original main-webview authority changed.
                     enabled_config(&app)?;
-                    validate_read_binding(&approved_spec,&proof,&args)?;
-                    check_main(&app,&webview,&approved_spec.command)?;
+                    validate_read_binding(&approved_spec, &proof, &args)?;
+                    check_main(&app, &webview, &approved_spec.command)?;
                     // Check while the worker owns its permit; do not copy a
                     // potentially huge native result onto the async runtime.
                     bounded_channel_json(&result, MAX_RESULT_BYTES)?;
@@ -378,7 +457,9 @@ impl PublicApiHost for NativeOwnerHost {
                 .map_err(|error| {
                     foundation::FoundationError::Tool(if error == "AGENT_CHANNEL_JSON_LIMIT" {
                         "OWNER_RESULT_LIMIT".into()
-                    } else { "OWNER_READ_FAILED_OR_BUSY".into() })
+                    } else {
+                        "OWNER_READ_FAILED_OR_BUSY".into()
+                    })
                 })?;
             // Keep the cancellation guard alive across the entire worker wait.
             drop(waiter);
@@ -404,10 +485,13 @@ pub async fn agent_runtime_read_tool(
     let storage = crate::workspace::data_dir(&app);
     run_channel_owned(app, webview, move || {
         ProductionExecution::begin_channel(&storage, uuid::Uuid::new_v4(), start)
-    }).await
+    })
+    .await
 }
 fn enabled_config(app: &AppHandle) -> Result<ExperimentConfig, String> {
-    let _guard = CONFIG_LOCK.try_lock().map_err(|_| "AGENT_EXPERIMENT_CONFIG_BUSY")?;
+    let _guard = CONFIG_LOCK
+        .try_lock()
+        .map_err(|_| "AGENT_EXPERIMENT_CONFIG_BUSY")?;
     let cfg = load(&config_path(app)?)?;
     if !cfg.enabled {
         return Err("AGENT_EXPERIMENT_DISABLED".into());
@@ -415,9 +499,7 @@ fn enabled_config(app: &AppHandle) -> Result<ExperimentConfig, String> {
     Ok(cfg)
 }
 fn checked_read(command: String, args: Value) -> Result<ChannelStart, String> {
-    if !args.is_object()
-        || bounded_channel_json(&args, 4096).is_err()
-    {
+    if !args.is_object() || bounded_channel_json(&args, 4096).is_err() {
         return Err("AGENT_EXPERIMENT_ARGUMENT_INVALID".into());
     }
     current_public_api_catalog()
@@ -447,7 +529,9 @@ async fn run_channel_owned(
             check_main(&owner_app, &owner_webview, "ai_service")?;
             enabled_config(&owner_app)?;
             admit()
-        }).await.map_err(|_| "AGENT_RUN_WORKER_FAILED".to_string())??;
+        })
+        .await
+        .map_err(|_| "AGENT_RUN_WORKER_FAILED".to_string())??;
         let result = run_admitted(app.clone(), webview.clone(), admission).await?;
         // Durable settlement is already owned by run_admitted. Revocation
         // during execution (including recovered reads) blocks live result
@@ -455,7 +539,9 @@ async fn run_channel_owned(
         check_main(&app, &webview, "ai_service")?;
         enabled_config(&app)?;
         Ok(result)
-    }).await.map_err(|_| "AGENT_RUN_WORKER_FAILED".to_string())?
+    })
+    .await
+    .map_err(|_| "AGENT_RUN_WORKER_FAILED".to_string())?
 }
 
 async fn run_admitted(
@@ -475,7 +561,8 @@ async fn run_admitted(
                 assignment,
             } => {
                 if assignment.task_id != execution.id() {
-                    return publish_channel(execution, Err("AGENT_RUN_SCOPE_MISMATCH".into())).await;
+                    return publish_channel(execution, Err("AGENT_RUN_SCOPE_MISMATCH".into()))
+                        .await;
                 }
                 let result = run_routed_fixture_owned(
                     assignment.kind,
@@ -615,25 +702,27 @@ pub(crate) async fn dispatch_recovery(
             } else {
                 Some(parse(&request.id)?)
             };
-            return CHANNEL_HISTORY_LANE.run(move || {
-                ProductionExecution::channel_catalog(&storage, cursor)
-            }).await;
+            return CHANNEL_HISTORY_LANE
+                .run(move || ProductionExecution::channel_catalog(&storage, cursor))
+                .await;
         }
         "channel_restore" => {
             let id = parse(&request.id)?;
-            return CHANNEL_HISTORY_LANE.run(move || {
-                ProductionExecution::read_channel(&storage, id)
-            }).await;
+            return CHANNEL_HISTORY_LANE
+                .run(move || ProductionExecution::read_channel(&storage, id))
+                .await;
         }
         "channel_forget" => {
             if !request.confirmed {
                 return Err("AGENT_RUN_FORGET_APPROVAL_REQUIRED".into());
             }
             let id = parse(&request.id)?;
-            return CHANNEL_HISTORY_LANE.run(move || {
-                let archived = ProductionExecution::forget_channel(&storage, id)?;
-                Ok(serde_json::json!({"forgotten":true,"archived":archived}))
-            }).await;
+            return CHANNEL_HISTORY_LANE
+                .run(move || {
+                    let archived = ProductionExecution::forget_channel(&storage, id)?;
+                    Ok(serde_json::json!({"forgotten":true,"archived":archived}))
+                })
+                .await;
         }
         _ => {}
     }
@@ -646,9 +735,15 @@ pub(crate) async fn dispatch_recovery(
         "channel_fixture" => {
             run_channel_owned(app, webview, move || {
                 ProductionExecution::begin_channel(
-                    &storage, run, ChannelStart::Fixture { fixture_id: request.id, config },
+                    &storage,
+                    run,
+                    ChannelStart::Fixture {
+                        fixture_id: request.id,
+                        config,
+                    },
                 )
-            }).await
+            })
+            .await
         }
         "channel_read" => {
             if request.message.len() > 4096 {
@@ -659,13 +754,15 @@ pub(crate) async fn dispatch_recovery(
             let start = checked_read(request.id, args)?;
             run_channel_owned(app, webview, move || {
                 ProductionExecution::begin_channel(&storage, run, start)
-            }).await
+            })
+            .await
         }
         "channel_resume" => {
             let previous = parse(&request.id)?;
             run_channel_owned(app, webview, move || {
                 ProductionExecution::resume_channel(&storage, previous, run)
-            }).await
+            })
+            .await
         }
         _ => Err("AGENT_EXPERIMENT_ACTION_DENIED".into()),
     }
@@ -679,7 +776,10 @@ mod tests {
     fn read_catalog_refuses_effectful_owner_paths() {
         assert!(resource_for("db_query", &json!({"sql":"SELECT 1"})).is_err());
         assert!(resource_for("git_studio_confirm", &json!({})).is_err());
-        assert_eq!(resource_for("tab_list", &json!({})).unwrap(), "browser:tabs");
+        assert_eq!(
+            resource_for("tab_list", &json!({})).unwrap(),
+            "browser:tabs"
+        );
         assert!(resource_for("tab_list", &json!({"js":"document.title"})).is_err());
         assert!(resource_for("tab_list", &json!({"id":"tab-1"})).is_err());
         assert!(resource_for("tab_list", &Value::Null).is_err());
@@ -693,8 +793,15 @@ mod tests {
         assert!(resource_for("db_list_connections", &json!({"sql":"SELECT 1"})).is_err());
         assert!(resource_for("git_status", &json!({"repo_id":"test","path":"other"})).is_err());
         assert!(resource_for("git_diff", &json!({"repo_id":"test","path":42})).is_err());
-        assert!(resource_for("coding_lsp_status", &json!({"root":"/repo","command":"run"})).is_err());
-        assert_eq!(resource_for("git_diff", &json!({"repo_id":"test","path":null})).unwrap(), "git:test");
+        assert!(resource_for(
+            "coding_lsp_status",
+            &json!({"root":"/repo","command":"run"})
+        )
+        .is_err());
+        assert_eq!(
+            resource_for("git_diff", &json!({"repo_id":"test","path":null})).unwrap(),
+            "git:test"
+        );
     }
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     #[test]

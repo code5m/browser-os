@@ -187,7 +187,9 @@ pub fn build_resource_received(
     // 未知长度映射：0 视为未知（WebKit content_length 未知时返回 0），不伪造
     let size_bytes = raw.size_bytes.filter(|n| *n > 0);
     let duration_ms = if raw.finished_at >= raw.started_at {
-        raw.finished_at.checked_sub(raw.started_at).map(|value| value as u64)
+        raw.finished_at
+            .checked_sub(raw.started_at)
+            .map(|value| value as u64)
     } else {
         None
     };
@@ -247,23 +249,35 @@ pub fn report_title(app: AppHandle, webview: tauri::Webview, title: String) -> R
         return Err("page title must originate from a browser tab".to_string());
     }
     let manager = app.state::<tauri_plugin_browser_tabs::TabManagerState>();
-    let Some((instance, revision, _)) = manager.observed_navigation(&id)
-        .map_err(|_| "TAB_METADATA_BUSY")? else { return Ok(()); };
+    let Some((instance, revision, _)) = manager
+        .observed_navigation(&id)
+        .map_err(|_| "TAB_METADATA_BUSY")?
+    else {
+        return Ok(());
+    };
     let page_url = webview.url().map_err(|e| e.to_string())?.to_string();
-    if !manager.observed_navigation(&id).is_ok_and(|current|
-        current.is_some_and(|(i, r, _)| i == instance && r == revision)) {
+    if !manager
+        .observed_navigation(&id)
+        .is_ok_and(|current| current.is_some_and(|(i, r, _)| i == instance && r == revision))
+    {
         return Ok(());
     }
     drop(manager);
     #[cfg(any(target_os = "linux", target_os = "windows"))]
-    if let Some(index) = std::env::var("GRID_CHILD_INDEX").ok().and_then(|v| v.parse::<u32>().ok()) {
+    if let Some(index) = std::env::var("GRID_CHILD_INDEX")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+    {
         if crate::grid_ipc::is_tab_renderer(index) && crate::grid_ipc::renderer_label(index) == id {
             let title = title.trim();
             if !title.is_empty() && title.len() <= 8192 && page_url.len() <= 8192 {
-                crate::enqueue_renderer_report("tab-title", serde_json::json!({
-                    "id": id, "url": page_url, "title": title,
-                    "instance":instance.to_string(), "revision":revision.to_string()
-                }));
+                crate::enqueue_renderer_report(
+                    "tab-title",
+                    serde_json::json!({
+                        "id": id, "url": page_url, "title": title,
+                        "instance":instance.to_string(), "revision":revision.to_string()
+                    }),
+                );
             }
             return Ok(());
         }
@@ -287,13 +301,24 @@ fn report_title_inner(
     // observed native instance/document and current address still match.
     let state = app.state::<AppState>();
     let mut tabs = state.tabs.try_lock().map_err(|_| "TAB_METADATA_BUSY")?;
-    if state.shutdown_requested.load(Ordering::Acquire) { return Ok(()); }
+    if state.shutdown_requested.load(Ordering::Acquire) {
+        return Ok(());
+    }
     let manager = app.state::<tauri_plugin_browser_tabs::TabManagerState>();
-    let Some((instance, revision, observed)) = manager.observed_navigation(&id)
-        .map_err(|_| "TAB_METADATA_BUSY")? else { return Ok(()); };
-    let Some(tab) = tabs.get_mut(&id) else { return Ok(()); };
-    if (instance, revision) != expected || page_url.is_empty() || page_url.len() > 8192
-        || observed.as_deref().unwrap_or(tab.url.as_str()) != page_url.as_str() {
+    let Some((instance, revision, observed)) = manager
+        .observed_navigation(&id)
+        .map_err(|_| "TAB_METADATA_BUSY")?
+    else {
+        return Ok(());
+    };
+    let Some(tab) = tabs.get_mut(&id) else {
+        return Ok(());
+    };
+    if (instance, revision) != expected
+        || page_url.is_empty()
+        || page_url.len() > 8192
+        || observed.as_deref().unwrap_or(tab.url.as_str()) != page_url.as_str()
+    {
         return Ok(());
     }
     tab.url = page_url.clone();
@@ -315,7 +340,12 @@ fn scan_resources(app: &AppHandle, id: &str) -> Result<(), String> {
     // injecting generic JavaScript into a candidate for safe blank reclaim.
     if let Some(index) = super::isolated_tabs::route(id) {
         let state = app.state::<AppState>();
-        let blank_or_missing = state.tabs.lock().unwrap().get(id).is_none_or(|tab| tab.url == "about:blank");
+        let blank_or_missing = state
+            .tabs
+            .lock()
+            .unwrap()
+            .get(id)
+            .is_none_or(|tab| tab.url == "about:blank");
         let active = state.active_tab.lock().unwrap().as_deref() == Some(id);
         if blank_or_missing || !active {
             return Ok(());

@@ -53,13 +53,22 @@ mod layout_revision_tests {
 /// 打开浏览器（内嵌为 main 窗口的子 webview）。
 /// 内部等价于「新建一个页签」并设为激活页签。前端优先使用 tab_new 多开页签。
 #[tauri::command]
-pub async fn open_browser(webview: tauri::Webview, app: AppHandle, url: String) -> Result<(), String> {
+pub async fn open_browser(
+    webview: tauri::Webview,
+    app: AppHandle,
+    url: String,
+) -> Result<(), String> {
     crate::shared::native_legacy_policy::require_main(&webview, "open_browser")?;
     crate::shared::native_legacy_policy::bound_text("open_browser", "url", &url)?;
 
     // Compatibility alias uses the same Browser Owner and receipt path.
-    super::tab_mutation::legacy_action::<TabInfo>(webview,app,
-        super::tab_mutation::Action::New{url}).await.map(|_|())
+    super::tab_mutation::legacy_action::<TabInfo>(
+        webview,
+        app,
+        super::tab_mutation::Action::New { url },
+    )
+    .await
+    .map(|_| ())
 }
 
 /// 关闭内嵌浏览器（默认关闭当前激活页签）。
@@ -76,8 +85,12 @@ pub async fn close_browser(webview: tauri::Webview, app: AppHandle) -> Result<()
         active.clone()
     };
     if let Some(id) = active_id {
-        return super::tab_mutation::legacy_action::<()>(webview,app,
-            super::tab_mutation::Action::Close{id}).await;
+        return super::tab_mutation::legacy_action::<()>(
+            webview,
+            app,
+            super::tab_mutation::Action::Close { id },
+        )
+        .await;
     }
     Ok(())
 }
@@ -110,7 +123,8 @@ pub async fn position_browser(
         let admitted = super::isolated_tabs::capture_layout(&app, &id)?;
         return super::isolated_tabs::on_worker(move || {
             super::isolated_tabs::position_admitted(&app, &id, (x, y, width, height), admitted)
-        }).await;
+        })
+        .await;
     }
     if let Err(e) = apply_bounds(&app, &id, x, y, width, height) {
         recover_tab_webview(&app, &id, "position", &e)?;
@@ -231,25 +245,40 @@ pub(crate) fn apply_bounds_inner(
 /// 宫格显示时移出激活页签、页签切换时移出非激活页签都走这里，
 /// 避免 tab_position/apply_bounds 的 50ms 去重把"移出屏幕"请求丢弃。
 #[tauri::command]
-pub async fn hide_webview(webview: tauri::Webview, app: AppHandle, id: String) -> Result<(), String> {
+pub async fn hide_webview(
+    webview: tauri::Webview,
+    app: AppHandle,
+    id: String,
+) -> Result<(), String> {
     crate::shared::native_legacy_policy::require_main(&webview, "hide_webview")?;
     crate::shared::native_legacy_policy::bound_text("hide_webview", "id", &id)?;
     if super::isolated_tabs::route(&id).is_some() {
         let admitted = super::isolated_tabs::capture_layout(&app, &id)?;
-        return super::isolated_tabs::on_worker(move || super::isolated_tabs::hide_admitted(&app, &id, admitted)).await;
+        return super::isolated_tabs::on_worker(move || {
+            super::isolated_tabs::hide_admitted(&app, &id, admitted)
+        })
+        .await;
     }
 
     // 宫格已迁子进程：隐藏 = 子进程整个窗口 hide（等价旧方案的移出屏幕）
     if let Some(index) = grid_index_of(&id) {
-        let stamp = app.state::<AppState>().grid_manager.grid_route_stamps(&[index])?
-            .into_iter().next().ok_or("GRID_INDEX_INVALID")?;
+        let stamp = app
+            .state::<AppState>()
+            .grid_manager
+            .grid_route_stamps(&[index])?
+            .into_iter()
+            .next()
+            .ok_or("GRID_INDEX_INVALID")?;
         return super::isolated_tabs::on_worker(move || {
             app.state::<AppState>().grid_manager.hide_grid_route(stamp)
-        }).await;
+        })
+        .await;
     }
-    let state=app.state::<AppState>();
-    if state.hibernated_tabs.lock().unwrap().contains(&id) {return Ok(());}
-    hide_bounds(&app,&id)
+    let state = app.state::<AppState>();
+    if state.hibernated_tabs.lock().unwrap().contains(&id) {
+        return Ok(());
+    }
+    hide_bounds(&app, &id)
 }
 
 #[tauri::command]
@@ -261,27 +290,43 @@ pub async fn hide_all_webviews(webview: tauri::Webview, app: AppHandle) -> Resul
     hide_all_webviews_sync(webview, app)
 }
 
-pub(crate) fn hide_all_webviews_sync(webview: tauri::Webview, app: AppHandle) -> Result<(), String> {
+pub(crate) fn hide_all_webviews_sync(
+    webview: tauri::Webview,
+    app: AppHandle,
+) -> Result<(), String> {
     crate::shared::native_legacy_policy::require_main(&webview, "hide_all_webviews")?;
     use tauri_plugin_browser_tabs::TabManagerState;
-    let manager=app.state::<TabManagerState>();
-    let state=app.state::<AppState>();
-    let mut failures=Vec::new();
-    if cfg!(any(target_os="linux",target_os="windows")) {
-        let result=if super::isolated_tabs::mode_enabled(){
+    let manager = app.state::<TabManagerState>();
+    let state = app.state::<AppState>();
+    let mut failures = Vec::new();
+    if cfg!(any(target_os = "linux", target_os = "windows")) {
+        let result = if super::isolated_tabs::mode_enabled() {
             super::isolated_tabs::hide_all(&app)
-        }else{state.grid_manager.hide_grid_renderers()};
-        if let Err(error)=result{failures.push(error);}
+        } else {
+            state.grid_manager.hide_grid_renderers()
+        };
+        if let Err(error) = result {
+            failures.push(error);
+        }
     }
     // Include all existing ordinary plugin tabs, even if creation has
     // published native state but not yet published logical metadata.
-    let mut ids:Vec<_>=manager.get_tab_ids().into_iter().filter(|id|super::is_tab_label(id)).collect();
+    let mut ids: Vec<_> = manager
+        .get_tab_ids()
+        .into_iter()
+        .filter(|id| super::is_tab_label(id))
+        .collect();
     ids.sort();
     for id in ids {
-        if let Err(error)=hide_bounds(&app,&id){failures.push(error);}
+        if let Err(error) = hide_bounds(&app, &id) {
+            failures.push(error);
+        }
     }
-    if failures.is_empty(){Ok(())}
-    else {Err(format!("TAB_HIDE_ALL_PARTIAL:{}",failures.join("; ")))} 
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("TAB_HIDE_ALL_PARTIAL:{}", failures.join("; ")))
+    }
 }
 
 /// 布局守护线程：每 400ms 按 child_layouts 重放所有子 webview 的目标矩形。

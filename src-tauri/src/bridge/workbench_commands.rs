@@ -87,8 +87,11 @@ pub async fn grid_read_replies(
             return Err("GRID_REPLY_SNAPSHOT_INVALID".into());
         }
         let state = app.state::<AppState>();
-        let observe = || (0..count).map(|i| state.grid_manager.grid_eval_binding(i).ok())
-            .collect::<Vec<_>>();
+        let observe = || {
+            (0..count)
+                .map(|i| state.grid_manager.grid_eval_binding(i).ok())
+                .collect::<Vec<_>>()
+        };
         let sources = observe();
         if sources != observe() {
             return Err("GRID_REPLY_SNAPSHOT_STALE".into());
@@ -100,17 +103,28 @@ pub async fn grid_read_replies(
     let permit = GRID_REPLY_WORKERS.reserve()?;
     // Compare the batch's original native source before worker admission.
     // Existing direct read callers without a batch keep their original path.
-    let binding = app.state::<AppState>().grid_manager.grid_eval_binding(index)?;
-    if expected_source.as_ref().is_some_and(|source| *source != grid_reply_source(binding)) {
+    let binding = app
+        .state::<AppState>()
+        .grid_manager
+        .grid_eval_binding(index)?;
+    if expected_source
+        .as_ref()
+        .is_some_and(|source| *source != grid_reply_source(binding))
+    {
         return Err("GRID_READ_TARGET_STALE".into());
     }
-    permit.run(move || {
-        let text = app.state::<AppState>().grid_manager.grid_read_replies_bound(binding)?;
-        if text.len() > crate::workbench::MAX_NOTE_BYTES as usize {
-            return Err("GRID_RESULT_LIMIT".into());
-        }
-        serde_json::from_str(&text).map_err(|_| "GRID_RESULT_INVALID".into())
-    }).await
+    permit
+        .run(move || {
+            let text = app
+                .state::<AppState>()
+                .grid_manager
+                .grid_read_replies_bound(binding)?;
+            if text.len() > crate::workbench::MAX_NOTE_BYTES as usize {
+                return Err("GRID_RESULT_LIMIT".into());
+            }
+            serde_json::from_str(&text).map_err(|_| "GRID_RESULT_INVALID".into())
+        })
+        .await
 }
 
 #[tauri::command]
@@ -127,9 +141,9 @@ pub async fn archive_replies(
         &crate::workspace::allowed_roots(&app),
     )
     .map_err(|_| "ARCHIVE_PATH_DENIED")?;
-    let result = GRID_ARCHIVE_WORKERS.run(move ||
-        crate::workbench::save_archives(&root, items, &tags)
-    ).await?;
+    let result = GRID_ARCHIVE_WORKERS
+        .run(move || crate::workbench::save_archives(&root, items, &tags))
+        .await?;
     workspace::log_audit(
         &app,
         "archive.save",

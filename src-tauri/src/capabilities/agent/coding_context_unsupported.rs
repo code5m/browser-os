@@ -20,9 +20,14 @@ pub fn execute(_root: &Path, _storage: &Path, request: Value) -> Result<Value, S
 }
 
 pub(crate) fn execute_read_context(
-    _root: &Path, _request: &Value, _cancelled: &dyn Fn() -> bool,
+    _root: &Path,
+    _request: &Value,
+    _cancelled: &dyn Fn() -> bool,
 ) -> Result<Value, String> {
-    Err(format!("CONTEXT_PLATFORM_UNSUPPORTED:{}", std::env::consts::OS))
+    Err(format!(
+        "CONTEXT_PLATFORM_UNSUPPORTED:{}",
+        std::env::consts::OS
+    ))
 }
 
 pub(crate) fn execute_cancelable(
@@ -43,7 +48,12 @@ pub(super) fn execute_cancelable_with_admission(
     before_spawn: impl FnOnce(&Value) -> Result<(), String>,
 ) -> Result<Value, String> {
     execute_cancelable_with_effect_admission(
-        root, storage, request, cancellation, None, |request, _| before_spawn(request),
+        root,
+        storage,
+        request,
+        cancellation,
+        None,
+        |request, _| before_spawn(request),
     )
 }
 

@@ -19,8 +19,12 @@ use std::{
 const LIMIT: u64 = 128 * 1024;
 fn read(path: &Path, allowed: &Path) -> Result<String, String> {
     let snapshot = crate::capabilities::workspace::safe_paths::read_versioned(
-        path, &[allowed.to_path_buf()], LIMIT as usize,
-    ).map_err(|_| "CONTEXT_READ_DENIED")?.ok_or("CONTEXT_READ_FAILED")?;
+        path,
+        &[allowed.to_path_buf()],
+        LIMIT as usize,
+    )
+    .map_err(|_| "CONTEXT_READ_DENIED")?
+    .ok_or("CONTEXT_READ_FAILED")?;
     String::from_utf8(snapshot.bytes).map_err(|_| "CONTEXT_NOT_TEXT".into())
 }
 use super::mcp_protocol::{self, safe_text, scrub, sensitive, RpcFrame};
@@ -43,7 +47,11 @@ fn roots(root: &Path) -> Vec<PathBuf> {
         .collect()
 }
 fn context_check(cancelled: &dyn Fn() -> bool) -> Result<(), String> {
-    if cancelled() { Err("AGENT_CANCELLED".into()) } else { Ok(()) }
+    if cancelled() {
+        Err("AGENT_CANCELLED".into())
+    } else {
+        Ok(())
+    }
 }
 
 fn scan(
@@ -433,7 +441,8 @@ impl Session {
                             let value = match mcp_protocol::decode_line(&bytes, LIMIT as usize) {
                                 Ok(value) => value,
                                 Err(error) => {
-                                    *on_read_failure.lock().unwrap_or_else(|p| p.into_inner()) = Some(error);
+                                    *on_read_failure.lock().unwrap_or_else(|p| p.into_inner()) =
+                                        Some(error);
                                     break;
                                 }
                             };
@@ -474,7 +483,10 @@ impl Session {
         self.send_until(value, self.deadline, true)
     }
     fn send_until(
-        &mut self, value: Value, deadline: Instant, observe_cancellation: bool,
+        &mut self,
+        value: Value,
+        deadline: Instant,
+        observe_cancellation: bool,
     ) -> Result<(), String> {
         if observe_cancellation && self.cancellation.load(Ordering::Acquire) {
             return Err("MCP_CANCEL_REQUESTED".into());
@@ -508,40 +520,64 @@ impl Session {
             if fd.revents & (libc::POLLERR | libc::POLLHUP | libc::POLLNVAL) != 0 {
                 return Err("MCP_PIPE_FAILED".into());
             }
-            if fd.revents & libc::POLLOUT == 0 { continue; }
+            if fd.revents & libc::POLLOUT == 0 {
+                continue;
+            }
             // poll may wake after cancellation/deadline. Do not begin
             // another fragment of the original frame on that readiness.
             if observe_cancellation && self.cancellation.load(Ordering::Acquire) {
                 return Err("MCP_CANCEL_REQUESTED".into());
             }
-            if Instant::now() >= deadline { return Err("MCP_WRITE_TIMEOUT".into()); }
+            if Instant::now() >= deadline {
+                return Err("MCP_WRITE_TIMEOUT".into());
+            }
             match self.input.write(&bytes[offset..]) {
                 Ok(0) => return Err("MCP_WRITE_FAILED".into()),
                 Ok(n) => offset += n,
-                Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted) => continue,
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
+                    ) =>
+                {
+                    continue
+                }
                 Err(_) => return Err("MCP_WRITE_FAILED".into()),
             }
         }
         if observe_cancellation && self.cancellation.load(Ordering::Acquire) {
             return Err("MCP_CANCEL_REQUESTED".into());
         }
-        if Instant::now() >= deadline { return Err("MCP_WRITE_TIMEOUT".into()); }
+        if Instant::now() >= deadline {
+            return Err("MCP_WRITE_TIMEOUT".into());
+        }
         Ok(())
     }
     fn notify_cancelled(&mut self, id: u64, method: &str) {
         if let Some(notification) = mcp_protocol::cancellation_notification(id, method) {
             // Separate short cleanup budget; no retries or provider outcome claim.
-            let _ = self.send_until(notification, Instant::now() + Duration::from_millis(200), false);
+            let _ = self.send_until(
+                notification,
+                Instant::now() + Duration::from_millis(200),
+                false,
+            );
         }
     }
     fn reader_error(&self) -> Option<String> {
-        self.reader_fault.lock().unwrap_or_else(|p| p.into_inner()).clone()
+        self.reader_fault
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
     }
     fn rpc(&mut self, id: u64, method: &str, params: Value) -> Result<Value, String> {
-        if let Some(error) = self.reader_error() { return Err(error); }
+        if let Some(error) = self.reader_error() {
+            return Err(error);
+        }
         self.send(json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}))?;
         loop {
-            if let Some(error) = self.reader_error() { return Err(error); }
+            if let Some(error) = self.reader_error() {
+                return Err(error);
+            }
             if self.cancellation.load(Ordering::Acquire) {
                 self.notify_cancelled(id, method);
                 return Err("MCP_CANCEL_REQUESTED".into());
@@ -558,15 +594,21 @@ impl Session {
                 Ok(value) => value?,
                 Err(mpsc::RecvTimeoutError::Timeout) => continue,
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    return Err(self.reader_error().unwrap_or_else(|| "MCP_TIMEOUT_OR_CLOSED".into()))
+                    return Err(self
+                        .reader_error()
+                        .unwrap_or_else(|| "MCP_TIMEOUT_OR_CLOSED".into()))
                 }
             };
             // A full queue or invalid frame ends the transport. A reply
             // buffered before that fault must not silently hide the loss.
-            if let Some(error) = self.reader_error() { return Err(error); }
+            if let Some(error) = self.reader_error() {
+                return Err(error);
+            }
             match mcp_protocol::classify_frame(value, id)? {
                 RpcFrame::Reply(result) => {
-                    if let Some(error) = self.reader_error() { return Err(error); }
+                    if let Some(error) = self.reader_error() {
+                        return Err(error);
+                    }
                     // A reply queued before the deadline is not a grant
                     // to accept it after cancellation or expiry.
                     if self.cancellation.load(Ordering::Acquire) {
@@ -578,7 +620,7 @@ impl Session {
                         return Err("MCP_TIMEOUT_OR_CLOSED".into());
                     }
                     return Ok(result);
-                },
+                }
                 RpcFrame::ServerRequest(reply) => self.send(reply)?,
                 RpcFrame::Ignore => {}
             }
@@ -609,14 +651,21 @@ pub(super) fn execute_cancelable_with_admission(
     before_spawn: impl FnOnce(&Value) -> Result<(), String>,
 ) -> Result<Value, String> {
     execute_cancelable_with_effect_admission(
-        root, storage, request, cancellation, None, |request, _| before_spawn(request),
+        root,
+        storage,
+        request,
+        cancellation,
+        None,
+        |request, _| before_spawn(request),
     )
 }
 
 /// The model loop supplies the live Task/session cancellation check. The
 /// request facade can use its registered run signal. No new effect admission.
 pub(crate) fn execute_read_context(
-    root: &Path, request: &Value, cancelled: &dyn Fn() -> bool,
+    root: &Path,
+    request: &Value,
+    cancelled: &dyn Fn() -> bool,
 ) -> Result<Value, String> {
     context_check(cancelled)?;
     let root = root.canonicalize().map_err(|_| "CONTEXT_ROOT_INVALID")?;
@@ -626,15 +675,25 @@ pub(crate) fn execute_read_context(
             let mut listed = Vec::new();
             for path in skills(&allowed, cancelled)?.into_iter().take(256) {
                 context_check(cancelled)?;
-                let Some(base) = allowed.iter().find(|base| path.starts_with(base)) else { continue; };
+                let Some(base) = allowed.iter().find(|base| path.starts_with(base)) else {
+                    continue;
+                };
                 let result = read(&path, base);
                 context_check(cancelled)?;
-                let Ok(text) = result else { continue; };
-                let description = safe_text(&text).lines()
-                    .find(|line| line.starts_with("description:")).unwrap_or("")
-                    .chars().take(240).collect::<String>();
-                listed.push(json!({"path":path,"name":path.parent().and_then(Path::file_name)
-                    .map(|name| name.to_string_lossy()),"description":description}));
+                let Ok(text) = result else {
+                    continue;
+                };
+                let description = safe_text(&text)
+                    .lines()
+                    .find(|line| line.starts_with("description:"))
+                    .unwrap_or("")
+                    .chars()
+                    .take(240)
+                    .collect::<String>();
+                listed.push(
+                    json!({"path":path,"name":path.parent().and_then(Path::file_name)
+                    .map(|name| name.to_string_lossy()),"description":description}),
+                );
             }
             Ok(json!({"skills":listed}))
         }
@@ -644,7 +703,9 @@ pub(crate) fn execute_read_context(
             if !skills(&allowed, cancelled)?.contains(&path) {
                 return Err("SKILL_OUTSIDE_ALLOWED_ROOTS".into());
             }
-            let base = allowed.iter().find(|base| path.starts_with(base))
+            let base = allowed
+                .iter()
+                .find(|base| path.starts_with(base))
                 .ok_or("SKILL_OUTSIDE_ALLOWED_ROOTS")?;
             context_check(cancelled)?;
             let text = safe_text(&read(&path, base)?);
@@ -669,7 +730,9 @@ pub(crate) fn execute_read_context(
                 context_check(cancelled)?;
                 if let Ok(text) = result {
                     for (line, s) in text.lines().enumerate() {
-                        if line % 64 == 0 { context_check(cancelled)?; }
+                        if line % 64 == 0 {
+                            context_check(cancelled)?;
+                        }
                         if !sensitive(s) && s.to_lowercase().contains(&query) {
                             hits.push(json!({"path":p,"line":line+1,"text":s.chars().take(400).collect::<String>()}));
                             if hits.len() == 40 {
@@ -698,8 +761,13 @@ pub(super) fn execute_cancelable_with_effect_admission(
     run: Option<uuid::Uuid>,
     before_spawn: impl FnOnce(&Value, Option<&super::mcp_authority::Binding>) -> Result<(), String>,
 ) -> Result<Value, String> {
-    if matches!(request["action"].as_str(), Some("skills_list" | "skill_read" | "knowledge_search")) {
-        return execute_read_context(root, &request, &|| cancellation.load(std::sync::atomic::Ordering::Acquire));
+    if matches!(
+        request["action"].as_str(),
+        Some("skills_list" | "skill_read" | "knowledge_search")
+    ) {
+        return execute_read_context(root, &request, &|| {
+            cancellation.load(std::sync::atomic::Ordering::Acquire)
+        });
     }
     let root = root.canonicalize().map_err(|_| "CONTEXT_ROOT_INVALID")?;
     match request["action"].as_str().unwrap_or("") {

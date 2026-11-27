@@ -59,7 +59,11 @@ impl LockFile {
             libc::openat(
                 parent.as_raw_fd(),
                 name.as_ptr(),
-                libc::O_RDWR | libc::O_CREAT | libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK,
+                libc::O_RDWR
+                    | libc::O_CREAT
+                    | libc::O_NOFOLLOW
+                    | libc::O_CLOEXEC
+                    | libc::O_NONBLOCK,
                 0o600 as libc::mode_t,
             )
         };
@@ -68,11 +72,7 @@ impl LockFile {
         }
         let file = unsafe { File::from_raw_fd(fd) };
         let meta = file.metadata()?;
-        if !meta.is_file()
-            || meta.uid() != owner
-            || meta.nlink() != 1
-            || meta.mode() & 0o077 != 0
-        {
+        if !meta.is_file() || meta.uid() != owner || meta.nlink() != 1 || meta.mode() & 0o077 != 0 {
             return Err(denied("BROWSER_PROFILE_OWNER_LOCK_DENIED"));
         }
         Ok(Self {
@@ -292,26 +292,34 @@ pub(crate) fn prepare(data_dir: &Path, profile: &Path, grid: bool) -> io::Result
         std::env::remove_var(GRID_EPOCH_ENV);
         ProfileLease::main(&directory)?
     };
-    HOST_PROFILE.set(lease)
+    HOST_PROFILE
+        .set(lease)
         .map_err(|_| denied("BROWSER_PROFILE_ALREADY_ADMITTED"))?;
     Ok(())
 }
 
 pub(crate) fn bind_prepared(data_dir: &Path, profile: &Path) -> io::Result<()> {
-    let lease = HOST_PROFILE.get()
+    let lease = HOST_PROFILE
+        .get()
         .ok_or_else(|| denied("BROWSER_PROFILE_OWNER_NOT_ADMITTED"))?;
     lease.bind_or_verify_profile(&data_dir.join(DIRECTORY), profile)?;
-    HOST_PROFILE_BOUND.set(())
+    HOST_PROFILE_BOUND
+        .set(())
         .map_err(|_| denied("BROWSER_PROFILE_ALREADY_BOUND"))?;
     eprintln!(
         "BROWSER_PROFILE_HOST_READY role={}",
-        if lease.leader.is_some() { "main" } else { "grid" }
+        if lease.leader.is_some() {
+            "main"
+        } else {
+            "grid"
+        }
     );
     Ok(())
 }
 
 pub(crate) fn grid_epoch() -> Result<String, String> {
-    HOST_PROFILE.get()
+    HOST_PROFILE
+        .get()
         .filter(|lease| lease.leader.is_some() && HOST_PROFILE_BOUND.get().is_some())
         .map(|lease| lease.epoch.to_string())
         .ok_or_else(|| "BROWSER_PROFILE_LEADER_REQUIRED".into())
@@ -333,19 +341,26 @@ mod tests {
 
     #[test]
     fn profile_member_child_fixture() {
-        let Some(root) = std::env::var_os(CHILD_ROOT) else { return };
+        let Some(root) = std::env::var_os(CHILD_ROOT) else {
+            return;
+        };
         let root = std::path::PathBuf::from(root);
         let epoch = parse_epoch(&std::env::var(CHILD_EPOCH).unwrap()).unwrap();
         let result = ProfileLease::grid(&root, epoch);
         if std::env::var_os(CHILD_EXPECT_STALE).is_some() {
             assert_eq!(
-                result.err().expect("stale membership must fail").to_string(),
+                result
+                    .err()
+                    .expect("stale membership must fail")
+                    .to_string(),
                 "BROWSER_PROFILE_STALE_EPOCH"
             );
             return;
         }
         let lease = result.unwrap();
-        lease.bind_or_verify_profile(&root, &root.join("native-profile")).unwrap();
+        lease
+            .bind_or_verify_profile(&root, &root.join("native-profile"))
+            .unwrap();
         std::fs::write(root.join("fixture-ready"), b"ready").unwrap();
         // Parent controls the lifetime; EOF ends the fixture.
         let mut byte = [0u8; 1];
@@ -369,20 +384,32 @@ mod tests {
         crate::capabilities::workspace::safe_paths::ensure_private_directory(&profile).unwrap();
         old.bind_or_verify_profile(&root, &profile).unwrap();
         let epoch = old.epoch;
-        let mut child = Child(Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", "browser_profile_owner::tests::profile_member_child_fixture", "--nocapture"])
-            .env(CHILD_ROOT, &root)
-            .env(CHILD_EPOCH, epoch.to_string())
-            .stdin(Stdio::piped())
-            .spawn().unwrap());
+        let mut child = Child(
+            Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "browser_profile_owner::tests::profile_member_child_fixture",
+                    "--nocapture",
+                ])
+                .env(CHILD_ROOT, &root)
+                .env(CHILD_EPOCH, epoch.to_string())
+                .stdin(Stdio::piped())
+                .spawn()
+                .unwrap(),
+        );
         let deadline = Instant::now() + Duration::from_secs(5);
         while !root.join("fixture-ready").exists() {
             assert!(child.0.try_wait().unwrap().is_none());
-            assert!(Instant::now() < deadline, "fixture did not acquire membership");
+            assert!(
+                Instant::now() < deadline,
+                "fixture did not acquire membership"
+            );
             std::thread::sleep(Duration::from_millis(20));
         }
         drop(old);
-        let error = ProfileLease::main(&root).err().expect("old Grid must fence a new epoch");
+        let error = ProfileLease::main(&root)
+            .err()
+            .expect("old Grid must fence a new epoch");
         assert_eq!(error.to_string(), "BROWSER_PROFILE_PREVIOUS_HOSTS_ACTIVE");
         // Parent retirement makes further joins fail even with the old epoch.
         assert!(ProfileLease::grid(&root, epoch).is_err());
@@ -399,13 +426,20 @@ mod tests {
         let next = ProfileLease::main(&root).unwrap();
         assert_ne!(next.epoch, epoch);
         next.bind_or_verify_profile(&root, &profile).unwrap();
-        let mut stale = Child(Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", "browser_profile_owner::tests::profile_member_child_fixture", "--nocapture"])
-            .env(CHILD_ROOT, &root)
-            .env(CHILD_EPOCH, epoch.to_string())
-            .env(CHILD_EXPECT_STALE, "1")
-            .stdin(Stdio::null())
-            .spawn().unwrap());
+        let mut stale = Child(
+            Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "browser_profile_owner::tests::profile_member_child_fixture",
+                    "--nocapture",
+                ])
+                .env(CHILD_ROOT, &root)
+                .env(CHILD_EPOCH, epoch.to_string())
+                .env(CHILD_EXPECT_STALE, "1")
+                .stdin(Stdio::null())
+                .spawn()
+                .unwrap(),
+        );
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             if let Some(status) = stale.0.try_wait().unwrap() {
@@ -430,7 +464,9 @@ mod tests {
         std::fs::rename(&profile, &moved).unwrap();
         crate::capabilities::workspace::safe_paths::ensure_private_directory(&profile).unwrap();
         assert_eq!(
-            old.bind_or_verify_profile(&root, &profile).unwrap_err().to_string(),
+            old.bind_or_verify_profile(&root, &profile)
+                .unwrap_err()
+                .to_string(),
             "BROWSER_PROFILE_ROOT_IDENTITY_CHANGED"
         );
         old.bind_or_verify_profile(&root, &moved).unwrap();

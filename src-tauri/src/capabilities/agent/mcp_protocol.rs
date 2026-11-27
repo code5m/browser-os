@@ -25,9 +25,15 @@ pub(super) fn encode_bounded(value: &Value, limit: usize) -> Result<Vec<u8>, Str
             self.bytes.extend_from_slice(bytes);
             Ok(bytes.len())
         }
-        fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
     }
-    let mut sink = Capped { bytes: Vec::new(), limit, overflow: false };
+    let mut sink = Capped {
+        bytes: Vec::new(),
+        limit,
+        overflow: false,
+    };
     match serde_json::to_writer(&mut sink, value) {
         Ok(()) => Ok(sink.bytes),
         Err(_) if sink.overflow => Err("MCP_REQUEST_LIMIT".into()),
@@ -38,7 +44,9 @@ pub(super) fn encode_bounded(value: &Value, limit: usize) -> Result<Vec<u8>, Str
 /// Share shape and size admission between review and actual dispatch.
 /// A full JSON-RPC frame has its own additional envelope budget.
 pub(super) fn checked_arguments(request: &Value) -> Result<Value, String> {
-    let Some(arguments) = request.get("arguments") else { return Ok(json!({})); };
+    let Some(arguments) = request.get("arguments") else {
+        return Ok(json!({}));
+    };
     if !arguments.is_object() {
         return Err("MCP_ARGUMENTS_INVALID".into());
     }
@@ -98,7 +106,10 @@ pub(super) fn owned_tool_request(
     // Reject the final call envelope before the caller publishes a durable
     // external execution intent or starts the executable. ID 2 is the same
     // ID used by both native sessions after initialize.
-    encode_bounded(&json!({"jsonrpc":"2.0","id":2,"method":method,"params":&params}), FRAME_LIMIT)?;
+    encode_bounded(
+        &json!({"jsonrpc":"2.0","id":2,"method":method,"params":&params}),
+        FRAME_LIMIT,
+    )?;
     Ok((method, params))
 }
 
@@ -163,9 +174,12 @@ pub(super) fn classify_frame(mut value: Value, pending: u64) -> Result<RpcFrame,
     let has_result = object.contains_key("result");
     let has_error = object.contains_key("error");
     match (has_result, has_error) {
-        (true, false) => Ok(RpcFrame::Reply(value.as_object_mut()
-            .and_then(|fields| fields.remove("result"))
-            .ok_or("MCP_RESULT_MISSING")?)),
+        (true, false) => Ok(RpcFrame::Reply(
+            value
+                .as_object_mut()
+                .and_then(|fields| fields.remove("result"))
+                .ok_or("MCP_RESULT_MISSING")?,
+        )),
         (false, true) if value["error"].is_object() => Err("MCP_REMOTE_ERROR".into()),
         (false, false) => Err("MCP_RESULT_MISSING".into()),
         _ => Err("MCP_PROTOCOL_FRAME_INVALID".into()),

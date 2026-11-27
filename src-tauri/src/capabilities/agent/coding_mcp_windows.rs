@@ -31,8 +31,12 @@ fn read_config(path: &Path, allowed: &Path) -> Result<String, String> {
     super::windows_sandbox::no_reparse_path(allowed).map_err(|_| "MCP_CONFIG_REPARSE_DENIED")?;
     super::windows_sandbox::no_reparse_path(path).map_err(|_| "MCP_CONFIG_REPARSE_DENIED")?;
     let snapshot = crate::capabilities::workspace::safe_paths::read_versioned(
-        path, &[allowed.to_path_buf()], CONFIG_LIMIT,
-    ).map_err(|_| "MCP_CONFIG_READ_DENIED")?.ok_or("MCP_CONFIG_NOT_FOUND")?;
+        path,
+        &[allowed.to_path_buf()],
+        CONFIG_LIMIT,
+    )
+    .map_err(|_| "MCP_CONFIG_READ_DENIED")?
+    .ok_or("MCP_CONFIG_NOT_FOUND")?;
     String::from_utf8(snapshot.bytes).map_err(|_| "MCP_CONFIG_NOT_TEXT".into())
 }
 fn sources(root: &Path, storage: &Path) -> Vec<(PathBuf, PathBuf)> {
@@ -175,18 +179,29 @@ impl Session {
         // leave recv(), and a full output queue must not strand the reader.
         drop(self.writer.take());
         drop(self.reader.take());
-        self.process.terminate().map_err(|_| "MCP_TERMINATION_UNKNOWN")?;
+        self.process
+            .terminate()
+            .map_err(|_| "MCP_TERMINATION_UNKNOWN")?;
         let deadline = Instant::now() + Duration::from_secs(2);
         while !self.process.cleanup_complete()
-            || self.writer_thread.as_ref().is_some_and(|worker| !worker.is_finished())
-            || self.reader_thread.as_ref().is_some_and(|worker| !worker.is_finished())
+            || self
+                .writer_thread
+                .as_ref()
+                .is_some_and(|worker| !worker.is_finished())
+            || self
+                .reader_thread
+                .as_ref()
+                .is_some_and(|worker| !worker.is_finished())
         {
             if Instant::now() >= deadline {
                 return Err("MCP_TERMINATION_UNKNOWN".into());
             }
             thread::sleep(Duration::from_millis(20));
         }
-        for worker in [self.writer_thread.take(), self.reader_thread.take()].into_iter().flatten() {
+        for worker in [self.writer_thread.take(), self.reader_thread.take()]
+            .into_iter()
+            .flatten()
+        {
             worker.join().map_err(|_| "MCP_TERMINATION_UNKNOWN")?;
         }
         Ok(())
@@ -384,7 +399,8 @@ impl Session {
                         Ok(_) => match mcp_protocol::decode_line(&bytes, LIMIT as usize) {
                             Ok(value) => value,
                             Err(error) => {
-                                *on_read_failure.lock().unwrap_or_else(|p| p.into_inner()) = Some(error);
+                                *on_read_failure.lock().unwrap_or_else(|p| p.into_inner()) =
+                                    Some(error);
                                 break;
                             }
                         },
@@ -422,7 +438,10 @@ impl Session {
         self.send_until(value, self.deadline, true)
     }
     fn send_until(
-        &mut self, value: Value, deadline: Instant, observe_cancellation: bool,
+        &mut self,
+        value: Value,
+        deadline: Instant,
+        observe_cancellation: bool,
     ) -> Result<(), String> {
         if observe_cancellation && self.cancellation.load(Ordering::Acquire) {
             return Err("MCP_CANCEL_REQUESTED".into());
@@ -443,8 +462,15 @@ impl Session {
             if observe_cancellation && self.cancellation.load(Ordering::Acquire) {
                 return Err("MCP_CANCEL_REQUESTED".into());
             }
-            if Instant::now() >= deadline { return Err("MCP_WRITE_TIMEOUT".into()); }
-            match self.writer.as_ref().ok_or("MCP_WRITE_FAILED")?.try_send(queued) {
+            if Instant::now() >= deadline {
+                return Err("MCP_WRITE_TIMEOUT".into());
+            }
+            match self
+                .writer
+                .as_ref()
+                .ok_or("MCP_WRITE_FAILED")?
+                .try_send(queued)
+            {
                 Ok(()) => break,
                 Err(mpsc::TrySendError::Disconnected(_)) => {
                     return Err("MCP_WRITE_FAILED".into());
@@ -470,25 +496,36 @@ impl Session {
             if remaining.is_zero() {
                 break Err("MCP_WRITE_TIMEOUT".into());
             }
-            match self.write_result.recv_timeout(remaining.min(Duration::from_millis(100))) {
+            match self
+                .write_result
+                .recv_timeout(remaining.min(Duration::from_millis(100)))
+            {
                 Ok(result) => {
                     if observe_cancellation && self.cancellation.load(Ordering::Acquire) {
                         break Err("MCP_CANCEL_REQUESTED".into());
                     }
-                    if Instant::now() >= deadline { break Err("MCP_WRITE_TIMEOUT".into()); }
+                    if Instant::now() >= deadline {
+                        break Err("MCP_WRITE_TIMEOUT".into());
+                    }
                     break result;
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => continue,
                 Err(mpsc::RecvTimeoutError::Disconnected) => break Err("MCP_WRITE_FAILED".into()),
             }
         };
-        if outcome.is_err() { drop(self.writer.take()); }
+        if outcome.is_err() {
+            drop(self.writer.take());
+        }
         outcome
     }
     fn notify_cancelled(&mut self, id: u64, method: &str) {
         if let Some(notification) = mcp_protocol::cancellation_notification(id, method) {
             // Separate short cleanup budget; no retries or provider outcome claim.
-            let _ = self.send_until(notification, Instant::now() + Duration::from_millis(200), false);
+            let _ = self.send_until(
+                notification,
+                Instant::now() + Duration::from_millis(200),
+                false,
+            );
         }
     }
     fn recv_frame(&self) -> Result<Value, String> {
@@ -511,7 +548,8 @@ impl Session {
             }
             match self
                 .reader
-                .as_ref().ok_or("MCP_CLOSED")?
+                .as_ref()
+                .ok_or("MCP_CLOSED")?
                 .recv_timeout(remaining.min(Duration::from_millis(100)))
             {
                 Ok(value) => {
@@ -532,7 +570,12 @@ impl Session {
         }
     }
     fn rpc(&mut self, id: u64, method: &str, params: Value) -> Result<Value, String> {
-        if let Some(error) = self.reader_fault.lock().unwrap_or_else(|p| p.into_inner()).clone() {
+        if let Some(error) = self
+            .reader_fault
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+        {
             return Err(error);
         }
         self.send(json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}))?;
@@ -550,7 +593,12 @@ impl Session {
             };
             match mcp_protocol::classify_frame(value, id)? {
                 RpcFrame::Reply(result) => {
-                    if let Some(error) = self.reader_fault.lock().unwrap_or_else(|p| p.into_inner()).clone() {
+                    if let Some(error) = self
+                        .reader_fault
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .clone()
+                    {
                         return Err(error);
                     }
                     // A reply queued before the deadline is not a grant
@@ -564,7 +612,7 @@ impl Session {
                         return Err("MCP_TIMEOUT_OR_CLOSED".into());
                     }
                     return Ok(result);
-                },
+                }
                 RpcFrame::ServerRequest(reply) => self.send(reply)?,
                 RpcFrame::Ignore => {}
             }
@@ -595,7 +643,12 @@ pub(super) fn execute_cancelable_with_admission(
     before_spawn: impl FnOnce(&Value) -> Result<(), String>,
 ) -> Result<Value, String> {
     execute_cancelable_with_effect_admission(
-        root, storage, request, cancellation, None, |request, _| before_spawn(request),
+        root,
+        storage,
+        request,
+        cancellation,
+        None,
+        |request, _| before_spawn(request),
     )
 }
 

@@ -489,15 +489,21 @@ fn close_tab(app: &AppHandle, id: &str) -> Result<(), String> {
     close_tab_admitted(app, id, None)
 }
 
-fn close_tab_admitted(app: &AppHandle, id: &str, admitted: Option<TabCloseAdmission<'_>>) -> Result<(), String> {
+fn close_tab_admitted(
+    app: &AppHandle,
+    id: &str,
+    admitted: Option<TabCloseAdmission<'_>>,
+) -> Result<(), String> {
     let _transition = tab_runtime::reserve_tab_transition(id)?;
     let state = app.state::<AppState>();
     let close_result = if let Some(index) = isolated_tabs::route(id) {
         match admitted {
-            Some(TabCloseAdmission::Isolated(expected)) =>
-                state.grid_manager.close_tab_renderer_bound(index, true, expected),
-            Some(TabCloseAdmission::IsolatedDocument(document)) =>
-                state.grid_manager.close_tab_renderer_document(index, true, document),
+            Some(TabCloseAdmission::Isolated(expected)) => state
+                .grid_manager
+                .close_tab_renderer_bound(index, true, expected),
+            Some(TabCloseAdmission::IsolatedDocument(document)) => state
+                .grid_manager
+                .close_tab_renderer_document(index, true, document),
             None => state.grid_manager.close_tab_renderer(index, true),
             _ => Err("TAB_MUTATION_INSTANCE_STALE".into()),
         }
@@ -510,8 +516,12 @@ fn close_tab_admitted(app: &AppHandle, id: &str, admitted: Option<TabCloseAdmiss
         use tauri_plugin_browser_tabs::TabManagerState;
         let manager = app.state::<TabManagerState>();
         let result = match admitted {
-            Some(TabCloseAdmission::Embedded(instance)) => manager.close_tab_instance(&id.to_owned(), instance),
-            Some(TabCloseAdmission::EmbeddedDocument(document)) => manager.close_tab_reviewed_document(&id.to_owned(), document),
+            Some(TabCloseAdmission::Embedded(instance)) => {
+                manager.close_tab_instance(&id.to_owned(), instance)
+            }
+            Some(TabCloseAdmission::EmbeddedDocument(document)) => {
+                manager.close_tab_reviewed_document(&id.to_owned(), document)
+            }
             None => manager.close_tab(&id.to_owned()),
             _ => return Err("TAB_MUTATION_INSTANCE_STALE".into()),
         };

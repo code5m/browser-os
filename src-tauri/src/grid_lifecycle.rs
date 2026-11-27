@@ -37,7 +37,10 @@ pub(super) struct LatestVisibility {
     wake: Condvar,
 }
 impl LatestVisibility {
-    pub(super) fn request(&self, mode: VisibilityMode, delay: Duration,
+    pub(super) fn request(
+        &self,
+        mode: VisibilityMode,
+        delay: Duration,
         targets: Vec<crate::grid_ipc::RendererBinding>,
     ) -> bool {
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
@@ -79,7 +82,11 @@ impl LatestVisibility {
         }
     }
     pub(super) fn is_latest(&self, revision: u64) -> bool {
-        self.state.lock().unwrap_or_else(|p| p.into_inner()).pending.as_ref()
+        self.state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .pending
+            .as_ref()
             .is_some_and(|intent| intent.revision == revision)
     }
     pub(super) fn finish(&self, revision: u64) -> bool {
@@ -158,14 +165,29 @@ impl GridLifecycle {
         *self.retirement_app.lock().unwrap() = Some(app);
     }
 
-    pub(super) fn download_history(&self) -> Result<(Vec<serde_json::Value>, Vec<serde_json::Value>), String> {
-        let history = self.download_history.try_lock().map_err(|_| "TAB_DOWNLOAD_HISTORY_BUSY")?;
-        Ok((history.pending.clone(), history.completed.iter().rev().cloned().collect()))
+    pub(super) fn download_history(
+        &self,
+    ) -> Result<(Vec<serde_json::Value>, Vec<serde_json::Value>), String> {
+        let history = self
+            .download_history
+            .try_lock()
+            .map_err(|_| "TAB_DOWNLOAD_HISTORY_BUSY")?;
+        Ok((
+            history.pending.clone(),
+            history.completed.iter().rev().cloned().collect(),
+        ))
     }
 
     fn begin_download_retirement(&self, payload: &serde_json::Value) {
-        let mut history = self.download_history.lock().unwrap_or_else(|p| p.into_inner());
-        if history.pending.iter().any(|row| same_download_owner(row, payload)) {
+        let mut history = self
+            .download_history
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        if history
+            .pending
+            .iter()
+            .any(|row| same_download_owner(row, payload))
+        {
             return;
         }
         let mut pending = payload.clone();
@@ -175,14 +197,25 @@ impl GridLifecycle {
 
     fn remember_download_retirement(&self, payload: &serde_json::Value) {
         const LIMIT: usize = 128;
-        let mut history = self.download_history.lock().unwrap_or_else(|p| p.into_inner());
+        let mut history = self
+            .download_history
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         // One registry lock publishes the pending -> completed transition.
         // Never report disappearance or a second owner for the same evidence.
-        history.pending.retain(|row| !same_download_owner(row, payload));
-        if history.completed.iter().any(|row| same_download_owner(row, payload)) {
+        history
+            .pending
+            .retain(|row| !same_download_owner(row, payload));
+        if history
+            .completed
+            .iter()
+            .any(|row| same_download_owner(row, payload))
+        {
             return;
         }
-        if history.completed.len() == LIMIT { history.completed.pop_front(); }
+        if history.completed.len() == LIMIT {
+            history.completed.pop_front();
+        }
         history.completed.push_back(payload.clone());
     }
 
@@ -273,13 +306,19 @@ impl GridLifecycle {
     }
 
     /// An absent live-map entry is not proof the old native window exited.
-    pub(super) fn retiring_routes(&self) -> Result<Vec<u32>,String> {
-        let retiring=self.retiring.try_lock().map_err(|_|"GRID_RETIREMENT_OBSERVATION_BUSY")?;
+    pub(super) fn retiring_routes(&self) -> Result<Vec<u32>, String> {
+        let retiring = self
+            .retiring
+            .try_lock()
+            .map_err(|_| "GRID_RETIREMENT_OBSERVATION_BUSY")?;
         Ok(retiring.keys().copied().collect())
     }
 
     pub(super) fn try_is_retiring(&self, index: u32) -> Result<bool, String> {
-        let retiring = self.retiring.try_lock().map_err(|_| "TAB_RENDERER_OBSERVATION_BUSY")?;
+        let retiring = self
+            .retiring
+            .try_lock()
+            .map_err(|_| "TAB_RENDERER_OBSERVATION_BUSY")?;
         Ok(retiring.contains_key(&index))
     }
 
@@ -345,24 +384,31 @@ impl GridLifecycle {
                                 if *count == 0 {
                                     retiring.remove(&index);
                                     true
-                                } else { false }
-                            } else { false }
+                                } else {
+                                    false
+                                }
+                            } else {
+                                false
+                            }
                         };
                         self.retiring_total.fetch_sub(1, Ordering::SeqCst);
                         self.wake.notify_all();
                         if !self.is_stopping() {
-                            if let Some(payload) = download_retired.filter(|p|
+                            if let Some(payload) = download_retired.filter(|p| {
                                 p["requested"].as_u64().is_some_and(|v| v > 0)
                                     || p["succeeded"].as_u64().is_some_and(|v| v > 0)
-                                    || p["failed"].as_u64().is_some_and(|v| v > 0)) {
+                                    || p["failed"].as_u64().is_some_and(|v| v > 0)
+                            }) {
                                 if let Some(app) = self.retirement_app.lock().unwrap().clone() {
                                     // Only after the exact native retirement is confirmed.
                                     // Unknown is not a failure or file-deletion receipt.
-                                    let _ = app.emit_to("main", "isolated-renderer-download", payload);
+                                    let _ =
+                                        app.emit_to("main", "isolated-renderer-download", payload);
                                 }
                             }
                         }
-                        if route_complete && crate::grid_ipc::is_tab_renderer(index)
+                        if route_complete
+                            && crate::grid_ipc::is_tab_renderer(index)
                             && !self.is_stopping()
                         {
                             // Drop every retirement/registry lock before
@@ -488,7 +534,11 @@ impl GridLifecycle {
 
     /// One tab may be closed/recovered while unrelated native owners are
     /// still retiring. Never use a global-empty receipt for that operation.
-    pub(super) fn wait_route_retired_until(&self, index: u32, deadline: Instant) -> Result<(), String> {
+    pub(super) fn wait_route_retired_until(
+        &self,
+        index: u32,
+        deadline: Instant,
+    ) -> Result<(), String> {
         while self.is_retiring(index) {
             if Instant::now() >= deadline {
                 return Err(format!("TAB_RENDERER_CLEANUP_PENDING:{index}"));
@@ -500,7 +550,13 @@ impl GridLifecycle {
 
     pub(super) fn wait_grid_retired_until(&self, deadline: Instant) -> Result<(), String> {
         loop {
-            if !self.retiring.lock().unwrap().keys().any(|id| !crate::grid_ipc::is_tab_renderer(*id)) {
+            if !self
+                .retiring
+                .lock()
+                .unwrap()
+                .keys()
+                .any(|id| !crate::grid_ipc::is_tab_renderer(*id))
+            {
                 return Ok(());
             }
             if Instant::now() >= deadline {

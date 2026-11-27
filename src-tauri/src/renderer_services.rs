@@ -17,11 +17,16 @@ fn valid_ticket(ticket: &str) -> bool {
     ticket.len() == 36 && uuid::Uuid::parse_str(ticket).is_ok_and(|id| id.get_version_num() == 4)
 }
 
-fn capture_start(app: &AppHandle, buffer: &mut CaptureBuffer, id: &String, ticket: &str,
+fn capture_start(
+    app: &AppHandle,
+    buffer: &mut CaptureBuffer,
+    id: &String,
+    ticket: &str,
     document: &CaptureDocument,
-) -> Result<Option<String>, String>
-{
-    if !valid_ticket(ticket) { return Err("CAPTURE_INVALID_TICKET".into()); }
+) -> Result<Option<String>, String> {
+    if !valid_ticket(ticket) {
+        return Err("CAPTURE_INVALID_TICKET".into());
+    }
     let manager = app.state::<TabManagerState>();
     if !manager.is_current_capture_document(id, document) {
         return Err("CAPTURE_DOCUMENT_STALE".into());
@@ -34,14 +39,17 @@ fn capture_start(app: &AppHandle, buffer: &mut CaptureBuffer, id: &String, ticke
     buffer.0 = None;
     let cancellation = CaptureCancellation::new();
     let (send, receive) = std::sync::mpsc::sync_channel(1);
-    let dispatched = manager.capture_bound_document(id, document.clone(), cancellation.clone(), move |result| {
-        let _ = send.send(result);
-    });
+    let dispatched =
+        manager.capture_bound_document(id, document.clone(), cancellation.clone(), move |result| {
+            let _ = send.send(result);
+        });
     if dispatched.is_err() && cancellation.revoke_pending_native() {
         return Err("CAPTURE_NATIVE_DISPATCH_REJECTED".into());
     }
     // Do not release a capture merely because its requester timed out.
-    let result = receive.recv().map_err(|_| "CAPTURE_RENDERER_OUTCOME_UNKNOWN")??;
+    let result = receive
+        .recv()
+        .map_err(|_| "CAPTURE_RENDERER_OUTCOME_UNKNOWN")??;
     if !manager.is_current_capture_document(id, &document) {
         return Err("CAPTURE_DOCUMENT_STALE".into());
     }
@@ -50,34 +58,56 @@ fn capture_start(app: &AppHandle, buffer: &mut CaptureBuffer, id: &String, ticke
     }
     crate::isolated_capture::checked_png(&result)?;
     let length = result.len();
-    buffer.0 = Some(Captured { ticket: ticket.to_owned(), document, bytes: result });
+    buffer.0 = Some(Captured {
+        ticket: ticket.to_owned(),
+        document,
+        bytes: result,
+    });
     Ok(Some(length.to_string()))
 }
 
-fn capture_read(app: &AppHandle, buffer: &CaptureBuffer, id: &String, ticket: &str, offset: usize,
+fn capture_read(
+    app: &AppHandle,
+    buffer: &CaptureBuffer,
+    id: &String,
+    ticket: &str,
+    offset: usize,
     document: &CaptureDocument,
-)
-    -> Result<Option<String>, String>
-{
-    let capture = buffer.0.as_ref().filter(|value| value.ticket == ticket)
+) -> Result<Option<String>, String> {
+    let capture = buffer
+        .0
+        .as_ref()
+        .filter(|value| value.ticket == ticket)
         .ok_or("CAPTURE_STALE_TICKET")?;
     if capture.document.native_identity() != document.native_identity()
-        || !app.state::<TabManagerState>().is_current_capture_document(id, &capture.document) {
+        || !app
+            .state::<TabManagerState>()
+            .is_current_capture_document(id, &capture.document)
+    {
         return Err("CAPTURE_DOCUMENT_STALE".into());
     }
     if offset >= capture.bytes.len() || offset % RENDERER_CAPTURE_CHUNK_BYTES != 0 {
         return Err("CAPTURE_CHUNK_INVALID".into());
     }
-    let end = offset.saturating_add(RENDERER_CAPTURE_CHUNK_BYTES).min(capture.bytes.len());
-    Ok(Some(base64::engine::general_purpose::STANDARD.encode(&capture.bytes[offset..end])))
+    let end = offset
+        .saturating_add(RENDERER_CAPTURE_CHUNK_BYTES)
+        .min(capture.bytes.len());
+    Ok(Some(
+        base64::engine::general_purpose::STANDARD.encode(&capture.bytes[offset..end]),
+    ))
 }
 
-fn fill(app: &AppHandle, id: &String, origin: &str, username: &str, password: &str,
+fn fill(
+    app: &AppHandle,
+    id: &String,
+    origin: &str,
+    username: &str,
+    password: &str,
     document: &CaptureDocument,
-)
-    -> Result<Option<String>, String>
-{
-    if username.len() > 8192 || password.len() > 8192 || origin.len() > 8192
+) -> Result<Option<String>, String> {
+    if username.len() > 8192
+        || password.len() > 8192
+        || origin.len() > 8192
         || crate::bridge::credential_origin(origin).as_deref() != Some(origin)
     {
         return Err("CREDENTIAL_FILL_INVALID".into());
@@ -88,9 +118,13 @@ fn fill(app: &AppHandle, id: &String, origin: &str, username: &str, password: &s
     }
     let js = crate::bridge::build_autofill_script(origin, username, password);
     let (send, receive) = std::sync::mpsc::sync_channel(1);
-    manager.eval_result_document(id, document, js, move |value| { let _ = send.send(value); })
+    manager
+        .eval_result_document(id, document, js, move |value| {
+            let _ = send.send(value);
+        })
         .map_err(|_| "CREDENTIAL_FILL_OUTCOME_UNKNOWN")?;
-    let code = receive.recv()
+    let code = receive
+        .recv()
         .map_err(|_| "CREDENTIAL_FILL_OUTCOME_UNKNOWN")?
         .map_err(|_| "CREDENTIAL_FILL_OUTCOME_UNKNOWN")?;
     if !manager.is_current_capture_document(id, document) {
@@ -102,11 +136,21 @@ fn fill(app: &AppHandle, id: &String, origin: &str, username: &str, password: &s
     Ok(Some(code))
 }
 
-fn viewport_script(app: &AppHandle, id: &String, document: &CaptureDocument, js: String) -> Result<Option<String>, String> {
+fn viewport_script(
+    app: &AppHandle,
+    id: &String,
+    document: &CaptureDocument,
+    js: String,
+) -> Result<Option<String>, String> {
     let manager = app.state::<TabManagerState>();
-    if !manager.is_current_capture_document(id, document) { return Err("TAB_VIEWPORT_STALE".into()); }
+    if !manager.is_current_capture_document(id, document) {
+        return Err("TAB_VIEWPORT_STALE".into());
+    }
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
-    manager.eval_result_document(id, document, js, move |value| { let _ = tx.send(value); })
+    manager
+        .eval_result_document(id, document, js, move |value| {
+            let _ = tx.send(value);
+        })
         .map_err(|_| "TAB_VIEWPORT_DISPATCH_UNKNOWN")?;
     let value = rx.recv().map_err(|_| "TAB_VIEWPORT_OUTCOME_UNKNOWN")??;
     if value.len() > 32 * 1024 || !manager.is_current_capture_document(id, document) {
@@ -115,39 +159,66 @@ fn viewport_script(app: &AppHandle, id: &String, document: &CaptureDocument, js:
     Ok(Some(value))
 }
 
-pub(crate) fn dispatch(app: &AppHandle, buffer: &mut CaptureBuffer, cmd: &GridCmd,
+pub(crate) fn dispatch(
+    app: &AppHandle,
+    buffer: &mut CaptureBuffer,
+    cmd: &GridCmd,
     document: Option<&CaptureDocument>,
-) -> Option<Result<Option<String>, String>>
-{
+) -> Option<Result<Option<String>, String>> {
     let require_document = || document.ok_or_else(|| "GRID_NATIVE_DOCUMENT_STALE".to_string());
     Some(match cmd {
-        GridCmd::ViewportSnapshot { id } => require_document().and_then(|document|
-            viewport_script(app,id,document,include_str!("../injected/tab-viewport-checkpoint.js").to_string())),
-        GridCmd::ViewportRestore { id,address,x,y } => require_document().and_then(|document| {
-            let js = crate::grid_ipc::viewport_restore_script(address,*x,*y)?;
-            viewport_script(app,id,document,js)
+        GridCmd::ViewportSnapshot { id } => require_document().and_then(|document| {
+            viewport_script(
+                app,
+                id,
+                document,
+                include_str!("../injected/tab-viewport-checkpoint.js").to_string(),
+            )
         }),
-        GridCmd::DownloadTasks { id, control } => app.state::<TabManagerState>()
-            .native_download_tasks(id,control.clone()).and_then(|value|{
-                let text=serde_json::to_string(&value).map_err(|_|"DOWNLOAD_RESULT_INVALID")?;
-                if text.len()>128*1024 {return Err("DOWNLOAD_RESULT_LIMIT".into());}
+        GridCmd::ViewportRestore { id, address, x, y } => require_document().and_then(|document| {
+            let js = crate::grid_ipc::viewport_restore_script(address, *x, *y)?;
+            viewport_script(app, id, document, js)
+        }),
+        GridCmd::DownloadTasks { id, control } => app
+            .state::<TabManagerState>()
+            .native_download_tasks(id, control.clone())
+            .and_then(|value| {
+                let text = serde_json::to_string(&value).map_err(|_| "DOWNLOAD_RESULT_INVALID")?;
+                if text.len() > 128 * 1024 {
+                    return Err("DOWNLOAD_RESULT_LIMIT".into());
+                }
                 Ok(Some(text))
             }),
-        GridCmd::FillCredential { id, origin, username, password } =>
-            require_document().and_then(|document| fill(app, id, origin, username, password, document)),
-        GridCmd::CaptureStart { id, ticket } =>
-            require_document().and_then(|document| capture_start(app, buffer, id, ticket, document)),
-        GridCmd::CaptureRead { id, ticket, offset } =>
-            require_document().and_then(|document| capture_read(app, buffer, id, ticket, *offset, document)),
+        GridCmd::FillCredential {
+            id,
+            origin,
+            username,
+            password,
+        } => require_document()
+            .and_then(|document| fill(app, id, origin, username, password, document)),
+        GridCmd::CaptureStart { id, ticket } => {
+            require_document().and_then(|document| capture_start(app, buffer, id, ticket, document))
+        }
+        GridCmd::CaptureRead { id, ticket, offset } => require_document()
+            .and_then(|document| capture_read(app, buffer, id, ticket, *offset, document)),
         GridCmd::CaptureRelease { id, ticket } => {
-            if buffer.0.as_ref().is_some_and(|value| value.ticket == *ticket) {
+            if buffer
+                .0
+                .as_ref()
+                .is_some_and(|value| value.ticket == *ticket)
+            {
                 let capture = buffer.0.take().expect("same owned capture");
-                if app.state::<TabManagerState>().is_current_capture_document(id, &capture.document) {
+                if app
+                    .state::<TabManagerState>()
+                    .is_current_capture_document(id, &capture.document)
+                {
                     Ok(None)
                 } else {
                     Err("CAPTURE_DOCUMENT_STALE".into())
                 }
-            } else { Err("CAPTURE_STALE_TICKET".into()) }
+            } else {
+                Err("CAPTURE_STALE_TICKET".into())
+            }
         }
         _ => return None,
     })

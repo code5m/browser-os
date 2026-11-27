@@ -413,9 +413,16 @@ impl Read for WindowsPipeStream {
 }
 
 impl WindowsPipeStream {
-    pub(crate) fn write_with_timeout(&mut self, buf: &[u8], timeout: Duration) -> io::Result<usize> {
+    pub(crate) fn write_with_timeout(
+        &mut self,
+        buf: &[u8],
+        timeout: Duration,
+    ) -> io::Result<usize> {
         if timeout.is_zero() {
-            return Err(io::Error::new(io::ErrorKind::TimedOut, "GRID_PIPE_WRITE_DEADLINE"));
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "GRID_PIPE_WRITE_DEADLINE",
+            ));
         }
         if buf.is_empty() {
             return Ok(0);
@@ -448,7 +455,10 @@ impl WindowsPipeStream {
             self.0.raw,
             event.0,
             &mut overlapped,
-            timeout.min(WRITE_TIMEOUT).as_millis().clamp(1, u32::MAX as u128) as u32,
+            timeout
+                .min(WRITE_TIMEOUT)
+                .as_millis()
+                .clamp(1, u32::MAX as u128) as u32,
         )
         .map(|count| count as usize)
     }

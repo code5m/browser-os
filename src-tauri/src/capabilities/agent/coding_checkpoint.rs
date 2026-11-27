@@ -479,7 +479,10 @@ fn write_record(
     let expected = safe_paths::read_versioned(path, &roots, limit + OVERHEAD)?;
     let marked = sealed_marker(storage, scope, false)?;
     if marked {
-        if expected.as_ref().is_some_and(|record| !record.bytes.starts_with(PREFIX)) {
+        if expected
+            .as_ref()
+            .is_some_and(|record| !record.bytes.starts_with(PREFIX))
+        {
             return Err("AGENT_CHECKPOINT_PLAINTEXT_DOWNGRADE".into());
         }
         if expected.is_none() && !allow_missing_sealed {
@@ -918,7 +921,10 @@ impl RunCheckpoint {
     /// Immutable, separately authenticated late provider proof. At most
     /// three files per existing Run (one for each signed final outcome).
     /// Keep the archived Run itself immutable and its lineage intact.
-    fn provider_evidence_location(&self, outcome: super::mcp_authority::FinalOutcome) -> Result<(PathBuf, PathBuf, String), String> {
+    fn provider_evidence_location(
+        &self,
+        outcome: super::mcp_authority::FinalOutcome,
+    ) -> Result<(PathBuf, PathBuf, String), String> {
         let directory = private_directory(&self.storage, "agent-run-provider-evidence")?;
         let outcome = outcome.evidence_name();
         let path = directory.join(format!("{}-{outcome}.proof", self.id));
@@ -926,7 +932,10 @@ impl RunCheckpoint {
         Ok((directory, path, scope))
     }
 
-    pub(super) fn read_provider_evidence(&self, outcome: super::mcp_authority::FinalOutcome) -> Result<Option<Vec<u8>>, String> {
+    pub(super) fn read_provider_evidence(
+        &self,
+        outcome: super::mcp_authority::FinalOutcome,
+    ) -> Result<Option<Vec<u8>>, String> {
         const LIMIT: usize = 4096;
         let (directory, path, scope) = self.provider_evidence_location(outcome)?;
         let snapshot = safe_paths::read_versioned(&path, &[directory], LIMIT + OVERHEAD)?;
@@ -944,13 +953,23 @@ impl RunCheckpoint {
         Ok(Some(bytes))
     }
 
-    pub(super) fn retain_provider_evidence(&self, outcome: super::mcp_authority::FinalOutcome, bytes: &[u8]) -> Result<(), String> {
+    pub(super) fn retain_provider_evidence(
+        &self,
+        outcome: super::mcp_authority::FinalOutcome,
+        bytes: &[u8],
+    ) -> Result<(), String> {
         const LIMIT: usize = 4096;
-        if bytes.len() > LIMIT { return Err("MCP_EFFECT_HISTORY_LIMIT".into()); }
+        if bytes.len() > LIMIT {
+            return Err("MCP_EFFECT_HISTORY_LIMIT".into());
+        }
         // The Run lock is already held. Never create evidence for a missing
         // Run, replace a published proof, or make an archived Run active.
-        if self.read()?.is_none() { return Err("AGENT_RUN_NOT_FOUND".into()); }
-        if self.read_provider_evidence(outcome)?.is_some() { return Ok(()); }
+        if self.read()?.is_none() {
+            return Err("AGENT_RUN_NOT_FOUND".into());
+        }
+        if self.read_provider_evidence(outcome)?.is_some() {
+            return Ok(());
+        }
         let (directory, path, scope) = self.provider_evidence_location(outcome)?;
         let encrypted = seal(&key(&self.storage, false)?, &scope, bytes)?;
         safe_paths::create_new_file(&path, &[directory], &encrypted)
@@ -1099,13 +1118,17 @@ mod tests {
         // sealed record or be accepted by the write/migration path again.
         let sealed = std::fs::read(&path).unwrap();
         std::fs::write(&path, b"legacy session").unwrap();
-        assert_eq!(write(&storage, &id, b"new", 128).unwrap_err(),
-            "AGENT_CHECKPOINT_PLAINTEXT_DOWNGRADE");
+        assert_eq!(
+            write(&storage, &id, b"new", 128).unwrap_err(),
+            "AGENT_CHECKPOINT_PLAINTEXT_DOWNGRADE"
+        );
         assert_eq!(std::fs::read(&path).unwrap(), b"legacy session");
         std::fs::write(&path, sealed).unwrap();
         std::fs::remove_file(&path).unwrap();
-        assert_eq!(write(&storage, &id, b"new", 128).unwrap_err(),
-            "AGENT_CHECKPOINT_RECORD_MISSING");
+        assert_eq!(
+            write(&storage, &id, b"new", 128).unwrap_err(),
+            "AGENT_CHECKPOINT_RECORD_MISSING"
+        );
         assert!(!path.exists());
         std::fs::remove_dir_all(storage).unwrap();
     }

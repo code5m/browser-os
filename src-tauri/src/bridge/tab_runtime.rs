@@ -82,7 +82,8 @@ pub(crate) fn tab_close_native(app: AppHandle, id: String) -> Result<(), String>
 }
 #[tauri::command]
 pub async fn tab_close(webview: tauri::Webview, app: AppHandle, id: String) -> Result<(), String> {
-    super::tab_mutation::legacy_action(webview, app, super::tab_mutation::Action::Close { id }).await
+    super::tab_mutation::legacy_action(webview, app, super::tab_mutation::Action::Close { id })
+        .await
 }
 
 pub(crate) fn tab_close_impl(
@@ -103,7 +104,8 @@ pub async fn tab_open(
     id: String,
     url: String,
 ) -> Result<(), String> {
-    super::tab_mutation::legacy_action(webview, app, super::tab_mutation::Action::Open { id, url }).await
+    super::tab_mutation::legacy_action(webview, app, super::tab_mutation::Action::Open { id, url })
+        .await
 }
 
 pub(crate) fn tab_open_impl(
@@ -116,7 +118,10 @@ pub(crate) fn tab_open_impl(
 }
 
 pub(super) fn tab_open_admitted(
-    webview: tauri::Webview, app: AppHandle, id: String, url: String,
+    webview: tauri::Webview,
+    app: AppHandle,
+    id: String,
+    url: String,
     binding: Option<crate::grid_ipc::RendererBinding>,
 ) -> Result<(), String> {
     crate::shared::native_legacy_policy::require_main(&webview, "tab_open")?;
@@ -134,15 +139,31 @@ pub(super) fn tab_open_admitted(
     let _ = Url::parse(&target).map_err(|e| format!("无效网址: {e}"))?;
     if let Some(index) = super::isolated_tabs::route(&id) {
         if let Some(binding) = binding {
-            if binding.index != index || !app.state::<AppState>().tabs.lock().unwrap().contains_key(&id) {
+            if binding.index != index
+                || !app
+                    .state::<AppState>()
+                    .tabs
+                    .lock()
+                    .unwrap()
+                    .contains_key(&id)
+            {
                 return Err("TAB_MUTATION_INSTANCE_STALE".into());
             }
-            return app.state::<AppState>().grid_manager.navigate_tab_renderer_bound(binding, &target);
+            return app
+                .state::<AppState>()
+                .grid_manager
+                .navigate_tab_renderer_bound(binding, &target);
         }
         return navigate_tab_webview(&app, &id, &target);
     }
-    if binding.is_some() { return Err("TAB_MUTATION_INSTANCE_STALE".into()); }
-    app.state::<AppState>().hibernated_scroll.lock().unwrap().remove(&id);
+    if binding.is_some() {
+        return Err("TAB_MUTATION_INSTANCE_STALE".into());
+    }
+    app.state::<AppState>()
+        .hibernated_scroll
+        .lock()
+        .unwrap()
+        .remove(&id);
     if let Err(e) = navigate_tab_webview(&app, &id, &target) {
         recover_tab_webview(&app, &id, "navigate", &e)?;
         navigate_tab_webview(&app, &id, &target)
@@ -155,7 +176,9 @@ pub(super) fn tab_open_admitted(
         return Err("TAB_APPLICATION_SHUTTING_DOWN".into());
     }
     if let Some(t) = tabs.get_mut(&id) {
-        if t.url != target { t.title = target.clone(); }
+        if t.url != target {
+            t.title = target.clone();
+        }
         t.url = target.clone();
     }
     Ok(())
@@ -164,15 +187,24 @@ pub(super) fn tab_open_admitted(
 /// Prepared embedded navigation uses the admitted document and never
 /// destroys/recreates a page on a stale or failed navigation dispatch.
 pub(super) fn tab_open_document(
-    app: &AppHandle, id: &str, url: &str, document: &tauri_plugin_browser_tabs::CaptureDocument,
+    app: &AppHandle,
+    id: &str,
+    url: &str,
+    document: &tauri_plugin_browser_tabs::CaptureDocument,
 ) -> Result<(), String> {
     let state = app.state::<AppState>();
-    if state.shutdown_requested.load(Ordering::Acquire) || super::isolated_tabs::route(id).is_some() {
+    if state.shutdown_requested.load(Ordering::Acquire) || super::isolated_tabs::route(id).is_some()
+    {
         return Err("TAB_MUTATION_INSTANCE_STALE".into());
     }
     let target = normalize_url(url);
     Url::parse(&target).map_err(|_| "TAB_URL_INVALID")?;
-    let previous = state.tabs.lock().unwrap().get(id).map(|tab| tab.url.clone())
+    let previous = state
+        .tabs
+        .lock()
+        .unwrap()
+        .get(id)
+        .map(|tab| tab.url.clone())
         .ok_or("TAB_NOT_FOUND")?;
     app.state::<tauri_plugin_browser_tabs::TabManagerState>()
         .navigate_document(&id.to_owned(), document, &target)
@@ -182,10 +214,14 @@ pub(super) fn tab_open_document(
     if state.shutdown_requested.load(Ordering::Acquire) {
         return Err("GRID_REQUEST_OUTCOME_UNKNOWN: navigation dispatched during shutdown".into());
     }
-    let tab = tabs.get_mut(id).ok_or("GRID_REQUEST_OUTCOME_UNKNOWN: navigation owner removed")?;
+    let tab = tabs
+        .get_mut(id)
+        .ok_or("GRID_REQUEST_OUTCOME_UNKNOWN: navigation owner removed")?;
     // Do not overwrite a more recent native URL observation.
     if tab.url == previous {
-        if tab.url != target { tab.title = target.clone(); }
+        if tab.url != target {
+            tab.title = target.clone();
+        }
         tab.url = target;
     }
     Ok(())
@@ -214,7 +250,8 @@ pub async fn tab_position(
         let admitted = super::isolated_tabs::capture_layout(&app, &id)?;
         return super::isolated_tabs::on_worker(move || {
             super::isolated_tabs::position_admitted(&app, &id, (x, y, width, height), admitted)
-        }).await;
+        })
+        .await;
     }
     tab_position_sync(webview, app, id, x, y, width, height)
 }
@@ -274,8 +311,8 @@ pub fn report_grid_load_failed(
 }
 
 // One worker per supported route, including its delay and native request.
- // Only the authenticated native reader can schedule a retry. A frontend
- // event bearing copied process identifiers is not native admission.
+// Only the authenticated native reader can schedule a retry. A frontend
+// event bearing copied process identifiers is not native admission.
 struct GridRetrySlot {
     window_started: std::time::Instant,
     attempts: u8,
@@ -283,9 +320,14 @@ struct GridRetrySlot {
     pending: bool,
 }
 static GRID_RETRY_SLOTS: std::sync::LazyLock<Mutex<[GridRetrySlot; MAX_GRID]>> =
-    std::sync::LazyLock::new(|| Mutex::new(std::array::from_fn(|_| GridRetrySlot {
-        window_started: std::time::Instant::now(), attempts: 0, last: None, pending: false,
-    })));
+    std::sync::LazyLock::new(|| {
+        Mutex::new(std::array::from_fn(|_| GridRetrySlot {
+            window_started: std::time::Instant::now(),
+            attempts: 0,
+            last: None,
+            pending: false,
+        }))
+    });
 
 struct GridRetryLease(usize);
 impl Drop for GridRetryLease {
@@ -295,41 +337,76 @@ impl Drop for GridRetryLease {
 }
 
 pub(crate) fn schedule_grid_load_retry(app: &AppHandle, payload: &serde_json::Value) {
-    let Some(index) = payload["index"].as_str().and_then(|s| s.parse::<u32>().ok())
-        .filter(|i| (*i as usize) < MAX_GRID) else { return; };
-    let Some(generation) = payload["renderer_generation"].as_str()
-        .and_then(|value| value.parse::<u64>().ok()).filter(|value| *value != 0)
-        else { return; };
-    let Some(pid) = payload["renderer_pid"].as_u64().and_then(|value| u32::try_from(value).ok())
-        .filter(|pid| *pid != 0) else { return; };
-    let Some(epoch) = payload["renderer_epoch"].as_str().and_then(|value| value.parse::<u64>().ok())
-        .filter(|epoch| *epoch != 0) else { return; };
-    let Some(revision) = payload["renderer_navigation_revision"].as_str()
-        .and_then(|value| value.parse::<u64>().ok()) else { return; };
+    let Some(index) = payload["index"]
+        .as_str()
+        .and_then(|s| s.parse::<u32>().ok())
+        .filter(|i| (*i as usize) < MAX_GRID)
+    else {
+        return;
+    };
+    let Some(generation) = payload["renderer_generation"]
+        .as_str()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value != 0)
+    else {
+        return;
+    };
+    let Some(pid) = payload["renderer_pid"]
+        .as_u64()
+        .and_then(|value| u32::try_from(value).ok())
+        .filter(|pid| *pid != 0)
+    else {
+        return;
+    };
+    let Some(epoch) = payload["renderer_epoch"]
+        .as_str()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|epoch| *epoch != 0)
+    else {
+        return;
+    };
+    let Some(revision) = payload["renderer_navigation_revision"]
+        .as_str()
+        .and_then(|value| value.parse::<u64>().ok())
+    else {
+        return;
+    };
     let binding = crate::grid_ipc::RendererBinding {
-        index, owner: (pid, epoch), generation, navigation_revision: revision,
+        index,
+        owner: (pid, epoch),
+        generation,
+        navigation_revision: revision,
     };
     let url = payload["url"].as_str().unwrap_or("");
     if !crate::grid_ipc::restorable_address(url)
-        || !Url::parse(url).is_ok_and(|value| matches!(value.scheme(), "http" | "https")) {
+        || !Url::parse(url).is_ok_and(|value| matches!(value.scheme(), "http" | "https"))
+    {
         return;
     }
     let state = app.state::<AppState>();
-    if state.shutdown_requested.load(Ordering::Acquire) { return; }
+    if state.shutdown_requested.load(Ordering::Acquire) {
+        return;
+    }
     // Repeated error-page JS and native loadFailed reports for one document
     // consume only one admission. The identity remains remembered across
     // the rate-window boundary. A different report while a worker owns the
     // slot is dropped, not queued for a later document or replacement.
     let lease = {
-        let Ok(mut slots) = GRID_RETRY_SLOTS.try_lock() else { return; };
+        let Ok(mut slots) = GRID_RETRY_SLOTS.try_lock() else {
+            return;
+        };
         let slot = &mut slots[index as usize];
-        if slot.pending || slot.last == Some(binding) { return; }
+        if slot.pending || slot.last == Some(binding) {
+            return;
+        }
         let now = std::time::Instant::now();
         if now.duration_since(slot.window_started) >= std::time::Duration::from_secs(60) {
             slot.window_started = now;
             slot.attempts = 0;
         }
-        if slot.attempts >= 2 { return; }
+        if slot.attempts >= 2 {
+            return;
+        }
         slot.attempts += 1;
         slot.last = Some(binding);
         slot.pending = true;
@@ -337,17 +414,21 @@ pub(crate) fn schedule_grid_load_retry(app: &AppHandle, payload: &serde_json::Va
     };
     let url = url.to_owned();
     let app = app.clone();
-    let started = std::thread::Builder::new().name(format!("grid-load-retry-{index}")).spawn(move || {
-        let _lease = lease;
-        std::thread::sleep(std::time::Duration::from_secs(3));
-        let state = app.state::<AppState>();
-        if state.shutdown_requested.load(Ordering::Acquire) { return; }
-        // Native retry rechecks the exact original process, connection,
-        // document revision and URL at execution and writer admission.
-        if let Err(error) = state.grid_manager.retry_failed_navigation(binding, &url) {
-            eprintln!("[grid] grid-{index} retry unconfirmed: {error}");
-        }
-    });
+    let started = std::thread::Builder::new()
+        .name(format!("grid-load-retry-{index}"))
+        .spawn(move || {
+            let _lease = lease;
+            std::thread::sleep(std::time::Duration::from_secs(3));
+            let state = app.state::<AppState>();
+            if state.shutdown_requested.load(Ordering::Acquire) {
+                return;
+            }
+            // Native retry rechecks the exact original process, connection,
+            // document revision and URL at execution and writer admission.
+            if let Err(error) = state.grid_manager.retry_failed_navigation(binding, &url) {
+                eprintln!("[grid] grid-{index} retry unconfirmed: {error}");
+            }
+        });
     if started.is_err() {
         // Failed spawn drops the captured lease. Do not silently replay.
         eprintln!("[grid] grid-{index} retry worker unavailable");
@@ -548,9 +629,27 @@ mod resource_tree_tests {
             (9, (0, "foreign".into(), 900)),
         ]);
         let owners = [
-            RendererProcess { index: 0, pid: 2, spawn_epoch: 1, ready: true, startup_reserved: false },
-            RendererProcess { index: tab_renderer_index("tab-1").unwrap(), pid: 4, spawn_epoch: 1, ready: true, startup_reserved: false },
-            RendererProcess { index: tab_renderer_index("tab-2").unwrap(), pid: 9, spawn_epoch: 1, ready: false, startup_reserved: false },
+            RendererProcess {
+                index: 0,
+                pid: 2,
+                spawn_epoch: 1,
+                ready: true,
+                startup_reserved: false,
+            },
+            RendererProcess {
+                index: tab_renderer_index("tab-1").unwrap(),
+                pid: 4,
+                spawn_epoch: 1,
+                ready: true,
+                startup_reserved: false,
+            },
+            RendererProcess {
+                index: tab_renderer_index("tab-2").unwrap(),
+                pid: 9,
+                spawn_epoch: 1,
+                ready: false,
+                startup_reserved: false,
+            },
         ];
         let tree = process_tree_rss_kb(&procs);
         let (grids, tabs, attributed) = renderer_rss(&owners, &procs, &tree, 1);
@@ -584,7 +683,13 @@ mod resource_tree_tests {
 /// 资源统计缓存仅加速频繁的 UI 采样；必须同时检查进程 PID 以免重建宫格返回旧值。
 /// 前端仍按已有 3/15 秒节奏拉取，命令工作保持在阻塞线程池。
 static RESOURCE_STATS_CACHE: std::sync::OnceLock<
-    Mutex<Option<(std::time::Instant, Vec<crate::grid_ipc::RendererProcess>, ResourceStats)>>,
+    Mutex<
+        Option<(
+            std::time::Instant,
+            Vec<crate::grid_ipc::RendererProcess>,
+            ResourceStats,
+        )>,
+    >,
 > = std::sync::OnceLock::new();
 
 /// 资源占用统计：主进程树 + 每宫格子进程树的 RSS（含 WebKit 子进程）。
@@ -642,8 +747,11 @@ fn renderer_rss(
     for owner in owners {
         // Each supervisor root is a direct child. A vanished or reused PID
         // must not subtract a foreign process from the application total.
-        let observed = procs.get(&owner.pid).is_some_and(|(parent, _, _)| *parent == main_pid)
-            && tree_rss.contains_key(&owner.pid) && seen.insert(owner.pid);
+        let observed = procs
+            .get(&owner.pid)
+            .is_some_and(|(parent, _, _)| *parent == main_pid)
+            && tree_rss.contains_key(&owner.pid)
+            && seen.insert(owner.pid);
         let rss = if observed { tree_rss[&owner.pid] } else { 0 };
         attributed = attributed.saturating_add(rss);
         let stat = ProcStat {
@@ -661,21 +769,30 @@ fn renderer_rss(
     (grids, tabs, attributed)
 }
 
-fn resource_stats_for_owners(app: &AppHandle, owners: &[crate::grid_ipc::RendererProcess]) -> ResourceStats {
+fn resource_stats_for_owners(
+    app: &AppHandle,
+    owners: &[crate::grid_ipc::RendererProcess],
+) -> ResourceStats {
     let procs = read_proc_table();
     let tree_rss = process_tree_rss_kb(&procs);
     let main_pid = std::process::id();
     let (grids, isolated_tabs, attributed_kb) = renderer_rss(owners, &procs, &tree_rss, main_pid);
     let app_total_kb = tree_rss.get(&main_pid).copied().unwrap_or(0);
     let main_only_kb = app_total_kb.saturating_sub(attributed_kb);
-    let main_name = procs.get(&main_pid).map(|(_, name, _)| name.clone()).unwrap_or_else(|| "main".into());
+    let main_name = procs
+        .get(&main_pid)
+        .map(|(_, name, _)| name.clone())
+        .unwrap_or_else(|| "main".into());
     let available = mem_available_mb();
     // Use the existing platform adapter, including GlobalMemoryStatusEx on
     // Windows, rather than a second Linux-only /proc/meminfo implementation.
     let total = super::grid_runtime::mem_total_mb();
     let state = app.state::<AppState>();
-    let grid_indices: Vec<u32> = owners.iter().filter(|owner| !crate::grid_ipc::is_tab_renderer(owner.index))
-        .map(|owner| owner.index).collect();
+    let grid_indices: Vec<u32> = owners
+        .iter()
+        .filter(|owner| !crate::grid_ipc::is_tab_renderer(owner.index))
+        .map(|owner| owner.index)
+        .collect();
     let starting = owners.iter().filter(|owner| owner.startup_reserved).count();
     let isolated_tab_start_budget = renderer_start_budget(available, starting)
         .min(crate::grid_ipc::MAX_ISOLATED_TAB_RENDERERS.saturating_sub(isolated_tabs.len()));
@@ -755,7 +872,7 @@ fn accepted_hibernation_scroll(snapshot: &serde_json::Value) -> Option<(f64, f64
     }
     let x = snapshot.get("scrollX")?.as_f64()?;
     let y = snapshot.get("scrollY")?.as_f64()?;
-    crate::grid_ipc::valid_viewport(x,y).then_some((x, y))
+    crate::grid_ipc::valid_viewport(x, y).then_some((x, y))
 }
 
 // Policy generations prevent a disable/re-enable cycle from authorizing
@@ -767,16 +884,20 @@ pub(crate) fn hibernation_policy_revision(app: &AppHandle) -> Option<u64> {
     let revision = HIBERNATION_POLICY_REVISION.try_lock().ok()?;
     let state = app.state::<AppState>();
     (state.hibernation_enabled.load(Ordering::Acquire)
-        && !state.shutdown_requested.load(Ordering::Acquire)).then_some(*revision)
+        && !state.shutdown_requested.load(Ordering::Acquire))
+    .then_some(*revision)
 }
 
-pub(crate) fn claim_hibernation_policy(app: &AppHandle, expected: u64)
-    -> Option<std::sync::MutexGuard<'static, u64>>
-{
+pub(crate) fn claim_hibernation_policy(
+    app: &AppHandle,
+    expected: u64,
+) -> Option<std::sync::MutexGuard<'static, u64>> {
     let revision = HIBERNATION_POLICY_REVISION.try_lock().ok()?;
     let state = app.state::<AppState>();
-    if *revision != expected || !state.hibernation_enabled.load(Ordering::Acquire)
-        || state.shutdown_requested.load(Ordering::Acquire) {
+    if *revision != expected
+        || !state.hibernation_enabled.load(Ordering::Acquire)
+        || state.shutdown_requested.load(Ordering::Acquire)
+    {
         return None;
     }
     Some(revision)
@@ -792,19 +913,25 @@ pub fn set_tab_hibernation(
 ) -> Result<(), String> {
     crate::shared::native_legacy_policy::require_main(&webview, "set_tab_hibernation")?;
 
-    let mut revision = HIBERNATION_POLICY_REVISION.try_lock()
+    let mut revision = HIBERNATION_POLICY_REVISION
+        .try_lock()
         .map_err(|_| "TAB_HIBERNATION_POLICY_BUSY")?;
     let state = app.state::<AppState>();
     if state.hibernation_enabled.load(Ordering::Acquire) != enabled {
-        *revision = revision.checked_add(1).ok_or("TAB_HIBERNATION_POLICY_EXHAUSTED")?;
+        *revision = revision
+            .checked_add(1)
+            .ok_or("TAB_HIBERNATION_POLICY_EXHAUSTED")?;
         state.hibernation_enabled.store(enabled, Ordering::Release);
     }
     eprintln!("[hibernation] 自适应资源休眠 = {}", enabled);
     Ok(())
 }
 
-fn tab_hibernation_snapshot(app: &AppHandle, id: &str,
-    document: &tauri_plugin_browser_tabs::CaptureDocument, expected_url: &str,
+fn tab_hibernation_snapshot(
+    app: &AppHandle,
+    id: &str,
+    document: &tauri_plugin_browser_tabs::CaptureDocument,
+    expected_url: &str,
 ) -> Result<(f64, f64), String> {
     use tauri_plugin_browser_tabs::TabManagerState;
     let manager = app.state::<TabManagerState>();
@@ -814,18 +941,26 @@ fn tab_hibernation_snapshot(app: &AppHandle, id: &str,
     let script = include_str!("../../injected/tab-viewport-checkpoint.js");
     let (tx, rx) = std::sync::mpsc::channel();
     manager
-        .eval_result_document(&id.to_string(), document, script.to_string(), move |result| {
-            let _ = tx.send(result);
-        })
+        .eval_result_document(
+            &id.to_string(),
+            document,
+            script.to_string(),
+            move |result| {
+                let _ = tx.send(result);
+            },
+        )
         .map_err(|_| "TAB_HIBERNATION_SNAPSHOT_FAILED")?;
     let encoded = rx
         .recv_timeout(std::time::Duration::from_secs(2))
         .map_err(|_| "TAB_HIBERNATION_SNAPSHOT_TIMEOUT")??;
-    if encoded.len() > 32 * 1024 { return Err("TAB_HIBERNATION_SNAPSHOT_INVALID".into()); }
+    if encoded.len() > 32 * 1024 {
+        return Err("TAB_HIBERNATION_SNAPSHOT_INVALID".into());
+    }
     let snapshot: serde_json::Value =
         serde_json::from_str(&encoded).map_err(|_| "TAB_HIBERNATION_SNAPSHOT_INVALID")?;
     if snapshot.get("address").and_then(serde_json::Value::as_str) != Some(expected_url)
-        || !manager.is_current_capture_document(&id.to_string(), document) {
+        || !manager.is_current_capture_document(&id.to_string(), document)
+    {
         return Err("TAB_HIBERNATION_DOCUMENT_STALE".into());
     }
     if !manager.download_history_clear(&id.to_string()) {
@@ -844,13 +979,17 @@ fn hibernate_tab(app: &AppHandle, id: &str, idle_window: std::time::Duration) ->
     if super::isolated_tabs::route(id).is_some() {
         return super::isolated_tabs::hibernate_blank(app, id, idle_window);
     }
-    let Some(policy_revision) = hibernation_policy_revision(app) else { return false; };
+    let Some(policy_revision) = hibernation_policy_revision(app) else {
+        return false;
+    };
     let state = app.state::<AppState>();
     let expected_url = match state.tabs.lock().unwrap().get(id) {
         Some(tab) => tab.url.clone(),
         None => return false,
     };
-    if !crate::grid_ipc::restorable_address(&expected_url) { return false; }
+    if !crate::grid_ipc::restorable_address(&expected_url) {
+        return false;
+    }
     let still_idle = || {
         // The user may disable the policy or navigate/activate the tab while a
         // two-second WebKit snapshot is in flight. Cancel on any such change.
@@ -881,7 +1020,9 @@ fn hibernate_tab(app: &AppHandle, id: &str, idle_window: std::time::Duration) ->
         return false;
     }
     let manager = app.state::<tauri_plugin_browser_tabs::TabManagerState>();
-    let Ok(document) = manager.capture_document(&id.to_string()) else { return false; };
+    let Ok(document) = manager.capture_document(&id.to_string()) else {
+        return false;
+    };
     let scroll = match tab_hibernation_snapshot(app, id, &document, &expected_url) {
         Ok(scroll) => scroll,
         Err(error) => {
@@ -897,11 +1038,16 @@ fn hibernate_tab(app: &AppHandle, id: &str, idle_window: std::time::Duration) ->
     let Ok(_transition) = reserve_tab_transition(id) else {
         return false;
     };
-    let Some(_policy) = claim_hibernation_policy(app, policy_revision) else { return false; };
+    let Some(_policy) = claim_hibernation_policy(app, policy_revision) else {
+        return false;
+    };
     if !still_idle() || !manager.is_current_capture_document(&id.to_string(), &document) {
         return false;
     }
-    if manager.close_tab_document(&id.to_string(), &document).is_ok() {
+    if manager
+        .close_tab_document(&id.to_string(), &document)
+        .is_ok()
+    {
         state.child_layouts.lock().unwrap().remove(id);
         state.layout_revisions.lock().unwrap().remove(id);
         state.last_position_at.lock().unwrap().remove(id);
@@ -1046,13 +1192,23 @@ pub(crate) fn tab_list_native(app: AppHandle) -> Vec<TabInfo> {
 /// Navigation notifications are hints, not authority for their URL payload.
 /// Read the live plugin instance's cached native observation instead.
 pub(crate) fn refresh_embedded_navigation(app: &AppHandle, id: &str) {
-    if !is_tab_label(id) || super::isolated_tabs::route(id).is_some() { return; }
+    if !is_tab_label(id) || super::isolated_tabs::route(id).is_some() {
+        return;
+    }
     let state = app.state::<AppState>();
-    let Ok(mut tabs) = state.tabs.try_lock() else { return; };
-    if state.shutdown_requested.load(Ordering::Acquire) { return; }
+    let Ok(mut tabs) = state.tabs.try_lock() else {
+        return;
+    };
+    if state.shutdown_requested.load(Ordering::Acquire) {
+        return;
+    }
     let manager = app.state::<tauri_plugin_browser_tabs::TabManagerState>();
-    let Ok(Some((_, _, Some(address)))) = manager.observed_navigation(&id.to_owned()) else { return; };
-    if address.is_empty() || address.len() > 8192 { return; }
+    let Ok(Some((_, _, Some(address)))) = manager.observed_navigation(&id.to_owned()) else {
+        return;
+    };
+    if address.is_empty() || address.len() > 8192 {
+        return;
+    }
     if let Some(tab) = tabs.get_mut(id) {
         if tab.url != address {
             tab.title = address.clone();
@@ -1071,8 +1227,10 @@ pub fn tab_list(webview: tauri::Webview, app: AppHandle) -> Result<Vec<TabInfo>,
     for logical in tabs.values() {
         let mut tab = logical.clone();
         if super::isolated_tabs::route(&tab.id).is_none() {
-            if let Some((_, _, Some(address))) = manager.observed_navigation(&tab.id)
-                .map_err(|_| "TAB_METADATA_BUSY")? {
+            if let Some((_, _, Some(address))) = manager
+                .observed_navigation(&tab.id)
+                .map_err(|_| "TAB_METADATA_BUSY")?
+            {
                 if !address.is_empty() && address.len() <= 8192 && tab.url != address {
                     tab.title = address.clone();
                     tab.url = address;
@@ -1125,7 +1283,11 @@ pub(crate) fn tab_go_back_impl(
 ) -> Result<(), String> {
     crate::shared::native_legacy_policy::require_main(&webview, "tab_go_back")?;
     crate::shared::native_legacy_policy::bound_text("tab_go_back", "id", &id)?;
-    app.state::<AppState>().hibernated_scroll.lock().unwrap().remove(&id);
+    app.state::<AppState>()
+        .hibernated_scroll
+        .lock()
+        .unwrap()
+        .remove(&id);
 
     plugin_eval(&app, &id, "if (history.length > 1) { history.back(); }")
 }
@@ -1137,7 +1299,8 @@ pub async fn tab_go_forward(
     app: AppHandle,
     id: String,
 ) -> Result<(), String> {
-    super::tab_mutation::legacy_action(webview, app, super::tab_mutation::Action::Forward { id }).await
+    super::tab_mutation::legacy_action(webview, app, super::tab_mutation::Action::Forward { id })
+        .await
 }
 
 pub(crate) fn tab_go_forward_impl(
@@ -1147,7 +1310,11 @@ pub(crate) fn tab_go_forward_impl(
 ) -> Result<(), String> {
     crate::shared::native_legacy_policy::require_main(&webview, "tab_go_forward")?;
     crate::shared::native_legacy_policy::bound_text("tab_go_forward", "id", &id)?;
-    app.state::<AppState>().hibernated_scroll.lock().unwrap().remove(&id);
+    app.state::<AppState>()
+        .hibernated_scroll
+        .lock()
+        .unwrap()
+        .remove(&id);
 
     plugin_eval(&app, &id, "history.forward();")
 }
@@ -1155,7 +1322,8 @@ pub(crate) fn tab_go_forward_impl(
 /// 刷新当前激活页签的 webview（location.reload）。
 #[tauri::command]
 pub async fn tab_reload(webview: tauri::Webview, app: AppHandle, id: String) -> Result<(), String> {
-    super::tab_mutation::legacy_action(webview, app, super::tab_mutation::Action::Reload { id }).await
+    super::tab_mutation::legacy_action(webview, app, super::tab_mutation::Action::Reload { id })
+        .await
 }
 
 pub(crate) fn tab_reload_impl(
@@ -1165,7 +1333,11 @@ pub(crate) fn tab_reload_impl(
 ) -> Result<(), String> {
     crate::shared::native_legacy_policy::require_main(&webview, "tab_reload")?;
     crate::shared::native_legacy_policy::bound_text("tab_reload", "id", &id)?;
-    app.state::<AppState>().hibernated_scroll.lock().unwrap().remove(&id);
+    app.state::<AppState>()
+        .hibernated_scroll
+        .lock()
+        .unwrap()
+        .remove(&id);
 
     plugin_eval(&app, &id, "location.reload();")
 }
@@ -1217,13 +1389,19 @@ enum EvalBinding {
 fn capture_eval_binding(app: &AppHandle, id: &str) -> Result<EvalBinding, String> {
     let state = app.state::<AppState>();
     if let Some(index) = grid_index_of(id) {
-        return state.grid_manager.grid_eval_binding(index).map(EvalBinding::Grid);
+        return state
+            .grid_manager
+            .grid_eval_binding(index)
+            .map(EvalBinding::Grid);
     }
     if state.hibernated_tabs.lock().unwrap().contains(id) {
         return Err("TAB_RENDERER_HIBERNATED_ACTIVATE_FIRST".into());
     }
     if let Some(index) = super::isolated_tabs::route(id) {
-        return state.grid_manager.renderer_binding(index).map(EvalBinding::Isolated);
+        return state
+            .grid_manager
+            .renderer_binding(index)
+            .map(EvalBinding::Isolated);
     }
     app.state::<tauri_plugin_browser_tabs::TabManagerState>()
         .capture_document(&id.to_owned())
@@ -1231,14 +1409,20 @@ fn capture_eval_binding(app: &AppHandle, id: &str) -> Result<EvalBinding, String
         .map_err(|_| "TAB_MUTATION_INSTANCE_UNAVAILABLE".into())
 }
 
-fn eval_in_tab_blocking(app: AppHandle, id: String, js: String,
-    binding: EvalBinding) -> Result<String, String> {
+fn eval_in_tab_blocking(
+    app: AppHandle,
+    id: String,
+    js: String,
+    binding: EvalBinding,
+) -> Result<String, String> {
     match binding {
         EvalBinding::Grid(binding) => {
             if grid_index_of(&id) != Some(binding.index) {
                 return Err("GRID_EVAL_TARGET_STALE".into());
             }
-            app.state::<AppState>().grid_manager.grid_eval_bound(binding, js)?;
+            app.state::<AppState>()
+                .grid_manager
+                .grid_eval_bound(binding, js)?;
         }
         EvalBinding::Isolated(binding) => {
             let _owner = super::tab_mutation::reserve_internal()?;
@@ -1264,7 +1448,8 @@ pub async fn tab_activate(
     app: AppHandle,
     id: String,
 ) -> Result<(), String> {
-    super::tab_mutation::legacy_action(webview, app, super::tab_mutation::Action::Activate { id }).await
+    super::tab_mutation::legacy_action(webview, app, super::tab_mutation::Action::Activate { id })
+        .await
 }
 
 pub(crate) fn tab_activate_impl(
@@ -1289,7 +1474,9 @@ pub(super) fn tab_activate_admitted(
     if super::isolated_tabs::route(&id).is_some() {
         return super::isolated_tabs::activate_admitted(&app, &id, admitted);
     }
-    if admitted.is_some() { return Err("TAB_RENDERER_ACTIVATION_STALE".into()); }
+    if admitted.is_some() {
+        return Err("TAB_RENDERER_ACTIVATION_STALE".into());
+    }
 
     {
         let state = app.state::<AppState>();
@@ -1347,57 +1534,127 @@ pub(super) fn tab_activate_admitted(
     // ambiguous script dispatch. Preserve the map entry until final admission
     // so explicit navigation can still invalidate it.
     if was_hibernated {
-        let scroll = app.state::<AppState>().hibernated_scroll.lock().unwrap().get(&id).cloned();
-        if let Some((expected_url, (x,y))) = scroll {
+        let scroll = app
+            .state::<AppState>()
+            .hibernated_scroll
+            .lock()
+            .unwrap()
+            .get(&id)
+            .cloned();
+        if let Some((expected_url, (x, y))) = scroll {
             let instance = active_instance.clone();
             let restore_app = app.clone();
             let restore_id = id.clone();
-            let spawned = std::thread::Builder::new().name("tab-viewport-restore".into()).spawn(move || {
-                std::thread::sleep(std::time::Duration::from_millis(900));
-                let manager = restore_app.state::<TabManagerState>();
-                let state = restore_app.state::<AppState>();
-                let pending = || state.hibernated_scroll.lock().unwrap().get(&restore_id)
-                    .is_some_and(|saved| saved.0 == expected_url && saved.1 == (x,y));
-                let current = || !state.shutdown_requested.load(Ordering::Acquire)
-                    && manager.is_current_instance(&restore_id,&instance)
-                    && state.active_tab.lock().unwrap().as_deref() == Some(restore_id.as_str())
-                    && state.tabs.lock().unwrap().get(&restore_id).is_some_and(|tab| tab.url == expected_url);
-                let report = || {
-                    if manager.is_current_instance(&restore_id,&instance) {
-                        let _ = restore_app.emit("tab-viewport-restore-unconfirmed", serde_json::json!({"id":restore_id}));
+            let spawned = std::thread::Builder::new()
+                .name("tab-viewport-restore".into())
+                .spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(900));
+                    let manager = restore_app.state::<TabManagerState>();
+                    let state = restore_app.state::<AppState>();
+                    let pending = || {
+                        state
+                            .hibernated_scroll
+                            .lock()
+                            .unwrap()
+                            .get(&restore_id)
+                            .is_some_and(|saved| saved.0 == expected_url && saved.1 == (x, y))
+                    };
+                    let current = || {
+                        !state.shutdown_requested.load(Ordering::Acquire)
+                            && manager.is_current_instance(&restore_id, &instance)
+                            && state.active_tab.lock().unwrap().as_deref()
+                                == Some(restore_id.as_str())
+                            && state
+                                .tabs
+                                .lock()
+                                .unwrap()
+                                .get(&restore_id)
+                                .is_some_and(|tab| tab.url == expected_url)
+                    };
+                    let report = || {
+                        if manager.is_current_instance(&restore_id, &instance) {
+                            let _ = restore_app.emit(
+                                "tab-viewport-restore-unconfirmed",
+                                serde_json::json!({"id":restore_id}),
+                            );
+                        }
+                    };
+                    let consume = || {
+                        let mut saved = state.hibernated_scroll.lock().unwrap();
+                        if saved
+                            .get(&restore_id)
+                            .is_some_and(|v| v.0 == expected_url && v.1 == (x, y))
+                        {
+                            saved.remove(&restore_id);
+                        }
+                    };
+                    // Never touch an unrelated replacement's checkpoint.
+                    if !manager.is_current_instance(&restore_id, &instance) || !pending() {
+                        return;
                     }
-                };
-                let consume = || {
-                    let mut saved = state.hibernated_scroll.lock().unwrap();
-                    if saved.get(&restore_id).is_some_and(|v| v.0 == expected_url && v.1 == (x,y)) {
-                        saved.remove(&restore_id);
+                    if !current() {
+                        consume();
+                        report();
+                        return;
                     }
-                };
-                // Never touch an unrelated replacement's checkpoint.
-                if !manager.is_current_instance(&restore_id,&instance) || !pending() { return; }
-                if !current() { consume(); report(); return; }
-                let Ok(_owner) = super::tab_mutation::reserve_internal() else { consume(); report(); return; };
-                let Ok(_transition) = reserve_tab_transition(&restore_id) else { consume(); report(); return; };
-                if !current() || !pending() { return; }
-                // Consume before the first possible dispatch. No subsequent
-                // activation can replay an ambiguous or partially applied write.
-                consume();
-                let Ok(js) = crate::grid_ipc::viewport_restore_script(&expected_url,x,y) else { report(); return; };
-                let Ok(document) = manager.capture_document(&restore_id) else { report(); return; };
-                if !current() { report(); return; }
-                let (tx,rx) = std::sync::mpsc::channel();
-                if manager.eval_result_document(&restore_id,&document,js,move |result| { let _=tx.send(result); }).is_err() {
-                    report(); return;
-                }
-                let confirmed = matches!(rx.recv_timeout(std::time::Duration::from_secs(2)),
+                    let Ok(_owner) = super::tab_mutation::reserve_internal() else {
+                        consume();
+                        report();
+                        return;
+                    };
+                    let Ok(_transition) = reserve_tab_transition(&restore_id) else {
+                        consume();
+                        report();
+                        return;
+                    };
+                    if !current() || !pending() {
+                        return;
+                    }
+                    // Consume before the first possible dispatch. No subsequent
+                    // activation can replay an ambiguous or partially applied write.
+                    consume();
+                    let Ok(js) = crate::grid_ipc::viewport_restore_script(&expected_url, x, y)
+                    else {
+                        report();
+                        return;
+                    };
+                    let Ok(document) = manager.capture_document(&restore_id) else {
+                        report();
+                        return;
+                    };
+                    if !current() {
+                        report();
+                        return;
+                    }
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    if manager
+                        .eval_result_document(&restore_id, &document, js, move |result| {
+                            let _ = tx.send(result);
+                        })
+                        .is_err()
+                    {
+                        report();
+                        return;
+                    }
+                    let confirmed = matches!(rx.recv_timeout(std::time::Duration::from_secs(2)),
                     Ok(Ok(value)) if value=="applied" || value=="skip_nonzero");
-                if !confirmed || !current() || !manager.is_current_capture_document(&restore_id,&document) {
-                    report();
-                }
-            });
+                    if !confirmed
+                        || !current()
+                        || !manager.is_current_capture_document(&restore_id, &document)
+                    {
+                        report();
+                    }
+                });
             if spawned.is_err() {
-                app.state::<AppState>().hibernated_scroll.lock().unwrap().remove(&id);
-                let _ = app.emit("tab-viewport-restore-unconfirmed", serde_json::json!({"id":id}));
+                app.state::<AppState>()
+                    .hibernated_scroll
+                    .lock()
+                    .unwrap()
+                    .remove(&id);
+                let _ = app.emit(
+                    "tab-viewport-restore-unconfirmed",
+                    serde_json::json!({"id":id}),
+                );
             }
         }
     }
@@ -1493,7 +1750,8 @@ pub(super) fn tab_activate_admitted(
         .map_err(|error| match error {
             WaitError::Revoked => "TAB_RENDERER_ACTIVATION_PARTIAL:TAB_ACTIVATION_LAYOUT_REVOKED",
             WaitError::Lost => "TAB_ACTIVATION_CALLBACK_LOST",
-        })?.map_err(|error|format!("TAB_RENDERER_ACTIVATION_PARTIAL:{id}:{error}"))?;
+        })?
+        .map_err(|error| format!("TAB_RENDERER_ACTIVATION_PARTIAL:{id}:{error}"))?;
     Ok(())
 }
 

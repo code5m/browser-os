@@ -307,8 +307,10 @@ impl DurableRun {
         {
             return Err("AGENT_RUN_RECEIPT_INVALID".into());
         }
-        if matches!(record.phase.as_str(), "provider_applied" | "provider_not_applied" | "provider_cancelled")
-            && !Self::provider_resolution_proven(&record)
+        if matches!(
+            record.phase.as_str(),
+            "provider_applied" | "provider_not_applied" | "provider_cancelled"
+        ) && !Self::provider_resolution_proven(&record)
         {
             return Err("AGENT_RUN_RECEIPT_INVALID".into());
         }
@@ -317,7 +319,10 @@ impl DurableRun {
                 if !binding.valid()
                     || binding.run_id != record.id
                     || effect.review_revision.as_deref() != Some(binding.review_revision.as_str())
-                    || record.approval.as_ref().map(|claim| claim.tool_name.as_str())
+                    || record
+                        .approval
+                        .as_ref()
+                        .map(|claim| claim.tool_name.as_str())
                         != Some("coding.manual_mcp_call")
                     || effect.response_payload.is_some()
                     || matches!(record.phase.as_str(), "completed" | "transport_returned")
@@ -427,8 +432,12 @@ impl DurableRun {
             })
     }
     fn provider_resolution_proven(record: &NativeRunReceipt) -> bool {
-        let Some(outcome) = super::mcp_authority::FinalOutcome::ALL.into_iter()
-            .find(|outcome| outcome.phase() == record.phase) else { return false; };
+        let Some(outcome) = super::mcp_authority::FinalOutcome::ALL
+            .into_iter()
+            .find(|outcome| outcome.phase() == record.phase)
+        else {
+            return false;
+        };
         let status = outcome.task_status();
         let disposition = outcome.phase();
         record.task.status == status
@@ -439,7 +448,10 @@ impl DurableRun {
             && record.effect.as_ref().is_some_and(|effect| {
                 effect.disposition == disposition
                     && effect.response_payload.is_none()
-                    && effect.authority.as_ref().zip(effect.provider_proof.as_ref())
+                    && effect
+                        .authority
+                        .as_ref()
+                        .zip(effect.provider_proof.as_ref())
                         .is_some_and(|(binding, proof)| {
                             binding.run_id == record.id
                                 && effect.review_revision.as_deref()
@@ -907,7 +919,9 @@ impl ProductionExecution {
             .ok_or("AGENT_RUN_RECEIPT_REQUIRED")?;
         // The provider has already scrubbed known credentials. Keep only
         // bounded results passing the existing additional secret screening.
-        payload.result = if encoded.as_deref().and_then(|bytes| std::str::from_utf8(bytes).ok())
+        payload.result = if encoded
+            .as_deref()
+            .and_then(|bytes| std::str::from_utf8(bytes).ok())
             .is_some_and(|text| !crate::security_policy::contains_credential_leak(text))
         {
             Some(value.clone())
@@ -1177,8 +1191,7 @@ impl ProductionExecution {
                     return Err("AGENT_RUN_NOT_RESUMABLE".into());
                 }
             };
-            if super::mcp_protocol::encode_bounded(&input, 128 * 1024).is_err()
-            {
+            if super::mcp_protocol::encode_bounded(&input, 128 * 1024).is_err() {
                 return Err("AGENT_RUN_INPUT_LIMIT".into());
             }
             if (resume
@@ -1477,7 +1490,11 @@ impl ProductionExecution {
         owner: &DurableRun,
         mut record: NativeRunReceipt,
     ) -> Result<(NativeRunReceipt, serde_json::Value), String> {
-        let Some(binding) = record.effect.as_ref().and_then(|effect| effect.authority.as_ref()) else {
+        let Some(binding) = record
+            .effect
+            .as_ref()
+            .and_then(|effect| effect.authority.as_ref())
+        else {
             return Ok((record, serde_json::json!({"state":"not_configured"})));
         };
         if binding.run_id != record.id {
@@ -1489,7 +1506,10 @@ impl ProductionExecution {
         let proof = observed.proof();
         if Self::can_resolve_manual(&record) && DurableRun::manual_admission_bound(&record) {
             if let Some(proof) = proof {
-                record.task.revision = record.task.revision.checked_add(1)
+                record.task.revision = record
+                    .task
+                    .revision
+                    .checked_add(1)
                     .ok_or("AGENT_TASK_REVISION_EXHAUSTED")?;
                 record.task.status = proof.outcome.task_status();
                 record.phase = proof.outcome.phase().into();
@@ -1507,50 +1527,86 @@ impl ProductionExecution {
         // authenticated late proofs without rewriting the original receipt.
         // Read all outcomes each time: removing/replacing the inbox file
         // cannot erase an already recorded contradiction.
-        let binding = record.effect.as_ref().and_then(|effect| effect.authority.as_ref())
+        let binding = record
+            .effect
+            .as_ref()
+            .and_then(|effect| effect.authority.as_ref())
             .ok_or("AGENT_RUN_RECEIPT_INVALID")?;
-        let stored = record.effect.as_ref().and_then(|effect| effect.provider_proof.as_ref());
+        let stored = record
+            .effect
+            .as_ref()
+            .and_then(|effect| effect.provider_proof.as_ref());
         let manual_outcome = match record.phase.as_str() {
             "reconciled_applied" => Some(true),
             "reconciled_not_applied" => Some(false),
             _ => None,
         };
-        let terminal_outcome = stored.map(|proof| proof.outcome.applied()).or(manual_outcome);
+        let terminal_outcome = stored
+            .map(|proof| proof.outcome.applied())
+            .or(manual_outcome);
         use super::mcp_authority::FinalOutcome;
-        let read_retained = |outcome: FinalOutcome| -> Result<Option<super::mcp_authority::SignedStatus>, String> {
-            let Some(bytes) = owner.checkpoint.read_provider_evidence(outcome)? else { return Ok(None); };
-            let retained: super::mcp_authority::SignedStatus =
-                serde_json::from_slice(&bytes).map_err(|_| "MCP_EFFECT_HISTORY_INVALID")?;
-            if retained.outcome != outcome || !retained.verify(binding) {
-                return Err("MCP_EFFECT_HISTORY_INVALID".into());
-            }
-            Ok(Some(retained))
-        };
-        let mut retained = [read_retained(FinalOutcome::NotAppliedFinal)?, read_retained(FinalOutcome::AppliedFinal)?, read_retained(FinalOutcome::CancelledFinal)?];
+        let read_retained =
+            |outcome: FinalOutcome| -> Result<Option<super::mcp_authority::SignedStatus>, String> {
+                let Some(bytes) = owner.checkpoint.read_provider_evidence(outcome)? else {
+                    return Ok(None);
+                };
+                let retained: super::mcp_authority::SignedStatus =
+                    serde_json::from_slice(&bytes).map_err(|_| "MCP_EFFECT_HISTORY_INVALID")?;
+                if retained.outcome != outcome || !retained.verify(binding) {
+                    return Err("MCP_EFFECT_HISTORY_INVALID".into());
+                }
+                Ok(Some(retained))
+            };
+        let mut retained = [
+            read_retained(FinalOutcome::NotAppliedFinal)?,
+            read_retained(FinalOutcome::AppliedFinal)?,
+            read_retained(FinalOutcome::CancelledFinal)?,
+        ];
         if terminal_outcome.is_none() && retained.iter().any(Option::is_some) {
             return Err("MCP_EFFECT_HISTORY_INVALID".into());
         }
         if let Some(latest) = proof {
-            let position = FinalOutcome::ALL.iter().position(|outcome| *outcome == latest.outcome).ok_or("MCP_EFFECT_HISTORY_INVALID")?;
+            let position = FinalOutcome::ALL
+                .iter()
+                .position(|outcome| *outcome == latest.outcome)
+                .ok_or("MCP_EFFECT_HISTORY_INVALID")?;
             // The primary provider proof already lives in the original
             // authenticated record. Only independently late evidence needs
             // the sidecar. Keep at most one verified proof per outcome.
-            if terminal_outcome.is_some() && stored.is_none_or(|original| original.outcome != latest.outcome)
+            if terminal_outcome.is_some()
+                && stored.is_none_or(|original| original.outcome != latest.outcome)
                 && retained[position].is_none()
             {
                 let bytes = serde_json::to_vec(latest).map_err(|_| "MCP_EFFECT_HISTORY_INVALID")?;
-                owner.checkpoint.retain_provider_evidence(latest.outcome, &bytes)?;
+                owner
+                    .checkpoint
+                    .retain_provider_evidence(latest.outcome, &bytes)?;
                 retained[position] = read_retained(latest.outcome)?;
-                if retained[position].is_none() { return Err("MCP_EFFECT_HISTORY_MISSING".into()); }
+                if retained[position].is_none() {
+                    return Err("MCP_EFFECT_HISTORY_MISSING".into());
+                }
             }
         }
-        let historical_conflict = terminal_outcome.is_some_and(|applied| retained.iter().flatten().any(|proof| proof.outcome.applied() != applied));
+        let historical_conflict = terminal_outcome.is_some_and(|applied| {
+            retained
+                .iter()
+                .flatten()
+                .any(|proof| proof.outcome.applied() != applied)
+        });
         let state = if stored.is_some() {
-            if historical_conflict { "conflicting_signed_terminal" } else { "settled" }
+            if historical_conflict {
+                "conflicting_signed_terminal"
+            } else {
+                "settled"
+            }
         } else if let Some(applied) = manual_outcome {
             if historical_conflict {
                 "conflicts_manual"
-            } else if retained.iter().flatten().any(|proof| proof.outcome.applied() == applied) {
+            } else if retained
+                .iter()
+                .flatten()
+                .any(|proof| proof.outcome.applied() == applied)
+            {
                 "matches_manual"
             } else {
                 observed.state()
@@ -1568,7 +1624,11 @@ impl ProductionExecution {
     }
 
     #[cfg(any(target_os = "linux", target_os = "windows"))]
-    fn manual_summary(record: &NativeRunReceipt, detail: bool, provider_inbox: serde_json::Value) -> serde_json::Value {
+    fn manual_summary(
+        record: &NativeRunReceipt,
+        detail: bool,
+        provider_inbox: serde_json::Value,
+    ) -> serde_json::Value {
         let effect = record.effect.as_ref();
         let response = if record.phase == "completed" && record.task.status == TaskStatus::Completed
         {
@@ -1605,7 +1665,8 @@ impl ProductionExecution {
             result["response_payload"] = serde_json::json!(response);
             result["reviews"] = serde_json::json!(&record.effect_reviews);
             result["resolution"] = serde_json::json!(&record.effect_resolution);
-            result["provider_proof"] = serde_json::json!(effect.and_then(|value| value.provider_proof.as_ref()));
+            result["provider_proof"] =
+                serde_json::json!(effect.and_then(|value| value.provider_proof.as_ref()));
             result["approved_tool"] =
                 serde_json::json!(record.approval.as_ref().map(|claim| &claim.tool_name));
         }
@@ -1632,7 +1693,8 @@ impl ProductionExecution {
                         return Ok(None);
                     }
                     let recovered = owner.recover_record(record)?;
-                    let (reconciled, inbox) = Self::reconcile_provider_status(storage, &owner, recovered)?;
+                    let (reconciled, inbox) =
+                        Self::reconcile_provider_status(storage, &owner, recovered)?;
                     Ok(Some(Self::manual_summary(&reconciled, false, inbox)))
                 })();
                 match result {
@@ -1844,7 +1906,10 @@ impl ProductionExecution {
             }
             // Contradictory signed evidence needs explicit investigation,
             // not an archive action that appears to finish the dispute.
-            if matches!(inbox["state"].as_str(), Some("conflicts_manual" | "conflicting_signed_terminal")) {
+            if matches!(
+                inbox["state"].as_str(),
+                Some("conflicts_manual" | "conflicting_signed_terminal")
+            ) {
                 return Err("MCP_EFFECT_STATUS_CONFLICT".into());
             }
             owner.checkpoint.archive_terminal()?;
@@ -2474,7 +2539,9 @@ mod tests {
                 second,
                 "",
                 || false,
-                |_, _| Ok(|_: &ExecutionLease<'static>| panic!("committed successor must not replay"))
+                |_, _| Ok(|_: &ExecutionLease<'static>| panic!(
+                    "committed successor must not replay"
+                ))
             )
             .unwrap(),
             answer
@@ -2494,7 +2561,9 @@ mod tests {
                 second,
                 "",
                 || false,
-                |_, _| Ok(|_: &ExecutionLease<'static>| panic!("compacted predecessor must only recover committed child"))
+                |_, _| Ok(|_: &ExecutionLease<'static>| panic!(
+                    "compacted predecessor must only recover committed child"
+                ))
             )
             .unwrap(),
             answer
@@ -2532,7 +2601,10 @@ mod tests {
             let request = serde_json::json!({
                 "action":"mcp_call","tool":"fixture","review_revision":binding.review_revision
             });
-            let digest = format!("{:x}", Sha256::digest(serde_json::to_vec(&request).unwrap()));
+            let digest = format!(
+                "{:x}",
+                Sha256::digest(serde_json::to_vec(&request).unwrap())
+            );
             let arguments = serde_json::json!({"run_id":run,"review_digest":digest});
             let (claim, permit) = execution
                 .approve_native(
@@ -2549,14 +2621,12 @@ mod tests {
             execution
                 .checkpoint_manual_mcp(&root, digest, &request, Some(&binding))
                 .unwrap();
-            assert!(
-                !execution
-                    .record_manual_mcp_return(
-                        &Ok(serde_json::json!({"result":{"content":[]},"untrusted":true})),
-                        true
-                    )
-                    .unwrap()
-            );
+            assert!(!execution
+                .record_manual_mcp_return(
+                    &Ok(serde_json::json!({"result":{"content":[]},"untrusted":true})),
+                    true
+                )
+                .unwrap());
             drop(lease);
             execution.finish_unknown().unwrap();
             let directory = storage.join("mcp-effect-status");
@@ -2576,7 +2646,11 @@ mod tests {
             let resolved = ProductionExecution::read_manual_mcp(&storage, &root, run).unwrap();
             assert_eq!(
                 resolved["phase"],
-                if outcome.applied() { "provider_applied" } else { "provider_not_applied" }
+                if outcome.applied() {
+                    "provider_applied"
+                } else {
+                    "provider_not_applied"
+                }
             );
             assert_eq!(resolved["provider_outcome"], serde_json::json!(outcome));
             assert_eq!(resolved["can_resolve"], false);
@@ -2584,7 +2658,10 @@ mod tests {
             let recovered = ProductionExecution::read_manual_mcp(&storage, &root, run).unwrap();
             assert_eq!(resolved["revision"], recovered["revision"]);
             assert_eq!(resolved["provider_proof"], recovered["provider_proof"]);
-            assert!(ProductionExecution::begin_workspace_run(&storage, "manual_mcp", &root, run).is_err());
+            assert!(
+                ProductionExecution::begin_workspace_run(&storage, "manual_mcp", &root, run)
+                    .is_err()
+            );
         }
         std::fs::remove_dir_all(root).unwrap();
     }

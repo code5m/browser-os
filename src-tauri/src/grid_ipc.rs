@@ -58,7 +58,9 @@ impl NativeWindowReceipt {
             self.source == NativeWindowSource::WindowsDwm && self.compositor_barrier
         } else if cfg!(target_os = "linux") {
             self.source == NativeWindowSource::X11Server && !self.compositor_barrier
-        } else { false };
+        } else {
+            false
+        };
         if !source_matches || self.visible != expected.is_some() {
             return Err("GRID_NATIVE_VISIBILITY_RECEIPT_MISMATCH".into());
         }
@@ -70,11 +72,17 @@ impl NativeWindowReceipt {
                 // The native APIs take integer physical pixels. Permit
                 // two pixels of window-manager rounding, not CSS units or
                 // an arbitrary old rectangle from the previous operation.
-                let close = |observed: f64, requested: f64| (observed - requested.trunc()).abs() <= 2.0;
-                if close(actual.x, wanted.x) && close(actual.y, wanted.y)
-                    && close(actual.w, wanted.w) && close(actual.h, wanted.h) {
+                let close =
+                    |observed: f64, requested: f64| (observed - requested.trunc()).abs() <= 2.0;
+                if close(actual.x, wanted.x)
+                    && close(actual.y, wanted.y)
+                    && close(actual.w, wanted.w)
+                    && close(actual.h, wanted.h)
+                {
                     Ok(())
-                } else { Err("GRID_NATIVE_GEOMETRY_UNCONFIRMED".into()) }
+                } else {
+                    Err("GRID_NATIVE_GEOMETRY_UNCONFIRMED".into())
+                }
             }
             _ => Err("GRID_NATIVE_VISIBILITY_RECEIPT_MISMATCH".into()),
         }
@@ -86,10 +94,11 @@ impl NativeWindowReceipt {
             GridCmd::HideWindow { .. } => None,
             _ => return Err("GRID_WINDOW_COMMAND_INVALID".into()),
         };
-        let data = data.filter(|value| value.len() <= 1024)
+        let data = data
+            .filter(|value| value.len() <= 1024)
             .ok_or("GRID_NATIVE_VISIBILITY_RECEIPT_MISSING")?;
-        let receipt: Self = serde_json::from_str(&data)
-            .map_err(|_| "GRID_NATIVE_VISIBILITY_RECEIPT_INVALID")?;
+        let receipt: Self =
+            serde_json::from_str(&data).map_err(|_| "GRID_NATIVE_VISIBILITY_RECEIPT_INVALID")?;
         receipt.validate_for(expected)?;
         Ok(receipt)
     }
@@ -101,16 +110,32 @@ mod native_window_receipt_tests {
     #[test]
     fn receipt_requires_platform_visibility_and_exact_physical_geometry() {
         let windows = cfg!(target_os = "windows");
-        let rect = IpcRect { x: -32.5, y: 20.0, w: 400.0, h: 300.0 };
+        let rect = IpcRect {
+            x: -32.5,
+            y: 20.0,
+            w: 400.0,
+            h: 300.0,
+        };
         let mut receipt = NativeWindowReceipt {
             visible: true,
-            source: if windows { NativeWindowSource::WindowsDwm } else { NativeWindowSource::X11Server },
+            source: if windows {
+                NativeWindowSource::WindowsDwm
+            } else {
+                NativeWindowSource::X11Server
+            },
             rect: Some(rect),
             compositor_barrier: windows,
         };
-        let command = GridCmd::UpdateRect { id: "grid-0".into(), rect };
+        let command = GridCmd::UpdateRect {
+            id: "grid-0".into(),
+            rect,
+        };
         assert!(NativeWindowReceipt::decode_for(&command, None).is_err());
-        assert!(NativeWindowReceipt::decode_for(&command, Some(serde_json::to_string(&receipt).unwrap())).is_ok());
+        assert!(NativeWindowReceipt::decode_for(
+            &command,
+            Some(serde_json::to_string(&receipt).unwrap())
+        )
+        .is_ok());
         receipt.rect.as_mut().unwrap().x += 30.0;
         assert!(receipt.validate_for(Some(rect)).is_err());
         receipt.visible = false;
@@ -131,8 +156,7 @@ pub(crate) const MAX_ISOLATED_TAB_RENDERERS: usize = 8;
 pub(crate) const TAB_RENDERER_MEMORY_LIMIT: usize = 2 * 1024 * 1024 * 1024;
 /// Reserve estimated startup memory while native children are still warming.
 /// This is host admission accounting, NOT an engine allocation hard limit.
-pub(crate) const RENDERER_STARTUP_RESERVE: std::time::Duration =
-    std::time::Duration::from_secs(10);
+pub(crate) const RENDERER_STARTUP_RESERVE: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// One sorted, process-owned observation used by telemetry and Agent
 /// metadata. Epoch avoids treating a recycled PID as the previous renderer.
@@ -177,15 +201,18 @@ impl NativeDocumentStamp {
     pub(crate) fn from_report(payload: &serde_json::Value) -> Option<Self> {
         let instance = payload["instance"].as_str()?.parse::<u64>().ok()?;
         let revision = payload["revision"].as_str()?.parse::<u64>().ok()?;
-        (instance > 0 && revision > 0
+        (instance > 0
+            && revision > 0
             && payload["instance"].as_str()? == instance.to_string()
             && payload["revision"].as_str()? == revision.to_string())
-            .then_some(Self { instance, revision })
+        .then_some(Self { instance, revision })
     }
 
     pub(crate) fn usable(self) -> bool {
-        self.instance > 0 && self.instance != u64::MAX
-            && self.revision > 0 && self.revision != u64::MAX
+        self.instance > 0
+            && self.instance != u64::MAX
+            && self.revision > 0
+            && self.revision != u64::MAX
     }
 }
 
@@ -257,21 +284,29 @@ pub(crate) fn is_renderer_ready(index: u32, frame: &Wire) -> bool {
 /// An address can be reopened without carrying an original document or
 /// embedded HTTP credentials. Explicit navigation policy is unchanged.
 pub(crate) fn restorable_address(address: &str) -> bool {
-    if address.is_empty() || address.len() > 8192 || address.trim() != address
+    if address.is_empty()
+        || address.len() > 8192
+        || address.trim() != address
         || address.chars().any(char::is_control)
     {
         return false;
     }
-    let Ok(url) = url::Url::parse(address) else { return false; };
-    if !url.username().is_empty() || url.password().is_some() { return false; }
+    let Ok(url) = url::Url::parse(address) else {
+        return false;
+    };
+    if !url.username().is_empty() || url.password().is_some() {
+        return false;
+    }
     match url.scheme() {
         "http" | "https" => url.has_host(),
         "file" => {
             let path = url.path().to_ascii_lowercase();
             (url.host_str().is_none() || url.host_str() == Some("localhost"))
-                && !path.starts_with("//") && !path.contains("%2f") && !path.contains("%5c")
+                && !path.starts_with("//")
+                && !path.contains("%2f")
+                && !path.contains("%5c")
                 && url.to_file_path().is_ok()
-        },
+        }
         "about" => address == "about:blank",
         _ => false,
     }
@@ -282,19 +317,25 @@ pub(crate) fn restorable_address(address: &str) -> bool {
 /// and do not reinterpret a transient or credential-bearing old page.
 pub(crate) fn explicit_reopen_address(address: &str) -> bool {
     restorable_address(address)
-        && url::Url::parse(address).is_ok_and(|url| matches!(url.scheme(), "http" | "https" | "file" | "about"))
+        && url::Url::parse(address)
+            .is_ok_and(|url| matches!(url.scheme(), "http" | "https" | "file" | "about"))
 }
 
 /// A denied popup is not a corrupt renderer connection. The parent may
 /// reopen an ordinary address but cannot transfer a transient document,
 /// opener, script URL, or remote-page access to local files.
 pub(crate) fn popup_address_supported(address: &str, source: Option<&str>) -> bool {
-    if !restorable_address(address) { return false; }
-    let Ok(url) = url::Url::parse(address) else { return false; };
+    if !restorable_address(address) {
+        return false;
+    }
+    let Ok(url) = url::Url::parse(address) else {
+        return false;
+    };
     match url.scheme() {
         "http" | "https" => url.has_host(),
         "about" => address == "about:blank",
-        "file" => source.filter(|source| restorable_address(source))
+        "file" => source
+            .filter(|source| restorable_address(source))
             .and_then(|source| url::Url::parse(source).ok())
             .is_some_and(|source| source.scheme() == "file"),
         _ => false,
@@ -319,8 +360,14 @@ impl DownloadObservation {
             failed: payload["failed"].as_u64()?,
         };
         const MAX_EXACT_JS_COUNT: u64 = (1u64 << 53) - 1;
-        [observation.requested, observation.succeeded, observation.failed]
-            .into_iter().all(|count| count <= MAX_EXACT_JS_COUNT).then_some(observation)
+        [
+            observation.requested,
+            observation.succeeded,
+            observation.failed,
+        ]
+        .into_iter()
+        .all(|count| count <= MAX_EXACT_JS_COUNT)
+        .then_some(observation)
     }
     pub(crate) fn from_report(payload: &serde_json::Value) -> Option<Self> {
         let observation = Self::from_counts(payload)?;
@@ -333,11 +380,14 @@ impl DownloadObservation {
         (phase_count > 0).then_some(observation)
     }
     pub(crate) fn advances(self, previous: Self) -> bool {
-        self.requested >= previous.requested && self.succeeded >= previous.succeeded
-            && self.failed >= previous.failed && self != previous
+        self.requested >= previous.requested
+            && self.succeeded >= previous.succeeded
+            && self.failed >= previous.failed
+            && self != previous
     }
     pub(crate) fn observed_unfinished(self) -> Option<u64> {
-        self.requested.checked_sub(self.succeeded.checked_add(self.failed)?)
+        self.requested
+            .checked_sub(self.succeeded.checked_add(self.failed)?)
     }
 }
 
@@ -346,42 +396,65 @@ pub(crate) fn valid_renderer_event(index: u32, name: &str, payload: &serde_json:
     let label = renderer_label(index);
     let index_text = index.to_string();
     let valid_url = || {
-        payload["url"].as_str().is_some_and(|url| !url.is_empty() && url.len() <= 8192)
+        payload["url"]
+            .as_str()
+            .is_some_and(|url| !url.is_empty() && url.len() <= 8192)
     };
     match name {
         "grid-child-focus" | "grid-child-blur" => {
             payload["index"].as_u64() == Some(u64::from(index))
         }
-        "native-document-revision" => payload.as_object().is_some_and(|fields| fields.len() == 3)
-            && payload["id"].as_str() == Some(label.as_str())
-            && NativeDocumentStamp::from_report(payload).is_some(),
-        "tab-document-changed" => payload.as_object().is_some_and(|fields| fields.len() == 1)
-            && payload["id"].as_str() == Some(label.as_str()),
+        "native-document-revision" => {
+            payload.as_object().is_some_and(|fields| fields.len() == 3)
+                && payload["id"].as_str() == Some(label.as_str())
+                && NativeDocumentStamp::from_report(payload).is_some()
+        }
+        "tab-document-changed" => {
+            payload.as_object().is_some_and(|fields| fields.len() == 1)
+                && payload["id"].as_str() == Some(label.as_str())
+        }
         "tab-navigated" | "new-tab-request" => {
             payload["id"].as_str() == Some(label.as_str()) && valid_url()
         }
-        "grid-load-failed" => {
-            payload["index"].as_str() == Some(index_text.as_str()) && valid_url()
+        "grid-load-failed" => payload["index"].as_str() == Some(index_text.as_str()) && valid_url(),
+        "renderer-resource" => {
+            is_tab_renderer(index)
+                && payload["id"].as_str() == Some(label.as_str())
+                && payload["resource"].is_object()
         }
-        "renderer-resource" => is_tab_renderer(index)
-            && payload["id"].as_str() == Some(label.as_str())
-            && payload["resource"].is_object(),
-        "tab-title" => is_tab_renderer(index)
-            && payload["id"].as_str() == Some(label.as_str())
-            && valid_url()
-            && payload["title"].as_str().is_some_and(|title| title.len() <= 8192)
-            && NativeDocumentStamp::from_report(payload).is_some_and(|stamp| stamp.usable()),
-        "browser-resources" => is_tab_renderer(index)
-            && payload["id"].as_str() == Some(label.as_str())
-            && payload["page_url"].as_str().is_some_and(|url| url.len() <= 8192)
-            && payload["items"].as_array().is_some_and(|items| items.len() <= 100),
-        "renderer-download" => is_tab_renderer(index)
-            && payload.as_object().is_some_and(|fields| fields.len() == 5)
-            && payload["id"].as_str() == Some(label.as_str())
-            && DownloadObservation::from_report(payload).is_some(),
-        "browser-tabs://shell-shortcut" => is_tab_renderer(index)
-            && payload["id"].as_str() == Some(label.as_str())
-            && matches!(payload["action"].as_str(), Some("immersive" | "compact" | "address")),
+        "tab-title" => {
+            is_tab_renderer(index)
+                && payload["id"].as_str() == Some(label.as_str())
+                && valid_url()
+                && payload["title"]
+                    .as_str()
+                    .is_some_and(|title| title.len() <= 8192)
+                && NativeDocumentStamp::from_report(payload).is_some_and(|stamp| stamp.usable())
+        }
+        "browser-resources" => {
+            is_tab_renderer(index)
+                && payload["id"].as_str() == Some(label.as_str())
+                && payload["page_url"]
+                    .as_str()
+                    .is_some_and(|url| url.len() <= 8192)
+                && payload["items"]
+                    .as_array()
+                    .is_some_and(|items| items.len() <= 100)
+        }
+        "renderer-download" => {
+            is_tab_renderer(index)
+                && payload.as_object().is_some_and(|fields| fields.len() == 5)
+                && payload["id"].as_str() == Some(label.as_str())
+                && DownloadObservation::from_report(payload).is_some()
+        }
+        "browser-tabs://shell-shortcut" => {
+            is_tab_renderer(index)
+                && payload["id"].as_str() == Some(label.as_str())
+                && matches!(
+                    payload["action"].as_str(),
+                    Some("immersive" | "compact" | "address")
+                )
+        }
         "open-terminal" => payload.is_null(),
         "note-saved" => payload.is_string(),
         "artifact-collected" => payload.is_object(),
@@ -415,13 +488,38 @@ pub enum GridCmd {
     ReadReplies {
         id: String,
     },
-    DownloadTasks { id: String, control: Option<(String,String)> },
-    ViewportSnapshot { id: String },
-    ViewportRestore { id: String, address: String, x: f64, y: f64 },
-    FillCredential { id: String, origin: String, username: String, password: String },
-    CaptureStart { id: String, ticket: String },
-    CaptureRead { id: String, ticket: String, offset: usize },
-    CaptureRelease { id: String, ticket: String },
+    DownloadTasks {
+        id: String,
+        control: Option<(String, String)>,
+    },
+    ViewportSnapshot {
+        id: String,
+    },
+    ViewportRestore {
+        id: String,
+        address: String,
+        x: f64,
+        y: f64,
+    },
+    FillCredential {
+        id: String,
+        origin: String,
+        username: String,
+        password: String,
+    },
+    CaptureStart {
+        id: String,
+        ticket: String,
+    },
+    CaptureRead {
+        id: String,
+        ticket: String,
+        offset: usize,
+    },
+    CaptureRelease {
+        id: String,
+        ticket: String,
+    },
     /// Read-only native WebView safety probe before discarding an empty Grid.
     /// Absence of an explicit safe response must fail closed.
     HibernationProbe {
@@ -455,10 +553,14 @@ impl GridCmd {
     /// native document in addition to the process/transport identity.
     pub(crate) fn document_id(&self) -> Option<&str> {
         match self {
-            Self::Eval { id, .. } | Self::Navigate { id, .. }
-            | Self::ReadReplies { id } | Self::HibernationProbe { id }
-            | Self::ViewportSnapshot { id } | Self::ViewportRestore { id, .. }
-            | Self::FillCredential { id, .. } | Self::CaptureStart { id, .. }
+            Self::Eval { id, .. }
+            | Self::Navigate { id, .. }
+            | Self::ReadReplies { id }
+            | Self::HibernationProbe { id }
+            | Self::ViewportSnapshot { id }
+            | Self::ViewportRestore { id, .. }
+            | Self::FillCredential { id, .. }
+            | Self::CaptureStart { id, .. }
             | Self::CaptureRead { id, .. } => Some(id.as_str()),
             _ => None,
         }
@@ -468,20 +570,36 @@ impl GridCmd {
     /// native command can be considered for automatic ordinary-tab reclaim.
     pub(crate) fn preserves_pristine_blank(&self) -> bool {
         matches!(self, Self::CreateTab { url, .. } if url == "about:blank")
-            || matches!(self, Self::UpdateRect { .. } | Self::HideWindow { .. }
-                | Self::HibernationProbe { .. } | Self::DownloadTasks { control:None,.. } | Self::Ping)
+            || matches!(
+                self,
+                Self::UpdateRect { .. }
+                    | Self::HideWindow { .. }
+                    | Self::HibernationProbe { .. }
+                    | Self::DownloadTasks { control: None, .. }
+                    | Self::Ping
+            )
     }
 
     pub(crate) fn allowed_during_blank_reclaim(&self) -> bool {
-        matches!(self, Self::HideWindow { .. } | Self::HibernationProbe { .. })
+        matches!(
+            self,
+            Self::HideWindow { .. } | Self::HibernationProbe { .. }
+        )
     }
 
     /// Each child owns exactly one renderer identity. A transport connection
     /// is not permission to address another WebView or create arbitrary tabs.
     pub(crate) fn targets(&self, index: u32) -> bool {
-        if matches!(self, Self::DownloadTasks { .. } | Self::ViewportSnapshot { .. } | Self::ViewportRestore { .. } | Self::FillCredential { .. } | Self::CaptureStart { .. }
-            | Self::CaptureRead { .. } | Self::CaptureRelease { .. })
-            && !is_tab_renderer(index)
+        if matches!(
+            self,
+            Self::DownloadTasks { .. }
+                | Self::ViewportSnapshot { .. }
+                | Self::ViewportRestore { .. }
+                | Self::FillCredential { .. }
+                | Self::CaptureStart { .. }
+                | Self::CaptureRead { .. }
+                | Self::CaptureRelease { .. }
+        ) && !is_tab_renderer(index)
         {
             return false;
         }
@@ -517,7 +635,12 @@ pub(crate) struct GridRequestFence {
 }
 
 impl GridRequestFence {
-    pub(crate) fn admit(&mut self, index: u32, seq: u64, cmd: &GridCmd) -> Result<(), &'static str> {
+    pub(crate) fn admit(
+        &mut self,
+        index: u32,
+        seq: u64,
+        cmd: &GridCmd,
+    ) -> Result<(), &'static str> {
         if seq == 0 || seq <= self.last {
             return Err("GRID_REQUEST_SEQUENCE_REJECTED");
         }
@@ -529,13 +652,15 @@ impl GridRequestFence {
     }
 }
 
-pub(crate) fn next_request_sequence(
-    counter: &std::sync::atomic::AtomicU64,
-) -> Result<u64, String> {
+pub(crate) fn next_request_sequence(counter: &std::sync::atomic::AtomicU64) -> Result<u64, String> {
     use std::sync::atomic::Ordering;
     counter
         .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
-            if n == 0 { None } else { n.checked_add(1) }
+            if n == 0 {
+                None
+            } else {
+                n.checked_add(1)
+            }
         })
         .map_err(|_| "GRID_REQUEST_SEQUENCE_EXHAUSTED".into())
 }
@@ -625,19 +750,23 @@ pub(crate) const MAX_PENDING_RENDERER_REQUESTS: usize = 32;
 /// Keep this a separate admission bound: OS write/cancellation and short
 /// metadata mutexes still have their own semantics.
 pub(crate) fn lock_renderer_writer<'a, T>(
-    writer: &'a std::sync::Mutex<T>, deadline: std::time::Instant,
+    writer: &'a std::sync::Mutex<T>,
+    deadline: std::time::Instant,
     mut check: impl FnMut() -> Result<(), String>,
 ) -> Result<std::sync::MutexGuard<'a, T>, String> {
     use std::sync::TryLockError;
     loop {
         check()?;
         let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-        if remaining.is_zero() { return Err("GRID_WRITER_ADMISSION_TIMEOUT".into()); }
+        if remaining.is_zero() {
+            return Err("GRID_WRITER_ADMISSION_TIMEOUT".into());
+        }
         match writer.try_lock() {
             Ok(guard) => return Ok(guard),
             Err(TryLockError::Poisoned(_)) => return Err("GRID_WRITER_POISONED".into()),
-            Err(TryLockError::WouldBlock) => std::thread::sleep(
-                remaining.min(std::time::Duration::from_millis(10))),
+            Err(TryLockError::WouldBlock) => {
+                std::thread::sleep(remaining.min(std::time::Duration::from_millis(10)))
+            }
         }
     }
 }
@@ -655,11 +784,12 @@ pub(crate) fn encode_wire(msg: &Wire) -> std::io::Result<Vec<u8>> {
             self.0.extend_from_slice(bytes);
             Ok(bytes.len())
         }
-        fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
     }
     let mut frame = Frame(Vec::new());
-    serde_json::to_writer(&mut frame, msg)
-        .map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
+    serde_json::to_writer(&mut frame, msg).map_err(|e| Error::new(ErrorKind::InvalidData, e))?;
     frame.0.push(b'\n');
     Ok(frame.0)
 }
@@ -743,24 +873,56 @@ mod framing_tests {
         assert!(tab_renderer_index("tab-0").is_none());
         assert!(tab_renderer_index("grid-2").is_none());
         assert!(tab_renderer_index("tab-2147483648").is_none());
-        let navigate = GridCmd::Navigate { id: "tab-2".into(), url: "about:blank".into() };
+        let navigate = GridCmd::Navigate {
+            id: "tab-2".into(),
+            url: "about:blank".into(),
+        };
         assert!(navigate.targets(tab));
         assert!(!navigate.targets(2));
-        assert!(!GridCmd::HideWindow { id: "grid-2".into() }.targets(tab));
-        assert!(valid_renderer_event(tab, "tab-navigated",
-            &serde_json::json!({"id":"tab-2","url":"about:blank"})));
-        assert!(!valid_renderer_event(tab, "tab-navigated",
-            &serde_json::json!({"id":"grid-2","url":"about:blank"})));
+        assert!(!GridCmd::HideWindow {
+            id: "grid-2".into()
+        }
+        .targets(tab));
+        assert!(valid_renderer_event(
+            tab,
+            "tab-navigated",
+            &serde_json::json!({"id":"tab-2","url":"about:blank"})
+        ));
+        assert!(!valid_renderer_event(
+            tab,
+            "tab-navigated",
+            &serde_json::json!({"id":"grid-2","url":"about:blank"})
+        ));
     }
 
     #[test]
     fn only_pristine_blank_and_layout_commands_preserve_automatic_reclaim() {
         let id = "tab-1".to_owned();
-        assert!(GridCmd::CreateTab { id: id.clone(), url: "about:blank".into() }.preserves_pristine_blank());
-        assert!(!GridCmd::CreateTab { id: id.clone(), url: "https://example.test".into() }.preserves_pristine_blank());
-        assert!(!GridCmd::Navigate { id: id.clone(), url: "about:blank".into() }.preserves_pristine_blank());
-        assert!(!GridCmd::Eval { id: id.clone(), js: "history.back()".into() }.preserves_pristine_blank());
-        assert!(!GridCmd::CaptureStart { id: id.clone(), ticket: "fixture".into() }.allowed_during_blank_reclaim());
+        assert!(GridCmd::CreateTab {
+            id: id.clone(),
+            url: "about:blank".into()
+        }
+        .preserves_pristine_blank());
+        assert!(!GridCmd::CreateTab {
+            id: id.clone(),
+            url: "https://example.test".into()
+        }
+        .preserves_pristine_blank());
+        assert!(!GridCmd::Navigate {
+            id: id.clone(),
+            url: "about:blank".into()
+        }
+        .preserves_pristine_blank());
+        assert!(!GridCmd::Eval {
+            id: id.clone(),
+            js: "history.back()".into()
+        }
+        .preserves_pristine_blank());
+        assert!(!GridCmd::CaptureStart {
+            id: id.clone(),
+            ticket: "fixture".into()
+        }
+        .allowed_during_blank_reclaim());
         assert!(GridCmd::HideWindow { id: id.clone() }.allowed_during_blank_reclaim());
         assert!(GridCmd::HibernationProbe { id }.allowed_during_blank_reclaim());
         assert!(!GridCmd::Ping.allowed_during_blank_reclaim());
@@ -769,16 +931,28 @@ mod framing_tests {
     #[test]
     fn private_services_are_route_bound_and_debug_redacted() {
         let index = tab_renderer_index("tab-4").unwrap();
-        let fill = GridCmd::FillCredential { id: "tab-4".into(), origin: "https://example.test".into(),
-            username: "fixture-user".into(), password: "fixture-secret".into() };
+        let fill = GridCmd::FillCredential {
+            id: "tab-4".into(),
+            origin: "https://example.test".into(),
+            username: "fixture-user".into(),
+            password: "fixture-secret".into(),
+        };
         assert!(fill.targets(index));
         assert!(!fill.targets(4));
         assert!(!fill.targets(tab_renderer_index("tab-5").unwrap()));
         assert!(!format!("{fill:?}").contains("fixture-secret"));
-        let capture = GridCmd::CaptureRead { id: "tab-4".into(), ticket: "fixture".into(), offset: 0 };
+        let capture = GridCmd::CaptureRead {
+            id: "tab-4".into(),
+            ticket: "fixture".into(),
+            offset: 0,
+        };
         assert!(capture.targets(index));
         assert!(!capture.targets(4));
-        assert!(!valid_renderer_event(4, "renderer-resource", &serde_json::json!({"id":"grid-4","resource":{}})));
+        assert!(!valid_renderer_event(
+            4,
+            "renderer-resource",
+            &serde_json::json!({"id":"grid-4","resource":{}})
+        ));
     }
 
     #[test]
@@ -788,41 +962,113 @@ mod framing_tests {
         assert!(is_renderer_ready(2, &ready));
         assert!(!is_renderer_ready(3, &ready));
         assert!(!is_renderer_ready(2, &Wire::ok(1)));
-        assert!(valid_renderer_event(2, "tab-navigated", &json!({"id":"grid-2","url":"about:blank"})));
-        assert!(!valid_renderer_event(2, "tab-navigated", &json!({"id":"tab-2","url":"about:blank"})));
-        assert!(!valid_renderer_event(2, "grid-load-failed", &json!({"index":"3","url":"about:blank"})));
-        assert!(!valid_renderer_event(2, "renderer-ready", &json!({"index":2})));
-        assert!(!valid_renderer_event(2, "arbitrary-host-event", &json!(null)));
+        assert!(valid_renderer_event(
+            2,
+            "tab-navigated",
+            &json!({"id":"grid-2","url":"about:blank"})
+        ));
+        assert!(!valid_renderer_event(
+            2,
+            "tab-navigated",
+            &json!({"id":"tab-2","url":"about:blank"})
+        ));
+        assert!(!valid_renderer_event(
+            2,
+            "grid-load-failed",
+            &json!({"index":"3","url":"about:blank"})
+        ));
+        assert!(!valid_renderer_event(
+            2,
+            "renderer-ready",
+            &json!({"index":2})
+        ));
+        assert!(!valid_renderer_event(
+            2,
+            "arbitrary-host-event",
+            &json!(null)
+        ));
         assert!(valid_renderer_event(2, "open-terminal", &json!(null)));
         let tab = tab_renderer_index("tab-2").unwrap();
-        assert!(valid_renderer_event(tab, "browser-tabs://shell-shortcut", &json!({"id":"tab-2","action":"address"})));
-        assert!(!valid_renderer_event(tab, "browser-tabs://shell-shortcut", &json!({"id":"tab-3","action":"address"})));
-        assert!(!valid_renderer_event(tab, "browser-tabs://shell-shortcut", &json!({"id":"tab-2","action":"arbitrary"})));
-        assert!(!valid_renderer_event(2, "browser-tabs://shell-shortcut", &json!({"id":"grid-2","action":"address"})));
+        assert!(valid_renderer_event(
+            tab,
+            "browser-tabs://shell-shortcut",
+            &json!({"id":"tab-2","action":"address"})
+        ));
+        assert!(!valid_renderer_event(
+            tab,
+            "browser-tabs://shell-shortcut",
+            &json!({"id":"tab-3","action":"address"})
+        ));
+        assert!(!valid_renderer_event(
+            tab,
+            "browser-tabs://shell-shortcut",
+            &json!({"id":"tab-2","action":"arbitrary"})
+        ));
+        assert!(!valid_renderer_event(
+            2,
+            "browser-tabs://shell-shortcut",
+            &json!({"id":"grid-2","action":"address"})
+        ));
     }
 
     #[test]
     fn invalid_native_geometry_is_rejected() {
-        let rect = IpcRect { x: -30000.0, y: 10.0, w: 800.0, h: 600.0 };
+        let rect = IpcRect {
+            x: -30000.0,
+            y: 10.0,
+            w: 800.0,
+            h: 600.0,
+        };
         assert!(rect.validate().is_ok());
-        assert!(IpcRect { w: f64::NAN, ..rect }.validate().is_err());
+        assert!(IpcRect {
+            w: f64::NAN,
+            ..rect
+        }
+        .validate()
+        .is_err());
         assert!(IpcRect { h: 0.0, ..rect }.validate().is_err());
-        assert!(IpcRect { x: f64::INFINITY, ..rect }.validate().is_err());
+        assert!(IpcRect {
+            x: f64::INFINITY,
+            ..rect
+        }
+        .validate()
+        .is_err());
         assert!(IpcRect { w: 32769.0, ..rect }.validate().is_err());
     }
 
     #[test]
     fn worker_route_and_sequence_are_fenced_before_native_dispatch() {
         let mut fence = GridRequestFence::default();
-        let valid = GridCmd::Navigate { id: "grid-2".into(), url: "about:blank".into() };
-        let foreign = GridCmd::CreateTab { id: "tab-1".into(), url: "about:blank".into() };
-        assert_eq!(fence.admit(2, 0, &valid), Err("GRID_REQUEST_SEQUENCE_REJECTED"));
+        let valid = GridCmd::Navigate {
+            id: "grid-2".into(),
+            url: "about:blank".into(),
+        };
+        let foreign = GridCmd::CreateTab {
+            id: "tab-1".into(),
+            url: "about:blank".into(),
+        };
+        assert_eq!(
+            fence.admit(2, 0, &valid),
+            Err("GRID_REQUEST_SEQUENCE_REJECTED")
+        );
         assert!(fence.admit(2, 1, &valid).is_ok());
-        assert_eq!(fence.admit(2, 1, &valid), Err("GRID_REQUEST_SEQUENCE_REJECTED"));
-        assert_eq!(fence.admit(2, 2, &foreign), Err("GRID_REQUEST_TARGET_REJECTED"));
+        assert_eq!(
+            fence.admit(2, 1, &valid),
+            Err("GRID_REQUEST_SEQUENCE_REJECTED")
+        );
+        assert_eq!(
+            fence.admit(2, 2, &foreign),
+            Err("GRID_REQUEST_TARGET_REJECTED")
+        );
         assert!(fence.admit(2, 3, &GridCmd::Ping).is_ok());
-        assert_eq!(fence.admit(2, 2, &valid), Err("GRID_REQUEST_SEQUENCE_REJECTED"));
-        assert!(!GridCmd::HideWindow { id: "grid-3".into() }.targets(2));
+        assert_eq!(
+            fence.admit(2, 2, &valid),
+            Err("GRID_REQUEST_SEQUENCE_REJECTED")
+        );
+        assert!(!GridCmd::HideWindow {
+            id: "grid-3".into()
+        }
+        .targets(2));
     }
 
     #[test]
@@ -892,15 +1138,20 @@ mod framing_tests {
 
 /// Viewport data is advisory, bounded, and contains no DOM or form values.
 pub(crate) fn checked_viewport(encoded: &str, address: &str) -> Result<(f64, f64), String> {
-    if encoded.len() > 32 * 1024 { return Err("TAB_VIEWPORT_INVALID".into()); }
-    let value: serde_json::Value = serde_json::from_str(encoded).map_err(|_| "TAB_VIEWPORT_INVALID")?;
+    if encoded.len() > 32 * 1024 {
+        return Err("TAB_VIEWPORT_INVALID".into());
+    }
+    let value: serde_json::Value =
+        serde_json::from_str(encoded).map_err(|_| "TAB_VIEWPORT_INVALID")?;
     if value["address"].as_str() != Some(address) || value["protected"].as_bool() != Some(false) {
         return Err("TAB_VIEWPORT_PROTECTED_OR_STALE".into());
     }
     let x = value["scrollX"].as_f64().ok_or("TAB_VIEWPORT_INVALID")?;
     let y = value["scrollY"].as_f64().ok_or("TAB_VIEWPORT_INVALID")?;
-    if !valid_viewport(x,y) { return Err("TAB_VIEWPORT_INVALID".into()); }
-    Ok((x,y))
+    if !valid_viewport(x, y) {
+        return Err("TAB_VIEWPORT_INVALID".into());
+    }
+    Ok((x, y))
 }
 pub(crate) fn valid_viewport(x: f64, y: f64) -> bool {
     x.is_finite() && y.is_finite() && x.abs() <= 100_000_000.0 && y.abs() <= 100_000_000.0
@@ -909,7 +1160,7 @@ pub(crate) fn valid_viewport(x: f64, y: f64) -> bool {
 /// "deferred" is permitted only before any write, so a later retry cannot
 /// mistake a partial scroll from our own earlier attempt for page-owned state.
 pub(crate) fn viewport_restore_script(address: &str, x: f64, y: f64) -> Result<String, String> {
-    if !restorable_address(address) || !valid_viewport(x,y) {
+    if !restorable_address(address) || !valid_viewport(x, y) {
         return Err("TAB_VIEWPORT_INVALID".into());
     }
     let address = serde_json::to_string(address).map_err(|_| "TAB_VIEWPORT_INVALID")?;

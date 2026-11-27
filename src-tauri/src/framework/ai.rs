@@ -398,8 +398,11 @@ fn mcp_profile_for_reference<'a>(
 fn read_mcp_profiles(storage: &Path) -> Result<AiConfig, String> {
     let path = storage.join("ai-profiles.json");
     let snapshot = crate::capabilities::workspace::safe_paths::read_versioned(
-        &path, &[storage.to_path_buf()], MAX_BYTES as usize,
-    ).map_err(|_| "AI_CONFIG_UNSAFE")?;
+        &path,
+        &[storage.to_path_buf()],
+        MAX_BYTES as usize,
+    )
+    .map_err(|_| "AI_CONFIG_UNSAFE")?;
     match snapshot {
         Some(snapshot) => decode_config(&snapshot.bytes),
         None => Ok(AiConfig::default()),
@@ -409,18 +412,27 @@ fn mcp_credential_metadata(
     config: &AiConfig,
     refs: &serde_json::Map<String, Value>,
 ) -> Result<Vec<Value>, String> {
-    if refs.len() > 64 { return Err("MCP_ENV_LIMIT".into()); }
-    refs.iter().map(|(name, reference)| {
-        let reference = reference.as_str().ok_or("MCP_CREDENTIAL_REF_INVALID")?;
-        let profile = mcp_profile_for_reference(config, reference)?;
-        Ok(json!({"reference":credential_reference(profile)?,"profile_id":profile.id,
-            "name":profile.name,"endpoint":profile.base_url,"environment":name}))
-    }).collect()
+    if refs.len() > 64 {
+        return Err("MCP_ENV_LIMIT".into());
+    }
+    refs.iter()
+        .map(|(name, reference)| {
+            let reference = reference.as_str().ok_or("MCP_CREDENTIAL_REF_INVALID")?;
+            let profile = mcp_profile_for_reference(config, reference)?;
+            Ok(
+                json!({"reference":credential_reference(profile)?,"profile_id":profile.id,
+            "name":profile.name,"endpoint":profile.base_url,"environment":name}),
+            )
+        })
+        .collect()
 }
 pub(crate) fn mcp_credential_infos(
-    storage: &Path, refs: &serde_json::Map<String, Value>,
+    storage: &Path,
+    refs: &serde_json::Map<String, Value>,
 ) -> Result<Vec<Value>, String> {
-    if refs.is_empty() { return Ok(Vec::new()); }
+    if refs.is_empty() {
+        return Ok(Vec::new());
+    }
     let _guard = CONFIG_LOCK.lock().map_err(|_| "AI_CONFIG_BUSY")?;
     mcp_credential_metadata(&read_mcp_profiles(storage)?, refs)
 }
@@ -430,12 +442,18 @@ pub(crate) fn mcp_credential_snapshot(
     expected_metadata: &Value,
 ) -> Result<BTreeMap<String, String>, String> {
     let mut snapshot = BTreeMap::new();
-    let expected = expected_metadata.as_array().ok_or("MCP_CREDENTIAL_SCOPE_INVALID")?;
+    let expected = expected_metadata
+        .as_array()
+        .ok_or("MCP_CREDENTIAL_SCOPE_INVALID")?;
     let Some(refs) = refs.filter(|refs| !refs.is_empty()) else {
-        if !expected.is_empty() { return Err("MCP_CREDENTIAL_SCOPE_CHANGED".into()); }
+        if !expected.is_empty() {
+            return Err("MCP_CREDENTIAL_SCOPE_CHANGED".into());
+        }
         return Ok(snapshot);
     };
-    if refs.len() > 64 { return Err("MCP_ENV_LIMIT".into()); }
+    if refs.len() > 64 {
+        return Err("MCP_ENV_LIMIT".into());
+    }
     let _guard = CONFIG_LOCK.lock().map_err(|_| "AI_CONFIG_BUSY")?;
     let config = read_mcp_profiles(storage)?;
     // All reviewed environment mappings, profile identities, endpoint
@@ -471,7 +489,9 @@ fn read(path: &Path) -> Result<AiConfig, String> {
     decode_config(&fs::read(path).map_err(|_| "AI_CONFIG_READ_FAILED")?)
 }
 fn decode_config(bytes: &[u8]) -> Result<AiConfig, String> {
-    if bytes.len() as u64 > MAX_BYTES { return Err("AI_CONFIG_LIMIT".into()); }
+    if bytes.len() as u64 > MAX_BYTES {
+        return Err("AI_CONFIG_LIMIT".into());
+    }
     let config: AiConfig = serde_json::from_slice(bytes).map_err(|_| "AI_CONFIG_INVALID")?;
     if config.profiles.len() > 256 {
         return Err("AI_CONFIG_LIMIT".into());
@@ -940,13 +960,20 @@ fn text_model_turn(
     cancelled: &(dyn Fn() -> bool + Sync),
     lease: &browseros_agent_foundation::task::ExecutionLease<'_>,
 ) -> Result<String, String> {
-    use browseros_agent_foundation::{engine::drive_owned_text_turn, rig_driver::drive_owned_rig_text_turn, FoundationError};
+    use browseros_agent_foundation::{
+        engine::drive_owned_text_turn, rig_driver::drive_owned_rig_text_turn, FoundationError,
+    };
     let inactive = || cancelled() || !lease.is_active();
     let request = || provider_turn_cancelable(profile, messages, &[], &inactive);
-    let map_error = |error| -> String { match error {
+    let map_error = |error| -> String {
+        match error {
             FoundationError::Cancelled => "AI_PROVIDER_CANCELLED".into(),
             FoundationError::Timeout => "AI_PROVIDER_TIMEOUT".into(),
-            FoundationError::Provider(code) if matches!(code.as_str(), "MODEL_TEXT_LIMIT" | "MODEL_EVENT_LIMIT") => "AI_RESPONSE_LIMIT".into(),
+            FoundationError::Provider(code)
+                if matches!(code.as_str(), "MODEL_TEXT_LIMIT" | "MODEL_EVENT_LIMIT") =>
+            {
+                "AI_RESPONSE_LIMIT".into()
+            }
             FoundationError::Provider(code) if code == "MODEL_TEXT_EMPTY" => {
                 "AI_RESPONSE_EMPTY".into()
             }
@@ -954,9 +981,13 @@ fn text_model_turn(
         }
     };
     if rig_revision.is_some() {
-        drive_owned_rig_text_turn(lease, messages,
+        drive_owned_rig_text_turn(
+            lease,
+            messages,
             |request| rig_transport::turn(profile, request, &inactive),
-            &inactive, map_error)
+            &inactive,
+            map_error,
+        )
     } else {
         drive_owned_text_turn(lease, request, &inactive, map_error)
     }
@@ -1054,7 +1085,8 @@ fn prepare_restored_text_provider<'a>(
     let agent = input["agent_id"].as_str().map(str::to_owned);
     // Missing field is the existing native receipt schema. Never select a
     // new engine from current settings for an authenticated continuation.
-    let rig_revision = input.get("rig_text_config_revision")
+    let rig_revision = input
+        .get("rig_text_config_revision")
         .map(|value| value.as_u64().ok_or("AGENT_RUN_CONTEXT_INVALID"))
         .transpose()?;
     if (kind == "chat" && agent.is_some()) || (kind == "legacy_agent" && agent.is_none()) {
@@ -1183,25 +1215,44 @@ fn provider_turn_cancelable(
         return Err("AI_RESPONSE_INVALID".into());
     }
     let choice = &choices[0];
-    let mut reply = choice["message"].as_object().map(|_| choice["message"].clone())
+    let mut reply = choice["message"]
+        .as_object()
+        .map(|_| choice["message"].clone())
         .ok_or("AI_RESPONSE_EMPTY")?;
     if reply["role"] != "assistant"
-        || reply.get("function_call").is_some_and(|value| !value.is_null()) {
+        || reply
+            .get("function_call")
+            .is_some_and(|value| !value.is_null())
+    {
         return Err("AI_RESPONSE_INVALID".into());
     }
     if let Some(content) = reply.get("content").filter(|value| !value.is_null()) {
-        let text = content.as_str().ok_or("AI_RESPONSE_INVALID")?.replace(&credential, "[REDACTED]");
+        let text = content
+            .as_str()
+            .ok_or("AI_RESPONSE_INVALID")?
+            .replace(&credential, "[REDACTED]");
         reply["content"] = json!(text);
     }
-    let calls = browseros_agent_foundation::model::parse_function_batch(&reply,
-        if tools.is_empty() { 0 } else { 8 }).map_err(|_| "AI_RESPONSE_INVALID")?;
-    if choice.get("finish_reason").filter(|value| !value.is_null()).is_some_and(|reason|
-        !matches!(reason.as_str(), Some("stop" | "tool_calls"))
-            || (reason.as_str() == Some("tool_calls")) != !calls.is_empty()) {
+    let calls = browseros_agent_foundation::model::parse_function_batch(
+        &reply,
+        if tools.is_empty() { 0 } else { 8 },
+    )
+    .map_err(|_| "AI_RESPONSE_INVALID")?;
+    if choice
+        .get("finish_reason")
+        .filter(|value| !value.is_null())
+        .is_some_and(|reason| {
+            !matches!(reason.as_str(), Some("stop" | "tool_calls"))
+                || (reason.as_str() == Some("tool_calls")) != !calls.is_empty()
+        })
+    {
         return Err("AI_RESPONSE_INVALID".into());
     }
     if provider_value_contains_credential(&reply, &credential)
-        || calls.iter().any(|call| provider_value_contains_credential(&call.arguments, &credential)) {
+        || calls
+            .iter()
+            .any(|call| provider_value_contains_credential(&call.arguments, &credential))
+    {
         return Err("AI_CONTEXT_CREDENTIAL_DENIED".into());
     }
     if cancelled() {
@@ -1298,7 +1349,9 @@ fn release_provider_text(
     let mut end = if final_chunk {
         pending.len()
     } else {
-        pending.len().saturating_sub(credential.len().saturating_sub(1))
+        pending
+            .len()
+            .saturating_sub(credential.len().saturating_sub(1))
     };
     while !pending.is_char_boundary(end) {
         end -= 1;
@@ -1323,9 +1376,12 @@ fn release_provider_text(
 fn provider_value_contains_credential(value: &Value, credential: &str) -> bool {
     match value {
         Value::String(text) => text.contains(credential),
-        Value::Array(items) => items.iter().any(|item| provider_value_contains_credential(item, credential)),
-        Value::Object(items) => items.iter().any(|(key, item)|
-            key.contains(credential) || provider_value_contains_credential(item, credential)),
+        Value::Array(items) => items
+            .iter()
+            .any(|item| provider_value_contains_credential(item, credential)),
+        Value::Object(items) => items.iter().any(|(key, item)| {
+            key.contains(credential) || provider_value_contains_credential(item, credential)
+        }),
         _ => false,
     }
 }
@@ -1388,7 +1444,10 @@ fn read_provider_stream_process(
             // Limit the read itself, not only the size after read_until.
             // An unterminated provider line cannot allocate without bound.
             let remaining = 262145usize.saturating_sub(total_bytes);
-            let count = match (&mut reader).take(remaining as u64).read_until(b'\n', &mut line) {
+            let count = match (&mut reader)
+                .take(remaining as u64)
+                .read_until(b'\n', &mut line)
+            {
                 Ok(count) => count,
                 Err(_) => {
                     stream_error = Some("AI_HTTP_IO".into());
@@ -1461,12 +1520,18 @@ fn read_provider_stream_process(
                     return Err("AI_RESPONSE_INVALID".into());
                 }
                 let choice = &choices[0];
-                if choice.get("index").is_some_and(|index| index.as_u64() != Some(0)) {
+                if choice
+                    .get("index")
+                    .is_some_and(|index| index.as_u64() != Some(0))
+                {
                     return Err("AI_RESPONSE_INVALID".into());
                 }
                 let delta = &choice["delta"];
                 if (!delta.is_object() && !delta.is_null())
-                    || delta.get("function_call").is_some_and(|call| !call.is_null()) {
+                    || delta
+                        .get("function_call")
+                        .is_some_and(|call| !call.is_null())
+                {
                     return Err("AI_RESPONSE_INVALID".into());
                 }
                 if let Some(role) = delta.get("role").filter(|value| !value.is_null()) {
@@ -1476,7 +1541,13 @@ fn read_provider_stream_process(
                 }
                 if let Some(text) = delta.get("content").filter(|value| !value.is_null()) {
                     pending_text.push_str(text.as_str().ok_or("AI_RESPONSE_INVALID")?);
-                    release_provider_text(&mut pending_text, credential, false, &mut content, on_delta)?;
+                    release_provider_text(
+                        &mut pending_text,
+                        credential,
+                        false,
+                        &mut content,
+                        on_delta,
+                    )?;
                 }
                 if let Some(calls) = delta.get("tool_calls").filter(|value| !value.is_null()) {
                     let calls = calls.as_array().ok_or("AI_RESPONSE_INVALID")?;
@@ -1485,11 +1556,19 @@ fn read_provider_stream_process(
                     }
                     let mut frame_indices = HashSet::new();
                     for call in calls {
-                        let index = call["index"].as_u64().filter(|index| *index < 8)
-                            .ok_or("AI_RESPONSE_INVALID")? as usize;
+                        let index = call["index"]
+                            .as_u64()
+                            .filter(|index| *index < 8)
+                            .ok_or("AI_RESPONSE_INVALID")?
+                            as usize;
                         if !frame_indices.insert(index)
-                            || call.get("type").is_some_and(|kind| !kind.is_null() && kind.as_str() != Some("function"))
-                            || call.get("function").is_some_and(|function| !function.is_null() && !function.is_object()) {
+                            || call.get("type").is_some_and(|kind| {
+                                !kind.is_null() && kind.as_str() != Some("function")
+                            })
+                            || call.get("function").is_some_and(|function| {
+                                !function.is_null() && !function.is_object()
+                            })
+                        {
                             return Err("AI_RESPONSE_INVALID".into());
                         }
                         let entry = tool_calls.entry(index).or_default();
@@ -1511,7 +1590,10 @@ fn read_provider_stream_process(
                         }
                     }
                 }
-                if let Some(reason) = choice.get("finish_reason").filter(|reason| !reason.is_null()) {
+                if let Some(reason) = choice
+                    .get("finish_reason")
+                    .filter(|reason| !reason.is_null())
+                {
                     let reason = reason.as_str().ok_or("AI_RESPONSE_INVALID")?;
                     // A truncated/content-filtered reply cannot authorize tools.
                     if !matches!(reason, "stop" | "tool_calls") {
@@ -1545,7 +1627,11 @@ fn read_provider_stream_process(
         // Preserve HTTP/curl failure classification. Only a successful
         // response with an explicit protocol terminal can publish a batch.
         if !status.success() || unsuccessful_http {
-            return Ok((json!({"role":"assistant","content":null}), status, http_status));
+            return Ok((
+                json!({"role":"assistant","content":null}),
+                status,
+                http_status,
+            ));
         }
         if cancelled() {
             return Err("AI_PROVIDER_CANCELLED".into());
@@ -1553,8 +1639,10 @@ fn read_provider_stream_process(
         if !done && finished_reason.is_none() {
             return Err("AI_RESPONSE_INVALID".into());
         }
-        if finished_reason.as_deref().is_some_and(|reason|
-            (reason == "tool_calls") != !tool_calls.is_empty()) {
+        if finished_reason
+            .as_deref()
+            .is_some_and(|reason| (reason == "tool_calls") != !tool_calls.is_empty())
+        {
             return Err("AI_RESPONSE_INVALID".into());
         }
         if tool_calls.keys().copied().ne(0..tool_calls.len()) {
@@ -1581,9 +1669,12 @@ fn read_provider_stream_process(
         let calls = browseros_agent_foundation::model::parse_function_batch(&message, 8)
             .map_err(|_| "AI_RESPONSE_INVALID")?;
         if provider_value_contains_credential(&message["tool_calls"], credential)
-            || calls.iter().any(|call| call.id.contains(credential)
-                || call.name.contains(credential)
-                || provider_value_contains_credential(&call.arguments, credential)) {
+            || calls.iter().any(|call| {
+                call.id.contains(credential)
+                    || call.name.contains(credential)
+                    || provider_value_contains_credential(&call.arguments, credential)
+            })
+        {
             return Err("AI_CONTEXT_CREDENTIAL_DENIED".into());
         }
         if message["content"].is_null() && calls.is_empty() {
@@ -2279,8 +2370,10 @@ pub async fn coding_service(
         Some(crate::capabilities::agent::public_api::register_coding_run(
             request["run_id"].as_str().ok_or("AGENT_RUN_ID_REQUIRED")?,
         )?)
-    } else if matches!(request["action"].as_str(),
-        Some("mcp_tools" | "mcp_call" | "skills_list" | "skill_read" | "knowledge_search")) {
+    } else if matches!(
+        request["action"].as_str(),
+        Some("mcp_tools" | "mcp_call" | "skills_list" | "skill_read" | "knowledge_search")
+    ) {
         request["run_id"]
             .as_str()
             .map(crate::capabilities::agent::public_api::register_coding_run)
@@ -2340,17 +2433,24 @@ pub async fn coding_service(
         // Only a new explicit model Run consults current settings.
         // The Coding Owner restores a paused task's authenticated route.
         let new_rig_revision = if request["action"] == "chat" {
-            let run = uuid::Uuid::parse_str(request["run_id"].as_str().ok_or("AGENT_RUN_ID_REQUIRED")?)
-                .map_err(|_| "AGENT_RUN_ID_INVALID")?;
+            let run =
+                uuid::Uuid::parse_str(request["run_id"].as_str().ok_or("AGENT_RUN_ID_REQUIRED")?)
+                    .map_err(|_| "AGENT_RUN_ID_INVALID")?;
             super::agent_channel::production_coding_revision(&storage, run)?
-        } else { None };
-        let mut rig_provider = |request: rig_core::completion::CompletionRequest,
-                                inactive: &(dyn Fn() -> bool + Sync)| {
-            // Unary SDK turns return the full validated message to the
-            // existing Coding host; no unadmitted token is sent to the UI.
-            rig_transport::turn(model_profile.as_ref().ok_or("AI_NOT_CONFIGURED")?,
-                request, inactive)
+        } else {
+            None
         };
+        let mut rig_provider =
+            |request: rig_core::completion::CompletionRequest,
+             inactive: &(dyn Fn() -> bool + Sync)| {
+                // Unary SDK turns return the full validated message to the
+                // existing Coding host; no unadmitted token is sent to the UI.
+                rig_transport::turn(
+                    model_profile.as_ref().ok_or("AI_NOT_CONFIGURED")?,
+                    request,
+                    inactive,
+                )
+            };
         let response = crate::capabilities::agent::public_api::dispatch_coding_request(
             &app,
             &webview,
@@ -2671,12 +2771,22 @@ mod tests {
             &|| checks.fetch_add(1, std::sync::atomic::Ordering::SeqCst) > 0,
             std::time::Duration::from_secs(1)),
             Err(error) if error == "AI_PROVIDER_CANCELLED"));
-        assert!(matches!(super::acquire_provider_permit_timeout(&profile, &|| false,
-            std::time::Duration::ZERO), Err(error) if error == "AI_PROVIDER_BUSY"));
-        let first = super::acquire_provider_permit_timeout(&profile, &|| false,
-            std::time::Duration::from_secs(1)).unwrap();
-        let second = super::acquire_provider_permit_timeout(&profile, &|| false,
-            std::time::Duration::from_secs(1)).unwrap();
+        assert!(
+            matches!(super::acquire_provider_permit_timeout(&profile, &|| false,
+            std::time::Duration::ZERO), Err(error) if error == "AI_PROVIDER_BUSY")
+        );
+        let first = super::acquire_provider_permit_timeout(
+            &profile,
+            &|| false,
+            std::time::Duration::from_secs(1),
+        )
+        .unwrap();
+        let second = super::acquire_provider_permit_timeout(
+            &profile,
+            &|| false,
+            std::time::Duration::from_secs(1),
+        )
+        .unwrap();
         drop((first, second));
     }
 
