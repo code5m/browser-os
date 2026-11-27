@@ -86,6 +86,9 @@ tokio = { version = "1.53.3", features = ["net", "io-util", "time", "rt", "sync"
 # is not exported on Windows; do not compile this Linux dependency there.
 [target.'cfg(target_os = "linux")'.dependencies]
 freedesktop-icons = "0.4"
+# Read-only window-server observations from the isolated host IPC worker.
+raw-window-handle = "=0.6.2"
+x11rb = "=0.13.2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 browseros-platform-security = { path = "../crates/browseros-platform-security" }
@@ -95,7 +98,7 @@ windows-sys = { version = "=0.60.2", features = [
     "Win32_System_Pipes", "Win32_System_IO", "Win32_Storage_FileSystem",
     "Win32_Security_Authorization", "Win32_Security_Isolation", "Win32_System_SystemInformation",
     "Win32_System_Com", "Win32_System_Memory", "Win32_System_Registry", "Win32_System_ProcessStatus",
-    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Dwm",
     "Wdk_Foundation", "Wdk_Storage_FileSystem"
 ] }
 

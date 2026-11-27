@@ -137,7 +137,15 @@ type TabOwnerView = {
   renderer_park_target?: RendererParkTarget | null;
   renderer_reopen_target?: RendererReopenTarget | null;
   isolated_renderer_mode?: boolean;
+  isolated_renderer_mode_reason?: string;
   renderer_state?: RendererState | null;
+  /** Last native window-system receipt, not live pixel/occlusion proof. */
+  renderer_last_visibility_receipt?: {
+    visible: boolean;
+    source: "x11_server" | "windows_dwm";
+    rect: { x: number; y: number; w: number; h: number } | null;
+    compositor_barrier: boolean;
+  } | null;
   renderer_download?: RendererDownloadObservation | null;
   download_inventory?: DownloadInventory;
   download_tasks?: DownloadTaskView;

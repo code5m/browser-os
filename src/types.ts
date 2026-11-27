@@ -392,6 +392,7 @@ export interface ResourceStats {
   isolated_tab_start_budget?: number;
   isolated_tab_memory_limit_mb?: number;
   isolated_tab_mode_enabled?: boolean;
+  isolated_tab_mode_reason?: string;
   memory_sample_known?: boolean;
   // 页签休眠开关状态
   hibernation_enabled: boolean;

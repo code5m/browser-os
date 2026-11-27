@@ -33,11 +33,17 @@ export const useBrowserStore = defineStore("browser", () => {
   const isolatedRendererMode = ref(false);
   const rendererStates = reactive(new Map<string, RendererState | "unknown">());
   const rendererDownloads = reactive(new Map<string, RendererDownloadObservation>());
+  // Advisory last native receipt only, never a visibility controller input.
+  const rendererVisibilityLabels = reactive(new Map<string, string>());
   const rendererObservations = new Map<string, symbol>();
   function clearRendererState(id: string) {
     rendererObservations.delete(id);
     rendererStates.delete(id);
     rendererDownloads.delete(id);
+    rendererVisibilityLabels.delete(id);
+  }
+  function rendererVisibilityLabel(id: string): string {
+    return rendererVisibilityLabels.get(id) ?? "";
   }
   function rendererUnavailable(id: string): boolean {
     const state = rendererStates.get(id);
@@ -76,9 +82,21 @@ export const useBrowserStore = defineStore("browser", () => {
       if (!view.renderer_state || !["ready","loading","not_ready","cleanup_pending","absent","hibernated"].includes(view.renderer_state)) {
         rendererStates.set(id, "unknown");
         rendererDownloads.delete(id);
+        rendererVisibilityLabels.delete(id);
         return null;
       }
       rendererStates.set(id, view.renderer_state);
+      rendererVisibilityLabels.delete(id);
+      const visibility = view.renderer_last_visibility_receipt;
+      if (visibility && view.renderer_recovery_target?.id === id
+          && typeof visibility.visible === "boolean"
+          && (view.renderer_state === "ready" || view.renderer_state === "loading")
+          && ((visibility.source === "windows_dwm" && visibility.compositor_barrier === true)
+              || (visibility.source === "x11_server" && visibility.compositor_barrier === false))) {
+        const source = visibility.source === "windows_dwm" ? "DWM 同步" : "X11 映射";
+        rendererVisibilityLabels.set(id, "上次原生回执：" + source
+          + (visibility.visible ? "显示" : "隐藏") + "（非实时像素证据）");
+      }
       const download = view.renderer_download;
       if (isRendererDownloadObservation(download) && view.renderer_recovery_target?.id === id
           && view.renderer_recovery_target?.pid === download.pid
@@ -94,6 +112,7 @@ export const useBrowserStore = defineStore("browser", () => {
       if (rendererObservations.get(id) === observation && tabs.some(item => item === tab)) {
         rendererStates.set(id, "unknown");
         rendererDownloads.delete(id);
+        rendererVisibilityLabels.delete(id);
       }
       return null;
     }
@@ -288,6 +307,7 @@ export const useBrowserStore = defineStore("browser", () => {
       rendererObservations.clear();
       rendererStates.clear();
       rendererDownloads.clear();
+      rendererVisibilityLabels.clear();
       for (const id of nativeTabFailures.keys()) {
         if (!byId.has(id)) nativeTabFailures.delete(id);
       }
@@ -1164,6 +1184,7 @@ export const useBrowserStore = defineStore("browser", () => {
         nativeTabFailures.clear();
         rendererStates.clear();
         rendererDownloads.clear();
+      rendererVisibilityLabels.clear();
         rendererObservations.clear();
         activeTabId.value = "";
         resources.value = null;
@@ -1187,6 +1208,7 @@ export const useBrowserStore = defineStore("browser", () => {
     rendererUnavailable,
     rendererWindowUnavailable,
     rendererStateLabel,
+    rendererVisibilityLabel,
     rendererDownloadLabel,
     refreshRendererState,
     tabRecoveryRequired,

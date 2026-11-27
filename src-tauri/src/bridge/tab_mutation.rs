@@ -661,7 +661,9 @@ pub(crate) struct OwnerView {
     renderer_park_target: Option<RendererParkTarget>,
     renderer_reopen_target: Option<RendererReopenTarget>,
     isolated_renderer_mode: bool,
+    isolated_renderer_mode_reason: &'static str,
     renderer_state: Option<&'static str>,
+    renderer_last_visibility_receipt: Option<crate::grid_ipc::NativeWindowReceipt>,
     // Advisory native counts, not per-transfer state or filesystem access.
     renderer_download: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -694,7 +696,9 @@ fn snapshot(app: &AppHandle) -> Result<OwnerView, String> {
             renderer_park_target: None,
             renderer_reopen_target: None,
             isolated_renderer_mode: super::isolated_tabs::mode_enabled(),
+            isolated_renderer_mode_reason: super::isolated_tabs::mode_reason(),
             renderer_state: None,
+            renderer_last_visibility_receipt: None,
             renderer_download: None,
             download_inventory: None,
             download_tasks: None,
@@ -1409,6 +1413,8 @@ fn tab_mutation_control(
                 }
             }
             if let Some((pid, epoch)) = observed_owner {
+                view.renderer_last_visibility_receipt =
+                    state.grid_manager.last_window_receipt(index, (pid, epoch))?;
                 view.renderer_download = download;
                 if status == "ready" && view.active_known
                     && view.active_tab_id.as_deref() != Some(id.as_str()) {
@@ -1688,7 +1694,9 @@ mod tests {
             renderer_park_target: None,
             renderer_reopen_target: None,
             isolated_renderer_mode: false,
+            isolated_renderer_mode_reason: "fixture",
             renderer_state: None,
+            renderer_last_visibility_receipt: None,
             renderer_download: None,
             download_inventory: None,
             download_tasks: None,

@@ -32,6 +32,96 @@ impl IpcRect {
     }
 }
 
+/// A native window-system observation for one admitted visibility request.
+/// Never evidence of arbitrary webpage pixels, occlusion or monitor scanout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NativeWindowSource {
+    X11Server,
+    WindowsDwm,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeWindowReceipt {
+    pub visible: bool,
+    pub source: NativeWindowSource,
+    pub rect: Option<IpcRect>,
+    // DwmFlush is a compositor synchronization barrier, not proof that
+    // the WebView's content was painted or that no other window occludes it.
+    pub compositor_barrier: bool,
+}
+
+impl NativeWindowReceipt {
+    pub(crate) fn validate_for(&self, expected: Option<IpcRect>) -> Result<(), String> {
+        let source_matches = if cfg!(target_os = "windows") {
+            self.source == NativeWindowSource::WindowsDwm && self.compositor_barrier
+        } else if cfg!(target_os = "linux") {
+            self.source == NativeWindowSource::X11Server && !self.compositor_barrier
+        } else { false };
+        if !source_matches || self.visible != expected.is_some() {
+            return Err("GRID_NATIVE_VISIBILITY_RECEIPT_MISMATCH".into());
+        }
+        match (expected, self.rect) {
+            (None, None) => Ok(()),
+            (Some(wanted), Some(actual)) => {
+                wanted.validate()?;
+                actual.validate()?;
+                // The native APIs take integer physical pixels. Permit
+                // two pixels of window-manager rounding, not CSS units or
+                // an arbitrary old rectangle from the previous operation.
+                let close = |observed: f64, requested: f64| (observed - requested.trunc()).abs() <= 2.0;
+                if close(actual.x, wanted.x) && close(actual.y, wanted.y)
+                    && close(actual.w, wanted.w) && close(actual.h, wanted.h) {
+                    Ok(())
+                } else { Err("GRID_NATIVE_GEOMETRY_UNCONFIRMED".into()) }
+            }
+            _ => Err("GRID_NATIVE_VISIBILITY_RECEIPT_MISMATCH".into()),
+        }
+    }
+
+    pub(crate) fn decode_for(cmd: &GridCmd, data: Option<String>) -> Result<Self, String> {
+        let expected = match cmd {
+            GridCmd::UpdateRect { rect, .. } => Some(*rect),
+            GridCmd::HideWindow { .. } => None,
+            _ => return Err("GRID_WINDOW_COMMAND_INVALID".into()),
+        };
+        let data = data.filter(|value| value.len() <= 1024)
+            .ok_or("GRID_NATIVE_VISIBILITY_RECEIPT_MISSING")?;
+        let receipt: Self = serde_json::from_str(&data)
+            .map_err(|_| "GRID_NATIVE_VISIBILITY_RECEIPT_INVALID")?;
+        receipt.validate_for(expected)?;
+        Ok(receipt)
+    }
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "windows")))]
+mod native_window_receipt_tests {
+    use super::*;
+    #[test]
+    fn receipt_requires_platform_visibility_and_exact_physical_geometry() {
+        let windows = cfg!(target_os = "windows");
+        let rect = IpcRect { x: -32.5, y: 20.0, w: 400.0, h: 300.0 };
+        let mut receipt = NativeWindowReceipt {
+            visible: true,
+            source: if windows { NativeWindowSource::WindowsDwm } else { NativeWindowSource::X11Server },
+            rect: Some(rect),
+            compositor_barrier: windows,
+        };
+        let command = GridCmd::UpdateRect { id: "grid-0".into(), rect };
+        assert!(NativeWindowReceipt::decode_for(&command, None).is_err());
+        assert!(NativeWindowReceipt::decode_for(&command, Some(serde_json::to_string(&receipt).unwrap())).is_ok());
+        receipt.rect.as_mut().unwrap().x += 30.0;
+        assert!(receipt.validate_for(Some(rect)).is_err());
+        receipt.visible = false;
+        receipt.rect = None;
+        assert!(receipt.validate_for(Some(rect)).is_err());
+        assert!(receipt.validate_for(None).is_ok());
+        receipt.compositor_barrier = !windows;
+        assert!(receipt.validate_for(None).is_err());
+    }
+}
+
 // Separate ordinary-tab and Grid route namespaces without a second process
 // manager or a second IPC transport. A tab route is never a Grid cell index.
 const TAB_RENDERER_BIT: u32 = 1 << 31;
@@ -134,6 +224,7 @@ pub(crate) struct GridSavedState {
 pub struct GridRouteStatus {
     pub index: u32,
     pub state: &'static str,
+    pub last_visibility_receipt: Option<NativeWindowReceipt>,
 }
 
 pub(crate) struct GridPreparedSlot {

@@ -372,7 +372,8 @@ pub struct GridChildHandle {
     pub blur_hidden: bool,
     // Last acknowledged native visibility for a specific connection.
     // Desired hidden/blur_hidden flags are not native success receipts.
-    native_window_visibility: Option<(u64, bool)>,
+    // Last authoritative window-system response, scoped to its connection.
+    native_window_visibility: Option<(u64, crate::grid_ipc::NativeWindowReceipt)>,
     /// Explicitly hidden since; used by adaptive memory hibernation.
     hidden_since: Option<std::time::Instant>,
 }
@@ -1024,6 +1025,24 @@ impl GridProcessManager {
 
     /// Read-only UI observation, not authorization to retire or restore.
     /// Removal from the live map precedes kernel-domain retirement.
+    /// Advisory last receipt only. It cannot authorize layout, close or
+    /// replace a document, and a replacement connection never inherits it.
+    pub(crate) fn last_window_receipt(&self, index: u32, expected: (u32, u64))
+        -> Result<Option<crate::grid_ipc::NativeWindowReceipt>, String>
+    {
+        let children = self.children.try_lock().map_err(|_| "GRID_WINDOW_OBSERVATION_BUSY")?;
+        let child = children.get(&index).ok_or("GRID_WINDOW_TARGET_STALE")?;
+        let _owner = child.comms.owner_gate.try_lock().map_err(|_| "GRID_WINDOW_OBSERVATION_BUSY")?;
+        if child.child.id() != expected.0
+            || child.comms.expected_pid.load(Ordering::SeqCst) != expected.0
+            || child.comms.spawn_epoch.load(Ordering::SeqCst) != expected.1 {
+            return Err("GRID_WINDOW_TARGET_STALE".into());
+        }
+        Ok(child.native_window_visibility
+            .filter(|(generation, _)| child.comms.is_current(*generation))
+            .map(|(_, receipt)| receipt))
+    }
+
     pub(crate) fn tab_renderer_inspection(&self, index: u32)
         -> Result<(Option<(u32, u64)>, &'static str, Option<serde_json::Value>), String>
     {
@@ -1483,7 +1502,7 @@ impl GridProcessManager {
                 && child.navigation_revision == binding.navigation_revision
                 && child.last_url.as_deref() == Some(address)
                 && child.hidden && !child.blur_hidden && !child.focused
-                && child.native_window_visibility == Some((binding.generation, false))
+                && child.native_window_visibility.is_some_and(|(generation, receipt)| generation == binding.generation && !receipt.visible)
                 && !state.shutdown_requested.load(Ordering::Acquire)
                 && state.active_tab.lock().unwrap().as_deref() != Some(id.as_str())
                 && state.tabs.lock().unwrap().get(&id).is_some_and(|tab| tab.url == address)
@@ -2340,7 +2359,19 @@ impl GridProcessManager {
                 return Err("GRID_REQUEST_OUTCOME_UNKNOWN: 等待子进程响应超时".into());
             }
             match rx.recv_timeout(remaining.min(std::time::Duration::from_millis(50))) {
-                Ok(result) => return result,
+                Ok(result) => {
+                    let data = result?;
+                    if !comms.is_current(generation) {
+                        return Err("GRID_REQUEST_OUTCOME_UNKNOWN: original connection changed before receipt".into());
+                    }
+                    if matches!(cmd, GridCmd::UpdateRect { .. } | GridCmd::HideWindow { .. }) {
+                        if let Err(error) = crate::grid_ipc::NativeWindowReceipt::decode_for(cmd, data.clone()) {
+                            comms.block_blank_reclaim_for(generation);
+                            return Err(error);
+                        }
+                    }
+                    return Ok(data);
+                },
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
                     comms.block_blank_reclaim_for(generation);
@@ -2396,20 +2427,22 @@ impl GridProcessManager {
     ) -> Result<(), String> {
         let _operation = self.lifecycle.enter()?;
         if !cmd.targets(binding.index) { return Err("GRID_REQUEST_TARGET_REJECTED".into()); }
-        let visible = match &cmd {
-            GridCmd::UpdateRect { .. } => true,
-            GridCmd::HideWindow { .. } => false,
-            _ => return Err("GRID_WINDOW_COMMAND_INVALID".into()),
-        };
+        if !matches!(&cmd, GridCmd::UpdateRect { .. } | GridCmd::HideWindow { .. }) {
+            return Err("GRID_WINDOW_COMMAND_INVALID".into());
+        }
         let comms = {
-            let children = self.children.lock().unwrap();
-            let child = children.get(&binding.index).ok_or("GRID_WINDOW_TARGET_STALE")?;
+            let mut children = self.children.lock().unwrap();
+            let child = children.get_mut(&binding.index).ok_or("GRID_WINDOW_TARGET_STALE")?;
+            let _owner = child.comms.owner_gate.lock().unwrap();
             if !Self::window_binding_matches(child, binding) {
                 return Err("GRID_WINDOW_TARGET_STALE".into());
             }
+            // Do not expose an earlier visibility result while a new
+            // operation is in flight or after an ambiguous native failure.
+            child.native_window_visibility = None;
             Arc::clone(&child.comms)
         };
-        let result = self.request_once_with(binding.index, comms, binding.generation, &cmd, timeout_ms).map(|_| ());
+        let result = self.request_once_with(binding.index, comms, binding.generation, &cmd, timeout_ms).and_then(|data| crate::grid_ipc::NativeWindowReceipt::decode_for(&cmd, data));
         let mut children = self.children.lock().unwrap();
         let child = children.get_mut(&binding.index)
             .ok_or("GRID_REQUEST_OUTCOME_UNKNOWN: window host retired")?;
@@ -2417,8 +2450,8 @@ impl GridProcessManager {
         if !Self::window_binding_matches(child, binding) {
             return Err("GRID_REQUEST_OUTCOME_UNKNOWN: window host changed".into());
         }
-        child.native_window_visibility = result.as_ref().ok().map(|_| (binding.generation, visible));
-        result
+        child.native_window_visibility = result.as_ref().ok().map(|receipt| (binding.generation, *receipt));
+        result.map(|_| ())
     }
 
     pub(crate) fn capture_window_route(&self, index: u32)
@@ -3020,7 +3053,7 @@ impl GridProcessManager {
                 match children.get_mut(&binding.index) {
                     Some(h) if Self::window_binding_matches(h, binding)
                         && !h.hidden && h.last_rect.is_some()
-                        && (!h.blur_hidden || h.native_window_visibility != Some((binding.generation, false))) => {
+                        && (!h.blur_hidden || !h.native_window_visibility.is_some_and(|(generation, receipt)| generation == binding.generation && !receipt.visible)) => {
                         // Desired state, not a native receipt. A newer show can
                         // compensate even if the hide's outcome is unknown.
                         h.blur_hidden = true;
@@ -3065,7 +3098,7 @@ impl GridProcessManager {
                 let children = self.children.lock().unwrap();
                 children.get(&binding.index).filter(|child|
                     Self::window_binding_matches(child, binding) && !child.hidden
-                        && (child.blur_hidden || child.native_window_visibility != Some((binding.generation, true))))
+                        && (child.blur_hidden || !child.native_window_visibility.is_some_and(|(generation, receipt)| generation == binding.generation && receipt.visible)))
                     .and_then(|child| child.last_rect)
             };
             let Some(rect) = css.and_then(|css| self.abs_rect(css)) else { continue; };
@@ -3073,7 +3106,7 @@ impl GridProcessManager {
                 let mut children = self.children.lock().unwrap();
                 let Some(child) = children.get_mut(&binding.index) else { continue; };
                 if !Self::window_binding_matches(child, binding) || child.hidden
-                    || (!child.blur_hidden && child.native_window_visibility == Some((binding.generation, true))) {
+                    || (!child.blur_hidden && child.native_window_visibility.is_some_and(|(generation, receipt)| generation == binding.generation && receipt.visible)) {
                     continue;
                 }
                 child.blur_hidden = false;
@@ -3415,7 +3448,14 @@ impl GridProcessManager {
             } else if sleeping.contains_key(&index) {
                 "hibernated"
             } else { "absent" };
-            crate::grid_ipc::GridRouteStatus { index, state }
+            let last_visibility_receipt = children.get(&index).and_then(|child| {
+                let _owner = child.comms.owner_gate.try_lock().ok()?;
+                if self.lifecycle.is_retiring(index) { return None; }
+                child.native_window_visibility
+                    .filter(|(generation, _)| child.comms.is_current(*generation))
+                    .map(|(_, receipt)| receipt)
+            });
+            crate::grid_ipc::GridRouteStatus { index, state, last_visibility_receipt }
         }).collect())
     }
 

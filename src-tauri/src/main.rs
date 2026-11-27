@@ -15,6 +15,8 @@ mod crashlog;
 mod domain;
 mod grid_ipc;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
+mod native_visibility;
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 mod renderer_services;
 mod gui_regression_receipt;
 #[cfg(target_os = "windows")]
@@ -951,7 +953,11 @@ fn start_grid_child_ipc(app: tauri::AppHandle, index: u32, host_label: String, s
                         continue;
                     }
                     let resp = match dispatch_grid_cmd(&app, &host_label, cmd, document.as_ref()) {
-                        Ok(()) => grid_ipc::Wire::ok(seq),
+                        Ok(None) => grid_ipc::Wire::ok(seq),
+                        Ok(Some(receipt)) => match serde_json::to_string(&receipt) {
+                            Ok(data) => grid_ipc::Wire::Response { seq, ok: true, err: None, data: Some(data) },
+                            Err(_) => grid_ipc::Wire::err(seq, "GRID_NATIVE_VISIBILITY_RECEIPT_INVALID"),
+                        },
                         Err(e) => grid_ipc::Wire::err(seq, e),
                     };
                     enqueue_child_critical(resp);
@@ -978,10 +984,10 @@ fn dispatch_grid_cmd(
     host_label: &str,
     cmd: grid_ipc::GridCmd,
     document: Option<&tauri_plugin_browser_tabs::CaptureDocument>,
-) -> Result<(), String> {
+) -> Result<Option<grid_ipc::NativeWindowReceipt>, String> {
     use grid_ipc::GridCmd;
     use tauri_plugin_browser_tabs::{CreateTabOptions, LogicalRect, TabManagerState};
-    match cmd {
+    let result = match cmd {
         GridCmd::CreateTab { id, url } => {
             let init_script = include_str!("../injected/collect.js");
             let manager = app.state::<TabManagerState>();
@@ -1008,6 +1014,9 @@ fn dispatch_grid_cmd(
                     if win.is_visible().map_err(|e| format!("GRID_NATIVE_VISIBILITY_UNCONFIRMED:{e}"))? {
                         return Err("GRID_NATIVE_CREATE_HIDE_UNCONFIRMED".into());
                     }
+                    // Creation is not a window-system visibility receipt:
+                    // a hidden shell may not have materialized its native
+                    // surface yet. Explicit show/hide obtains that evidence.
                     eprintln!("[grid-child] CreateTab {} 完成", id);
                     Ok(())
                 }
@@ -1024,7 +1033,7 @@ fn dispatch_grid_cmd(
                 .get_window(host_label)
                 .ok_or_else(|| "子进程壳窗口不存在".to_string())?;
             // A successful native receipt requires every layout stage.
-            let result = (|| -> Result<(), String> {
+            let result = (|| -> Result<grid_ipc::NativeWindowReceipt, String> {
                 win.set_position(tauri::PhysicalPosition::new(rect.x as i32, rect.y as i32))
                     .map_err(|e| format!("set_position 失败: {e}"))?;
                 win.set_size(tauri::PhysicalSize::new(rect.w as u32, rect.h as u32))
@@ -1044,9 +1053,10 @@ fn dispatch_grid_cmd(
                 if !win.is_visible().map_err(|e| format!("GRID_NATIVE_VISIBILITY_UNCONFIRMED:{e}"))? {
                     return Err("GRID_NATIVE_SHOW_UNCONFIRMED".into());
                 }
+                let receipt = native_visibility::confirm(&win, Some(rect))?;
                 app.state::<AppState>().child_layouts.lock().unwrap()
                     .insert(id.clone(), (0.0, 0.0, lw, lh));
-                Ok(())
+                Ok(receipt)
             })();
             if result.is_err() {
                 app.state::<AppState>().child_layouts.lock().unwrap().remove(&id);
@@ -1056,8 +1066,10 @@ fn dispatch_grid_cmd(
                 if win.is_visible().map_err(|e| format!("GRID_NATIVE_VISIBILITY_UNCONFIRMED:{e}"))? {
                     return Err("GRID_NATIVE_LAYOUT_HIDE_UNCONFIRMED".into());
                 }
+                native_visibility::confirm(&win, None)
+                    .map_err(|error| format!("GRID_NATIVE_LAYOUT_HIDE_UNCONFIRMED:{error}"))?;
             }
-            result
+            return result.map(Some);
         }
         GridCmd::HideWindow { .. } => {
             let win = app
@@ -1067,7 +1079,7 @@ fn dispatch_grid_cmd(
             if win.is_visible().map_err(|e| format!("GRID_NATIVE_VISIBILITY_UNCONFIRMED:{e}"))? {
                 return Err("GRID_NATIVE_HIDE_UNCONFIRMED".into());
             }
-            Ok(())
+            return native_visibility::confirm(&win, None).map(Some);
         }
         GridCmd::Eval { id, js } => {
             let manager = app.state::<TabManagerState>();
@@ -1104,7 +1116,8 @@ fn dispatch_grid_cmd(
         | GridCmd::ViewportSnapshot { .. } | GridCmd::ViewportRestore { .. } => {
             Err("GRID_ASYNC_ONLY".into())
         }
-    }
+    };
+    result.map(|_| None)
 }
 
 /// Test-only force-exit for a Grid child owned by this BrowserOS process.
@@ -1882,6 +1895,10 @@ fn main() {
     }
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     let supervisor_endpoint = native_supervisor::take_child_endpoint();
+
+    // Freeze the ordinary-tab route after supervisor/delegation selection
+    // and before Tauri can publish any browser tab or restore a session.
+    bridge::isolated_tabs::initialize();
 
     // 日志/崩溃捕获必须最先初始化（stderr 镜像 + panic 钩子 + 致命信号捕获）
     crashlog::init();

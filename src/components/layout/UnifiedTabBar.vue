@@ -331,7 +331,7 @@ async function newTab() {
       :class="['tab', {active:tab.active}]"
       @click="activateProjectedTab(tab)"
       @contextmenu.prevent="context = { id: tab.id, kind: tab.kind === 'web' ? 'web' : 'module' }"
-      :title="tab.kind === 'web' ? [tab.title, browser.rendererStateLabel(tab.id), browser.rendererDownloadLabel(tab.id)].filter(Boolean).join(' · ') : (tab.path || tab.title)"
+      :title="tab.kind === 'web' ? [tab.title, browser.rendererStateLabel(tab.id), browser.rendererVisibilityLabel(tab.id), browser.rendererDownloadLabel(tab.id)].filter(Boolean).join(' · ') : (tab.path || tab.title)"
     >
       <Globe v-if="tab.kind === 'web'" class="tab-ic" :size="15"/>
       <span v-else class="tab-ic">{{ tab.icon }}</span>

@@ -2924,6 +2924,7 @@ dependencies = [
  "png 0.18.1",
  "portable-pty",
  "postgres",
+ "raw-window-handle",
  "reqwest",
  "rig-core",
  "ring",
@@ -2942,6 +2943,7 @@ dependencies = [
  "urlencoding",
  "uuid",
  "windows-sys 0.60.2",
+ "x11rb",
 ]
 
 [[package]]

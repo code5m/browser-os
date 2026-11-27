@@ -1,4 +1,4 @@
-//! Explicit opt-in ordinary-tab process backend. Browser metadata remains
+//! Process-lifetime ordinary-tab backend selection. Browser metadata remains
 //! in AppState.tabs; the shared native process manager owns the actual child.
 //! No runtime migration of an existing WebView, cookie copy, or fallback.
 use super::*;
@@ -6,14 +6,87 @@ use crate::grid_ipc::{tab_renderer_index, GridCmd};
 
 // One backend for the entire process lifetime. Routing an existing logical
 // tab must not depend on a later environment read.
-static ISOLATED_MODE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct BackendSelection {
+    isolated: bool,
+    reason: &'static str,
+}
+static ISOLATED_MODE: std::sync::OnceLock<BackendSelection> = std::sync::OnceLock::new();
 
-pub(crate) fn mode_enabled() -> bool {
-    *ISOLATED_MODE.get_or_init(|| {
-        cfg!(any(target_os = "linux", target_os = "windows"))
-            && std::env::var("BROWSEROS_EXPERIMENTAL_ISOLATED_TABS").as_deref() == Ok("1")
-            && std::env::var_os("GRID_CHILD_INDEX").is_none()
+fn select_backend(supported: bool, child: bool, release: bool,
+    setting: Option<&str>, available: impl FnOnce() -> bool) -> BackendSelection
+{
+    let embedded = |reason| BackendSelection { isolated: false, reason };
+    if child { return embedded("renderer_child"); }
+    if !supported { return embedded("unsupported_platform"); }
+    match setting {
+        Some("0") => return embedded("explicit_embedded"),
+        Some("1") => {
+            // Preserve the existing explicit strict opt-in. A failed native
+            // spawn is reported, never substituted with an embedded page.
+            return BackendSelection { isolated: true, reason: "explicit_isolated" };
+        }
+        Some(_) => return embedded("invalid_backend_setting"),
+        None if !release => return embedded("development_embedded"),
+        None => {}
+    }
+    if available() {
+        BackendSelection { isolated: true, reason: "default_isolated_kernel_ready" }
+    } else {
+        // Only the initial empty-host selection may choose compatibility
+        // mode. No renderer has been started and no document is migrated.
+        embedded("kernel_containment_unavailable")
+    }
+}
+
+fn kernel_ready() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        // Probe only a fresh, empty owned group in the delegated domain.
+        // No renderer or application payload is spawned by this selection.
+        let Ok(Some(scope)) = crate::shared::process_scope::ProcessScope::prepare() else { return false; };
+        scope.configure_memory_limit(crate::grid_ipc::TAB_RENDERER_MEMORY_LIMIT).is_ok()
+    }
+    #[cfg(target_os = "windows")]
+    {
+        crate::windows_process::JobObject::create_with_memory_limit(crate::grid_ipc::TAB_RENDERER_MEMORY_LIMIT).is_ok()
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    false
+}
+
+fn selection() -> &'static BackendSelection {
+    ISOLATED_MODE.get_or_init(|| {
+        let setting = std::env::var_os("BROWSEROS_EXPERIMENTAL_ISOLATED_TABS");
+        let value = setting.as_ref().map(|value| value.to_str().unwrap_or("<invalid>"));
+        select_backend(cfg!(any(target_os = "linux", target_os = "windows")),
+            std::env::var_os("GRID_CHILD_INDEX").is_some(), !cfg!(debug_assertions),
+            value, kernel_ready)
     })
+}
+
+/// Called once after supervisor/delegation startup and before any GUI tab.
+pub(crate) fn initialize() {
+    let chosen = selection();
+    eprintln!("[browser-backend] isolated={} reason={}", chosen.isolated, chosen.reason);
+}
+
+pub(crate) fn mode_enabled() -> bool { selection().isolated }
+pub(crate) fn mode_reason() -> &'static str { selection().reason }
+
+#[cfg(test)]
+mod backend_selection_tests {
+    use super::*;
+    #[test]
+    fn release_defaults_to_isolated_only_with_kernel_preflight() {
+        assert!(select_backend(true, false, true, None, || true).isolated);
+        assert_eq!(select_backend(true, false, true, None, || false).reason, "kernel_containment_unavailable");
+        assert!(!select_backend(true, false, true, Some("0"), || panic!("opt out must not probe")).isolated);
+        assert!(select_backend(true, false, false, Some("1"), || panic!("explicit strict route must not fall back")).isolated);
+        assert!(!select_backend(true, true, true, Some("1"), || panic!("child must not probe")).isolated);
+        assert!(!select_backend(false, false, true, None, || panic!("unsupported must not probe")).isolated);
+        assert!(!select_backend(true, false, false, None, || panic!("development must not probe")).isolated);
+    }
 }
 
 pub(crate) fn route(id: &str) -> Option<u32> {
@@ -289,7 +362,11 @@ pub(super) fn reopen_absent(app: &AppHandle, id: &str, url: &str, absence_epoch:
     state.grid_manager.start_tab_renderer_at_absence(index, url, absence_epoch)?;
     state.hibernated_tabs.lock().unwrap().remove(id);
     state.hibernated_scroll.lock().unwrap().remove(id);
-    let binding = state.grid_manager.renderer_binding(index)
+    // A recovered host can acknowledge creation before its first document
+    // stamp. Publish the actual owner's navigation metadata immediately;
+    // document operations still require a fresh document binding.
+    let binding = state.grid_manager.capture_window_route(index)
+        .and_then(|value| value.ok_or_else(|| "TAB_RENDERER_WINDOW_UNAVAILABLE".to_owned()))
         .map_err(|error| format!("TAB_RENDERER_REOPEN_PARTIAL:{id}:{error}"))?;
     state.grid_manager.publish_reopened_tab(binding)
         .map_err(|error| format!("TAB_RENDERER_REOPEN_PARTIAL:{id}:{error}"))

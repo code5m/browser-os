@@ -381,6 +381,7 @@ pub struct ResourceStats {
     pub isolated_tab_start_budget: usize,
     pub isolated_tab_memory_limit_mb: usize,
     pub isolated_tab_mode_enabled: bool,
+    pub isolated_tab_mode_reason: &'static str,
     pub memory_sample_known: bool,
     /// 页签休眠开关状态
     pub hibernation_enabled: bool,
@@ -694,6 +695,7 @@ fn resource_stats_for_owners(app: &AppHandle, owners: &[crate::grid_ipc::Rendere
         isolated_tab_start_budget,
         isolated_tab_memory_limit_mb: crate::grid_ipc::TAB_RENDERER_MEMORY_LIMIT / (1024 * 1024),
         isolated_tab_mode_enabled: super::isolated_tabs::mode_enabled(),
+        isolated_tab_mode_reason: super::isolated_tabs::mode_reason(),
         memory_sample_known: total.is_some() && available.is_some(),
         hibernation_enabled: state.hibernation_enabled.load(Ordering::Relaxed),
         hibernated_count,
