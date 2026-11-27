@@ -690,3 +690,8 @@ Agent-owned Browser receipt slots explicitly reject the ordinary Start control, 
 - Browser mutation receipts treat Linux and Windows native cleanup-pending diagnostics, including nested partial failures, as nonterminal unknown. No extra retry, changed process owner, or kill path.
 - The installed native fixture compares the complete renderer binding including navigation revision, and surfaces a failed terminal POST. The independent observer checks distinct route identities, capture deadline and live terminal owner, seals a bounded snapshot under its lock, and rejects late stages. Missing snapshot means GUI_PENDING, never pass. Fixture-only evidence, not physical scanout or arbitrary user interaction; a blocked OS capture is not forcibly terminated.
 - Regression source only. No compilation, tests, builds, install, CI, Actions, branch/ref updates, gate changes, or master merge. Do not count these source changes as runtime acceptance.
+
+
+## 2026-11-27 — FINAL SOURCE FREEZE (NOT_RUN)
+
+Runtime source baseline: `d5183041190f3c7e15d2da213c5c0e098867f5a1`. This documentation-only successor freezes the five core acceptance targets and the stop rule in [browseros-v2-source-freeze-20261127.md](../../operations/browseros-v2-source-freeze-20261127.md). Exact Rig 0.43.0 upstream interfaces were sampled at `654567eb64274fca00cab86cdd32c86b9913769e`; no confirmed mismatch in inspected interfaces, not a compile pass. Rig remains configuration-routed and isolated default requires native containment. No additional speculative remediation is queued; reopen only for concrete blockers. No build, tests, install, CI, Actions, gate edits, refs or master merge. SOURCE_FROZEN / NOT_RUN / GUI_PENDING / REF_PUBLICATION_PENDING.
