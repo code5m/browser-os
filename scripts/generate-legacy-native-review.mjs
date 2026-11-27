@@ -27,19 +27,40 @@ for(const name of names){
  // The receipt wrappers retain the same command identity and call the exact
  // guarded implementation. Verify both edges; do not treat a helper's name
  // alone as evidence of origin/argument validation.
- const receiptWrapped=new Set(['tab_activate','tab_close','tab_go_back','tab_go_forward','tab_new','tab_open','tab_reload']);
- if(receiptWrapped.has(name)){
-  const dispatch=new RegExp('super::tab_mutation::legacy\\(\\s*webview,\\s*"'+name+'",\\s*move\\s*\\|webview\\|\\s*(?:\\{\\s*)?'+name+'_impl\\(webview,\\s*app(?:,\\s*[a-z_]+)*\\)\\s*(?:\\}\\s*)?\\)\\s*\\.await');
-  assert.match(body,dispatch,name+': receipt wrapper must dispatch exactly the guarded implementation');
+ const receiptActions=new Map([
+  ['tab_activate',['Activate','id']],['tab_close',['Close','id']],
+  ['tab_go_back',['Back','id']],['tab_go_forward',['Forward','id']],
+  ['tab_new',['New','url']],['tab_open',['Open','id, url']],['tab_reload',['Reload','id']]
+ ]);
+ if(receiptActions.has(name)){
+  const [variant,fields]=receiptActions.get(name);
+  const dispatch=new RegExp('super::tab_mutation::legacy_action\\(\\s*webview,\\s*app,\\s*super::tab_mutation::Action::'+variant+'\\s*\\{\\s*'+fields.replace(', ', ',\\s*')+'\\s*\\}\\s*\\)\\.await\\s*\\}');
+  assert.match(body,dispatch,name+': wrapper must dispatch the exact typed action and arguments');
   const owner=rust.find(([file])=>file.endsWith('/bridge/tab_mutation.rs'));
   assert.ok(owner,name+': native receipt owner missing');
-  const admissionStart=owner[1].indexOf('pub(super) async fn legacy<');
-  assert.ok(admissionStart>=0,name+': legacy admission missing');
-  const admission=owner[1].slice(admissionStart);
-  assert.match(admission,/crate::shared::native_legacy_policy::require_main\(&webview,\s*command\)\?;\s*let ticket[\s\S]*?let mut state = owner\(\)\?;/,name+': receipt admission must validate main caller before taking owner');
+  const cut=(from,to)=>{const a=owner[1].indexOf(from),b=owner[1].indexOf(to,a+from.length);assert.ok(a>=0&&b>a,name+': missing receipt region '+from);return owner[1].slice(a,b)};
+  const command=cut('fn command(&self)', 'fn target(&self)');
+  assert.match(command,new RegExp('Self::'+variant+'\\s*\\{\\s*\\.\\.\\s*\\}\\s*=>\\s*"'+name+'"'));
+  const authorize=cut('fn authorize(&self)', 'fn is_document_mutation(');
+  assert.match(authorize,/else\s*\{\s*self\.command\(\)\s*\};\s*require_main\(webview,\s*cmd\)\?;/);
+  if(variant==='New') assert.match(authorize,/Self::New\s*\{\s*url\s*\}\s*=>\s*bound_text\(cmd,\s*"url",\s*url\)/);
+  else if(variant==='Open') assert.match(authorize,/Self::Open\s*\{\s*id,\s*url\s*\}\s*=>\s*\{\s*bound_text\(cmd,\s*"id",\s*id\)\?;\s*bound_text\(cmd,\s*"url",\s*url\)/);
+  else assert.match(authorize,/Self::Close\s*\{\s*id\s*\}\s*\|\s*Self::Activate\s*\{\s*id\s*\}\s*\|\s*Self::Back\s*\{\s*id\s*\}\s*\|\s*Self::Forward\s*\{\s*id\s*\}\s*\|\s*Self::Reload\s*\{\s*id\s*\}\s*=>\s*bound_text\(cmd,\s*"id",\s*id\)/);
+  const admission=cut('pub(super) async fn legacy_action<','pub(crate) fn tab_mutation_diagnostic(');
+  assert.match(admission,/action\.authorize\(&webview\)\?;\s*let ticket[\s\S]*?let mut state = owner\(\)\?;/);
+  assert.match(admission,/let binding = Binding::capture\(&app,\s*&action\)\?;[\s\S]*?if binding\.current\(&app,\s*&action\)\s*\{\s*action\.execute\(webview,\s*app\.clone\(\),\s*&binding\)/);
+  const execute=cut('fn execute(self,','fn agent_action(');
+  assert.match(execute,/self\.authorize\(&webview\)\?;/);
+  assert.match(execute,new RegExp('Self::'+variant+'\\s*\\{\\s*'+fields.replace(', ', ',\\s*')+'\\s*\\}\\s*=>\\s*(?:serde_json::to_value\\()?'+name+'_impl\\(webview,\\s*app,\\s*'+fields.replace(', ', ',\\s*')+'\\)'));
   const helper=new RegExp('pub\\(crate\\)\\s+fn\\s+'+name+'_impl\\s*\\(').exec(source);
   assert.ok(helper,name+': exact native implementation missing');
   body=source.slice(helper.index,source.indexOf('\n}',helper.index)+2);
+  if(name==='tab_activate'||name==='tab_open'){
+   assert.match(body,new RegExp(name+'_admitted\\(webview,\\s*app,\\s*'+fields.replace(', ', ',\\s*')+',\\s*None\\)'));
+   const admitted=new RegExp('pub\\(super\\)\\s+fn\\s+'+name+'_admitted\\s*\\(').exec(source);
+   assert.ok(admitted,name+': admitted helper missing');
+   body=source.slice(admitted.index,source.indexOf('\n}',admitted.index)+2);
+  }
  }
  const remote=name==='report_title'||name==='report_resources';
  const originGuard=remote?'remote-origin-policy':'main-webview-guard';
