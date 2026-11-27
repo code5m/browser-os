@@ -17,6 +17,8 @@ mod grid_ipc;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 mod native_visibility;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
+mod native_visibility_review;
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 mod renderer_services;
 mod gui_regression_receipt;
 #[cfg(target_os = "windows")]
@@ -1900,8 +1902,13 @@ fn main() {
     // and before Tauri can publish any browser tab or restore a session.
     bridge::isolated_tabs::initialize();
 
-    // 日志/崩溃捕获必须最先初始化（stderr 镜像 + panic 钩子 + 致命信号捕获）
-    crashlog::init();
+    // Normal startup retains the early crash logger. The manual visibility
+    // fixture captures stderr in its external runner; the Linux logger
+    // would otherwise create the very profile root that preflight must
+    // prove absent. Never touch an existing profile on a rejected fixture.
+    if std::env::var_os("BROWSEROS_VISIBILITY_REVIEW").is_none() {
+        crashlog::init();
+    }
     // Workaround：WebKitGTK 在 Wayland 下默认启用 DMA-BUF 渲染器会静默崩溃
     // （进程启动数秒后退出、窗口白屏）。禁用后可稳定运行。
     #[cfg(target_os = "linux")]
@@ -1947,6 +1954,11 @@ fn main() {
                 .unwrap()
         })
         .setup(move |app| {
+            // A manual installed-GUI fixture must prove its fresh profile
+            // before normal workspace preparation can touch existing data.
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
+            let visibility_review = native_visibility_review::Review::preflight(app.handle())
+                .map_err(std::io::Error::other)?;
             // Prepare workspace storage before business state, schedulers or WebViews.
             // Early single-instance/Opened requests stay in bounded memory.
             if let Err(error) = startup::prepare_workspace(app.handle()) {
@@ -2188,6 +2200,12 @@ fn main() {
             #[cfg(not(test))]
             if std::env::var("NATIVE_58_GUI_REVIEW").is_ok() {
                 native_58_gui_review::start(app.handle().clone()).map_err(std::io::Error::other)?;
+            }
+            // No public IPC surface or normal-startup execution. This opt-in
+            // driver is bound to the independent loopback desktop observer.
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
+            if let Some(review) = visibility_review {
+                review.start(app.handle().clone()).map_err(std::io::Error::other)?;
             }
             Ok(())
         })
