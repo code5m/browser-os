@@ -378,7 +378,7 @@ const base=process.env.CODING_UI_URL||'http://127.0.0.1:1433';
       if(request.action==='read'&&request.path==='late.ts')return new Promise(resolve=>{window.fixture.finishOldRead=()=>resolve({content:'OLD PROJECT CONTENT',hash:'old-root'});});
       if(request.action==='tree')return {entries:[{name:'late.ts',path:'late.ts',kind:'file'}]};
       if(request.action==='sessions_list')return {sessions:[{session_id:'saved-project-session',modified_ms:1793000000000,status:'approval_required',pending_changes:2,pending_operations:1}],truncated:true};
-      if(request.action==='session')return {session_id:'session:'+request.root,root:request.root,messages:[],changes:[],tool_events:[],operations:[]};
+      if(request.action==='session'){window.fixture.sessionReads=(window.fixture.sessionReads||[]).concat([{root:request.root,session_id:request.session_id??null}]);return {session_id:request.session_id||'session:'+request.root,root:request.root,messages:[],changes:[],tool_events:[],operations:[]};}
       return previous(request);
     };
   });
@@ -396,7 +396,9 @@ const base=process.env.CODING_UI_URL||'http://127.0.0.1:1433';
   await page.getByRole('button',{name:/approval_required · 2 个变更 \/ 1 个待审批/}).click();
   await page.getByRole('status').filter({hasText:'已恢复项目会话'}).waitFor();
   assert.equal(await page.getByLabel('恢复会话 ID',{exact:true}).inputValue(),'saved-project-session');
-  await page.getByText('仅显示扫描范围内最近 20 个会话；更早会话可输入 ID 恢复。',{exact:true}).waitFor();
+  assert.deepEqual(await page.evaluate(()=>window.fixture.sessionReads.at(-1)),{root:'/new-project',session_id:'saved-project-session'},'the selected session must be recovered in the current project');
+  await page.getByText('当前会话：saved-project-session',{exact:true}).waitFor();
+  await page.getByText('会话列表不完整：可能达到扫描上限，或有记录因密钥、权限或损坏无法读取；可输入已知 ID 核对。',{exact:true}).waitFor();
   await page.evaluate(()=>{
     const previous=window.fixture.bridge.codingService;
     window.fixture.recoveryUnavailable=true;window.fixture.failedChats=0;
