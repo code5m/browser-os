@@ -3203,7 +3203,7 @@ impl GridProcessManager {
                     if crate::grid_ipc::is_tab_renderer(index) {
                         let _ = app.emit("isolated-tab-renderer-exited", serde_json::json!({
                             "id": crate::grid_ipc::renderer_label(index), "exit_code": code
-                        ));
+                        }));
                         continue;
                     }
                     // Preserve the crash circuit/backoff without attempting a
