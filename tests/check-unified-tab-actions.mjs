@@ -244,9 +244,9 @@ function callerView(store) {
   assert.equal(target.ticket, "old-ticket");
   assert.deepEqual(requested, [], "inspection must not request a restart");
   native.inspectTabMutation = async () => ({epoch:"reload-epoch",next_sequence:"8",
-    domain_recovery_available:true,receipt:{ticket:"different-ticket",phase:"unknown"}});
+    domain_recovery_available:true,recovery_scope:"renderer",receipt:{ticket:"different-ticket",phase:"unknown"}});
   await browser.requestNativeDomainRecovery(target);
-  assert.deepEqual(requested, [["reload-epoch","7","old-ticket"]],
+  assert.deepEqual(requested, [["reload-epoch","7","old-ticket","application"]],
     "confirmation must carry the inspected target, not a silently substituted one");
   assert.equal(browser.tabRecoveryRequired, true, "a request is not a domain exit receipt");
 }
