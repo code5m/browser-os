@@ -174,8 +174,10 @@ function c5(ctx) {
 
 // C6 closeGrid 销毁资源 + owner 收敛视图 + 状态不变量守卫
 function c6(ctx) {
-  const cg = extractFn(ctx.gridStoreSrc, "closeGridAll");
-  if (!cg) return { pass: false, msg: "C6 closeGridAll 存在", detail: "未找到" };
+  const entry = extractFn(ctx.gridStoreSrc, "closeGridAll");
+  const cg = extractFn(ctx.gridStoreSrc, "closeGridOwned");
+  if (!entry || !cg || !/await closeGridOwned\(\)\.catch\(/.test(entry)) return { pass: false, msg: "C6 closeGridAll 委托 owner", detail: "缺实际关闭 owner" };
+  if (!/await bridge\.closeGrid\(\)/.test(cg) || !/catch\s*\(error\)\s*\{[\s\S]*?gridCleanupUnconfirmed\.value\s*=\s*true;[\s\S]*?throw error;/.test(cg)) return { pass: false, msg: "C6 native close receipt", detail: "缺关闭回执或失败保护" };
   if (!/gridOpen\.value\s*=\s*false/.test(cg)) {
     return { pass: false, msg: "C6 closeGrid 确实销毁资源", detail: "缺 gridOpen.value = false" };
   }
@@ -368,10 +370,11 @@ function computeDesiredVisibility(mv, go) {
   return { browserVisible: mv === "browser", gridVisible: go && mv === "grid" };
 }
 const desiredGridVisibility = computed(() => computeDesiredVisibility(layout.mainView, gridOpen.value).gridVisible);
-async function closeGridAll() {
+async function closeGridAll() { await closeGridOwned().catch(() => {}); }
+async function closeGridOwned() {
   gridOpen.value = false;
+  try { await bridge.closeGrid(); } catch (error) { gridCleanupUnconfirmed.value = true; throw error; }
   if (layout.mainView === "grid") { layout.setView("browser"); }
-  await bridge.closeGrid();
 }
 function openGrid() {}
 function closeGrid() {}

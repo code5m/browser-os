@@ -36,7 +36,9 @@ assert.doesNotMatch(plugin, /on_navigation\(move \|url, navigate\| \{ callback\(
 
 // Frontend must not apply late events for a closed tab, and omnibox must
 // release stale focus-time display state on blur.
-assert.match(browser, /if \(!t \|\| !navUrl\.trim\(\)\) return;/);
+assert.match(browser, /if \(typeof id !== "string" \|\| !tabs\.some\(tab => tab\.id === id\)\) return;/);
+assert.match(browser, /const snapshot = await bridge\.tabList\(\);[\s\S]*?if \(epoch !== metadataEpoch \|\| runningMutation/);
+assert.match(browser, /!tabs\.some\(item => item === tab\) \|\| metadataDirty\.has\(row\.id\)[\s\S]*?!native\.url\.trim\(\)[\s\S]*?continue;/);
 assert.match(bar, /function blurAddress\(\)\s*\{[\s\S]{0,320}addressText\.value=contextualAddress\.value;/);
 assert.match(main, /\[navigation\] main_forward seq=/);
 assert.match(shellDiagnostics, /\[navigation\] frontend_applied seq=/);

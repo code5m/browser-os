@@ -7,7 +7,9 @@ const read=(p)=>readFileSync(join(ROOT,p),"utf8");
 const failures=[]; const ok=(x)=>console.log("  ok   "+x); const fail=(x)=>{failures.push(x);console.error("  FAIL "+x)};
 function extract(src,name){const sig="async function "+name+"(";const s=src.indexOf(sig);if(s<0)return"";let d=0;for(let i=src.indexOf("{",s);i<src.length;i++){if(src[i]==="{")d++;else if(src[i]==="}"&&--d===0)return src.slice(s,i+1)}return""}
 function run(grid,browser,gridHost,browserHost){
- const close=extract(grid,"closeGridAll");
+ const entry=extract(grid,"closeGridAll");
+ const close=extract(grid,"closeGridOwned");
+ if (/await closeGridOwned\(\)\.catch\(/.test(entry)) ok("public close delegates to native owner"); else fail("public close must delegate to native owner");
  if(close) ok("Grid owner closeGridAll exists"); else fail("Grid owner closeGridAll missing");
  for(const [label,re] of [
   ["gridOpen=false",/gridOpen\.value\s*=\s*false/],
@@ -18,6 +20,8 @@ function run(grid,browser,gridHost,browserHost){
   ["Browser public tab restore",/browser\.tabSwitch\(browser\.activeTabId\)/],
   ["Browser public relocate",/browser\.relocate\(\)/],
  ]) re.test(close)?ok(label):fail(label);
+ const native=close.indexOf("await bridge.closeGrid()");
+ if(native>=0 && close.indexOf("gridRects.splice")>native && close.indexOf("browser.relocate")>native && /catch\s*\(error\)\s*\{[\s\S]*?gridCleanupUnconfirmed\.value\s*=\s*true;[\s\S]*?throw error;/.test(close)) ok("native close receipt precedes publication; failure retains cleanup debt"); else fail("close receipt or cleanup debt guard missing");
  if(/gridOpen|gridSession|buildGrid|closeGridAll|activateGrid/.test(browser)) fail("Browser store still owns Grid lifecycle"); else ok("Browser store has no Grid lifecycle");
  const vis=browser.match(/const isBrowserVisible = computed\([\s\S]*?\);/)?.[0]||"";
  if(/mainView === "browser"/.test(vis)&&!/gridOpen/.test(vis)) ok("Browser visibility independent from Grid"); else fail("Browser visibility formula regressed");
@@ -26,7 +30,7 @@ function run(grid,browser,gridHost,browserHost){
 }
 if(process.argv.includes("--help")){console.log("check-grid-close-logic.mjs [--self-test|--json]");process.exit(0)}
 if(process.argv.includes("--self-test")){
- const g='const gridOpen={value:true}; const gridRects=[]; async function closeGridAll(){gridOpen.value=false;await bridge.closeGrid();gridRects.splice(0,gridRects.length);if(layout.mainView==="grid")layout.setView("browser");await browser.tabSwitch(browser.activeTabId);browser.relocate();}';
+ const g='const gridOpen={value:true}; const gridRects=[]; async function closeGridAll(){await closeGridOwned().catch(()=>{});} async function closeGridOwned(){gridOpen.value=false;try{await bridge.closeGrid();}catch(error){gridCleanupUnconfirmed.value=true;throw error;}gridRects.splice(0,gridRects.length);if(layout.mainView==="grid")layout.setView("browser");await browser.tabSwitch(browser.activeTabId);browser.relocate();}';
  const b='const isBrowserVisible = computed(() => layout.mainView === "browser");';
  run(g,b,'bridge.gridPosition(); bridge.gridSetZoom();','function schedulePosition(){}');
  console.log(failures.length?"GRID_CLOSE_SELF_TEST: FAIL":"GRID_CLOSE_SELF_TEST: ALL_PASS");process.exit(failures.length?1:0);

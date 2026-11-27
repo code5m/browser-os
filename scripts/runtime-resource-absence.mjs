@@ -145,6 +145,11 @@ async function boot(tag, profile, opts = {}) {
   bridge.closeGrid = async () => {
     counter.closeGrid += 1
   }
+  // Mock the native acknowledgement boundary, not Browser lifecycle.
+  bridge.hideAllWebviews = async () => { counter.hideAllWebviews = (counter.hideAllWebviews ?? 0) + 1 }
+  bridge.hideWebview = async () => {}
+  bridge.tabActivate = async () => {}
+  bridge.tabList = async () => []
   bridge.gridOpen = async () => {}
   bridge.gridPosition = async () => {}
   bridge.gridSetZoom = async () => {}

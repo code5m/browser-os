@@ -27,7 +27,7 @@ const eventDriven=Array.from(js.matchAll(/\brecord\('(report_title|report_resour
 const actual=[...invoked,...eventDriven];
 assert.deepEqual(actual.slice().sort(),debt.slice().sort(),'every declared Native 58 command needs one real invocation or remote WebView event observation');
 assert.equal(new Set(actual).size,58,'duplicate/missing Native 58 outcomes are not permitted');
-assert.match(browserOwner,/let active_id = \{[\s\S]*?active\.clone\(\)[\s\S]*?\};\s*if let Some\(id\) = active_id \{\s*close_tab\(&app, &id\)\?/,'close_browser must drop active_tab mutex before invoking close_tab');
+assert.match(browserOwner,/let active_id = \{[\s\S]*?active\.clone\(\)[\s\S]*?\};\s*if let Some\(id\) = active_id \{\s*return super::tab_mutation::legacy_action::<\(\)>\(\s*webview,\s*app,\s*super::tab_mutation::Action::Close\s*\{\s*id\s*\}\s*\)\.await;/,'close_browser must drop active_tab mutex before invoking close_tab');
 assert.match(js,/const invoke = tauri\?\.core\?\.invoke;/,'must use the actual installed Tauri IPC');
 assert.match(js,/tauri\.event\.emit\('native-58-review-finished'/,'must emit real completed command outcomes');
 assert.match(js,/resourceRecordsBeforeClear/,'must include before/after WebKit resource evidence');

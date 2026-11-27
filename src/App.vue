@@ -78,8 +78,7 @@ const appHeight = ref<string>("100vh");
 let unlistenResize: (() => void) | null = null;
 let unlistenChildShortcut: (() => void) | null = null;
 let unlistenExitStatus: (() => void) | null = null;
-let unlistenRendererRecovery: (() => void) | null = null;
-let unlistenRendererDownload: (() => void) | null = null;
+let unlistenRendererEvents: (() => void) | null = null;
 let stopPendingOpenWatch: (() => void) | null = null;
 let uiHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let layoutBusy = false;
@@ -134,8 +133,7 @@ onBeforeUnmount(() => {
   unlistenResize?.();
   unlistenChildShortcut?.();
   unlistenExitStatus?.();
-  unlistenRendererRecovery?.();
-  unlistenRendererDownload?.();
+  unlistenRendererEvents?.();
   stopPendingOpenWatch?.();
   if (uiHeartbeatTimer !== null) clearInterval(uiHeartbeatTimer);
   uiHeartbeatTimer = null;
@@ -238,50 +236,7 @@ onMounted(async () => {
   // 关闭入口统一走 browser.tabClose → closeTabNow（内部写入 recentlyClosed 内存栈）。
   // 不再挂接任何关闭拦截器 / 确认框（旧的关闭确认弹窗已撤销）。
   bridge.onTabRecovery((d) => browser.handleTabRecovery(d));
-  bridge.onTabViewportUnconfirmed((d) => {
-    if (d && typeof d.id === "string" && browser.tabs.some(tab => tab.id === d.id)) {
-      layout.showToast("页签已重建，但滚动位置恢复未确认；不会自动重复恢复。");
-    }
-  });
-  bridge.onIsolatedRendererExited((event) => { void browser.handleIsolatedRendererExited(event); });
-  unlistenRendererRecovery = await bridge.onIsolatedRendererRecoveryChanged((event) => {
-    if (typeof event?.id === "string") void browser.refreshRendererState(event.id);
-  });
-  const notifiedRetirements = new Set<string>();
-  unlistenRendererDownload = await bridge.onIsolatedDownload(async (event) => {
-    // The bridge already validated the runtime payload and count arithmetic.
-    if (event.phase === "owner_retired") {
-      // This is the original owner's confirmed retirement notification,
-      // not an update to the replacement tab. A new live host or failed
-      // inspection must not suppress the old owner's download warning.
-      const key = event.id + ":" + event.pid + ":" + event.spawn_epoch;
-      if (event.outcome === "unknown" && !notifiedRetirements.has(key)
-          && (event.observed_unfinished === null || event.observed_unfinished > 0)) {
-        if (notifiedRetirements.size >= 128) {
-          const oldest = notifiedRetirements.values().next().value;
-          if (oldest !== undefined) notifiedRetirements.delete(oldest);
-        }
-        notifiedRetirements.add(key);
-        layout.showToast(event.id + " 原下载宿主已回收；曾观察到未完成或无法对账的下载，最终结果待核对。");
-      }
-      return;
-    }
-    if (!browser.tabs.some(tab => tab.id === event.id)) return;
-    const view = await browser.refreshRendererState(event.id);
-    const target = view?.renderer_recovery_target;
-    if (!view) return;
-    const observed = view.renderer_download;
-    // Only the latest authenticated owner/connection observation can notify.
-    // Cumulative counts are advisory; never infer a per-transfer identity.
-    if (!target || !observed?.connection_current || target.pid !== event.pid
-        || target.spawn_epoch !== event.spawn_epoch
-        || observed.renderer_generation !== event.renderer_generation
-        || observed.requested !== event.requested || observed.succeeded !== event.succeeded
-        || observed.failed !== event.failed) return;
-    layout.showToast(event.phase === "requested"
-      ? "独立页签收到下载请求；关闭宿主可能中断下载"
-      : event.phase === "succeeded" ? "原生引擎报告下载成功" : "原生引擎报告下载未成功");
-  });
+  unlistenRendererEvents = await browser.subscribeRendererEvents();
   bridge.onNewTabRequest((u) => {
     setTimeout(() => browser.tabNew(u.url), 0);
   });

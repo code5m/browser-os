@@ -51,7 +51,9 @@ function assertRestartSafety(source, windows) {
 
   // Explicit closes cancel deferred restarts before transferring native owners.
   assert.match(close, /self\.pending_restarts\.lock\(\)\.unwrap\(\)\.remove\(&index\);[\s\S]*?let removed = self\.children\.lock\(\)\.unwrap\(\)\.remove\(&index\)/);
-  assert.match(closeAll, /self\.pending_restarts\.lock\(\)\.unwrap\(\)\.clear\(\);[\s\S]*?children\.drain\(\)/);
+  // Grid shutdown may not retire unrelated isolated browser tabs.
+  assert.match(closeAll, /self\.pending_restarts\.lock\(\)\.unwrap\(\)\.retain\(\|id, _\| crate::grid_ipc::is_tab_renderer\(\*id\)\);[\s\S]*?children\.keys\(\)\.copied\(\)\s*\.filter\(\|id\| !crate::grid_ipc::is_tab_renderer\(\*id\)\)\.collect\(\);[\s\S]*?for index in indices\s*\{[\s\S]*?children\.remove\(&index\)[\s\S]*?self\.lifecycle\.retire\(index, owner\)/);
+  assert.doesNotMatch(closeAll, /children\.drain\(\)/);
 }
 
 assert.match(rust, /CORE_MEMORY_RESERVE_MB:\s*u64\s*=\s*1800/);
@@ -75,7 +77,7 @@ for (const [source, windows] of [[grid, false], [windowsGrid, true]]) {
     ["restart before native retirement", /&& !(?:self|manager)\.lifecycle\.is_retiring\(\*\*index\)/, "&& true"],
     ["restart during shutdown", /if manager\.lifecycle\.is_stopping\(\)\s*\{\s*break;/, "if false { break;"],
     ["closed cell keeps deferred restart", /self\.pending_restarts\.lock\(\)\.unwrap\(\)\.remove\(&index\);/g, "self.pending_restarts.lock().unwrap().get(&index);"],
-    ["closed view keeps deferred restarts", /self\.pending_restarts\.lock\(\)\.unwrap\(\)\.clear\(\);/, "self.pending_restarts.lock().unwrap().len();"],
+    ["closed view keeps deferred restarts", /self\.pending_restarts\.lock\(\)\.unwrap\(\)\.retain\(\|id, _\| crate::grid_ipc::is_tab_renderer\(\*id\)\);/, "self.pending_restarts.lock().unwrap().len();"],
   ]) {
     const mutated = source.replace(pattern, replacement);
     assert.notEqual(mutated, source, "ineffective fixture: " + name);

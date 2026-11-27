@@ -68,6 +68,7 @@ function fixture(options = {}) {
   };
   const browserModule = owner("src/capabilities/browser/state/useBrowserStore.ts", {
     "../../../bridge": { bridge: native },
+    "../../../utils/nativeSurfaceSync": owner("src/utils/nativeSurfaceSync.ts", {}),
     "../../../utils/webviewFreeze": { WEBVIEW_FREEZE_JS: "", WEBVIEW_UNFREEZE_JS: "" },
     "../resource/guard": { isBrowserResourceAllowed: () => availability.browser },
     "../../../stores/useLayoutStore": { useLayoutStore: () => layout },

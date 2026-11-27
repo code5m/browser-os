@@ -922,6 +922,61 @@ export const useBrowserStore = defineStore("browser", () => {
       }
     });
   }
+  // Browser owns renderer-specific subscriptions and their lifetime.
+  async function subscribeRendererEvents(): Promise<() => void> {
+    const disposers: (() => void)[] = [];
+    const dispose = () => { for (const unlisten of disposers.splice(0)) unlisten(); };
+    try {
+      disposers.push(await bridge.onTabViewportUnconfirmed((d) => {
+        if (d && typeof d.id === "string" && tabs.some(tab => tab.id === d.id)) {
+          layout.showToast("页签已重建，但滚动位置恢复未确认；不会自动重复恢复。");
+        }
+      }));
+      disposers.push(await bridge.onIsolatedRendererExited((event) => { void handleIsolatedRendererExited(event); }));
+      disposers.push(await bridge.onIsolatedRendererRecoveryChanged((event) => {
+        if (typeof event?.id === "string") void refreshRendererState(event.id);
+      }));
+      const notifiedRetirements = new Set<string>();
+      disposers.push(await bridge.onIsolatedDownload(async (event) => {
+        // The bridge already validated the runtime payload and count arithmetic.
+        if (event.phase === "owner_retired") {
+          // This is the original owner's confirmed retirement notification,
+          // not an update to the replacement tab. A new live host or failed
+          // inspection must not suppress the old owner's download warning.
+          const key = event.id + ":" + event.pid + ":" + event.spawn_epoch;
+          if (event.outcome === "unknown" && !notifiedRetirements.has(key)
+              && (event.observed_unfinished === null || event.observed_unfinished > 0)) {
+            if (notifiedRetirements.size >= 128) {
+              const oldest = notifiedRetirements.values().next().value;
+              if (oldest !== undefined) notifiedRetirements.delete(oldest);
+            }
+            notifiedRetirements.add(key);
+            layout.showToast(event.id + " 原下载宿主已回收；曾观察到未完成或无法对账的下载，最终结果待核对。");
+          }
+          return;
+        }
+        if (!tabs.some(tab => tab.id === event.id)) return;
+        const view = await refreshRendererState(event.id);
+        const target = view?.renderer_recovery_target;
+        if (!view) return;
+        const observed = view.renderer_download;
+        // Only the latest authenticated owner/connection observation can notify.
+        // Cumulative counts are advisory; never infer a per-transfer identity.
+        if (!target || !observed?.connection_current || target.pid !== event.pid
+            || target.spawn_epoch !== event.spawn_epoch
+            || observed.renderer_generation !== event.renderer_generation
+            || observed.requested !== event.requested || observed.succeeded !== event.succeeded
+            || observed.failed !== event.failed) return;
+        layout.showToast(event.phase === "requested"
+          ? "独立页签收到下载请求；关闭宿主可能中断下载"
+          : event.phase === "succeeded" ? "原生引擎报告下载成功" : "原生引擎报告下载未成功");
+      }));
+      return dispose;
+    } catch (error) {
+      dispose();
+      throw error;
+    }
+  }
   function setTitle(t: TabInfo) {
     if (t && typeof t.id === "string") queueNativeTabMetadata(t.id);
   }
@@ -1240,6 +1295,7 @@ export const useBrowserStore = defineStore("browser", () => {
     reloadActive,
     setTitle,
     setNavigated,
+    subscribeRendererEvents,
     handleTabRecovery,
     handleIsolatedRendererExited,
     getRecentNativeTabFailure,

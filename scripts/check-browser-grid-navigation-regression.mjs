@@ -37,12 +37,12 @@ function hasExplicitNewTab(source) {
 }
 const cases = [
   ["native viewport normalizer imported", /import\s*\{\s*normalizeHostRect\s*\}/.test(host)],
-  ["failed tab position invalidates dedupe cache", /tabPosition\(tabId,[\s\S]*?\.catch\(\(error\)[\s\S]*?deduper\.reset\(\)/.test(host)],
+  ["failed tab position invalidates dedupe cache", /await bridge\.tabPosition\(intent\.id,\s*intent\.rect\);[\s\S]*?catch\s*\{[\s\S]*?intent\.current\(\)\s*&&\s*!pending\)[\s\S]*?intent\.settled\(false\)/.test(host) && /settled:\s*\(ok\)\s*=>\s*\{\s*if\s*\(ok\)\s*return;\s*lastKey\s*=\s*"";/.test(host)],
   ["omnibox preserves its captured tab and guarded navigation", preservesCurrentTab(browser)],
   ["address submit uses navigateCurrent", /function onAddrGo\(\)[\s\S]*?browser\.navigateCurrent\(\)/.test(bar)],
   ["history selection uses navigateCurrent", /function pickUrl\(u: string\)[\s\S]*?browser\.navigateCurrent\(\)/.test(bar)],
   ["new tab is explicit and reports native failure", hasExplicitNewTab(tabs)],
-  ["grid startup guarded against overlap", /let gridBuilding = false;[\s\S]*?async function buildGrid\(\) \{\s*if \(gridBuilding\)/.test(grid)],
+  ["grid startup guarded against overlap", /let gridBuilding = false;/.test(grid) && /if \(gridBuilding\)\s*\{[\s\S]*?return;[\s\S]*?\}[\s\S]*?gridBuilding = true;/.test(ownerFunction(grid, "buildGrid"))],
   ["grid startup clears guard on failure", /catch \(error\)[\s\S]*?finally \{[\s\S]*?gridBuilding = false;/.test(grid) && /finally \{\s*gridStarting\.value = false;\s*gridBuilding = false;/.test(grid)],
   ["no obsolete browser grid lifecycle calls", !/browser\.(?:gridOpen|layoutGrid|openGrid)\b/.test(tabs)],
   ["negative: occupied tab cannot enter the create branch", !preservesCurrentTab(mutateNavigation(browser, "if (!current) {", "if (true) {"))],
