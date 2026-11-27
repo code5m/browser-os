@@ -49,7 +49,7 @@ assert.match(native,/isolated_capture::checked_png\(bytes\)/);
 // an exact native owner request, not use the shared profile or auto replay.
 assert.match(isolated,/INTERACTIVE_CHILD_FLAG/);
 assert.match(isolated,/validate_capture_command\(std::io::stdin\(\).lock\(\)\)/);
-assert.match(isolated,/endpoint\.write_all\(&\[CAPTURE_BYTE\]\)/);
+assert.match(isolated,/if ready && !triggered && \(control\.capture_requested\)\(\)\? \{[\s\S]*?if cancelled\(\) \{[\s\S]*?return Err\("CAPTURE_ISOLATED_CANCELLED"\.into\(\)\);[\s\S]*?let mut endpoint = pipe\.take\(\)\.ok_or\("CAPTURE_WORKER_ADMISSION_FAILED"\)\?;[\s\S]*?endpoint\s*\.write_all\(&\[CAPTURE_BYTE\]\)\s*\.map_err\(\|_\| "CAPTURE_WORKER_TRIGGER_FAILED"\)\?;[\s\S]*?drop\(endpoint\);\s*triggered = true;/);
 assert.match(isolated,/let mut deadline = Instant::now\(\) \+ DEADLINE/);
 assert.match(native,/fn request_interactive_capture/);
 assert.match(native,/CaptureRequest::CaptureNow/);
