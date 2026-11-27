@@ -11,7 +11,7 @@ const base=process.env.CODING_UI_URL||'http://127.0.0.1:1433';
   const page=await browser.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.route('**/__operation_test',r=>r.fulfill({contentType:'text/html; charset=utf-8',body:`<div id="app"></div><script type="module">
    import {createApp,h,ref} from '${vue}';import Review from '/src/capabilities/agent/ui/CodingOperationReview.vue';
-   import {bridge} from '/src/bridge.ts';import {commandWorkbench} from '/src/script/public.ts';
+   import {bridge} from '/src/bridge.ts';import {commandWorkbench} from '/src/capabilities/script/public.ts';
    const operation=ref({id:'mcp-first',kind:'mcp',input:{server_id:'fixture',tool:'write',arguments:{value:1}},status:'pending'});
    const calls=[],reviews=[],resolutions=[],dispatches=[],claims=[];let revision='a'.repeat(64);
    bridge.codingService=async request=>{calls.push(structuredClone(request));if(request.action!=='mcp_review')throw Error('direct MCP dispatch forbidden');
