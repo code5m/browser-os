@@ -34,24 +34,41 @@ for(const name of names){
  ]);
  if(receiptActions.has(name)){
   const [variant,fields]=receiptActions.get(name);
-  const dispatch=new RegExp('super::tab_mutation::legacy_action\\(\\s*webview,\\s*app,\\s*super::tab_mutation::Action::'+variant+'\\s*\\{\\s*'+fields.replace(', ', ',\\s*')+'\\s*\\}\\s*\\)\\.await\\s*\\}');
+  const dispatch=new RegExp('super::tab_mutation::legacy_action\\(\\s*webview,\\s*app,\\s*super::tab_mutation::Action::'+variant+'\\s*\\{\\s*'+fields.replace(', ', ',\\s*')+'\\s*\\}\\s*,?\\s*\\)\\s*\\.await\\s*\\}');
   assert.match(body,dispatch,name+': wrapper must dispatch the exact typed action and arguments');
   const owner=rust.find(([file])=>file.endsWith('/bridge/tab_mutation.rs'));
   assert.ok(owner,name+': native receipt owner missing');
   const cut=(from,to)=>{const a=owner[1].indexOf(from),b=owner[1].indexOf(to,a+from.length);assert.ok(a>=0&&b>a,name+': missing receipt region '+from);return owner[1].slice(a,b)};
   const command=cut('fn command(&self)', 'fn target(&self)');
   assert.match(command,new RegExp('Self::'+variant+'\\s*\\{\\s*\\.\\.\\s*\\}\\s*=>\\s*"'+name+'"'));
-  const authorize=cut('fn authorize(&self)', 'fn is_document_mutation(');
+  const authorize=cut('fn authorize(&self,', 'fn is_document_mutation(');
   assert.match(authorize,/else\s*\{\s*self\.command\(\)\s*\};\s*require_main\(webview,\s*cmd\)\?;/);
   if(variant==='New') assert.match(authorize,/Self::New\s*\{\s*url\s*\}\s*=>\s*bound_text\(cmd,\s*"url",\s*url\)/);
   else if(variant==='Open') assert.match(authorize,/Self::Open\s*\{\s*id,\s*url\s*\}\s*=>\s*\{\s*bound_text\(cmd,\s*"id",\s*id\)\?;\s*bound_text\(cmd,\s*"url",\s*url\)/);
   else assert.match(authorize,/Self::Close\s*\{\s*id\s*\}\s*\|\s*Self::Activate\s*\{\s*id\s*\}\s*\|\s*Self::Back\s*\{\s*id\s*\}\s*\|\s*Self::Forward\s*\{\s*id\s*\}\s*\|\s*Self::Reload\s*\{\s*id\s*\}\s*=>\s*bound_text\(cmd,\s*"id",\s*id\)/);
   const admission=cut('pub(super) async fn legacy_action<','pub(crate) fn tab_mutation_diagnostic(');
   assert.match(admission,/action\.authorize\(&webview\)\?;\s*let ticket[\s\S]*?let mut state = owner\(\)\?;/);
-  assert.match(admission,/let binding = Binding::capture\(&app,\s*&action\)\?;[\s\S]*?if binding\.current\(&app,\s*&action\)\s*\{\s*action\.execute\(webview,\s*app\.clone\(\),\s*&binding\)/);
+  assert.match(admission,/let binding = Binding::capture\(&app,\s*&action\)\?;[\s\S]*?if binding\.current\(&app,\s*&action\)\s*\{\s*action\s*\.execute\(webview,\s*app\.clone\(\),\s*&binding\)/);
+  // Validate the worker's generation-bound routes as well as the compatibility
+  // helper: newer document bindings must not silently fall back to a replacement.
+  assert.match(admission,/let entered = \{[\s\S]*?matching\(&mut state, &ticket\)\.is_ok_and\(Slot::enter\)[\s\S]*?if !entered \{[\s\S]*?TAB_MUTATION_CANCELLED_BEFORE_EXECUTION/);
   const execute=cut('fn execute(self,','fn agent_action(');
   assert.match(execute,/self\.authorize\(&webview\)\?;/);
   assert.match(execute,new RegExp('Self::'+variant+'\\s*\\{\\s*'+fields.replace(', ', ',\\s*')+'\\s*\\}\\s*=>\\s*(?:serde_json::to_value\\()?'+name+'_impl\\(webview,\\s*app,\\s*'+fields.replace(', ', ',\\s*')+'\\)'));
+  if(variant==='Close'){
+   assert.match(execute,/if let Self::Close \{ ref id \} = self \{[\s\S]*?Binding::LiveDocument\(document\)[\s\S]*?TabCloseAdmission::EmbeddedDocument\(document\)[\s\S]*?Binding::IsolatedDocument\(document\)[\s\S]*?TabCloseAdmission::IsolatedDocument\(\*document\)[\s\S]*?return super::close_tab_admitted\(&app, id, Some\(admitted\)\)/);
+  }
+  if(variant==='Open'){
+   assert.match(execute,/if let Binding::LiveDocument\(document\) = binding \{[\s\S]*?tab_open_document\(&app, &id, &url, document\)/);
+   assert.match(execute,/if let Binding::IsolatedDocument\(document\) = binding \{[\s\S]*?tab_open_admitted\(webview, app.clone\(\), id, url, Some\(\*document\)\)/);
+  }
+  if(variant==='Activate'){
+   assert.match(execute,/if let Binding::IsolatedActivation\(expected\) = binding \{[\s\S]*?tab_activate_admitted\(webview, app.clone\(\), id.clone\(\), Some\(\*expected\)\)/);
+  }
+  if(['Back','Forward','Reload'].includes(variant)){
+   assert.match(execute,/if let Binding::LiveDocument\(document\) = binding \{[\s\S]*?\.eval_navigation_document\(&id, document, js\)/);
+   assert.match(execute,new RegExp('Self::'+variant+'\\s*\\{\\s*id\\s*\\}\\s*=>\\s*super::isolated_tabs::eval_bound\\([\\s\\S]*?&app,\\s*&id,[\\s\\S]*?\\*document,\\s*\\)'));
+  }
   const helper=new RegExp('pub\\(crate\\)\\s+fn\\s+'+name+'_impl\\s*\\(').exec(source);
   assert.ok(helper,name+': exact native implementation missing');
   body=source.slice(helper.index,source.indexOf('\n}',helper.index)+2);
@@ -64,12 +81,14 @@ for(const name of names){
  }
  const remote=name==='report_title'||name==='report_resources';
  const originGuard=remote?'remote-origin-policy':'main-webview-guard';
- assert.ok(body.includes(remote?'check_invocation_source(':`native_legacy_policy::require_main(&webview, "${name}")`),`${name}: missing ${originGuard}`);
+ const mainGuard=new RegExp('native_legacy_policy::require_main\\(\\s*&webview,\\s*"'+name+'"\\s*,?\\s*\\)');
+ assert.ok(remote?/check_invocation_source\s*\(/.test(body):mainGuard.test(body),`${name}: missing ${originGuard}`);
  const primitiveFields=[...params.matchAll(/\b([a-z_][a-z0-9_]*)\s*:\s*(?:Option<\s*)?(String|f64)/g)].map(m=>({name:m[1],type:m[2]}));
  const uncovered=primitiveFields.filter(field=>{
   if(remote)return false;
   if(field.name==='intent' && (name==='session_delete'||name==='snippet_remove'||name==='set_default_browser'))return !body.includes('.consume(');
-  return !body.includes(`native_legacy_policy::bound_${field.type==='f64'?'dimension':'text'}("${name}", "${field.name}"`);
+  const bound=new RegExp('native_legacy_policy::bound_'+(field.type==='f64'?'dimension':'text')+'\\(\\s*"'+name+'",\\s*"'+field.name+'"');
+  return !bound.test(body);
  });
  assert.equal(uncovered.length,0,`${name} missing primitive argument bound: ${JSON.stringify(uncovered)}`);
  const m=new RegExp(`^  ${name}:\\s*\\n(?:(?!^  [a-z_]+:)[\\s\\S])*?^    side_effect: "([^"]+)"`,'m').exec(registry);
