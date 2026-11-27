@@ -999,6 +999,15 @@ fn dispatch_grid_cmd(
                 initialization_script: Some(init_script.to_string()),
             }) {
                 Ok(()) => {
+                    // The ordinary/Grid host starts hidden; creation must not
+                    // accidentally reveal it before the owner's layout intent.
+                    let win = app.get_window(host_label).ok_or("GRID_NATIVE_HOST_UNAVAILABLE")?;
+                    if win.is_visible().map_err(|e| format!("GRID_NATIVE_VISIBILITY_UNCONFIRMED:{e}"))? {
+                        win.hide().map_err(|e| format!("GRID_NATIVE_CREATE_HIDE_FAILED:{e}"))?;
+                    }
+                    if win.is_visible().map_err(|e| format!("GRID_NATIVE_VISIBILITY_UNCONFIRMED:{e}"))? {
+                        return Err("GRID_NATIVE_CREATE_HIDE_UNCONFIRMED".into());
+                    }
                     eprintln!("[grid-child] CreateTab {} 完成", id);
                     Ok(())
                 }

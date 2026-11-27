@@ -1232,6 +1232,54 @@ fn provider_turn_cancelable_stream(
     }
     Ok(message)
 }
+// Retain enough raw UTF-8 text to recognize a credential split across
+// consecutive SSE fragments. Never emit a partial match that could later
+// become a complete secret. The stream reader already bounds raw bytes.
+fn release_provider_text(
+    pending: &mut String,
+    credential: &str,
+    final_chunk: bool,
+    content: &mut String,
+    on_delta: &mut dyn FnMut(&str) -> Result<(), String>,
+) -> Result<(), String> {
+    if credential.is_empty() {
+        return Err("AI_CREDENTIAL_INVALID".into());
+    }
+    let mut end = if final_chunk {
+        pending.len()
+    } else {
+        pending.len().saturating_sub(credential.len().saturating_sub(1))
+    };
+    while !pending.is_char_boundary(end) {
+        end -= 1;
+    }
+    // A complete match may straddle the provisional emission boundary.
+    // Consume the entire match rather than emit a secret prefix.
+    for (start, matched) in pending.match_indices(credential) {
+        if start >= end {
+            break;
+        }
+        end = end.max(start + matched.len());
+    }
+    if end != 0 {
+        let safe = pending[..end].replace(credential, "[REDACTED]");
+        pending.drain(..end);
+        on_delta(&safe)?;
+        content.push_str(&safe);
+    }
+    Ok(())
+}
+
+fn provider_value_contains_credential(value: &Value, credential: &str) -> bool {
+    match value {
+        Value::String(text) => text.contains(credential),
+        Value::Array(items) => items.iter().any(|item| provider_value_contains_credential(item, credential)),
+        Value::Object(items) => items.iter().any(|(key, item)|
+            key.contains(credential) || provider_value_contains_credential(item, credential)),
+        _ => false,
+    }
+}
+
 fn read_provider_stream_process(
     mut child: Child,
     input: &[u8],
@@ -1277,6 +1325,9 @@ fn read_provider_stream_process(
         let mut line = Vec::new();
         let mut total_bytes = 0usize;
         let mut content = String::new();
+        let mut pending_text = String::new();
+        let mut finished_reason: Option<String> = None;
+        let mut event_count = 0usize;
         let mut tool_calls: BTreeMap<usize, (String, String, String)> = BTreeMap::new();
         let mut http_status = None;
         let mut done = false;
@@ -1284,7 +1335,10 @@ fn read_provider_stream_process(
 
         loop {
             line.clear();
-            let count = match reader.read_until(b'\n', &mut line) {
+            // Limit the read itself, not only the size after read_until.
+            // An unterminated provider line cannot allocate without bound.
+            let remaining = 262145usize.saturating_sub(total_bytes);
+            let count = match (&mut reader).take(remaining as u64).read_until(b'\n', &mut line) {
                 Ok(count) => count,
                 Err(_) => {
                     stream_error = Some("AI_HTTP_IO".into());
@@ -1303,21 +1357,38 @@ fn read_provider_stream_process(
             let without_lf = line.strip_suffix(b"\n").unwrap_or(&line);
             let trimmed = without_lf.strip_suffix(b"\r").unwrap_or(without_lf);
             if let Some(status) = trimmed.strip_prefix(b"__BROWSEROS_HTTP_STATUS__") {
+                if http_status.is_some() {
+                    stream_error = Some("AI_RESPONSE_INVALID".into());
+                    break;
+                }
                 http_status = std::str::from_utf8(status)
                     .ok()
                     .and_then(|value| value.trim().parse::<u16>().ok());
+                if http_status.is_none() {
+                    stream_error = Some("AI_RESPONSE_INVALID".into());
+                    break;
+                }
                 continue;
             }
             let Some(data) = trimmed.strip_prefix(b"data:") else {
                 continue;
             };
             let data = data.strip_prefix(b" ").unwrap_or(data);
+            if data.is_empty() {
+                continue;
+            }
+            if done || http_status.is_some() {
+                stream_error = Some("AI_RESPONSE_INVALID".into());
+                break;
+            }
             if data == b"[DONE]" {
                 done = true;
                 continue;
             }
-            if done || data.is_empty() {
-                continue;
+            event_count += 1;
+            if event_count > 4096 {
+                stream_error = Some("AI_RESPONSE_LIMIT".into());
+                break;
             }
             let chunk: Value = match serde_json::from_slice(data) {
                 Ok(value) => value,
@@ -1326,33 +1397,83 @@ fn read_provider_stream_process(
                     break;
                 }
             };
-            let delta = &chunk["choices"][0]["delta"];
-            if let Some(text) = delta["content"].as_str().filter(|text| !text.is_empty()) {
-                let safe_text = text.replace(credential, "[REDACTED]");
-                content.push_str(&safe_text);
-                if let Err(error) = on_delta(&safe_text) {
-                    stream_error = Some(error);
-                    break;
+            let admitted = (|| -> Result<(), String> {
+                if chunk.get("error").is_some_and(|error| !error.is_null()) {
+                    return Err("AI_RESPONSE_INVALID".into());
                 }
-            }
-            if let Some(calls) = delta["tool_calls"].as_array() {
-                for call in calls {
-                    let Some(index) = call["index"].as_u64().map(|value| value as usize) else {
-                        continue;
-                    };
-                    let entry = tool_calls.entry(index).or_default();
-                    if let Some(id) = call["id"].as_str() {
-                        entry.0.push_str(&id.replace(credential, "[REDACTED]"));
-                    }
-                    if let Some(name) = call["function"]["name"].as_str() {
-                        entry.1.push_str(&name.replace(credential, "[REDACTED]"));
-                    }
-                    if let Some(arguments) = call["function"]["arguments"].as_str() {
-                        entry
-                            .2
-                            .push_str(&arguments.replace(credential, "[REDACTED]"));
+                let choices = chunk["choices"].as_array().ok_or("AI_RESPONSE_INVALID")?;
+                // A usage-only frame may have no choices. Never collapse
+                // multiple alternative completions into one tool transcript.
+                if choices.is_empty() {
+                    return Ok(());
+                }
+                if choices.len() != 1 || finished_reason.is_some() {
+                    return Err("AI_RESPONSE_INVALID".into());
+                }
+                let choice = &choices[0];
+                if choice.get("index").is_some_and(|index| index.as_u64() != Some(0)) {
+                    return Err("AI_RESPONSE_INVALID".into());
+                }
+                let delta = &choice["delta"];
+                if (!delta.is_object() && !delta.is_null())
+                    || delta.get("function_call").is_some_and(|call| !call.is_null()) {
+                    return Err("AI_RESPONSE_INVALID".into());
+                }
+                if let Some(role) = delta.get("role").filter(|value| !value.is_null()) {
+                    if role.as_str() != Some("assistant") {
+                        return Err("AI_RESPONSE_INVALID".into());
                     }
                 }
+                if let Some(text) = delta.get("content").filter(|value| !value.is_null()) {
+                    pending_text.push_str(text.as_str().ok_or("AI_RESPONSE_INVALID")?);
+                    release_provider_text(&mut pending_text, credential, false, &mut content, on_delta)?;
+                }
+                if let Some(calls) = delta.get("tool_calls").filter(|value| !value.is_null()) {
+                    let calls = calls.as_array().ok_or("AI_RESPONSE_INVALID")?;
+                    if calls.len() > 8 {
+                        return Err("AI_RESPONSE_LIMIT".into());
+                    }
+                    let mut frame_indices = HashSet::new();
+                    for call in calls {
+                        let index = call["index"].as_u64().filter(|index| *index < 8)
+                            .ok_or("AI_RESPONSE_INVALID")? as usize;
+                        if !frame_indices.insert(index)
+                            || call.get("type").is_some_and(|kind| !kind.is_null() && kind.as_str() != Some("function"))
+                            || call.get("function").is_some_and(|function| !function.is_null() && !function.is_object()) {
+                            return Err("AI_RESPONSE_INVALID".into());
+                        }
+                        let entry = tool_calls.entry(index).or_default();
+                        // Preserve raw fragments until the complete call is
+                        // validated. Never redact arguments into a different
+                        // operation or expose split credential fragments.
+                        for (field, target, limit) in [
+                            (&call["id"], &mut entry.0, 256usize),
+                            (&call["function"]["name"], &mut entry.1, 128),
+                            (&call["function"]["arguments"], &mut entry.2, 16_384),
+                        ] {
+                            if !field.is_null() {
+                                let fragment = field.as_str().ok_or("AI_RESPONSE_INVALID")?;
+                                if fragment.len() > limit.saturating_sub(target.len()) {
+                                    return Err("AI_RESPONSE_LIMIT".into());
+                                }
+                                target.push_str(fragment);
+                            }
+                        }
+                    }
+                }
+                if let Some(reason) = choice.get("finish_reason").filter(|reason| !reason.is_null()) {
+                    let reason = reason.as_str().ok_or("AI_RESPONSE_INVALID")?;
+                    // A truncated/content-filtered reply cannot authorize tools.
+                    if !matches!(reason, "stop" | "tool_calls") {
+                        return Err("AI_RESPONSE_INVALID".into());
+                    }
+                    finished_reason = Some(reason.to_owned());
+                }
+                Ok(())
+            })();
+            if let Err(error) = admitted {
+                stream_error = Some(error);
+                break;
             }
         }
 
@@ -1370,6 +1491,26 @@ fn read_provider_stream_process(
             return Err("AI_PROVIDER_HTTP_STATUS_MISSING".into());
         }
 
+        let unsuccessful_http = http_status.is_some_and(|status| !(200..=299).contains(&status));
+        // Preserve HTTP/curl failure classification. Only a successful
+        // response with an explicit protocol terminal can publish a batch.
+        if !status.success() || unsuccessful_http {
+            return Ok((json!({"role":"assistant","content":null}), status, http_status));
+        }
+        if cancelled() {
+            return Err("AI_PROVIDER_CANCELLED".into());
+        }
+        if !done && finished_reason.is_none() {
+            return Err("AI_RESPONSE_INVALID".into());
+        }
+        if finished_reason.as_deref().is_some_and(|reason|
+            (reason == "tool_calls") != !tool_calls.is_empty()) {
+            return Err("AI_RESPONSE_INVALID".into());
+        }
+        if tool_calls.keys().copied().ne(0..tool_calls.len()) {
+            return Err("AI_RESPONSE_INVALID".into());
+        }
+        release_provider_text(&mut pending_text, credential, true, &mut content, on_delta)?;
         let mut message = json!({
             "role":"assistant",
             "content":if content.is_empty(){Value::Null}else{json!(content)}
@@ -1387,12 +1528,19 @@ fn read_provider_stream_process(
                 .collect();
             message["tool_calls"] = json!(calls);
         }
-        let unsuccessful_http = http_status.is_some_and(|status| !(200..=299).contains(&status));
-        if !unsuccessful_http
-            && message["content"].is_null()
-            && message["tool_calls"].as_array().is_none()
-        {
+        let calls = browseros_agent_foundation::model::parse_function_batch(&message, 8)
+            .map_err(|_| "AI_RESPONSE_INVALID")?;
+        if provider_value_contains_credential(&message["tool_calls"], credential)
+            || calls.iter().any(|call| call.id.contains(credential)
+                || call.name.contains(credential)
+                || provider_value_contains_credential(&call.arguments, credential)) {
+            return Err("AI_CONTEXT_CREDENTIAL_DENIED".into());
+        }
+        if message["content"].is_null() && calls.is_empty() {
             return Err("AI_RESPONSE_EMPTY".into());
+        }
+        if cancelled() {
+            return Err("AI_PROVIDER_CANCELLED".into());
         }
         Ok((message, status, http_status))
     })
@@ -1558,6 +1706,10 @@ fn coding_provider_binding(
         &profile.base_url,
         &profile.model,
         &profile.kind,
+        // Bind a resumed run to the same native credential generation,
+        // not merely the same profile label/endpoint. Persist only the
+        // digest of this non-secret reference, never the token.
+        credential_reference(profile)?,
     ))
     .map_err(|_| "AGENT_CONTINUATION_INVALID")?;
     Ok(

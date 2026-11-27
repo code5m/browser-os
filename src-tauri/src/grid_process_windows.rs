@@ -985,7 +985,13 @@ impl GridProcessManager {
         {
             let mut children = self.children.lock().unwrap();
             let child = children.remove(&index).ok_or("GRID_ROLLBACK_TARGET_STALE")?;
-            if let Some(saved) = prepared.saved.clone() {
+            if let Some(mut saved) = prepared.saved.clone() {
+                // Creation may have waited while a newer hide/layout intent
+                // was recorded against the replacement child. Roll back the
+                // document, not that newer native visibility intent.
+                saved.hidden = child.hidden;
+                saved.blur_hidden = child.blur_hidden;
+                saved.last_rect = child.last_rect;
                 self.hibernated.lock().unwrap().insert(index, saved);
             }
             // A missing live child must not be observable as fully retired
@@ -1274,12 +1280,14 @@ impl GridProcessManager {
         let _operation = self.lifecycle.enter()?;
         if (binding.index as usize) >= crate::bridge::MAX_GRID || !cmd.targets(binding.index)
             || !matches!(&cmd, GridCmd::Eval { .. } | GridCmd::ReadReplies { .. }
-                | GridCmd::SetZoom { .. } | GridCmd::Navigate { .. } | GridCmd::UpdateRect { .. }
+                | GridCmd::SetZoom { .. } | GridCmd::Navigate { .. }
                 | GridCmd::CreateTab { .. })
         {
             return Err("GRID_REQUEST_TARGET_REJECTED".into());
         }
-        let document_bound = !matches!(&cmd, GridCmd::SetZoom { .. } | GridCmd::UpdateRect { .. });
+        // Geometry is admitted only through position_window_bound and
+        // its visibility receipt path, not this generic document lane.
+        let document_bound = !matches!(&cmd, GridCmd::SetZoom { .. });
         let comms = {
             let children = self.children.lock().unwrap();
             let child = children.get(&binding.index).ok_or("GRID_EVAL_TARGET_STALE")?;

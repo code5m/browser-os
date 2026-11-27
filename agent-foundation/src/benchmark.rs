@@ -183,7 +183,7 @@ async fn run_routed_fixture_owned_with_id(
                     .drive(
                         actual_task_id,
                         "benchmark-mock",
-                        &ScriptedRig,
+                        Arc::new(ScriptedRig),
                         tasks,
                         &registry,
                         &[],

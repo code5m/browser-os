@@ -22,11 +22,19 @@ use uuid::Uuid;
 pub type RigCall<'a> = Pin<Box<dyn Future<Output = Result<CompletionResponse>> + Send + 'a>>;
 pub trait RigModelBackend: Send + Sync {
     fn complete<'a>(&'a self, request: CompletionRequest) -> RigCall<'a>;
+
+    /// The trusted host may supply a backend without a fixed SDK model ID.
+    /// A configured SDK model must not accept a different requested label.
+    fn accepts_model(&self, _model_id: &str) -> bool { true }
 }
 
 /// A genuine official Rig SDK transport for the multi-turn Driver.
 pub struct RigSdkBackend(pub DynModel<Completion>);
 impl RigModelBackend for RigSdkBackend {
+    fn accepts_model(&self, model_id: &str) -> bool {
+        self.0.id().is_none_or(|id| id == model_id)
+    }
+
     fn complete<'a>(&'a self, request: CompletionRequest) -> RigCall<'a> {
         Box::pin(async move {
             self.0
@@ -57,7 +65,25 @@ struct DriverOwner {
     task: Uuid,
     revision: u64,
     model: String,
+    backend: Arc<dyn RigModelBackend>,
 }
+
+// A dropped SDK future cannot leave a still-current Running task with no
+// driver. This is local settlement, never proof of remote cancellation.
+struct AbandonedRigDrive<'a> {
+    tasks: &'a TaskRegistry,
+    task: Uuid,
+    revision: u64,
+    armed: bool,
+}
+impl Drop for AbandonedRigDrive<'_> {
+    fn drop(&mut self) {
+        if self.armed && self.tasks.active_at_revision(self.task, self.revision) {
+            let _ = self.tasks.finish_at_revision(self.task, false, self.revision);
+        }
+    }
+}
+
 pub struct RigMultiTurnDriver {
     pilot: RigRunPilot,
     pending: Option<(Uuid, Uuid, u64, ToolCall)>,
@@ -87,7 +113,7 @@ impl RigMultiTurnDriver {
         &mut self,
         task_id: Uuid,
         model_id: &str,
-        model: &dyn RigModelBackend,
+        model: Arc<dyn RigModelBackend>,
         tasks: &TaskRegistry,
         registry: &ToolRegistry,
         definitions: &[ToolDefinition],
@@ -99,6 +125,9 @@ impl RigMultiTurnDriver {
             return Err(FoundationError::InvalidInput(
                 "rig driver model or tool limit",
             ));
+        }
+        if !model.accepts_model(model_id) {
+            return Err(FoundationError::PermissionDenied);
         }
         // Bound schema and description material before SDK copies. Exact
         // ordered definitions are part of this run, not a replaceable grant.
@@ -122,6 +151,7 @@ impl RigMultiTurnDriver {
         if self.owner.as_ref().is_some_and(|owner|
             !Arc::ptr_eq(&owner.registry,&identity)
                 || !Arc::ptr_eq(&owner.tools,&tools_identity)
+                || !Arc::ptr_eq(&owner.backend, &model)
                 || owner.definitions_digest!=definitions_digest || owner.task!=task_id
                 || owner.revision!=revision || owner.model!=model_id) {
             return Err(FoundationError::ApprovalMismatch);
@@ -136,11 +166,12 @@ impl RigMultiTurnDriver {
             crate::engine::ModelTurnGate::acquire(tasks, task_id, revision, limits.deadline)?;
         if self.owner.is_none() {
             self.owner=Some(DriverOwner{registry:identity,tools:tools_identity,definitions_digest,
-                task:task_id,revision,model:model_id.to_owned()});
+                task:task_id,revision,model:model_id.to_owned(),backend:Arc::clone(&model)});
         }
         // If the awaiting future is dropped, this flag remains set. The
         // partially advanced SDK state is not a resumable host receipt.
         self.in_flight=true;
+        let mut abandoned = AbandonedRigDrive { tasks, task: task_id, revision, armed: true };
         let run = async {
             loop {
                 gate.active()?;
@@ -262,6 +293,7 @@ impl RigMultiTurnDriver {
             }
         };
         let result = run.await;
+        abandoned.armed = false;
         self.in_flight=false;
         if result.is_err() {
             self.finished=true;
@@ -461,7 +493,8 @@ mod tests {
         let mut driver = RigMultiTurnDriver::new("Review", 2).unwrap();
         driver.owner=Some(DriverOwner{registry:tasks.execution_identity(),tools:tools.execution_identity(),
             definitions_digest:[0;32],task:task.id,
-            revision:revision.checked_sub(2).unwrap(),model:"model-mock".into()});
+            revision:revision.checked_sub(2).unwrap(),model:"model-mock".into(),
+            backend:Arc::new(FakeBackend(Mutex::new(vec![])))});
         driver.pending = Some((task.id, call_id, revision, call));
         tasks.pause(task.id).unwrap();
         tasks.start(task.id).unwrap();
@@ -479,12 +512,12 @@ mod tests {
 
     #[tokio::test]
     async fn oversized_completion_cannot_commit_success() {
-        let backend = FakeBackend(Mutex::new(vec![CompletionResponse::new(
+        let backend: Arc<dyn RigModelBackend> = Arc::new(FakeBackend(Mutex::new(vec![CompletionResponse::new(
             vec![AssistantContent::text("X".repeat(256 * 1024 + 2))],
             Usage::default(),
             "mock",
             json!({}),
-        )]));
+        )])));
         let tasks = TaskRegistry::new(Arc::new(EventJournal::new(16)));
         let task = tasks.create(Uuid::new_v4(), "oversized", vec![]).unwrap();
         tasks.start(task.id).unwrap();
@@ -497,7 +530,7 @@ mod tests {
         )];
         let mut driver = RigMultiTurnDriver::new("Review", 2).unwrap();
         let outcome = driver
-            .drive(task.id, "model-mock", &backend, &tasks, &tools, &defs)
+            .drive(task.id, "model-mock", Arc::clone(&backend), &tasks, &tools, &defs)
             .await;
         assert_eq!(
             outcome.err(),
@@ -515,7 +548,7 @@ mod tests {
                 json!({"repo_id":"test"}),
             ),
         );
-        let backend = FakeBackend(Mutex::new(vec![
+        let backend: Arc<dyn RigModelBackend> = Arc::new(FakeBackend(Mutex::new(vec![
             CompletionResponse::new(
                 vec![AssistantContent::ToolCall(call)],
                 Usage::default(),
@@ -528,7 +561,7 @@ mod tests {
                 "mock",
                 json!({}),
             ),
-        ]));
+        ])));
         let tasks = TaskRegistry::new(Arc::new(EventJournal::new(128)));
         let workspace = Uuid::new_v4();
         let task = tasks
@@ -544,7 +577,7 @@ mod tests {
         )];
         let mut driver = RigMultiTurnDriver::new("Review", 3).unwrap();
         let first = driver
-            .drive(task.id, "model-mock", &backend, &tasks, &tools, &defs)
+            .drive(task.id, "model-mock", Arc::clone(&backend), &tasks, &tools, &defs)
             .await
             .unwrap();
         let RigDriverStep::NeedsApproval { call_id, .. } = first else {
@@ -607,7 +640,7 @@ mod tests {
             Some(FoundationError::ApprovalMismatch)
         );
         let next = driver
-            .drive(task.id, "model-mock", &backend, &tasks, &tools, &defs)
+            .drive(task.id, "model-mock", Arc::clone(&backend), &tasks, &tools, &defs)
             .await
             .unwrap();
         assert!(matches!(next,RigDriverStep::Completed{text,..} if text=="All done"));
