@@ -43,7 +43,7 @@ function fixture(options = {}) {
         if (Object.hasOwn(modules, name)) return modules[name];
         throw Error("Unexpected dependency: " + name);
       },
-      window: { setTimeout: options.setTimeout || setTimeout, clearTimeout: options.clearTimeout || clearTimeout }, setTimeout, clearTimeout, console,
+      window: { setTimeout: options.setTimeout || setTimeout, clearTimeout: options.clearTimeout || clearTimeout }, setTimeout, clearTimeout, console, URL,
     }, { filename: path });
     return exports;
   }

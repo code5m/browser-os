@@ -115,7 +115,11 @@ assert.match(codingOwner, /fn resume_coding\([\s\S]*?coding_scope\(root, Some\(s
 assert.match(codingOwner, /record\.workspace_id != workspace\s*\|\| record\.session_id != session/);
 assert.match(codingOwner, /tasks\s*\.restore_paused_record\(restored\)/);
 assert.match(aiBackend, /public_api::dispatch_coding_request\(/);
-assert.match(codingFacade, /super::coding::execute_with_admission_adapter\(/);
+assert.match(codingFacade, /super::coding::execute_with_routed_effect_adapter\(\s*root,\s*storage,\s*request,\s*binding,\s*provider,\s*new_rig_revision,\s*Some\(rig_provider\),/);
+assert.match(codingFacade, /run_command_for_coding\([\s\S]*?admit\(None\)/);
+assert.match(codingFacade, /execute_agent_browser_action\([\s\S]*?AGENT_BROWSER_REVIEW_REQUIRED[\s\S]*?admit\(None\)/);
+assert.match(codingFacade, /execute_cancelable_with_effect_admission\([\s\S]*?\|_, binding\| admit\(binding\)/);
+assert.match(coding, /rig_driver::drive_owned_rig_function_batches\(/);
 assert.match(coding, /ProductionExecution::resume_coding\(\s*&root,\s*&session\.session_id,\s*session\.foundation_task\.as_ref\(\)/);
 assert.match(coding, /execution\.acquire_lease\(\)\?;[\s\S]*?engine::drive_owned_function_batches\([\s\S]*?&execution_lease,\s*8,\s*8/);
 console.log('BROWSER_NAVIGATION_HANG_DIAGNOSTICS_CONTRACT=PASS');

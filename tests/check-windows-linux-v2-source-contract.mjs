@@ -1151,7 +1151,11 @@ assert.match(privateLease, /active_cache_churn_does_not_enter_a_deep_audit/);
 assert.match(privateLease, /consumers_share_preparation_and_cold_restart_reaudits/);
 assert.match(startup, /tabs\.prepare_storage\(\)/);
 const createTab = sourceRegion(tabs, "pub fn create_tab(", "pub fn update_rect(");
-assert.ok(createTab.indexOf('self.prepared_browser_profile()?') < createTab.indexOf('self.tabs.write()'));
+const preparedProfile = createTab.search(/self\.prepared_browser_profile\(\)\?/);
+const tabRegistryWrite = createTab.search(/self\.tabs\s*\.write\(\)/);
+assert.ok(preparedProfile >= 0 && tabRegistryWrite > preparedProfile,
+  'prepare the browser profile before acquiring the tab registry write lock');
+assert.match(createTab, /self\.tabs\s*\.write\(\)\s*\.insert\(/);
 assert.doesNotMatch(createTab, /secure_windows_browser_profile|audit_private_directory|PreparedPrivateDirectory::prepare/);
 
 // Sensitive URL content remains in trusted routing, never diagnostic records.
