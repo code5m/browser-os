@@ -116,6 +116,8 @@ pub(crate) fn dispatch_coding_request(
     request: Value,
     binding: Option<CodingProviderBinding>,
     provider: impl FnMut(&[Value], &[Value]) -> Result<Value, String>,
+    new_rig_revision: Option<u64>,
+    rig_provider: &mut super::coding::CodingRigProvider<'_>,
 ) -> Result<Value, String> {
     if !root.is_absolute() || root.parent().is_none() {
         return Err("AGENT_ROOT_INVALID".into());
@@ -352,12 +354,14 @@ pub(crate) fn dispatch_coding_request(
     if matches!(action, "mcp_list" | "mcp_review") {
         return super::coding_context::execute(root, storage, request);
     }
-    super::coding::execute_with_effect_adapter(
+    super::coding::execute_with_routed_effect_adapter(
         root,
         storage,
         request,
         binding,
         provider,
+        new_rig_revision,
+        Some(rig_provider),
         |kind, input, approved, cancel, run, admit| match kind {
             "command" => {
                 crate::bridge::run_command_for_coding(app, webview, input, approved, cancel, || {

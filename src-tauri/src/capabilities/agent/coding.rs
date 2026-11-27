@@ -246,6 +246,10 @@ struct ModelContinuation {
     provider: CodingProviderBinding,
     plan: bool,
     schema_digest: String,
+    // Native-owned route, not an IPC/model-selected engine. Old checkpoints
+    // are Native; a paused Task never changes engine on a resumed Run.
+    #[serde(default)]
+    rig_revision: Option<u64>,
     // False only after a complete model answer, not after reaching the
     // tool-round limit or waiting for a user's decision.
     resume_pending: bool,
@@ -1163,6 +1167,9 @@ fn provider_failure(error: &str) -> String {
         "AI_RESPONSE_LIMIT",
         "AI_RESPONSE_INVALID",
         "AI_RESPONSE_EMPTY",
+        "AI_RIG_PROVIDER_FAILED",
+        "AI_CONTEXT_INVALID",
+        "AGENT_RIG_PROVIDER_UNAVAILABLE",
     ];
     if SAFE_CODES.contains(&error) {
         format!("AGENT_PROVIDER_FAILED: {error}")
@@ -2666,17 +2673,23 @@ fn recent_sessions(root: &Path, storage: &Path, archived: bool) -> Result<Value,
 /// adapter knows about the workspace, staged edits and encrypted transcript.
 /// It cannot execute an effectful model proposal: request_operation creates
 /// a pending host approval, consumed later by execute_operation.
-struct CodingBatchHost<'a, P> {
+pub(crate) type CodingRigProvider<'a> = dyn FnMut(
+    rig_core::completion::CompletionRequest,
+    &(dyn Fn() -> bool + Sync),
+) -> Result<rig_core::completion::CompletionResponse, String> + 'a;
+
+struct CodingBatchHost<'a, 'p, P> {
     root: &'a Path,
     storage: &'a Path,
     session: &'a mut Session,
     messages: &'a mut Vec<Value>,
     plan: bool,
     provider: &'a mut P,
+    rig_provider: Option<&'a mut CodingRigProvider<'p>>,
     lease: &'a browseros_agent_foundation::task::ExecutionLease<'static>,
 }
 impl<P: FnMut(&[Value], &[Value]) -> Result<Value, String>>
-    browseros_agent_foundation::engine::FunctionBatchHost for CodingBatchHost<'_, P>
+    browseros_agent_foundation::engine::FunctionBatchHost for CodingBatchHost<'_, '_, P>
 {
     type Error = String;
     fn cancelled(&self) -> bool {
@@ -2832,6 +2845,35 @@ impl<P: FnMut(&[Value], &[Value]) -> Result<Value, String>>
     }
 }
 
+impl<P: FnMut(&[Value], &[Value]) -> Result<Value, String>>
+    browseros_agent_foundation::rig_driver::RigFunctionBatchHost for CodingBatchHost<'_, '_, P>
+{
+    fn request_rig(&mut self, request: rig_core::completion::CompletionRequest)
+        -> Result<rig_core::completion::CompletionResponse, String> {
+        verify_workspace_binding(self.root, self.session.workspace_identity.as_deref())?;
+        let root = self.root;
+        let session_id = &self.session.session_id;
+        let lease = self.lease;
+        let inactive = || !lease.is_active() || cancelled(root, session_id);
+        let provider = self.rig_provider.as_deref_mut().ok_or("AGENT_RIG_PROVIDER_UNAVAILABLE")?;
+        provider(request, &inactive)
+    }
+
+    fn rig_tool_results(&mut self, calls: &[browseros_agent_foundation::model::FunctionCall])
+        -> Result<Vec<String>, String> {
+        let start = self.session.messages.len().checked_sub(calls.len())
+            .ok_or("AGENT_REPLY_INVALID")?;
+        let results = &self.session.messages[start..];
+        results.iter().zip(calls).map(|(message,call)| {
+            if message["role"] != "tool" || message["tool_call_id"].as_str() != Some(call.id.as_str()) {
+                return Err("AGENT_REPLY_INVALID".into());
+            }
+            message["content"].as_str().map(str::to_owned)
+                .ok_or_else(|| "AGENT_REPLY_INVALID".into())
+        }).collect()
+    }
+}
+
 pub fn execute(
     root: &Path,
     storage: &Path,
@@ -2904,7 +2946,28 @@ pub(crate) fn execute_with_effect_adapter(
     storage: &Path,
     request: Value,
     provider_binding: Option<CodingProviderBinding>,
+    provider: impl FnMut(&[Value], &[Value]) -> Result<Value, String>,
+    adapter: impl FnMut(
+        &str,
+        &Value,
+        &Value,
+        &Arc<AtomicBool>,
+        uuid::Uuid,
+        &mut dyn FnMut(Option<&super::mcp_authority::Binding>) -> Result<(), String>,
+    ) -> Result<Value, String>,
+) -> Result<Value, String> {
+    execute_with_routed_effect_adapter(root, storage, request, provider_binding,
+        provider, None, None, adapter)
+}
+
+pub(crate) fn execute_with_routed_effect_adapter(
+    root: &Path,
+    storage: &Path,
+    request: Value,
+    provider_binding: Option<CodingProviderBinding>,
     mut provider: impl FnMut(&[Value], &[Value]) -> Result<Value, String>,
+    new_rig_revision: Option<u64>,
+    rig_provider: Option<&mut CodingRigProvider<'_>>,
     mut adapter: impl FnMut(
         &str,
         &Value,
@@ -2916,7 +2979,7 @@ pub(crate) fn execute_with_effect_adapter(
 ) -> Result<Value, String> {
     #[cfg(all(not(unix), not(windows)))]
     {
-        let _ = (root, storage, &request, &mut provider);
+        let _ = (root, storage, &request, &mut provider, new_rig_revision, rig_provider);
         return Err("AGENT_CODING_PLATFORM_UNSUPPORTED".into());
     }
     let root = root.canonicalize().map_err(|_| "AGENT_ROOT_INVALID")?;
@@ -3614,6 +3677,19 @@ pub(crate) fn execute_with_effect_adapter(
             if session.runs.len() >= 256 {
                 return Err("AGENT_RUN_HISTORY_LIMIT".into());
             }
+            // The selected route belongs to the original paused Task.
+            // Explicitly starting a new user message while it still owns
+            // approvals/changes cannot silently change engines either.
+            let task_paused = session.foundation_task.as_ref().is_some_and(|task|
+                task.status == browseros_agent_foundation::task::TaskStatus::Paused);
+            let rig_revision = if resume || task_paused {
+                session.continuation.as_ref().and_then(|checkpoint| checkpoint.rig_revision)
+            } else {
+                new_rig_revision
+            };
+            if rig_revision.is_some() && (rig_provider.is_none() || provider_binding.is_none()) {
+                return Err("AGENT_RIG_PROVIDER_UNAVAILABLE".into());
+            }
             let execution = super::execution_owner::ProductionExecution::resume_coding(
                 &root,
                 &session.session_id,
@@ -3636,6 +3712,7 @@ pub(crate) fn execute_with_effect_adapter(
                         provider,
                         plan,
                         schema_digest: continuation_schema(plan)?,
+                        rig_revision,
                         resume_pending: true,
                     }),
                     None => None,
@@ -3663,20 +3740,30 @@ pub(crate) fn execute_with_effect_adapter(
                 messages.push(json!({"role":"system","content":CODING_PLAN_PROMPT}));
             }
             messages.extend(session.messages.clone());
-            let turn_result = browseros_agent_foundation::engine::drive_owned_function_batches(
-                &mut CodingBatchHost {
-                    root: &root,
-                    storage,
-                    session: &mut session,
-                    messages: &mut messages,
-                    plan,
-                    provider: &mut provider,
-                    lease: &execution_lease,
-                },
-                &execution_lease,
-                8,
-                8,
-            );
+            // The Rig branch obtains CallModel/CallTools/Done from the
+            // SDK, using the same host admission and durable settlement as
+            // Native. Capture only the existing authenticated transcript.
+            let rig_history = rig_revision.map(|_| messages.clone());
+            let mut host = CodingBatchHost {
+                root: &root,
+                storage,
+                session: &mut session,
+                messages: &mut messages,
+                plan,
+                provider: &mut provider,
+                rig_provider,
+                lease: &execution_lease,
+            };
+            let turn_result = if let Some(history) = rig_history.as_ref() {
+                browseros_agent_foundation::rig_driver::drive_owned_rig_function_batches(
+                    &mut host, &execution_lease, history, &tools(plan), 8, 8,
+                )
+            } else {
+                browseros_agent_foundation::engine::drive_owned_function_batches(
+                    &mut host, &execution_lease, 8, 8,
+                )
+            };
+            drop(host);
             if turn_result.is_err() && session.status == "running" {
                 session.status = "failed".into();
             }
@@ -4003,6 +4090,75 @@ mod tests {
             |_, _, _, _| unreachable!()
         )
         .is_err());
+    }
+
+    #[test]
+    fn rig_coding_reads_then_pauses_for_review_and_resumes_same_task() {
+        use rig_core::{
+            completion::{CompletionRequest, CompletionResponse, Usage},
+            message::{AssistantContent, ToolCall, ToolFunction, ToolName},
+        };
+        let f = Fixture::new();
+        let storage = f.0.join("state");
+        fs::write(f.0.join("note.txt"), "fixture-data").unwrap();
+        let binding = CodingProviderBinding {
+            profile_id: "fixture".into(),
+            fingerprint: "fixture-model".into(),
+        };
+        let first = uuid::Uuid::new_v4().to_string();
+        let _guard = register_run_request(&first).unwrap();
+        let mut count = 0;
+        let mut rig = |request: CompletionRequest, _: &(dyn Fn() -> bool + Sync)| {
+            count += 1;
+            let (id, name, arguments) = match count {
+                1 => ("read-1", "read_file", json!({"path":"note.txt"})),
+                2 => {
+                    let history = serde_json::to_string(&request.chat_history).unwrap();
+                    assert!(history.contains("fixture-data"));
+                    assert!(history.contains("read-1"));
+                    ("review-1", "request_operation", json!({"kind":"git_context","input":{}}))
+                }
+                _ => panic!("must pause before another provider call"),
+            };
+            Ok(CompletionResponse::new(vec![AssistantContent::ToolCall(
+                ToolCall::from_wire(id, ToolFunction::new(ToolName::new(name).unwrap(), arguments))
+            )], Usage::default(), "mock", json!({})))
+        };
+        let paused = execute_with_routed_effect_adapter(&f.0, &storage,
+            json!({"action":"chat","message":"inspect","run_id":first}),
+            Some(binding.clone()), |_,_| panic!("Rig cannot call the Native model adapter"),
+            Some(7), Some(&mut rig), |_,_,_,_,_,_| panic!("model cannot execute an external effect"),
+        ).unwrap();
+        assert_eq!(count, 2);
+        assert_eq!(paused["status"], "approval_required");
+        assert_eq!(paused["foundation_task"]["status"], "paused");
+        assert_eq!(paused["operations"][0]["status"], "pending");
+        let id = paused["session_id"].as_str().unwrap();
+        let saved = load_without_recovery(&f.0, &storage, Some(id)).unwrap();
+        assert_eq!(saved.continuation.as_ref().unwrap().rig_revision, Some(7));
+        let operation = paused["operations"][0]["id"].as_str().unwrap();
+        let reviewed = run(&f, json!({"action":"resolve_operation","session_id":id,
+            "operation_id":operation,"status":"rejected","result":"not approved"})).unwrap();
+        assert_eq!(reviewed["operations"][0]["status"], "rejected");
+        let second = uuid::Uuid::new_v4().to_string();
+        let _guard2 = register_run_request(&second).unwrap();
+        let mut resumed_rig = |request: CompletionRequest, _: &(dyn Fn() -> bool + Sync)| {
+            let history = serde_json::to_string(&request.chat_history).unwrap();
+            assert!(history.contains("read-1"));
+            assert!(history.contains("review-1"));
+            assert!(history.contains("rejected"));
+            Ok(CompletionResponse::new(vec![AssistantContent::text("Reviewed")],
+                Usage::default(), "mock", json!({})))
+        };
+        let done = execute_with_routed_effect_adapter(&f.0, &storage,
+            json!({"action":"resume_turn","session_id":id,"run_id":second,
+                "previous_run_id":first,"confirmed":true}),
+            Some(binding), |_,_| panic!("settings changed; persisted Rig route must survive"),
+            None, Some(&mut resumed_rig), |_,_,_,_,_,_| panic!("reviewed result cannot replay effect"),
+        ).unwrap();
+        assert_eq!(done["foundation_task"]["id"], paused["foundation_task"]["id"]);
+        assert_eq!(done["foundation_task"]["status"], "completed");
+        assert_eq!(done["messages"].as_array().unwrap().last().unwrap()["content"], "Reviewed");
     }
 
     #[test]

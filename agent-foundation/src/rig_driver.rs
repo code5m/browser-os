@@ -7,15 +7,14 @@ use crate::{
     tool::{ToolExecutionReceipt, ToolRegistry},
     FoundationError, Result,
 };
-use rig_agent::run::{AgentRunStep, ModelTurn, ModelTurnOutcome};
+use rig_agent::run::{AgentRun, AgentRunStep, ModelTurn, ModelTurnOutcome};
 use rig_core::{
-    completion::{CompletionRequest, CompletionResponse, ToolDefinition},
+    completion::{CompletionRequest, CompletionResponse, FinishReason, Message, ToolDefinition},
     driver::DynModel,
-    message::{AssistantContent, ToolCall, ToolResult, ToolResultContent, UserContent},
+    message::{AssistantContent, ToolCall, ToolFunction, ToolName, ToolResult, ToolResultContent, UserContent},
     operation::Completion,
 };
-#[cfg(test)]
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::{collections::BTreeSet, future::Future, pin::Pin, sync::Arc, time::Duration};
 use uuid::Uuid;
 
@@ -379,58 +378,296 @@ impl RigMultiTurnDriver {
     }
 }
 
-/// Production text-only bridge. Rig owns the single model step and its
-/// terminal state; the native host supplies the exact existing messages,
-/// authenticated transport, execution lease and durable publication.
-/// This path grants no tools and never creates a second task or retries I/O.
+/// Trusted production host: only the existing Coding Owner admits tool
+/// batches, creates staged changes or approval proposals, and checkpoints
+/// their exact results. Rig never executes a host effect directly.
+pub trait RigFunctionBatchHost: crate::engine::FunctionBatchHost {
+    fn request_rig(&mut self, request: CompletionRequest)
+        -> std::result::Result<CompletionResponse, Self::Error>;
+    fn rig_tool_results(&mut self, calls: &[crate::model::FunctionCall])
+        -> std::result::Result<Vec<String>, Self::Error>;
+}
+
+fn typed_call(call: &crate::model::FunctionCall) -> Result<ToolCall> {
+    let name = ToolName::new(call.name.as_str())
+        .map_err(|_| FoundationError::InvalidInput("rig tool name"))?;
+    Ok(ToolCall::from_wire(call.id.clone(),
+        ToolFunction::new(name, call.arguments.clone())))
+}
+
+/// Decode the native authenticated transcript without flattening roles,
+/// losing call IDs or treating tool output as a new user instruction.
+fn typed_history(history: &[Value]) -> Result<Vec<Message>> {
+    crate::model::serialized_size(history, 512 * 1024)?;
+    let mut out = Vec::new();
+    let mut ids = BTreeSet::new();
+    let mut i = 0;
+    while i < history.len() {
+        let item = &history[i];
+        i += 1;
+        match item["role"].as_str() {
+            Some("system") => out.push(Message::system(item["content"].as_str()
+                .ok_or(FoundationError::InvalidInput("rig system history"))?)),
+            Some("user") => out.push(Message::user(item["content"].as_str()
+                .ok_or(FoundationError::InvalidInput("rig user history"))?)),
+            Some("assistant") => {
+                let calls = crate::model::parse_function_batch(item, 8)?;
+                let mut choice = Vec::new();
+                if let Some(content) = item.get("content").filter(|v| !v.is_null()) {
+                    let text = content.as_str().ok_or(FoundationError::InvalidInput("rig assistant history"))?;
+                    if !text.is_empty() { choice.push(AssistantContent::text(text)); }
+                }
+                let mut results = Vec::new();
+                for call in &calls {
+                    if !ids.insert(call.id.clone()) {
+                        return Err(FoundationError::InvalidInput("duplicate historical tool id"));
+                    }
+                    let result = history.get(i).ok_or(FoundationError::InvalidInput("unpaired tool history"))?;
+                    i += 1;
+                    if result["role"] != "tool" || result["tool_call_id"].as_str() != Some(call.id.as_str()) {
+                        return Err(FoundationError::InvalidInput("unpaired tool history"));
+                    }
+                    let content = result["content"].as_str()
+                        .ok_or(FoundationError::InvalidInput("rig tool history"))?;
+                    let typed = typed_call(call)?;
+                    results.push(typed.result(vec![ToolResultContent::text(content)]));
+                    choice.push(AssistantContent::ToolCall(typed));
+                }
+                if choice.is_empty() {
+                    return Err(FoundationError::InvalidInput("empty assistant history"));
+                }
+                out.push(Message::Assistant { id: None, content: choice });
+                if !results.is_empty() { out.push(Message::tool_results(results)); }
+            }
+            _ => return Err(FoundationError::InvalidInput("rig history role")),
+        }
+    }
+    Ok(out)
+}
+
+fn typed_definitions(tools: &[Value]) -> Result<Vec<ToolDefinition>> {
+    crate::model::serialized_size(tools, 64 * 1024)?;
+    if tools.len() > 32 { return Err(FoundationError::InvalidInput("rig tool inventory")); }
+    let mut seen = BTreeSet::new();
+    tools.iter().map(|tool| {
+        let function = &tool["function"];
+        let name = function["name"].as_str()
+            .filter(|name| !name.is_empty() && name.len() <= 128
+                && name.bytes().all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c)))
+            .ok_or(FoundationError::InvalidInput("rig tool definition"))?;
+        if tool["type"] != "function" || !seen.insert(name)
+            || !function["parameters"].is_object() {
+            return Err(FoundationError::InvalidInput("rig tool definition"));
+        }
+        Ok(ToolDefinition::new(
+            ToolName::new(name).map_err(|_| FoundationError::InvalidInput("rig tool name"))?,
+            function["description"].as_str().ok_or(FoundationError::InvalidInput("rig tool description"))?,
+            function["parameters"].clone(),
+        ))
+    }).collect()
+}
+
+/// Project SDK content into the exact existing native transcript dialect.
+/// Reject unsupported replay metadata rather than silently changing a tool
+/// identity or losing provider-specific state required for a later turn.
+fn native_reply(response: &CompletionResponse) -> Result<Value> {
+    if response.choice.len() > 64
+        || response.finish_reason().is_some_and(|reason| !matches!(reason, FinishReason::Stop | FinishReason::ToolCalls)) {
+        return Err(FoundationError::InvalidInput("rig response terminal"));
+    }
+    let mut text = String::new();
+    let mut calls = Vec::new();
+    for item in &response.choice {
+        match item {
+            AssistantContent::Text(part) => {
+                if part.additional_params.is_some() {
+                    return Err(FoundationError::InvalidInput("rig text replay metadata"));
+                }
+                if part.text.len() > (256 * 1024usize).saturating_sub(text.len()) {
+                    return Err(FoundationError::Provider("MODEL_TEXT_LIMIT".into()));
+                }
+                text.push_str(&part.text);
+            }
+            AssistantContent::ToolCall(call) => {
+                if call.signature.is_some() || call.additional_params.is_some() {
+                    return Err(FoundationError::InvalidInput("rig tool replay metadata"));
+                }
+                crate::model::validate_serialized_arguments(&call.function.arguments)?;
+                calls.push(json!({"id":call.id.to_string(),"type":"function",
+                    "function":{"name":call.function.name.to_string(),
+                        "arguments":serde_json::to_string(&call.function.arguments)
+                            .map_err(|_| FoundationError::InvalidInput("rig tool arguments"))?}}));
+            }
+            _ => return Err(FoundationError::Provider("RIG_UNSUPPORTED_CONTENT".into())),
+        }
+    }
+    if calls.is_empty() && text.trim().is_empty() {
+        return Err(FoundationError::Provider("MODEL_TEXT_EMPTY".into()));
+    }
+    let mut reply = json!({"role":"assistant","content":if text.is_empty() { Value::Null } else { json!(text) }});
+    if !calls.is_empty() { reply["tool_calls"] = json!(calls); }
+    Ok(reply)
+}
+
+/// Production multi-turn driver. The SDK chooses CallModel/CallTools/Done;
+/// the native host only performs the admitted step and returns its exact
+/// receipt. A durable pause resumes from the already-paired native transcript,
+/// not from a second serialized SDK authority or automatic effect replay.
+pub fn drive_owned_rig_function_batches<H: RigFunctionBatchHost>(
+    host: &mut H,
+    lease: &crate::task::ExecutionLease<'_>,
+    history: &[Value],
+    tools: &[Value],
+    rounds: usize,
+    max_calls: usize,
+) -> std::result::Result<(), H::Error> {
+    use crate::engine::{BatchFlow, ModelAdmissionBudget, TurnLimits};
+    if !(1..=8).contains(&rounds) || max_calls > 8 {
+        return Err(host.invalid_batch(FoundationError::InvalidInput("rig function limits")));
+    }
+    if !lease.is_active() || host.cancelled() { return host.on_cancelled(); }
+    let mut history = typed_history(history).map_err(|e| host.invalid_batch(e))?;
+    let prompt = history.pop().filter(|m| matches!(m, Message::User { .. }))
+        .ok_or_else(|| host.invalid_batch(FoundationError::InvalidInput("rig pending prompt")))?;
+    let definitions = typed_definitions(tools).map_err(|e| host.invalid_batch(e))?;
+    let names: BTreeSet<_> = definitions.iter().map(|d| d.name.clone()).collect();
+    let mut run = AgentRun::new(prompt).with_history(history).max_turns(rounds);
+    let limits = TurnLimits::complete_message();
+    let mut budget = ModelAdmissionBudget::new(limits).map_err(|e| host.invalid_batch(e))?;
+    let deadline = std::time::Instant::now() + limits.deadline;
+    let mut ids = BTreeSet::new();
+    let mut remaining_arguments = 256 * 1024usize;
+    let mut remaining_results = 512 * 1024usize;
+    for round in 0..rounds {
+        if !lease.is_active() || host.cancelled() { return host.on_cancelled(); }
+        if std::time::Instant::now() >= deadline { return Err(host.invalid_batch(FoundationError::Timeout)); }
+        crate::model::serialized_size(&run, 1_048_576).map_err(|e| host.invalid_batch(e))?;
+        let step = run.next_step().map_err(|_| host.invalid_batch(FoundationError::InvalidTransition))?;
+        let AgentRunStep::CallModel { prompt, history, turn } = step else {
+            return Err(host.invalid_batch(FoundationError::InvalidTransition));
+        };
+        run.advertise_tools(turn, definitions.clone());
+        let request = CompletionRequest::new(prompt).messages(history)
+            .tools(definitions.clone()).max_tokens(4096u64);
+        let response = match host.request_rig(request) {
+            Ok(response) => response,
+            Err(error) => {
+                if !lease.is_active() || host.cancelled() { return host.on_cancelled(); }
+                return Err(host.provider_failure(error));
+            }
+        };
+        if !lease.is_active() || host.cancelled() { return host.on_cancelled(); }
+        if std::time::Instant::now() >= deadline { return Err(host.invalid_batch(FoundationError::Timeout)); }
+        let reply = native_reply(&response).map_err(|e| host.invalid_batch(e))?;
+        host.validate_reply(&reply)?;
+        let calls = crate::model::parse_function_batch(&reply, max_calls)
+            .map_err(|e| host.invalid_batch(e))?;
+        budget.admit_events(1 + calls.len()).map_err(|e| host.invalid_batch(e))?;
+        budget.admit_text(reply["content"].as_str().unwrap_or("").len()).map_err(|e| host.invalid_batch(e))?;
+        for call in &calls {
+            if !names.contains(call.name.as_str()) || !ids.insert(call.id.clone()) {
+                return Err(host.invalid_batch(FoundationError::PermissionDenied));
+            }
+            let bytes = crate::model::serialized_size(&call.arguments, remaining_arguments.min(16_384))
+                .map_err(|e| host.invalid_batch(e))?;
+            remaining_arguments -= bytes;
+        }
+        let outcome = run.model_response(ModelTurn::from_response_parts(&response, names.clone(), names.clone()))
+            .map_err(|_| host.invalid_batch(FoundationError::InvalidTransition))?;
+        if !matches!(outcome, ModelTurnOutcome::Continue { .. }) {
+            return Err(host.invalid_batch(FoundationError::PermissionDenied));
+        }
+        crate::model::serialized_size(&run, 1_048_576).map_err(|e| host.invalid_batch(e))?;
+        let step = run.next_step().map_err(|_| host.invalid_batch(FoundationError::InvalidTransition))?;
+        if !lease.is_active() || host.cancelled() { return host.on_cancelled(); }
+        if std::time::Instant::now() >= deadline { return Err(host.invalid_batch(FoundationError::Timeout)); }
+        match step {
+            AgentRunStep::Done(result) if calls.is_empty()
+                && reply["content"].as_str() == Some(result.output.as_str()) => {
+                let flow = host.accept_batch(round, round + 1 == rounds, reply, calls)?;
+                if !lease.is_active() || host.cancelled() { return host.on_cancelled(); }
+                if std::time::Instant::now() >= deadline { return Err(host.invalid_batch(FoundationError::Timeout)); }
+                return if matches!(flow, BatchFlow::Stop) { Ok(()) }
+                    else { Err(host.invalid_batch(FoundationError::InvalidTransition)) };
+            }
+            AgentRunStep::CallTools { calls: pending } if !calls.is_empty() && pending.len() == calls.len() => {
+                if pending.iter().zip(&calls).any(|(p,c)| p.preresolved_result.is_some()
+                    || p.tool_call.id.to_string() != c.id
+                    || p.tool_call.function.name.as_ref() != c.name.as_str()
+                    || p.tool_call.function.arguments != c.arguments) {
+                    return Err(host.invalid_batch(FoundationError::ApprovalMismatch));
+                }
+                // The host owns all proposed writes/effects and pairs the
+                // complete batch before returning. No SDK callback can bypass
+                // approval or invent a successful external operation.
+                let receipt_calls = calls.iter().map(|c| crate::model::FunctionCall {
+                    id:c.id.clone(), name:c.name.clone(), arguments:c.arguments.clone(),
+                }).collect::<Vec<_>>();
+                let flow = host.accept_batch(round, round + 1 == rounds, reply, calls)?;
+                if !lease.is_active() || host.cancelled() { return host.on_cancelled(); }
+                let results = host.rig_tool_results(&receipt_calls)?;
+                if results.len() != pending.len() {
+                    return Err(host.invalid_batch(FoundationError::ApprovalMismatch));
+                }
+                let mut paired = Vec::with_capacity(results.len());
+                for (result, pending) in results.into_iter().zip(pending) {
+                    if result.len() > remaining_results.min(40_000) {
+                        return Err(host.invalid_batch(FoundationError::InvalidInput("rig tool result limit")));
+                    }
+                    remaining_results -= result.len();
+                    paired.push(UserContent::ToolResult(pending.tool_call.result(vec![ToolResultContent::text(result)])));
+                }
+                run.tool_results(paired).map_err(|_| host.invalid_batch(FoundationError::ApprovalMismatch))?;
+                crate::model::serialized_size(&run, 1_048_576).map_err(|e| host.invalid_batch(e))?;
+                if !lease.is_active() || host.cancelled() { return host.on_cancelled(); }
+                if std::time::Instant::now() >= deadline { return Err(host.invalid_batch(FoundationError::Timeout)); }
+                if matches!(flow, BatchFlow::Stop) { return Ok(()); }
+            }
+            _ => return Err(host.invalid_batch(FoundationError::InvalidTransition)),
+        }
+    }
+    Err(host.invalid_batch(FoundationError::InvalidTransition))
+}
+
+struct RigTextHost<P,C,M> {
+    request:P, cancelled:C, error:M, result:Option<String>,
+}
+impl<E,P,C,M> crate::engine::FunctionBatchHost for RigTextHost<P,C,M>
+where P:FnMut(CompletionRequest)->std::result::Result<CompletionResponse,E>,
+      C:Fn()->bool, M:Fn(FoundationError)->E {
+    type Error=E;
+    fn cancelled(&self)->bool { (self.cancelled)() }
+    fn on_cancelled(&mut self)->std::result::Result<(),E> { Err((self.error)(FoundationError::Cancelled)) }
+    fn request(&mut self)->std::result::Result<Value,E> { Err((self.error)(FoundationError::InvalidTransition)) }
+    fn provider_failure(&mut self,error:E)->E {error}
+    fn validate_reply(&mut self,_:&Value)->std::result::Result<(),E>{Ok(())}
+    fn invalid_batch(&mut self,error:FoundationError)->E{(self.error)(error)}
+    fn accept_batch(&mut self,_:usize,_:bool,reply:Value,calls:Vec<crate::model::FunctionCall>)
+        ->std::result::Result<crate::engine::BatchFlow,E>{
+        if !calls.is_empty(){return Err((self.error)(FoundationError::PermissionDenied));}
+        self.result=reply["content"].as_str().map(str::to_owned);
+        Ok(crate::engine::BatchFlow::Stop)
+    }
+}
+impl<E,P,C,M> RigFunctionBatchHost for RigTextHost<P,C,M>
+where P:FnMut(CompletionRequest)->std::result::Result<CompletionResponse,E>,
+      C:Fn()->bool, M:Fn(FoundationError)->E {
+    fn request_rig(&mut self,request:CompletionRequest)->std::result::Result<CompletionResponse,E>{(self.request)(request)}
+    fn rig_tool_results(&mut self,_:&[crate::model::FunctionCall])->std::result::Result<Vec<String>,E>{
+        Err((self.error)(FoundationError::PermissionDenied))
+    }
+}
+
 pub fn drive_owned_rig_text_turn<E>(
     lease: &crate::task::ExecutionLease<'_>,
-    prompt: &str,
-    request: impl FnMut() -> std::result::Result<serde_json::Value, E>,
-    cancelled: impl Fn() -> bool,
-    error: impl Fn(FoundationError) -> E,
-) -> std::result::Result<String, E> {
-    let active = || lease.is_active() && !cancelled();
-    if !active() {
-        return Err(error(FoundationError::Cancelled));
-    }
-    let mut pilot = RigRunPilot::new(prompt, 1).map_err(&error)?;
-    let step = pilot.state().next_step()
-        .map_err(|_| error(FoundationError::Provider("RIG_NEXT_STEP".into())))?;
-    let AgentRunStep::CallModel { turn, .. } = step else {
-        return Err(error(FoundationError::InvalidTransition));
-    };
-    pilot.state().advertise_tools(turn, Vec::new());
-    // The existing complete-message boundary enforces the same limits,
-    // cancellation and no-tool policy before any response enters Rig.
-    let text = crate::engine::drive_owned_text_turn(lease, request, &cancelled, &error)?;
-    if !active() {
-        return Err(error(FoundationError::Cancelled));
-    }
-    let response = CompletionResponse::new(
-        vec![AssistantContent::text(text.clone())],
-        rig_core::completion::Usage::default(),
-        "browseros-native-text",
-        serde_json::json!({}),
-    );
-    let turn = ModelTurn::from_response_parts(&response, BTreeSet::new(), BTreeSet::new());
-    let outcome = pilot.state().model_response(turn)
-        .map_err(|_| error(FoundationError::Provider("RIG_MODEL_TURN_REJECTED".into())))?;
-    pilot.ensure_snapshot_budget().map_err(&error)?;
-    if !matches!(outcome, ModelTurnOutcome::Continue { .. }) {
-        return Err(error(FoundationError::PermissionDenied));
-    }
-    let step = pilot.state().next_step()
-        .map_err(|_| error(FoundationError::Provider("RIG_NEXT_STEP".into())))?;
-    if !active() {
-        return Err(error(FoundationError::Cancelled));
-    }
-    match step {
-        AgentRunStep::Done(response) if response.output == text => Ok(response.output),
-        // A second model step, unexpected tool grant or altered output is
-        // not authority to make another provider call or change the answer.
-        _ => Err(error(FoundationError::Provider("RIG_TEXT_TERMINAL_MISMATCH".into()))),
-    }
+    history: &[Value],
+    request: impl FnMut(CompletionRequest)->std::result::Result<CompletionResponse,E>,
+    cancelled: impl Fn()->bool,
+    error: impl Fn(FoundationError)->E,
+)->std::result::Result<String,E>{
+    let mut host=RigTextHost{request,cancelled,error,result:None};
+    drive_owned_rig_function_batches(&mut host,lease,history,&[],1,0)?;
+    host.result.ok_or_else(|| (host.error)(FoundationError::Provider("MODEL_TEXT_EMPTY".into())))
 }
 
 fn stale_transition(error: FoundationError) -> FoundationError {
@@ -532,26 +769,28 @@ mod tests {
         let task = tasks.create(Uuid::new_v4(), "text", vec![]).unwrap();
         tasks.start(task.id).unwrap();
         let lease = tasks.acquire_execution(task.id, tasks.get(task.id).unwrap().revision).unwrap();
+        let history = [json!({"role":"system","content":"Review source"}),json!({"role":"user","content":"Review"})];
         let mut calls = 0;
         let text = drive_owned_rig_text_turn(
-            &lease, "Review", || {
+            &lease, &history, |request| {
                 calls += 1;
-                Ok(json!({"role":"assistant","content":"All done"}))
+                assert_eq!(request.chat_history.len(), 2);
+                assert!(request.tools.is_empty());
+                Ok(CompletionResponse::new(vec![AssistantContent::text("All done")], Usage::default(), "mock", json!({})))
             }, || false, |error| error,
         ).unwrap();
         assert_eq!(text, "All done");
         assert_eq!(calls, 1);
-        // Durable host, not Rig, remains responsible for final settlement.
         assert_eq!(tasks.get(task.id).unwrap().status, TaskStatus::Running);
         let denied = drive_owned_rig_text_turn(
-            &lease, "Review", || Ok(json!({"role":"assistant","tool_calls":[
-                {"id":"one","type":"function","function":{"name":"demo.inspect","arguments":"{}"}}
-            ]})), || false, |error| error,
+            &lease, &history, |_| Ok(CompletionResponse::new(vec![AssistantContent::ToolCall(
+                ToolCall::from_wire("one",ToolFunction::new(ToolName::new("demo.inspect").unwrap(),json!({})))
+            )], Usage::default(), "mock", json!({}))), || false, |error| error,
         );
         assert!(denied.is_err());
         tasks.pause(task.id).unwrap();
-        let denied = drive_owned_rig_text_turn(&lease, "Review",
-            || panic!("stale lease must not call provider"), || false, |error| error);
+        let denied = drive_owned_rig_text_turn(&lease, &history,
+            |_| panic!("stale lease must not call provider"), || false, |error| error);
         assert_eq!(denied, Err(FoundationError::Cancelled));
     }
 

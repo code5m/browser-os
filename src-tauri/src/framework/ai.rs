@@ -15,6 +15,9 @@ use std::{
 };
 use tauri::Manager;
 
+#[path = "ai/rig_transport.rs"]
+mod rig_transport;
+
 static CONFIG_LOCK: Mutex<()> = Mutex::new(());
 const PROVIDER_CONCURRENCY: usize = 2;
 const PROVIDER_QUEUE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
@@ -921,7 +924,7 @@ fn build_chat_messages(
 }
 
 // Chat and Legacy are deliberately text-only hosts. The optional Rig
-// single-turn state machine retains the native transport and the same lease.
+// path uses typed SDK requests, retaining the same native task lease.
 fn text_model_turn(
     profile: &ProviderProfile,
     messages: &[Value],
@@ -943,9 +946,9 @@ fn text_model_turn(
         }
     };
     if rig_revision.is_some() {
-        let prompt = messages.last().and_then(|turn| turn["content"].as_str())
-            .ok_or("AI_MESSAGE_INVALID")?;
-        drive_owned_rig_text_turn(lease, prompt, request, &inactive, map_error)
+        drive_owned_rig_text_turn(lease, messages,
+            |request| rig_transport::turn(profile, request, &inactive),
+            &inactive, map_error)
     } else {
         drive_owned_text_turn(lease, request, &inactive, map_error)
     }
@@ -2326,6 +2329,20 @@ pub async fn coding_service(
             .as_ref()
             .map(coding_provider_binding)
             .transpose()?;
+        // Only a new explicit model Run consults current settings.
+        // The Coding Owner restores a paused task's authenticated route.
+        let new_rig_revision = if request["action"] == "chat" {
+            let run = uuid::Uuid::parse_str(request["run_id"].as_str().ok_or("AGENT_RUN_ID_REQUIRED")?)
+                .map_err(|_| "AGENT_RUN_ID_INVALID")?;
+            super::agent_channel::production_coding_revision(&storage, run)?
+        } else { None };
+        let mut rig_provider = |request: rig_core::completion::CompletionRequest,
+                                inactive: &(dyn Fn() -> bool + Sync)| {
+            // Unary SDK turns return the full validated message to the
+            // existing Coding host; no unadmitted token is sent to the UI.
+            rig_transport::turn(model_profile.as_ref().ok_or("AI_NOT_CONFIGURED")?,
+                request, inactive)
+        };
         let response = crate::capabilities::agent::public_api::dispatch_coding_request(
             &app,
             &webview,
@@ -2347,6 +2364,8 @@ pub async fn coding_service(
                     &mut emit_delta,
                 )
             },
+            new_rig_revision,
+            &mut rig_provider,
         );
         response
     })

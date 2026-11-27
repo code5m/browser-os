@@ -73,9 +73,18 @@ fn load(path: &Path) -> Result<ExperimentConfig, String> {
 /// owner. Store the returned revision in the authenticated input so later
 /// continuation does not consult a mutable engine choice.
 pub(super) fn production_text_revision(storage: &Path, run: uuid::Uuid) -> Result<Option<u64>, String> {
+    production_revision(storage, run, false)
+}
+
+pub(super) fn production_coding_revision(storage: &Path, run: uuid::Uuid) -> Result<Option<u64>, String> {
+    production_revision(storage, run, true)
+}
+
+fn production_revision(storage: &Path, run: uuid::Uuid, coding: bool) -> Result<Option<u64>, String> {
     let _guard = CONFIG_LOCK.try_lock().map_err(|_| "AGENT_EXPERIMENT_CONFIG_BUSY")?;
     let config = load(&storage.join(CONFIG_FILE))?;
-    if !config.enabled || !config.production_text_enabled {
+    let enabled = if coding { config.production_coding_enabled } else { config.production_text_enabled };
+    if !config.enabled || !enabled {
         return Ok(None);
     }
     let router = ExperimentRouter::new(true);

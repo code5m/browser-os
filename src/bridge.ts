@@ -555,6 +555,7 @@ export interface AgentRuntimeExperimentConfig {
   emergency_fallback_to_native: boolean;
   benchmark_enabled: boolean;
   production_text_enabled?: boolean;
+  production_coding_enabled?: boolean;
   max_turns: number;
 }
 export interface AgentRuntimeBenchmarkSample {

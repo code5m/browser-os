@@ -18,6 +18,7 @@ const mode = ref<AgentRuntimeMode>("native");
 const canary = ref(10);
 const benchEnabled = ref(false);
 const productionTextEnabled = ref(false);
+const productionCodingEnabled = ref(false);
 const emergencyFallback = ref(true);
 const maxTurns = ref(3);
 const repeats = ref(3);
@@ -66,6 +67,7 @@ async function refresh() {
     canary.value = config.canary_percent;
     benchEnabled.value = config.benchmark_enabled;
     productionTextEnabled.value = config.production_text_enabled ?? false;
+    productionCodingEnabled.value = config.production_coding_enabled ?? false;
     emergencyFallback.value = config.emergency_fallback_to_native;
     maxTurns.value = config.max_turns;
   } catch (reason) {
@@ -87,6 +89,7 @@ async function save() {
     emergency_fallback_to_native:emergencyFallback.value,
     benchmark_enabled:benchEnabled.value,
     production_text_enabled:labEnabled.value && productionTextEnabled.value,
+    production_coding_enabled:labEnabled.value && productionCodingEnabled.value,
     max_turns:Math.min(32,Math.max(1,Math.round(maxTurns.value)))
   };
   try {
@@ -94,6 +97,7 @@ async function save() {
     persisted.value = updated;
     mode.value = updated.mode;
     productionTextEnabled.value = updated.production_text_enabled ?? false;
+    productionCodingEnabled.value = updated.production_coding_enabled ?? false;
     message.value = "已由原生 Host 原子保存（版本 " + updated.revision + "）。仅影响新建任务；已记录的恢复链沿用原执行引擎。";
   } catch (reason) {
     error.value = "保存失败：" + String(reason);
@@ -225,7 +229,7 @@ onMounted(refresh);
 
     <div class="settings-grid">
       <div class="field wide switch-field">
-        <div><b>启用实验能力</b><small>不会替换现有 Coding Agent 的默认生产链路</small></div>
+        <div><b>启用实验能力</b><small>真实文本和 Coding 分别显式开启，默认仍使用 Native</small></div>
         <input v-model="labEnabled" type="checkbox" :disabled="!supported" aria-label="启用 Agent Runtime 实验" />
       </div>
       <div class="field wide">
@@ -243,8 +247,12 @@ onMounted(refresh);
         <input id="runtime-turns" v-model.number="maxTurns" type="number" min="1" max="32" :disabled="!supported || !labEnabled" />
       </div>
       <div class="field wide switch-field">
-        <div><b>真实 Chat / Legacy Agent 文本执行</b><small>默认关闭。开启后按上方策略选择 Rig 单轮状态机；使用已配置的真实模型和现有原生传输，不授予工具权限，不影响 Coding。</small></div>
+        <div><b>真实 Chat / Legacy Agent 文本执行</b><small>默认关闭。开启后按上方策略选择 Rig SDK 单轮真实模型请求，复用原生凭据，不授予工具权限。</small></div>
         <input v-model="productionTextEnabled" type="checkbox" :disabled="!supported || !labEnabled" aria-label="启用真实文本运行时实验" />
+      </div>
+      <div class="field wide switch-field">
+        <div><b>真实 Coding Agent 多轮执行</b><small>默认关闭。Rig SDK 驱动模型和工具步骤，每次 Run 最多 8 轮；工作区写入、外部操作及其审批仍由原生 Owner 负责。已暂停任务保留原引擎。</small></div>
+        <input v-model="productionCodingEnabled" type="checkbox" :disabled="!supported || !labEnabled" aria-label="启用真实 Coding 运行时实验" />
       </div>
       <div class="field check"><label><input v-model="benchEnabled" type="checkbox" :disabled="!supported || !labEnabled" /> 开启可重复基准测评</label></div>
       <div class="field check"><label><input v-model="emergencyFallback" type="checkbox" :disabled="!supported || !labEnabled" /> 应急回退策略（仅预留，尚未自动执行）</label></div>

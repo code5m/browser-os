@@ -33,6 +33,10 @@ pub struct ExperimentConfig {
     /// configurations must not silently enable a production engine.
     #[serde(default)]
     pub production_text_enabled: bool,
+    /// Coding has a separate opt-in so older text-only consent does not
+    /// silently change the production workspace execution loop.
+    #[serde(default)]
+    pub production_coding_enabled: bool,
     pub max_turns: u8,
 }
 impl Default for ExperimentConfig {
@@ -45,6 +49,7 @@ impl Default for ExperimentConfig {
             emergency_fallback_to_native: true,
             benchmark_enabled: false,
             production_text_enabled: false,
+            production_coding_enabled: false,
             max_turns: 1,
         }
     }
@@ -56,7 +61,8 @@ impl ExperimentConfig {
                 "runtime experiment configuration",
             ));
         }
-        if !self.enabled && (self.mode != RoutingMode::Native || self.production_text_enabled) {
+        if !self.enabled && (self.mode != RoutingMode::Native
+            || self.production_text_enabled || self.production_coding_enabled) {
             return Err(FoundationError::PermissionDenied);
         }
         Ok(())
@@ -270,6 +276,7 @@ mod tests {
             "emergency_fallback_to_native":true,"benchmark_enabled":false,"max_turns":3
         })).unwrap();
         assert!(!config.production_text_enabled);
+        assert!(!config.production_coding_enabled);
         assert!(config.validate().is_ok());
         let invalid = ExperimentConfig {
             production_text_enabled: true,
