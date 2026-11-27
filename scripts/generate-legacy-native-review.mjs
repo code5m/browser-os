@@ -67,7 +67,9 @@ for(const name of names){
   }
   if(['Back','Forward','Reload'].includes(variant)){
    assert.match(execute,/if let Binding::LiveDocument\(document\) = binding \{[\s\S]*?\.eval_navigation_document\(&id, document, js\)/);
-   assert.match(execute,new RegExp('Self::'+variant+'\\s*\\{\\s*id\\s*\\}\\s*=>\\s*(?:\\{\\s*)?super::isolated_tabs::eval_bound\\(\\s*&app,\\s*&id,\\s*"'+({Back:'if \\\\(history\\\\.length > 1\\\\) \\\\{ history\\\\.back\\\\(\\\\); \\\\}',Forward:'history\\\\.forward\\\\(\\\\);',Reload:'location\\\\.reload\\\\(\\\\);'}[variant])+'"\\s*,\\s*\\*document\\s*,?\\s*\\)'));
+   const code={Back:'if (history.length > 1) { history.back(); }',Forward:'history.forward();',Reload:'location.reload();'}[variant];
+   const literal=code.replace(/[.*+?^$(){}|[\]\\]/g,'\\$&');
+   assert.match(execute,new RegExp('Self::'+variant+'\\s*\\{\\s*id\\s*\\}\\s*=>\\s*(?:\\{\\s*)?super::isolated_tabs::eval_bound\\(\\s*&app,\\s*&id,\\s*"'+literal+'"\\s*,\\s*\\*document\\s*,?\\s*\\)'));
   }
   const helper=new RegExp('pub\\(crate\\)\\s+fn\\s+'+name+'_impl\\s*\\(').exec(source);
   assert.ok(helper,name+': exact native implementation missing');
