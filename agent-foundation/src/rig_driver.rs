@@ -200,10 +200,14 @@ impl RigMultiTurnDriver {
                         // single invocation between user approval pauses.
                         self.budget.admit_events(response.choice.len())?;
                         let mut suggested=false;
+                        let mut has_text=false;
                         for content in response.choice.iter() {
                             match content {
-                                AssistantContent::Text(text) => self.budget.admit_text(text.text.len())
-                                    .map_err(|_| FoundationError::Provider("RIG_OUTPUT_LIMIT".into()))?,
+                                AssistantContent::Text(text) => {
+                                    has_text |= !text.text.trim().is_empty();
+                                    self.budget.admit_text(text.text.len())
+                                        .map_err(|_| FoundationError::Provider("RIG_OUTPUT_LIMIT".into()))?;
+                                }
                                 AssistantContent::ToolCall(call) => {
                                     if suggested || !names.contains(call.function.name.as_ref()) {
                                         return Err(FoundationError::PermissionDenied);
@@ -223,6 +227,7 @@ impl RigMultiTurnDriver {
                                     return Err(FoundationError::Provider("RIG_UNSUPPORTED_CONTENT".into())),
                             }
                         }
+                        validate_terminal_metadata(&response, suggested, has_text)?;
                         gate.active()?;
                         let turn =
                             ModelTurn::from_response_parts(&response, names.clone(), names.clone());
@@ -467,12 +472,28 @@ fn typed_definitions(tools: &[Value]) -> Result<Vec<ToolDefinition>> {
     }).collect()
 }
 
+// Both SDK drivers must apply the same terminal-envelope policy before
+// advancing their state machines. Typed fixture adapters may omit metadata,
+// but an explicit finish reason must agree with the admitted content.
+fn validate_terminal_metadata(response: &CompletionResponse, has_tools: bool, has_text: bool) -> Result<()> {
+    if response.finish_reason().is_some_and(|reason| match reason {
+        FinishReason::Stop => has_tools,
+        FinishReason::ToolCalls => !has_tools,
+        _ => true,
+    }) {
+        return Err(FoundationError::InvalidInput("rig response terminal mismatch"));
+    }
+    if !has_tools && !has_text {
+        return Err(FoundationError::Provider("MODEL_TEXT_EMPTY".into()));
+    }
+    Ok(())
+}
+
 /// Project SDK content into the exact existing native transcript dialect.
 /// Reject unsupported replay metadata rather than silently changing a tool
 /// identity or losing provider-specific state required for a later turn.
 fn native_reply(response: &CompletionResponse) -> Result<Value> {
-    if response.choice.len() > 64
-        || response.finish_reason().is_some_and(|reason| !matches!(reason, FinishReason::Stop | FinishReason::ToolCalls)) {
+    if response.choice.len() > 64 {
         return Err(FoundationError::InvalidInput("rig response terminal"));
     }
     let mut text = String::new();
@@ -501,13 +522,7 @@ fn native_reply(response: &CompletionResponse) -> Result<Value> {
             _ => return Err(FoundationError::Provider("RIG_UNSUPPORTED_CONTENT".into())),
         }
     }
-    if matches!(response.finish_reason(), Some(FinishReason::Stop)) && !calls.is_empty()
-        || matches!(response.finish_reason(), Some(FinishReason::ToolCalls)) && calls.is_empty() {
-        return Err(FoundationError::InvalidInput("rig response terminal mismatch"));
-    }
-    if calls.is_empty() && text.trim().is_empty() {
-        return Err(FoundationError::Provider("MODEL_TEXT_EMPTY".into()));
-    }
+    validate_terminal_metadata(response, !calls.is_empty(), !text.trim().is_empty())?;
     let mut reply = json!({"role":"assistant","content":if text.is_empty() { Value::Null } else { json!(text) }});
     if !calls.is_empty() { reply["tool_calls"] = json!(calls); }
     Ok(reply)
@@ -766,6 +781,20 @@ mod tests {
             .execute_receipted(permit, tasks, Duration::from_secs(2))
             .await
             .unwrap()
+    }
+
+    #[test]
+    fn both_rig_drivers_require_terminal_text_or_tools() {
+        let blank = CompletionResponse::new(
+            vec![AssistantContent::text("  ")], Usage::default(), "mock", json!({}),
+        );
+        assert!(validate_terminal_metadata(&blank, false, false).is_err());
+        assert!(native_reply(&blank).is_err());
+        let text = CompletionResponse::new(
+            vec![AssistantContent::text("done")], Usage::default(), "mock", json!({}),
+        );
+        assert!(validate_terminal_metadata(&text, false, true).is_ok());
+        assert!(native_reply(&text).is_ok());
     }
 
     #[test]

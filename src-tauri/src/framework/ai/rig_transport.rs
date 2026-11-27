@@ -153,6 +153,9 @@ fn checked_wire_reply(bytes: &[u8], credential: &str, max_calls: usize) -> http:
     if !matches!((finish.as_deref(), calls.is_empty()), (Some("stop"), true) | (Some("tool_calls"), false)) {
         return Err(denied("AI_RESPONSE_INVALID"));
     }
+    if calls.is_empty() && !message["content"].as_str().is_some_and(|text| !text.trim().is_empty()) {
+        return Err(denied("AI_RESPONSE_EMPTY"));
+    }
     if calls.iter().any(|call| provider_value_contains_credential(&call.arguments, credential))
         || provider_value_contains_credential(&body, credential) {
         return Err(denied("AI_CONTEXT_CREDENTIAL_DENIED"));
@@ -233,6 +236,11 @@ mod tests {
             "message":{"role":"assistant","content":"secret"}}]});
         let raw = checked_wire_reply(&serde_json::to_vec(&complete).unwrap(),"secret",0).unwrap();
         assert!(!String::from_utf8(raw).unwrap().contains("secret"));
+        for content in [Value::Null, json!(""), json!("  ")] {
+            let mut blank = complete.clone();
+            blank["choices"][0]["message"]["content"] = content;
+            assert!(checked_wire_reply(&serde_json::to_vec(&blank).unwrap(),"secret",0).is_err());
+        }
         let mut truncated = complete.clone();
         truncated["choices"][0]["finish_reason"] = json!("length");
         assert!(checked_wire_reply(&serde_json::to_vec(&truncated).unwrap(),"secret",0).is_err());

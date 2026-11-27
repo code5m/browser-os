@@ -1642,15 +1642,15 @@ impl GridProcessManager {
         self.tab_renderer_absence_epoch_locked(index)
     }
 
-    pub(crate) fn start_tab_renderer(&self, index: u32, url: &str) -> Result<(), String> {
+    pub(crate) fn start_tab_renderer(&self, index: u32, url: &str) -> Result<crate::grid_ipc::RendererBinding, String> {
         self.start_tab_renderer_admitted(index, url, None)
     }
 
-    pub(crate) fn start_tab_renderer_at_absence(&self, index: u32, url: &str, expected: u64) -> Result<(), String> {
+    pub(crate) fn start_tab_renderer_at_absence(&self, index: u32, url: &str, expected: u64) -> Result<crate::grid_ipc::RendererBinding, String> {
         self.start_tab_renderer_admitted(index, url, Some(expected))
     }
 
-    fn start_tab_renderer_admitted(&self, index: u32, url: &str, absence: Option<u64>) -> Result<(), String> {
+    fn start_tab_renderer_admitted(&self, index: u32, url: &str, absence: Option<u64>) -> Result<crate::grid_ipc::RendererBinding, String> {
         if !crate::grid_ipc::is_tab_renderer(index) {
             return Err("TAB_RENDERER_ROUTE_INVALID".into());
         }
@@ -1677,7 +1677,7 @@ impl GridProcessManager {
                 child.last_url = Some(url.to_owned());
                 ((child.child.id(), child.comms.spawn_epoch.load(Ordering::SeqCst)), Arc::clone(&child.comms))
             };
-            let result = (|| -> Result<(), String> {
+            let result = (|| -> Result<crate::grid_ipc::RendererBinding, String> {
                 let (comms, generation) = self.wait_connected(index, 15000)?;
                 if !Arc::ptr_eq(&original, &comms) || comms.owner_snapshot()? != expected {
                     return Err("TAB_RENDERER_CREATE_TARGET_STALE".into());
@@ -1694,12 +1694,17 @@ impl GridProcessManager {
                     return Err("GRID_REQUEST_OUTCOME_UNKNOWN: renderer create owner changed".into());
                 }
                 child.document_ready = true;
-                Ok(())
+                // Return the exact create acknowledgement owner, not a
+                // second lookup that could adopt a replacement connection.
+                Ok(crate::grid_ipc::RendererBinding {
+                    index, owner: expected, generation,
+                    navigation_revision: child.navigation_revision,
+                })
             })();
             (expected, result)
         };
         match result {
-            Ok(()) => Ok(()),
+            Ok(binding) => Ok(binding),
             Err(error) => {
                 // Retain listener generation, and never close a newer host.
                 match self.retire_bound_tab_renderer(index, expected) {
@@ -2020,8 +2025,9 @@ impl GridProcessManager {
     }
 
     pub(crate) fn publish_tab_renderer_info(
-        &self, index: u32, mut info: crate::domain::TabInfo,
+        &self, binding: crate::grid_ipc::RendererBinding, mut info: crate::domain::TabInfo,
     ) -> Result<crate::domain::TabInfo, String> {
+        let index = binding.index;
         if !crate::grid_ipc::is_tab_renderer(index) || info.id != crate::grid_ipc::renderer_label(index) {
             return Err("TAB_RENDERER_ROUTE_INVALID".into());
         }
@@ -2030,7 +2036,9 @@ impl GridProcessManager {
         let children = self.children.lock().unwrap();
         let child = children.get(&index).ok_or("TAB_RENDERER_DOCUMENT_UNAVAILABLE")?;
         let _owner = child.comms.owner_gate.lock().unwrap();
-        if !child.document_ready || !child.comms.is_connected() {
+        if !Self::window_binding_matches(child, binding)
+            || child.comms.expected_pid.load(Ordering::SeqCst) != binding.owner.0
+        {
             return Err("TAB_RENDERER_DOCUMENT_UNAVAILABLE".into());
         }
         if let Some(url) = &child.last_url {
@@ -2060,7 +2068,9 @@ impl GridProcessManager {
         let children = self.children.lock().unwrap();
         let child = children.get(&binding.index).ok_or("TAB_RENDERER_REOPEN_STALE")?;
         let _owner = child.comms.owner_gate.lock().unwrap();
-        if !Self::window_binding_matches(child, binding) {
+        if !Self::window_binding_matches(child, binding)
+            || child.comms.expected_pid.load(Ordering::SeqCst) != binding.owner.0
+        {
             return Err("TAB_RENDERER_REOPEN_STALE".into());
         }
         let address = child.last_url.as_ref().ok_or("TAB_RENDERER_REOPEN_ADDRESS_UNKNOWN")?;

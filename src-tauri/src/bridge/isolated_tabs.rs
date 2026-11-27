@@ -133,22 +133,27 @@ pub(super) fn create(app: &AppHandle, url: &str) -> Result<TabInfo, String> {
         format!("tab-{}", *counter)
     };
     let index = tab_renderer_index(&id).ok_or("TAB_RENDERER_ID_EXHAUSTED")?;
-    if let Err(error) = state.grid_manager.start_tab_renderer(index, &url) {
-        // Even an unpublished failed spawn may own a listener or retirement.
-        return match state.grid_manager.close_tab_renderer(index, true) {
-            Ok(()) => Err(error),
-            Err(cleanup) => Err(format!("{error}; {cleanup}")),
-        };
-    }
+    let created = match state.grid_manager.start_tab_renderer(index, &url) {
+        Ok(binding) => binding,
+        Err(error) => {
+            // This logical ID has never been published and cannot be reused.
+            // Even a failed spawn may own a listener or retirement.
+            return match state.grid_manager.close_tab_renderer(index, true) {
+                Ok(()) => Err(error),
+                Err(cleanup) => Err(format!("{error}; {cleanup}")),
+            };
+        }
+    };
     let info = TabInfo {
         id: id.clone(),
         url: url.clone(),
         title: parsed.host_str().unwrap_or(url.as_str()).to_owned(),
     };
-    let info = match state.grid_manager.publish_tab_renderer_info(index, info) {
+    let info = match state.grid_manager.publish_tab_renderer_info(created, info) {
         Ok(info) => info,
         Err(error) => {
-            return match state.grid_manager.close_tab_renderer(index, true) {
+            // The create receipt cannot authorize closing another owner.
+            return match state.grid_manager.close_tab_renderer_bound(index, true, Some(created.owner)) {
                 Ok(()) => Err(error),
                 Err(cleanup) => Err(format!("{error}; {cleanup}")),
             };
@@ -156,9 +161,7 @@ pub(super) fn create(app: &AppHandle, url: &str) -> Result<TabInfo, String> {
     };
     // The tab is already published. Report the partial outcome explicitly
     // so the UI reconciles its logical list instead of creating a duplicate.
-    let selection = state.grid_manager.capture_window_route(index)
-        .and_then(|target| target.ok_or_else(|| "TAB_RENDERER_WINDOW_UNAVAILABLE".to_owned()))
-        .and_then(|target| select_bound(app, &id, target));
+    let selection = select_bound(app, &id, created);
     if let Err(error) = selection {
         return Err(format!("TAB_CREATED_ACTIVATION_PARTIAL:{id}:{error}"));
     }
@@ -294,7 +297,7 @@ pub(super) fn activate_admitted(app: &AppHandle, id: &str, admitted: Option<Acti
             if !crate::grid_ipc::restorable_address(&url) {
                 return Err("TAB_RESTORE_URL_UNSUPPORTED".into());
             }
-            state.grid_manager.start_tab_renderer_at_absence(index,&url,epoch)?;
+            let initial=state.grid_manager.start_tab_renderer_at_absence(index,&url,epoch)?;
             state.hibernated_tabs.lock().unwrap().remove(id);
             // Once a replacement exists, consume the old checkpoint before
             // any fallible binding observation. Never carry it to a later host.
@@ -302,7 +305,6 @@ pub(super) fn activate_admitted(app: &AppHandle, id: &str, admitted: Option<Acti
             let window=|| state.grid_manager.capture_window_route(index)?
                 .ok_or_else(||"TAB_RENDERER_WINDOW_UNAVAILABLE".to_owned());
             let partial=|error:String|format!("TAB_RENDERER_ACTIVATION_PARTIAL:{id}:{error}");
-            let initial=window().map_err(partial)?;
             let mut restored=snapshot.is_none();
             if let Some((address,(x,y)))=snapshot {
                 if address==url && crate::grid_ipc::valid_viewport(x,y) {
@@ -359,15 +361,12 @@ pub(super) fn reopen_absent(app: &AppHandle, id: &str, url: &str, absence_epoch:
         || state.hibernated_tabs.lock().unwrap().contains(id) {
         return Err("TAB_RENDERER_REOPEN_STALE".into());
     }
-    state.grid_manager.start_tab_renderer_at_absence(index, url, absence_epoch)?;
+    let binding = state.grid_manager.start_tab_renderer_at_absence(index, url, absence_epoch)?;
     state.hibernated_tabs.lock().unwrap().remove(id);
     state.hibernated_scroll.lock().unwrap().remove(id);
     // A recovered host can acknowledge creation before its first document
     // stamp. Publish the actual owner's navigation metadata immediately;
     // document operations still require a fresh document binding.
-    let binding = state.grid_manager.capture_window_route(index)
-        .and_then(|value| value.ok_or_else(|| "TAB_RENDERER_WINDOW_UNAVAILABLE".to_owned()))
-        .map_err(|error| format!("TAB_RENDERER_REOPEN_PARTIAL:{id}:{error}"))?;
     state.grid_manager.publish_reopened_tab(binding)
         .map_err(|error| format!("TAB_RENDERER_REOPEN_PARTIAL:{id}:{error}"))
 }

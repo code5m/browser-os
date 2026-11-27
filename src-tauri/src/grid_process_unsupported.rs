@@ -42,7 +42,7 @@ impl GridProcessManager {
     pub(crate) fn close_tab_renderer_bound(&self, _index: u32, _release_listener: bool, _expected: Option<(u32, u64)>) -> Result<(), String> { Err(unsupported()) }
     pub(crate) fn close_tab_renderer_document(&self, _index: u32, _release_listener: bool,
         _document: crate::grid_ipc::RendererBinding) -> Result<(), String> { Err(unsupported()) }
-    pub(crate) fn publish_tab_renderer_info(&self, _index: u32, _info: crate::domain::TabInfo)
+    pub(crate) fn publish_tab_renderer_info(&self, _binding: crate::grid_ipc::RendererBinding, _info: crate::domain::TabInfo)
         -> Result<crate::domain::TabInfo, String> {
         Err(unsupported())
     }
@@ -88,8 +88,8 @@ impl GridProcessManager {
         Err(unsupported())
     }
     pub(crate) fn tab_renderer_absence_epoch(&self, _index: u32) -> Result<u64, String> { Err(unsupported()) }
-    pub(crate) fn start_tab_renderer_at_absence(&self, _index: u32, _url: &str, _expected: u64) -> Result<(), String> { Err(unsupported()) }
-    pub(crate) fn start_tab_renderer(&self, _index: u32, _url: &str) -> Result<(), String> {
+    pub(crate) fn start_tab_renderer_at_absence(&self, _index: u32, _url: &str, _expected: u64) -> Result<crate::grid_ipc::RendererBinding, String> { Err(unsupported()) }
+    pub(crate) fn start_tab_renderer(&self, _index: u32, _url: &str) -> Result<crate::grid_ipc::RendererBinding, String> {
         Err(unsupported())
     }
     pub(crate) fn close_tab_renderer(&self, _index: u32, _release_listener: bool) -> Result<(), String> {

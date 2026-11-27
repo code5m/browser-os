@@ -2697,7 +2697,21 @@ struct CodingBatchHost<'a, 'p, P> {
     provider: &'a mut P,
     rig_provider: Option<&'a mut CodingRigProvider<'p>>,
     lease: &'a browseros_agent_foundation::task::ExecutionLease<'static>,
+    // A text-only answer is provisional until the Foundation driver's
+    // post-callback cancellation/deadline checks have accepted the turn.
+    pending_answer: Option<Value>,
 }
+
+fn commit_model_answer(session: &mut Session, answer: Option<Value>, driver_ok: bool) -> bool {
+    if driver_ok && matches!(session.status.as_str(), "complete" | "review") {
+        if let Some(answer) = answer {
+            session.messages.push(answer);
+            return true;
+        }
+    }
+    false
+}
+
 impl<P: FnMut(&[Value], &[Value]) -> Result<Value, String>>
     browseros_agent_foundation::engine::FunctionBatchHost for CodingBatchHost<'_, '_, P>
 {
@@ -2706,6 +2720,7 @@ impl<P: FnMut(&[Value], &[Value]) -> Result<Value, String>>
         !self.lease.is_active() || cancelled(self.root, &self.session.session_id)
     }
     fn on_cancelled(&mut self) -> Result<(), String> {
+        self.pending_answer = None;
         self.session.status = "cancelled".into();
         Ok(())
     }
@@ -2779,9 +2794,11 @@ impl<P: FnMut(&[Value], &[Value]) -> Result<Value, String>>
             session.status = "cancelled".into();
             return Ok(browseros_agent_foundation::engine::BatchFlow::Stop);
         }
-        session.messages.push(reply.clone());
-        messages.push(reply);
         if calls.is_empty() {
+            if !reply["content"].as_str().is_some_and(|text| !text.trim().is_empty()) {
+                return Err("AGENT_REPLY_INVALID".into());
+            }
+            self.pending_answer = Some(reply);
             session.status = if session.changes.is_empty() {
                 "complete"
             } else {
@@ -2790,6 +2807,8 @@ impl<P: FnMut(&[Value], &[Value]) -> Result<Value, String>>
             .into();
             return Ok(browseros_agent_foundation::engine::BatchFlow::Stop);
         }
+        session.messages.push(reply.clone());
+        messages.push(reply);
         for call in calls {
             let name = call.name.as_str();
             let arguments = call.arguments;
@@ -3692,6 +3711,20 @@ pub(crate) fn execute_with_routed_effect_adapter(
             // approvals/changes cannot silently change engines either.
             let task_paused = session.foundation_task.as_ref().is_some_and(|task|
                 task.status == browseros_agent_foundation::task::TaskStatus::Paused);
+            // A new prompt on an unfinished Task is not permission to
+            // disclose its retained context to a different provider or to
+            // change the reviewed tool inventory/mode. Finish or discard the
+            // existing Task before explicitly choosing a new binding.
+            if task_paused && !resume {
+                if let Some(checkpoint) = session.continuation.as_ref() {
+                    if provider_binding.as_ref() != Some(&checkpoint.provider)
+                        || checkpoint.plan != plan
+                        || checkpoint.schema_digest != continuation_schema(plan)?
+                    {
+                        return Err("AGENT_CONTINUATION_MODEL_CHANGED".into());
+                    }
+                }
+            }
             let rig_revision = if resume || task_paused {
                 session.continuation.as_ref().and_then(|checkpoint| checkpoint.rig_revision)
             } else {
@@ -3763,8 +3796,9 @@ pub(crate) fn execute_with_routed_effect_adapter(
                 provider: &mut provider,
                 rig_provider,
                 lease: &execution_lease,
+                pending_answer: None,
             };
-            let turn_result = if let Some(history) = rig_history.as_ref() {
+            let mut turn_result = if let Some(history) = rig_history.as_ref() {
                 browseros_agent_foundation::rig_driver::drive_owned_rig_function_batches(
                     &mut host, &execution_lease, history, &tools(plan), 8, 8,
                 )
@@ -3773,13 +3807,21 @@ pub(crate) fn execute_with_routed_effect_adapter(
                     &mut host, &execution_lease, 8, 8,
                 )
             };
+            let answer = host.pending_answer.take();
             drop(host);
+            let model_finished = commit_model_answer(&mut session, answer, turn_result.is_ok());
+            if !model_finished && matches!(session.status.as_str(), "complete" | "review") {
+                // Never settle success if the driver's final check failed
+                // or there is no admitted final answer to publish.
+                session.status = "failed".into();
+                if turn_result.is_ok() {
+                    turn_result = Err("AGENT_REPLY_INVALID".into());
+                }
+            }
             if turn_result.is_err() && session.status == "running" {
                 session.status = "failed".into();
             }
             let run_status = session.status.clone();
-            let model_finished =
-                turn_result.is_ok() && matches!(run_status.as_str(), "complete" | "review");
             if let Some(checkpoint) = &mut session.continuation {
                 checkpoint.resume_pending = !model_finished;
             }
@@ -4070,6 +4112,20 @@ mod tests {
             |_, _, _, _| unreachable!()
         )
         .is_err());
+        // A fresh chat request must not bypass the existing paused Task's
+        // provider/mode binding just by omitting the resume action.
+        let mut changed = binding.clone();
+        changed.fingerprint = "another-provider".into();
+        let fresh = json!({"action":"chat","session_id":id,"run_id":second,
+            "mode":"plan","message":"new prompt on same task"});
+        assert_eq!(execute_with_bound_adapter(&f.0, &storage, fresh.clone(),
+            Some(changed), |_,_| panic!("changed provider must not dispatch"),
+            |_,_,_,_| unreachable!()).unwrap_err(), "AGENT_CONTINUATION_MODEL_CHANGED");
+        let mut changed_mode = fresh;
+        changed_mode["mode"] = json!("build");
+        assert_eq!(execute_with_bound_adapter(&f.0, &storage, changed_mode,
+            Some(binding.clone()), |_,_| panic!("changed mode must not dispatch"),
+            |_,_,_,_| unreachable!()).unwrap_err(), "AGENT_CONTINUATION_MODEL_CHANGED");
         let result = execute_with_bound_adapter(
             &f.0,
             &storage,
@@ -4844,6 +4900,23 @@ mod tests {
             assert!(propose_operation(&mut session, &input).is_err());
         }
         assert!(session.operations.is_empty());
+    }
+    #[test]
+    fn provisional_final_answer_is_not_a_resumable_history_entry_after_rejection() {
+        let f = Fixture::new();
+        let storage = f.0.join("state");
+        let mut session = load(&f.0, &storage, None).unwrap();
+        session.messages.push(json!({"role":"user","content":"inspect"}));
+        let answer = json!({"role":"assistant","content":"uncommitted answer"});
+        session.status = "complete".into();
+        assert!(!commit_model_answer(&mut session, Some(answer.clone()), false));
+        assert!(complete_resume_boundary(&session.messages));
+        session.status = "cancelled".into();
+        assert!(!commit_model_answer(&mut session, Some(answer.clone()), true));
+        assert_eq!(session.messages.len(), 1);
+        session.status = "complete".into();
+        assert!(commit_model_answer(&mut session, Some(answer), true));
+        assert_eq!(session.messages.len(), 2);
     }
     #[test]
     fn cancellation_before_registration_stops_only_its_exact_run() {

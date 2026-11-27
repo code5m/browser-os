@@ -470,12 +470,22 @@ fn write_record(
     scope: &str,
     plaintext: &[u8],
     limit: usize,
+    allow_missing_sealed: bool,
 ) -> Result<(), String> {
     if plaintext.len() > limit {
         return Err("AGENT_SESSION_LIMIT".into());
     }
     let roots = [directory];
     let expected = safe_paths::read_versioned(path, &roots, limit + OVERHEAD)?;
+    let marked = sealed_marker(storage, scope, false)?;
+    if marked {
+        if expected.as_ref().is_some_and(|record| !record.bytes.starts_with(PREFIX)) {
+            return Err("AGENT_CHECKPOINT_PLAINTEXT_DOWNGRADE".into());
+        }
+        if expected.is_none() && !allow_missing_sealed {
+            return Err("AGENT_CHECKPOINT_RECORD_MISSING".into());
+        }
+    }
     let secret = key(storage, true)?;
     if let Some(previous) = &expected {
         if previous.bytes.starts_with(PREFIX) {
@@ -662,7 +672,7 @@ pub(super) fn write(
     }
     let directory = private_directory(storage, "coding-sessions")?;
     let path = directory.join(format!("{id}.json"));
-    write_record(storage, &path, directory, id, plaintext, limit)
+    write_record(storage, &path, directory, id, plaintext, limit, false)
 }
 
 // One-shot production runs have their own typed namespace, but reuse the
@@ -1033,7 +1043,9 @@ pub(super) fn write_artifact(
     key(storage, true)?;
     let (directory, scope) = artifact(storage, session, name)?;
     let path = directory.join(name);
-    write_record(storage, &path, directory, &scope, bytes, limit)
+    // Journal/manifest files can be deliberately removed after a completed
+    // transaction. Session IDs, unlike these reusable artifacts, cannot.
+    write_record(storage, &path, directory, &scope, bytes, limit, true)
 }
 
 #[cfg(test)]
@@ -1083,6 +1095,18 @@ mod tests {
         std::fs::write(&path, b"legacy session").unwrap();
         write(&storage, &id, b"upgraded", 128).unwrap();
         assert_eq!(read(&storage, &id, 128).unwrap(), b"upgraded");
+        // Even the exact historically enrolled plaintext cannot replace a
+        // sealed record or be accepted by the write/migration path again.
+        let sealed = std::fs::read(&path).unwrap();
+        std::fs::write(&path, b"legacy session").unwrap();
+        assert_eq!(write(&storage, &id, b"new", 128).unwrap_err(),
+            "AGENT_CHECKPOINT_PLAINTEXT_DOWNGRADE");
+        assert_eq!(std::fs::read(&path).unwrap(), b"legacy session");
+        std::fs::write(&path, sealed).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(write(&storage, &id, b"new", 128).unwrap_err(),
+            "AGENT_CHECKPOINT_RECORD_MISSING");
+        assert!(!path.exists());
         std::fs::remove_dir_all(storage).unwrap();
     }
 
