@@ -52,7 +52,7 @@ if (typeof nodeModule.registerHooks === "function") {
 
 // useLayoutStore.showToast 用 window.setTimeout（浏览器环境），Node 下补最小桩
 let allowSessionDelete = true;
-globalThis.window = { setTimeout: (fn, ms) => setTimeout(fn, ms), confirm: () => allowSessionDelete };
+globalThis.window = { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: id => clearTimeout(id), confirm: () => allowSessionDelete };
 
 const ROOT = new URL("..", import.meta.url).pathname;
 
@@ -231,6 +231,20 @@ assert(hasCall("tabClose"), "普通关闭必须调用 bridge.tabClose 完成生�
 assert(!browser.tabs.find((t) => t.id === "tab-1"), "普通关闭后 tab-1 必须从页签列表移除");
 // 全程不得有任何确认框相关状态
 assert(browser.recentlyClosed.length === rcBefore + 1, "普通关闭不得产生额外副作用");
+
+// A rejected native close is not a successful close receipt.
+browser.tabs.push({ id: "tab-failed", url: "https://fail.example.com", title: "关闭失败" });
+const rcBeforeFailure = browser.recentlyClosed.length;
+const closeMock = bridge.tabClose;
+bridge.tabClose = async id => { calls.push(["tabClose", id]); throw new Error("NATIVE_CLOSE_UNCONFIRMED"); };
+calls.length = 0;
+try { await browser.tabClose("tab-failed"); } catch {}
+assert(browser.tabs.some(t => t.id === "tab-failed"), "原生关闭失败须保留页签所有权");
+assert(browser.recentlyClosed.length === rcBeforeFailure, "未确认关闭不得进入最近关闭记录");
+assert(!hasCall("sessionSave") && !hasCall("sessionDiscard"), "关闭失败不得保存或删除草稿");
+bridge.tabClose = closeMock;
+// Remove the fixture only; no successful-close counter is affected.
+browser.tabs.splice(browser.tabs.findIndex(t => t.id === "tab-failed"), 1);
 
 // ================= 2) 多次普通关闭只写内存栈，不触发任何持久化 =================
 browser.tabs.push({ id: "tab-2", url: "https://b.example.com", title: "页面B" });

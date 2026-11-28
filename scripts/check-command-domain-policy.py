@@ -313,6 +313,18 @@ def detect_violations(files: dict) -> list[str]:
         if f"bridge::{cmd}" not in main_rs:
             v.append(f"CMD_HANDLER_NOT_REGISTERED:{cmd}")
 
+    reviewed_body = rust_fn_body(bridge, "run_reviewed_command")
+    run_cmd_body = rust_fn_body(bridge, "run_command")
+    # The native owner path must return the reviewed execution result;
+    # finding a helper declaration alone cannot satisfy the boundary.
+    reviewed_call = re.fullmatch(
+        r'\s*\{\s*check_invocation_source\(&webview,\s*"run_command",\s*None,\s*&app\)\?;\s*'
+        r'run_reviewed_command\(app,\s*id,\s*values,\s*expected_revision,\s*None,\s*\|\|\s*Ok\(\(\)\)\)'
+        r'\s*\.map\(\|started\|\s*started\.snapshot\(\)\)\s*\}\s*',
+        run_cmd_body,
+    )
+    delegated = bool(reviewed_body or "run_reviewed_command(" in run_cmd_body)
+    owner_body = reviewed_body if reviewed_call else ""
     for cmd in RUN_COMMANDS:
         cmd_body = rust_fn_body(bridge, cmd)
         if not cmd_body:
@@ -322,8 +334,15 @@ def detect_violations(files: dict) -> list[str]:
                 v.append(f"CMD_SHELL_CONCAT_PRESENT:{cmd}:{bad}")
         if "check_invocation_source" not in cmd_body:
             v.append(f"CMD_SOURCE_CHECK_MISSING:{cmd}")
-        if "check_id(" not in cmd_body:
+        id_body = owner_body if delegated else cmd_body
+        if "check_id(" not in id_body:
             v.append(f"CMD_ID_VALIDATION_MISSING:{cmd}")
+        if delegated and owner_body:
+            for bad in SHELL_FORBIDDEN:
+                # Distinguish process spawn from before_spawn(), the durable
+                # admission callback. Direct or method spawn remains forbidden.
+                if (re.search(r"\bspawn\s*\(", owner_body) if bad == "spawn(" else bad in owner_body):
+                    v.append(f"CMD_SHELL_CONCAT_PRESENT:{cmd}:{bad}")
         if f'"{cmd}"' not in acl:
             v.append(f"CMD_ACL_MISSING:{cmd}")
         if f"bridge::{cmd}" not in main_rs:
@@ -336,11 +355,24 @@ def detect_violations(files: dict) -> list[str]:
 
     # 12.8.1 焦点 4：run_command 必须把 argv 构造与进程启动交给
     #        `script_runner::start_command`；在命令层另起 `Command::new` 即新建执行旁路。
-    run_cmd_body = rust_fn_body(bridge, "run_command")
-    if run_cmd_body and "script_runner::start_command" not in run_cmd_body:
-        v.append(
-            "CMD_RUN_COMMAND_NOT_REUSING_RUNNER:run_command 未调用 script_runner::start_command"
-        )
+    if run_cmd_body:
+        if delegated:
+            anchors = (
+                "check_id(", "get_enabled_snippet(", "expected_revision.len()",
+                "expected_revision != snippet_revision(&snippet)?",
+                "SNIPPET_REVIEW_CHANGED",
+                "script_runner::start_command_owned_with_admission(",
+            )
+            positions = [owner_body.find(anchor) for anchor in anchors]
+            runner_call = bool(owner_body and all(p >= 0 for p in positions)
+                               and positions == sorted(positions)
+                               and re.search(r'if expected_revision != snippet_revision\(&snippet\)\?\s*\{\s*return Err\("SNIPPET_REVIEW_CHANGED"\.into\(\)\);\s*\}', owner_body))
+            # Explicitly reject direct execution in the public facade.
+            runner_call = runner_call and "script_runner::" not in run_cmd_body and "Command::new" not in run_cmd_body
+        else:
+            runner_call = "script_runner::start_command(" in run_cmd_body
+        if not runner_call:
+            v.append("CMD_RUN_COMMAND_NOT_REUSING_RUNNER:run_command 未经统一审批执行入口")
 
     # 12.8.2 焦点 6：执行层全文禁 shell 拼接形态（黑名单不含 `spawn(`，见常量注释）
     if runner_code.strip():
@@ -557,11 +589,25 @@ def run_self_test(root: Path) -> int:
         "domain", "CMD_QUOTE_WRAP_PRESENT")
 
     # 12. 命令层另起执行旁路（M2-6-fix1 / 复核 P1-3）
-    add("run_command 不再复用 script_runner::start_command",
+    add("run_command 不再复用受审命令执行入口",
         mutate(bridge=good["bridge"].replace(
-            "crate::script_runner::start_command(",
+            "crate::script_runner::start_command_owned_with_admission(",
             "crate::script_runner::start_argv_run(", 1)),
         "bridge", "CMD_RUN_COMMAND_NOT_REUSING_RUNNER")
+    add("公开命令绕过受审 owner",
+        mutate(bridge=good["bridge"].replace(
+            "run_reviewed_command(app, id, values, expected_revision, None, || Ok(()))",
+            "unreviewed_command(app, id, values)", 1)),
+        "bridge", "CMD_RUN_COMMAND_NOT_REUSING_RUNNER")
+    add("受审 owner 缺少版本比较",
+        mutate(bridge=good["bridge"].replace(
+            "expected_revision != snippet_revision(&snippet)?", "false", 1)),
+        "bridge", "CMD_RUN_COMMAND_NOT_REUSING_RUNNER")
+    reviewed = rust_fn_body(good["bridge"], "run_reviewed_command")
+    add("受审 owner 缺少 ID 校验",
+        mutate(bridge=good["bridge"].replace(reviewed,
+            reviewed.replace('crate::images::check_id(&id, "命令片段 id")?;', ""), 1)),
+        "bridge", "CMD_ID_VALIDATION_MISSING")
 
     # 13. 执行层出现 shell 拼接
     add("script_runner.rs 出现 sh -c",

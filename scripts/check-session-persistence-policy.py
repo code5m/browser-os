@@ -33,6 +33,7 @@ import argparse
 import re
 import sys
 from pathlib import Path
+from native_bridge_owner_sources import tab_close_owner_body
 
 SESSION_COMMANDS = (
     "session_save",
@@ -236,8 +237,11 @@ def detect_violations(files: dict[str, str]) -> list[str]:
         v.append("SP_POLICY_WRITER_SERIALIZATION_MISSING")
     if "shutdown_requested" not in policy_setter or "SESSION_EXIT_ALREADY_ACCEPTED" not in policy_setter:
         v.append("SP_POLICY_AFTER_ACCEPTANCE_ALLOWED")
-    close_body = rust_fn_body(bridge, "close_tab")
-    if "session_drafts" not in close_body or "remove" not in close_body:
+    close_body = tab_close_owner_body(bridge, rust_fn_body)
+    cleanup = re.search(r"\bsession_drafts\s*\.\s*lock\s*\(\s*\)\s*\.\s*unwrap\s*\(\s*\)\s*\.\s*remove\s*\(\s*id\s*\)", close_body)
+    delegated = bool(rust_fn_body(bridge, "close_tab_admitted"))
+    receipt = close_body.find("close_result?;")
+    if not cleanup or (delegated and not 0 <= receipt < cleanup.start()):
         v.append("SP_DRAFT_ON_CLOSE_MISSING")
     shutdown_body = rust_fn_body(bridge, "register_shutdown_tasks")
     if '"close-tabs"' not in shutdown_body:
@@ -654,7 +658,18 @@ def run_self_test() -> int:
     if baseline:
         failures.append(f"good fixture should be clean, got {baseline}")
 
+    delegated_bridge = GOOD_BRIDGE.replace(
+        "fn close_tab(app: &AppHandle, id: &str) -> Result<(), String> {",
+        "fn close_tab(app: &AppHandle, id: &str) -> Result<(), String> { close_tab_admitted(app, id, None) }\n"
+        "fn close_tab_admitted(app: &AppHandle, id: &str) -> Result<(), String> {\n    let close_result = native.close_tab(id);\n    close_result?;",
+    )
+    delegated_good = dict(good, bridge=delegated_bridge)
+    if delegated_bridge == GOOD_BRIDGE or detect_violations(delegated_good):
+        failures.append("delegated close owner good fixture rejected")
     cases: list[tuple[str, dict, str]] = [
+        ("关闭委托被绕过", {"bridge": delegated_bridge.replace("close_tab_admitted(app, id, None)", "Ok(())")}, "SP_DRAFT_ON_CLOSE_MISSING"),
+        ("原生关闭失败仍清理", {"bridge": delegated_bridge.replace("close_result?;", "let _ = close_result;")}, "SP_DRAFT_ON_CLOSE_MISSING"),
+        ("实际 owner 清理缺失", {"bridge": delegated_bridge.replace("state.session_drafts.lock().unwrap().remove(id);", "")}, "SP_DRAFT_ON_CLOSE_MISSING"),
         ("DTO 含 cookie 字段",
          {"domain": GOOD_DOMAIN.replace("pub url: String,\n    pub resources", "pub cookie: String,\n    pub resources")},
          "SP_DTO_BLACKLIST_FIELD"),

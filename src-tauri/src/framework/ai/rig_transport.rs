@@ -298,6 +298,7 @@ pub(super) fn turn(
     request: CompletionRequest,
     cancelled: &(dyn Fn() -> bool + Sync),
 ) -> Result<CompletionResponse, String> {
+    crate::shared::blocking::require_off_ui_thread()?;
     let _permit = acquire_provider_permit(&profile.id, cancelled)?;
     validate(profile)?;
     if profile.kind != "chat" {
@@ -315,6 +316,7 @@ pub(super) fn turn(
     ))
     .map_err(|_| "AI_ENDPOINT_INVALID")?;
     let max_calls = if request.tools.is_empty() { 0 } else { 8 };
+    crate::shared::blocking::require_off_ui_thread()?;
     tauri::async_runtime::block_on(async {
         let client = reqwest::Client::builder()
             .https_only(true)

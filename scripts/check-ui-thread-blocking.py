@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Reject APIs that can block the Tauri/GTK UI event loop.
 
-This gate intentionally covers APIs that are never acceptable in this desktop
-application. Broader synchronous command latency (filesystem, subprocess and
+This gate rejects blocking APIs on the GUI thread. Two reviewed worker-only
+runtime bridges require a fail-closed native thread-identity guard. Broader synchronous command latency (filesystem, subprocess and
 IPC waits) is audited separately because those calls require call-path context.
 """
 
@@ -44,15 +44,53 @@ def rust_files(root: Path) -> list[Path]:
     return sorted(files)
 
 
+# This is not a file-level exemption: only the exact guarded call is accepted.
+WORKER_BRIDGES = {
+    "src-tauri/src/framework/ai/rig_transport.rs",
+    "src-tauri/src/native_visibility_review.rs",
+}
+GUARD_CALL = "crate::shared::blocking::require_off_ui_thread()?;"
+RUNTIME_CALL = "tauri::async_runtime::block_on(async {"
+GUARD_IMPLEMENTATION = "staticUI_THREAD_ID:OnceLock<ThreadId>=OnceLock::new();pub(crate)fnregister_ui_thread(){UI_THREAD_ID.set(thread::current().id()).expect(\"nativeUIthreadregisteredonce\");}fnensure_off_ui_thread(ui_thread:Option<ThreadId>)->Result<(),String>{matchui_thread{Some(ui)ifui!=thread::current().id()=>Ok(()),_=>Err(\"UI_THREAD_BLOCKING_FORBIDDEN\".into()),}}pub(crate)fnrequire_off_ui_thread()->Result<(),String>{ensure_off_ui_thread(UI_THREAD_ID.get().copied())}"
+
+
+def worker_guard_registered(root: Path) -> bool:
+    source = root / "src-tauri/src"
+    try:
+        main = (source / "main.rs").read_text(encoding="utf-8")
+        boundary = (source / "shared/blocking.rs").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    def code_only(value: str) -> str:
+        return re.sub(r"\s+", "", "\n".join(
+            line.split("//", 1)[0] for line in value.splitlines()
+        ))
+    return (
+        "fnmain(){shared::blocking::register_ui_thread();" in code_only(main)
+        and GUARD_IMPLEMENTATION in code_only(boundary)
+    )
+
+
 def scan(root: Path) -> list[tuple[str, Path, int]]:
     hits: list[tuple[str, Path, int]] = []
+    guarded = worker_guard_registered(root)
     for path in rust_files(root):
-        text = path.read_text(encoding="utf-8")
-        for line_no, line in enumerate(text.splitlines(), 1):
+        lines = path.read_text(encoding="utf-8").splitlines()
+        relative = path.relative_to(root)
+        for line_no, line in enumerate(lines, 1):
             code = line.split("//", 1)[0]
             for name, pattern in RULES:
                 if pattern.search(code):
-                    hits.append((name, path.relative_to(root), line_no))
+                    if (
+                        guarded
+                        and name == "UIBLOCK_RUNTIME_BLOCK_ON"
+                        and relative.as_posix() in WORKER_BRIDGES
+                        and code.strip() == RUNTIME_CALL
+                        and line_no > 1
+                        and lines[line_no - 2].strip() == GUARD_CALL
+                    ):
+                        continue
+                    hits.append((name, relative, line_no))
     return hits
 
 
@@ -91,7 +129,40 @@ pub async fn choose(app: AppHandle) -> Result<(), String> {
             if expected[name] not in codes:
                 print(f"UI_THREAD_BLOCKING_SELF_TEST=FAIL missed {name}", file=sys.stderr)
                 return 1
-    print("UI_THREAD_BLOCKING_SELF_TEST=PASS (1 good + 3 bad fixtures)")
+        main = source / "main.rs"
+        main.write_text("fn main() { shared::blocking::register_ui_thread(); }", encoding="utf-8")
+        boundary = source / "shared/blocking.rs"
+        boundary.parent.mkdir(parents=True)
+        boundary.write_text(GUARD_IMPLEMENTATION, encoding="utf-8")
+        worker = root / "src-tauri/src/framework/ai/rig_transport.rs"
+        worker.parent.mkdir(parents=True)
+        reviewed = GUARD_CALL + "\n" + RUNTIME_CALL + "\n    future.await\n})"
+        def worker_hit() -> bool:
+            return any(hit == worker.relative_to(root) for _, hit, _ in scan(root))
+        worker.write_text(reviewed, encoding="utf-8")
+        if worker_hit():
+            print("UI_THREAD_BLOCKING_SELF_TEST=FAIL guarded worker rejected", file=sys.stderr)
+            return 1
+        for broken in (
+            RUNTIME_CALL,
+            reviewed + "\nrt.block_on(other());",
+            GUARD_CALL + "\nrt.block_in_place(work);",
+        ):
+            worker.write_text(broken, encoding="utf-8")
+            if not worker_hit():
+                print("UI_THREAD_BLOCKING_SELF_TEST=FAIL unsafe worker accepted", file=sys.stderr)
+                return 1
+        worker.write_text(reviewed, encoding="utf-8")
+        main.write_text("fn main() {}", encoding="utf-8")
+        if not worker_hit():
+            print("UI_THREAD_BLOCKING_SELF_TEST=FAIL missing registration accepted", file=sys.stderr)
+            return 1
+        main.write_text("fn main() { shared::blocking::register_ui_thread(); }", encoding="utf-8")
+        boundary.write_text(GUARD_IMPLEMENTATION.replace("ui!=", "ui=="), encoding="utf-8")
+        if not worker_hit():
+            print("UI_THREAD_BLOCKING_SELF_TEST=FAIL inverted guard accepted", file=sys.stderr)
+            return 1
+    print("UI_THREAD_BLOCKING_SELF_TEST=PASS (original + guarded worker fixtures)")
     return 0
 
 

@@ -16,6 +16,10 @@ export const useGridStore = defineStore("grid", () => {
   const gridOpen = ref(false);
   const gridStarting = ref(false);
   const gridStartupError = ref("");
+  // The Owner publishes a diagnostic projection, never a native success receipt.
+  function setGridStartupError(message: string) {
+    gridStartupError.value = message;
+  }
   const gridSession = ref(0);
   // Archive identity follows content-changing host intents, not resizing.
   const gridArchiveRevision = ref(0);
@@ -196,7 +200,7 @@ export const useGridStore = defineStore("grid", () => {
     // Browser absent（framework-only）→ 直接拒绝，grid-child 恒为 0。
     // 禁止改写成 profile 名判断 / 环境变量判断 / browser 布尔第二真源。
     if (!isGridResourceAllowed()) {
-      gridStartupError.value = "宫格功能尚未激活；请在能力管理中检查 Grid 状态";
+      setGridStartupError("宫格功能尚未激活；请在能力管理中检查 Grid 状态");
       bridge.debugLog("buildGrid refused: grid capability not ACTIVE (resource isolation gate)");
       return;
     }
@@ -208,7 +212,7 @@ export const useGridStore = defineStore("grid", () => {
     const previouslyOpen = gridOpen.value;
     gridStarting.value = true;
     gridRecoveryStates.value = null;
-    gridStartupError.value = "";
+    setGridStartupError("");
     try {
     const n = gridCount.value;
     gridSession.value += 1;
@@ -273,11 +277,11 @@ export const useGridStore = defineStore("grid", () => {
       // no longer published. Keep the explicit close path available and do
       // not silently recreate that partial topology.
       if (partial) gridCleanupUnconfirmed.value = true;
-      gridStartupError.value = reason.includes("GRID_MEMORY_GUARD")
+      setGridStartupError(reason.includes("GRID_MEMORY_GUARD")
         ? "内存不足以安全启动宫格。请先尝试 2 格，或关闭其他应用后重试。"
         : partial
           ? "宫格重建结果部分完成或未知；已确认的格子可能仍在运行。请显式关闭并核对后再重建。"
-          : "原生宫格启动失败。请核对后手动重试。";
+          : "原生宫格启动失败。请核对后手动重试。");
       bridge.debugLog(`buildGrid failed: ${reason}`);
       layout.showToast(gridStartupError.value);
     } finally {
@@ -314,7 +318,7 @@ export const useGridStore = defineStore("grid", () => {
         if (/GRID_BUILD_PARTIAL|GRID_REQUEST_OUTCOME_UNKNOWN|GRID_WORKER_FAILED|GRID_OPEN_TARGET_CHANGED|GRID_RENDERER_READY_TIMEOUT/.test(reason)) {
           gridCleanupUnconfirmed.value = true;
           gridRecoveryStates.value = null;
-          gridStartupError.value = "单格导航结果待核对，不会自动重放；请核对原生状态。";
+          setGridStartupError("单格导航结果待核对，不会自动重放；请核对原生状态。");
           gridOpen.value = false;
         }
         layout.showToast(gridStartupError.value || "单格导航未确认，请检查原生状态后手动操作。");
@@ -442,15 +446,15 @@ export const useGridStore = defineStore("grid", () => {
         await bridge.closeGrid();
       } catch (error) {
         gridCleanupUnconfirmed.value = true;
-        gridStartupError.value = /GRID_CLOSE_CLEANUP_PENDING/.test(String(error))
+        setGridStartupError(/GRID_CLOSE_CLEANUP_PENDING/.test(String(error))
           ? "宫格进程域仍在回收中，请重新核对关闭状态"
-          : "原生宫格关闭未确认，请重新核对；不会自动重试";
+          : "原生宫格关闭未确认，请重新核对；不会自动重试");
         layout.showToast(gridStartupError.value);
         throw error;
       }
       gridCleanupUnconfirmed.value = false;
       gridRecoveryStates.value = null;
-      gridStartupError.value = "";
+      setGridStartupError("");
       layout.gridToolbarOpen = false;
       gridRects.splice(0, gridRects.length);
       if (browser.activeTabId) {
@@ -497,11 +501,11 @@ export const useGridStore = defineStore("grid", () => {
         // This only removes the UI interlock; subsequent native admission
         // still verifies the new request's identities. No automatic build.
         gridCleanupUnconfirmed.value = false;
-        gridStartupError.value = "";
+        setGridStartupError("");
         layout.showToast("当前无残留宫格；可手动重新加载");
       } else {
         gridCleanupUnconfirmed.value = true;
-        gridStartupError.value = "仍有原生宫格或待清理状态，请核对后显式关闭";
+        setGridStartupError("仍有原生宫格或待清理状态，请核对后显式关闭");
       }
     } catch {
       if (epoch === gridEpoch) {

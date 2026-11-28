@@ -150,27 +150,57 @@ def check_native_image_create(files: dict[str, str]) -> list[str]:
         violations.append("IMG_NATIVE_CREATE_CLEANUP_MISSING:linux")
 
     windows_create = rust_fn_body(windows, "create_new_file")
-    windows_rename = compact_code(rust_fn_body(windows, "rename_no_replace"))
+    windows_stage = rust_fn_body(windows, "open_stage_at")
+    windows_rename = compact_code(rust_fn_body(windows, "rename_at"))
+    # The new private stage is a pinned, non-shared handle. Publication must
+    # not reopen a temporary path, weaken DACL or overwrite an existing image.
     if not calls_in_order(
         windows_create,
         "open_authorized_root(parent_path, roots)?",
         "open_destination_directory(parent_path)?",
         "authorize_with_root(&parent, &root)?",
-        "open_child_at(",
-        "&parent, &temp,",
-        "FILE_CREATE,",
+        "let mut stage = open_stage_at(&parent, &temp)?",
         "stage.write_all(content)?",
         "stage.sync_all()?",
-        "rename_no_replace(&parent_path.join(&temp), parent_path, filename, roots)",
+        "stage.arm_cleanup().map_err(io::Error::other)?",
+        "stage.prepare_publish().map_err(io::Error::other)?",
+        "rename_at(&stage, &parent, filename, false)?",
+        "stage.published = true",
+    ) or not calls_in_order(
+        windows_stage,
+        "PrivateFileSecurity::new()?",
+        "open_object_with_security_at(",
+        "parent, filename, ACCESS, 0, FILE_CREATE, false, security.as_ptr()",
+        "published: false",
+        "audit_private_file(&stage.file)?",
+        "Ok(stage)",
     ) or not all(token in windows_rename for token in (
-        "authorize_with_root(&source,&source_root)?",
-        "authorize_with_root(&destination,&destination_root)?",
-        "ReplaceIfExists:false",
-        "RootDirectory=destination.as_raw_handle()",
-        "NtSetInformationFile(",
+        "ReplaceIfExists:replace",
+        "RootDirectory=parent.as_raw_handle()",
+        "NtSetInformationFile(source.as_raw_handle()",
+        "ifstatus<0",
+    )) or any(token in compact_code(windows_create) for token in (
+        "rename_no_replace(", "rename_replace_at(", "fs::write(", "File::create(",
     )):
         violations.append("IMG_NATIVE_CREATE_BOUNDARY_MISSING:windows")
-    if not calls_in_order(windows_create, "if result.is_err()", "remove_regular_at(&parent, &temp)"):
+
+    # Check RAII's actual Drop implementation, not a similarly named helper
+    # elsewhere. It must delete an unpublished stage by its original handle.
+    drop_impl = re.search(r"impl\s+Drop\s+for\s+StagedWrite\s*\{", windows)
+    drop_body = rust_fn_body(windows[drop_impl.end():], "drop") if drop_impl else ""
+    arm = compact_code(rust_fn_body(windows, "arm_cleanup"))
+    prepare = compact_code(rust_fn_body(windows, "prepare_publish"))
+    disposition = compact_code(rust_fn_body(windows, "set_delete_disposition"))
+    delete = compact_code(rust_fn_body(windows, "delete_on_close"))
+    if not calls_in_order(drop_body, "if !self.published", "delete_on_close(&self.file)") or not all((
+        "set_delete_disposition(&self.file,true)" in arm,
+        "set_delete_disposition(&self.file,false)" in prepare,
+        "DeleteFile:delete" in disposition,
+        "SetFileInformationByHandle(file.as_raw_handle()" in disposition,
+        "DeleteFile:true" in delete,
+        "SetFileInformationByHandle(file.as_raw_handle()" in delete,
+        calls_in_order(windows_create, "stage.arm_cleanup()", "stage.prepare_publish()", "rename_at(", "stage.published = true"),
+    )):
         violations.append("IMG_NATIVE_CREATE_CLEANUP_MISSING:windows")
     return violations
 
@@ -446,7 +476,8 @@ def run_self_test(root: Path) -> int:
     ))
     samples.append((
         "Windows 原子 rename 允许覆盖旧文件",
-        mutate(safe_paths_windows=good["safe_paths_windows"].replace("ReplaceIfExists: false", "ReplaceIfExists: true")),
+        mutate(safe_paths_windows=good["safe_paths_windows"].replace(
+            "rename_at(&stage, &parent, filename, false)?;", "rename_at(&stage, &parent, filename, true)?;", 1)),
         "IMG_NATIVE_CREATE_BOUNDARY_MISSING:windows",
     ))
     samples.append((
@@ -456,7 +487,30 @@ def run_self_test(root: Path) -> int:
     ))
     samples.append((
         "Windows stage 失败后未清理",
-        mutate(safe_paths_windows=good["safe_paths_windows"].replace("remove_regular_at(&parent, &temp);", "")),
+        mutate(safe_paths_windows=good["safe_paths_windows"].replace("delete_on_close(&self.file);", "", 1)),
+        "IMG_NATIVE_CREATE_CLEANUP_MISSING:windows",
+    ))
+    samples.append((
+        "Windows stage 不再私有且非共享",
+        mutate(safe_paths_windows=good["safe_paths_windows"].replace("security.as_ptr(),", "std::ptr::null_mut(),", 1)),
+        "IMG_NATIVE_CREATE_BOUNDARY_MISSING:windows",
+    ))
+    samples.append((
+        "Windows stage 未同步便发布",
+        mutate(safe_paths_windows=good["safe_paths_windows"].replace("stage.sync_all()?;", "", 1)),
+        "IMG_NATIVE_CREATE_BOUNDARY_MISSING:windows",
+    ))
+    samples.append((
+        "Windows stage 错误地提前标记发布",
+        mutate(safe_paths_windows=good["safe_paths_windows"].replace(
+            "rename_at(&stage, &parent, filename, false)?;\n    stage.published = true;",
+            "stage.published = true;\n    rename_at(&stage, &parent, filename, false)?;", 1)),
+        "IMG_NATIVE_CREATE_BOUNDARY_MISSING:windows",
+    ))
+    samples.append((
+        "Windows stage 未设置句柄清理保护",
+        mutate(safe_paths_windows=good["safe_paths_windows"].replace(
+            "stage.arm_cleanup().map_err(io::Error::other)?;", "", 1)),
         "IMG_NATIVE_CREATE_CLEANUP_MISSING:windows",
     ))
     samples.append((

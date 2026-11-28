@@ -19,8 +19,9 @@ import { fileURLToPath } from "node:url";
 
 // 宽 bridge 桩：任何方法都返回 Promise(undefined)，使 store 生命周期动作可在 headless 下跑通
 const BRIDGE_STUB =
-  "export const bridge = new Proxy({}, { get: () => async () => undefined });" +
-  "export const M0Config = {};";
+  // Preserve real validation/contract exports; mock transport only.
+  "export * from " + JSON.stringify(new URL("../src/bridge.ts", import.meta.url).href) + ";" +
+  "export const bridge = new Proxy({}, { get: () => async () => undefined });";
 
 function resolveWithExt(specifier, context, next) {
   if (specifier === "../bridge" || specifier.endsWith("/bridge")) {
@@ -51,7 +52,7 @@ if (typeof nodeModule.registerHooks === "function") {
 }
 
 // 最小浏览器环境桩
-globalThis.window = { setTimeout: (fn, ms) => setTimeout(fn, ms), addEventListener: () => {}, __TAURI_INTERNALS__: undefined };
+globalThis.window = { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: id => clearTimeout(id), addEventListener: () => {}, removeEventListener: () => {}, __TAURI_INTERNALS__: undefined };
 const lsWrites = [];
 globalThis.localStorage = {
   _s: {},
@@ -187,8 +188,9 @@ if (browser) {
   check("toggleAiNav() 打开", browser.aiNavOpen === true);
   browser.toggleAiNav();
   check("toggleAiNav() 再次关闭", browser.aiNavOpen === false);
-  const before = browser.aiNavOpen;
-  try { browser.gotoAI({ name: "x", url: "https://example.com", region: "国内" }); } catch { /* openBrowser 触发 bridge 桩，aiNavOpen 已在入口同步置 false */ }
+  browser.toggleAiNav();
+  check("gotoAI 前 AI 导航实际打开", browser.aiNavOpen === true);
+  try { await browser.gotoAI({ name: "x", url: "https://example.com", region: "国内" }); } catch { /* simulated native transport may reject; the UI close still must occur */ }
   check("gotoAI 关闭 aiNavOpen（writer 唯一）", browser.aiNavOpen === false);
 
 }
@@ -205,9 +207,9 @@ if (grid) {
 
 if (layout && bookmark) {
   // 6A-2 面板各自独立、不误合并
-  const sb0 = layout.sidebarOpen;
+  const sb0 = layout.sidebarOpen, bmBeforeSidebar = bookmark.panelOpen;
   layout.toggleSidebar();
-  check("toggleSidebar 仅切 sidebarOpen，不动 bookmark", layout.sidebarOpen === !sb0 && bookmark.panelOpen === bookmark.panelOpen);
+  check("toggleSidebar 仅切 sidebarOpen，不动 bookmark", layout.sidebarOpen === !sb0 && bookmark.panelOpen === bmBeforeSidebar);
 
   const clip0 = layout.clipOpen;
   layout.toggleClipboard();
@@ -218,9 +220,9 @@ if (layout && bookmark) {
   check("toggleBrowserDock 切 browserDockOpen 且子页签=files", layout.browserDockOpen === !dock0 && layout.browserDockTab === "files");
 
   // bookmark 面板独立，不污染 layout 面板
-  const bm0 = bookmark.panelOpen;
+  const bm0 = bookmark.panelOpen, clipBeforeBookmark = layout.clipOpen, sidebarBeforeBookmark = layout.sidebarOpen;
   bookmark.togglePanel();
-  check("togglePanel 仅切 bookmark.panelOpen", bookmark.panelOpen === !bm0 && layout.clipOpen === layout.clipOpen && layout.sidebarOpen === layout.sidebarOpen);
+  check("togglePanel 仅切 bookmark.panelOpen", bookmark.panelOpen === !bm0 && layout.clipOpen === clipBeforeBookmark && layout.sidebarOpen === sidebarBeforeBookmark);
   // bmPanelOpen 派生：bookmark 开 + 浏览器视图 == 真
   layout.setView("browser");
   check("bmPanelOpen 派生 = panelOpen && mainView==='browser'", bookmark.panelOpen === true && layout.mainView === "browser");

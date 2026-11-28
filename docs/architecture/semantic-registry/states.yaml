@@ -180,6 +180,564 @@ owner_implementations:
 
 states:
 
+  # ---------------- BrowserOS V2 native owner / receipt state ----------------
+  # Current facts from the V2 owner implementations; no activation or native receipt inferred from UI state.
+  isolatedRendererMode:
+    owner: useBrowserStore
+    single_owner_required: true
+    meaning: "原生页签快照确认的独立渲染模式"
+    not_meaning:
+      - "不是用户偏好，也不自行授予资源权限"
+    kind: stored
+    derived: false
+    canonical_writer:
+      - "useBrowserStore.recoverNativeTabs"
+    forbidden_writers:
+      - "非 owner 组件或其他 store"
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  rendererStates:
+    owner: useBrowserStore
+    single_owner_required: true
+    meaning: "按逻辑页签 ID 缓存最近原生渲染状态，失联或身份变化时标为 unknown"
+    not_meaning:
+      - "不是窗口实际可见性或页面加载成功的证明"
+    kind: stored
+    derived: false
+    canonical_writer:
+      - "useBrowserStore.clearRendererState"
+      - "useBrowserStore.refreshRendererState"
+      - "useBrowserStore.recoverNativeTabs"
+      - "useBrowserStore.parkRenderer"
+      - "useBrowserStore.reopenRenderer"
+      - "useBrowserStore.retireRenderer"
+      - "useBrowserStore.deactivate"
+    forbidden_writers:
+      - "非 owner 组件或其他 store"
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+    note: "Map 的 set/delete/clear 与生命周期回调由 Browser owner 持有；R9 当前只覆盖 ref 赋值。"
+
+  rendererDownloads:
+    owner: useBrowserStore
+    single_owner_required: true
+    meaning: "绑定渲染进程身份和当前连接的下载观察累计值"
+    not_meaning:
+      - "不是逐下载唯一身份、下载最终结果或可安全关闭的证明"
+    kind: stored
+    derived: false
+    canonical_writer:
+      - "useBrowserStore.clearRendererState"
+      - "useBrowserStore.refreshRendererState"
+      - "useBrowserStore.recoverNativeTabs"
+      - "useBrowserStore.deactivate"
+    forbidden_writers:
+      - "非 owner 组件或其他 store"
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+    note: "Map 更新须通过已验证原生观察，断线不得消除未知结果。"
+
+  rendererVisibilityLabels:
+    owner: useBrowserStore
+    single_owner_required: true
+    meaning: "上次原生显隐回执的只读提示投影"
+    not_meaning:
+      - "不是布局控制输入或合成器像素证据"
+    kind: stored
+    derived: false
+    canonical_writer:
+      - "useBrowserStore.clearRendererState"
+      - "useBrowserStore.refreshRendererState"
+      - "useBrowserStore.recoverNativeTabs"
+      - "useBrowserStore.deactivate"
+    forbidden_writers:
+      - "非 owner 组件或其他 store"
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+    note: "Map 变更仅供展示，不驱动窗口显隐。"
+
+  tabNativeState:
+    owner: useBrowserStore
+    single_owner_required: true
+    meaning: "本地页签执行槽状态 ready/running/unknown"
+    not_meaning:
+      - "不是原生任务终态或可重放许可"
+    kind: stored
+    derived: false
+    canonical_writer:
+      - "useBrowserStore.recoverNativeTabs"
+      - "useBrowserStore.mutateTabs"
+    forbidden_writers:
+      - "非 owner 组件或其他 store"
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  tabRecoveryRequired:
+    owner: useBrowserStore
+    single_owner_required: true
+    meaning: "原生执行权未核对时禁止新页签变更的联锁"
+    not_meaning:
+      - "不是关闭、取消或超时后释放执行权的许可"
+    kind: stored
+    derived: false
+    canonical_writer:
+      - "useBrowserStore.recoverNativeTabs"
+      - "useBrowserStore.mutateTabs"
+      - "useBrowserStore.closeTabNow"
+    forbidden_writers:
+      - "非 owner 组件或其他 store"
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  tabRecoveryMessage:
+    owner: useBrowserStore
+    single_owner_required: true
+    meaning: "页签恢复和原生核对的人类可读提示"
+    not_meaning:
+      - "不是原生执行回执或敏感日志"
+    kind: stored
+    derived: false
+    canonical_writer:
+      - "useBrowserStore.inspectNativeDomainRecovery"
+      - "useBrowserStore.requestNativeDomainRecovery"
+      - "useBrowserStore.recoverNativeTabs"
+      - "useBrowserStore.mutateTabs"
+      - "useBrowserStore.closeTabNow"
+    forbidden_writers:
+      - "非 owner 组件或其他 store"
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  tabRecoveryBusy:
+    owner: useBrowserStore
+    single_owner_required: true
+    meaning: "当前显式恢复或故障域核对是否在途"
+    not_meaning:
+      - "不是原生工作已停止"
+    kind: stored
+    derived: false
+    canonical_writer:
+      - "useBrowserStore.requestNativeDomainRecovery"
+      - "useBrowserStore.recoverNativeTabs"
+    forbidden_writers:
+      - "非 owner 组件或其他 store"
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  saveNotice:
+    owner: useGridArchiveStore
+    single_owner_required: true
+    meaning: "最近一次回复归档保存的回执提示，可能含用户选择的目录"
+    not_meaning:
+      - "不是当前提取批次的成功证明，不得自动重试未知写入"
+    kind: stored
+    derived: false
+    canonical_writer:
+      - "useGridArchiveStore.save"
+    forbidden_writers:
+      - "非 owner 组件或其他 store"
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  activeBatch:
+    owner: useGridArchiveStore
+    single_owner_required: true
+    meaning: "当前提取批次的来源身份、归档修订、数量与范围快照"
+    not_meaning:
+      - "不是允许旧结果进入新批次的可变授权"
+    kind: stored
+    derived: false
+    canonical_writer:
+      - "useGridArchiveStore.invalidate"
+      - "useGridArchiveStore.extract"
+    forbidden_writers:
+      - "非 owner 组件或其他 store"
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  canExtract:
+    owner: useGridArchiveStore
+    meaning: "当前 Grid 拓扑、忙碌、清理、布局与 capability 联锁决定的提取许可投影"
+    not_meaning:
+      - "不是独立激活授权"
+    kind: derived
+    derived: true
+    derived_from:
+      - "gridOpen"
+      - "gridBusy"
+      - "gridCleanupUnconfirmed"
+      - "gridLayoutSuspended"
+      - "mainView"
+      - "isGridResourceAllowed"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone（派生量禁止写入）
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  retryableFailed:
+    owner: useGridArchiveStore
+    meaning: "当前有效批次内仍可按原始来源重试的失败行"
+    not_meaning:
+      - "不是对已经失效文档的重放许可"
+    kind: derived
+    derived: true
+    derived_from:
+      - "failed"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone（派生量禁止写入）
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  saveable:
+    owner: useGridArchiveStore
+    meaning: "当前已选成功且未保存、结果不未知的回复集合"
+    not_meaning:
+      - "不是对未知保存结果自动重试的许可"
+    kind: derived
+    derived: true
+    derived_from:
+      - "success"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone（派生量禁止写入）
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  gridArchiveRevision:
+    owner: useGridStore
+    single_owner_required: true
+    meaning: "内容相关宿主操作变更纪元，归档批次据此失效"
+    not_meaning:
+      - "不是布局尺寸变化或原生文档唯一身份"
+    kind: stored
+    derived: false
+    canonical_writer:
+      - "useGridStore.buildGrid"
+      - "useGridStore.gridSetUrl"
+      - "useGridStore.gridSendAi"
+      - "useGridStore.closeGridOwned"
+    forbidden_writers:
+      - "非 owner 组件或其他 store"
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  gridLayoutSuspended:
+    owner: useGridStore
+    single_owner_required: true
+    meaning: "Grid 资源生命周期暂停导致的布局准入联锁"
+    not_meaning:
+      - "不是原生窗口已隐藏的证据"
+    kind: stored
+    derived: false
+    canonical_writer:
+      - "useGridStore.suspendGridResources"
+      - "useGridStore.resumeGridResources"
+    forbidden_writers:
+      - "非 owner 组件或其他 store"
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  gridCellBusy:
+    owner: useGridStore
+    single_owner_required: true
+    meaning: "单格导航操作在途的本地执行联锁"
+    not_meaning:
+      - "不是网页加载成功"
+    kind: stored
+    derived: false
+    canonical_writer:
+      - "useGridStore.gridSetUrl"
+    forbidden_writers:
+      - "非 owner 组件或其他 store"
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  gridSending:
+    owner: useGridStore
+    single_owner_required: true
+    meaning: "群发调度批次仍持有本地执行槽"
+    not_meaning:
+      - "不是提供方收到消息"
+    kind: stored
+    derived: false
+    canonical_writer:
+      - "useGridStore.gridSendAi"
+    forbidden_writers:
+      - "非 owner 组件或其他 store"
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  gridClosing:
+    owner: useGridStore
+    single_owner_required: true
+    meaning: "Grid 关闭所有者操作正在结算"
+    not_meaning:
+      - "不是进程域已回收"
+    kind: stored
+    derived: false
+    canonical_writer:
+      - "useGridStore.closeGridOwned"
+    forbidden_writers:
+      - "非 owner 组件或其他 store"
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  gridSendResults:
+    owner: useGridStore
+    single_owner_required: true
+    meaning: "各格群发脚本调度回执、未尝试或未知结果的观察"
+    not_meaning:
+      - "不是消息已发送或远端实际送达的证明"
+    kind: stored
+    derived: false
+    canonical_writer:
+      - "useGridStore.buildGrid"
+      - "useGridStore.gridSendAi"
+    forbidden_writers:
+      - "非 owner 组件或其他 store"
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+    note: "数组元素只由 gridSendAi 内部 record 回调更新。"
+
+  gridBusy:
+    owner: useGridStore
+    meaning: "启动、单格导航、群发、关闭任一在途的派生联锁"
+    not_meaning:
+      - "不是额外存储态或原生空闲证明"
+    kind: derived
+    derived: true
+    derived_from:
+      - "gridStarting"
+      - "gridCellBusy"
+      - "gridSending"
+      - "gridClosing"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone（派生量禁止写入）
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  gridCleanupUnconfirmed:
+    owner: useGridStore
+    single_owner_required: true
+    meaning: "Grid 拓扑或进程域回收未确认时禁止重建和提取的联锁"
+    not_meaning:
+      - "不是自动重试或忽略残留原生进程的许可"
+    kind: stored
+    derived: false
+    canonical_writer:
+      - "useGridStore.buildGrid"
+      - "useGridStore.gridSetUrl"
+      - "useGridStore.closeGridOwned"
+      - "useGridStore.inspectGridRecovery"
+    forbidden_writers:
+      - "非 owner 组件或其他 store"
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  gridInspecting:
+    owner: useGridStore
+    single_owner_required: true
+    meaning: "显式原生拓扑恢复核对正在进行"
+    not_meaning:
+      - "不是拓扑已为空"
+    kind: stored
+    derived: false
+    canonical_writer:
+      - "useGridStore.inspectGridRecovery"
+    forbidden_writers:
+      - "非 owner 组件或其他 store"
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  editorConflict:
+    owner: useFileStore
+    single_owner_required: true
+    meaning: "编辑覆盖层按路径与文档修订绑定的保存冲突记录"
+    not_meaning:
+      - "不是覆盖原文件的许可；不能作为持久化明文日志"
+    kind: stored
+    derived: false
+    canonical_writer:
+      - "useFileStore.inspectSaveConflict"
+      - "useFileStore.openRecoveredDraft"
+      - "useFileStore.saveRecoveredDraftAs"
+      - "useFileStore.enterDir"
+      - "useFileStore.openEditorDocument"
+      - "useFileStore.saveFile"
+      - "useFileStore.saveConflictCopy"
+    forbidden_writers:
+      - "非 owner 组件或其他 store"
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+    note: "inspectSaveConflict 使用局部 ref 别名；保存副本仅更新原冲突的 savedCopy，不重设基线。"
+
+  inlineConflict:
+    owner: useFileStore
+    single_owner_required: true
+    meaning: "行内编辑器按路径与文档修订绑定的保存冲突记录"
+    not_meaning:
+      - "不是覆盖原文件的许可；不能作为持久化明文日志"
+    kind: stored
+    derived: false
+    canonical_writer:
+      - "useFileStore.inspectSaveConflict"
+      - "useFileStore.openFileInline"
+      - "useFileStore.saveInline"
+      - "useFileStore.closeInline"
+      - "useFileStore.openDirPreview"
+      - "useFileStore.enterDir"
+      - "useFileStore.saveConflictCopy"
+    forbidden_writers:
+      - "非 owner 组件或其他 store"
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  conflictCopyBusy:
+    owner: useFileStore
+    single_owner_required: true
+    meaning: "冲突副本保存操作的单次执行联锁"
+    not_meaning:
+      - "不是原文件已更新或保存成功的证明"
+    kind: stored
+    derived: false
+    canonical_writer:
+      - "useFileStore.saveConflictCopy"
+    forbidden_writers:
+      - "非 owner 组件或其他 store"
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  activeEditorConflict:
+    owner: useFileStore
+    meaning: "当前编辑器路径和修订与冲突记录匹配时的派生投影"
+    not_meaning:
+      - "不是另一个可写冲突源"
+    kind: derived
+    derived: true
+    derived_from:
+      - "editorConflict"
+      - "editorDocumentRevision"
+      - "editorFilePath"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone（派生量禁止写入）
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  activeInlineConflict:
+    owner: useFileStore
+    meaning: "当前行内编辑路径和修订与冲突记录匹配时的派生投影"
+    not_meaning:
+      - "不是另一个可写冲突源"
+    kind: derived
+    derived: true
+    derived_from:
+      - "inlineConflict"
+      - "inlineDocumentRevision"
+      - "inlineFile"
+    canonical_writer: []
+    forbidden_writers:
+      - everyone（派生量禁止写入）
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  inlineConflictTarget:
+    owner: FilePanel.vue
+    meaning: "行内冲突另存副本的组件输入目标路径"
+    not_meaning:
+      - "不是原文档路径授权或文件写入许可"
+    kind: stored
+    derived: false
+    canonical_writer:
+      - "组件输入绑定"
+      - "activeInlineConflict.path 变化监听"
+    forbidden_writers:
+      - "非 FilePanel 组件"
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+    note: "局部 UI 输入，仅在 FilePanel；实际保存由 useFileStore 所有。"
+
+  tabHibernationBusy:
+    owner: useSettingsStore
+    single_owner_required: true
+    meaning: "原生休眠策略设置请求在途"
+    not_meaning:
+      - "不是原生策略已生效"
+    kind: stored
+    derived: false
+    canonical_writer:
+      - "useSettingsStore.setTabHibernation"
+    forbidden_writers:
+      - "非 owner 组件或其他 store"
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  tabHibernationKnown:
+    owner: useSettingsStore
+    single_owner_required: true
+    meaning: "最近一次休眠策略设置收到确认的标志"
+    not_meaning:
+      - "不是上次保存偏好必然等于原生当前设置"
+    kind: stored
+    derived: false
+    canonical_writer:
+      - "useSettingsStore.setTabHibernation"
+    forbidden_writers:
+      - "非 owner 组件或其他 store"
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+  tabHibernationError:
+    owner: useSettingsStore
+    single_owner_required: true
+    meaning: "原生休眠设置结果未确认的提示"
+    not_meaning:
+      - "不是原生策略失败终态或自动重试许可"
+    kind: stored
+    derived: false
+    canonical_writer:
+      - "useSettingsStore.setTabHibernation"
+    forbidden_writers:
+      - "非 owner 组件或其他 store"
+    duplicate_names: []
+    adr_required: false
+    status: CURRENT_FACT
+
+
   # ---------------- View Navigation ----------------
   mainView:
     owner: useLayoutStore
@@ -420,14 +978,14 @@ states:
   gridStartupError:
     owner: useGridStore
     single_owner_required: true
-    meaning: 最近一次原生 Grid 启动失败的非敏感人类可读信息；成功或再次启动时清空
+    meaning: 最近一次原生 Grid 启动、导航、关闭或恢复核对的非敏感提示；仅按对应操作回执更新或清空
     not_meaning:
       - 真实 WebView 页面是否加载成功（不得由原生创建成功推断）
       - 永久诊断记录与持久化存储
     kind: stored
     derived: false
     canonical_writer:
-      - useGridStore.buildGrid
+      - useGridStore.setGridStartupError
     forbidden_writers:
       - components/**
       - useLayoutStore

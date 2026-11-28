@@ -1988,6 +1988,7 @@ fn run_m0_driver(app: tauri::AppHandle, cfg: bridge::M0Config) {
 }
 
 fn main() {
+    shared::blocking::register_ui_thread();
     // The one-shot Linux domain guardian must never enter Tauri, GTK,
     // application plugins, profile migration or the single-instance path.
     #[cfg(target_os = "linux")]

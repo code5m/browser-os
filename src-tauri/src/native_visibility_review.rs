@@ -196,6 +196,7 @@ impl Review {
             .base
             .join(route)
             .map_err(|_| "VISIBILITY_REVIEW_BASE_INVALID")?;
+        crate::shared::blocking::require_off_ui_thread()?;
         tauri::async_runtime::block_on(async {
             let reply = client
                 .post(endpoint)

@@ -7,6 +7,27 @@
 //! This bounds concurrency; it does not make a blocking OS syscall cancellable.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::OnceLock;
+use std::thread::{self, ThreadId};
+
+static UI_THREAD_ID: OnceLock<ThreadId> = OnceLock::new();
+
+pub(crate) fn register_ui_thread() {
+    UI_THREAD_ID
+        .set(thread::current().id())
+        .expect("native UI thread registered once");
+}
+
+fn ensure_off_ui_thread(ui_thread: Option<ThreadId>) -> Result<(), String> {
+    match ui_thread {
+        Some(ui) if ui != thread::current().id() => Ok(()),
+        _ => Err("UI_THREAD_BLOCKING_FORBIDDEN".into()),
+    }
+}
+
+pub(crate) fn require_off_ui_thread() -> Result<(), String> {
+    ensure_off_ui_thread(UI_THREAD_ID.get().copied())
+}
 
 pub(crate) struct BlockingLane {
     active: AtomicUsize,
@@ -82,6 +103,17 @@ mod tests {
     use super::*;
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn synchronous_runtime_bridge_rejects_ui_or_unregistered_thread() {
+        assert!(ensure_off_ui_thread(None).is_err());
+        let ui = thread::current().id();
+        assert!(ensure_off_ui_thread(Some(ui)).is_err());
+        assert!(thread::spawn(move || ensure_off_ui_thread(Some(ui)))
+            .join()
+            .unwrap()
+            .is_ok());
+    }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn cancelled_waiter_retains_capacity_until_native_work_finishes() {

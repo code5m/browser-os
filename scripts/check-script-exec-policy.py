@@ -123,7 +123,7 @@ def rust_fn_body(source: str, name: str) -> str:
     只做花括号配平，不解析 Rust 语法；字符串里的花括号可能导致截断，
     但本夹具关注的函数体（spawn/kill）不含字符串花括号。
     """
-    match = re.search(rf"\b(?:pub\s+)?fn\s+{re.escape(name)}\s*\(", source)
+    match = re.search(rf"\b(?:pub\s+)?fn\s+{re.escape(name)}\s*(?:<[^<>]+>)?\s*\(", source)
     if not match:
         return ""
     paren = source.find("(", match.end() - 1)
@@ -181,31 +181,48 @@ def braced_after(source: str, pattern: str) -> tuple[str, int, int] | None:
     return None
 
 
-WINDOWS_SUPERVISOR_BRANCHES = (
-    r"Ok\s*\(\s*Some\s*\(\s*exit\s*\)\s*\)\s*=>\s*\{",
-    r"if\s+cancel\.load\(Ordering::SeqCst\)\s*\{",
-    r"if\s+started\.elapsed\(\)\.as_secs\(\)\s*>=\s*timeout_secs\s+as\s+u64\s*\{",
-    r"Err\(e\)\s*=>\s*\{",
-)
+def compact(source: str) -> str:
+    return re.sub(r"\s+", "", source)
 
 
-def windows_supervisor_cleans_every_exit(supervisor: str) -> bool:
-    for pattern in WINDOWS_SUPERVISOR_BRANCHES:
-        block = braced_after(supervisor, pattern)
-        if not block:
+def ordered(source: str, *anchors: str) -> bool:
+    code = compact(source)
+    cursor = 0
+    for anchor in anchors:
+        token = compact(anchor)
+        found = code.find(token, cursor)
+        if found < 0:
             return False
-        body = block[0]
-        cleanup = list(re.finditer(
-            r"#\[cfg\(windows\)\]\s*let\s+_\s*=\s*job\.terminate\(\)\s*;", body,
-        ))
-        join = body.find("join_output_readers(")
-        wait = body.find("child.wait()")
-        if len(cleanup) != 1 or join < 0 or cleanup[0].end() > join:
-            return False
-        if wait >= 0 and cleanup[0].end() > wait:
-            return False
+        cursor = found + len(token)
     return True
 
+
+def windows_supervisor_cleans_every_exit(supervisor: str, runner: str) -> bool:
+    # Success, cancellation, timeout and wait-observation errors all converge
+    # on kernel-confirmed Job emptiness before output join/terminal publication.
+    cancel = braced_after(supervisor, r"if\s+let\s+Some\(\(status,\s*grace\)\)\s*=\s*outcome\s*\{")
+    wait_error = braced_after(supervisor, r"Err\(_\)\s*=>\s*\{")
+    confirm = cfg_fn_body(runner, "confirm_job_empty", "windows")
+    retain = rust_fn_body(runner, "confirm_owned_cleanup")
+    return bool(
+        cancel and wait_error
+        and ordered(supervisor,
+            "match poll_leader_exit(&mut child, pgid)",
+            "Some((RunStatus::Cancelled, CANCEL_GRACE_SECS))",
+            "Some((RunStatus::Timeout, HARD_GRACE_SECS))",
+            "if let Some((status, grace)) = outcome",
+            "#[cfg(windows)] confirm_job_empty(&job);",
+            "join_output_readers(readers);", "st.status = status;")
+        and ordered(cancel[0], "#[cfg(windows)] { let _ = job.terminate(); }",
+            "terminate_group(pgid, grace)", 'confirm_owned_cleanup("child reap unconfirmed", || child.wait().ok())',
+            "break (status, exit.code(), None)")
+        and ordered(wait_error[0], "#[cfg(windows)] { let _ = job.terminate(); let _ = child.kill(); }",
+            'confirm_owned_cleanup("leader wait receipt unconfirmed", || child.wait().ok())', "break (")
+        and ordered(confirm, 'confirm_owned_cleanup("job exit unconfirmed", || {',
+            "if job.is_empty().ok() == Some(true)", "return Some(())", "job.terminate()", "None")
+        and ordered(retain, "loop {", "if let Some(value) = confirm()", "return value", "thread::sleep(")
+        and "terminate_group(" not in wait_error[0]
+    )
 
 def detect(ctx: dict[str, str]) -> set[str]:
     """返回命中的违规码集合（ACTIVE 与 PENDING 一并检测，由调用方按模式过滤）。"""
@@ -233,63 +250,71 @@ def detect(ctx: dict[str, str]) -> set[str]:
 
     # --- 进程组与回收（取 cfg(unix) 版函数体，避免被 non-unix 桩误导） ---
     spawn_body = cfg_fn_body(runner, "spawn_in_new_group", "unix")
-    if not ("pre_exec" in spawn_body and "setsid" in spawn_body):
+    if not ordered(spawn_body, "cmd.pre_exec(||", "if libc::setsid() < 0",
+                   "return Err(std::io::Error::last_os_error())", "cmd.spawn()"):
         hits.add("EXEC_NO_SETSID")
 
     kill_body = cfg_fn_body(runner, "kill_group", "unix")
     windows_spawn = cfg_fn_body(runner, "spawn_in_new_group", "windows")
-    start_body = rust_fn_body(runner, "start_argv_run")
-    callers_use_owner = all(
-        re.search(r"\bstart_argv_run\s*\(", rust_fn_body(runner, name))
-        and ".spawn(" not in rust_fn_body(runner, name)
-        for name in ("start_run", "start_command")
-    )
-    spawn = re.search(
-        r"let\s+mut\s+child\s*=\s*match\s+spawn_in_new_group\s*\(\s*&mut\s+cmd\s*\)",
-        start_body,
-    )
-    attach = re.search(
-        r"#\[cfg\(windows\)\]\s*let job = match "
-        r"crate::windows_process::JobObject::attach_suspended_pid\(child\.id\(\)\)"
-        r"\s*\{.*?^    \};", start_body, re.S | re.M,
-    )
-    suspended_spawn = (
-        "cmd.creation_flags(crate::windows_process::CREATE_SUSPENDED)" in windows_spawn
-        and "cmd.spawn()" in windows_spawn
-        and windows_spawn.find("CREATE_SUSPENDED") < windows_spawn.find("cmd.spawn()")
-    )
-    owner_spawn = bool(callers_use_owner and spawn and attach and spawn.end() < attach.start())
-    handoff = re.search(
-        r"\bsupervise\s*\(\s*child\s*,\s*Some\(pgid\)\s*,"
-        r"\s*#\[cfg\(windows\)\]\s*job\s*,", start_body,
-    )
-
-    # The only direct-child cleanup exception is the exact attach-failure arm
-    # for a child that never resumed. Exclude just that kill statement, never
-    # the whole match: a rogue kill in Ok(job) must remain visible.
-    direct_kills = runner
-    cleanup = None
-    if attach and suspended_spawn and owner_spawn:
-        cleanup = re.search(
-            r"Err\(error\)\s*=>\s*\{\s*"
-            r"(?P<kill>let\s+_\s*=\s*child\.kill\(\)\s*;)\s*"
-            r"let\s+_\s*=\s*child\.wait\(\)\s*;\s*"
-            r"table\.lock_runs\(\)\.remove\(&run_id\)\s*;\s*"
-            r"return\s+Err\(RunError::SpawnFailed\(format!\(\s*"
-            r'"WINDOWS_SCRIPT_JOB_FAILED: \{error\}"\s*,?\s*\)\)\)\s*;\s*\}',
-            attach.group(0),
-        )
-        if cleanup and runner.count(start_body) == 1:
-            offset = runner.index(start_body) + attach.start()
-            first = offset + cleanup.start("kill")
-            last = offset + cleanup.end("kill")
-            direct_kills = runner[:first] + runner[last:]
-    if "killpg" not in kill_body or DIRECT_CHILD_KILL_PATTERN.search(direct_kills):
-        hits.add("EXEC_NO_KILLPG")
+    start_body = rust_fn_body(runner, "start_argv_run_owned")
     supervisor = rust_fn_body(runner, "supervise")
-    if (not owner_spawn or not suspended_spawn or not cleanup or not handoff
+    # Follow each public entry to the SAME owner. Do not count declarations
+    # or allow a direct spawn in an intermediate wrapper.
+    caller_edges = (
+        ("start_run", "start_argv_run"),
+        ("start_argv_run", "start_argv_run_owned"),
+        ("start_command", "start_command_owned"),
+        ("start_command_owned", "start_command_owned_with_admission"),
+        ("start_command_owned_with_admission", "start_argv_run_owned"),
+    )
+    callers_use_owner = all(
+        re.search(r"\b" + target + r"\s*\(", rust_fn_body(runner, caller))
+        and ".spawn(" not in rust_fn_body(runner, caller)
+        for caller, target in caller_edges
+    )
+    assignment = braced_after(start_body, r"#\[cfg\(windows\)\]\s*if let Err\(error\) = job\.assign_suspended_pid\(child\.id\(\)\)\s*\{")
+    suspended_spawn = ordered(windows_spawn,
+        "cmd.creation_flags(crate::windows_process::CREATE_SUSPENDED)", "cmd.spawn()")
+    owner_spawn = callers_use_owner and ordered(start_body,
+        "#[cfg(windows)] let job = match crate::windows_process::JobObject::create_for_spawn()",
+        "if let Err(error) = before_spawn()", "return Err(error)",
+        "let mut child = match spawn_in_new_group(&mut cmd)",
+        "#[cfg(windows)] if let Err(error) = job.assign_suspended_pid(child.id())",
+        "thread::spawn(move ||", "supervise(child, Some(pgid), #[cfg(windows)] job,")
+    assignment_cleanup = bool(assignment and ordered(assignment[0],
+        'confirm_owned_cleanup("failed job assignment child exit unconfirmed",',
+        "|| match child.try_wait()", "Ok(Some(status)) => Some(status)",
+        "_ => { let _ = child.kill(); let _ = job.terminate(); None }",
+        "confirm_job_empty(&job);", "table.lock_runs().remove(&run_id);", "return Err(RunError::SpawnFailed("))
+    windows_cleanup = windows_supervisor_cleans_every_exit(supervisor, runner)
+
+    # Permit exactly the two identity-bound Windows child cleanup statements:
+    # an unresumed child with failed Job assignment, and a failed wait
+    # observation paired with Job termination and confirmed reaping.
+    # Any other direct child kill (including a new Ok arm) still fails.
+    allowed_kills = []
+    if assignment_cleanup and suspended_spawn and owner_spawn:
+        match = re.search(r"let\s+_\s*=\s*child\.kill\(\)\s*;", assignment[0])
+        if match and start_body and runner.count(start_body) == 1:
+            offset = runner.index(start_body) + assignment[1]
+            allowed_kills.append((offset + match.start(), offset + match.end()))
+    wait_error = braced_after(supervisor, r"Err\(_\)\s*=>\s*\{")
+    if windows_cleanup and wait_error:
+        match = re.search(r"let\s+_\s*=\s*child\.kill\(\)\s*;", wait_error[0])
+        if match and supervisor and runner.count(supervisor) == 1:
+            offset = runner.index(supervisor) + wait_error[1]
+            allowed_kills.append((offset + match.start(), offset + match.end()))
+    direct_kills = runner
+    for first, last in sorted(allowed_kills, reverse=True):
+        direct_kills = direct_kills[:first] + direct_kills[last:]
+    terminate = cfg_fn_body(runner, "terminate_group", "unix")
+    if (not ordered(kill_body, "libc::killpg(pgid, sig)")
+            or not ordered(terminate, "kill_group(pgid, libc::SIGTERM)", "kill_group(pgid, libc::SIGKILL)")
+            or not assignment_cleanup or DIRECT_CHILD_KILL_PATTERN.search(direct_kills)):
+        hits.add("EXEC_NO_KILLPG")
+    if (not owner_spawn or not suspended_spawn or not assignment_cleanup
             or "#[cfg(windows)] job: crate::windows_process::JobObject" not in runner
-            or not windows_supervisor_cleans_every_exit(supervisor)):
+            or not windows_cleanup):
         hits.add("EXEC_WINDOWS_JOB_MISSING")
 
     # 必须存在 soft/hard 分层的**常量定义**：M5-1 切片 0b 后常量可收口到
@@ -304,9 +329,17 @@ def detect(ctx: dict[str, str]) -> set[str]:
     if not (hard_grace_present and re.search(r"pub const CANCEL_GRACE_SECS\s*:", runner)):
         hits.add("EXEC_TIMEOUT_NOT_LAYERED")
 
-    # 回收必须发生在 supervisor 内，且必须是**非阻塞轮询** `try_wait`
-    # （`child.wait()` 只是 cancel/timeout 分支的收尾，只查它会蒙混过关）。
-    if "try_wait" not in rust_fn_body(runner, "supervise"):
+    # Linux must observe an unreaped leader without blocking, kill its
+    # descendants before PID recycling, then reap. Other platforms poll
+    # try_wait. A blocking wait alone never satisfies this rule.
+    poll = rust_fn_body(runner, "poll_leader_exit")
+    observe = cfg_fn_body(runner, "leader_exited_unreaped", 'target_os = "linux"')
+    if not (ordered(supervisor, "match poll_leader_exit(&mut child, pgid)")
+            and ordered(observe, "libc::waitid(", "libc::P_PID", "child.id() as libc::id_t",
+                        "libc::WEXITED | libc::WNOHANG | libc::WNOWAIT")
+            and ordered(poll, '#[cfg(target_os = "linux")]', "if !leader_exited_unreaped(child)?",
+                        "return Ok(None)", "kill_group(pgid, libc::SIGKILL)", "child.wait().map(Some)",
+                        '#[cfg(not(target_os = "linux"))]', "child.try_wait()")):
         hits.add("EXEC_NO_WAIT_REAP")
 
     if ARG_QUOTED_PATTERN.search(runner):
@@ -423,17 +456,22 @@ def read_ctx() -> dict[str, str]:
 MUTATIONS: tuple[tuple[str, str, str, int], ...] = (
     ("EXEC_SH_C_PRESENT", "Command::new(program)", 'Command::new(program).args(["sh", "-c"])', 1),
     ("EXEC_STRING_INTERPOLATION", "Command::new(program)", 'Command::new(format!("{}", program))', 1),
-    ("EXEC_NO_SETSID", "            libc::setsid();", "            // removed", 1),
+    ("EXEC_NO_SETSID", "if libc::setsid() < 0", "if false", 1),
     ("EXEC_NO_KILLPG", "        libc::killpg(pgid, sig);", "        let _ = sig;", 1),
     ("EXEC_WINDOWS_JOB_MISSING", "cmd.creation_flags(crate::windows_process::CREATE_SUSPENDED);", "cmd.creation_flags(0);", 1),
-    ("EXEC_WINDOWS_JOB_MISSING", "JobObject::attach_suspended_pid(child.id())", "JobObject::adopt_running_pid(child.id())", 1),
+    ("EXEC_WINDOWS_JOB_MISSING", "job.assign_suspended_pid(child.id())", "job.adopt_running_pid(child.id())", 1),
     ("EXEC_WINDOWS_JOB_MISSING", "let _ = job.terminate();", "let _ = job;", 1),
     ("EXEC_WINDOWS_JOB_MISSING", "let mut child = match spawn_in_new_group(&mut cmd)", "let mut child = match cmd.spawn()", 1),
     ("EXEC_WINDOWS_JOB_MISSING", "    start_argv_run(\n", "    unowned_argv_run(\n", 1),
     ("EXEC_NO_KILLPG", "        Ok(job) => job,", "        Ok(job) => { child.kill(); job },", 1),
-    ("EXEC_NO_KILLPG", "            let _ = child.wait();\n            table.lock_runs().remove(&run_id);", "            table.lock_runs().remove(&run_id);", 1),
+    ("EXEC_NO_KILLPG", "|| match child.try_wait()", "|| match child.id()", 1),
     ("EXEC_NO_KILLPG", "        libc::killpg(pgid, sig);", "        child.kill();", 1),
-    ("EXEC_NO_WAIT_REAP", "        match child.try_wait() {", "        match child.id() {", 1),
+    ("EXEC_NO_WAIT_REAP", "match poll_leader_exit(&mut child, pgid)", "match child.wait()", 1),
+    ("EXEC_NO_WAIT_REAP", "libc::WEXITED | libc::WNOHANG | libc::WNOWAIT", "libc::WEXITED", 1),
+    ("EXEC_NO_WAIT_REAP", "kill_group(pgid, libc::SIGKILL);\n        }\n        child.wait().map(Some)", "child.wait().map(Some);\n        }\n        child.wait().map(Some)", 1),
+    ("EXEC_WINDOWS_JOB_MISSING", "confirm_job_empty(&job);\n    join_output_readers(readers);", "join_output_readers(readers);\n    confirm_job_empty(&job);", 1),
+    ("EXEC_WINDOWS_JOB_MISSING", "start_command_owned_with_admission(\n        table,", "unreviewed_command(\n        table,", 1),
+    ("EXEC_WINDOWS_JOB_MISSING", "if let Err(error) = before_spawn()", "if let Err(error) = Ok(())", 1),
     ("EXEC_ARG_QUOTED", "argv.push(value.to_string());", 'argv.push(format!("\'{}\'", value));', 1),
     ("EXEC_PLATFORM_STUB_MISSING", "#[cfg(all(not(unix), not(windows)))]", "#[cfg(unix)]", 1),
     ("EXEC_ENV_NOT_CLEARED", ".env_clear()", "", 1),
@@ -561,12 +599,12 @@ def self_test() -> int:
     if "EXEC_NO_KILLPG" not in detect(direct_kill):
         failures.append("direct child kill outside suspended attach failure was accepted")
 
-    # Preserve four termination calls while moving the cancel cleanup into
-    # the success branch. A global count would pass this broken lifecycle.
+    # Preserve termination call count while moving cancel/timeout cleanup
+    # into the success arm. Counts alone must not satisfy this contract.
     supervisor = rust_fn_body(ctx["runner"], "supervise")
-    cancel = braced_after(supervisor, WINDOWS_SUPERVISOR_BRANCHES[1])
+    cancel = braced_after(supervisor, r"if\s+let\s+Some\(\(status,\s*grace\)\)\s*=\s*outcome\s*\{")
     if not cancel or "let _ = job.terminate();" not in cancel[0]:
-        failures.append("cancel termination mutation anchor is missing")
+        failures.append("cancel/timeout termination mutation anchor is missing")
     else:
         changed_cancel = cancel[0].replace("let _ = job.terminate();", "let _ = job;", 1)
         moved = supervisor.replace(cancel[0], changed_cancel, 1).replace(
@@ -580,7 +618,7 @@ def self_test() -> int:
             misplaced = dict(ctx)
             misplaced["runner"] = ctx["runner"].replace(supervisor, moved, 1)
             if "EXEC_WINDOWS_JOB_MISSING" not in detect(misplaced):
-                failures.append("cancel termination moved into another branch was accepted")
+                failures.append("cancel/timeout termination moved into another branch was accepted")
 
     # 3) pending 码位完整性：默认模式不得误判 pending 为 active
     overlap = set(ACTIVE_CODES) & set(PENDING_CODES)

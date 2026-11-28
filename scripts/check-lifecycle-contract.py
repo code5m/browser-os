@@ -8,7 +8,7 @@ import re
 import sys
 import tempfile
 from pathlib import Path
-from native_bridge_owner_sources import read_native_bridge_owners
+from native_bridge_owner_sources import read_native_bridge_owners, tab_close_owner_body
 
 
 LEGACY_GAPS = (
@@ -90,9 +90,10 @@ def detect_gaps(
     # Ordinary close is reversible: keep every Owner record/draft if the
     # native WebView refuses to close. A cleanup receipt may follow success
     # only. This is intentionally different from final shutdown aggregation.
-    close_tab = function_body(bridge_source, "close_tab")
+    close_tab = tab_close_owner_body(bridge_source, function_body)
     close_call = close_tab.find(".close_tab")
-    first_short_circuit = close_tab.find("?;", close_call)
+    # Only propagation of the native close result authorizes cleanup.
+    first_short_circuit = close_tab.find("close_result?;", close_call)
     metadata_cleanup = close_tab.find("child_layouts", close_call)
     if require_owners and (close_call < 0 or metadata_cleanup < 0):
         gaps.append("TAB_CLOSE_OWNER_CLEANUP_MISSING")
@@ -234,7 +235,18 @@ fn register_shutdown_tasks() {
         print("self-test: protected close/shutdown fixture rejected", file=sys.stderr)
         return 1
 
+    delegated = clean_bridge.replace("fn close_tab() {",
+        "fn close_tab() { close_tab_admitted(app, id, None) }\nfn close_tab_admitted() {")
+    if detect_gaps(clean_main, delegated, "", require_owners=True):
+        print("self-test: delegated close owner rejected", file=sys.stderr)
+        return 1
     cases = [
+        ("TAB_CLOSE_OWNER_CLEANUP_MISSING", clean_main, delegated.replace(
+            "close_tab_admitted(app, id, None)", "Ok(())")),
+        ("TAB_CLOSE_OWNER_CLEANUP_MISSING", clean_main, delegated.replace(
+            "fn close_tab_admitted()", "fn orphan_cleanup()")),
+        ("TAB_CLOSE_FAILURE_LOSES_OWNER_STATE", clean_main, delegated.replace(
+            "    close_result?;", "    let _ = close_result;")),
         ("WINDOW_CLOSE_BYPASSES_UNIFIED_CORE", bypass_main, clean_bridge),
         ("SYSTEM_EXIT_HOOK_MISSING", no_exit_main, clean_bridge),
         ("GRID_PARTIAL_CREATE_ROLLBACK_MISSING", clean_main, clean_bridge.replace(clean_grid, unsafe_grid)),
